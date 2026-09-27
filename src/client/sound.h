@@ -45,6 +45,12 @@ public:
         if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; }
     }
 
+    void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
+        if (dev_) SDL_LockAudioDevice(dev_);
+        tapContext_ = context; tap_ = tap;
+        if (dev_) SDL_UnlockAudioDevice(dev_);
+    }
+
     void init(const tak::hpi::Vfs& vfs) {
         vfs_ = &vfs;
         // Index the sounds/ namespace by stem (user overrides already win via the
@@ -482,8 +488,13 @@ private:
         return &cache_.emplace(key, std::move(*pcm)).first->second;
     }
 
+    void* tapContext_ = nullptr;
+    void (*tap_)(void*, const int16_t*, int, int) = nullptr;
     static void mixThunk(void* ud, Uint8* stream, int len) {
-        static_cast<SoundBank*>(ud)->mix(reinterpret_cast<int16_t*>(stream), len / 2);
+        auto* bank = static_cast<SoundBank*>(ud);
+        auto* pcm = reinterpret_cast<int16_t*>(stream);
+        bank->mix(pcm, len / 2);
+        if (bank->tap_) bank->tap_(bank->tapContext_, pcm, len / 2 / std::max(bank->chan_,1), bank->chan_);
     }
 
     void mix(int16_t* out, int n) {

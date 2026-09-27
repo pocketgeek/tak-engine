@@ -79,7 +79,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            g++ cmake ninja-build nasm pkg-config git make curl ca-certificates \
+            g++ cmake ninja-build nasm pkg-config git make curl ca-certificates perl python3 patch \
             libstdc++-*-dev \
             libasound2-dev libpulse-dev libdbus-1-dev \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
@@ -89,7 +89,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-ubuntu-latest-n7.1.1
+          key: ffmpeg-bink-ubuntu-latest-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
       - name: Cache static deps (zlib/libjpeg/SDL2)
@@ -125,7 +125,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            g++ cmake ninja-build nasm pkg-config git make curl ca-certificates \
+            g++ cmake ninja-build nasm pkg-config git make curl ca-certificates perl python3 patch \
             libstdc++-*-dev \
             libasound2-dev libpulse-dev libdbus-1-dev \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
@@ -135,7 +135,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-ubuntu-latest-n7.1.1
+          key: ffmpeg-bink-ubuntu-latest-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
       - name: Cache static deps (zlib/libjpeg/SDL2)

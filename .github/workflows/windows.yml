@@ -49,13 +49,13 @@ jobs:
             make
             zip
 
-      # Minimal static Bink-only FFmpeg so the bundle plays the door videos with no
+      # Static Bink/streaming FFmpeg so the bundle plays the door videos with no
       # runtime FFmpeg DLLs (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.
       - name: Cache static FFmpeg (Bink)
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-windows-x64-n7.1.1
+          key: ffmpeg-bink-windows-x64-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
 
@@ -64,16 +64,19 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test
+          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test
 
       - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
         run: |
           imports=$(objdump -p build/takclient.exe | awk '/DLL Name:/{print tolower($3)}')
           echo "$imports"
-          if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil'; then
+          if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl'; then
             echo "::error::takclient.exe still imports a non-static media DLL -- not fully static"; exit 1
           fi
           echo "OK: no SDL2/jpeg/zlib/ffmpeg DLL imports -- fully static"
+
+      - name: Streaming encode test
+        run: ./build/stream_test.exe
 
       - name: Project version
         run: echo "VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
@@ -82,6 +85,7 @@ jobs:
         run: |
           mkdir -p dist-win
           cp build/takclient.exe build/takserver.exe dist-win/
+          cp STREAMING-LICENSES.txt dist-win/
           # Safety net: copy any non-system DLL still imported (should be none now that
           # SDL2/jpeg/zlib are static; graceful if a target ends up dynamic anyway).
           ldd build/takclient.exe build/takserver.exe \
@@ -120,6 +124,7 @@ jobs:
         run: |
           mkdir -p dist-win-debug
           cp build-debug/takclient.exe build-debug/takserver.exe dist-win-debug/
+          cp STREAMING-LICENSES.txt dist-win-debug/
           ldd build-debug/takclient.exe build-debug/takserver.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win-debug/; done

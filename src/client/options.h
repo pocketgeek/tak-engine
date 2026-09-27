@@ -54,7 +54,8 @@ public:
     // speaker-slider row set is rebuilt for the new channel count automatically.
     OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                   std::function<void()> onSave, int audioChannels = 0,
-                  std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {});
+                  std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {},
+                  std::function<void()> onStreaming = {});
 
     // Feed one SDL event. Returns true when the user leaves (Esc / BACK); the host
     // should then stop showing the screen. Persisting is explicit (the SAVE button
@@ -118,6 +119,7 @@ private:
     std::function<void()> onSave_;
     std::function<void()> onHotkeys_;   // opens the hotkey config screen (host-provided)
     std::function<void()> onAudioDevice_;   // host re-opens audio on a live device switch
+    std::function<void()> onStreaming_;
     bool pendingRebuild_ = false;       // a device change asked for a deferred control rebuild
     std::vector<Control> ctls_;
     bool dirty_ = false;    // unsaved changes since the last save/open -> SAVE enabled

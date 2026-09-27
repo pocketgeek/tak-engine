@@ -1,0 +1,90 @@
+# Streaming to YouTube
+
+In a game, press **F9**, or open **Esc → Options → YouTube Streaming**.
+Paste the stream key from YouTube Studio, select the video settings, and click
+**Start Streaming**. Follow the preview/status in YouTube Studio to make the
+broadcast public. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
+
+The initial settings are 720p, 30 FPS and 6,000 Kbps video. The panel also offers
+1080p, 60 FPS, 3,000–12,000 Kbps, and automatic or CPU encoding. Automatic tries
+available hardware encoders before falling back to the CPU:
+
+| Platform | Hardware backends |
+| --- | --- |
+| Linux | NVIDIA NVENC; Intel/AMD VA-API |
+| Windows | NVIDIA NVENC; AMD AMF; Intel Quick Sync |
+| macOS | Apple VideoToolbox |
+
+A working GPU driver with H.264 encoding support is required for hardware
+encoding. The panel reports the encoder actually opened, connection state,
+encoded frames, video frames replaced/dropped from the capture queue, and bytes
+sent with an estimated encoded-payload bitrate. Unsupported hardware falls back to the bundled x264 CPU encoder. Hardware
+that fails during encoding triggers a restart using the CPU.
+
+The stream contains the game view, HUD, cursor and mixed game audio, including
+music. Hardware cursors temporarily use the software drawing path so they appear
+in the stream. A differently shaped game window is letterboxed. Setup controls
+and connection badges are drawn **after capture** and stay off-stream.
+Microphone input, desktop capture, account login and broadcast scheduling are
+not included.
+
+**Stop Streaming** stops the upload; closing the F9 panel leaves it running.
+Leaving the game stops it. The key and preferences last for that game session
+only. Keys are masked, never written to settings, and excluded from encoder and
+network diagnostics. Ctrl+V pastes a key; Ctrl+A clears the key field.
+
+Uploads use RTMPS with certificate and hostname verification, H.264 video, AAC
+stereo audio at 44.1 kHz / 128 Kbps, and two-second video keyframes. After a
+connection failure, the worker retries three times, waiting 2, 4 and 8 seconds.
+Stop interrupts network I/O; an unsuccessful stream reports failure in the game.
+The primary YouTube ingest endpoint is currently fixed in the client.
+
+## Performance and dependencies
+
+Encoding, scaling, audio resampling and networking run on a separate worker.
+The video queue holds only the latest frame; the audio ring has a fixed size.
+Slow uploads cannot grow an unlimited queue or block the mixer/simulation.
+The OpenGL renderer uses two pixel buffers and nonblocking fence checks for
+readback. SDL's other renderers use its portable readback at the selected capture
+rate; that readback can add render-thread cost. Lower the resolution/frame rate
+or choose hardware encoding if streaming reduces game performance.
+
+No FFmpeg executable or additional DLL/shared-library bundle is required by
+players. FFmpeg, x264, the Linux OpenSSL/VA-API/DRM loaders and the Windows oneVPL
+dispatcher are built as static archives. NVIDIA and AMD SDK headers add no runtime
+library bundle. Installed GPU drivers and native OS frameworks remain external,
+just as SDL's display/audio drivers do.
+
+## Development checks
+
+`tools/build-ffmpeg-bink.sh` now builds both Bink playback and streaming support.
+Its pinned dependencies are built by `tools/build-stream-deps.sh`. Linux needs
+Python 3, Ninja, Perl's standard modules (Fedora: `perl-core`), and patch in
+addition to the regular build tools. Perl configures OpenSSL during the build;
+it is not a game dependency. Windows uses Schannel and macOS uses
+SecureTransport, so they do not build OpenSSL. FFmpeg's OpenSSL hostname checking
+is patched explicitly for the pinned FFmpeg 7.1 source.
+
+CMake requires the media/codec/TLS/loader archives by full path; CI additionally
+checks executable imports. `stream_test` tests H.264/AAC output, timestamps,
+configuration validation, stopping, failure and restart without any network.
+`stream_capture_test` exercises capture with an open private setup panel.
+Both are registered with CTest. For a GPU capture check:
+
+```sh
+SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl \
+  ./build-o2/stream_capture_test gl /tmp/capture.flv
+./build-o2/stream_test h264_nvenc
+```
+
+The optional local network check uses a test-only build of the backend, a local
+TLS proxy, and a local FFmpeg receiver. It verifies reconnect and rejects a
+trusted certificate for the wrong hostname. It never contacts YouTube:
+
+```sh
+cmake --build build-o2 --target stream_network_test
+python3 tools/check-stream-network.py build-o2/stream_network_test
+```
+
+The external `ffmpeg` and `openssl` commands used by this check are development
+test tools, not engine runtime dependencies.

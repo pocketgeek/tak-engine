@@ -1,0 +1,21 @@
+#pragma once
+#include "video/stream.h"
+#include <SDL.h>
+#include <memory>
+namespace tak {
+constexpr int kStreamingEvent = 0x54414b53;
+// Owned by the game session; closing/leaving the game always stops the stream.
+class Streaming {
+public:
+    explicit Streaming(SDL_Renderer*);
+    ~Streaming();
+    video::Stream& stream();
+    bool input(const SDL_Event&, int w, int h);
+    // Capture BEFORE drawing private setup UI. Never stream the setup panel.
+    void frame(int w, int h);
+    bool shown() const;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> p_;
+};
+}

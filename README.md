@@ -183,6 +183,7 @@ builders, but units they produce inherit their squad.
 | **Tab** | Toggle the full-screen map; press again to return |
 | **F1** | Toggle unit information |
 | **F4** | Toggle unit counts / status |
+| **F9** | YouTube streaming setup / status |
 | **O**, with no units selected | Toggle campaign objectives when available |
 | **Pause** | Pause / resume the game or replay |
 | **+** / **−** (also **=** and keypad **+/−**) | Change game / replay speed |
@@ -288,6 +289,14 @@ For the evidence and remaining scope, see the [retail engine notes](docs/retail-
 [campaign implementation and comparisons](docs/campaign-design.md),
 [transport and animation audit](docs/transport-animation-audit-2026-09-21.md), and
 [naval building placement correction](docs/naval-building-placement.md).
+
+## YouTube streaming
+
+Press **F9** in a game to stream game video and audio directly to YouTube.
+Paste a YouTube Studio stream key, choose 720p/1080p and 30/60 FPS, then start.
+Automatic hardware encoding supports NVIDIA, AMD, Intel and Apple backends,
+with a CPU fallback. No separate FFmpeg installation is needed.
+See [streaming setup and platform details](docs/streaming.md).
 
 ## Build and contribute
 

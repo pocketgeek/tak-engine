@@ -16,6 +16,7 @@
 
 #include "campaign/campaign.h"
 #include <utility>
+#include "client/streaming.h"
 #include "client/briefingscreen.h"
 #include "client/artscale.h"
 #include "client/videofilter.h"
@@ -1255,6 +1256,11 @@ int main(int argc, char** argv) {
     // inherit that game's mode and just sit in the lobby instead of auto-hosting).
     const int autoOv = tak::devEnv("TAK_MPAUTO")
                            ? std::atoi(tak::devEnv("TAK_MPAUTO")) : mpAutoMode;
+    tak::Streaming streaming(ren);
+    if (gameView) gameView->setAudioTap(&streaming.stream(),
+        [](void* context, const int16_t* pcm, int frames, int channels) {
+            static_cast<tak::video::Stream*>(context)->audio(pcm,frames,channels);
+        });
     uint64_t last = SDL_GetPerformanceCounter();
     while (running) {
         if (tak::termRequested()) { running = false; quitApp = true; break; }
@@ -1307,6 +1313,7 @@ int main(int argc, char** argv) {
                 SDL_RenderWindowToLogical(ren, e.button.x, e.button.y, &lx, &ly);
                 e.button.x = int(lx); e.button.y = int(ly);
             }
+            if (gameView && streaming.input(e,ww,wh)) continue;
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);
             if (gameView) gameView->input(e, ww, wh);
@@ -1537,7 +1544,9 @@ int main(int argc, char** argv) {
         // Custom animated mouse cursor, drawn last so it sits above the HUD (and above
         // the AA-resolved scene) at native resolution. Only in-game; the asset viewers
         // keep the OS arrow.
-        if (gameView) gameView->drawCursorOverlay();
+        if (gameView) gameView->drawCursorOverlay(streaming.stream().active() || streaming.shown());
+        if (gameView) streaming.frame(w,h);
+        if (gameView && streaming.shown()) gameView->drawCursorOverlay(true,true);
         // Read both metrics from the pinned snapshot before releasing it.
         const uint32_t profTick = prof && gameView ? gameView->framedTick() : 0;
         const size_t profLive = prof && gameView ? gameView->framedAliveUnits() : 0;
@@ -1829,6 +1838,8 @@ int main(int argc, char** argv) {
             }
         }
     }
+    streaming.stream().stop();
+    if (gameView) gameView->setAudioTap(nullptr,nullptr);
     // Campaign mission ended (and resolved -- not a mid-mission quit): advance
     // persisted progress on a win, then show the result screen and act on the choice.
     if (!campaignStem.empty() && !campaignId.empty() && gameView && !quitApp &&

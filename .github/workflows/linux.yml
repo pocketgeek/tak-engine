@@ -59,7 +59,7 @@ jobs:
           # SDL2 with its X11/Wayland/audio drivers (the libs themselves are
           # built from source below).
           apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ git make dpkg-dev nasm pkg-config file \
+            cmake ninja-build g++ git make perl python3 patch dpkg-dev nasm pkg-config file \
             curl ca-certificates xz-utils \
             libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
@@ -72,7 +72,7 @@ jobs:
           # libstdc++-static: Fedora splits libstdc++.a out, and without it the
           # -static-libstdc++ probe in CMakeLists fails and the binary keeps a
           # libstdc++.so.6 dependency -- which is exactly what the static gate rejects.
-          dnf -y install cmake ninja-build gcc-c++ git make rpm-build nasm pkgconf \
+          dnf -y install cmake ninja-build gcc-c++ git make perl-core python3 patch rpm-build nasm pkgconf \
             libstdc++-static \
             tar gzip zstd xz \
             alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel \
@@ -83,7 +83,7 @@ jobs:
         if: matrix.family == 'arch'
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel cmake ninja git nasm pkgconf curl \
+            base-devel perl python patch cmake ninja git nasm pkgconf curl \
             alsa-lib libpulse pipewire dbus \
             libx11 libxext libxcursor libxi libxrandr libxfixes libxss \
             libxkbcommon wayland wayland-protocols libdecor mesa
@@ -102,13 +102,13 @@ jobs:
           ln -sf /opt/cmake-3.28.6-linux-x86_64/bin/cpack /usr/local/bin/cpack
           cmake --version
 
-      # Static Bink-only FFmpeg + static zlib/libjpeg/SDL2 (see the tools/
+      # Static Bink/streaming FFmpeg + static zlib/libjpeg/SDL2 (see the tools/
       # scripts): built inside THIS distro's container, cached per distro.
       - name: Cache static FFmpeg (Bink)
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-${{ matrix.tag }}-n7.1.1
+          key: ffmpeg-bink-${{ matrix.tag }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
       - name: Cache static deps (zlib/libjpeg/SDL2)
@@ -128,7 +128,10 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target takclient takserver cartographer
+          cmake --build build --target takclient takserver cartographer stream_test
+
+      - name: Streaming encode test
+        run: ./build/stream_test
 
       # Windows and macOS each gate on their binaries being static; Linux did not, and it
       # is the platform where a leak is most costly: CPack derives package dependencies
@@ -183,6 +186,7 @@ jobs:
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-debug --target takclient takserver
           mkdir -p dist-linux-debug
+          cp STREAMING-LICENSES.txt dist-linux-debug/
           cp build-debug/takclient build-debug/takserver dist-linux-debug/
           tar -C dist-linux-debug -czf dist/tak-engine-linux-x64-debug.tar.gz .
 

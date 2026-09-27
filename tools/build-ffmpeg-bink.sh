@@ -1,24 +1,7 @@
 #!/usr/bin/env bash
-#
-# Build a MINIMAL, static, LGPL FFmpeg that can decode the retail door videos
-# (Bink1 / "BIKf") and nothing else, then install it to a prefix that CMake links
-# statically into takclient (always -- see CMakeLists.txt). This lets a
-# shipped takclient play the door videos with NO runtime FFmpeg dependency, so a
-# stock distro (whose libavcodec-free lacks the Bink decoder) needs nothing extra.
-#
-# Only the Bink demuxer + bink/binkaudio decoders + swscale/swresample are enabled, so
-# no GPL codecs and no external media libraries are pulled in -- the result is pure
-# LGPL, which is fine to static-link into an open-source, rebuildable binary.
-#
-# Env overrides:
-#   FFMPEG_VERSION   git tag to build            (default: n7.1.1)
-#   PREFIX           install prefix              (default: <repo>/third_party/ffmpeg-bink)
-#   SRC              source/checkout dir         (default: <PREFIX>/src)
-#   JOBS             parallel make jobs          (default: nproc)
-#   CC / CROSS_PREFIX / TARGET_OS / TARGET_ARCH  cross-compile knobs (CI: Windows/macOS)
-#
-# Idempotent: if $PREFIX/lib/pkgconfig/libavcodec.pc already exists it does nothing, so
-# CI can cache $PREFIX and skip the ~minutes-long rebuild.
+# Static FFmpeg for retail Bink playback and H.264/AAC RTMPS streaming.
+# Builds pinned static dependencies using build-stream-deps.sh. Only OS frameworks
+# and GPU driver runtimes remain external. PREFIX / JOBS / cross knobs supported.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"     # repo root
@@ -27,9 +10,13 @@ PREFIX="${PREFIX:-$here/third_party/ffmpeg-bink}"
 SRC="${SRC:-$PREFIX/src}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
-if [ -f "$PREFIX/lib/pkgconfig/libavcodec.pc" ]; then
-  echo "ffmpeg-bink: already built at $PREFIX (delete it to rebuild)"; exit 0
+recipe=$(cat "$here/tools/build-ffmpeg-bink.sh" "$here/tools/build-stream-deps.sh" "$here/tools/ffmpeg-tls-hostname.patch" | cksum)
+stamp="stream-v2-$FFMPEG_VERSION-${TARGET_OS:-$(uname -s)}-${TARGET_ARCH:-native}-$recipe"
+if [ -f "$PREFIX/stream-build-version" ] && [ "$(cat "$PREFIX/stream-build-version")" = "$stamp" ]; then
+  echo "static FFmpeg with streaming: already built"; exit 0
 fi
+PREFIX="$PREFIX" JOBS="$JOBS" "$here/tools/build-stream-deps.sh"
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 
 echo "ffmpeg-bink: building $FFMPEG_VERSION -> $PREFIX"
 mkdir -p "$SRC"
@@ -39,25 +26,42 @@ fi
 
 # Cross-compile pass-through (empty on a normal native build).
 cross_args=()
-[ -n "${CROSS_PREFIX:-}" ] && cross_args+=(--enable-cross-compile "--cross-prefix=$CROSS_PREFIX")
+[ -n "${CROSS_PREFIX:-}" ] && cross_args+=(--enable-cross-compile "--cross-prefix=$CROSS_PREFIX" "--pkg-config=${PKG_CONFIG:-pkg-config}")
 [ -n "${TARGET_OS:-}" ]    && cross_args+=("--target-os=$TARGET_OS")
 [ -n "${TARGET_ARCH:-}" ]  && cross_args+=("--arch=$TARGET_ARCH")
 [ -n "${CC:-}" ]           && cross_args+=("--cc=$CC")
 
+platform="${TARGET_OS:-$(uname -s)}"
+stream_args=()
+case "$platform" in
+  Darwin|darwin) stream_args+=(--enable-securetransport --enable-videotoolbox --enable-encoder=h264_videotoolbox) ;;
+  MINGW*|MSYS*|mingw32) stream_args+=(--enable-schannel --enable-d3d11va --enable-dxva2 --enable-nvenc --enable-ffnvcodec --enable-amf --enable-libvpl --enable-encoder=h264_nvenc,h264_amf,h264_qsv) ;;
+  *) stream_args+=(--enable-openssl --enable-nvenc --enable-ffnvcodec --enable-vaapi --enable-encoder=h264_nvenc,h264_vaapi) ;;
+esac
 cd "$SRC"
+# FFmpeg 7.1 verifies the certificate chain but not the hostname with OpenSSL.
+# The patch also loads the OS trust store. Never disable certificate validation.
+if ! grep -q 'SSL_set1_host' libavformat/tls_openssl.c; then
+  patch -p1 < "$here/tools/ffmpeg-tls-hostname.patch"
+fi
 ./configure \
   --prefix="$PREFIX" \
   --disable-shared --enable-static --enable-pic --enable-small \
   --disable-programs --disable-doc --disable-htmlpages --disable-manpages --disable-txtpages \
-  --disable-everything --disable-network --disable-autodetect --disable-asm --disable-debug \
+  --disable-everything --enable-network --disable-autodetect --disable-asm --disable-debug \
   --disable-iconv --disable-zlib --disable-bzlib --disable-lzma --disable-sdl2 \
-  --disable-videotoolbox --disable-audiotoolbox --disable-avfoundation \
-  --disable-coreimage --disable-appkit --disable-securetransport \
+  --disable-audiotoolbox --disable-avfoundation --disable-coreimage --disable-appkit \
+  --enable-gpl --enable-version3 --enable-libx264 --pkg-config-flags=--static \
+  --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib" \
   --enable-swscale --enable-swresample \
+  --enable-encoder=libx264,aac --enable-muxer=flv \
+  --enable-protocol=file,rtmp,rtmps,tcp,tls \
+  "${stream_args[@]}" \
   --enable-demuxer=bink \
   --enable-decoder=bink,binkaudio_dct,binkaudio_rdft \
   ${cross_args[@]+"${cross_args[@]}"}   # 3.2-safe empty-array expansion (macOS ships Bash 3.2)
 
 make -j"$JOBS"
 make install
+printf '%s\n' "$stamp" > "$PREFIX/stream-build-version"
 echo "ffmpeg-bink: done -> $PREFIX/lib (static .a + pkgconfig)"

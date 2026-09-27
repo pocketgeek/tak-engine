@@ -220,11 +220,11 @@ namespace {
             }
         }
 
-    void GameView::drawCursorOverlay() {
+    void GameView::drawCursorOverlay(bool forceSoftware, bool uiOverlay) {
         if (!cursorsInit_) { cursorsInit_ = true; cursors_.load(ren_, vfs_, settings_); }
         // A benchmark RUN is hands-off: hide the cursor entirely (OS + software). It
         // returns for the stats screen (benchStatsShown_) so DONE is clickable.
-        if (benchmarkMode_ && !benchStatsShown_) {
+        if (benchmarkMode_ && !benchStatsShown_ && !uiOverlay) {
             if (cursorMode_ != 0) { cursors_.releaseHardware(); SDL_ShowCursor(SDL_DISABLE); cursorMode_ = 0; }
             return;
         }
@@ -233,13 +233,13 @@ namespace {
             return;
         }
         bool fightTint = false;
-        tak::CursorId c = desiredCursor(fightTint);
+        tak::CursorId c = uiOverlay ? tak::CursorId::Normal : desiredCursor(fightTint);
         int sc = settings_ ? settings_->cursorScale : 1;
         SDL_Color tint = fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255};
 
         // HARDWARE cursor: hand the sprite to the OS, which tracks the pointer position
         // itself -- so it stays smooth even when a heavy frame stalls our render loop.
-        if (settings_ && settings_->hardwareCursor && !hwCursorFailed_) {
+        if (settings_ && settings_->hardwareCursor && !forceSoftware && !hwCursorFailed_) {
             if (cursorMode_ != 1) { SDL_ShowCursor(SDL_ENABLE); cursorMode_ = 1; }
             if (cursors_.applyHardware(c, sc, tint)) return;
             hwCursorFailed_ = true;   // platform rejected it (size cap?) -> software from here on
@@ -251,7 +251,7 @@ namespace {
         // Pointer position in renderer-output pixels (the space mouse events are mapped
         // into). Before the first motion, sample the OS position and map it the same way.
         int mx, my;
-        if (mouseX_ >= 0) { mx = int(mouseX_); my = int(mouseY_); }
+        if (!uiOverlay && mouseX_ >= 0) { mx = int(mouseX_); my = int(mouseY_); }
         else {
             int wx, wy; SDL_GetMouseState(&wx, &wy);
             float lx, ly; SDL_RenderWindowToLogical(ren_, wx, wy, &lx, &ly);

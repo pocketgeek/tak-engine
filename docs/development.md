@@ -8,8 +8,9 @@ It is separate from the multiplayer protocol version in `src/net/protocol.h`.
 ## Building
 
 Use CMake ≥ 3.24, a C++20 compiler (GCC/Clang or MinGW-w64), Ninja, Git,
-Make, and pkg-config. Linux and macOS builds require the vendored static
-zlib, libjpeg-turbo, SDL2, and Bink-only FFmpeg libraries. Installing a system
+Make, and pkg-config. Linux streaming dependencies also need Python 3, patch,
+and Perl standard modules (`perl-core` on Fedora). Linux and macOS builds require the vendored static
+zlib, libjpeg-turbo, SDL2, and Bink/streaming FFmpeg libraries. Installing a system
 SDL2 package alone is not sufficient.
 
 On Linux, install development headers for the SDL video/audio backends you need
@@ -53,7 +54,9 @@ network changes so the client, server, and tools use the same code.
 Menu door clips use Bink video decoded by the bundled, minimal FFmpeg build.
 No separate FFmpeg installation is needed at runtime. FFmpeg is required for a
 source build; a missing or unreadable clip can fall back to static menu art.
-The dependency script enables Bink decoding without GPL codecs.
+The dependency script also builds H.264/AAC streaming with static x264 (GPL),
+compatible with the engine's GPLv3 license. See [streaming](streaming.md) for
+platform backends, dependency boundaries and tests.
 
 SDL2, libjpeg, zlib, and FFmpeg are linked statically. Linux also embeds the
 GCC/C++ runtime but retains system C libraries; SDL loads available windowing and

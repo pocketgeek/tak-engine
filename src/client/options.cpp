@@ -146,9 +146,9 @@ SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
 
 OptionsScreen::OptionsScreen(SDL_Renderer* ren, Settings& s, std::function<void()> onChange,
                              std::function<void()> onSave, int audioChannels,
-                             std::function<void()> onHotkeys, std::function<void()> onAudioDevice)
+                             std::function<void()> onHotkeys, std::function<void()> onAudioDevice, std::function<void()> onStreaming)
     : ren_(ren), s_(s), onChange_(std::move(onChange)), onSave_(std::move(onSave)),
-      onHotkeys_(std::move(onHotkeys)), onAudioDevice_(std::move(onAudioDevice)) {
+      onHotkeys_(std::move(onHotkeys)), onAudioDevice_(std::move(onAudioDevice)), onStreaming_(std::move(onStreaming)) {
     build(audioChannels > 0 ? audioChannels : detectOutputChannels());
 }
 
@@ -172,8 +172,6 @@ void OptionsScreen::build(int channels) {
     auto toggle = [&](const char* label, std::function<float()> get, std::function<void(float)> set) {
         ctls_.push_back({Control::Toggle, label, 0, 1, std::move(get), std::move(set), {}, {}, {}});
     };
-    // (The Options screen no longer hosts a button row -- hotkey config moved to the
-    // SETTINGS menu; Control::Button still exists for future use, just unused here.)
     // A dropdown: `options()` lists the display choices, get() is the selected index,
     // set(index) applies the choice. Rendered closed as a chip + arrow; clicking opens
     // a pop-up list.
@@ -183,6 +181,10 @@ void OptionsScreen::build(int channels) {
                          {}, {}, std::move(options)});
     };
 
+    if (onStreaming_) {
+        section("STREAMING");
+        ctls_.push_back({Control::Button, "YOUTUBE STREAMING (F9)", 0, 1, {}, {}, {}, onStreaming_, {}});
+    }
     section("AUDIO");
     // Output device: "System Default" plus every current output device. On startup a
     // saved-but-missing device auto-falls-back to system (see setAudioDevice); here the

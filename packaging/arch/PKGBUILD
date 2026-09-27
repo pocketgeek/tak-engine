@@ -23,5 +23,6 @@ options=('!debug')
 package() {
   install -Dm755 "$startdir/../../build/takclient" "$pkgdir/usr/bin/takclient"
   install -Dm755 "$startdir/../../build/takserver" "$pkgdir/usr/bin/takserver"
+  install -Dm644 "$startdir/../../STREAMING-LICENSES.txt" "$pkgdir/usr/share/licenses/$pkgname/STREAMING-LICENSES.txt"
   install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

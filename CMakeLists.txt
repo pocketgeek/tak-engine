@@ -445,7 +445,7 @@ target_link_libraries(simperf PRIVATE tak-formats)
 option(TAK_BUILD_CLIENT "Build the SDL2 client (asset viewer + game)" ON)
 
 # FFmpeg decodes the retail Bink (.bik) menu videos -- libavcodec carries a clean-room
-# Bink decoder (LGPL). It is ALWAYS the minimal Bink-only static build from
+# Bink decoder (LGPL). It is ALWAYS the minimal Bink and streaming static build from
 # tools/build-ffmpeg-bink.sh; there is no dynamic link and no no-video build.
 #
 # The system libavcodec is never consulted, which is deliberate twice over: stock
@@ -453,7 +453,7 @@ option(TAK_BUILD_CLIENT "Build the SDL2 client (asset viewer + game)" ON)
 # "videos play"), and its .pc files were the last place a shared libatomic could sneak
 # back into an otherwise static binary. TAK_FFMPEG_PREFIX overrides where the static
 # install lives.
-set(TAK_FFMPEG_PREFIX "" CACHE PATH "Install prefix of the static Bink-only FFmpeg")
+set(TAK_FFMPEG_PREFIX "" CACHE PATH "Install prefix of the static Bink and streaming FFmpeg")
 
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
@@ -463,16 +463,20 @@ if(PkgConfig_FOUND)
   if(EXISTS "${TAK_FFMPEG_PREFIX}/lib/pkgconfig")
     set(ENV{PKG_CONFIG_PATH} "${TAK_FFMPEG_PREFIX}/lib/pkgconfig")
     # Order high-level -> low-level so the static archives resolve left-to-right.
+    if(NOT EXISTS "${TAK_FFMPEG_PREFIX}/stream-build-version")
+      message(FATAL_ERROR "Static FFmpeg needs streaming support; run tools/build-ffmpeg-bink.sh")
+    endif()
+    unset(__pkg_config_checked_FFMPEG CACHE)
     pkg_check_modules(FFMPEG libavformat libavcodec libswscale libswresample libavutil)
   else()
     message(FATAL_ERROR
-      "The static Bink-only FFmpeg is missing: ${TAK_FFMPEG_PREFIX}\n"
+      "The static Bink and streaming FFmpeg is missing: ${TAK_FFMPEG_PREFIX}\n"
       "  Build it once with:  ./tools/build-ffmpeg-bink.sh\n"
       "(FFmpeg is always linked statically; there is no dynamic build and no "
       "no-video build to fall back to.)")
   endif()
 else()
-  message(FATAL_ERROR "pkg-config is required to locate the static Bink-only FFmpeg")
+  message(FATAL_ERROR "pkg-config is required to locate the static Bink and streaming FFmpeg")
 endif()
 
 # One INTERFACE target both takclient and biktool link.
@@ -480,6 +484,21 @@ if(FFMPEG_FOUND)
   add_library(tak_ffmpeg INTERFACE)
   target_compile_definitions(tak_ffmpeg INTERFACE TAK_HAVE_FFMPEG)
   target_include_directories(tak_ffmpeg INTERFACE ${FFMPEG_STATIC_INCLUDE_DIRS})
+  # Explicit archive paths: a stray .so/.dll import library in the prefix must
+  # never silently turn a streaming dependency into a runtime requirement.
+  set(_ff_archives "")
+  foreach(_flag IN LISTS FFMPEG_STATIC_LDFLAGS)
+    if(_flag MATCHES "^-l(avformat|avcodec|avutil|swscale|swresample|x264|ssl|crypto|va|va-drm|drm|vpl)$")
+      set(_archive "${TAK_FFMPEG_PREFIX}/lib/lib${CMAKE_MATCH_1}.a")
+      if(NOT EXISTS "${_archive}")
+        message(FATAL_ERROR "Missing static streaming archive ${_archive}; run tools/build-ffmpeg-bink.sh")
+      endif()
+      list(APPEND _ff_archives "${_archive}")
+    else()
+      list(APPEND _ff_archives "${_flag}")
+    endif()
+  endforeach()
+  set(FFMPEG_STATIC_LDFLAGS ${_ff_archives})
   if(APPLE)
     # pkg-config lists macOS frameworks as the two tokens "-framework" "CoreVideo";
     # a plain link-libraries list would turn the bare "CoreVideo" into -lCoreVideo
@@ -517,13 +536,22 @@ if(FFMPEG_FOUND)
     target_link_libraries(tak_ffmpeg INTERFACE
       -Wl,--start-group ${_ff_ldflags} -Wl,--end-group)
   endif()
-  message(STATUS "FFmpeg: STATIC Bink-only build from ${TAK_FFMPEG_PREFIX}")
+  message(STATUS "FFmpeg: STATIC Bink and streaming build from ${TAK_FFMPEG_PREFIX}")
 endif()
+
+add_executable(stream_network_test tools/stream_network_test.cpp src/video/stream.cpp)
+target_compile_definitions(stream_network_test PRIVATE TAK_STREAM_TESTING)
+target_link_libraries(stream_network_test PRIVATE tak-formats tak_ffmpeg)
+
+add_executable(stream_test tools/stream_test.cpp src/video/stream.cpp)
+target_link_libraries(stream_test PRIVATE tak-formats tak_ffmpeg)
+add_test(NAME streaming COMMAND stream_test)
+set_tests_properties(streaming PROPERTIES TIMEOUT 30)
 
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/mapview.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/video/bink.cpp)
+    add_executable(takclient src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/mapview.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
     if(WIN32)
       target_link_libraries(takclient PRIVATE psapi)   # GetProcessMemoryInfo (benchmark metrics)
     elseif(APPLE)
@@ -539,6 +567,11 @@ if(TAK_BUILD_CLIENT)
     else()
       set(_tak_sdl2 SDL2::SDL2)
     endif()
+    add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/video/stream.cpp)
+    target_link_libraries(stream_capture_test PRIVATE tak-formats tak_ffmpeg ${_tak_sdl2})
+    target_compile_definitions(stream_capture_test PRIVATE SDL_MAIN_HANDLED)
+    add_test(NAME streaming_capture COMMAND stream_capture_test)
+    set_tests_properties(streaming_capture PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 15)
     add_executable(cursor_test tools/cursor_test.cpp src/client/cursors.cpp)
     target_include_directories(cursor_test PRIVATE src)
     target_compile_definitions(cursor_test PRIVATE SDL_MAIN_HANDLED)
@@ -732,6 +765,7 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 # SDL2 still dlopens its X11/Wayland/audio backends, which every desktop that can run the
 # game already has; those are not declared (they aren't link-time deps of a static SDL2).
 if(UNIX AND NOT APPLE)
+  install(FILES STREAMING-LICENSES.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
@@ -782,6 +816,7 @@ if(UNIX AND NOT APPLE)
 
   include(CPack)
 elseif(WIN32)
+  install(FILES STREAMING-LICENSES.txt DESTINATION .)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.
