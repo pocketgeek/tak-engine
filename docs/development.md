@@ -67,7 +67,7 @@ frameworks. CI checks these dependency boundaries for release packages.
 ### Platform builds and releases
 
 - **Windows x64:** use the MSYS2 **MINGW64** environment with its GCC, CMake,
-  Ninja, SDL2, libjpeg-turbo, zlib, and pkgconf packages, plus Git and Make.
+  Ninja, SDL2, libjpeg-turbo, zlib, and pkgconf packages, plus Git, Make, and patch.
   Run `./tools/build-ffmpeg-bink.sh`, then configure and build as above.
   CMake uses the toolchain's static dependency archives; the native
   `build-static-deps.sh` step is not needed. See
