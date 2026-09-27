@@ -1,3 +1,4 @@
+#include "client/streaming.h"
 #include "client/mainmenu.h"
 #include "client/dooranimation.h"
 #include "client/videofilter.h"
@@ -984,7 +985,7 @@ void MainMenu::setConnectError(const std::string& msg) { d_->pendingConnectError
 void MainMenu::setReplayError(const std::string& msg) { d_->pendingReplayError = msg; }
 
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
-                               MenuMusic* music, Settings* settings) {
+                               MenuMusic* music, Settings* settings, Streaming* streaming) {
     if (settings) tak::video::setDeblock(settings->videoDeblock);
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(d_->ren, &w, &h);
@@ -1025,6 +1026,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 d_->field = 3;
             }
             d_->renderServerSelect(w, h);
+        }
+        if (streaming && tak::devEnv("TAK_SHOT_STREAM")) {
+            SDL_Event event{}; event.type=SDL_KEYDOWN; event.key.keysym.sym=SDLK_F9;
+            streaming->input(event,w,h); streaming->draw(w,h);
         }
         d_->screenshot(w, h, shotPath);
         // Debug: TAK_SHOT_RESULT captures the victory result screen (saves to its path).
@@ -1094,6 +1099,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 e.button.x = int(lx); e.button.y = int(ly);
             }
 
+            if (streaming && streaming->input(e, w, h)) continue;
             if (d_->serverSelect) {   // multiplayer: server + account sign-in
                 auto connect = [&]() -> bool {
                     std::string sv = d_->serverChoice();
@@ -1221,7 +1227,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                                 }
                             },
                             [settings] { saveSettings(*settings); }, 0, [] {},
-                            [music] { if (music) music->reopen(); });   // live output-device switch
+                            [music] { if (music) music->reopen(); },
+                            streaming ? std::function<void()>([] {
+                                SDL_Event event{}; event.type = SDL_USEREVENT;
+                                event.user.code = kStreamingEvent; SDL_PushEvent(&event);
+                            }) : std::function<void()>{});   // live output-device switch
                     } else if (hit(d_->setBtnRect_[1])) {   // CONTROLS -> hotkey rebinding
                         d_->settingsMenu_ = false;
                         d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
@@ -1348,6 +1358,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         for (auto& dr : d_->doors) d_->updateDoor(dr, dt);
         if (music) music->poll();
         d_->render(w, h);
+        // Capture only the title artwork: account entry and other private
+        // overlays are drawn afterward and never enter the broadcast.
+        if (streaming) streaming->frame(w, h, false);
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         if (d_->settingsMenu_) d_->renderSettingsMenu(w, h);
         if (d_->replayMenu_) d_->renderReplayMenu(w, h);
@@ -1355,6 +1368,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (d_->options_) d_->options_->render(w, h);
         if (d_->hotkeys_) d_->hotkeys_->render(w, h);   // above Options
         if (d_->campaign_) d_->campaign_->render(w, h);
+        if (streaming) streaming->draw(w, h);
         // Draw the cursor last so it sits above the doors and the overlays. With the
         // hardware-cursor option the OS tracks the pointer (smooth under load); otherwise
         // hide the OS arrow and draw our own into the frame.

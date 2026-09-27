@@ -544,8 +544,10 @@ target_compile_definitions(stream_network_test PRIVATE TAK_STREAM_TESTING)
 target_link_libraries(stream_network_test PRIVATE tak-formats tak_ffmpeg)
 
 add_executable(stream_test tools/stream_test.cpp src/video/stream.cpp)
+target_compile_definitions(stream_test PRIVATE TAK_STREAM_TESTING=1)
 target_link_libraries(stream_test PRIVATE tak-formats tak_ffmpeg)
 add_test(NAME streaming COMMAND stream_test)
+add_test(NAME streaming_overload COMMAND stream_test libx264 overload)
 set_tests_properties(streaming PROPERTIES TIMEOUT 30)
 
 if(TAK_BUILD_CLIENT)

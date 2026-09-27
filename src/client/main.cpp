@@ -668,6 +668,8 @@ int main(int argc, char** argv) {
     // dispatches on that gadget name and plays it there, once per launch (see
     // MainMenu::run). Playing both back to back at startup was wrong.
     if (fromMenu && shot.empty()) tak::MainMenu::playIntro(ren, dataRoot);
+    auto streamingOwner = std::make_unique<tak::Streaming>(ren);
+    auto& streaming = *streamingOwner;
     std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
     std::string menuReplayError;    // refused replay -> shown on the picker when it reopens
     for (;;) {
@@ -721,7 +723,7 @@ int main(int argc, char** argv) {
                 menu.setReplayError(menuReplayError);
                 menuReplayError.clear();
             }
-            choice = menu.run(shot, &menuServer, &menuMusic, &settings);
+            choice = menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
             if (choice == tak::MainMenu::Choice::Campaign) {
                 campaignStem = menu.chosenMission();
                 campaignId = menu.chosenCampaign();
@@ -755,7 +757,7 @@ int main(int argc, char** argv) {
                 continue;
             }
         }
-        if (!shot.empty()) { SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
+        if (!shot.empty()) { streamingOwner.reset(); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit(); return 0; }
         if (choice != tak::MainMenu::Choice::SinglePlayer &&
             choice != tak::MainMenu::Choice::Multiplayer &&
             choice != tak::MainMenu::Choice::Benchmark &&
@@ -1256,7 +1258,6 @@ int main(int argc, char** argv) {
     // inherit that game's mode and just sit in the lobby instead of auto-hosting).
     const int autoOv = tak::devEnv("TAK_MPAUTO")
                            ? std::atoi(tak::devEnv("TAK_MPAUTO")) : mpAutoMode;
-    tak::Streaming streaming(ren);
     if (gameView) gameView->setAudioTap(&streaming.stream(),
         [](void* context, const int16_t* pcm, int frames, int channels) {
             static_cast<tak::video::Stream*>(context)->audio(pcm,frames,channels);
@@ -1838,7 +1839,6 @@ int main(int argc, char** argv) {
             }
         }
     }
-    streaming.stream().stop();
     if (gameView) gameView->setAudioTap(nullptr,nullptr);
     // Campaign mission ended (and resolved -- not a mid-mission quit): advance
     // persisted progress on a win, then show the result screen and act on the choice.
@@ -1922,6 +1922,7 @@ int main(int argc, char** argv) {
     }  // ---- end outer session loop ----
 
     if (aaTex) gpuvram::destroy(aaTex);
+    streamingOwner.reset();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

@@ -1,6 +1,6 @@
 # Streaming to YouTube
 
-In a game, press **F9**, or open **Esc → Options → YouTube Streaming**.
+At the title screen or in a game, press **F9**, or open **Options → YouTube Streaming** (under Esc during a game).
 Paste the stream key from YouTube Studio, select the video settings, and click
 **Start Streaming**. Follow the preview/status in YouTube Studio to make the
 broadcast public. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
@@ -17,7 +17,7 @@ available hardware encoders before falling back to the CPU:
 
 A working GPU driver with H.264 encoding support is required for hardware
 encoding. The panel reports the encoder actually opened, connection state,
-encoded frames, video frames replaced/dropped from the capture queue, and bytes
+encoded frames, replaced capture frames plus skipped encoder time slots, and bytes
 sent with an estimated encoded-payload bitrate. Unsupported hardware falls back to the bundled x264 CPU encoder. Hardware
 that fails during encoding triggers a restart using the CPU.
 
@@ -29,7 +29,8 @@ Microphone input, desktop capture, account login and broadcast scheduling are
 not included.
 
 **Stop Streaming** stops the upload; closing the F9 panel leaves it running.
-Leaving the game stops it. The key and preferences last for that game session
+Returning to the title screen keeps it running. Exiting the application stops it.
+The key and preferences last for that application session
 only. Keys are masked, never written to settings, and excluded from encoder and
 network diagnostics. Ctrl+V pastes a key; Ctrl+A clears the key field.
 
@@ -88,3 +89,9 @@ python3 tools/check-stream-network.py build-o2/stream_network_test
 
 The external `ffmpeg` and `openssl` commands used by this check are development
 test tools, not engine runtime dependencies.
+
+Encoder slowdowns skip late video frames without reconnecting. Audio catches up
+independently; reconnects are reserved for connection/write failures. Title-screen
+account and settings overlays are excluded from the broadcast. The front-end
+currently streams title artwork with silence; mixed game audio begins in the game. During loading
+and modal screens, the last captured frame remains on the stream.

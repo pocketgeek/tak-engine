@@ -29,9 +29,14 @@ int main(int argc,char** argv) {
         for(int y=0;y<480;++y)for(int x=0;x<640;++x){size_t p=(y*640+x)*4;pixels[p]=uint8_t(x/3);pixels[p+1]=uint8_t(y/2);pixels[p+2]=80;pixels[p+3]=255;}
         std::array<int16_t,256*6> audio{};
         int samples=0;
+        bool delayed=false;
+        const bool overload=argc>2;
         auto begin=std::chrono::steady_clock::now();
-        while(std::chrono::steady_clock::now()-begin<2500ms) {
+        while(std::chrono::steady_clock::now()-begin<(overload?4500ms:2500ms)) {
             require(stream.active(),stream.status().state.c_str());
+            if(overload && !delayed && stream.status().frames>=15) {
+                stream.testDelayOnce(1300); delayed=true;
+            }
             stream.video(pixels.data(),640,480,640*4);
             for(int i=0;i<256;++i) {
                 int16_t s=int16_t(std::sin(double(samples++)*6.283185307179586*440/11025)*12000);
@@ -43,6 +48,7 @@ int main(int argc,char** argv) {
         auto status=stream.status();
         std::printf("encoder=%s frames=%llu dropped=%llu bytes=%llu\n",status.encoder.c_str(),
                     (unsigned long long)status.frames,(unsigned long long)status.dropped,(unsigned long long)status.bytes);
+        if(overload) {require(delayed,"overload injected");require(status.dropped>=30,"late video slots skipped");require(status.state=="RECORDING","encoder stall did not restart stream");}
         require(status.frames>=30,"video frames encoded");require(status.bytes>10000,"packets written");
         auto stop=std::chrono::steady_clock::now();stream.stop();
         require(std::chrono::steady_clock::now()-stop<50ms,"stop does not block UI");
@@ -72,6 +78,7 @@ int main(int argc,char** argv) {
     }
     require(vc&&ac,"both codec configuration headers present");
     require(videos>=30&&audios>=40&&keys>=1,"decodable video and audio packets");
+    std::printf("audio/video end_ms=%u/%u\n",vt,at);
     require(std::abs(int(vt)-int(at))<100,"audio/video end times within 100 ms");
     std::printf("file=%s video=%d audio=%d keyframes=%d end_ms=%u/%u\n",path.string().c_str(),videos,audios,keys,vt,at);
     if(argc<2)std::filesystem::remove(path);

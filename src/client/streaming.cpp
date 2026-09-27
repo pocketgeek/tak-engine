@@ -144,7 +144,7 @@ struct Streaming::Impl {
         text(s.state,20,352,{255,210,100,255});
         text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,375);
         text("SENT "+std::to_string(s.bytes/1024/1024)+" MB  RATE "+std::to_string(rateKbps)+" KBPS",20,398);
-        text(error.empty()?"ESC / F9: CLOSE - LEAVING GAME STOPS STREAM":error,20,437);
+        text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,437);
     }
 };
 Streaming::Streaming(SDL_Renderer* ren):p_(std::make_unique<Impl>()) {p_->ren=ren;}
@@ -188,14 +188,20 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
     // Don't send setup keystrokes/clicks as game orders. Still pass window events.
     return e.type==SDL_KEYDOWN||e.type==SDL_KEYUP||e.type==SDL_TEXTINPUT||e.type==SDL_MOUSEBUTTONDOWN||e.type==SDL_MOUSEBUTTONUP||e.type==SDL_MOUSEMOTION||e.type==SDL_MOUSEWHEEL;
 }
-void Streaming::frame(int w,int h) {
-    uint64_t now=SDL_GetTicks64();
+void Streaming::draw(int w,int h) { p_->draw(w,h); }
+void Streaming::frame(int w,int h,bool drawPanel) {
+    uint64_t now=SDL_GetTicks64()*1000;
     bool active=p_->stream.active();
     if(!active && p_->wasActive)p_->capture.reset();
     p_->wasActive=active;
     if(active&&now>=p_->nextCapture&&w>0&&h>0){
-        p_->capture.get(p_->ren,w,h,p_->stream);p_->nextCapture=now+1000/p_->config.fps;
+        p_->capture.get(p_->ren,w,h,p_->stream);
+        const uint64_t interval=1000000/p_->config.fps;
+        // Keep a stable cadence across uneven render frames; now + interval
+        // loses a whole render frame whenever the deadline is slightly late.
+        p_->nextCapture+=interval;
+        if(p_->nextCapture<=now)p_->nextCapture=now+interval;
     }
-    p_->draw(w,h);
+    if(drawPanel) p_->draw(w,h);
 }
 }

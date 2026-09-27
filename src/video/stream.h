@@ -16,7 +16,7 @@ struct StreamStatus {
     std::string state = "OFF", encoder;
     uint64_t frames = 0, dropped = 0, bytes = 0;
 };
-// One session-owned encoder. All codec/network operations run on its worker.
+// One application-owned encoder. All codec/network operations run on its worker.
 // Video/audio producers never wait for that worker or allocate on the audio thread.
 class Stream {
 public:
@@ -26,6 +26,7 @@ public:
     // Local FLV integration test/recording sink, never exposed as a network URL.
     bool startRecording(const StreamConfig&, const std::string& path);
 #ifdef TAK_STREAM_TESTING
+    void testDelayOnce(int milliseconds);
     bool startTestEndpoint(const StreamConfig&, const std::string& url, const std::string& caFile);
 #endif
     void stop(); // nonblocking; destruction joins after interrupting network I/O

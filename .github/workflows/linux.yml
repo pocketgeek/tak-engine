@@ -131,7 +131,9 @@ jobs:
           cmake --build build --target takclient takserver cartographer stream_test
 
       - name: Streaming encode test
-        run: ./build/stream_test
+        run: |
+          ./build/stream_test
+          ./build/stream_test libx264 overload
 
       # Windows and macOS each gate on their binaries being static; Linux did not, and it
       # is the platform where a leak is most costly: CPack derives package dependencies

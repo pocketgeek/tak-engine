@@ -15,6 +15,7 @@
 namespace tak {
 
 class MenuMusic;
+class Streaming;
 struct Settings;
 
 class MainMenu {
@@ -40,7 +41,7 @@ public:
     void setConnectError(const std::string& msg);
 
     Choice run(const std::string& shotPath = "", std::string* serverOut = nullptr,
-               MenuMusic* music = nullptr, Settings* settings = nullptr);
+               MenuMusic* music = nullptr, Settings* settings = nullptr, Streaming* streaming = nullptr);
 
     // After run() returns Choice::Campaign, the campaign mission stem the player picked
     // (e.g. "takmission01_mt") and the campaign id it belongs to; empty otherwise.

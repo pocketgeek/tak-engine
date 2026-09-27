@@ -70,7 +70,9 @@ jobs:
           echo "OK: only system libs/frameworks linked -- as static as macOS allows"
 
       - name: Streaming encode test
-        run: ./build/stream_test
+        run: |
+          ./build/stream_test
+          ./build/stream_test libx264 overload
 
       - name: Project version
         run: echo "VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"

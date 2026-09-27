@@ -65,6 +65,9 @@ struct Stream::Impl {
     std::atomic<bool> running{false}, cancel{false};
     std::atomic<int64_t> deadline{0};
     std::atomic<uint64_t> dropped{0};
+#ifdef TAK_STREAM_TESTING
+    std::atomic<int> testDelay{0};
+#endif
     mutable std::mutex stateMutex;
     StreamStatus state;
     std::thread worker;
@@ -154,6 +157,7 @@ struct Stream::Impl {
     }
     void open(Encoder& e, const StreamConfig& c, const std::string& dest, bool local) {
         check(avformat_alloc_output_context2(&e.mux, nullptr, "flv", nullptr));
+        e.mux->max_interleave_delta = 250000;
         e.mux->interrupt_callback = local ? AVIOInterruptCB{nullptr,nullptr} : AVIOInterruptCB{interrupted, this};
         const auto name = chooseVideo(e, c);
         report("CONNECTING", name);
@@ -252,13 +256,34 @@ struct Stream::Impl {
                 open(e, c, dest, local);
                 { std::lock_guard lock(audioMutex); count = read = 0; }
                 report(local ? "RECORDING" : "LIVE");
-                int64_t start = micros(), vpts = 0, apts = 0;
+                int64_t start = micros(), vpts = 0, apts = 0, nextKey = 0;
                 bool haveVideo = false;
                 std::vector<uint8_t> frame;
                 int width = 0, height = 0;
                 while (!cancel) {
+#ifdef TAK_STREAM_TESTING
+                    if (int delay = testDelay.exchange(0)) {
+                        std::unique_lock lock(inputMutex);
+                        wake.wait_for(lock, std::chrono::milliseconds(delay), [&]{return cancel.load();});
+                    }
+#endif
                     int64_t elapsed = micros() - start;
-                    if (elapsed - vpts * 1000000 / c.fps > 1000000) throw AVERROR(ETIMEDOUT);
+                    // A busy encoder is not a broken connection. Skip expired video
+                    // slots rather than trying to encode a growing backlog.
+                    const int64_t due = elapsed * c.fps / 1000000;
+                    if (due > vpts) { dropped += due - vpts; vpts = due; }
+                    // Catch audio up before the next expensive video conversion. A
+                    // long I/O stall discards old sound instead of delaying it forever.
+                    const int64_t audioDue = elapsed * 44100 / 1000000;
+                    if (audioDue - apts > 44100) {
+                        apts = (audioDue / e.af->nb_samples) * e.af->nb_samples;
+                        av_audio_fifo_reset(e.fifo);
+                        std::lock_guard lock(audioMutex);
+                        read = count = 0;
+                    }
+                    while (apts <= audioDue && !cancel) {
+                        audioFrame(e, apts); apts += e.af->nb_samples;
+                    }
                     if (vpts * 1000000 / c.fps <= elapsed) {
                         check(av_frame_make_writable(e.vf));
                         { std::lock_guard lock(inputMutex);
@@ -291,15 +316,15 @@ struct Stream::Impl {
                             check(av_image_fill_black(e.vf->data, stride, static_cast<AVPixelFormat>(e.vf->format), AVCOL_RANGE_MPEG,c.width,c.height));
                         }
                         e.vf->pts = vpts++;
+                        e.vf->pict_type = e.vf->pts >= nextKey ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
+                        if (e.vf->pict_type == AV_PICTURE_TYPE_I) nextKey = e.vf->pts + c.fps * 2;
                         if (e.pool) {
                             av_frame_unref(e.hw); check(av_hwframe_get_buffer(e.pool, e.hw, 0));
                             check(av_hwframe_transfer_data(e.hw, e.vf, 0)); e.hw->pts = e.vf->pts;
+                            e.hw->pict_type = e.vf->pict_type;
                             packets(e, e.v, e.vs, e.hw);
                         } else packets(e, e.v, e.vs, e.vf);
                         { std::lock_guard lock(stateMutex); ++state.frames; }
-                    }
-                    if (apts * 1000000 / 44100 <= elapsed) {
-                        audioFrame(e, apts); apts += e.af->nb_samples;
                     }
                     const int64_t next = std::min(vpts*1000000/c.fps, apts*1000000/44100);
                     std::unique_lock lock(inputMutex);
@@ -353,6 +378,7 @@ bool Stream::startRecording(const StreamConfig& c, const std::string& path) {
     return p_->start(c, "file:" + path, true);
 }
 #ifdef TAK_STREAM_TESTING
+void Stream::testDelayOnce(int milliseconds) { p_->testDelay = milliseconds; }
 bool Stream::startTestEndpoint(const StreamConfig& c, const std::string& url, const std::string& caFile) {
     if (active() || !url.starts_with("rtmps://localhost:")) return false;
     p_->testCaFile = caFile;
