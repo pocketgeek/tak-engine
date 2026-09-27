@@ -1,4 +1,5 @@
 #include "client/streaming.h"
+#include "client/presentationpacer.h"
 #include "client/mainmenu.h"
 #include "client/dooranimation.h"
 #include "client/videofilter.h"
@@ -1076,6 +1077,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         d_->pendingReplayError.clear();
     }
 
+    PresentationPacer streamPacer;
     Uint64 prev = SDL_GetPerformanceCounter();
     const double freq = double(SDL_GetPerformanceFrequency());
     for (;;) {
@@ -1385,6 +1387,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
         }
         SDL_RenderPresent(d_->ren);
+        streamPacer.pace(SDL_RenderGetWindow(d_->ren), settings && settings->vsync &&
+                         streaming && streaming->stream().active());
         SDL_Delay(1);
     }
 }

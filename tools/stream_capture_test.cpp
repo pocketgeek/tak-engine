@@ -1,4 +1,5 @@
 #include "client/streaming.h"
+#include "client/presentationpacer.h"
 #include <SDL.h>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,21 @@ int main(int argc,char** argv) {
     }
     const int swapBefore=checkVsync?SDL_GL_GetSwapInterval():0;
     if(checkVsync && swapBefore!=1){std::fprintf(stderr,"native GL VSync not enabled\n");return 4;}
+    // A fast/nonblocking present must still be paced. A slow frame must not
+    // be followed by another whole interval of delay.
+    if(checkVsync) {
+        tak::PresentationPacer pacer;
+        pacer.paceAtRefresh(60);
+        const auto begin=SDL_GetPerformanceCounter();
+        for(int i=0;i<6;++i)pacer.paceAtRefresh(60);
+        const double elapsed=double(SDL_GetPerformanceCounter()-begin)/SDL_GetPerformanceFrequency();
+        if(elapsed<0.095){std::fprintf(stderr,"presentation fallback ran too fast\n");return 7;}
+        SDL_Delay(30);
+        const auto slow=SDL_GetPerformanceCounter();pacer.paceAtRefresh(60);
+        if(double(SDL_GetPerformanceCounter()-slow)/SDL_GetPerformanceFrequency()>0.010) {
+            std::fprintf(stderr,"presentation fallback double-paced a slow frame\n");return 8;
+        }
+    }
     SDL_RendererInfo info{};SDL_GetRendererInfo(ren,&info);
     std::string path=argc>2?argv[2]:(std::filesystem::temp_directory_path()/"tak-stream-capture.flv").string();
     {

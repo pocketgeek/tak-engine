@@ -17,6 +17,7 @@
 #include "campaign/campaign.h"
 #include <utility>
 #include "client/streaming.h"
+#include "client/presentationpacer.h"
 #include "client/briefingscreen.h"
 #include "client/artscale.h"
 #include "client/videofilter.h"
@@ -670,6 +671,7 @@ int main(int argc, char** argv) {
     if (fromMenu && shot.empty()) tak::MainMenu::playIntro(ren, dataRoot);
     auto streamingOwner = std::make_unique<tak::Streaming>(ren);
     auto& streaming = *streamingOwner;
+    tak::PresentationPacer streamPacer;
     std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
     std::string menuReplayError;    // refused replay -> shown on the picker when it reopens
     for (;;) {
@@ -1553,6 +1555,7 @@ int main(int argc, char** argv) {
         const size_t profLive = prof && gameView ? gameView->framedAliveUnits() : 0;
         if (gameView) gameView->endFrame();   // release the pinned sim snapshot for this frame
         SDL_RenderPresent(ren);
+        streamPacer.pace(win, settings.vsync && !noVsync && streaming.stream().active());
         if (prof) {
             double t5 = pnow();
             if (profFrames)
