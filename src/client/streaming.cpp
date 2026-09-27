@@ -18,9 +18,15 @@ public:
         if (w<=0 || h<=0 || w>8192 || h>8192) return false;
         SDL_RendererInfo info{}; SDL_GetRendererInfo(ren,&info);
         bool gl = info.name && !std::strcmp(info.name,"opengl");
-        if (gl && !checked_) { checked_=true; available_=load(); context_=SDL_GL_GetCurrentContext(); }
+        if (gl && !checked_) { checked_=true; available_=load(); scalable_=loadScale(); context_=SDL_GL_GetCurrentContext(); }
         if (gl && available_ && SDL_GL_GetCurrentContext()==context_) {
             SDL_RenderFlush(ren);
+            const int sourceW=w, sourceH=h;
+            const auto output=stream.status();
+            if(scalable_ && output.width>0 && output.height>0) {
+                const double scale=std::min({1.0,double(output.width)/w,double(output.height)/h});
+                w=std::max(2,int(w*scale)&~1); h=std::max(2,int(h*scale)&~1);
+            }
             if (w!=w_ || h!=h_) {clear();w_=w;h_=h; gen_(2,buffers_.data());}
             GLint old=0, align=0; get_(GL_PIXEL_PACK_BUFFER_BINDING,&old);get_(GL_PACK_ALIGNMENT,&align);
             GLint rowLength=0, skipRows=0, skipPixels=0;
@@ -40,15 +46,46 @@ public:
                         pixels_.resize(size_t(w)*h*4);
                         for(int y=0;y<h;++y) std::memcpy(pixels_.data()+size_t(y)*w*4,ptr+size_t(h-1-y)*w*4,size_t(w)*4);
                         unmap_(GL_PIXEL_PACK_BUFFER);
-                        delivered=stream.video(pixels_.data(),w,h,w*4);
+                        delivered=stream.video(pixels_,w,h);
                     }
                     deleteSync_(fences_[i]);fences_[i]=nullptr;
                 }
             }
             for(int i=0;i<2;++i) if(!fences_[i]) {
                 bind_(GL_PIXEL_PACK_BUFFER,buffers_[i]);
-                data_(GL_PIXEL_PACK_BUFFER,GLsizeiptr(size_t(w)*h*4),nullptr,GL_STREAM_READ);
+                if(!allocated_[i]) {
+                    data_(GL_PIXEL_PACK_BUFFER,GLsizeiptr(size_t(w)*h*4),nullptr,GL_STREAM_READ);
+                    allocated_[i]=true;
+                }
+                GLint oldRead=0, oldDraw=0, oldRenderbuffer=0;
+                const bool scale=scalable_ && (sourceW!=w || sourceH!=h);
+                if(scale) {
+                    get_(GL_READ_FRAMEBUFFER_BINDING,&oldRead);get_(GL_DRAW_FRAMEBUFFER_BINDING,&oldDraw);
+                    get_(GL_RENDERBUFFER_BINDING,&oldRenderbuffer);
+                    if(!fbo_) {
+                        genFbo_(1,&fbo_);genRb_(1,&rb_);
+                        bindRb_(GL_RENDERBUFFER,rb_);storage_(GL_RENDERBUFFER,GL_RGBA8,w,h);
+                        bindFbo_(GL_DRAW_FRAMEBUFFER,fbo_);
+                        attach_(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_RENDERBUFFER,rb_);
+                    } else bindFbo_(GL_DRAW_FRAMEBUFFER,fbo_);
+                    if(checkFbo_(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) {
+                        bindFbo_(GL_READ_FRAMEBUFFER,oldRead);bindFbo_(GL_DRAW_FRAMEBUFFER,oldDraw);
+                        bindRb_(GL_RENDERBUFFER,oldRenderbuffer);
+                        bind_(GL_PIXEL_PACK_BUFFER,GLuint(old));store_(GL_PACK_ALIGNMENT,align);
+                        store_(GL_PACK_ROW_LENGTH,rowLength);store_(GL_PACK_SKIP_ROWS,skipRows);store_(GL_PACK_SKIP_PIXELS,skipPixels);
+                        clear();scalable_=false;return false; // portable full-size capture next frame
+                    }
+                    const bool scissor=isEnabled_(GL_SCISSOR_TEST);
+                    if(scissor)disable_(GL_SCISSOR_TEST);
+                    blit_(0,0,sourceW,sourceH,0,0,w,h,GL_COLOR_BUFFER_BIT,GL_LINEAR);
+                    if(scissor)enable_(GL_SCISSOR_TEST);
+                    bindFbo_(GL_READ_FRAMEBUFFER,fbo_);
+                }
                 read_(0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+                if(scale) {
+                    bindFbo_(GL_READ_FRAMEBUFFER,oldRead);bindFbo_(GL_DRAW_FRAMEBUFFER,oldDraw);
+                    bindRb_(GL_RENDERBUFFER,oldRenderbuffer);
+                }
                 fences_[i]=fence_(GL_SYNC_GPU_COMMANDS_COMPLETE,0);serial_[i]=++nextSerial_;break;
             }
             bind_(GL_PIXEL_PACK_BUFFER,GLuint(old));store_(GL_PACK_ALIGNMENT,align);
@@ -57,7 +94,7 @@ public:
         }
         pixels_.resize(size_t(w)*h*4);
         if(SDL_RenderReadPixels(ren,nullptr,SDL_PIXELFORMAT_RGBA32,pixels_.data(),w*4)!=0)return false;
-        return stream.video(pixels_.data(),w,h,w*4);
+        return stream.video(pixels_,w,h);
     }
 private:
     template<class T> bool proc(T& out,const char* name) {out=reinterpret_cast<T>(SDL_GL_GetProcAddress(name));return out!=nullptr;}
@@ -68,18 +105,44 @@ private:
           proc(fence_,"glFenceSync") && proc(wait_,"glClientWaitSync") && proc(deleteSync_,"glDeleteSync") &&
           proc(read_,"glReadPixels") && proc(get_,"glGetIntegerv") && proc(store_,"glPixelStorei");
     }
+    bool loadScale() {
+        if(!SDL_GL_ExtensionSupported("GL_ARB_framebuffer_object"))return false;
+        return proc(genFbo_,"glGenFramebuffers") && proc(delFbo_,"glDeleteFramebuffers") &&
+            proc(bindFbo_,"glBindFramebuffer") && proc(genRb_,"glGenRenderbuffers") &&
+            proc(delRb_,"glDeleteRenderbuffers") && proc(bindRb_,"glBindRenderbuffer") &&
+            proc(storage_,"glRenderbufferStorage") && proc(attach_,"glFramebufferRenderbuffer") &&
+            proc(checkFbo_,"glCheckFramebufferStatus") && proc(blit_,"glBlitFramebuffer") &&
+            proc(isEnabled_,"glIsEnabled") && proc(enable_,"glEnable") && proc(disable_,"glDisable");
+    }
     void clear() {
         if(context_ && context_==SDL_GL_GetCurrentContext()) {
             for(auto& f:fences_) if(f) {deleteSync_(f);f=nullptr;}
             if(buffers_[0]) del_(2,buffers_.data());
+            if(fbo_)delFbo_(1,&fbo_);
+            if(rb_)delRb_(1,&rb_);
         }
-        buffers_={};fences_={};
+        buffers_={};fences_={};allocated_={};fbo_=rb_=0;
     }
-    bool checked_=false,available_=false;
+    bool checked_=false,available_=false,scalable_=false;
+    GLuint fbo_=0,rb_=0;
     int w_=0,h_=0;SDL_GLContext context_=nullptr;
     std::array<uint64_t,2> serial_{};uint64_t nextSerial_=0;
+    std::array<bool,2> allocated_{};
     std::array<GLuint,2> buffers_{};std::array<GLsync,2> fences_{};
     std::vector<uint8_t> pixels_;
+    GLboolean (APIENTRY *isEnabled_)(GLenum)=nullptr;
+    void (APIENTRY *enable_)(GLenum)=nullptr;
+    void (APIENTRY *disable_)(GLenum)=nullptr;
+    void (APIENTRY *genFbo_)(GLsizei,GLuint*)=nullptr;
+    void (APIENTRY *delFbo_)(GLsizei,const GLuint*)=nullptr;
+    void (APIENTRY *bindFbo_)(GLenum,GLuint)=nullptr;
+    void (APIENTRY *genRb_)(GLsizei,GLuint*)=nullptr;
+    void (APIENTRY *delRb_)(GLsizei,const GLuint*)=nullptr;
+    void (APIENTRY *bindRb_)(GLenum,GLuint)=nullptr;
+    void (APIENTRY *storage_)(GLenum,GLenum,GLsizei,GLsizei)=nullptr;
+    void (APIENTRY *attach_)(GLenum,GLenum,GLenum,GLuint)=nullptr;
+    GLenum (APIENTRY *checkFbo_)(GLenum)=nullptr;
+    void (APIENTRY *blit_)(GLint,GLint,GLint,GLint,GLint,GLint,GLint,GLint,GLbitfield,GLenum)=nullptr;
     void (APIENTRY *gen_)(GLsizei,GLuint*)=nullptr;
     void (APIENTRY *del_)(GLsizei,const GLuint*)=nullptr;
     void (APIENTRY *bind_)(GLenum,GLuint)=nullptr;
@@ -99,6 +162,7 @@ struct Streaming::Impl {
     video::Stream stream;
     video::StreamConfig config;
     Capture capture;
+    int resolution=0; // 720p, 1080p, 1440p, 4K, full window resolution
     bool visible=false,editing=false,wasActive=false,wasTextInput=false;
     std::string error;
     uint64_t nextCapture=0, rateTime=0, rateBytes=0;
@@ -132,7 +196,9 @@ struct Streaming::Impl {
         text("GAME VIDEO AND AUDIO - KEY IS NOT SAVED",20,45);
         std::array<std::string,6> labels={
             "STREAM KEY: " + (config.key.empty()?std::string("CLICK AND PASTE"):std::string(std::min<size_t>(config.key.size(),36),'*')),
-            "RESOLUTION: " + std::to_string(config.width)+" X "+std::to_string(config.height),
+            "RESOLUTION: " + std::string(resolution==4?"FULL ":"") +
+                std::to_string(resolution==4&&!s.active?(w&~1):config.width)+" X "+
+                std::to_string(resolution==4&&!s.active?(h&~1):config.height),
             "FRAME RATE: " + std::to_string(config.fps),
             "BITRATE: " + std::to_string(config.bitrateKbps)+" KBPS",
             "ENCODER: " + std::string(config.encoder.empty()?"AUTOMATIC":"CPU"),
@@ -143,7 +209,7 @@ struct Streaming::Impl {
         }
         text(s.state,20,352,{255,210,100,255});
         text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,375);
-        text("SENT "+std::to_string(s.bytes/1024/1024)+" MB  RATE "+std::to_string(rateKbps)+" KBPS",20,398);
+        text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,398);
         text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,437);
     }
 };
@@ -174,13 +240,30 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
         for(int i=0;i<6;++i) {auto r=p_->row(i);if(!SDL_PointInFRect(&pt,&r))continue;
             if(i==5) {
                 if(p_->stream.active())p_->stream.stop();
-                else if(!p_->stream.start(p_->config))p_->error="ENTER A VALID YOUTUBE STUDIO STREAM KEY";
-                else {p_->error.clear();p_->editing=false;SDL_StopTextInput();}
+                else {
+                    if(p_->resolution==4){p_->config.width=w&~1;p_->config.height=h&~1;}
+                    if(w<2 || h<2 || p_->config.width>8192 || p_->config.height>8192)
+                        p_->error="RESOLUTION MUST BE BETWEEN 2 AND 8192 PIXELS";
+                    else if(!p_->stream.start(p_->config))p_->error="ENTER A VALID YOUTUBE STUDIO STREAM KEY";
+                    else {p_->error.clear();p_->editing=false;SDL_StopTextInput();}
+                }
             } else if(!p_->stream.active()) {
                 p_->editing=i==0;if(p_->editing)SDL_StartTextInput();else SDL_StopTextInput();
-                if(i==1){p_->config.width=p_->config.width==1280?1920:1280;p_->config.height=p_->config.width==1280?720:1080;}
+                if(i==1){
+                    p_->resolution=(p_->resolution+1)%5;
+                    constexpr int widths[]={1280,1920,2560,3840};
+                    constexpr int heights[]={720,1080,1440,2160};
+                    p_->config.width=p_->resolution==4?(w&~1):widths[p_->resolution];
+                    p_->config.height=p_->resolution==4?(h&~1):heights[p_->resolution];
+                    const int64_t pixels=int64_t(p_->config.width)*p_->config.height;
+                    p_->config.bitrateKbps=std::max(p_->config.bitrateKbps,pixels>2560*1440?30000:pixels>1920*1080?12000:6000);
+                }
                 if(i==2)p_->config.fps=p_->config.fps==30?60:30;
-                if(i==3)p_->config.bitrateKbps=p_->config.bitrateKbps>=12000?3000:p_->config.bitrateKbps+3000;
+                if(i==3){
+                    constexpr int rates[]={3000,6000,9000,12000,20000,30000,45000,60000,80000};
+                    const auto next=std::upper_bound(std::begin(rates),std::end(rates),p_->config.bitrateKbps);
+                    p_->config.bitrateKbps=next==std::end(rates)?rates[0]:*next;
+                }
                 if(i==4)p_->config.encoder=p_->config.encoder.empty()?"libx264":"";
             }
         }

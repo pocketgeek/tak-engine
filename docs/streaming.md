@@ -6,7 +6,13 @@ Paste the stream key from YouTube Studio, select the video settings, and click
 broadcast public. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
 
 The initial settings are 720p, 30 FPS and 6,000 Kbps video. The panel also offers
-1080p, 60 FPS, 3,000–12,000 Kbps, and automatic or CPU encoding. Automatic tries
+1080p, 1440p, 4K (3840×2160), Full Resolution, 60 FPS, 3,000–80,000 Kbps,
+and automatic or CPU encoding. Full Resolution uses the actual window drawable
+size at Start Streaming, including high-DPI scaling, rounded down to even pixels.
+The output dimensions stay fixed until you stop and restart; resizing the window
+letterboxes the new image. The supported input range is 2–8192 pixels per axis,
+subject to the encoder’s limits. Selecting a larger resolution raises a lower
+bitrate to 12,000 Kbps for 1440p or 30,000 Kbps for 4K; it remains adjustable. Automatic tries
 available hardware encoders before falling back to the CPU:
 
 | Platform | Hardware backends |
@@ -17,8 +23,9 @@ available hardware encoders before falling back to the CPU:
 
 A working GPU driver with H.264 encoding support is required for hardware
 encoding. The panel reports the encoder actually opened, connection state,
-encoded frames, replaced capture frames plus skipped encoder time slots, and bytes
-sent with an estimated encoded-payload bitrate. Unsupported hardware falls back to the bundled x264 CPU encoder. Hardware
+encoded frames, missed output frames (**DROPPED**), superseded or busy capture
+submissions (**REPLACED**), and estimated encoded-payload bitrate. Replacing a
+capture does not itself mean an output frame was missed. Unsupported hardware falls back to the bundled x264 CPU encoder. Hardware
 that fails during encoding triggers a restart using the CPU.
 
 The stream contains the game view, HUD, cursor and mixed game audio, including
@@ -95,3 +102,8 @@ independently; reconnects are reserved for connection/write failures. Title-scre
 account and settings overlays are excluded from the broadcast. The front-end
 currently streams title artwork with silence; mixed game audio begins in the game. During loading
 and modal screens, the last captured frame remains on the stream.
+
+OpenGL capture downscales on the GPU before asynchronous readback when the
+stream is smaller than the window. Frame buffers transfer to the encoder worker
+without an extra full-frame copy on all render backends. The OpenGL path falls
+back to full-size readback when framebuffer scaling is unavailable.

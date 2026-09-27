@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -22,6 +23,12 @@ int main(int argc,char** argv) {
         require(!stream.start(config),"URL injection rejected without connection");
         config.width=1;require(!stream.startRecording(config,path.string()),"invalid dimensions rejected");config.width=1280;
         require(!stream.startRecording(config,"rtmps://example.invalid/test"),"recording cannot contact a network destination");
+        config.width=8194;require(!stream.startRecording(config,path.string()),"oversized dimensions rejected");
+        config.width=1279;require(!stream.startRecording(config,path.string()),"odd dimensions rejected");
+        config.width=1280;
+        if(argc>2 && std::string(argv[2])=="4k") {config.width=3840;config.height=2160;config.bitrateKbps=30000;}
+        if(argc>2 && std::string(argv[2])=="native") {config.width=1582;config.height=934;}
+        if(argc>3)config.fps=std::atoi(argv[3]);
         config.key.clear();
         require(stream.startRecording(config,path.string()),"start recording");
         require(!stream.startRecording(config,path.string()),"cannot start twice");
@@ -30,7 +37,7 @@ int main(int argc,char** argv) {
         std::array<int16_t,256*6> audio{};
         int samples=0;
         bool delayed=false;
-        const bool overload=argc>2;
+        const bool overload=argc>2 && std::string(argv[2])=="overload";
         auto begin=std::chrono::steady_clock::now();
         while(std::chrono::steady_clock::now()-begin<(overload?4500ms:2500ms)) {
             require(stream.active(),stream.status().state.c_str());
@@ -55,6 +62,7 @@ int main(int argc,char** argv) {
     }
     std::ifstream file(path,std::ios::binary);
     std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)),{});
+    file.close(); // Windows cannot remove an output while our reader still holds it.
     require(bytes.size()>13 && bytes[0]=='F'&&bytes[1]=='L'&&bytes[2]=='V',"valid FLV header");
     require((bytes[4]&5)==5,"both audio and video advertised");
     size_t pos=13;int videos=0,audios=0,keys=0;uint32_t vt=0,at=0;
@@ -81,7 +89,7 @@ int main(int argc,char** argv) {
     std::printf("audio/video end_ms=%u/%u\n",vt,at);
     require(std::abs(int(vt)-int(at))<100,"audio/video end times within 100 ms");
     std::printf("file=%s video=%d audio=%d keyframes=%d end_ms=%u/%u\n",path.string().c_str(),videos,audios,keys,vt,at);
-    if(argc<2)std::filesystem::remove(path);
+    if(argc<2 || (argc>2 && std::string(argv[2])=="overload"))std::filesystem::remove(path);
     path += ".restart";
     // Failure is local, reported without throwing through the host or exposing a key.
     {

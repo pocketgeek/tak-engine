@@ -51,8 +51,9 @@ struct Encoder {
     }
 };
 bool valid(const StreamConfig& c) {
-    return ((c.width == 1280 && c.height == 720) || (c.width == 1920 && c.height == 1080)) &&
-        (c.fps == 30 || c.fps == 60) && c.bitrateKbps >= 1000 && c.bitrateKbps <= 20000 &&
+    return (c.width >= 2 && c.height >= 2 && c.width <= 8192 && c.height <= 8192 &&
+            c.width % 2 == 0 && c.height % 2 == 0) &&
+        (c.fps == 30 || c.fps == 60) && c.bitrateKbps >= 1000 && c.bitrateKbps <= 80000 &&
         (c.encoder.empty() || c.encoder == "libx264" || c.encoder == "h264_nvenc" ||
          c.encoder == "h264_amf" || c.encoder == "h264_qsv" ||
          c.encoder == "h264_vaapi" || c.encoder == "h264_videotoolbox");
@@ -64,7 +65,7 @@ struct Stream::Impl {
 #endif
     std::atomic<bool> running{false}, cancel{false};
     std::atomic<int64_t> deadline{0};
-    std::atomic<uint64_t> dropped{0};
+    std::atomic<uint64_t> dropped{0}, replaced{0};
 #ifdef TAK_STREAM_TESTING
     std::atomic<int> testDelay{0};
 #endif
@@ -355,10 +356,10 @@ struct Stream::Impl {
     bool start(const StreamConfig& c, std::string destination, bool local) {
         if (running || !valid(c)) return false;
         if (worker.joinable()) worker.join();
-        { std::lock_guard lock(stateMutex); state = {}; state.state = "STARTING"; }
+        { std::lock_guard lock(stateMutex); state = {}; state.state = "STARTING"; state.width=c.width; state.height=c.height; }
         { std::lock_guard lock(inputMutex); pixels.clear(); fresh = false; }
         { std::lock_guard lock(audioMutex); read = count = 0; }
-        cancel = false; dropped = 0; running = true;
+        cancel = false; dropped = 0; replaced = 0; running = true;
         try { worker = std::thread([this,c,d=std::move(destination),local]() mutable {run(c,std::move(d),local);}); }
         catch (...) { running=false; report("FAILED - CANNOT START WORKER"); return false; }
         return true;
@@ -389,15 +390,23 @@ void Stream::stop() { if (active()) p_->report("STOPPING"); p_->cancel = true; p
 bool Stream::active() const { return p_->running; }
 StreamStatus Stream::status() const {
     std::lock_guard lock(p_->stateMutex); auto s = p_->state;
-    s.active = p_->running; s.dropped = p_->dropped; return s;
+    s.active = p_->running; s.dropped = p_->dropped; s.replaced = p_->replaced; return s;
 }
 bool Stream::video(const uint8_t* rgba, int w, int h, int pitch) {
     if (!active() || !rgba || w <= 0 || h <= 0 || w > 8192 || h > 8192 || pitch < w*4) return false;
     std::unique_lock lock(p_->inputMutex, std::try_to_lock);
-    if (!lock.owns_lock()) { ++p_->dropped; return false; }
-    if (p_->fresh) ++p_->dropped;
+    if (!lock.owns_lock()) { ++p_->replaced; return false; }
+    if (p_->fresh) ++p_->replaced;
     p_->pixels.resize(size_t(w)*h*4);
     for (int y=0;y<h;++y) std::memcpy(p_->pixels.data()+size_t(y)*w*4, rgba+size_t(y)*pitch, size_t(w)*4);
+    p_->sourceW=w; p_->sourceH=h; p_->fresh=true; return true;
+}
+bool Stream::video(std::vector<uint8_t>& rgba, int w, int h) {
+    if (!active() || w <= 0 || h <= 0 || w > 8192 || h > 8192 || rgba.size() != size_t(w)*h*4) return false;
+    std::unique_lock lock(p_->inputMutex, std::try_to_lock);
+    if (!lock.owns_lock()) { ++p_->replaced; return false; }
+    if (p_->fresh) ++p_->replaced;
+    p_->pixels.swap(rgba);
     p_->sourceW=w; p_->sourceH=h; p_->fresh=true; return true;
 }
 void Stream::audio(const int16_t* samples, int frames, int channels) {
