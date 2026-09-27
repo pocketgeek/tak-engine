@@ -566,7 +566,7 @@ namespace {
         // so the ordering is the priority ordering: frame rate before link quality before
         // counts before process stats.
         //
-        // Labels are kept to the width budget below (<=5 chars) and values to <=7, which
+        // Labels are kept to the width budget below (<=9 chars) and values to <=7, which
         // is what lets the type size stay put instead of resizing when a value gains a
         // digit.
         struct Row { const char* label; std::string value; };
@@ -587,46 +587,56 @@ namespace {
             rows.push_back({"SIM", b});
         }
 
-        // One pass over the render snapshot for both counts -- the live world is never
-        // touched here (the sim worker owns it; this is display only).
-        int mine = 0, all = 0;
-        for (const UnitR* up : front().live) {
-            if (!up->alive() || !up->type) continue;
-            ++all;
-            if (up->player == localPlayer_) ++mine;
-        }
-        if (!spectating_) {
-            std::snprintf(b, sizeof b, "%d", mine);
-            rows.push_back({"YOURS", b});
-        }
-        std::snprintf(b, sizeof b, "%d", all);
+        // Living units owned by the player, including embarked units. Spectators
+        // have no player army and retain the match-wide living count.
+        int units = 0;
+        for (const UnitR* up : front().live)
+            if (up->alive() && up->type && (spectating_ || up->player == localPlayer_)) ++units;
+        std::snprintf(b, sizeof b, "%d", units);
         rows.push_back({"UNITS", b});
-
-        // Game clock from the snapshot's tick, not wall time: a paused or catching-up
-        // client should show the clock the SIM is at, which is what a player comparing
-        // notes with anyone else in the game means by "how long in are we".
-        uint32_t secs = front().gameTick / uint32_t(tak::net::kServerHz);
-        std::snprintf(b, sizeof b, "%u:%02u", secs / 60, secs % 60);
-        rows.push_back({"TIME", b});
 
         if (!spectating_) {
             std::snprintf(b, sizeof b, "%d", framePlayer(localPlayer_).kills);
             rows.push_back({"KILLS", b});
         }
+        const uint64_t wallNow = SDL_GetTicks64();
+        const uint64_t elapsed = gameStartMs_ && wallNow >= gameStartMs_
+            ? (wallNow - gameStartMs_) / 1000 : 0;
+        std::snprintf(b, sizeof b, "%llu:%02llu",
+                      (unsigned long long)(elapsed / 60), (unsigned long long)(elapsed % 60));
+        rows.push_back({"TIME", b});
+        const uint32_t gameSecs = front().gameTick / uint32_t(tak::net::kServerHz);
+        std::snprintf(b, sizeof b, "%u:%02u", gameSecs / 60, gameSecs % 60);
+        rows.push_back({"GAME TIME", b});
 
-        // Process stats. proc::sample() reads /proc (or the OS equivalent) so it is NOT
-        // free per frame -- sample it once a second and reuse. Doing this per frame was
-        // measurable on the very machines whose frame rate the panel exists to report.
-        static uint32_t memAt = 0;
-        static size_t memRss = 0;
-        uint32_t now = SDL_GetTicks();
-        if (memRss == 0 || now - memAt > 1000) {
-            tak::proc::Sample ps = tak::proc::sample(0);
-            if (ps.ok) memRss = ps.rssBytes;
-            memAt = now;
+        const uint64_t now = SDL_GetTicks64();
+        if (!statsSampleAt_ || now - statsSampleAt_ >= 1000) {
+            const auto sample = tak::proc::sample(0);
+            statsCpuPct_ = sample.ok && statsProcess_.ok && now > statsSampleAt_
+                ? std::max(0.0, (sample.cpuSeconds - statsProcess_.cpuSeconds) *
+                    100000.0 / double(now - statsSampleAt_)) : -1;
+            statsProcess_ = sample;
+            statsSampleAt_ = now;
         }
-        if (memRss) {
-            std::snprintf(b, sizeof b, "%zu MB", memRss >> 20);
+        // GPU driver queries can spawn nvidia-smi. Never wait for them in a
+        // frame: keep one background request in flight and reuse the last result.
+        if (statsGpuPending_.valid() &&
+            statsGpuPending_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            statsGpu_ = statsGpuPending_.get();
+        if (!statsGpuPending_.valid() && (!statsGpuAt_ || now - statsGpuAt_ >= 2000)) {
+            statsGpuAt_ = now;
+            statsGpuPending_ = std::async(std::launch::async, [] { return tak::proc::gpuSample(); });
+        }
+        if (statsCpuPct_ >= 0) std::snprintf(b, sizeof b, "%.0f%%", statsCpuPct_);
+        else std::snprintf(b, sizeof b, "N/A");
+        rows.push_back({"CPU", b});   // client process; 100% = one logical core
+        if (statsGpu_.ok && statsGpu_.utilPct >= 0)
+            std::snprintf(b, sizeof b, "%.0f%%", statsGpu_.utilPct);
+        else std::snprintf(b, sizeof b, "N/A");
+        rows.push_back({"GPU", b});
+
+        if (statsProcess_.ok && statsProcess_.rssBytes) {
+            std::snprintf(b, sizeof b, "%zu MB", statsProcess_.rssBytes >> 20);
             rows.push_back({"MEM", b});
         }
         std::snprintf(b, sizeof b, "%zu MB", gpuvram::bytes() >> 20);
@@ -635,15 +645,10 @@ namespace {
         // The block font the mana readout uses (5x7 cells, blockWidth = chars * 6 * px),
         // so the panel matches the HUD it sits in rather than introducing a second face.
         //
-        // The size is FIXED -- it tracks the UI SCALE option and nothing else. Resizing
-        // the window does not grow or shrink the readout; it only changes how many rows
-        // there is room for. 2.2 is the largest that still clears the narrowest the strip
-        // ever gets: cmdPanelW never goes below miniSize()+12 (= 180*uiScale + 12), and
-        // both that floor and this scale track uiScale, so the budget clears it at every
-        // UI SCALE setting rather than only at the default.
-        // Budget: 5 label + 1 gap + 7 value characters.
-        constexpr int kColBudget = 13;
-        const float px = 2.2f * uiScale_;
+        // Fixed size follows UI scale. Reserve nine label characters (GAME TIME),
+        // one separator and seven value characters without overlapping columns.
+        constexpr int kColBudget = 17;
+        const float px = 1.7f * uiScale_;
         const tak::hud::StatsFit fit =
             tak::hud::fitStats(int(rows.size()), availW, availH, kColBudget,
                                /*glyphW=*/6.0f, /*glyphH=*/7.0f, px,
@@ -1688,61 +1693,27 @@ namespace {
         { int tc[tak::sim::kMaxPlayers] = {};
           for (int t = 0; t < np; ++t) tc[framePlayer(t).team % tak::sim::kMaxPlayers]++;
           for (int t = 0; t < tak::sim::kMaxPlayers; ++t) if (tc[t] > 1) teams = true; }
-        int rows = 0, totalUnits = 0;
-        for (int t = 0; t < np; ++t) { if (board || cnt[t] > 0) ++rows; totalUnits += cnt[t]; }
+        int rows = 0;
+        for (int t = 0; t < np; ++t)
+            if ((board || cnt[t] > 0) && (framePlayer(t).built > 0 || cnt[t] > 0)) ++rows;
         // A spectator sees the full economy: an extra MANA column (income) per faction.
         const bool showMana = spectating_;
         const float px = 2.6f, hx = 1.9f;          // row / header font scales (bigger)
         const float lh = 7 * px + 12, x = 14;
         float y = 14;
         const float nameX = x + (teams ? 46 : 0);
-        // Wider panel with generous, non-overlapping columns (the old one crammed the
-        // speed readout into the MANA header and the names into the numbers). Right-
-        // align MANA / UNITS / KILLS; leave the name column plenty of room.
-        const float panelW = showMana ? 640.0f : (board || teams) ? 400.0f : 300.0f;
+        // Player/team identity, spectator economy, and kills only. Live
+        // performance metrics and clocks belong in the side stats panel.
+        const float panelW = showMana ? 640.0f : 440.0f;
         const float colKills = x + panelW - 70;
-        const float colUnits = colKills - 104;
-        const float colMana  = colUnits - 176;
+        const float colMana = colKills - 176;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
-        // Two header lines (a meta line + the column labels) above the player rows.
-        SDL_FRect bg{x - 8, y - 8, panelW, (rows + 2) * lh + 12};
+        SDL_FRect bg{x - 8, y - 8, panelW, (rows + 1) * lh + 12};
         SDL_RenderFillRectF(ren_, &bg);
         char buf[80];
-        // --- meta line: FPS, game speed, and (spectating) the global unit count ---
-        std::snprintf(buf, sizeof buf, "FPS %d", int(fps_ + 0.5f));
-        blockText(buf, x, y, px, SDL_Color{195, 195, 200, 255});
-        if (mp_) {
-            // requested game speed vs the ACTUAL speed the sim achieves (they diverge
-            // when a client -- or the server, pacing to the slowest -- can't sustain it).
-            float req = std::max(1, int(mp_->gameSpeed())) / 10.0f;
-            char sb[48];
-            std::snprintf(sb, sizeof sb, "SPEED %.1fx  ACTUAL %.1fx", req, actualSpeed_);
-            SDL_Color scol = actualSpeed_ < req - 0.3f ? SDL_Color{240, 200, 110, 255}
-                                                       : SDL_Color{150, 195, 160, 255};
-            blockText(sb, x + blockWidth(buf, px) + 24, y + 4, hx, scol);
-        }
-        if (showMana) {   // global unit count across every faction, right-aligned
-            std::snprintf(buf, sizeof buf, "TOTAL %d", totalUnits);
-            blockText(buf, x + panelW - blockWidth(buf, hx) - 4, y + 4, hx,
-                      SDL_Color{210, 215, 225, 255});
-        }
-        y += lh;
-        // --- column-header line (left: elapsed clocks in a net game; right: labels) ---
-        if (mp_) {
-            int gsec = int(netTick_) / 30;   // game time = ticks / 30Hz
-            char tb[64];
-            if (gameStartMs_) {              // spectating: real (wall) time too
-                int rsec = int((SDL_GetTicks64() - gameStartMs_) / 1000);
-                std::snprintf(tb, sizeof tb, "GAME %d:%02d  REAL %d:%02d",
-                              gsec / 60, gsec % 60, rsec / 60, rsec % 60);
-            } else {
-                std::snprintf(tb, sizeof tb, "GAME %d:%02d", gsec / 60, gsec % 60);
-            }
-            blockText(tb, x, y + 3, hx, SDL_Color{175, 180, 190, 255});
-        }
+        blockText("PLAYER", nameX, y + 3, hx, SDL_Color{150, 150, 155, 255});
         if (showMana) blockText("MANA", colMana, y + 3, hx, SDL_Color{150, 150, 155, 255});
-        blockText("UNITS", colUnits, y + 3, hx, SDL_Color{150, 150, 155, 255});
         blockText("KILLS", colKills, y + 3, hx, SDL_Color{150, 150, 155, 255});
         y += lh;
         for (int t = 0; t < np; ++t) {
@@ -1780,8 +1751,6 @@ namespace {
                 std::snprintf(buf, sizeof buf, "%d +%d", int(pl.mana), int(pl.income + 0.5f));
                 blockText(buf, colMana, y, hx, c);
             }
-            std::snprintf(buf, sizeof buf, "%d", cnt[t]);
-            blockText(buf, colUnits, y, px, c);
             std::snprintf(buf, sizeof buf, "%d", framePlayer(t).kills);
             blockText(buf, colKills, y, px, c);
             if (dead) blockText("OUT", nameX + blockWidth(s, px) + 8, y, 1.7f,

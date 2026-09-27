@@ -118,6 +118,16 @@ scale. Spawns respect map capacity, player caps, and unit-specific limits, so
 the requested rate does not guarantee a particular final unit count. A slow
 simulation can take longer than 60 seconds of wall-clock time.
 
+The in-game stats panel shows **Units** (your living units) with **Kills** directly
+below it. Spectators see the total living units in the match. **Time** is real
+elapsed match time; **Game Time** advances with the simulation. **CPU** measures
+the client process, with 100% equal to one logical CPU core; it can exceed 100%.
+**GPU** shows the driver-reported utilization, or **N/A** when unavailable.
+NVIDIA/AMD and macOS report whole-device usage; Intel Linux reports this process.
+GPU readings refresh in the background so driver queries do not stall rendering.
+The **F4** player panel keeps player/team identity, defeat status and kills (plus
+mana for spectators); performance metrics, clocks and unit counts live in the side panel.
+
 ### Campaigns
 
 The campaign door opens the authored chapter book. Choose a campaign tab, then

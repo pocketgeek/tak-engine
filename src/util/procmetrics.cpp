@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <mutex>
 
 #if defined(_WIN32)
 #  include <windows.h>
@@ -243,6 +244,9 @@ bool intelGpuSample(GpuSample& g) {
 }  // namespace
 
 GpuSample gpuSample() {
+    // Intel engine deltas are shared by the benchmark and live HUD sampler.
+    static std::mutex mutex;
+    const std::lock_guard<std::mutex> lock(mutex);
     GpuSample g;
 #if defined(__APPLE__)
     // No public PER-PROCESS GPU stat exists on Apple Silicon (Metal has no

@@ -107,6 +107,14 @@ int main() {
         check("live resize: rows always fit the gap they were given", contained);
     }
 
+    // The live panel reserves the full GAME TIME label plus a seven-character
+    // value. All eleven rows fit a 200px gap at normal UI scale.
+    for (float ui : {0.75f, 1.0f, 1.25f, 1.5f, 2.0f}) {
+        auto f = tak::hud::fitStats(11, narrowestStrip(ui), 200 * ui,
+                                  17, 6, 7, 1.7f * ui, 6 * ui);
+        check("expanded clock and metrics panel fits", f.visible && f.rows == 11);
+    }
+
     std::printf(failures ? "statsfit_test: %d FAILED\n" : "statsfit_test: all passed\n", failures);
     return failures ? 1 : 0;
 }

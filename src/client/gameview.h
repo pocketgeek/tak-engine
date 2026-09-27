@@ -30,6 +30,7 @@
 #include "gui/gui.h"
 #include "hpi/hpi.h"
 #include "net/client.h"
+#include <future>
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
 #include "net/lockstep.h"
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
@@ -1431,6 +1432,11 @@ private:
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
     bool bilinear_ = false;     // smooth terrain/feature scaling (Options)
     int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
+    uint64_t statsSampleAt_ = 0, statsGpuAt_ = 0;
+    tak::proc::Sample statsProcess_;
+    double statsCpuPct_ = -1;
+    tak::proc::GpuSample statsGpu_;
+    std::future<tak::proc::GpuSample> statsGpuPending_;
     bool statsPanel_ = true;    // Options: live readout in the dead strip under the minimap
     // Animation stall gate (see animFrame): the sim tick last observed, and when it
     // last CHANGED. Animation freezes when the sim clock stops, so a network stall looks
@@ -2356,7 +2362,7 @@ private:
     float actualSpeed_ = 0.0f;
     float actualSpeedReq_ = 0.0f;   // requested speed the average is currently tracking
     uint64_t lastSpecAckMs_ = 0;   // spectator flow-control heartbeat (see mpStep)
-    uint64_t gameStartMs_ = 0;     // wall time the game/spectate began (F4 real-time elapsed)
+    uint64_t gameStartMs_ = 0;     // wall time the game/spectate began (stats real-time elapsed)
     bool follow_ = false;
     bool trackSel_ = false;   // T: keep the camera centred on the selection
     bool trace_ = false;
