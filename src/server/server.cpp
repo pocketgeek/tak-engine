@@ -502,6 +502,7 @@ void Server::writeReplay(Room& r) {
     h.overridePolicy = r.opts.overridePolicy;
     h.unitCap = r.opts.unitCap;
     h.monarchExpendable = r.opts.monarchExpendable;
+    h.doubleSight = r.opts.doubleSight;
     h.stressTest = r.opts.stressTest;
     h.randomStarts = r.opts.randomStarts;
     h.benchmark = uint8_t(r.opts.benchmark);
@@ -823,7 +824,7 @@ void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
     w.u8(r.opts.overridePolicy);
     w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap); w.u8(r.opts.monarchExpendable);
     w.u8(r.opts.stressTest); w.u8(r.opts.fogExplored); w.u8(r.opts.benchmark);
-    w.u8(r.opts.randomStarts);
+    w.u8(r.opts.randomStarts); w.u8(r.opts.doubleSight);
     w.u32(r.hostId);
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = (fromStart && r.running) ? r.startSlots[i] : r.slots[i];
@@ -890,6 +891,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.fogExplored = std::min<uint8_t>(r.u8(), 2);
             o.benchmark = r.u8();
             o.randomStarts = r.u8() ? 1 : 0;
+            o.doubleSight = r.u8() ? 1 : 0;
+            if (!mission.empty()) o.doubleSight = 0;
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
@@ -1230,6 +1233,7 @@ void Server::tryStart(Client& c) {
             cfg.mapPath = mapPath;
             cfg.unitCap = r->opts.unitCap;
             cfg.monarchExpendable = r->opts.monarchExpendable != 0;
+            cfg.doubleSight = r->opts.doubleSight != 0;
             cfg.stressTest = r->opts.stressTest != 0;
             cfg.benchmark = r->opts.benchmark;
             cfg.randomStarts = r->opts.randomStarts != 0;
@@ -1374,6 +1378,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.fogExplored = std::min<uint8_t>(rd.u8(), 2);   // 0/1/2, see CreateGame
             o.benchmark = rd.u8();
             o.randomStarts = rd.u8() ? 1 : 0;
+            o.doubleSight = rd.u8() ? 1 : 0;
+            if (!r->mission.empty()) o.doubleSight = 0;
             if (!rd.ok) return;
             if (o.speed < 1) o.speed = 1;
             if (o.speed > 40) o.speed = 40;   // clamp 0.1x .. 4.0x
@@ -1568,6 +1574,8 @@ bool Server::canAdvance(const Room& r) const {
     bool anyHuman = false;
     for (int i = 0; i < kMaxSlots; ++i) {
         if (r.slots[i].type != 1 || r.slotClient[i] < 0) continue;
+        // An eliminated client must never pace the surviving players.
+        if (r.ref && i < r.ref->numPlayers() && r.ref->player(i).defeated) continue;
         auto it = clients_.find(uint32_t(r.slotClient[i]));
         if (it == clients_.end() || !it->second->loaded) continue;
         anyHuman = true;

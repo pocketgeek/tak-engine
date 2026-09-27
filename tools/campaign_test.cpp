@@ -51,10 +51,14 @@ int main(int argc,char** argv) {
                     if(!c.altFinal.empty())stems.push_back(c.altFinal);
                     for(const auto& stem:stems) {
                         tak::sim::World world;world.setVisPlayer(-1);world.setSerialThreads(true);
+                        world.setDoubleSight(true); // prior skirmish setting must not leak into a mission
                         int human=0;
                         const bool loaded=tak::sim::setupMission(world,registry,vfs,stem,human);
                         check(loaded,"mounted mission startup loads");
                         if(!loaded)continue;
+                        tak::sim::UnitType eye;eye.sight=123;eye.radar=234;
+                        check(world.sightDistance(eye)==123 && world.radarDistance(eye)==234,
+                              "campaign resets skirmish sight/radar multiplier");
                         for(int tick=0;tick<30 && !world.missionOutcome();++tick)world.tick(1.f/30.f);
                         std::printf("startup %s crusades=%d tick=%u outcome=%d units=%zu\n",stem.c_str(),crusades,
                                     world.tickCount(),world.missionOutcome(),world.units().size());

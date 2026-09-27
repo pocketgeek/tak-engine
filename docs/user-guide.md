@@ -187,7 +187,7 @@ clears).
 | | |
 | --- | --- |
 | **Select** | drag = box-select · **Ctrl+A** all your units · **Ctrl+Z** all your units of every type in the current selection · **Ctrl+U** everything on screen · **N** cycle to next unit |
-| **Order** | right-click = move/attack (**Shift** queues) · **F** fight-move · **M** move · **A** attack · **P** patrol · **G** guard · **S** stop · **Ctrl+Shift+D** toggle self-destruct · **Esc** cancel an armed order |
+| **Order** | right-click = move/attack (**Shift** queues and shows selected units’ routes, including production-building rally orders) · **F** fight-move · **M** move · **A** attack · **P** patrol · **G** guard · **S** stop · **Ctrl+Shift+D** toggle self-destruct · **Esc** cancel an armed order |
 | **Groups & formations** | **Ctrl+1–0** assign a group · **Alt+1–0** assign a **formation** · **1–0** select, press again to track · **+Shift** appends when assigning · **Ctrl+Esc** leave. A unit is in one squad at a time, and a number is a group *or* a formation. A **formation** moves at its slowest member's speed and its stragglers rejoin. Each unit shows its squad under it (`3` = group 3, `3F` = formation 3). Recalling a squad skips its builders — a builder rides along only so anything it builds auto-joins the squad. |
 | **Camera** | arrows / middle-drag / **screen-edge** scroll · wheel zoom (toward cursor) · minimap click/drag = move the camera · right-click minimap = move the selection there |
 | **Minimap orders** | with an order armed (**F**/**M**/**A**/**P**/**G**), click the minimap to issue it at that spot — e.g. **F** then a minimap click = fight-move across the map |
@@ -249,10 +249,18 @@ position updates.
   of the entire install: maps, scripts, and model files are outside this hash,
   although they can affect simulation and must be compatible between players.
 - **Lobby.** The in-client lobby has a game browser, a create-game dialog
-  (name/password/map; **crusades**, **gods**, and **Monarch Expendable** toggles),
+  (name/password/map; **Crusades**, **Double Sight/Radar**, and **Monarch Expendable** toggles),
   and a room where each player picks faction, colour, and team and readies up; the
   host opens/closes slots, kicks, and starts. Fog and start-location rules are
   chosen when creating the game and shown as read-only information in the room.
+  **Not Explored** starts terrain hidden; **Explored** starts it mapped. Both
+  retain discovered terrain under fog when sight is lost; hidden enemies remain
+  unselectable. **Full Vision** removes fog.
+  The host can toggle **Double Sight/Radar** in the multiplayer or skirmish room: it
+  doubles every unit’s sight and radar distances, without changing weapon range.
+  Campaigns always use their authored sight/radar values.
+  Defeated players go to results automatically after three real-time seconds;
+  surviving players keep playing throughout.
   Random maps can be generated from the create-game screen.
   **Monarch Expendable** is the loss
   rule: *off* (the retail commander rule) means losing your Monarch loses you the

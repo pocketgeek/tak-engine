@@ -33,7 +33,7 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 7;   // 7: the gods option is gone (retail rolls it)
+inline constexpr uint32_t kReplayFormat = 8;   // 8: double-sight match option
 
 struct ReplayHeader {
     std::string mapId;
@@ -43,6 +43,7 @@ struct ReplayHeader {
     uint8_t overridePolicy = 1;
     uint32_t unitCap = 0;
     uint8_t monarchExpendable = 0, stressTest = 0, randomStarts = 0;
+    uint8_t doubleSight = 0;
     uint8_t benchmark = 0;        // benchmark intensity (0 = off)
     uint32_t seed = 0;
     uint64_t dataHash = 0;        // hpi::gameplayHash of the data the game ran on
@@ -77,6 +78,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     w.str(h.mission);
     w.str(h.engineVersion);
     w.u64(h.dataHash);
+    w.u8(h.doubleSight);
     w.u8(uint8_t(kMaxSlots));
     for (int i = 0; i < kMaxSlots; ++i) {
         w.u8(h.slotType[i]);
@@ -111,6 +113,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
         h.engineVersion = r.str();
         h.dataHash = r.u64();
     }
+    h.doubleSight = fmt >= 8 ? r.u8() : 0;
     const uint8_t nslots = r.u8();
     if (!r.ok || nslots > kMaxSlots) return false;
     for (int i = 0; i < nslots; ++i) {

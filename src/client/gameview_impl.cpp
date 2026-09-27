@@ -1450,6 +1450,7 @@
         // per-player defeated flags each tick (deterministic across peers); the
         // viewer just maps that to this player's win/lose banner. Only armed once
         // at least two teams have fielded units (staged demos may field one).
+        const int previousOutcome = outcome_.load();
         if (outcome_ == 0 && !missionStem_.empty()) {
             // Campaign mission: the in-sim god script + the .ota victory/defeat
             // conditions decide the result (last-team-standing doesn't apply -- the
@@ -1468,15 +1469,8 @@
             if (teamsSeen >= 2 && win >= 0) {
                 outcome_ = (win == world_.player(localPlayer_).team) ? 1 : -1;
             } else if (!spectating_ && world_.player(localPlayer_).defeated && teamsSeen >= 2) {
-                // Spectators have no team to lose; their fallback player 0 may
-                // be eliminated while the watched match is still running.
-                // My whole team may still be alive via allies; only lose when the
-                // sim says my team is gone, but a solo (FFA) defeat ends my game.
-                bool teamAlive = false;
-                for (int p = 0; p < world_.numPlayers(); ++p)
-                    if (world_.player(p).team == world_.player(localPlayer_).team &&
-                        !world_.player(p).defeated) { teamAlive = true; break; }
-                if (!teamAlive) outcome_ = -1;
+                // A defeated player exits even when an allied player is still fighting.
+                outcome_ = -1;
             }
         }
         // The result just landed: ask for this player's replay to be written. REQUEST,
@@ -1484,7 +1478,7 @@
         // its recorded bundles and hashes from the main thread. Serializing those
         // vectors from here would read them while they grow. The main thread picks
         // this up (see cosmeticStep) and does the work.
-        if (outcome_ != 0) replayWanted_.store(true, std::memory_order_relaxed);
+        if (previousOutcome == 0 && outcome_ != 0) replayWanted_.store(true, std::memory_order_relaxed);
         captureFrame();   // snapshot post-tick unit state for the render (poses + read fields)
     }
 
@@ -1651,7 +1645,7 @@
                 ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
                 : int(u.underConstruction);
             s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
-            s.buildQueue = u.buildQueue; s.orders = u.orders;
+            s.buildQueue = u.buildQueue; s.orders = u.orders; s.rally = u.rally;
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.captureMovement(u);
             s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&

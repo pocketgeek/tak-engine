@@ -310,6 +310,8 @@ std::string mapDisplayName(const std::string& id) {
         blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 30;
         lbBtn(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
+        lbBtn(x, y, 240, 26, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
+              [this] { createDoubleSight_ = !createDoubleSight_; }); y += 34;
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
         lbBtn(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
@@ -352,6 +354,7 @@ std::string mapDisplayName(const std::string& id) {
         lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
             o.overridePolicy = createOverride_;
+            o.doubleSight = createDoubleSight_ ? 1 : 0;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
             o.randomStarts = createRandomStarts_ ? 1 : 0;
@@ -696,9 +699,16 @@ std::string mapDisplayName(const std::string& id) {
                 o.unitCap = seq[(idx + 1) % 4];
                 mp_->setGameOptions(o); });
         }
+        if (room.mission.empty()) {
+            lbBtn(x + 330, y, 240, 26,
+                  room.opts.doubleSight ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", host, [this] {
+                      auto o = mpRoom().opts; o.doubleSight = !o.doubleSight;
+                      mp_->setGameOptions(o);
+                  });
+        }
         // Rules chosen when creating the game are informational in the lobby.
-        // Fog of war (display-only rule, never hashed): NOT EXPLORED darkens seen
-        // terrain again when it leaves sight; EXPLORED keeps it dimmed-but-visible;
+        // Fog of war: NOT EXPLORED starts hidden; EXPLORED starts mapped.
+        // Both keep seen terrain dimmed after sight is lost;
         // FULL VISION removes fog entirely (whole map + every unit, all players).
         y += 34;
         {

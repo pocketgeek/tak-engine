@@ -41,6 +41,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     out.engineVersion = h.engineVersion;
     out.cfg.unitCap = uint16_t(h.unitCap);
     out.cfg.monarchExpendable = h.monarchExpendable != 0;
+    out.cfg.doubleSight = h.mission.empty() && h.doubleSight != 0;
     out.cfg.stressTest = h.stressTest != 0;
     out.cfg.randomStarts = h.randomStarts != 0;
     out.cfg.benchmark = h.benchmark;
@@ -122,6 +123,7 @@ std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,
     h.overridePolicy = room.opts.overridePolicy;
     h.unitCap = room.opts.unitCap;
     h.monarchExpendable = room.opts.monarchExpendable;
+    h.doubleSight = room.opts.doubleSight;
     h.stressTest = room.opts.stressTest;
     h.randomStarts = room.opts.randomStarts;
     h.benchmark = uint8_t(room.opts.benchmark);

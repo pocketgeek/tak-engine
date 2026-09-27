@@ -5651,7 +5651,7 @@ void World::tickReclaimArea(Unit& b) {
         sight.active=false;
         // Before the first exploration pass, initialize the same authored sight.
         if (sight.x<0 || sight.z<0) {
-            sight.distance=int16_t(u.type->sight);sight.sightHeight=u.type->sightHeight;
+            sight.distance=int16_t(sightDistance(*u.type));sight.sightHeight=u.type->sightHeight;
             sight.x=int16_t(u.x.floorInt()/32);sight.z=int16_t(u.z.floorInt()/32);
             const Fixed y=u.type->canFly?u.flightY:u.groundY;
             sight.eyeHeight=std::max(y.floorInt(),seaLevel_+1)+sight.sightHeight;
@@ -6367,7 +6367,7 @@ void World::tickRetailAiStrike(int owner,unsigned index) {
                     range,range,true,false,[&](int x,int z) { return plane->cells[size_t(z)*nav->width()+x]; }))
                 unsupported("unreachable member withdrawal");
         }
-        radius=std::max(radius,std::max(u->type->sight,weapon.range));
+        radius=std::max(radius,std::max(sightDistance(*u->type),weapon.range));
         if (u->orders.empty() || !u->orders[currentLeg(u->orders)].groundMission || u->orders[currentLeg(u->orders)].park)
             unsupported("non-move member order");
     }
@@ -6912,7 +6912,7 @@ void World::updateNavigationExploration() {
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
             if (!u.alive() || !u.type || u.underConstruction || u.embarked()) continue;
-            const int16_t distance=int16_t(u.type->sight);
+            const int16_t distance=int16_t(sightDistance(*u.type));
             if (u.sightFootprint.distance!=distance || u.sightFootprint.sightHeight!=u.type->sightHeight) {
                 u.sightFootprint={};
                 u.sightFootprint.distance=distance;
@@ -7011,8 +7011,8 @@ void World::visGather() {
         // Reveal to the greater of sight and radar range. Radar sees THROUGH terrain, so
         // the LoS test applies only to the sight area not already covered by radar; a unit
         // with radar >= sight does zero LoS work.
-        int rSight = int(u.type->sight) / 16;
-        int rRadar = int(u.type->radar) / 16;
+        int rSight = int(sightDistance(*u.type)) / 16;
+        int rRadar = int(radarDistance(*u.type)) / 16;
         int r = std::max(rSight, rRadar) + 1;
         int rRadar2 = rRadar * rRadar;
         int cx = u.x.floorInt() / 16, cz = u.z.floorInt() / 16;
@@ -7046,10 +7046,9 @@ void World::visCompute() {
     static float EYE = [] {
         const char* e = std::getenv("TAK_FOG_EYE"); return e ? float(std::atof(e)) : 40.0f;
     }();
-    // Demote last pass's visible cells: to EXPLORED (1, dimmed but remembered) normally, or
-    // straight to hidden (0) when fog memory is off, so they go dark again once out of sight.
+    // Losing current sight never erases terrain exploration.
     for (auto& v : visBack_)
-        if (v == 2) v = fogExplored_ ? 1 : 0;
+        if (v == 2) v = 1;
     // PASS 1b (PARALLEL): the O(r^3) LoS ray-march for each new mask -- the expensive part
     // a moving army keeps retriggering. Each computes independently, reading only the
     // immutable heightmap into a local buffer (no shared-map writes); we install them
@@ -8037,7 +8036,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // then release to the next order (usually an attack).
         if (u.type->canFly) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
         else if (!u.type->isStructure()) brakeGround(u);
-        float sight = u.type->sight > 0 ? u.type->sight : 200.0f;
+        float sight = u.type->sight > 0 ? sightDistance(*u.type) : 200.0f;
         // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
         // ambushing unit, every tick -- O(n^2) in the number of ambushers, and a
         // mission that sets "wa" on a large force pays it on the referee as well as
@@ -8189,7 +8188,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             scanTurnRate = uint16_t(int64_t(scanTurnRate)*multiplier.v/65536);
             for (;;) {
                 const auto scan=retailGroundScan(u.x,u.groundY,u.z,u.heading,tickCounter_,
-                    uint8_t(u.type->halfCellTicks),boat,int16_t(u.type->footX),int16_t(u.type->sight),false,
+                    uint8_t(u.type->halfCellTicks),boat,int16_t(u.type->footX),int16_t(sightDistance(*u.type)),false,
                     [&](Fixed x,Fixed,Fixed z) {
                         return cellScoreWithBodies(u.type,footprintCell(x,u.type->footX),
                                          footprintCell(z,u.type->footZ),u.id,boat?nullptr:&scanBodies);
@@ -9687,6 +9686,7 @@ uint64_t World::stateHash() const {
         std::memcpy(&b, &f, 4);
         mix(b);
     };
+    if (doubleSight_) mix(0x44424c5349474854ull);
     mix(nextMovementController_);
     mix(navigationExplored_.size());
     mix(uint32_t(restoredNavigationViewer_));

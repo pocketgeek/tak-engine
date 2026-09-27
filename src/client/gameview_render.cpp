@@ -1522,7 +1522,7 @@
             targets.clear();
             for (int sid : selection_)
                 if (const auto* su = frameUnitP(sid))
-                    for (const auto& o : su->orders)
+                    for (const auto& o : su->displayedOrders())
                         if (o.targetId > 0) targets.insert(o.targetId);
             for (int tid : targets) {
                 const auto* t = frameUnitP(tid);
@@ -1797,7 +1797,8 @@
             SDL_RenderFillRectF(ren_, &shade);
             float tw = float(bigFont_.width(msg, 1.5f));
             bigFont_.draw(ren_, msg, (winW - tw) / 2, float(winH) / 2 + 24, 1.5f, col);
-            const char* hint = "PRESS ESC FOR MENU";
+            const char* hint = outcome_ < 0 && !spectating_ && !replayMode_ && missionStem_.empty()
+                ? "RESULTS IN 3 SECONDS" : "PRESS ESC FOR MENU";
             blockText(hint, (winW - blockWidth(hint, 2.0f)) / 2, float(winH) / 2 + 74, 2.0f,
                       {220, 220, 230, 255});
         }
@@ -4094,14 +4095,14 @@
             const UnitR* up = frameUnitP(selId);
             if (!up || !up->alive() || !up->type) continue;
             if (up->player != localPlayer_) continue;      // never leak enemy intent
-            if (up->orders.empty()) continue;
+            if (up->displayedOrders().empty()) continue;
             // Retail beads only its few "focus" units but puts an END MARKER on
             // every selected unit's orders (the dots flag is per unit; the marker
             // is not), so the caps differ on purpose.
             const bool beads = drawn < kTrailUnits && shiftHeld;
             ++drawn;
             float px = up->x, pz = up->z;                  // running position
-            for (const auto& o : up->orders) {
+            for (const auto& o : up->displayedOrders()) {
                 // Only the ends of the player's own orders are line vertices; the
                 // Route waypoints between them are the navigator's business, exactly
                 // as retail's order list held goals and not path nodes.

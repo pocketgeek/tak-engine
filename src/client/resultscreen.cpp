@@ -163,7 +163,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     if (victory && hasNext) proceed = ResultChoice::Next;
     else if (!victory) proceed = ResultChoice::Retry;
     const char* proceedHint = proceed == ResultChoice::Next   ? "ENTER: NEXT MISSION"
-                              : proceed == ResultChoice::Retry ? "ENTER: TRY AGAIN"
+                              : proceed == ResultChoice::Retry ? ""
                                                                : "ENTER: CONTINUE";
 
     for (;;) {

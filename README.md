@@ -281,7 +281,8 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-**0.7.6 and 0.7.5 use protocol 184**, incorporating stationary building combat, campaign,
+**The current development build uses protocol 185** for the doubled sight/radar
+match option. All participants need that build. Released **0.7.6 and 0.7.5 use protocol 184**, incorporating stationary building combat, campaign,
 area-clearing, and naval fixes. Version 0.7.1 uses 179; these versions cannot
 mix in a match.
 Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.

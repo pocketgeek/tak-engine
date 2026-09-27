@@ -1207,16 +1207,21 @@ int main(int argc, char** argv) {
             gameView->beginFrame();
             bool cont = gameView->mpAutoStep(mpHeadless, mapId, crusades);
             gameView->endFrame();
-            // The game ENDING is an exit condition, not just the clock running out.
-            // Once a team wins, simStep stops draining bundles (the drain loop is
-            // gated on outcome_ == 0), so netTick_ freezes and the tick limit below
-            // is never reached -- this loop would spin on SDL_Delay forever. Worse,
-            // a frozen spectator stops acking, and the server, pacing an all-AI room
-            // to its slowest consumer, parks exactly kMaxLeadTicks past that stale
-            // ack and holds the room open with nobody left to end it. A 32-run desync
-            // sweep lost 16 runs to that wedge (each alive 5h+ for a 65-minute cap)
-            // and starved 5 more that never got a job slot.
-            if (!cont || gameView->outcomePublic() != 0) break;
+            // Ordinary headless runs finish at their result. The defeat probe waits
+            // for the same three-second transition the interactive client uses.
+            static uint64_t defeatAt = 0;
+            const bool defeatProbe = tak::devFlag("TAK_DEFEAT_TEST");
+            if (defeatProbe && gameView->outcomePublic() < 0 && !defeatAt)
+                defeatAt = SDL_GetTicks64();
+            if (defeatProbe && gameView->menuRequested()) {
+                const uint64_t delay = SDL_GetTicks64() - defeatAt;
+                if (!defeatAt || delay < 2950 || delay > 4000)
+                    throw std::runtime_error("defeat results transition did not take three seconds");
+                std::fprintf(stderr, "PASS: automatic defeat results after %llu ms at tick %u\n",
+                             (unsigned long long)delay, gameView->netTick());
+                break;
+            }
+            if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
             if (int(gameView->netTick()) >= limitTicks) break;
             SDL_Delay(bench ? 16 : 2);   // ~60 fps for the benchmark
         }

@@ -143,6 +143,7 @@
         cfg.mapPath = mapPath_;
         cfg.unitCap = room.opts.unitCap;
         cfg.monarchExpendable = room.opts.monarchExpendable != 0;
+        cfg.doubleSight = room.opts.doubleSight != 0;
         cfg.stressTest = room.opts.stressTest != 0;
         cfg.benchmark = room.opts.benchmark;
         cfg.randomStarts = room.opts.randomStarts != 0;
@@ -176,7 +177,7 @@
         // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
         world_.setVisPlayer(localPlayer_);
-        world_.setFogExplored(room.opts.fogExplored == 1 || missionPreMapped_);
+        if (room.opts.fogExplored == 1) world_.revealTerrain();
         // A mission overrides the room's fog rule with its own: lineofsight=0 plays
         // revealed, mapping=1 starts the terrain explored. Display-only either way.
         if (missionFullVision_) noFog_ = true;
@@ -268,8 +269,18 @@
     }
 
     bool GameView::mpStep() {
+        if (outcome_ < 0 && !spectating_ && !replayMode_ && missionStem_.empty()) {
+            const uint64_t now = SDL_GetTicks64();
+            if (!defeatStartedMs_) defeatStartedMs_ = now;
+            if (now - defeatStartedMs_ >= 3000) menuRequested_ = true;
+        }
+
         if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
         if (mp_->desynced()) { netError_ = mp_->desyncReason(); return false; }
+#ifndef NDEBUG
+        // Regression probe: an eliminated, non-acking client must not stall survivors.
+        if (outcome_ < 0 && tak::devFlag("TAK_DEFEAT_STALL")) return true;
+#endif
         // Send at the rate the server DRAINS (kCmdCapPerTick per sim tick), metered
         // by elapsed ticks rather than by frames. Two earlier versions of this were
         // both frame-coupled: flushing the whole outbox every render step offered
@@ -398,7 +409,7 @@
         }
         if (netDelay_ <= 0) {
             // Default: drain to the newest delivered bundle every frame.
-            while (outcome_ == 0 && drained < 512 && mp_->takeBundle(netTick_, bd)) simTick();
+            while (drained < 512 && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: 0 ticks played this frame while future bundles ARE
             // buffered means the one we need is late (head-of-line block) -- a stall.
             ++netBenchFrames_;
@@ -432,7 +443,7 @@
             // -- fast-forward it back down to the target reserve instead of pacing.
             if (buffered > netDelay_ + 60) budget = 512;
             budget = std::min(budget, 512);
-            while (outcome_ == 0 && drained < budget && mp_->takeBundle(netTick_, bd)) simTick();
+            while (drained < budget && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: the wall clock wanted more ticks than we could play
             // because the next bundle isn't buffered yet (jitter exceeded the
             // reserve). One count per starved frame.
@@ -667,6 +678,7 @@ void GameView::autoplayStep() {
                 o.randomStarts = tak::devFlag("TAK_RANDOM_STARTS") ? 1 : 0;
             o.monarchExpendable = tak::devFlag("TAK_MONARCH_EXPENDABLE") ? 1 : 0;
             o.forfeitSelfDestruct = tak::devFlag("TAK_FORFEIT_SELFDESTRUCT") ? 1 : 0;
+            o.doubleSight = tak::devFlag("TAK_DOUBLE_SIGHT") ? 1 : 0;
             // TAK_FOG=0|1|2 forces the room's fog rule (not explored / explored /
             // full vision) so the setting can be tested end to end without driving
             // the lobby by hand.
@@ -798,7 +810,7 @@ void GameView::autoplayStep() {
             bool spec = mp_->isSpectator();
             mp_->clearRejoin();
             world_.resetForReplay();
-            netTick_ = 0; outcome_ = 0; netError_.clear();
+            netTick_ = 0; outcome_ = 0; defeatStartedMs_ = 0; netError_.clear();
             // Replaying history from tick 0: hold our own orders and stop counting
             // acknowledgements until the log is spent (see cmdCatchUp_).
             // The SERVER says where history ends; we do not guess (see
@@ -842,6 +854,14 @@ void GameView::autoplayStep() {
         } else if (st == S::InGame) {
 #ifndef NDEBUG
             autoplayStep();   // TAK_AUTOPLAY: headless humans that actually give orders
+            // Exercise defeat through the ordinary synchronized Ctrl+D command.
+            if (tak::devFlag("TAK_DEFEAT_TEST") && !debugDefeatSent_ && netTick_ >= 60) {
+                for (const auto* u : front().live) {
+                    if (u->player != localPlayer_ || !u->type || !u->type->commander) continue;
+                    tak::net::Command c; c.kind = tak::net::Cmd::Destroy; c.unitId = u->id;
+                    issue(c); debugDefeatSent_ = true; break;
+                }
+            }
 #endif
             return mpStep();
         }

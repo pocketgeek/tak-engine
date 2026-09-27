@@ -54,6 +54,7 @@ int main() {
     }
     for (int step=0;step<16;++step) {
         for (auto* world:{&serial,&parallel}) {
+            world->setDoubleSight(step>=8);
             world->setTeam(1,step<8 ? 0 : 1);
             for (size_t i=0;i<world->units().size();++i) {
                 auto& u=world->units()[i];

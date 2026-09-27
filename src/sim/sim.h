@@ -1615,9 +1615,12 @@ public:
     // Draw a loaded, paused campaign before its first simulation tick. This
     // initializes only the local display fog, never authoritative exploration.
     void prepareInitialVisibility() { if (!visHavePass_) updateVisibility(); }
-    // Fog-of-war memory (client display only, never hashed): true = a seen cell stays
-    // EXPLORED (dimmed) when it leaves sight; false = NOT EXPLORED -- it reverts to dark.
-    void setFogExplored(bool e) { fogExplored_ = e; }
+    // Start with terrain mapped; current enemy visibility is still line-of-sight gated.
+    // Call during setup, before visibility work starts. Display-only, never hashed.
+    void revealTerrain() { for (auto& v : vis_) if (v == 0) v = 1; ++visGen_; }
+    void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
+    int32_t sightDistance(const UnitType& type) const { return type.sight * (doubleSight_ ? 2 : 1); }
+    int32_t radarDistance(const UnitType& type) const { return type.radar * (doubleSight_ ? 2 : 1); }
     // Monarch-expendable rule (net GameOptions): when FALSE, losing your Monarch
     // (a commander unit) loses you the game even if other units survive.
     void setMonarchExpendable(bool e) { monarchExpendable_ = e; }
@@ -2145,7 +2148,7 @@ private:
 
     std::vector<uint8_t> vis_;
     int visPlayer_ = 0;
-    bool fogExplored_ = true;   // keep seen cells dimmed (vs. reverting to dark); display-only
+    bool doubleSight_ = false;  // synchronized skirmish/MP rule; campaigns use authored sight
     int visW_ = 0, visH_ = 0;
     // Client-local fog acceleration: the LoS-tested cell set for a (sight, radar,
     // cell) combination is a pure function of the IMMUTABLE heightmap, so it is

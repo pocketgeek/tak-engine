@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 184;      // 184: stationary buildings aim without rotating their bodies
+constexpr uint32_t kNetVersion = 185;      // 185: synchronized double-sight/radar match option
+                                           // 184: stationary buildings aim without rotating their bodies
                                            // 182: authoritative area reclaim command and target selection
                                            // 181: reject building yards extending into the map border
                                            // 180: water-yard building placement follows retail waterline rules
@@ -314,8 +315,8 @@ struct GameOptions {
     // its faction's combat units the moment the game starts, to load-test the sim.
     uint8_t stressTest = 0;
     // Fog of war (client-only display, never hashed -- every client applies the
-    // same room rule, so it stays fair): 0 = NOT EXPLORED (cells go dark again the
-    // moment they leave sight), 1 = EXPLORED (seen terrain stays dimmed-visible),
+    // same room rule, so it stays fair): 0 = NOT EXPLORED (terrain starts hidden),
+    // 1 = EXPLORED (terrain starts mapped). Both retain seen terrain under fog;
     // 2 = FULL VISION (no fog at all: the whole map and every unit are visible).
     // Host-set in the room.
     // Random Start Locations: 0 = fixed (slot N always takes the map's Nth start,
@@ -323,6 +324,7 @@ struct GameOptions {
     // Deterministic -- derived from the match seed, so every peer agrees.
     uint8_t randomStarts = 0;
     uint8_t fogExplored = 1;
+    uint8_t doubleSight = 0;   // skirmish/MP only; ignored for campaign missions
     // Benchmark INTENSITY: 0=off, 1=Low..6=Extra Absurd -- an all-AI perf run with a spawn ramp
     // (see MatchConfig::benchmark). Deterministic, so it IS part of the hashed sim.
     uint8_t benchmark = 0;

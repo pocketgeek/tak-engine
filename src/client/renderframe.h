@@ -60,7 +60,10 @@ struct UnitR {
     int scriptHealthPercent = 100;
     bool yardOpen = false;
     std::vector<const tak::sim::UnitType*> buildQueue;
-    std::vector<tak::sim::Order> orders;
+    std::vector<tak::sim::Order> orders, rally;
+    const std::vector<tak::sim::Order>& displayedOrders() const {
+        return type && type->isStructure() && type->producesUnits() ? rally : orders;
+    }
     // Construction still pending anywhere in the queue (builds are ordinary
     // orders now, so this is just "is one of them a build").
     bool hasQueuedBuild() const {

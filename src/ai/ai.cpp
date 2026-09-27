@@ -434,7 +434,7 @@ bool Controller::nearestVisibleEnemy(const tak::sim::World& world, float cx, flo
     for (auto& u : world.units())
         if (u.alive() && u.player == player_ && u.type && !u.embarked() &&
             !u.underConstruction) {   // a half-built unit has no eyes yet
-            float s = std::max(u.type->sight, u.type->radar);
+            float s = std::max(world.sightDistance(*u.type), world.radarDistance(*u.type));
             eyes.push_back({u.x.toFloat(), u.z.toFloat(), s * s});
         }
     if (eyes.empty()) return false;

@@ -41,6 +41,7 @@ static ReplayHeader sample() {
     h.monarchExpendable = 1;
     h.stressTest = 1;
     h.randomStarts = 1;
+    h.doubleSight = 1;
     h.benchmark = 4;
     h.seed = 0xabcdef01u;
     h.dataHash = 0x0123456789abcdefull;
@@ -74,6 +75,7 @@ int main() {
         check(out.engineVersion == in.engineVersion, "engine version");
         check(out.seed == in.seed, "seed (was recorded, then discarded by the loader)");
         check(out.randomStarts == in.randomStarts, "randomStarts (shuffled start positions)");
+        check(out.doubleSight == in.doubleSight, "double sight survives recording");
         check(out.benchmark == in.benchmark, "benchmark intensity (the staged spawns)");
         check(out.dataHash == in.dataHash, "gameplay data hash");
         check(out.unitCap == in.unitCap, "unitCap");

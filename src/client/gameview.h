@@ -2074,6 +2074,10 @@ private:
     float lobbyOffX_ = 0, lobbyOffY_ = 0;   // lobby centre offset (logical units; set in render)
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false;
+    bool createDoubleSight_ = false;
+#ifndef NDEBUG
+    bool debugDefeatSent_ = false;
+#endif
     // Fog of war, chosen at CREATE time (0 = not explored, 1 = explored,
     // 2 = full vision). It is a room setting like the rest, so it belongs where
     // the room is set up -- the host could previously only change it after the
@@ -3365,6 +3369,7 @@ private:
     std::vector<tak::cob::Vm*> vmTick_;     // scratch list for the parallel pass
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
+    uint64_t defeatStartedMs_ = 0;   // main-thread wall clock, independent of sim speed/pause
     std::atomic<int> outcome_{0};   // 0 = playing, 1 = victory, -1 = defeat (worker writes, main reads)
     // TAK_FAKE_DESYNC=TICK: report a wrong hash from this tick on (see reportedHash).
     // Debug-only -- devEnv reads no environment at all in a release build, so this is

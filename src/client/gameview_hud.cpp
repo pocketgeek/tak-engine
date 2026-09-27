@@ -1211,6 +1211,7 @@ namespace {
         };
         bool mobile = front->type->maxVel > tak::sim::Fixed();        // inverse of isStructure()
         bool armed = !front->type->weapons.empty();
+        const bool rally = front->type->producesUnits();
         // The five order slots sit at fixed .gui positions that nothing else uses, so
         // retail keeps them on screen and swaps in the Disabled face when the order
         // doesn't apply (Gadget slot 0). Emitting them as UPPERCASE marks them
@@ -1218,8 +1219,8 @@ namespace {
         // The context slots below OVERLAP each other (HEAL/LOAD share one rect, CLEAR/
         // UNLOAD another, cloak/power a third), so those must stay hidden, never
         // blanked -- retail hides those the same way.
-        add("MOVE", mobile ? 'm' : 'M');
-        add("PATROL", mobile ? 'p' : 'P');
+        add("MOVE", (mobile || rally) ? 'm' : 'M');
+        add("PATROL", (mobile || rally) ? 'p' : 'P');
         add("GUARD", mobile ? 'g' : 'G');
         add("ATTACK", armed ? 'a' : 'A');
         add("STOP", 's');
