@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.5-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.6-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -16,7 +16,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
 <table>
   <tr>
-    <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Zhon conjurers and their army during an eight-AI benchmark"></a><br><sub>Zhon forces on Ulasem Arena</sub></td>
+    <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Aramon barracks and troops in the local development demo"></a><br><sub>Aramon on Ulasem Arena</sub></td>
     <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna ships fighting on the water at Cairbray Coast Landing"></a><br><sub>Naval combat on Cairbray Coast Landing</sub></td>
   </tr>
   <tr>
@@ -29,7 +29,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured in v0.7.5. Army view: built-in benchmark. Naval view: development demo. Results: sample statistics.</sub>
+<sub>Captured in v0.7.6. Army and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -41,7 +41,22 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.5
+## New in 0.7.6
+
+- **Stream title and lobby music:** broadcasts now include the front-end music
+  at your current music/master volume, switching to mixed game audio when the
+  match starts. YouTube receives stereo AAC at 44.1 kHz / 128 Kbps.
+- **Monarch attack warning:** the original AlarmMon sound plays when your monarch
+  takes damage, including off-screen and splash hits, with a 15-second cooldown.
+- **Group recall:** press **1–0** once to select a group or formation without
+  moving the camera; press the same number again to track it. Holding a number
+  does not count as a second press.
+- **Scoring documentation:** the results screen already uses retail's authored
+  kill values; the guide now explains scoring and the differences between balance modes.
+
+See the [0.7.6 validation report](docs/release-0.7.6-validation.md) for test and remote-sweep results.
+
+### Also included from 0.7.5
 
 - **YouTube streaming:** start from Settings or F9, paste a stream key, and stream
   through the bundled encoder. Defaults are **Max 3840 / 60 FPS**; the width cap
@@ -62,7 +77,7 @@ the GOG edition, supplies the game data.
 
 ## Download
 
-Get **version 0.7.5** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.6** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -266,7 +281,7 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-**0.7.5 uses protocol 184**, incorporating stationary building combat, campaign,
+**0.7.6 and 0.7.5 use protocol 184**, incorporating stationary building combat, campaign,
 area-clearing, and naval fixes. Version 0.7.1 uses 179; these versions cannot
 mix in a match.
 Version 0.7.0 uses 177. Older incompatible clients and recordings are rejected.

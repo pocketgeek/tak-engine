@@ -21,8 +21,8 @@ struct MenuMusicTestAccess {
         for(int i=0;i<rate*channels;++i) {
             auto* out=music.src_.data()+i*bytes;
             if(format==AUDIO_U8)*out=160;
-            else if(format==AUDIO_F32SYS) {float value=.25f;std::memcpy(out,&value,4);}
-            else {int16_t value=8192;std::memcpy(out,&value,2);}
+            else if(format==AUDIO_F32SYS) {float value=channels==2 && i%2 ? -.125f : .25f;std::memcpy(out,&value,4);}
+            else {int16_t value=channels==2 && i%2 ? -4096 : 8192;std::memcpy(out,&value,2);}
         }
         music.resetTapConverter();
     }
@@ -53,8 +53,11 @@ int main(int argc,char**argv) {
             for(int i=0;i<100;++i)tak::MenuMusicTestAccess::fill(music,rate/50);
             const size_t frames=capture.pcm.size()/2;
             if(frames<21000 || frames>22100)throw std::runtime_error("wrong resampled duration");
-            if(std::abs(int(capture.pcm[capture.pcm.size()/2])-4096)>20)
+            const size_t middle=(capture.pcm.size()/4)*2;
+            if(std::abs(int(capture.pcm[middle])-4096)>20)
                 throw std::runtime_error("music volume not reflected in stream");
+            if(std::abs(int(capture.pcm[middle+1])-(channels==1?4096:-2048))>20)
+                throw std::runtime_error("stereo channels lost during menu capture");
             music.setVolume(0,128);
             for(int i=0;i<20;++i)tak::MenuMusicTestAccess::fill(music,rate/50);
             if(std::abs(int(capture.pcm.back()))>1)throw std::runtime_error("master mute not reflected");
