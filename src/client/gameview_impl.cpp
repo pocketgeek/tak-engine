@@ -1206,6 +1206,10 @@
             const auto before=featureSmokeSprites_[78][0].particle.position;
             const auto countdown=featureSmokeSprites_[78][0].particle.countdown;
             SmokeTick second;second.tick=front().gameTick-2;second.windX=123;second.windZ=-45;
+            // Active burns send a tick event even when they emit no new smoke.
+            // Finished burns stop advancing their feature-owned particles.
+            second.features.push_back({78,"vertree01",{0,0,0},0});
+            second.features.back().emit=false;
             SmokeTick third=second;third.tick=front().gameTick-1;third.removedFeatures={77};
             smokeTickQueue_.push_back(second);smokeTickQueue_.push_back(third);consumeSmokeTicks();
             const auto after=featureSmokeSprites_[78][0].particle;

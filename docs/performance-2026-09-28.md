@@ -163,3 +163,16 @@ also fails its delayed tick/retirement motion assertion in both binaries; that
 legacy probe remains unresolved. Feature generation/lifecycle and smoke checks
 in CTest pass, as does the real-art `TAK_FEATURE_CACHE_TEST`. Neither the timed
 capture nor the failing legacy probe is counted as successful validation.
+
+### Follow-up: smoke probe corrected
+
+The smoke-queue probe omitted active-feature tick events from its two delayed
+ticks. The renderer advances feature-owned smoke when those events arrive;
+events with `emit=false` advance existing particles without creating new ones.
+The probe now supplies those events for its surviving feature. It passes its
+capacity, motion, single-consumption and retirement-isolation assertions with
+native animation export verification enabled. This corrects the old probe's
+input, not engine smoke behavior. The dragon/tree flame capture remains open.
+
+The `41f9e72` Linux, Windows, macOS and determinism CI runs all completed
+successfully. Native Windows/macOS performance measurements remain outstanding.
