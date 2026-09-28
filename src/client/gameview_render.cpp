@@ -2151,6 +2151,7 @@
     }
 
     void GameView::invalidateRenderTargets() {
+        mapView_.invalidateRenderTargets();
         fogMeshValid_ = false;
         distantModelCache_.clear();
         for(auto& geometry:geomPool_)geometry.geometryKey.clear();

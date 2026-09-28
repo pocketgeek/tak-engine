@@ -323,6 +323,34 @@ static void rallyIsAdopted() {
 // ---------------------------------------------------------------------------
 // 3. A rally set BEFORE anything is built still applies, and re-setting replaces.
 // ---------------------------------------------------------------------------
+static void mobileRallyIsAdopted() {
+    World& w = *makeWorld(160, 160);
+    UnitType builder = factoryType(), sol = soldierType();
+    builder.maxVel = sol.maxVel; builder.canMove = true;
+    const int id = w.spawn(&builder, 600, 600, 0, 0);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.order(id, 1500, 600, false);
+    w.patrolTo(id, 1500, 1000, true);
+    const auto queue = w.unit(id)->buildQueue;
+    check(queue.size()==1 && w.unit(id)->orders.empty(), "mobile rally preserves active production");
+    int child = 0;
+    for (int tick=0; tick<900 && !child; ++tick) {
+        w.tick(1.0f / 30.0f);
+        for (const auto& u : w.units())
+            if (u.id!=id && u.alive() && !u.underConstruction) child=u.id;
+    }
+    const Unit* output = w.unit(child);
+    check(output && output->orders.size()>=2 && output->orders.back().patrol &&
+          output->orders.back().x==Fixed::fromInt(1500) && output->orders.back().z==Fixed::fromInt(1000),
+          "mobile producer output inherits queued move and patrol rally");
+    check(w.unit(id)->x==Fixed::fromInt(600) && w.unit(id)->z==Fixed::fromInt(600),
+          "producing builder does not follow output rally");
+    w.stop(id);
+    check(!w.unit(id)->repeatType && w.unit(id)->buildQueue.empty(), "Stop cancels mobile repeat production");
+    delete &w;
+}
+
 static void rallyReplaces() {
     std::printf("re-setting a rally replaces it (unqueued):\n");
     World& w = *makeWorld(160, 160);
@@ -452,6 +480,34 @@ static void repairParticles() {
           "finished repair stops emission and lets existing particles drain");
 }
 
+// Structures must never reach navigation steering at the edge of weapon range.
+static void defensiveBodyStaysFixed() {
+    for (bool canMove : {false, true}) for (float distance : {200.f,490.f,700.f}) {
+        World& w=*makeWorld(128,128);
+        UnitType tower=factoryType(),enemy=soldierType();
+        tower.isBuilder=false;tower.canMove=canMove;tower.turnRate=500;
+        tower.sight=1000;
+        Weapon weapon;weapon.range=500;weapon.damage=1;weapon.reload=1;
+        tower.weapon=weapon;tower.weapons.push_back(weapon);
+        enemy.maxHp=10000;
+        w.setPlayerCount(2);
+        const int id=w.spawn(&tower,1000,1000,0,0);
+        const int target=w.spawn(&enemy,1000+distance,1000,0,1);
+        const auto heading=w.unit(id)->heading;
+        w.attack(id,target,false);
+        bool fixed=true;
+        for(int tick=0;tick<90;++tick) {
+            w.tick(1.f/30);
+            const auto* u=w.unit(id);
+            fixed &= u->heading==heading && u->x==Fixed::fromInt(1000) &&
+                     u->z==Fixed::fromInt(1000);
+        }
+        check(fixed,"defensive body stays fixed at every attack distance",
+              std::to_string(distance)+(canMove ? " canmove" : " immobile"));
+        delete &w;
+    }
+}
+
 int main() {
     std::printf("production_test\n");
     {
@@ -476,6 +532,7 @@ int main() {
         check(count(0,&limited)==1 && count(1,&limited)==1,
               "benchmark can replace a dead limited unit without exceeding its cap");
     }
+    defensiveBodyStaysFixed();
     repairParticles();
     mobileProducerFacesSite();
     productionNeedsMana();
@@ -485,6 +542,7 @@ int main() {
     outputDoesNotJam();
     rallyIsAdopted();
     rallyReplaces();
+    mobileRallyIsAdopted();
     std::printf(g_fail ? "production_test: %d FAILURE(S)\n" : "production_test: all passed\n",
                 g_fail);
     return g_fail ? 1 : 0;

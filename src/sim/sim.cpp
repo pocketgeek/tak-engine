@@ -1533,7 +1533,7 @@ void World::dropLeg(Unit& u) {
     u.orders.erase(u.orders.begin(), u.orders.begin() + long(end) + 1);
 }
 
-// A move/attack/patrol order aimed at a PRODUCTION BUILDING sets its rally instead:
+// Production buildings and infinitely producing mobile builders hold rally orders:
 // the building cannot go anywhere itself, but the units it makes can. Returns true
 // when the order was consumed as a rally, so the caller stops there.
 //
@@ -1541,7 +1541,7 @@ void World::dropLeg(Unit& u) {
 // appends, so a player can lay out "move here, then fight-move there, then patrol"
 // and every unit off the line follows the whole plan.
 bool World::setRally(Unit& u, const Order& o, bool queue) {
-    if (!u.type || !u.type->producesUnits()) return false;
+    if (!u.type || (!u.type->producesUnits() && !u.repeatType)) return false;
     if (!queue) u.rally.clear();
     u.rally.push_back(o);
     u.rally.back().goal = true;          // each issued rally step is its own leg
@@ -1585,7 +1585,7 @@ void World::order(int unitId, float x, float z, bool queue) {
     // BUILDING accept a move order -- it could not go anywhere, but the mover still
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
-    if (u->type->isStructure()) { setRally(*u, Order{Fixed::fromFloat(x), Fixed::fromFloat(z), 0}, queue); return; }
+    if (u->type->isStructure() || u->repeatType) { setRally(*u, Order{Fixed::fromFloat(x), Fixed::fromFloat(z), 0}, queue); return; }
     // A replacement owns a fresh search, even for another click in the same
     // cell. Cadence retries within the same order may retain search progress.
     if (!queue) {
@@ -3174,7 +3174,7 @@ void World::patrol(int unitId, float x, float z) {
     // BUILDING accept a move order -- it could not go anywhere, but the mover still
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
-    if (u->type->isStructure()) {
+    if (u->type->isStructure() || u->repeatType) {
         // The rally patrols between the building and the clicked point: a unit off the
         // line walks out and then loops, which is what a patrol rally means.
         //
@@ -3221,7 +3221,7 @@ void World::patrolTo(int unitId, float x, float z, bool queue) {
     // BUILDING accept a move order -- it could not go anywhere, but the mover still
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
-    if (u->type->isStructure()) {
+    if (u->type->isStructure() || u->repeatType) {
         Order o{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};
         o.patrol = true;
         o.attackMove = true;
@@ -8189,6 +8189,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         });
         if (threat) u.orders.erase(u.orders.begin());
     } else {
+        // Buildings can retain attack orders outside the combat hold radius.
+        // They have no movement controller: even a zero-speed navigator turns
+        // the body while steering. Keep script-driven turrets independent.
+        if (u.type->isStructure()) return;
         // Goal satisfaction belongs to the mission, independently of the
         // navigator's next intermediate point (retail 0x4e5150). A stale
         // waypoint can be occupied even after we have reached the goal area.

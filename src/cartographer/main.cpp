@@ -800,6 +800,8 @@ int main(int argc, char** argv) {
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if(e.type==SDL_RENDER_TARGETS_RESET || e.type==SDL_RENDER_DEVICE_RESET)
+                mapView.invalidateRenderTargets();
             // Map input from physical window pixels into the logical draw space.
             if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
                 e.button.x /= kUIScale; e.button.y /= kUIScale;

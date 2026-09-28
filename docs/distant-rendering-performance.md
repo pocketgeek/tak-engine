@@ -73,3 +73,70 @@ three pixels on the animated monarch and the changing HUD, with the remaining
 map viewport identical. The software screenshot path has pre-existing tiny-fog
 rasterization artifacts, so it was not used to claim visual equivalence.
 Both the Release client and optimized Debug client were rebuilt.
+
+## Initial screen-view cache (2026-09-28, superseded below)
+
+Wide stationary views now retain the fully rendered terrain image, eliminating
+repeated submission of hundreds of thousands of tile quads. This preserves the
+output resolution, antialiasing scale, texture filtering and viewport exactly;
+it does not replace terrain with the minimap. Units, scenery and fog remain live
+and draw afterward.
+
+The cache activates at zoom <= 0.25 with at least 100,000 tile vertices. A moving
+camera uses direct geometry; after it settles, the next frame bakes the cache.
+Camera changes, uploaded sections, map edits, filtering changes, output size,
+antialiasing, clipping and renderer resets invalidate it. The single texture is
+bounded to 256 MiB and the shared GPU budget; unsupported or oversized targets
+keep direct rendering. Zooming back in releases it. Development builds can
+compare with `TAK_TERRAIN_CACHE_OFF=1`.
+
+`terrain_cache_test` compares direct, freshly cached and reused pixels at scales
+1, 1.5 and 2, with nearest and bilinear filtering, an offset viewport and clipping.
+It also checks map edits, renderer reset and texture cleanup. Comparisons passed
+with SDL software and Mesa software OpenGL. There was no physical GPU exposed
+in this session, so these checks do not establish a hardware FPS improvement.
+Panning still rebuilds the terrain batches; this change addresses the persistent
+cost after zooming out and stopping the camera.
+
+The same pixel checks also passed on **Ultima Online B1 (1008 x 1008 blocks)**
+at zoom 0.05. An isolated stationary terrain run on Mesa software OpenGL,
+1280 x 960, with readback each frame to force completion, measured 168.95 ms
+without the image cache and 2.85 ms with it. This is a CPU-rendered terrain-only
+comparison, not a whole-game result or a prediction of physical-GPU FPS.
+
+## Persistent map-space terrain chunks (2026-09-28)
+
+The screen-view image cache has been replaced with reusable 1024-world-pixel
+terrain chunks. They remain valid when the camera pans, changes zoom, changes
+viewport, or changes filtering. Six resolution levels cover full detail through
+1/32 scale. A worker generates each section's mip images with repeated 2x2 area
+averaging, then composes chunk pixels from those section images. A one-texel
+border contains the actual neighbouring terrain for filtering at chunk edges.
+
+The selected level normally meets the physical output pixel density, including
+antialiasing. When that would exceed the cache budget, it can choose a coarser
+level that still meets logical-pixel density. GPU images share a 256 MiB budget
+and evict the least recently used offscreen chunks. Current visible chunks are
+protected. Consequently previously evicted regions may need preparation again;
+the whole map at every resolution is not permanently resident.
+
+Worker requests contain snapshots of tile references, so map edits cannot race
+composition. Pending jobs and finished CPU images are bounded; main-thread
+uploads have an 8 MiB budget (at most 64 small images) per frame. The ordinary
+tile renderer fills regions whose chunks are not ready or cannot fit in memory.
+Map edits, reloads and renderer resets invalidate chunks. No render targets are
+required for the chunk images, and no new dynamic dependencies were introduced.
+
+Validation covers panning without new uploads, returning to an existing zoom
+level, filtering changes without rebaking, AA scale and viewport preservation,
+map edits, stale-job rejection through resets, and GPU accounting at teardown.
+Full-resolution pixels on both sides of chunk boundaries match the independent
+CPU terrain compositor. Software and Mesa OpenGL runs include Ultima Online B1.
+
+A moving-camera, terrain-only run on Ultima Online B1, zoom 0.05, 1280 x 960,
+Mesa software OpenGL with a readback every frame measured **167.98 ms/frame**
+with the earlier screen-view cache and **5.03 ms/frame** with persistent chunks.
+The measured pan uploaded one newly exposed edge chunk; retained images were
+reused. The cache occupied about **8.97 MiB**. This is not a physical-GPU or
+whole-game FPS measurement. `TAK_TERRAIN_CACHE_OFF=1` retains the direct tile
+path for development comparisons.

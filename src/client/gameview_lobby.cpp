@@ -312,6 +312,11 @@ std::string mapDisplayName(const std::string& id) {
               [this] { createCrusades_ = !createCrusades_; }); y += 34;
         lbBtn(x, y, 240, 26, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
               [this] { createDoubleSight_ = !createDoubleSight_; }); y += 34;
+        lbBtn(x,y,240,26,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this] {
+            static constexpr uint16_t limits[]={250,500,1000,2000};
+            auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
+            createUnitCap_=at==std::end(limits) || ++at==std::end(limits) ? limits[0] : *at;
+        }); y+=34;
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
         lbBtn(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
@@ -355,6 +360,7 @@ std::string mapDisplayName(const std::string& id) {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
             o.overridePolicy = createOverride_;
             o.doubleSight = createDoubleSight_ ? 1 : 0;
+            o.unitCap = createUnitCap_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
             o.randomStarts = createRandomStarts_ ? 1 : 0;
@@ -687,18 +693,10 @@ std::string mapDisplayName(const std::string& id) {
                 auto o = mpRoom().opts; o.speedUnlock = o.speedUnlock ? 0 : 1;
                 mp_->setGameOptions(o); });
         }
-        // Per-player unit cap (host cycles 250/500/1000/2000; everyone sees it).
+        // Unit limit is selected at creation; the room only displays it.
         y += 34;
         char cb[40]; std::snprintf(cb, sizeof cb, "UNIT CAP  %d", int(room.opts.unitCap));
         blockText(cb, x, y + 6, 2.0f, {205, 210, 225, 255});
-        if (host) {
-            lbBtn(x + 220, y, 90, 26, "CHANGE", true, [this] {
-                static const uint16_t seq[] = {250, 500, 1000, 2000};
-                auto o = mpRoom().opts; int idx = 3;   // default 2000
-                for (int k = 0; k < 4; ++k) if (seq[k] == o.unitCap) idx = k;
-                o.unitCap = seq[(idx + 1) % 4];
-                mp_->setGameOptions(o); });
-        }
         if (room.mission.empty()) {
             blockText(room.opts.doubleSight ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF",
                       x + 330, y + 6, 1.6f, {205, 210, 225, 255});

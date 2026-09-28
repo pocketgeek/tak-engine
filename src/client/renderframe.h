@@ -65,7 +65,7 @@ struct UnitR {
     std::vector<const tak::sim::UnitType*> buildQueue;
     std::vector<tak::sim::Order> orders, rally;
     const std::vector<tak::sim::Order>& displayedOrders() const {
-        return type && type->isStructure() && type->producesUnits() ? rally : orders;
+        return type && (type->producesUnits() || repeatType) ? rally : orders;
     }
     // Construction still pending anywhere in the queue (builds are ordinary
     // orders now, so this is just "is one of them a build").

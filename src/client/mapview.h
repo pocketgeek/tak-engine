@@ -1,7 +1,7 @@
 #pragma once
 
 // Terrain map view: pans/zooms a TNT map and composites its tile chunks on a
-// background worker thread (see chunkWorkerLoop in mapview.cpp). Extracted from
+// background worker thread (TerrainChunks). Extracted from
 // client/main.cpp; kept at global scope so its unqualified use sites there are
 // unchanged.
 //
@@ -15,6 +15,7 @@
 #include "terrain/terrain.h"   // tak::terrain::Compositor (by-value member)
 #include "tnt/tnt.h"           // tak::tnt::Map (by-value member)
 #include "client/geometrysubmit.h"
+#include "client/terrainchunks.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -63,6 +64,8 @@ public:
     // rectangle. The owner sets this (GameView's minimap texture); null = none.
     void setUnderlay(SDL_Texture* t) { underlay_ = t; }
 
+    void invalidateRenderTargets();
+
     void draw(int winW, int winH);
 
     // Bilinear terrain scaling (retail's video option). Applies to already-built
@@ -83,7 +86,8 @@ public:
     // features, then call tilesEdited() so any newly-referenced section textures
     // decode+upload and the tile-quad batch rebuilds next frame.
     tak::tnt::Map& editMap() { return map_; }
-    void tilesEdited() { queueAllSections(); tileBatchDirty_ = true; }
+    void tilesEdited() { chunks_.clear(); queueAllSections(); tileBatchDirty_ = true; }
+    tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
 
 private:
     static constexpr int kBlock = 32;   // one map cell = a 32px tile
@@ -130,6 +134,9 @@ private:
     int builtW_ = -1, builtH_ = -1;
     bool tileBatchDirty_ = true;   // set when a section uploads / view changes
     void rebuildTileBatch(int winW, int winH);
+    tak::TerrainChunks chunks_{comp_};
+    uint64_t chunkRevision_=0;
+    bool chunksEnabled_=true;
 
     bool bilinear_ = false;   // smooth terrain scaling (Options; see setBilinear)
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;

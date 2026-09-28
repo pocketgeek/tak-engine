@@ -31,17 +31,19 @@ const char* const kMonarchs[5] = {"araking", "tarnecro", "vermage", "zonhunt", "
 void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command& c) {
     using tak::net::Cmd;
     // An infinitely producing mobile builder stays on that job until Stop.
+    // Move/patrol describe its output rally, without redirecting construction.
     // Gate before redirect(): rejected orders must not cancel its construction.
     // Test repeatType rather than queue size so item transitions, mana shortages
     // and blocked output positions do not briefly unlock the producer.
     const auto* producer=world.unit(c.unitId);
-    if (c.kind!=Cmd::Stop && producer && producer->type &&
-        !producer->type->isStructure() && producer->repeatType) return;
+    const bool repeatingMobile = producer && producer->type &&
+        !producer->type->isStructure() && producer->repeatType;
+    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
     };
-    auto redirect = [&] { if (!c.queue) world.cancelBuilds(c.unitId); };
+    auto redirect = [&] { if (!c.queue && !repeatingMobile) world.cancelBuilds(c.unitId); };
     switch (c.kind) {
         case Cmd::Move:
             if (owns(c.unitId)) { redirect(); world.order(c.unitId, c.x, c.z, c.queue); }
@@ -58,7 +60,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             // silently replaced the route instead of extending it -- patrolTo has
             // existed for this the whole time, used only by mission scripts.
             if (owns(c.unitId)) {
-                world.cancelBuilds(c.unitId);
+                if (!repeatingMobile) world.cancelBuilds(c.unitId);
                 if (c.queue) world.patrolTo(c.unitId, c.x, c.z, true);
                 else world.patrol(c.unitId, c.x, c.z);
             }

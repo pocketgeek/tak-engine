@@ -36,12 +36,18 @@ bypasses the shade table entirely. The distinction matters because authored row
 
 The native default light vector is `(-0.464991, 0.813733, -0.348743)`. The shade
 index is ambient 5 plus truncation of 19 times the nonnegative negated dot product
-with the normalized native face normal. The model's negative X/Z import must be
-accounted for when using engine-space normals. Owner lighting admission at
+with the normalized native face normal. The native rasterizer computes a reversed face normal. For the engine's
+outward normal, use the positive dot product with that same light vector.
+The final engine body transform already includes the authored/native half-turn;
+negating the light's X/Z components again is incorrect. That mistake darkened
+the camera-facing sides of structures, particularly the Death Totem, and was
+corrected on 2026-09-28. Owner lighting admission at
 `0x4ec4e6` uses the structure flag or the two visual overrides, then the shading
 option. The synthetic horizontal quad returns index 20 with lighting and SHADE,
-and index 15 otherwise. An additional 289 sloped faces verify the engine-space
-normal conversion and resulting intensity levels.
+and index 15 otherwise. The oracle now passes the normals of all 289 sloped faces to the actual
+production C++ shading helper and compares its intensity with native output.
+The earlier oracle checked a separately written expected equation, which missed
+the extra coordinate conversion in the production renderer.
 
 The indexed lookup is the **shade** table, not the light table: `0x4c2220` loads
 `palettes/<name>.shd`; `0x5477d0` copies its 8192 bytes to active palette `+0x28`.

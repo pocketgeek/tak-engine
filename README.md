@@ -290,8 +290,9 @@ materializes during the second half. The upgrade uses the normal advanced cost
 and build time, needs no extra unit-cap slot, and produces no mana until complete.
 Cancellation or destruction does not restore the consumed basic lodestone.
 
-A mobile builder producing an infinite queue accepts only **Stop**
-until that queue is cleared. See the [user guide](docs/user-guide.md#controls)
+While a mobile builder runs an infinite queue, **Move** and **Patrol** set rally
+orders for its produced units; **Shift** appends rally steps and displays the route.
+**Stop** cancels production and restores normal control of the builder. See the [user guide](docs/user-guide.md#controls)
 for construction and reclaim details.
 
 ## Multiplayer and replays
@@ -300,9 +301,14 @@ Choose a server through the multiplayer menu, sign in, then create or join a
 game. An unused account name is registered on first sign-in. Players connect
 to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
+Choose the per-player unit limit on the game-creation screen: the button cycles
+through 250, 500, 1,000, and 2,000. The lobby displays this value without allowing
+it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-**Versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
+The current development build uses **protocol 191**, which adds mobile infinite-production rally orders and prevents
+stationary structures from entering navigation steering. Restart/update both client and server
+together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and
 0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
 clients and recordings are rejected.

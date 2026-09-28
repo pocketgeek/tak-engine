@@ -1384,7 +1384,9 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (o.speed < 1) o.speed = 1;
             if (o.speed > 40) o.speed = 40;   // clamp 0.1x .. 4.0x
             if (!r->running) {
-                // Lobby: adopt the whole option set and rebroadcast the slot table.
+                // The unit limit is fixed when the room is created.
+                o.unitCap = r->opts.unitCap;
+                // Lobby: adopt the remaining options and rebroadcast the slot table.
                 r->opts = o;
                 broadcastLobby(*r);
             } else if (r->opts.speedUnlock && r->opts.speed != o.speed) {

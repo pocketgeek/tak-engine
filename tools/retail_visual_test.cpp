@@ -1,4 +1,5 @@
 #include "client/retailquality.h"
+#include "client/retailmodellighting.h"
 #include "client/weaponanimationqueue.h"
 #include "client/retaileffectframe.h"
 #include "client/retailfeatureclock.h"
@@ -121,6 +122,18 @@ static bool testDeathSfxLifecycle() {
 }
 
 int main(int argc,char** argv) {
+    if(argc==2 && std::strcmp(argv[1],"--model-shade")==0) {
+        float nx,ny,nz;
+        while(std::scanf("%f %f %f",&nx,&ny,&nz)==3)
+            std::printf("%d\n",tak::retailModelShadeLevel(nx,ny,nz));
+        return 0;
+    }
+    if(argc==1 && (tak::retailModelShadeLevel(0,16,0)!=20 ||
+                   tak::retailModelShadeLevel(0,0,-16)!=11 ||
+                   tak::retailModelShadeLevel(-16,0,0)!=13 ||
+                   tak::retailModelShadeLevel(16,0,0)!=5)) {
+        std::puts("FAIL: building light must illuminate camera-facing surfaces");return 1;
+    }
     if(argc==1) {
         if(!testScriptEffectPosition() || !testDeathSfxLifecycle())return 1;
         {

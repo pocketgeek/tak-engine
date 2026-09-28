@@ -6,6 +6,8 @@ polygon submission is a sink. Synthetic inputs remain in memory. This verifies
 shared model rasterization semantics used by Glide, not a whole-game capture.
 """
 import math
+import subprocess
+import sys
 import struct
 from emu import Icd, HEAP
 
@@ -61,9 +63,12 @@ for flags in range(16):
                 assert calls[0][-1] == (20 if lighting and flags & 4 else 15), calls
 print('PASS: all 16 piece flag combinations, both body cache passes, shading on/off, shadow admission')
 
-# Native importer negates engine X/Z. Test the resulting engine-normal formula
-# over sloped faces, not just a single horizontal polygon.
+# Final rendered engine vertices share the native axes: the body heading
+# already includes the authored/native half-turn. Compare the production helper
+# using the normals of these actual vertices, rather than flipping X/Z twice.
 light = struct.unpack('<3f', p.uc.mem_read(0x616440,12))
+shade_inputs=[]
+shade_expected=[]
 p.uc.mem_write(instance+0x1f6,b'\x0f\x00')
 for ax in range(-8,9):
     for az in range(-8,9):
@@ -76,7 +81,13 @@ for ax in range(-8,9):
         dot = (-light[0]*ax+light[1]*16+light[2]*az)/math.sqrt(ax*ax+256+az*az)
         expected = 5+int(19*max(0,dot))
         assert len(calls)==1 and calls[0][-1]==expected, (ax,az,calls,expected)
-print('PASS: 289 sloped native faces verify engine-normal light direction and shade levels')
+        shade_inputs.append(f'{-ax} 16 {az}')
+        shade_expected.append(expected)
+binary=sys.argv[1] if len(sys.argv)>1 else 'build-o2/retail_visual_test'
+actual=subprocess.run([binary,'--model-shade'],input='\n'.join(shade_inputs)+'\n',
+                      text=True,capture_output=True,check=True)
+assert list(map(int,actual.stdout.split()))==shade_expected, 'production model shading differs from retail'
+print('PASS: 289 sloped native faces match the production lighting helper')
 
 # Original virtual callbacks: visible/cache/shade/render are bits 0/1/2/3.
 vm = HEAP+0x20000

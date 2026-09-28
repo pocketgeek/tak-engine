@@ -359,14 +359,30 @@ int main(int argc, char** argv) {
                 check(world.stateHash()!=before,"infinite production lock participates in lockstep hash");
                 world.unit(id)->repeatType=output;
                 for (int kind=0;kind<=int(net::Cmd::SetSquad);++kind) {
-                    c.kind=net::Cmd(kind);if (c.kind==net::Cmd::Stop) continue;
+                    c.kind=net::Cmd(kind);if (c.kind==net::Cmd::Stop || c.kind==net::Cmd::Move || c.kind==net::Cmd::Patrol) continue;
                     c.targetId=enemy;c.x=1500;c.z=1500;
                     for (int queued : {0,1}) {
                         c.queue=uint8_t(queued);sim::applyCommand(world,registry,c);
                         check(world.stateHash()==before && world.unit(id)->repeatType==output,
-                              "only Stop is accepted during infinite mobile production");
+                              "unrelated commands stay rejected during infinite mobile production");
                     }
                 }
+            }
+            for (auto kind : {net::Cmd::Move, net::Cmd::Patrol}) {
+                world.unit(id)->rally.clear();
+                c.kind=kind;c.queue=0;c.x=1400;c.z=1400;c.player=1;
+                sim::applyCommand(world,registry,c);
+                check(world.unit(id)->rally.empty(),"another player cannot set producer rally");
+                c.player=0;sim::applyCommand(world,registry,c);
+                const size_t initial=world.unit(id)->rally.size();
+                check(initial==(kind==net::Cmd::Move ? 1u : 2u),"mobile producer accepts replacement rally");
+                c.queue=1;c.x=1600;sim::applyCommand(world,registry,c);
+                check(world.unit(id)->rally.size()==initial+1 &&
+                      world.unit(id)->rally.back().patrol==(kind==net::Cmd::Patrol),
+                      "queued move/patrol extends producer rally");
+                check(world.unit(id)->orders.empty() && world.unit(id)->repeatType==output &&
+                      world.unit(id)->x==sim::Fixed::fromInt(800) && world.unit(id)->z==sim::Fixed::fromInt(800),
+                      "rally commands leave the builder stationary and repeating");
             }
             c.kind=net::Cmd::Stop;c.player=1;sim::applyCommand(world,registry,c);
             check(world.unit(id)->repeatType==output,"another player cannot unlock the producer");

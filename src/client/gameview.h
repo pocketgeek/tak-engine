@@ -1,4 +1,5 @@
 #pragma once
+#include "client/retailmodellighting.h"
 
 // GameView -- the in-world game client: rendering, input, the retail HUD, fog,
 // minimap, the COB animation VM host, benchmark, lobby, and the
@@ -1875,10 +1876,7 @@ private:
                                 const float bx=c.px-a.px,by=c.py-a.py,bz=c.pz-a.pz;
                                 float nx=ay*bz-az*by,ny=az*bx-ax*bz,nz=ax*by-ay*bx;
                                 if(mirror) {nx=-nx;ny=-ny;nz=-nz;}
-                                const float length=std::sqrt(nx*nx+ny*ny+nz*nz);
-                                const float dot=length>0 ? (0.464991f*nx+0.813733f*ny+
-                                                           0.348743f*nz)/length : 0;
-                                level=std::clamp(5+int(19*std::max(0.0f,dot)),5,24);
+                                level=tak::retailModelShadeLevel(nx,ny,nz);
                             }
                             const auto& sheet=lit->second[frame];
                             tri.tex=sheet.texture;
@@ -2131,6 +2129,7 @@ private:
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false;
     bool createDoubleSight_ = false;
+    uint16_t createUnitCap_ = tak::net::GameOptions{}.unitCap;
 #ifndef NDEBUG
     bool debugDefeatSent_ = false;
 #endif

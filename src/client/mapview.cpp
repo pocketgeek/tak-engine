@@ -27,6 +27,7 @@ MapView::MapView(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, tak::tnt::Map map)
 }
 
 MapView::~MapView() {
+    invalidateRenderTargets();
     {
         std::lock_guard<std::mutex> lk(secMu_);
         secStop_ = true;
@@ -40,6 +41,7 @@ MapView::~MapView() {
 }
 
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
+    invalidateRenderTargets();
     // Quiesce the decode worker first: it reads map_, which is about to be swapped.
     {
         std::unique_lock<std::mutex> lk(secMu_);
@@ -111,10 +113,8 @@ void MapView::clampOffset(int winW, int winH) {
 }
 
 void MapView::ensureChunks(int winW, int winH) {
-    // (Kept name: the call sites are unchanged.) Adopt any sections the worker
-    // decoded since last frame; that's all the per-frame texture work now --
-    // there is no per-view streaming/eviction. The map's whole section set
-    // (~7 MiB) is resident once decoded, resolution-independent.
+    // Keep the small source-section set resident for immediate fallback while
+    // TerrainChunks composes camera-independent images on its own worker.
     clampOffset(winW, winH);
     uploadReadySections();
 }
@@ -148,6 +148,7 @@ void MapView::rebuildTileBatch(int winW, int winH) {
         float y0 = float(std::lround((by * kBlock - offY_) * zoom_));
         float y1 = float(std::lround(((by + 1) * kBlock - offY_) * zoom_));
         for (int bx = b0x; bx <= b1x; ++bx) {
+            if(chunksEnabled_ && chunks_.covers(bx,by)) {bx=(bx/32+1)*32-1;continue;}
             size_t b = size_t(by) * mapW + bx;
             auto si = sections_.find(map_.tileKeys[b]);
             if (si == sections_.end() || !si->second.tex) continue;  // underlay shows
@@ -175,6 +176,7 @@ void MapView::rebuildTileBatch(int winW, int winH) {
     builtOffX_ = offX_; builtOffY_ = offY_; builtZoom_ = zoom_;
     builtW_ = winW; builtH_ = winH;
     tileBatchDirty_ = false;
+
 }
 
 void MapView::draw(int winW, int winH) {
@@ -190,15 +192,28 @@ void MapView::draw(int winW, int winH) {
         SDL_RenderCopy(ren_, underlay_, nullptr, &udst);
     }
 
-    // Rebuild the tile-quad batch only when the view moved or a section uploaded
-    // (idle spectating rebuilds nothing -- just re-submits the cached batch).
-    if (tileBatchDirty_ || offX_ != builtOffX_ || offY_ != builtOffY_ ||
-        zoom_ != builtZoom_ || winW != builtW_ || winH != builtH_)
-        rebuildTileBatch(winW, winH);
+    // Cached map chunks follow the camera with a few image copies. Only missing
+    // chunks use the original tile geometry while the worker prepares them.
+    chunksEnabled_=!tak::devFlag("TAK_TERRAIN_CACHE_OFF");
+    if(chunksEnabled_) {
+        chunks_.prepare(ren_,map_,offX_,offY_,zoom_,winW,winH,bilinear_);
+        const auto revision=chunks_.stats().revision;
+        if(revision!=chunkRevision_) {tileBatchDirty_=true;chunkRevision_=revision;}
+        if(chunks_.draw(ren_,offX_,offY_,zoom_)) {
+            tileBatch_.clear();tileBatchDirty_=true;return;
+        }
+    } else {chunks_.clear();tileBatchDirty_=true;}
+    const bool changed=tileBatchDirty_ || offX_ != builtOffX_ || offY_ != builtOffY_ ||
+        zoom_ != builtZoom_ || winW != builtW_ || winH != builtH_;
+    if(changed)rebuildTileBatch(winW,winH);
 
     for (auto& [tex, verts] : tileBatch_)
         if (tex && !verts.empty())
             tileSubmit_.draw(ren_, tex, verts, !tak::devFlag("TAK_TERRAIN_SDL_SUBMIT"));
+}
+
+void MapView::invalidateRenderTargets() {
+    chunks_.clear();tileBatchDirty_=true;
 }
 
 void MapView::setBilinear(bool b) {
