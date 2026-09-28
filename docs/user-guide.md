@@ -159,8 +159,9 @@ engine. Access follows the kernel perf permissions; blocked counters show N/A.
 The newer Xe driver is not yet supported by this sampler. No process-only
 utilization is substituted for unavailable system-wide readings.
 GPU readings refresh in the background so driver queries do not stall rendering.
-The **F4** player panel keeps player/team identity, defeat status and kills (plus
+The **F4** player panel keeps player/team identity, defeat status, kills and score (plus
 mana for spectators except in AI-only games); performance metrics, clocks and unit counts live in the side panel.
+The side panel also shows your kills and score below Units when playing.
 
 ### Campaigns
 
@@ -223,7 +224,7 @@ clears).
 | **Minimap orders** | with an order armed (**F**/**M**/**A**/**P**/**G**), click the minimap to issue it at that spot — e.g. **F** then a minimap click = fight-move across the map |
 | **Build queue** | at a training building: left-click **+1**, **Shift** **+5**, **Ctrl+Shift** **+10**; right-click removes the same; **Ctrl**+left starts/toggles infinite production at a stationary producer and also starts it for mobile builders. Each icon shows its queued count. (A builder that *places* things — structures, or a mobile conjurer like a Beast Handler — arms placement instead: click to position.) A mobile builder running infinite production accepts **only Stop**, which clears its queue and restores normal orders. |
 | **Reclaim** | with a mobile builder (any unit with `canreclaim`, monarchs included) selected, **right-click-drag** a box to clear it — the builder roams the area reclaiming trees, rocks, and buildings for mana (nearest first). Sacred Stones and Standing Stones are left alone. **Shift** appends the sweep to its orders. |
-| **Game** | **Pause** · **+/−** game speed (0.5×–4× in live games, including single-player; only the **host** can change it, with *in-game speed* unlocked in the lobby) · **F4** player status/kills |
+| **Game** | **Pause** · **+/−** game speed (0.5×–4× in live games, including single-player; only the **host** can change it, with *in-game speed* unlocked in the lobby) · **F4** player status/kills/score |
 | **Disco** 🪩 | **Shift+D** — your monarchs spin, bob, hue-cycle, and glow on a little dance floor for 10s, to a synthesised disco track that plays positionally from the monarch. Purely cosmetic, but synced over the lockstep so every player sees it. |
 | **Headbang** 🤘 | **Shift+H** — your monarchs headbang to a synthesised heavy-metal track (positional, from the monarch), nodding and flashing red on a mosh-pit glow for 10s. Also cosmetic and lockstep-synced. |
 

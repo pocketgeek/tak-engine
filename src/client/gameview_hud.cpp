@@ -690,6 +690,7 @@ namespace {
         if (!spectating_) {
             std::snprintf(b, sizeof b, "%d", framePlayer(localPlayer_).kills);
             rows.push_back({"KILLS", b});
+            rows.push_back({"SCORE", std::to_string(framePlayer(localPlayer_).score)});
         }
         const uint64_t wallNow = SDL_GetTicks64();
         const uint64_t elapsed = gameStartMs_ && wallNow >= gameStartMs_
@@ -715,7 +716,7 @@ namespace {
             }
             statsSampleAt_ = now;
         }
-        // GPU driver queries can spawn nvidia-smi. Never wait for them in a
+        // GPU driver queries can take time. Never wait for them in a
         // frame: keep one background request in flight and reuse the last result.
         if (statsGpuPending_.valid() &&
             statsGpuPending_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
@@ -1801,6 +1802,7 @@ namespace {
         const float nameX = x + (teams ? 32 : 0);
         float nameW = blockWidth("PLAYER", hx);
         float killsW = blockWidth("KILLS", hx);
+        float scoreW = blockWidth("SCORE", hx);
         float manaW = blockWidth("MANA", hx);
         for (int t = 0; t < np; ++t) {
             if ((!board && cnt[t] == 0) || (framePlayer(t).built == 0 && cnt[t] == 0)) continue;
@@ -1819,15 +1821,17 @@ namespace {
                 (framePlayer(t).defeated ? 8 + blockWidth("OUT", hx) : 0));
             killsW = std::max(killsW, blockWidth(std::to_string(framePlayer(t).kills), px));
             const auto& pl = framePlayer(t);
+            scoreW = std::max(scoreW, blockWidth(std::to_string(pl.score), px));
             manaW = std::max(manaW, blockWidth(std::to_string(int(pl.mana)) + " +" +
                 std::to_string(int(pl.income + 0.5f)), hx));
         }
-        // AI-only spectating needs just player status and kills. Size columns
+        // AI-only spectating needs player status, kills, and score. Size columns
         // to their contents instead of reserving a wide spectator economy panel.
         const bool showMana = spectating_ && !allAi;
         const float colMana = nameX + nameW + 20;
         const float colKills = showMana ? colMana + manaW + 20 : colMana;
-        const float panelW = colKills + killsW - x + 16;
+        const float colScore = colKills + killsW + 20;
+        const float panelW = colScore + scoreW - x + 16;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
         SDL_FRect bg{x - 8, y - 8, panelW, (rows + 1) * lh + 8};
@@ -1836,6 +1840,7 @@ namespace {
         blockText("PLAYER", nameX, y + 3, hx, SDL_Color{150, 150, 155, 255});
         if (showMana) blockText("MANA", colMana, y + 3, hx, SDL_Color{150, 150, 155, 255});
         blockText("KILLS", colKills, y + 3, hx, SDL_Color{150, 150, 155, 255});
+        blockText("SCORE", colScore, y + 3, hx, SDL_Color{150, 150, 155, 255});
         y += lh;
         for (int t = 0; t < np; ++t) {
             if (!board && cnt[t] == 0) continue;
@@ -1863,6 +1868,7 @@ namespace {
             }
             std::snprintf(buf, sizeof buf, "%d", framePlayer(t).kills);
             blockText(buf, colKills, y, px, c);
+            blockText(std::to_string(framePlayer(t).score), colScore, y, px, c);
             if (dead) blockText("OUT", nameX + blockWidth(s, px) + 8, y, hx,
                                 SDL_Color{210, 90, 70, 255});
             y += lh;
