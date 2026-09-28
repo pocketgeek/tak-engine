@@ -161,13 +161,14 @@ those systems. No claim of 4× simulation at 16,000 units is implied.
   leg skips because the target headers are unavailable; no native Windows or Mac
   test was performed here.
 
-The optional dragon/tree flame screenshot gate did not complete on Ulasem Arena
+The initial dragon/tree flame screenshot gate did not complete on Ulasem Arena
 within 30 seconds in either the baseline or new build. It is inconclusive for
 live ignition visuals on that map. The optional `TAK_FEATURE_SMOKE_QUEUE_TEST`
 also fails its delayed tick/retirement motion assertion in both binaries; that
 legacy probe remains unresolved. Feature generation/lifecycle and smoke checks
 in CTest pass, as does the real-art `TAK_FEATURE_CACHE_TEST`. Neither the timed
-capture nor the failing legacy probe is counted as successful validation.
+capture nor the failing legacy probe is counted as successful validation of
+the initial pass. The follow-up corrections below resolve both probes.
 
 ### Follow-up: smoke probe corrected
 
@@ -294,3 +295,38 @@ combat gain is small (about 0.6%); the huge-map result is essentially unchanged.
 Every checkpoint matches in all three comparisons. Both full suites pass and
 GCC/Clang O0/O2/O3 retain math golden `dcef618cd2e4d558`. The local ARM cross
 leg skips for unavailable target headers; native ARM64 checks run in macOS CI.
+
+Reverse-order repeats measured 23.011 → 22.951 seconds for standard combat and
+22.331 → 22.353 for Crusades. The direction shortcut is a small improvement,
+close to run-to-run noise, rather than a substantial general speedup.
+
+## Follow-up integration and remaining costs
+
+The accepted changes retain all 120 baseline checkpoints in the final
+3,600-tick Crusades run (`07ba752e5ce5e06b`). It completes 120 game seconds in
+82.139 seconds, ending with 11,236 living units from an initial 16,000. This is
+workload validation, not a sustained-16,000-unit speed guarantee. All affected
+targets are rebuilt in Release and optimized Debug.
+
+A fresh all-thread patrol profile, collected separately from timing runs,
+attributes 20.9% of CPU samples to model geometry preparation, 11.6% to cosmetic
+VM ticking, 10.5% to navigation movement, 5.0% to snapshot capture, 4.9% to body
+rectangle queries and 1.0% to animation-state export. These inclusive categories
+overlap; worker CPU percentages are not main-thread elapsed time. Model
+preparation uses the existing worker pool; its sort experiment did not improve
+drawing time. Actual interpreter instructions, movement/collision work, model
+processing and shadow rendering remain substantial costs. This pass does
+not change their cadence, search budgets, RNG order or visual fidelity.
+
+The retained follow-up optimizations are portable CPU work; the existing SDL
+fallback remains in use on D3D, Metal and software renderers. Runtime GPU
+comparisons and performance numbers here come from Linux/NVIDIA. Windows x64
+and macOS ARM64 CI provide compilation, script and math coverage, not native
+GPU performance measurements. No new dependencies were added.
+
+At code commit `2929f21`, Linux package CI, Windows Release/Debug builds,
+macOS ARM64 and the determinism workflow all pass. Both native platforms pass
+the retail script scheduling/restoration regression and their math/driver
+equivalence gates. The final local suites pass 88/88 in Release and 91/91 in
+optimized Debug. All retained changes are committed and pushed; unproven
+triangle-sort and target-damage experiments are absent from the final engine.
