@@ -564,17 +564,18 @@ std::string MountSet::sourceOf(const std::string& path) const {
 
 // ---- Vfs: layered runtime read-path over a retail install root -------------
 
-void Vfs::addLayer(MountSet ms, const std::string& prefix) {
+void Vfs::addLayer(MountSet ms, const std::string& prefix, bool mapResources) {
     std::string p = MountSet::key(prefix);
     if (!p.empty() && p.back() != '/') p += '/';
-    layers_.push_back({std::move(ms), std::move(p)});
+    layers_.push_back({std::move(ms), std::move(p), mapResources});
 }
 
 // Try each layer highest-precedence-first; if the requested path is under a
 // layer's virtual prefix, strip the prefix and delegate to that MountSet.
-std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path) const {
+std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path, bool skipMapResources) const {
     std::string kp = MountSet::key(path);
     for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
+        if (skipMapResources && it->mapResources) continue;
         if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
         std::string sub = path.substr(it->prefix.size());
         if (it->ms.has(sub)) return it->ms.read(sub);
@@ -582,8 +583,8 @@ std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path) const 
     return std::nullopt;
 }
 
-std::vector<uint8_t> Vfs::read(const std::string& path) const {
-    if (auto b = tryRead(path)) return std::move(*b);
+std::vector<uint8_t> Vfs::read(const std::string& path, bool skipMapResources) const {
+    if (auto b = tryRead(path, skipMapResources)) return std::move(*b);
     throw std::runtime_error("not in data set: " + path);
 }
 
@@ -685,6 +686,10 @@ uint64_t gameplayHash(const Vfs& vfs) {
             }
             byKey.emplace(k, p);
         }
+    // Generated maps are assembled from sections rather than a single map TNT.
+    // These height/feature planes must agree even when players own different map packs.
+    for (const auto& path : mapgen::assetPaths(vfs))
+        byKey.emplace(MountSet::key(path), path);
     std::vector<std::string> keys;
     keys.reserve(byKey.size());
     for (const auto& [k, p] : byKey) keys.push_back(k);
@@ -887,7 +892,7 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
         cfg.keep = [](const std::string& p) {
             return MountSet::key(p).rfind("kmap/", 0) == 0 || !affectsGameplay(p);
         };
-        vfs.addLayer(MountSet(maps, std::move(cfg)));
+        vfs.addLayer(MountSet(maps, std::move(cfg)), "", true);
     }
     // Highest precedence: user overrides (loose files OR archives), filtered by
     // the multiplayer policy. Cosmetic drops any gameplay-affecting override so

@@ -15,8 +15,9 @@ constexpr int kBlock = 32;
 
 Compositor::Compositor(const hpi::Vfs& vfs) : vfs_(&vfs) {}
 
-const jpeg::Image& Compositor::section(uint32_t key) {
-    auto it = cache_.find(key);
+const jpeg::Image& Compositor::section(uint32_t key, bool stockTerrain) {
+    const auto id = std::pair{key, stockTerrain};
+    auto it = cache_.find(id);
     if (it != cache_.end()) return it->second;
     // Terrain tiles are content-addressed by the map's u32 tile key: terrain/<8hex>.jpg.
     char buf[16];
@@ -24,7 +25,7 @@ const jpeg::Image& Compositor::section(uint32_t key) {
     std::string path = std::string("terrain/") + buf + ".jpg";
     if (!vfs_->has(path))
         throw std::runtime_error(std::string("terrain JPG not found: ") + buf);
-    return cache_.emplace(key, jpeg::load(vfs_->read(path))).first->second;
+    return cache_.emplace(id, jpeg::load(vfs_->read(path, stockTerrain))).first->second;
 }
 
 void Compositor::renderBlock(const tnt::Map& map, int bx, int by,
@@ -37,7 +38,7 @@ void Compositor::renderBlock(const tnt::Map& map, int bx, int by,
     const jpeg::Image* imgp = nullptr;
     // A key the install can't resolve must not throw out of the chunk worker
     // thread (std::terminate); the block just stays empty.
-    try { imgp = &section(map.tileKeys[b]); } catch (const std::exception&) { return; }
+    try { imgp = &section(map.tileKeys[b], map.stockTerrain); } catch (const std::exception&) { return; }
     const jpeg::Image& img = *imgp;
     int sx = (map.tileCols[b] * kBlock) % std::max(img.width, 1);
     int sy = (map.tileRows[b] * kBlock) % std::max(img.height, 1);

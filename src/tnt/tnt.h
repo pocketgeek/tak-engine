@@ -22,6 +22,9 @@ namespace tak::tnt {
 //  12: -> overview image {u32 w, u32 h, w*h bytes}
 
 struct Map {
+    // Runtime render provenance, not part of the TNT file format. Generated maps
+    // use retail sections; unrelated downloaded-map reskins must not override them.
+    bool stockTerrain = false;
     int width = 0, height = 0;       // in 16px cells
     int seaLevel = 0;                // heights below this are water
     int blocksX = 0, blocksY = 0;    // in 32px blocks (width/2, height/2)

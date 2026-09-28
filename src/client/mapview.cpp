@@ -239,7 +239,7 @@ void MapView::uploadReadySections() {
     for (uint32_t key : ready) {
         if (sections_.count(key)) continue;   // already uploaded
         const tak::jpeg::Image* img = nullptr;
-        try { img = &comp_.sectionImage(key); } catch (const std::exception&) {
+        try { img = &comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) {
             sections_[key] = {};   // absent JPG: remember so we never retry it
             continue;
         }
@@ -278,7 +278,7 @@ void MapView::sectionWorkerLoop() {
         secBusy_ = true;
         lk.unlock();
         // Decode into the Compositor cache (the heavy JPEG work, once per section).
-        try { comp_.sectionImage(key); } catch (const std::exception&) { /* absent */ }
+        try { comp_.sectionImage(key, map_.stockTerrain); } catch (const std::exception&) { /* absent */ }
         lk.lock();
         secBusy_ = false;
         decoded_.push_back(key);

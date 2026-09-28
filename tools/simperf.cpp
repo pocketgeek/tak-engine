@@ -76,6 +76,7 @@ int main(int argc,char** argv) try {
         vfs=hpi::mountRetailRoot(data);
         sim::setupRegistry(registry,vfs,crusades);
         mapgen::Params map;
+        map.formatVer=2; // Keep the established performance fixture comparable.
         map.widthCells=map.heightCells=768;map.players=8;
         map.waterDensity=map.treeDensity=map.rockDensity=map.reliefDensity=0;
         sim::MatchConfig config;

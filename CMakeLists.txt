@@ -75,6 +75,7 @@ add_library(tak-formats
   src/tnt/tnt.cpp
   src/tnt/ota.cpp
   src/tnt/mapgen.cpp
+  src/tnt/mapgen_balanced.cpp
   src/tdo/tdo.cpp
   src/tdf/tdf.cpp
   src/cob/cob.cpp
@@ -296,6 +297,10 @@ target_link_libraries(retail_scheduler_test PRIVATE tak-formats)
 add_executable(retail_ai_test tools/retail_ai_test.cpp)
 target_link_libraries(retail_ai_test PRIVATE tak-formats)
 add_test(NAME retail_ai COMMAND retail_ai_test)
+add_executable(mapgen_test tools/mapgen_test.cpp)
+target_link_libraries(mapgen_test PRIVATE tak-formats)
+add_test(NAME mapgen COMMAND mapgen_test)
+
 add_executable(retail_visual_test tools/retail_visual_test.cpp)
 target_link_libraries(retail_visual_test PRIVATE tak-formats)
 add_test(NAME retail_visual COMMAND retail_visual_test)
@@ -408,6 +413,8 @@ add_executable(flyer_combat_test tools/flyer_combat_test.cpp)
 target_link_libraries(flyer_combat_test PRIVATE tak-formats)
 set(TAK_TEST_DATA "" CACHE PATH "Retail install for the data-backed tests (optional)")
 if(TAK_TEST_DATA)
+    add_test(NAME mapgen_roster COMMAND mapgen_test "${TAK_TEST_DATA}")
+    add_test(NAME mapgen_naval COMMAND mapgen_test "${TAK_TEST_DATA}" --naval)
     add_test(NAME campaign_roster COMMAND campaign_test "${TAK_TEST_DATA}")
     add_test(NAME structure_combat COMMAND structure_combat_test "${TAK_TEST_DATA}")
     add_test(NAME naval_combat COMMAND naval_combat_test "${TAK_TEST_DATA}")

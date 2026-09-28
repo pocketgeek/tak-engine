@@ -196,15 +196,16 @@ class Vfs {
 public:
     // Push a layer on TOP (highest precedence). `prefix` (e.g. "music/") maps the
     // layer's own namespace under that virtual directory; "" mounts it as-is.
-    void addLayer(MountSet ms, const std::string& prefix = "");
+    void addLayer(MountSet ms, const std::string& prefix = "", bool mapResources = false);
 
     bool has(const std::string& path) const;
-    std::vector<uint8_t> read(const std::string& path) const;          // throws if absent
-    std::optional<std::vector<uint8_t>> tryRead(const std::string& path) const;
+    // skipMapResources keeps generated terrain independent of downloaded map reskins.
+    std::vector<uint8_t> read(const std::string& path, bool skipMapResources = false) const; // throws if absent
+    std::optional<std::vector<uint8_t>> tryRead(const std::string& path, bool skipMapResources = false) const;
     std::vector<std::string> list(const std::string& prefix) const;    // union, deduped
 
 private:
-    struct Layer { MountSet ms; std::string prefix; };   // prefix keyed, "" or trailing '/'
+    struct Layer { MountSet ms; std::string prefix; bool mapResources = false; };   // prefix keyed, "" or trailing '/'
     std::vector<Layer> layers_;                          // back = highest precedence
 };
 

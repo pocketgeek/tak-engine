@@ -171,7 +171,12 @@ std::string mapDisplayName(const std::string& id) {
         mapPreviewW_ = mapPreviewH_ = 0;
         mapPreviewDims_.clear();
         if (tntPath.empty()) return;
-        if (tak::mapgen::isGeneratedMapId(tntPath)) { buildGenPreview(tntPath); return; }
+        genPreviewInfo_.clear(); genPreviewError_.clear();
+        if (tak::mapgen::isGeneratedMapId(tntPath)) {
+            try { buildGenPreview(tntPath); }
+            catch (const std::exception& e) { genPreviewError_ = e.what(); }
+            return;
+        }
         std::vector<uint8_t> d;
         try { d = vfs_.read(tntPath); } catch (...) { return; }
         if (d.size() < 52) return;
@@ -274,10 +279,17 @@ std::string mapDisplayName(const std::string& id) {
         char dims[48];
         std::snprintf(dims, sizeof dims, "%d x %d   %d PLAYER", W / 32, H / 32, int(gp.players));
         mapPreviewDims_ = dims;
+        if (gp.formatVer >= 3)
+            genPreviewInfo_ = "ACTUAL WATER: " + std::to_string(g.waterPercent) + "%";
+
     }
 
     void GameView::applyGenParams() {
+        genParams_.formatVer = 3;
         genParams_ = tak::mapgen::sanitize(genParams_);
+        // The menu offers square maps; accommodate the layout's minimum size.
+        genParams_.widthCells = genParams_.heightCells =
+            std::max(genParams_.widthCells, genParams_.heightCells);
         mpMapId_ = tak::mapgen::encodeMapId(genParams_);
         mapPath_ = mpMapId_;   // generated: the id IS the path (findMap returns it as-is)
     }
@@ -356,7 +368,7 @@ std::string mapDisplayName(const std::string& id) {
         // bottom-right, both inset by `x` from their side and at the same height.
         // BROWSER (MP only) sits just left of CREATE.
         const float by = kLobbyH - 40, bw = 120;
-        lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty(), [this] {
+        lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty() && genPreviewError_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
             o.overridePolicy = createOverride_;
             o.doubleSight = createDoubleSight_ ? 1 : 0;
@@ -483,18 +495,29 @@ std::string mapDisplayName(const std::string& id) {
         // is kGap. The rows used to step by 30, 30, 36 and then 44, so the buttons
         // sat tighter than the sliders and the run of sliders drifted out of line
         // with everything above it.
-        const float kRowH = 24, kGap = 8, kBtnW = 300;
+        const float kRowH = 24, kGap = 6, kBtnW = 300;
         const float kSliderH = 32;   // label (11) + 7 + bar (14)
         float px = lx, py = hy + 46;   // aligns with the map list's box top
         lbBtn(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
               true, [this] { genParams_.mapType = uint8_t((genParams_.mapType + 1) % tak::mapgen::kMapTypes);
                              applyGenParams(); }); py += kRowH + kGap;
+        lbBtn(px, py, kBtnW, kRowH, std::string("LAYOUT:  ") + tak::mapgen::layoutName(genParams_.layout),
+              true, [this] { genParams_.layout = uint8_t((genParams_.layout + 1) % 3);
+                             applyGenParams(); }); py += kRowH + kGap;
         int curU = genParams_.widthCells / 32;
         char szl[48]; std::snprintf(szl, sizeof szl, "SIZE:  %d x %d", curU, curU);
         lbBtn(px, py, kBtnW, kRowH, szl, true, [this] {
-            int u = genParams_.widthCells / 32, ni = 0;
-            for (int k = 0; k < 5; ++k) if (kSizes[k] == u) ni = (k + 1) % 5;
-            genParams_.widthCells = genParams_.heightCells = uint16_t(kSizes[ni] * 32);
+            const int u = genParams_.widthCells / 32;
+            int next = 0;
+            for (int size : kSizes) {
+                auto candidate = genParams_;
+                candidate.widthCells = candidate.heightCells = uint16_t(size * 32);
+                candidate = tak::mapgen::sanitize(candidate);
+                if (candidate.widthCells != size * 32 || candidate.heightCells != size * 32) continue;
+                if (!next) next = size;
+                if (size > u) { next = size; break; }
+            }
+            genParams_.widthCells = genParams_.heightCells = uint16_t(next * 32);
             applyGenParams();
         }); py += kRowH + kGap;
         char pl[32]; std::snprintf(pl, sizeof pl, "PLAYERS:  %d", int(genParams_.players));
@@ -502,27 +525,27 @@ std::string mapDisplayName(const std::string& id) {
             genParams_.players = uint8_t(genParams_.players >= 8 ? 2 : genParams_.players + 1);
             applyGenParams();
         }); py += kRowH + kGap * 2;   // a wider break between the pickers and the sliders
-        auto slider = [&](int idx, const char* label, uint8_t val) {
+        auto slider = [&](int idx, const char* label, uint8_t val, bool enabled = true) {
             blockText(label, px, py, 1.6f, {180, 185, 195, 255});
             float bx = px, by = py + 18, bw = kBtnW, bh = 14;
-            genSliderRect_[idx] = {bx, by, bw, bh};
+            genSliderRect_[idx] = enabled ? SDL_FRect{bx, by, bw, bh} : SDL_FRect{};
             SDL_FRect bar{bx, by, bw, bh};
             SDL_SetRenderDrawColor(ren_, 30, 34, 46, 255); SDL_RenderFillRectF(ren_, &bar);
-            float t = val / 255.0f;
+            float t = enabled ? val / 255.0f : 0.0f;
             SDL_FRect fill{bx, by, bw * t, bh};
             SDL_SetRenderDrawColor(ren_, 70, 120, 90, 255); SDL_RenderFillRectF(ren_, &fill);
             SDL_FRect handle{bx + bw * t - 3, by - 2, 6, bh + 4};
-            SDL_SetRenderDrawColor(ren_, 200, 220, 200, 255); SDL_RenderFillRectF(ren_, &handle);
+            SDL_SetRenderDrawColor(ren_, 200, 220, 200, 255); if (enabled) SDL_RenderFillRectF(ren_, &handle);
             SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bar);
-            char pc[8]; std::snprintf(pc, sizeof pc, "%d%%", int(val) * 100 / 255);
-            blockText(pc, bx + bw + 8, py + 16, 1.5f, {160, 165, 180, 255});
+            const char* level = !enabled ? "AUTO" : val == 0 ? "NONE" : val < 86 ? "LOW" : val < 171 ? "MED" : "HIGH";
+            blockText(level, bx + bw + 8, py + 16, 1.5f, {160, 165, 180, 255});
             py += kSliderH + kGap;
         };
-        slider(0, "TREES", genParams_.treeDensity);
-        slider(1, "ROCKS", genParams_.rockDensity);
-        slider(2, "MANA SPOTS", genParams_.manaDensity);
-        slider(3, "WATER", genParams_.waterDensity);
-        slider(4, "HILLS  (plateaus & ramps)", genParams_.reliefDensity);
+        slider(0, "FORESTS", genParams_.treeDensity);
+        slider(1, "ROCK CLUSTERS", genParams_.rockDensity);
+        slider(2, "EXTRA MANA SPOTS", genParams_.manaDensity);
+        slider(3, "WATER AMOUNT", genParams_.waterDensity, genParams_.layout != tak::mapgen::Islands);
+        slider(4, "AUTHORED HILLS", genParams_.reliefDensity);
         lbBtn(px, py, 140, kRowH, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
             applyGenParams();
@@ -549,8 +572,18 @@ std::string mapDisplayName(const std::string& id) {
         SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &pbox);
         if (!mapPreviewDims_.empty())
             blockText(mapPreviewDims_, pvx, pvy + pvH + 8, 1.6f, {160, 165, 180, 255});
+        if (gen) {
+            blockText(genPreviewError_.empty() ? genPreviewInfo_ : "MAP UNAVAILABLE", pvx, pvy + pvH + 28,
+                      1.4f, {180, 185, 195, 255});
+            if (!genPreviewError_.empty())
+                blockText("CHECK RETAIL DATA", pvx, pvy + pvH + 46, 1.4f, {220, 140, 120, 255});
+            blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 106, 1.3f, {160, 175, 160, 255});
+            blockText("MANA SLIDER: EXTRA SPOTS", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
+            if (genParams_.layout == tak::mapgen::Islands)
+                blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 142, 1.3f, {160, 175, 160, 255});
+        }
         // Keep the generator action below the preview and map description.
-        lbBtn(pvx, pvy + pvH + 32, pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
+        lbBtn(pvx, pvy + pvH + (gen ? 68 : 32), pvW, 26, gen ? "PICK AN EXISTING MAP" : "GENERATE RANDOM MAP", true,
               [this, gen] {
                   if (gen) { mpMapId_.clear(); mapPath_.clear(); }  // drop back to the list
                   else applyGenParams();                           // encode the current gen params

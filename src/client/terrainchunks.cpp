@@ -17,11 +17,11 @@ void TerrainChunks::clear() {
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
     cache_.clear();bytes_=0;++revision_;
 }
-const jpeg::Image& TerrainChunks::mip(uint32_t key,int level) {
-    if(!level)return compositor_.sectionImage(key);
-    const auto id=std::pair{key,level};
+const jpeg::Image& TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) {
+    if(!level)return compositor_.sectionImage(key,stockTerrain);
+    const auto id=std::tuple{key,level,stockTerrain};
     if(auto i=mips_.find(id);i!=mips_.end())return i->second;
-    const auto& src=mip(key,level-1);
+    const auto& src=mip(key,level-1,stockTerrain);
     jpeg::Image out;out.width=std::max(1,src.width/2);out.height=std::max(1,src.height/2);
     out.rgba.resize(size_t(out.width)*out.height*4);
     for(int y=0;y<out.height;++y)for(int x=0;x<out.width;++x)for(int c=0;c<4;++c) {
@@ -38,7 +38,7 @@ void TerrainChunks::compose(Job& j) {
     std::map<uint32_t,const jpeg::Image*> decoded;
     for(const auto& t:j.tiles) {
         auto [entry,added]=decoded.try_emplace(t.key,nullptr);
-        if(added)try {entry->second=&mip(t.key,level);}catch(...) {}
+        if(added)try {entry->second=&mip(t.key,level,j.stockTerrain);}catch(...) {}
         images.push_back(entry->second);
     }
     j.pixels.resize(size_t(j.w+2)*(j.h+2)*4);
@@ -118,7 +118,7 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
     }
     for(const auto& key:visible_) {
         if(cache_.count(key) || pending_.count(key) || pending_.size()>=64 || gpuvram::blocked())continue;
-        const auto [level,cx,cy]=key;Job job;job.key=key;job.epoch=epoch_;
+        const auto [level,cx,cy]=key;Job job;job.key=key;job.epoch=epoch_;job.stockTerrain=map.stockTerrain;
         job.mapW=map.blocksX*(32>>level);job.mapH=map.blocksY*(32>>level);
         job.w=std::min(span>>level,job.mapW-(cx*span>>level));
         job.h=std::min(span>>level,job.mapH-(cy*span>>level));

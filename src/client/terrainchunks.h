@@ -30,7 +30,7 @@ private:
     using Key=std::tuple<int,int,int>; // level, chunk x, chunk y
     struct Tile {uint32_t key;uint8_t col,row;};
     struct Job {
-        Key key;uint64_t epoch;
+        Key key;uint64_t epoch;bool stockTerrain=false;
         int mapW,mapH,bx,by,bw,bh,w,h;
         std::vector<Tile> tiles;
         std::vector<uint8_t> pixels;
@@ -38,9 +38,9 @@ private:
     struct Entry {SDL_Texture* texture=nullptr;int w=0,h=0;uint64_t used=0;};
     void work();
     void compose(Job&);
-    const jpeg::Image& mip(uint32_t key,int level);
+    const jpeg::Image& mip(uint32_t key,int level,bool stockTerrain);
     terrain::Compositor& compositor_;
-    std::map<std::pair<uint32_t,int>,jpeg::Image> mips_; // worker only
+    std::map<std::tuple<uint32_t,int,bool>,jpeg::Image> mips_; // worker only
     std::thread worker_;
     std::mutex mutex_;
     std::condition_variable cv_;

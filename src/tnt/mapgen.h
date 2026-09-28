@@ -5,7 +5,7 @@
 // client and the server referee build the BYTE-IDENTICAL map from the same seed --
 // the generated terrain/features feed the hashed lockstep sim, so it must agree on
 // every peer. The parameters ride inside the mapId string ("~gen1~<hex>"), which the
-// lobby already threads to both peers, so no net-protocol change is needed.
+// lobby threads to every peer. Protocol 192 requires support for v3 recipes.
 
 #include "tnt/tnt.h"
 
@@ -22,8 +22,11 @@ namespace tak::mapgen {
 // Matches matchsetup faction ids: 0=aramon 1=taros 2=veruna 3=zhon 4=creon.
 enum MapType : uint8_t { Aramon = 0, Taros = 1, Veruna = 2, Zhon = 3, Creon = 4, kMapTypes };
 
+enum Layout : uint8_t { Mainland = 0, Lakes = 1, Islands = 2 };
+const char* layoutName(uint8_t layout);
+
 struct Params {
-    uint16_t formatVer = 2;          // v2 split doodads into tree/rock + added relief
+    uint16_t formatVer = 3;          // v1/v2 seeds retain their original generator
     uint64_t seed = 1;
     uint8_t  mapType = Aramon;
     uint16_t widthCells = 256, heightCells = 256;   // multiples of 32, clamped
@@ -31,12 +34,16 @@ struct Params {
     uint8_t  treeDensity = 128;      // 0..255 (few..lots)
     uint8_t  rockDensity = 96;       // 0..255
     uint8_t  manaDensity = 128;      // 0..255
-    uint8_t  waterDensity = 96;      // 0..255 (how much of the map is water)
-    uint8_t  reliefDensity = 128;    // 0..255 (plateaus + ramps: 0 = flat)
+    uint8_t  waterDensity = 96;      // mainland/lake intensity, not coverage; 0 = dry
+    uint8_t  layout = Mainland;
+    uint8_t  reliefDensity = 128;    // authored hill patch density; 0 = flat
 };
 
 struct Result {
     tak::tnt::Map map;
+    int waterPercent = 0, reliefPatches = 0;
+    // v3: one open-water harbor per island; cells suitable for naval construction.
+    std::vector<std::pair<int, int>> harbors;
     std::vector<std::pair<int, int>> starts;   // start positions in 16px CELL coords (x, z)
 };
 
@@ -53,7 +60,10 @@ std::string friendlyLabel(const Params& p);
 // agreement already pins the install).
 Result generate(const Params& p, const hpi::Vfs& vfs);
 
-// Clamp raw UI inputs to supported ranges (even cells, 2..8 players, sane size).
+// Prefabs consumed by either generator, included in multiplayer's data hash.
+std::vector<std::string> assetPaths(const hpi::Vfs& vfs);
+
+// Clamp UI inputs to section multiples, 2..8 players, and layout-specific space.
 Params sanitize(Params p);
 
 }  // namespace tak::mapgen

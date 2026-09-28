@@ -34,17 +34,17 @@ public:
     // returned reference stays valid for the Compositor's lifetime (cache_ is a
     // std::map -- node-stable across inserts). Thread-safe. Throws if absent.
     // Used by the tile-atlas terrain renderer to upload each section once.
-    const jpeg::Image& sectionImage(uint32_t key) {
+    const jpeg::Image& sectionImage(uint32_t key, bool stockTerrain = false) {
         std::lock_guard<std::mutex> lk(mu_);
-        return section(key);
+        return section(key, stockTerrain);
     }
 
 private:
-    const jpeg::Image& section(uint32_t key);
+    const jpeg::Image& section(uint32_t key, bool stockTerrain);
 
     const hpi::Vfs* vfs_ = nullptr;
     std::mutex mu_;                           // guards cache_ (see renderBlock)
-    std::map<uint32_t, jpeg::Image> cache_;   // key -> decoded section (lazy)
+    std::map<std::pair<uint32_t,bool>, jpeg::Image> cache_;   // key -> decoded section (lazy)
 };
 
 } // namespace tak::terrain

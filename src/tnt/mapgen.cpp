@@ -1,4 +1,5 @@
 #include "tnt/mapgen.h"
+#include "tnt/mapgen_internal.h"
 
 #include "hpi/hpi.h"   // coast prefab sections are read through the VFS
 
@@ -10,254 +11,25 @@
 
 namespace tak::mapgen {
 
-namespace {
+using namespace detail;
 
-// ---- deterministic integer helpers (no float -> identical on every peer) -------
+Result generateBalanced(const Params& p, const hpi::Vfs& vfs);
 
-uint64_t splitmix(uint64_t& s) {
-    uint64_t z = (s += 0x9e3779b97f4a7c15ULL);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return z ^ (z >> 31);
+std::vector<std::string> assetPaths(const hpi::Vfs& vfs) {
+    std::vector<std::string> paths;
+    for (const auto& kit : kShoreKit)
+        for (const auto* name : kit.name)
+            for (const auto* variant : kit.var) {
+                std::string path = std::string(kit.dir) + name + variant + kit.ext;
+                if (vfs.has(path)) paths.push_back(std::move(path));
+            }
+    for (const auto* prefix : kReliefDir)
+        for (const auto& path : vfs.list(prefix))
+            if (hpi::MountSet::key(path).ends_with(".tnt")) paths.push_back(path);
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    return paths;
 }
-
-// Hashed lattice value 0..255 at integer grid point (x,y) for a given seed.
-uint32_t latticeVal(uint64_t seed, int x, int y) {
-    uint64_t h = seed ^ 0x100000001b3ULL;
-    h = (h ^ uint64_t(uint32_t(x))) * 0x9e3779b97f4a7c15ULL;
-    h = (h ^ uint64_t(uint32_t(y))) * 0xc2b2ae3d27d4eb4fULL;
-    h ^= h >> 29; h *= 0xbf58476d1ce4e5b9ULL; h ^= h >> 32;
-    return uint32_t(h & 0xff);
-}
-
-// Bilinear value noise 0..255 at cell (cx,cz), lattice spacing L (>0).
-uint32_t noise(uint64_t seed, int cx, int cz, int L) {
-    int gx = (cx >= 0 ? cx : cx - L + 1) / L, gz = (cz >= 0 ? cz : cz - L + 1) / L;
-    int fx = cx - gx * L, fz = cz - gz * L;                 // 0..L-1
-    uint32_t v00 = latticeVal(seed, gx, gz),     v10 = latticeVal(seed, gx + 1, gz);
-    uint32_t v01 = latticeVal(seed, gx, gz + 1), v11 = latticeVal(seed, gx + 1, gz + 1);
-    uint32_t a = (v00 * uint32_t(L - fx) + v10 * uint32_t(fx)) / uint32_t(L);
-    uint32_t b = (v01 * uint32_t(L - fx) + v11 * uint32_t(fx)) / uint32_t(L);
-    return (a * uint32_t(L - fz) + b * uint32_t(fz)) / uint32_t(L);
-}
-
-// Two-octave fractal noise 0..255 (large land masses + medium detail).
-uint32_t fractal(uint64_t seed, int cx, int cz, int span) {
-    int L1 = std::max(8, span / 5), L2 = std::max(4, span / 11);
-    uint32_t a = noise(seed, cx, cz, L1);
-    uint32_t b = noise(seed ^ 0xABCDEF, cx, cz, L2);
-    return (a * 7 + b * 3) / 10;   // 70% coarse + 30% fine
-}
-
-// Per-world ground + sea terrain section JPG keys (terrain/<key:08x>.jpg), verified
-// present in terrain.hpi, plus each section's VALID wallpaper period in 32px tiles.
-// Ground fills are seamless across their whole grid (16x16; Zhon's is 256px = 8x8).
-// The sea JPGs are 512px but only PARTLY art: Aramon/Taros/Zhon carry a 5x5 block
-// of flat dark-teal water in the top-left corner and pure-black padding elsewhere
-// (only Veruna's dgsea fills all 16x16) -- wallpapering them %16 sampled ~90%
-// padding, which is what made generated water look black.
-struct WorldArt { uint32_t ground, sea; uint8_t groundK, seaK; };
-constexpr std::array<WorldArt, kMapTypes> kWorldArt = {{
-    {0x868a8222u, 0x0c2e64b2u, 16, 5},    // Aramon: grass / asea
-    {0xca4200f8u, 0xb8524a38u, 16, 5},    // Taros:  low_ground / taros_sea
-    // Veruna: sandy-cay land (a0863a34, dunes/sand -- what the Coast Sandy kit's
-    // land edges blend into, Athri Cay style) over dgsea (full-art teal sea).
-    {0xa0863a34u, 0x9a5c5436u, 16, 16},
-    {0x9bb50b09u, 0x59f53dfdu, 8, 5},     // Zhon:   jungletile80 (256px) / H2OTILE
-    // Creon (Iron Plague, IPData.hpi): green turf fill mined from the takx19-26
-    // mission maps (their other big fill, 93c585b7, is city cobblestone). Every
-    // shipped Creon map is DRY -- IP never used a Creon deep-sea fill -- so water
-    // borrows Veruna's dgsea (full 16x16 teal). CreWave01-16 exist for shores.
-    {0x814dddc1u, 0x9a5c5436u, 16, 16},   // Creon:  turf / (Veruna sea stand-in)
-}};
-
-// ---- coast prefab kits ---------------------------------------------------------
-// Retail coastlines are whole hand-painted 512px prefab SECTIONS (plain TNT files
-// in sections.hpi / IPSections.hpi: one terrain key, an identity col/row tile
-// grid, an authored bank heightfield, sometimes beach features). The generator
-// lays its coastline out on the section grid and stamps these whole -- that is
-// where retail's big sweeping curves come from. Role order below: straights with
-// water N/S/E/W of the piece; outer bends (water wraps NW/NE/SE/SW around a land
-// tip); inner pockets (water only in the NW/NE/SW/SE corner).
-enum ShoreRole { kRN, kRS, kRE, kRW, kONW, kONE, kOSE, kOSW, kINW, kINE, kISW, kISE, kRoles };
-struct ShoreKit {
-    const char* dir;
-    const char* name[kRoles];
-    const char* var[3];   // interchangeable cosmetic variants, picked by position
-    const char* ext;
-};
-constexpr std::array<ShoreKit, kMapTypes> kShoreKit = {{
-    {"Sections/Aramon/Coast Sandy/",
-     {"ascoast01", "ascoast02", "ascoast03", "ascoast04", "ascoast05", "ascoast06",
-      "ascoast07", "ascoast08", "ascoast12", "ascoast11", "ascoast09", "ascoast10"},
-     {"a_80", "b_80", "c_80"}, ".TNT"},
-    {"Sections/Taros/Coast Sandy/",
-     {"n", "s", "e", "w", "nw", "ne", "se", "sw", "nwe", "nee", "swe", "see"},
-     {"01", "02", "03"}, ".TNT"},
-    {"Sections/Veruna/Coast Sandy/",
-     {"n", "s", "e", "w", "nw", "ne", "se", "sw", "n_w", "e_n", "s_w", "e_s"},
-     {"01", "02", "03"}, ".TNT"},
-    // Zhon uses the JUNGLE palette's coast kit so the land edges blend into the
-    // jungletile ground fill (plain "Coast Sandy" is for its sand-flat palette).
-    {"Sections/Zhon/Coast Sandy Jungle/",
-     {"n", "s", "e", "w", "1nw", "1ne", "1se", "1sw", "2nw", "2ne", "2sw", "2se"},
-     {"1", "2", "3"}, ".TNT"},
-    {"sections/creon/shores/",
-     {"n", "s", "e", "w", "nw", "ne", "se", "sw", "n_w", "e_n", "s_w", "e_s"},
-     {"01", "02", "03"}, ".tnt"},
-}};
-
-// Marching case (bit0 NW, bit1 NE, bit2 SW, bit3 SE wet) -> kit role, -1 = none.
-constexpr int kCaseRole[16] = {
-    -1,     // 0  all dry
-    kINW,   // 1  water pocket NW
-    kINE,   // 2  water pocket NE
-    kRN,    // 3  water north
-    kISW,   // 4  water pocket SW
-    kRW,    // 5  water west
-    -1,     // 6  diagonal pinch (cleaned away)
-    kONW,   // 7  only SE dry: water wraps NW
-    kISE,   // 8  water pocket SE
-    -1,     // 9  diagonal pinch (cleaned away)
-    kRE,    // 10 water east
-    kONE,   // 11 only SW dry: water wraps NE
-    kRS,    // 12 water south
-    kOSW,   // 13 only NE dry: water wraps SW
-    kOSE,   // 14 only NW dry: water wraps SE
-    -1,     // 15 all wet
-};
-
-// Retail authoring levels the coast prefabs assume: {seaLevel, flat land level}.
-// Aramon + Creon kits are authored at land 80 (river-map style, sea 40); the
-// three sea worlds at land 62 (sea 58). Measured from the shipped prefabs/maps.
-struct WorldLevels { uint8_t sea, land; };
-constexpr std::array<WorldLevels, kMapTypes> kLevels = {{
-    {40, 80}, {58, 62}, {58, 62}, {58, 62}, {40, 80},
-}};
-
-// Per-world doodad + mana palette (names verified in features/<world>/*.tdf).
-// Trees (category=trees) and rocks (category=rocks) are reclaimable obstacles --
-// we vary across ALL the art variants so no one type repeats. A mana deposit is a
-// glowing Sacred Stone centre (XxxManaNN, category=Mana + animating=1 -- the
-// buildable spot the sim harvests) ringed by static Standing Stones (XxxHengeNN,
-// "ruins"), exactly as the shipped maps lay them out. Rocks are ordered small->big
-// so placement can bias toward the little ones. The sim skips names it can't
-// resolve, so an over-long list is harmless.
-struct Span { const char* const* p; int n; };
-struct WorldFeatures {
-    Span trees, rocks;
-    std::array<const char*, 3> sacred;   // weak, medium, strong (sacredsite 1.0/1.5/2.0)
-};
-
-constexpr const char* kAraTree[] = {"AraTree01", "AraTree02", "AraTree03", "AraTree04", "AraTree05",
-                                    "AraTree06", "AraTree07", "AraTree08", "AraTree09", "AraTree10"};
-constexpr const char* kAraRock[] = {"AraRock01", "AraRock02", "AraRock03", "AraRock04",
-                                    "AraRock05", "AraRock06", "AraRock07"};
-
-constexpr const char* kTarTree[] = {"TarTree01", "TarTree02", "TarTree03", "TarTree04", "TarTree05",
-                                    "TarTree06", "TarTree07", "TarTree08", "TarTree09"};
-constexpr const char* kTarRock[] = {"TarRock07", "TarRock06", "TarRock05", "TarRock04",
-                                    "TarRock03", "TarRock02", "TarRock01"};   // small->big
-
-constexpr const char* kVerTree[] = {"VerTree01", "VerTree02", "VerTree03", "VerTree04", "VerTree05",
-                                    "VerTree06", "VerTree07", "VerTree08", "VerTree09"};
-constexpr const char* kVerRock[] = {"VeRock01", "VeRock02", "VeRock05", "VeRock07",
-                                    "VeRock04", "VeRock03", "VeRock06"};   // small->big
-
-constexpr const char* kZonTree[] = {"ZonTree01", "ZonTree02", "ZonTree03",
-                                    "ZonTree04", "ZonTree05", "ZonTree06"};
-constexpr const char* kZonRock[] = {"ZonRock07", "ZonRock06", "ZonRock05", "ZonRock04",
-                                    "ZonRock03", "ZonRock02", "ZonRock01"};   // small->big
-
-// Creon (Iron Plague): features/creon/*.tdf in IPData.hpi.
-constexpr const char* kCreTree[] = {"CreTree01", "CreTree02", "CreTree03", "CreTree04", "CreTree05",
-                                    "CreTree06", "CreTree07", "CreTree08", "CreTree09"};
-constexpr const char* kCreRock[] = {"CRERock12", "CRERock07", "CRERock09", "CRERock10", "CRERock11",
-                                    "CRERock02", "CRERock03", "CRERock04", "CRERock06", "CRERock05",
-                                    "CRERock13", "CRERock01", "CRERock08"};   // small->big
-
-constexpr std::array<WorldFeatures, kMapTypes> kWorldFeat = {{
-    {{kAraTree, 10}, {kAraRock, 7},  {{"AraMana01", "AraMana02", "AraMana03"}}},
-    {{kTarTree, 9},  {kTarRock, 7},  {{"TarMana01", "TarMana02", "TarMana03"}}},
-    {{kVerTree, 9},  {kVerRock, 7},  {{"VerMana01", "VerMana02", "VerMana03"}}},
-    {{kZonTree, 6},  {kZonRock, 7},  {{"ZonMana01", "ZonMana02", "ZonMana03"}}},
-    {{kCreTree, 9},  {kCreRock, 13},  {{"CReMana01", "CREMana02", "CREMana03"}}},
-}};
-
-// ---- mana-deposit henge rings --------------------------------------------------
-// Mined from ALL 101 shipped maps (1207 deposits, 3230 henges): each henge
-// variant is an ARC SEGMENT authored for ONE compass slot at a canonical anchor
-// offset from the sacred stone (3-6 cells -- tighter than our old 5-8 scatter).
-// A retail deposit is ONE sacred stone + 2-4 henges from DISTINCT slots
-// (canonical trio NW+NE+S where the world has it), each at its variant's
-// canonical offset with +-1 cell of jitter (+-2 on Zhon, the loosest world).
-// Weights are the shipped occurrence counts.
-enum RingSlot { rN, rNE, rE, rSE, rS, rSW, rW, rNW };
-struct RingPiece { const char* name; int8_t dx, dz; uint8_t slot; uint8_t w; };
-struct RingSpec {
-    const RingPiece* p; int n;
-    uint8_t cnt[6];      // cumulative % thresholds: ring size k when roll < cnt[k]
-    int8_t jitter;       // +- cells around the canonical offset
-    uint8_t order[8];    // slot preference order (canonical trio first)
-};
-constexpr RingPiece kAraRing[] = {
-    {"AraHenge01", -4, -4, rNW, 95}, {"AraHenge08", -5, -4, rNW, 47},
-    {"AraHenge09", +3, -3, rNE, 89}, {"AraHenge02", +3, -3, rNE, 61},
-    {"AraHenge05", +3, -4, rNE, 19}, {"AraHenge03", +4, -1, rE, 17},
-    {"AraHenge07", -1, +6, rS, 117}, {"AraHenge04",  0, +5, rS, 56},
-    {"AraHenge06", -5, -1, rW, 49},
-};
-constexpr RingPiece kTarRing[] = {
-    {"TarHenge09", -4, -3, rNW, 135}, {"TarHenge01", -4, -4, rNW, 25},
-    {"TarHenge02", -1, -4, rN, 47},   {"TarHenge10", +1, -5, rN, 38},
-    {"TarHenge11", +4, -3, rNE, 137}, {"TarHenge04", +3, -3, rNE, 33},
-    {"TarHenge05", +4,  0, rE, 59},   {"TarHenge06", +3, +3, rSE, 38},
-    {"TarHenge12", +3, +3, rSE, 19},  {"TarHenge13",  0, +5, rS, 156},
-    {"TarHenge14", -4, +3, rSW, 62},  {"TarHenge08", -4,  0, rW, 28},
-    {"TarHenge03", -5,  0, rW, 15},   {"TarHenge07", -7, +2, rW, 11},
-};
-constexpr RingPiece kVerRing[] = {
-    {"VerHenge10", -4, -3, rNW, 68},  {"VerHenge01b", -5, -4, rNW, 38},
-    {"VerHenge01", -6, -4, rNW, 26},  {"VerHenge02", -1, -5, rN, 36},
-    {"VerHenge11", +3, -2, rNE, 72},  {"VerHenge04", +3, -3, rNE, 24},
-    {"VerHenge05b", +4, 0, rE, 31},   {"VerHenge05", +4,  0, rE, 24},
-    {"VerHenge09", -1, +4, rS, 102},  {"VerHenge07",  0, +4, rS, 19},
-    {"VerHenge08", -4, +2, rSW, 54},
-};
-constexpr RingPiece kZonRing[] = {
-    {"ZonHenge02", -3, -5, rNW, 46},  {"ZonHenge01", -4, -4, rNW, 25},
-    {"ZonHenge10", -4, -3, rNW, 16},  {"ZonHenge06",  0, -5, rN, 41},
-    {"ZonHenge03", +2, -5, rN, 36},   {"ZonHenge07", +3, -4, rNE, 34},
-    {"ZonHenge04", +5,  0, rE, 31},   {"ZonHenge05", +3, +2, rSE, 48},
-    {"ZonHenge09", +1, +4, rS, 49},   {"ZonHenge11", -6, +4, rSW, 41},
-    {"ZonHenge08", -5, +1, rW, 40},
-};
-constexpr RingPiece kCreRing[] = {
-    {"CREHenge17", -1, -5, rN, 18},   {"CREHenge16", -3, -4, rN, 9},
-    {"CREHenge22", +3, -4, rNE, 16},  {"CREHenge21", +4, -2, rNE, 9},
-    {"CREHenge23", +4, -3, rNE, 8},   {"CREHenge09", +4, +1, rE, 7},
-    {"CREHenge14",  0, +5, rS, 11},   {"CREHenge07",  0, +4, rS, 7},
-    {"CREHenge15", -3, +4, rSW, 21},  {"CREHenge05", -3, +3, rSW, 10},
-    {"CREHenge19", -5, +1, rW, 32},   {"CREHenge11", -6, -1, rW, 7},
-    {"CREHenge06", -3, -5, rNW, 7},   {"CREHenge03", -5, -4, rNW, 6},
-};
-constexpr std::array<RingSpec, kMapTypes> kRing = {{
-    // cnt: shipped ring-size distribution (cumulative %); order: canonical first.
-    {kAraRing, 9,  {0, 0, 30, 93, 100, 100}, 1, {rNW, rNE, rS, rW, rE, rSW, rN, rSE}},
-    {kTarRing, 14, {0, 0, 23, 67, 88, 100},  1, {rNW, rNE, rS, rSW, rE, rN, rW, rSE}},
-    {kVerRing, 11, {0, 19, 58, 94, 99, 100}, 1, {rNW, rNE, rS, rSW, rN, rE, rW, rSE}},
-    {kZonRing, 11, {0, 5, 24, 66, 91, 100},  2, {rNW, rSE, rN, rSW, rW, rNE, rE, rS}},
-    // 21% of shipped Creon deposits are BARE (no ring at all) -- reproduced.
-    {kCreRing, 14, {21, 27, 71, 96, 100, 100}, 1, {rW, rN, rNE, rSW, rS, rE, rNW, rSE}},
-}};
-
-// Even compass directions (integer, scaled by 1000) for start-position rings.
-constexpr std::array<std::pair<int, int>, 8> kCompass = {{
-    {0, -1000}, {707, -707}, {1000, 0}, {707, 707},
-    {0, 1000}, {-707, 707}, {-1000, 0}, {-707, -707},
-}};
-
-}  // namespace
 
 Params sanitize(Params p) {
     if (p.mapType >= kMapTypes) p.mapType = Aramon;
@@ -269,11 +41,25 @@ Params sanitize(Params p) {
     p.widthCells = fix(p.widthCells);
     p.heightCells = fix(p.heightCells);
     p.players = uint8_t(std::clamp<int>(p.players, 2, 8));
+    if (p.formatVer >= 3) {
+        p.layout = std::min<uint8_t>(p.layout, Islands);
+        const int minimum = p.layout == Lakes ? (p.players > 4 ? 512 : 384) : (p.players > 4 ? 384 : 256);
+        int minW = minimum, minH = minimum;
+        if (p.layout == Islands) {
+            const int cols = p.players <= 4 ? 2 : 3;
+            const int rows = (p.players + cols - 1) / cols;
+            minW = std::max(minW, cols * 256);
+            minH = std::max(minH, rows * 256);
+        }
+        p.widthCells = uint16_t(std::max<int>(p.widthCells, minW));
+        p.heightCells = uint16_t(std::max<int>(p.heightCells, minH));
+    }
     return p;
 }
 
 Result generate(const Params& raw, const tak::hpi::Vfs& vfs) {
     Params p = sanitize(raw);
+    if (p.formatVer >= 3) return generateBalanced(p, vfs);
     Result r;
     tak::tnt::Map& m = r.map;
     const int W = p.widthCells, H = p.heightCells;
@@ -667,6 +453,7 @@ std::string encodeMapId(const Params& pin) {
     b.push_back(char(p.manaDensity));
     b.push_back(char(p.waterDensity));
     b.push_back(char(p.reliefDensity));
+    if (p.formatVer >= 3) b.push_back(char(p.layout));
     return std::string(kMagic) + toHex(b);
 }
 
@@ -684,6 +471,8 @@ Params decodeMapId(const std::string& id) {
     auto u16 = [&](size_t o) -> uint16_t { return uint16_t(u8(o) | (u8(o + 1) << 8)); };
     if (raw.size() >= 19) {
         p.formatVer = u16(0);
+        if (p.formatVer > 3 || (p.formatVer == 3 && raw.size() != 22)) return Params{};
+        if (p.formatVer == 3) p.layout = u8(21);
         uint64_t s = 0; for (int i = 0; i < 8; ++i) s |= uint64_t(u8(2 + i)) << (8 * i);
         p.seed = s;
         p.mapType = u8(10);

@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 191;      // 191: infinite mobile builders accept move/patrol rally orders
+constexpr uint32_t kNetVersion = 192;      // 192: version-3 balanced generated-map recipes
+                                           // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering
                                            // 189: authored corpse decisions and death owner lifetimes
                                            // 184: stationary buildings aim without rotating their bodies

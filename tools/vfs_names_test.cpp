@@ -39,6 +39,20 @@ int main(int argc,char** argv) {
             require(tak::vpath::stem("Maps\\a.b.tnt")=="a.b","backslash path");
             require(tak::vpath::extension("dir.dot/file").empty(),"directory dot is not extension");
             require(tak::vpath::stem(".hidden")==".hidden","dotfile stem");
+            // Downloaded-map terrain may replace stock keys for that map, but
+            // generated maps must see the retail tile (explicit user overrides win).
+            const auto writeTile=[&](const char* dir,const char* value) {
+                fs::create_directories(root/dir/"terrain");
+                std::ofstream f(root/dir/"terrain"/"12345678.jpg");f<<value;
+            };
+            writeTile("base","stock");writeTile("download","map");writeTile("override","user");
+            tak::hpi::Vfs scoped;
+            scoped.addLayer(tak::hpi::MountSet(root/"base"));
+            scoped.addLayer(tak::hpi::MountSet(root/"download"),"",true);
+            const auto tile=[&](bool stock) {auto b=scoped.read("terrain/12345678.jpg",stock);return std::string(b.begin(),b.end());};
+            require(tile(false)=="map"&&tile(true)=="stock","generated terrain ignores map reskins");
+            scoped.addLayer(tak::hpi::MountSet(root/"override"));
+            require(tile(false)=="user"&&tile(true)=="user","explicit user terrain override retained");
             if(argc>1) {
                 auto real=tak::hpi::mountRetailRoot(fs::u8path(argv[1]));
                 auto all=tak::hpi::listMaps(real);

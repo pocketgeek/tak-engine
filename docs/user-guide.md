@@ -294,7 +294,22 @@ position updates.
   Campaigns always use their authored sight/radar values.
   Defeated players go to results automatically after three real-time seconds;
   surviving players keep playing throughout.
-  Random maps can be generated from the create-game screen.
+  Random maps can be generated from the create-game screen. Choose Mainland,
+  Lakes, or Islands and one of the five world palettes. The generator reserves
+  flat bases, clear army approaches, and three home mana spots per player (one
+  of each strength). Extra mana is added in equal rounds, with comparable walking
+  distances; space limits can reduce the number for everyone. Forests and rocks
+  form clusters outside reserved approaches. Hills use retail terrain sections,
+  copying their painted artwork and heights together.
+
+  Water amount is an intensity control, not a percentage of the map. The preview
+  reports actual water coverage. At zero, Mainland and Lakes are dry. Islands
+  allocate water automatically, with connected shipping lanes and open harbor
+  space; they require naval or air travel between bases. Minimum size increases
+  with layout and player count to leave enough room. Sliders control additional
+  scenery, not the decorations already painted or placed in retail sections.
+  Existing version-1/version-2 generated-map IDs retain their old layouts;
+  newly generated maps use version 3.
   **Monarch Expendable** is the loss
   rule: *off* (the retail commander rule) means losing your Monarch loses you the
   game even if other units survive; *on* makes the Monarch just another unit. The

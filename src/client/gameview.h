@@ -2167,6 +2167,7 @@ private:
     // which slider is being dragged (0=doodad 1=mana 2=water, -1=none), and the three
     // slider bar rects for drag hit-testing.
     tak::mapgen::Params genParams_{};
+    std::string genPreviewInfo_, genPreviewError_;
     int genSlider_ = -1;
     SDL_FRect genSliderRect_[5]{};
     void applyGenParams();             // re-encode genParams_ -> mpMapId_
