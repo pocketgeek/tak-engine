@@ -142,7 +142,8 @@ Zhon's mobile conjurers replace the conventional keep-based production chain.
 Unless **Monarch Expendable** is enabled, losing your Monarch loses the game.
 The lobby supports a maximum of **2,000 live units per player**.
 **Double Sight/Radar** doubles every unit's sight and radar distance in skirmish
-and multiplayer. It does not change weapon range or campaign missions.
+and multiplayer. Choose it in game setup; the lobby only displays its status.
+It does not change weapon range or campaign missions.
 Terrain you have explored remains visible under fog after your units leave;
 enemy units outside current sight remain untargetable.
 

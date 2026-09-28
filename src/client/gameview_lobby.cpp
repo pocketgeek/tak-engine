@@ -700,11 +700,8 @@ std::string mapDisplayName(const std::string& id) {
                 mp_->setGameOptions(o); });
         }
         if (room.mission.empty()) {
-            lbBtn(x + 330, y, 240, 26,
-                  room.opts.doubleSight ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", host, [this] {
-                      auto o = mpRoom().opts; o.doubleSight = !o.doubleSight;
-                      mp_->setGameOptions(o);
-                  });
+            blockText(room.opts.doubleSight ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF",
+                      x + 330, y + 6, 1.6f, {205, 210, 225, 255});
         }
         // Rules chosen when creating the game are informational in the lobby.
         // Fog of war: NOT EXPLORED starts hidden; EXPLORED starts mapped.

@@ -288,7 +288,8 @@ position updates.
   **Not Explored** starts terrain hidden; **Explored** starts it mapped. Both
   retain discovered terrain under fog when sight is lost; hidden enemies remain
   unselectable. **Full Vision** removes fog.
-  The host can toggle **Double Sight/Radar** in the multiplayer or skirmish room: it
+  Choose **Double Sight/Radar** during multiplayer or skirmish game setup;
+  the lobby displays its status as read-only information. It
   doubles every unit’s sight and radar distances, without changing weapon range.
   Campaigns always use their authored sight/radar values.
   Defeated players go to results automatically after three real-time seconds;
