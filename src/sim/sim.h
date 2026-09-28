@@ -1670,7 +1670,8 @@ public:
     int projectileEnvironment(const std::array<int32_t,3>& point,int32_t& verticalSpeed,
                               uint32_t weaponFlags) const;
     // Build once for the projectile update phase, in player/entity order.
-    std::vector<int> projectileAirGrid();
+    RetailAirCollisionGrid projectileAirScratch_;
+    std::span<const int> projectileAirGrid();
     struct ProjectileCollisionResult { int code=0,unitId=0; };
     ProjectileCollisionResult projectileCollision(const std::array<int32_t,3>& point,
         int32_t& verticalSpeed,uint32_t weaponFlags,int owner,std::span<const int> airGrid,
@@ -2127,6 +2128,11 @@ private:
     // Derived occupancy: rebuilt each tick, then updated after every cell change.
     // Both moving and parked bodies reserve their whole footprint (0 = free).
     std::vector<int32_t> occ_;
+    std::vector<size_t> occTouched_;
+    void setOccupant(size_t cell,int id) {
+        if (id && !occ_[cell]) occTouched_.push_back(cell);
+        occ_[cell]=id;
+    }
     int occW_ = 0, occH_ = 0;
     RetailCostSearch::Costs searchCosts(const Unit& u) const;
     bool requestPath(Unit& u, float x, float z);   // true iff a search was queued
@@ -2163,6 +2169,7 @@ private:
     }
 
     std::vector<int> gHead_, gNext_;
+    std::vector<size_t> gTouched_;
     // Conservative owner mask for rejecting all-allied target cells. Capture
     // invalidates it until the next rebuild; linked-list order stays unchanged.
     std::vector<uint64_t> gPlayers_;

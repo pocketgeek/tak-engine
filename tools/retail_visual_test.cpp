@@ -1179,6 +1179,30 @@ int main(int argc,char** argv) {
         bodies={{1,7,2,1,1,true},{2,2,2,1,1,false}};
         const auto empty=tak::sim::retailAirCollisionGrid(8,8,bodies,[](unsigned){return 0;});
         if(std::any_of(empty.begin(),empty.end(),[](int cell){return cell!=0;}))return 1;
+        tak::sim::RetailAirCollisionGrid cached;
+        unsigned state=520640;
+        auto next=[&] {state=state*214013u+2531011u;return state;};
+        for(int frame=0;frame<200;++frame) {
+            // Move/remove bodies, change map shape (including equal area), and
+            // alternate empty frames with dense overlap/overflow frames.
+            const int width=frame%3==0 ? 8 : 12,height=frame%3==0 ? 12 : 8;
+            bodies.clear();
+            const int count=frame%5==0 ? 0 : int(next()%40);
+            for(int i=0;i<count;++i) {
+                const int x=frame%2 ? 2 : int(next()%16)-2;
+                const int z=frame%2 ? 2 : int(next()%16)-2;
+                bodies.push_back({i*3+100,x,z,1+int(next()%4),1+int(next()%4),next()%3!=0});
+            }
+            unsigned a=state,b=state;
+            auto random=[](unsigned& seed,unsigned n) {
+                seed=seed*214013u+2531011u;return ((seed>>16)&32767u)*n/32768u;
+            };
+            const auto fresh=tak::sim::retailAirCollisionGrid(width,height,bodies,[&](unsigned n){return random(a,n);});
+            const auto& reused=cached.build(width,height,bodies,[&](unsigned n){return random(b,n);});
+            if(fresh!=reused || a!=b) {
+                std::fprintf(stderr,"air collision cache differs after frame %d\n",frame);return 1;
+            }
+        }
         std::puts("PASS: airborne collision overflow, map-edge exclusion and grounded exclusion");
     }
     {

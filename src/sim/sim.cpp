@@ -977,7 +977,7 @@ void World::commitGroundStep(Unit& u,Fixed dx,Fixed dz) {
                     if (owner==u.id) owner=0;
                 }
             for (int z=nz;z<nz+fz;++z) for (int x=nx;x<nx+fx;++x)
-                if (x>=0 && z>=0 && x<occW_ && z<occH_) occ_[size_t(z)*occW_+x]=u.id;
+                if (x>=0 && z>=0 && x<occW_ && z<occH_) setOccupant(size_t(z)*occW_+x,u.id);
         }
         u.x=px;u.z=pz;
     } else {
@@ -4927,9 +4927,12 @@ void World::rebuildOccupancy() {
     occW_ = terW_;
     occH_ = terH_;
     if (occW_ <= 0 || occH_ <= 0) {
-        occ_.clear(); occW_ = occH_ = 0; return;
+        occ_.clear(); occTouched_.clear(); occW_ = occH_ = 0; return;
     }
-    occ_.assign(size_t(occW_) * size_t(occH_), 0);
+    const size_t cells=size_t(occW_)*occH_;
+    if (occ_.size()!=cells) occ_.assign(cells,0);
+    else for (size_t cell:occTouched_) occ_[cell]=0;
+    occTouched_.clear();
     // Rebuild in deterministic order, moving bodies first and parked ones last.
     // Subsequent steps update ownership immediately; two units cannot reserve
     // the same destination using a stale snapshot of this grid.
@@ -4948,7 +4951,7 @@ void World::rebuildOccupancy() {
                     int x = cx + i, z = cz + j;
                     if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
                     const size_t cell = size_t(z) * size_t(occW_) + size_t(x);
-                    occ_[cell] = u.id;
+                    setOccupant(cell,u.id);
                 }
         }
     }
@@ -4973,8 +4976,11 @@ void World::rebuildGrid() {
     gOz_ = minz - gCell_;
     gW_ = int((maxx - minx) / gCell_) + 3;
     gH_ = int((maxz - minz) / gCell_) + 3;
-    gHead_.assign(size_t(gW_) * gH_, -1);
-    gPlayers_.assign(gHead_.size(),0);
+    const size_t cells=size_t(gW_)*gH_;
+    if (gHead_.size()!=cells) {
+        gHead_.assign(cells,-1);gPlayers_.assign(cells,0);
+    } else for (size_t cell:gTouched_) {gHead_[cell]=-1;gPlayers_[cell]=0;}
+    gTouched_.clear();
     gPlayersValid_=true;
     gNext_.assign(units_.size(), -1);
     for (size_t i = 0; i < units_.size(); ++i) {
@@ -4983,6 +4989,7 @@ void World::rebuildGrid() {
         int cx = std::clamp(int((u.x.toFloat() - gOx_) / gCell_), 0, gW_ - 1);
         int cz = std::clamp(int((u.z.toFloat() - gOz_) / gCell_), 0, gH_ - 1);
         int c = cz * gW_ + cx;
+        if (gHead_[size_t(c)]<0) gTouched_.push_back(size_t(c));
         gNext_[i] = gHead_[size_t(c)];
         gHead_[size_t(c)] = int(i);
         if (unsigned(u.player)<64) gPlayers_[size_t(c)]|=uint64_t(1)<<u.player;
@@ -6081,7 +6088,7 @@ void World::completeRetailConstruction(Unit& builder,Unit& site) {
         const int x=footprintOrigin(site.x,foot),z=footprintOrigin(site.z,foot);
         for (int dz=0;dz<foot;++dz) for (int dx=0;dx<foot;++dx)
             if (x+dx>=0 && z+dz>=0 && x+dx<occW_ && z+dz<occH_)
-                occ_[size_t(z+dz)*occW_+x+dx]=site.id;
+                setOccupant(size_t(z+dz)*occW_+x+dx,site.id);
         for (auto& plane:searchGrades_) refreshSearchRect(plane,x,z,foot,foot);
     }
 }
@@ -7499,7 +7506,7 @@ void World::tickFlames(std::span<const int> airGrid) {
     std::erase_if(flames_,[](const auto& flame){return flame.expired;});
 }
 
-std::vector<int> World::projectileAirGrid() {
+std::span<const int> World::projectileAirGrid() {
     std::vector<const Unit*> aircraft;
     for(const auto& u:units_)
         if(u.alive() && u.type && u.type->canFly && !u.embarked())aircraft.push_back(&u);
@@ -7511,7 +7518,7 @@ std::vector<int> World::projectileAirGrid() {
     bodies.reserve(aircraft.size());
     for(const auto* u:aircraft)bodies.push_back({u->id,footprintOrigin(u->x,u->type->footX),
         footprintOrigin(u->z,u->type->footZ),u->type->footX,u->type->footZ,u->flightGroundMode==2});
-    return retailAirCollisionGrid(hW_,hH_,bodies,[&](unsigned n){return gameRand(int32_t(n));});
+    return projectileAirScratch_.build(hW_,hH_,bodies,[&](unsigned n){return gameRand(int32_t(n));});
 }
 
 World::ProjectileCollisionResult World::projectileCollision(const std::array<int32_t,3>& point,

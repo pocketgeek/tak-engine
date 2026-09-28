@@ -13,19 +13,20 @@
 int main(int argc,char** argv) try {
     using namespace tak;
     std::string mode="movement",data="assets/game",mapName;
-    int count=16000,ticks=3600;
+    int count=16000,ticks=3600,unitCap=0;
     bool crusades=false,serial=false;
     for (int i=1;i<argc;++i) {
         const std::string arg=argv[i];
         if (arg=="--serial") {serial=true;continue;}
         if (arg=="--crusades") {crusades=true;continue;}
         if (arg=="--help") {
-            std::puts("simperf [--mode movement|match|patrol|crowd] [--units 16000] [--ticks 3600] [--data assets/game] [--map NAME] [--crusades] [--serial]\n"
+            std::puts("simperf [--mode movement|match|patrol|crowd] [--units 16000] [--unit-cap 2000] [--ticks 3600] [--data assets/game] [--map NAME] [--crusades] [--serial]\n"
                       "movement: synthetic flat terrain, unarmed moving units; excludes scripts/AI/rendering.\n"
                       "match: generated flat map, mixed retail armies and eight Absurd AIs; includes combat/deaths.\n"
                       "patrol: same mixed retail armies, allied and patrolling; includes scripts, excludes AI/combat/rendering.\n"
                       "crowd: allied mixed armies converging near their starting positions; includes scripts and destination congestion.\n"
                       "--map selects a retail map for match/patrol/crowd; the default remains the generated flat map.\n"
+                      "--unit-cap sets each player's cap independently of the initial army size (8 initial units allow natural AI growth).\n"
                       "Times include periodic lockstep hashes, exclude setup, and do not measure rendering.");
             return 0;
         }
@@ -35,11 +36,13 @@ int main(int argc,char** argv) try {
         else if (arg=="--data") data=value;
         else if (arg=="--map") mapName=value;
         else if (arg=="--units") count=std::stoi(value);
+        else if (arg=="--unit-cap") unitCap=std::stoi(value);
         else if (arg=="--ticks") ticks=std::stoi(value);
         else throw std::invalid_argument("unknown option: "+arg);
     }
     if (count<1 || count>16000 || ticks<1 || ticks>18000)
         throw std::invalid_argument("units must be 1..16000 and ticks 1..18000");
+    if(unitCap<0 || unitCap>2000)throw std::invalid_argument("unit cap must be 0..2000 (0 uses the initial army size)");
     if (mode!="movement" && mode!="match" && mode!="patrol" && mode!="crowd") throw std::invalid_argument("invalid mode");
     if (mode!="movement" && count%8) throw std::invalid_argument("army unit count must be divisible by 8");
 
@@ -85,7 +88,7 @@ int main(int argc,char** argv) try {
         if (world.units().size()!=size_t(count))
             throw std::runtime_error("map placed only "+std::to_string(world.units().size())+
                 " units; expected "+std::to_string(count)+" including monarchs; reduce --units or choose another map");
-        world.setUnitCap(count/8);
+        world.setUnitCap(unitCap ? unitCap : count/8);
         std::printf("map=%s terrain_cells=%dx%d\n",config.mapPath.c_str(),
                     world.nav().width(),world.nav().height());
         if (mode=="patrol") {
@@ -115,7 +118,7 @@ int main(int argc,char** argv) try {
     std::vector<double> durations;
     durations.reserve(size_t(ticks));
     int minAlive=int(world.units().size());
-    double hashMs=0;uint64_t firedTicks=0,hitEvents=0;
+    double hashMs=0,aiMs=0,worldMs=0;uint64_t firedTicks=0,hitEvents=0;
     std::vector<std::pair<int32_t,int32_t>> previousPositions;
     for (const auto& u:world.units()) previousPositions.emplace_back(u.x.v,u.z.v);
     const auto start=std::chrono::steady_clock::now();
@@ -123,7 +126,10 @@ int main(int argc,char** argv) try {
         const auto tickStart=std::chrono::steady_clock::now();
         for (auto& controller:controllers)
             controller->tick(world,uint32_t(tick),[&](const net::Command& c){sim::applyCommand(world,registry,c);});
+        const auto worldStart=std::chrono::steady_clock::now();
+        aiMs+=std::chrono::duration<double,std::milli>(worldStart-tickStart).count();
         world.tick(1.f/30);
+        worldMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-worldStart).count();
         hitEvents+=world.hits().size();
         durations.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-tickStart).count());
         if (tick%30==29) {
@@ -146,8 +152,9 @@ int main(int argc,char** argv) try {
             const auto hashStart=std::chrono::steady_clock::now();
             const auto hash=world.stateHash();
             hashMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-hashStart).count();
-            std::printf("tick=%d hash=%016llx ms=%.3f alive=%d moving=%d firing=%d projectiles=%zu stationary_1s=%d near_goal_512=%d\n",tick+1,
-                static_cast<unsigned long long>(hash),durations.back(),living,moving,firing,world.projectiles().size(),stationary,nearGoal);
+            std::printf("tick=%d hash=%016llx ms=%.3f alive=%d moving=%d firing=%d projectiles=%zu stationary_1s=%d near_goal_512=%d ai_ms=%.3f world_ms=%.3f\n",tick+1,
+                static_cast<unsigned long long>(hash),durations.back(),living,moving,firing,world.projectiles().size(),stationary,nearGoal,aiMs,worldMs);
+            aiMs=worldMs=0;
             std::fflush(stdout);
         }
     }

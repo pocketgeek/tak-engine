@@ -42,13 +42,24 @@ struct RetailAirCollisionBody {
     int id=0,x=0,z=0,width=1,height=1;
     bool airborne=true;
 };
-template<class Random>
-std::vector<int> retailAirCollisionGrid(int width,int height,
-        const std::vector<RetailAirCollisionBody>& bodies,Random random) {
+// Derived scratch state only: retain allocation and clear/convert the cells
+// actually visited by aircraft. Empty parts of large maps need no per-tick work.
+class RetailAirCollisionGrid {
     struct Links { std::array<int,7> ids{}; int count=0; };
-    std::vector<Links> links(bodies.size());
+    std::vector<Links> links;
+    std::vector<int> cells;
+    std::vector<size_t> touched;
+public:
+template<class Random>
+const std::vector<int>& build(int width,int height,
+        const std::vector<RetailAirCollisionBody>& bodies,Random random) {
+    if (cells.size()!=size_t(width)*height) cells.assign(size_t(width)*height,0);
+    else for (size_t cell:touched) cells[cell]=0;
+    touched.clear();
+    links.assign(bodies.size(),{});
     // Internal indices avoid imposing native 16-bit entity IDs on World IDs.
-    std::vector<int> cells(size_t(width)*height,-1);
+    // During construction 0 = empty, -1 = overflow, and positive values are
+    // index+1. Afterwards only touched positive cells convert to entity IDs.
     auto add=[&](int a,int b) {
         auto& list=links[size_t(a)];
         if(a==b || list.count<0)return;
@@ -60,11 +71,12 @@ std::vector<int> retailAirCollisionGrid(int width,int height,
         const auto& body=bodies[index];
         if(!body.airborne || body.x<0 || body.z<0 || body.x+body.width>=width || body.z+body.height>=height)continue;
         for(int z=body.z;z<body.z+body.height;++z)for(int x=body.x;x<body.x+body.width;++x) {
-            int& owner=cells[size_t(z)*width+x];
-            if(owner==-1) {owner=int(index);continue;}
-            if(owner==-2) {links[index].count=-1;continue;}
-            const int previous=owner;
-            if(links[size_t(previous)].count<0) {owner=-2;links[index].count=-1;continue;}
+            const size_t cell=size_t(z)*width+x;
+            int& owner=cells[cell];
+            if(owner==0) {owner=int(index)+1;touched.push_back(cell);continue;}
+            if(owner==-1) {links[index].count=-1;continue;}
+            const int previous=owner-1;
+            if(links[size_t(previous)].count<0) {owner=-1;links[index].count=-1;continue;}
             add(previous,int(index));add(int(index),previous);
             std::array<int,7> candidates{previous,int(index)};
             int count=2;
@@ -74,18 +86,25 @@ std::vector<int> retailAirCollisionGrid(int width,int height,
                 const auto& candidate=bodies[size_t(other)];
                 if(x<candidate.x || z<candidate.z || x>=candidate.x+candidate.width || z>=candidate.z+candidate.height)continue;
                 if(count==7) {
-                    owner=-2;links[size_t(other)].count=-1;
+                    owner=-1;links[size_t(other)].count=-1;
                     for(int c:candidates)links[size_t(c)].count=-1;
                     break;
                 }
                 add(other,int(index));add(int(index),other);
                 candidates[size_t(count++)]=other;
             }
-            if(owner!=-2)owner=candidates[size_t(random(unsigned(count)))];
+            if(owner!=-1)owner=candidates[size_t(random(unsigned(count)))]+1;
         }
     }
-    for(auto& cell:cells)cell=cell==-1 ? 0 : cell==-2 ? -1 : bodies[size_t(cell)].id;
+    for(size_t index:touched) if(cells[index]>0)cells[index]=bodies[size_t(cells[index]-1)].id;
     return cells;
+}
+};
+template<class Random>
+std::vector<int> retailAirCollisionGrid(int width,int height,
+        const std::vector<RetailAirCollisionBody>& bodies,Random random) {
+    RetailAirCollisionGrid grid;
+    return grid.build(width,height,bodies,random);
 }
 
 using RetailCollisionQuad=std::array<std::array<int32_t,2>,4>;

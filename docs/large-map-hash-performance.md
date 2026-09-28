@@ -2,7 +2,9 @@
 
 A report of Ultima Online B1 (63×63) alternating between roughly 4× and 1×
 prompted a timing check. The slowdown has not yet been reproduced in a matching
-interactive workload; player count and army size remain unknown.
+interactive workload at the time. A subsequent report identified eight Absurd
+AIs with Crusades balance and a few hundred units; see
+[collision-grid measurements](large-map-collision-performance.md) for that follow-up.
 
 One confirmed cost was the placement-cell portion of the periodic state hash.
 Each cell has a 16-bit feature index, serialized as eight bytes by the existing
