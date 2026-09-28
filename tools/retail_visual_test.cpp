@@ -23,6 +23,7 @@
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
 #include "client/renderframe.h"
+#include "client/featureindex.h"
 #include "sim/retailpiecepose.h"
 #include <algorithm>
 #include <cstdio>
@@ -31,6 +32,41 @@
 #include <map>
 #include <tuple>
 #include <vector>
+
+static bool testFeatureIndex() {
+    struct Point { float x,z,liftX,liftZ; };
+    std::vector<Point> points;
+    uint32_t rng=17;
+    auto next=[&]{rng=rng*1664525u+1013904223u;return rng;};
+    for(int i=0;i<12000;++i)
+        points.push_back({float(int(next()%34000)-1024),float(int(next()%34000)-1024),
+                          float(next()%128)/2,float(next()%256)/2});
+    // Bucket boundaries, including negative projected positions.
+    for(int i=-2;i<34;++i)for(float edge:{-0.01f,0.f,0.01f})
+        points.push_back({i*1024.f+edge,i*1024.f+edge,0,0});
+    tak::FeatureIndex index;
+    auto rebuild=[&]{index.rebuild(points.size(),[&](size_t i) {
+        const auto& p=points[i];return std::pair{p.x-p.liftX,p.z-p.liftZ};
+    });};
+    auto check=[&] {
+        for(float zoom:{.05f,.1f,.25f,1.f,1.5f,4.f})for(int view=0;view<80;++view) {
+            const float ox=float(int(next()%38000)-3000),oz=float(int(next()%38000)-3000);
+            auto visible=[&](size_t i){const auto& p=points[i];
+                const float x=(p.x-ox)*zoom-p.liftX*zoom,z=(p.z-oz)*zoom-p.liftZ*zoom;
+                return x>=-200 && z>=-200 && x<=1480 && z<=1160;};
+            std::vector<size_t> expected,actual;
+            for(size_t i=0;i<points.size();++i)if(visible(i))expected.push_back(i);
+            for(size_t i:index.query(ox-200/zoom-1,oz-200/zoom-1,ox+1480/zoom+1,oz+1160/zoom+1))
+                if(visible(i))actual.push_back(i);
+            if(actual!=expected)return false;
+        }
+        return true;
+    };
+    rebuild();if(!check() || index.query(4000,4000,5000,5000).size()>=points.size()/10)return false;
+    points[0]={-4096,-2048,0,0};points.push_back({16384,8192,64,127});
+    rebuild();if(!check())return false;
+    points.clear();rebuild();return index.query(-100,-100,100,100).empty() && index.all().empty();
+}
 
 static bool testScriptEffectPosition() {
     uint32_t seed=0x51f3a217u;
@@ -135,6 +171,7 @@ int main(int argc,char** argv) {
         std::puts("FAIL: building light must illuminate camera-facing surfaces");return 1;
     }
     if(argc==1) {
+        if(!testFeatureIndex()){std::puts("FAIL: scenery culling changed visibility/order");return 1;}
         if(!testScriptEffectPosition() || !testDeathSfxLifecycle())return 1;
         {
             // Three simulation steps between display frames: an intervening
@@ -1052,6 +1089,39 @@ int main(int argc,char** argv) {
         update(103);
         if(projectiles!=1)return 1;
         std::puts("PASS: weapon callback starts reload; delayed script acknowledgement creates exactly one projectile");
+    }
+    if (argc==1) {
+        static_assert(sizeof(RenderOrder)<=64);
+        tak::sim::UnitType producer;producer.isBuilder=true;producer.maxVel=tak::sim::Fixed::fromInt(1);
+        tak::sim::Unit source;source.type=&producer;
+        for(unsigned bits=0;bits<256;++bits) {
+            tak::sim::Order o;
+            o.x=tak::sim::Fixed::raw(int32_t(bits*17451)-150000);
+            o.z=tak::sim::Fixed::raw(240000-int32_t(bits*9203));
+            o.clickX=o.z;o.clickZ=o.x;o.buildX=o.x;o.buildZ=o.z;
+            o.targetId=int(bits);o.reclaimFeat=-int(bits);o.repairTarget=int(bits+1);o.issuedTick=bits*37;
+            o.load=bits&1;o.unload=bits&2;o.attackMove=bits&4;o.patrol=bits&8;o.guard=bits&16;o.goal=bits&32;
+            if(bits&64)o.reclaimArea.emplace();
+            if(bits&128){o.buildRectangle.emplace();o.buildType=&producer;}
+            source.orders.push_back(o);
+        }
+        source.rally={source.orders[64],source.orders[32]};
+        UnitR frame;frame.type=&producer;frame.repeatType=&producer;frame.captureOrders(source);
+        if(frame.orders.size()!=source.orders.size() || frame.rally.size()!=2 ||
+           !frame.hasQueuedBuild() || !frame.hasQueuedWork() || &frame.displayedOrders()!=&frame.rally)return 1;
+        for(size_t i=0;i<source.orders.size();++i) {
+            const auto& o=source.orders[i];const auto& r=frame.orders[i];
+            if(r.x!=o.x || r.z!=o.z || r.clickX!=o.clickX || r.clickZ!=o.clickZ ||
+               r.buildX!=o.buildX || r.buildZ!=o.buildZ || r.buildType!=o.buildType ||
+               r.targetId!=o.targetId || r.reclaimFeat!=o.reclaimFeat || r.repairTarget!=o.repairTarget ||
+               r.issuedTick!=o.issuedTick || r.load!=o.load || r.unload!=o.unload || r.attackMove!=o.attackMove ||
+               r.patrol!=o.patrol || r.guard!=o.guard || r.goal!=o.goal ||
+               r.reclaimArea!=bool(o.reclaimArea) || r.buildRectangle!=bool(o.buildRectangle))return 1;
+        }
+        source.orders.clear();source.rally.clear();frame.repeatType=nullptr;frame.captureOrders(source);
+        if(!frame.orders.empty() || !frame.rally.empty() || frame.hasQueuedWork() || frame.hasQueuedBuild() ||
+           &frame.displayedOrders()!=&frame.orders)return 1;
+        std::puts("PASS: compact render orders preserve queue, rally, markers and work status");
     }
     if (argc==1) {
         tak::sim::UnitType type;type.maxVel=tak::sim::Fixed::fromInt(1);

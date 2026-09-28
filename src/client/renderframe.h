@@ -15,6 +15,24 @@
 #include <optional>
 #include <vector>
 
+// Orders exposed to rendering and the HUD. Navigator/transport controllers and
+// mission scratch belong to the simulation, not to each of three frame buffers.
+// Keep every waypoint and every field consumed by overlays/status/cursors.
+struct RenderOrder {
+    tak::sim::Fixed x,z,clickX,clickZ,buildX,buildZ;
+    const tak::sim::UnitType* buildType=nullptr;
+    int targetId=0,reclaimFeat=0,repairTarget=0;
+    uint32_t issuedTick=0;
+    bool load=false,unload=false,attackMove=false,patrol=false,guard=false,goal=false;
+    bool reclaimArea=false,buildRectangle=false;
+    RenderOrder()=default;
+    RenderOrder(const tak::sim::Order& o)
+        :x(o.x),z(o.z),clickX(o.clickX),clickZ(o.clickZ),buildX(o.buildX),buildZ(o.buildZ),
+         buildType(o.buildType),targetId(o.targetId),reclaimFeat(o.reclaimFeat),repairTarget(o.repairTarget),
+         issuedTick(o.issuedTick),load(o.load),unload(o.unload),attackMove(o.attackMove),patrol(o.patrol),
+         guard(o.guard),goal(o.goal),reclaimArea(bool(o.reclaimArea)),buildRectangle(bool(o.buildRectangle)) {}
+};
+
 // Per-tick render SNAPSHOT of a sim Unit (sim/render decouple -- see
 // docs/sim-render-decouple-plan.md). Field names + methods MIRROR sim::Unit so render code
 // reads them unchanged; captured each tick by GameView::captureFrame() so the render never
@@ -63,8 +81,12 @@ struct UnitR {
     int scriptHealthPercent = 100;
     bool yardOpen = false;
     std::vector<const tak::sim::UnitType*> buildQueue;
-    std::vector<tak::sim::Order> orders, rally;
-    const std::vector<tak::sim::Order>& displayedOrders() const {
+    std::vector<RenderOrder> orders, rally;
+    void captureOrders(const tak::sim::Unit& unit) {
+        orders.assign(unit.orders.begin(),unit.orders.end());
+        rally.assign(unit.rally.begin(),unit.rally.end());
+    }
+    const std::vector<RenderOrder>& displayedOrders() const {
         return type && (type->producesUnits() || repeatType) ? rally : orders;
     }
     // Construction still pending anywhere in the queue (builds are ordinary

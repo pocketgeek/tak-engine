@@ -49,6 +49,7 @@
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/aascalereset.h"   // RAII 1:1 render-scale guard (extracted leaf)
 #include "client/distantmodels.h"
+#include "client/featureindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
@@ -2671,6 +2672,8 @@ private:
                              // static "Standing Stones" (animating=0) are decoration.
     };
     std::vector<FeatureInst> features_;
+    tak::FeatureIndex featureIndex_;
+    bool featureIndexDirty_=true;
     std::unordered_set<int> featInstIds_;   // sim ids with a visual inst (dynamic adds)
     std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
 

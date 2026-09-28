@@ -366,6 +366,7 @@ unavailable measurements display N/A.
 Testing targets up to **16,000 total units**, not a guarantee of real-time play
 at that population. Map, unit mix, orders, hardware, and graphics settings all
 matter. See the [large-map collision-grid results](docs/large-map-collision-performance.md),
+[moving-army, snapshot and scenery results](docs/performance-2026-09-28.md),
 [geometry and shadow reuse results](docs/render-reuse-2026-09-26.md),
 [rendering and animation improvements](docs/render-submission-2026-09-26.md),
 [engine profiling results](docs/performance-2026-09-26.md), and

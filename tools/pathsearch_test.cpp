@@ -9,6 +9,18 @@
 
 using namespace tak::sim;
 
+namespace tak::sim {
+struct RetailReplayProbe {
+    static bool counts(const PathService& service) {
+        std::array<int,10> pending{},priority{};
+        for(const auto& [id,entry]:service.q_) {
+            ++pending[size_t(entry.player)];priority[size_t(entry.player)]+=entry.priority;
+        }
+        return pending==service.pendingByPlayer_ && priority==service.priorityByPlayer_;
+    }
+};
+}
+
 static int fails = 0;
 static void check(bool ok, const std::string& what, const std::string& detail = "") {
     std::printf("  [%s] %s%s\n", ok ? "PASS" : "FAIL", what.c_str(),
@@ -54,6 +66,32 @@ static PathSearch::Result run(const Grid& g, PathCell s, PathCell e,
 }
 
 int main() {
+    {
+        PathService service;service.setBudget(80);
+        uint32_t rng=31;
+        auto next=[&]{rng=rng*1664525u+1013904223u;return rng;};
+        bool valid=true;int delivered=0;
+        auto tick=[&]{service.tick([](int,int x,int z){return x<0 || z<0 || x>=24 || z>=24 ? 0:6;},
+            [&](int,const std::vector<PathCell>&,Fixed,Fixed,bool,bool,bool,bool){++delivered;});};
+        for(int i=0;i<4000 && valid;++i) {
+            const int id=int(next()%64),owner=int(next()%10);
+            const int operation=int(next()%12);
+            if(operation==0)service.clear();
+            else if(operation<4)service.cancel(id);
+            else {
+                const int goal=operation<8 ? 20 : 18;
+                service.request(id,{2,2},{goal,20},24,24,Fixed::fromInt(goal*16),Fixed::fromInt(320),owner,false);
+                if(operation&1)service.request(id,{2,2},{goal,20},24,24,
+                    Fixed::fromInt(goal*16),Fixed::fromInt(320),owner,true);
+            }
+            valid=RetailReplayProbe::counts(service);
+            tick();valid &= RetailReplayProbe::counts(service);
+        }
+        service.setBudget(12000);
+        for(int i=0;i<1000 && service.pendingCount();++i){tick();valid &= RetailReplayProbe::counts(service);}
+        check(valid && delivered>0 && !service.pendingCount(),
+              "scheduler counts survive promotions, replacements, owner changes, cancellations, clear and completion");
+    }
     std::printf("[retail direction boundaries]\n");
     check(pathDirFromDelta(12, 5) == 5 && pathDirFromDelta(13, 5) == 6,
           "24:10 boundary stays diagonal; beyond it becomes cardinal");

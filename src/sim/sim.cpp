@@ -856,6 +856,8 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         (void)inserted;
         if (unitScriptById_.size()<=size_t(u.id)) unitScriptById_.resize(size_t(u.id)+1,nullptr);
         unitScriptById_[size_t(u.id)]=&it->second;
+        if (scriptYardById_.size()<=size_t(u.id)) scriptYardById_.resize(size_t(u.id)+1,0);
+        scriptYardById_[size_t(u.id)]=it->second.yardOpen;
         it->second.state.vm.start(*type->script(),type->script()->scriptIndex("Create"));
         it->second.state.startArguments(*type->script(),type->script()->scriptIndex("SetMaxReloadTime"),
                                        {uint32_t(type->maxWeaponReloadMs),0,0,0},1);
@@ -2650,10 +2652,7 @@ bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float
 }
 
 bool World::scriptYardOpen(int unitId) const {
-    // The index is maintained at every insertion/removal. A null entry is an
-    // authoritative miss too; do not repeat it as a map search for dead units.
-    const auto* script=unitScript(unitId);
-    return script && script->yardOpen;
+    return size_t(unitId)<scriptYardById_.size() && scriptYardById_[size_t(unitId)];
 }
 
 bool World::canLoadInto(int unitId,int transportId) const {
@@ -7361,6 +7360,7 @@ struct World::ScriptHost {
                 }
             if (!occupied) {
                 factory.yardOpen=(value&1)!=0;
+                world.scriptYardById_[size_t(unit.id)]=factory.yardOpen;
                 // 507c70 restamps the yard, then 4e1e20 refreshes every
                 // movement-class cache, including its clearance border.
                 for (auto& plane:world.searchGrades_)
@@ -7779,6 +7779,7 @@ void World::tickUnitScript(Unit& u) {
     if (!u.alive() && (u.deadFor>=kRetiredTicks || !script->dying ||
                        u.deadFor+1>=u.corpseAnimationTicks())) {
         unitScriptById_[size_t(u.id)]=nullptr;
+        scriptYardById_[size_t(u.id)]=0;
         unitScripts_.erase(u.id);return;
     }
     // Keep the original VM until Killed can query its state. A dead owner keeps
@@ -7831,6 +7832,7 @@ void World::beginUnitDeath(Unit& u) {
     updateCorpseWindow(u);
     if (u.corpseAnimationTicks()==0 && script) {
         unitScriptById_[size_t(u.id)]=nullptr;
+        scriptYardById_[size_t(u.id)]=0;
         unitScripts_.erase(u.id);
     }
 }

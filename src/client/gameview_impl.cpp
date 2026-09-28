@@ -1877,7 +1877,7 @@
                 ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
                 : int(u.underConstruction);
             s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
-            s.buildQueue = u.buildQueue; s.orders = u.orders; s.rally = u.rally;
+            s.buildQueue = u.buildQueue; s.captureOrders(u);
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.captureMovement(u);
             s.corpseAnimationTicks=u.corpseAnimationTicks();

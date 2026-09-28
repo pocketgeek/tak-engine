@@ -1521,7 +1521,7 @@ public:
     // setPlayerCount (called by setupMatch afterwards) rebuild nav/vis/players.
     void resetForReplay() {
         scoreAutomaticDisabled_=false;
-        unitScripts_.clear();unitScriptById_.clear();
+        unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
         paths_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();
@@ -2383,6 +2383,9 @@ private:
     // Non-owning direct lookup; the map still owns stable script objects and
     // supplies the unchanged ID-ordered state-hash traversal.
     std::vector<UnitScript*> unitScriptById_;
+    // Derived from the canonical script flag; dense reads avoid touching a large
+    // VM object per unit when publishing render snapshots. Not separately hashed.
+    std::vector<uint8_t> scriptYardById_;
     UnitScript* unitScript(int id) {
         return size_t(id)<unitScriptById_.size() ? unitScriptById_[size_t(id)] : nullptr;
     }

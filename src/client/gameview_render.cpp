@@ -132,7 +132,20 @@
         items.clear();
         const auto& vis = frameVisibility();
         int vw = frameVisW();
-        for (const auto& f : features_) {
+        if(featureIndexDirty_) {
+            featureIndex_.rebuild(features_.size(),[&](size_t i) {
+                const auto& f=features_[i];
+                return std::pair{f.x-terrainLiftX(f.x,f.z),f.z-terrainLift(f.x,f.z)};
+            });
+            featureIndexDirty_=false;
+        }
+        // Same 200-screen-pixel apron as the exact cull below. One world pixel
+        // extra protects its different floating-point evaluation order at edges.
+        const auto candidates=tak::devFlag("TAK_FEATURE_FULL_SCAN") ? featureIndex_.all() :
+            featureIndex_.query(mapView_.offX()-200/zm0-1,mapView_.offY()-200/zm0-1,
+                mapView_.offX()+(winW+200)/zm0+1,mapView_.offY()+(winH+200)/zm0+1);
+        for (size_t index:candidates) {
+            const auto& f=features_[index];
             if (!f.tex) continue;   // burnt away to a stage with no art
             if (!f.aliveVis) continue;   // reclaimed away by a builder (snapshotted)
             int cx = int(f.x) / 16, cz = int(f.z) / 16;
@@ -515,8 +528,8 @@
                 }
                 for (auto& [coverage,vertices]:maskBatches) {
                     if (vertices.empty()) continue;
-                    if (SDL_RenderGeometry(ren_,coverage,vertices.data(),
-                                           int(vertices.size()),nullptr,0)!=0) {ok=false;break;}
+                    if (bodySubmit_.draw(ren_,coverage,vertices,
+                            !tak::devFlag("TAK_SHADOW_SDL_SUBMIT"))!=0) {ok=false;break;}
                 }
             }
             restoreRenderer();
@@ -2204,6 +2217,7 @@
         // FeatArt: .tex ALIASES frames[0] (see featureArtFor) -- destroy the
         // body/shadow frame arrays only; FeatureInst merely borrows these pointers.
         features_.clear();
+        featureIndexDirty_=true;
         for (auto& [n, a] : featureArt_) {
             for (SDL_Texture* t : a.frames) if (t) gpuvram::destroy(t);
             for (auto* texture : a.shadowFrames) if (texture) gpuvram::destroy(texture);
@@ -3144,6 +3158,7 @@
         // Standing Stones sharing the category are just ruins around it.
         inst.glowy = inst.mana && di->second.numberOr("animating", 0) != 0;
         features_.push_back(inst);
+        featureIndexDirty_=true;
         // NO NAV BLOCKING HERE. Feature blocking belongs to the SIM, and
         // registerMapFeatures/setupMatch already does it -- into the shared obst_
         // overlay, with this exact rule and footprint. Doing it again here wrote to
@@ -3186,11 +3201,12 @@
         // simMutex_ across the whole scan meant the worker waited on art
         // replacement, atlas lookups, texture loads and effect spawns. Render-side
         // acquisition is nonblocking so neither thread waits on the other's work.
-        // The generation counter gates the locked scans. The apply loop consumes
-        // that cached state; smoke emission and motion use the simulation tick queue.
+        // The generation counter gates both the locked scan and the visual apply.
+        // Smoke emission and motion use the simulation tick queue, not this scan.
         std::vector<FeatSim>& simState = featSimState_;
         const uint32_t featGen = world_.featGeneration();   // atomic; no lock needed
         const bool featDirty = featGen != lastFeatGen_ || simState.size() != features_.size();
+        if (!featDirty && !tak::devFlag("TAK_FEATURE_FULL_SYNC")) return;
         struct NewFeat { int id; std::string name; };
         std::vector<NewFeat> fresh;
         // A simulation tick can take seconds in a crowded match. Keep drawing
@@ -3198,10 +3214,10 @@
         // Copy existing and newly created features under ONE acquisition so a
         // failed retry cannot mark unseen corpses as already synchronized.
         auto refresh = [&] {
-            if (!featDirty) return;
+            if (!featDirty) return true;
             std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
-            if (useSimThread_ && !lk.try_lock()) return;
-            if (world_.featureTypes().empty()) return;
+            if (useSimThread_ && !lk.try_lock()) return false;
+            if (world_.featureTypes().empty()) return false;
             simState.clear();
             simState.reserve(features_.size());
             for (const auto& fi : features_) {
@@ -3222,14 +3238,16 @@
                 fresh.push_back({sf.id, world_.featureTypes()[size_t(sf.type)].name});
             }
             lastFeatGen_ = featGen;
+            return true;
         };
-        refresh();
+        if (!refresh()) return;
         if (simState.size() != features_.size()) return;   // nothing synced yet
         size_t fidx = 0;
         for (auto& fi : features_) {
             const FeatSim st = simState[fidx++];
             fi.aliveVis = st.alive ? 1 : 0;   // what the draw loop reads
             if (st.hasSim) {
+                if(fi.fx!=st.fx || fi.fz!=st.fz)featureIndexDirty_=true;
                 fi.fx = st.fx; fi.fz = st.fz;
                 fi.x = float((fi.simId % mapView_.map().width) * 16 + fi.fx * 8);
                 fi.z = float((fi.simId / mapView_.map().width) * 16 + fi.fz * 8);
@@ -3281,7 +3299,9 @@
     void GameView::loadFeatures() {
         fogMeshValid_ = false;
         features_.clear();   // full rebuild -- safe to call again on a map change
+        featureIndexDirty_=true;
         featInstIds_.clear();
+        featSimState_.clear();lastFeatGen_=UINT32_MAX;
         const auto& names = mapView_.map().featureNames;
         if (names.empty()) return;
         loadFeatureDefs();

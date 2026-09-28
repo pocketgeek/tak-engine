@@ -285,6 +285,7 @@ class PathService {
     void clear() {
         retireActive();
         q_.clear();
+        pendingByPlayer_.fill(0);priorityByPlayer_.fill(0);
         notifications_.clear();
         scheduler_={};
         poolFirst_.fill(0); poolSize_.fill(0); fixedPool_.fill(false);
@@ -343,6 +344,10 @@ class PathService {
 
     int budget_ = kPathBudgetDefault;
     std::map<int, Entry> q_;    // unit id order: deterministic
+    // Derived queue counts: avoid walking thousands of scattered map nodes
+    // each tick merely to reconstruct the scheduler's ten player records.
+    std::array<int,10> pendingByPlayer_{},priorityByPlayer_{};
+    void eraseRequest(std::map<int,Entry>::iterator it);
     RetailSearchWorker worker_;
     RetailSearchScheduler scheduler_;
     std::array<int,10> poolFirst_{},poolSize_{};

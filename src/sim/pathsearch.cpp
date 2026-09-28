@@ -535,14 +535,22 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
             // had pointed.
             ex.goalX = goalX;
             ex.goalZ = goalZ;
-            if (priority) ex.priority = true;   // may still be promoted
+            if (priority && !ex.priority) {
+                ex.priority=true;++priorityByPlayer_[owner];
+            }
             return;
         }
     }
     if (auto it=q_.find(unitId); it!=q_.end() && scheduler_.active==
         RetailSearchScheduler::Request{it->second.player,unitId-poolFirst_[size_t(it->second.player)]})
         retireActive();
-    Entry& e = q_[unitId];
+    auto [entry,inserted]=q_.try_emplace(unitId);
+    Entry& e=entry->second;
+    if (!inserted) {
+        --pendingByPlayer_[size_t(e.player)];
+        priorityByPlayer_[size_t(e.player)]-=e.priority;
+    }
+    ++pendingByPlayer_[owner];priorityByPlayer_[owner]+=priority;
     e.start = start;
     e.goal = goal;
     e.mapW = mapW;
@@ -563,13 +571,19 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     e.ring = ring;
 }
 
+void PathService::eraseRequest(std::map<int,Entry>::iterator it) {
+    --pendingByPlayer_[size_t(it->second.player)];
+    priorityByPlayer_[size_t(it->second.player)]-=it->second.priority;
+    q_.erase(it);
+}
+
 void PathService::cancel(int unitId) {
     std::erase_if(notifications_, [=](const Notification& n) { return n.unitId == unitId; });
     auto it = q_.find(unitId);
     if (it == q_.end()) return;
     if (scheduler_.active==RetailSearchScheduler::Request{
         it->second.player,unitId-poolFirst_[size_t(it->second.player)]}) retireActive();
-    q_.erase(it);
+    eraseRequest(it);
 }
 
 void PathService::tick(const std::function<int(int,int,int)>& score,
@@ -580,10 +594,10 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
     if (q_.empty()) return;
     const uint32_t now=simulationTick ? simulationTick : uint32_t(tickNo_);
     std::array<RetailSearchScheduler::Player,10> players{};
-    for (const auto& [id,e]:q_) {
-        auto& p=players[size_t(e.player)];
-        p.enabled=true; p.priority|=e.priority; ++p.pending;
-        p.slots=poolSize_[size_t(e.player)];
+    for (size_t i=0;i<players.size();++i) {
+        auto& p=players[i];
+        p.enabled=pendingByPlayer_[i]!=0;p.priority=priorityByPlayer_[i]!=0;
+        p.pending=pendingByPlayer_[i];p.slots=p.enabled ? poolSize_[i] : 0;
     }
     auto lookup=[&](RetailSearchScheduler::Request r) {
         const int id=poolFirst_[size_t(r.player)]+r.slot;
@@ -657,7 +671,7 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
                 if (gradeHost_.finish) gradeHost_.finish(id);
                 activeId_=-1;
                 --players[size_t(e.player)].pending;
-                q_.erase(it);
+                eraseRequest(it);
             }
             return RetailSearchScheduler::Slice{result.work,complete};
         });
