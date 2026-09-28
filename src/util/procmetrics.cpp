@@ -1,4 +1,5 @@
 #include "util/procmetrics.h"
+#include "util/winprocess.h"
 
 #include <algorithm>
 #include <chrono>
@@ -195,19 +196,16 @@ namespace {
 std::string runCmd(const char* cmd) {
     std::string out;
 #if defined(_WIN32)
-    FILE* p = _popen(cmd, "r");
+    // The only caller supplies a fixed ASCII nvidia-smi command line.
+    return tak::captureHiddenProcess(std::wstring(cmd, cmd + std::strlen(cmd)));
 #else
     FILE* p = popen(cmd, "r");
-#endif
     if (!p) return out;
     char buf[256];
     while (std::fgets(buf, sizeof buf, p)) out += buf;
-#if defined(_WIN32)
-    _pclose(p);
-#else
     pclose(p);
-#endif
     return out;
+#endif
 }
 #if !defined(_WIN32) && !defined(__APPLE__)
 bool readLL(const char* path, long long& out) {
@@ -325,7 +323,7 @@ GpuSample gpuSample() {
     // NVIDIA (any OS with the driver in PATH): one nvidia-smi CSV line.
 #if defined(_WIN32)
     const char* nv = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name "
-                     "--format=csv,noheader,nounits 2>nul";
+                     "--format=csv,noheader,nounits";
 #else
     const char* nv = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name "
                      "--format=csv,noheader,nounits 2>/dev/null";
