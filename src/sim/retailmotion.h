@@ -102,7 +102,9 @@ constexpr int sineSample(unsigned index) {
 // Retail 0x53612a rounds atan2 to nearest BAM. Keep the simulation independent
 // of host libm and its floating-point environment. Arguments follow atan2(y,x).
 inline Bam retailDirection(Fixed y, Fixed x) {
-    if (!x.v && !y.v) return Bam(0);
+    // Axis-aligned vectors have exact BAM results; no vectoring is needed.
+    if (!x.v) return Bam(y.v>0 ? 16384 : y.v<0 ? 49152 : 0);
+    if (!y.v) return Bam(x.v<0 ? 32768 : 0);
     int64_t vx = int64_t(x.v) * (int64_t(1) << 28);
     int64_t vy = int64_t(y.v) * (int64_t(1) << 28);
     int64_t angle = 0;

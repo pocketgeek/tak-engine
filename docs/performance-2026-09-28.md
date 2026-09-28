@@ -7,6 +7,11 @@ Runs are sequential, with no concurrent builds or performance tests. CPU
 affinity is unrestricted; older measurements pinned to four CPUs are not
 directly comparable.
 
+The follow-up retained active-thread indexing, parallel shadow-atlas preparation
+and sparse occupancy-bucket clearing. It also resolved both legacy feature-effect
+probes. Detailed paired measurements and rejected experiments appear below;
+the original measurements in the first sections describe `41f9e72`.
+
 ## Changes
 
 - Render snapshots carry 56-byte display orders instead of 320-byte simulation
@@ -274,3 +279,18 @@ Both full suites pass with the body full-scan verifier enabled in optimized
 Debug, as does a separate 400-unit live combat/movement check. Accelerated
 OpenGL validation passes all 1,152 geometry comparisons plus shadow coverage,
 atlas, ordered-mask and compositing checks on the NVIDIA GPU.
+
+### Follow-up: exact axis directions
+
+Axis-aligned vectors now return their exact BAM heading directly. Other vectors
+still use the unchanged bounded integer CORDIC. The full reference comparison
+covers 200,000 signed input pairs and boundary cases, including zero vectors and
+positive/negative axes. No direction quantization or trigonometric approximation
+was introduced.
+
+Paired 900-tick results: standard 16,000-unit combat 23.059 → 22.898 seconds;
+Crusades 22.409 → 22.280; the 512-unit huge-map fixture 5.364 → 5.386. The dense
+combat gain is small (about 0.6%); the huge-map result is essentially unchanged.
+Every checkpoint matches in all three comparisons. Both full suites pass and
+GCC/Clang O0/O2/O3 retain math golden `dcef618cd2e4d558`. The local ARM cross
+leg skips for unavailable target headers; native ARM64 checks run in macOS CI.
