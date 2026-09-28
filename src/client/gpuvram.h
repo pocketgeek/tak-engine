@@ -1,5 +1,5 @@
 #pragma once
-// Central GPU-texture memory accountant for the SDL2 client. Render-thread only (every
+// Central GPU memory accountant for the SDL2 client. Render-thread only (every
 // SDL texture in src/client is created/destroyed on the render thread), so no locking.
 // NONE of this is folded into World::stateHash() -- it is pure display state, so the
 // deterministic lockstep sim is untouched (the headless referee never builds a GameView).
@@ -21,7 +21,7 @@
 
 namespace gpuvram {
 
-inline size_t   g_bytes = 0;                     // running total of live texture bytes
+inline size_t   g_bytes = 0;                     // running total of live texture and retained-buffer bytes
 inline size_t   g_cap   = size_t(1280) << 20;    // budget; default 1.25 GiB, tightens on failure
 inline size_t   g_floor = size_t(384) << 20;     // never auto-tighten below this (essentials)
 inline std::unordered_map<SDL_Texture*, size_t> g_size;   // per-texture byte size

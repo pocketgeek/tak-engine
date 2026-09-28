@@ -35,6 +35,10 @@ int main() {
     }
     tak::GeometrySubmit submit;
     bool ok=true;int cases=0;
+    const auto baselineBytes=gpuvram::bytes();
+    for(uint64_t revision:{0,1,2}) {
+    if(revision==2)for(auto& v:vertices){v.position.x+=1.25f;v.color.r^=127;}
+    for(SDL_FPoint offset:{SDL_FPoint{0,0},SDL_FPoint{1.25f,-2.5f}})
     for(float scale:{1.f,2.f,1.41421356f})for(bool textured:{false,true})
     for(bool clipped:{false,true})for(bool offscreen:{false,true})
     for(auto blend:{SDL_BLENDMODE_NONE,SDL_BLENDMODE_BLEND,SDL_BLENDMODE_ADD,SDL_BLENDMODE_MOD})
@@ -49,7 +53,7 @@ int main() {
             SDL_Rect viewport{2,3,int(120/scale),int(120/scale)},clip{3,4,42,39};
             SDL_RenderSetViewport(renderer,&viewport);SDL_RenderSetClipRect(renderer,clipped?&clip:nullptr);
             SDL_SetRenderDrawBlendMode(renderer,blend);
-            ok &= submit.draw(renderer,textured?texture:nullptr,vertices,native)==0;
+            ok &= submit.draw(renderer,textured?texture:nullptr,vertices,native,revision,offset)==0;
             // A different SDL draw follows immediately, detecting leaked arrays,
             // matrix scale, color, texture, clipping and target state.
             SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
@@ -66,7 +70,26 @@ int main() {
         }
         ++cases;
     }
-    if(std::strcmp(info.name,"opengl")==0 && !submit.active())ok=false;
+    }
+    if(std::strcmp(info.name,"opengl")==0 && (!submit.active() || submit.uploads()!=2))ok=false;
+    submit.clear();
+    if(gpuvram::bytes()!=baselineBytes)ok=false;
+    // A device reset must rebuild the retained data even at the same revision.
+    SDL_RenderSetScale(renderer,1,1);
+    submit.draw(renderer,texture,vertices,true,2);
+    submit.draw(renderer,texture,vertices,true,2);
+    if(std::strcmp(info.name,"opengl")==0 && submit.uploads()!=3)ok=false;
+    submit.clear();
+    if(gpuvram::bytes()!=baselineBytes)ok=false;
+    const auto savedCap=gpuvram::g_cap;
+    gpuvram::g_cap=gpuvram::bytes();
+    const auto uploadsBefore=submit.uploads();
+    ok &= submit.draw(renderer,texture,vertices,true,3)==0;
+    ok &= submit.uploads()==uploadsBefore && gpuvram::bytes()==baselineBytes;
+    gpuvram::g_cap=savedCap;
+    // A continuously changing camera must not churn persistent allocations.
+    for(uint64_t revision=4;revision<20;++revision)submit.draw(renderer,texture,vertices,true,revision);
+    ok &= submit.uploads()==uploadsBefore && gpuvram::bytes()==baselineBytes;
     std::printf("%s: %d geometry pixel/state comparisons (%s, direct=%d)\n",ok?"PASS":"FAIL",cases,info.name,submit.active());
     SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_FreeSurface(surface);SDL_Quit();

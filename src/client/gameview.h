@@ -122,6 +122,7 @@
 
 #include "client/shadowopaque.h"
 #include "client/geometrysubmit.h"
+#include "client/fogupload.h"
 #include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
 
@@ -1264,6 +1265,9 @@ private:
     };
     tak::OpaqueShadowSubmit shadowOpaqueSubmit_;
     tak::GeometrySubmit bodySubmit_;
+    tak::GeometrySubmit fogSubmit_;
+    tak::FogUpload fogUpload_;
+    uint64_t fogMeshRevision_=0;
     tak::DistantModels distantModelCache_;
     std::vector<tak::DistantModels::Item> distantModelItems_;
     std::vector<SDL_Vertex> shadowCompositeBatch_;
@@ -3193,6 +3197,7 @@ private:
     // At distant zoom retain transparent cells too, so visibility only updates
     // the texture instead of rebuilding millions of vertices four times/sec.
     bool fogMeshValid_ = false;
+    int fogGridX0_=0,fogGridZ0_=0,fogGridX1_=0,fogGridZ1_=0;
     uint32_t fogMeshGeneration_ = 0;
     int fogMeshW_ = 0, fogMeshH_ = 0, fogMeshWinW_ = 0, fogMeshWinH_ = 0;
     float fogMeshX_ = 0, fogMeshY_ = 0, fogMeshZoom_ = 0;

@@ -1533,6 +1533,10 @@ int main(int argc, char** argv) {
             // longer piles onto the 1-in-8 net frame that runs the sim tick.
             if (!benchFrozen) {
                 gameView->benchmarkCamera(dt, w, h);   // benchmark flythrough (no-op otherwise)
+#ifndef NDEBUG
+                if(tak::devFlag("TAK_PROFILE_PAN"))
+                    gameView->lookAt(15000+1000*std::sin(float(SDL_GetTicks64())*.0004f),14000);
+#endif
                 const double animationStart = prof ? pnow() : 0;
                 gameView->animFrame(dt);
                 if (prof) animationMs = pnow() - animationStart;
@@ -1569,6 +1573,20 @@ int main(int argc, char** argv) {
         const uint32_t profTick = prof && gameView ? gameView->framedTick() : 0;
         const size_t profLive = prof && gameView ? gameView->framedAliveUnits() : 0;
         if (gameView) gameView->endFrame();   // release the pinned sim snapshot for this frame
+#ifndef NDEBUG
+        // Offscreen Present need not wait for the GPU. Use this for completed-frame
+        // profiling and capture without changing normal rendering or vsync pacing.
+        if (prof && tak::devFlag("TAK_PROF_FINISH")) {
+            SDL_RenderFlush(ren);
+            auto finish=reinterpret_cast<void(APIENTRY*)()>(SDL_GL_GetProcAddress("glFinish"));
+            if (finish) finish();
+        }
+        static bool profileCaptured=false;
+        if (!profileCaptured && SDL_GetTicks64()>10000)
+            if (const char* path=tak::devEnv("TAK_PROFILE_CAPTURE")) {
+                screenshot(ren,w,h,path);profileCaptured=true;
+            }
+#endif
         SDL_RenderPresent(ren);
         streamPacer.pace(win, settings.vsync && !noVsync && streaming.stream().active());
         if (prof) {

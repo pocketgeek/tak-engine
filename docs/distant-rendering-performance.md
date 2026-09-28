@@ -140,3 +140,72 @@ The measured pan uploaded one newly exposed edge chunk; retained images were
 reused. The cache occupied about **8.97 MiB**. This is not a physical-GPU or
 whole-game FPS measurement. `TAK_TERRAIN_CACHE_OFF=1` retains the direct tile
 path for development comparisons.
+
+## Retained fog geometry and partial visibility uploads (2026-09-28)
+
+Profiling after the terrain-chunk change identified fog as the remaining cost in
+an otherwise nearly empty wide-map view. Caching the CPU vertex vector still
+resent the whole vector to OpenGL each frame, and each visibility generation
+rewrote/uploaded the entire fog texture even when its pixels were unchanged.
+
+Fog now compares the new visibility snapshot with the last successful upload.
+Unchanged pixels require no upload. Changes update 64-cell blocks, joining
+adjacent dirty blocks into horizontal rectangles. Initial creation and device
+resets upload the full image; failed locks are retried. Close-view fog meshes
+also retain their generation when visibility recomputes without changing any
+pixels. These changes apply to every SDL renderer.
+
+On compatible desktop OpenGL, stable fog meshes retain a vertex buffer instead
+of resending vertex arrays. Its limit is 64 MiB and it participates in the shared
+GPU memory budget. A changed mesh must survive into a second draw before a
+buffer is allocated, avoiding allocation churn during continuous changes.
+Unsupported backends, fractional antialiasing scales, and exhausted budgets
+retain the existing geometry path. No shaders, terrain detail, fog opacity,
+visibility rules, simulation timing, or pathfinding were changed.
+
+Distant fog meshes include a 64-cell margin around the visible region. Panning
+inside that region translates the existing mesh; moving outside it, changing
+zoom, or resizing rebuilds it. OpenGL applies the translation as a matrix;
+other backends translate the cached vertices without resampling terrain or
+reconstructing triangles. Map-edge skirts and terrain relief remain intact.
+
+Development comparisons use `TAK_FOG_FULL_UPLOAD=1`, `TAK_FOG_RETAIN_OFF=1`, and
+`TAK_FOG_PAN_CACHE_OFF=1` together to select the earlier behavior.
+`TAK_PROFILE_PAN=1` supplies a repeating camera pan. `TAK_PROF_FINISH=1` with
+`TAK_PROF=1` waits for GPU completion when profiling offscreen OpenGL; without
+it, offscreen Present can report submission throughput rather than completed
+frames. `TAK_PROFILE_CAPTURE=/tmp/capture.png` captures the output after ten
+seconds. These controls are disabled in Release builds.
+
+Validation: Release CTest 88/88, optimized Debug CTest 91/91, plus 1,152 NVIDIA
+OpenGL pixel/state comparisons covering retained/streamed meshes, translations,
+changed vertices, blending, clipping, filtering, targets, scales and subsequent
+SDL draws. Tests also cover reset/re-upload, GPU budget fallback, avoiding
+allocations for continuously changing meshes, dirty fog blocks, unchanged
+snapshots, and partial edge blocks. The software renderer runs the same geometry
+comparisons. A full-game 1280 x 960, AA 4 screenshot comparison found no terrain
+or fog differences; changed pixels were confined to the animated monarch and
+HUD. Both Release and optimized Debug binaries were rebuilt.
+
+Completed-frame measurements on the NVIDIA RTX 5070 Laptop, optimized Debug,
+SDL offscreen OpenGL, **1280 x 960, AA 4**, Ultima Online B1 at zoom 0.05,
+three live units, fog and shadows enabled, vsync disabled:
+
+| Camera | Before | After |
+| --- | ---: | ---: |
+| Stationary, two runs per version (ABBA) | 10.05 / 9.85 ms | 1.03 / 1.04 ms |
+| Continuous pan, one run per version | 34.66 ms | 1.08 ms |
+
+Each run lasted 28 seconds; these are means of completed-frame intervals derived
+from the one-second profiler samples after the first 15 seconds (13 samples per
+run). Every frame explicitly waited for the GPU. The controlled baseline uses
+all three switches above; terrain chunks and all other engine changes are the
+same in both versions. The stationary comparison averages about 9.95 to 1.04 ms,
+and the panning comparison includes crossing cached-region boundaries. New
+regions and changed zoom still incur mesh preparation; this does not eliminate
+all cold-view stalls.
+
+These numbers isolate the reported almost-empty, far-zoom map case. They are not
+predictions for crowded battles, AI simulation speed, other GPUs, or non-OpenGL
+backends. No physical Windows/Metal performance claim is made by the portable
+correctness tests.

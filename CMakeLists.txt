@@ -620,6 +620,12 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(geometrysubmit_test PRIVATE ${_tak_sdl2})
     add_test(NAME geometrysubmit COMMAND geometrysubmit_test)
+    add_executable(fogupload_test tools/fogupload_test.cpp)
+    target_include_directories(fogupload_test PRIVATE src)
+    target_compile_definitions(fogupload_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(fogupload_test PRIVATE ${_tak_sdl2})
+    add_test(NAME fogupload COMMAND fogupload_test)
+    set_tests_properties(fogupload PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp)
     target_compile_definitions(audio_device_test PRIVATE SDL_MAIN_HANDLED
       SDL_GetNumAudioDevices=TAK_Test_GetNumAudioDevices

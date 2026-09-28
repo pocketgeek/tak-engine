@@ -2152,6 +2152,7 @@
 
     void GameView::invalidateRenderTargets() {
         mapView_.invalidateRenderTargets();
+        fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
         fogMeshValid_ = false;
         distantModelCache_.clear();
         for(auto& geometry:geomPool_)geometry.geometryKey.clear();
@@ -2212,6 +2213,7 @@
             for (auto& f : ea.frames) if (f.tex) gpuvram::destroy(f.tex);
         effectAnims_.clear();
         explosionsLoaded_ = false;
+        fogSubmit_.clear();fogUpload_.clear();
         kill(fogTex_);
         kill(panelTex_);
         kill(botTex_);
@@ -3601,32 +3603,19 @@
         if (vis.empty()) return;
         int w = frameVisW(), h = frameVisH();
         if (!fogTex_) {
+            fogUpload_.clear();fogTexGen_=~0u;
             fogMeshValid_ = false;
             fogTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_STREAMING, w, h);
             SDL_SetTextureBlendMode(fogTex_, SDL_BLENDMODE_BLEND);
             SDL_SetTextureScaleMode(fogTex_, SDL_ScaleModeLinear);
         }
-        // The fog CONTENT only changes when the sim recomputes visibility (4Hz);
-        // frames render far more often (up to 240Hz), so rewrite + re-upload the
-        // streaming texture only when the vis generation actually advanced.
-        if (fogTexGen_ != frameVisGeneration()) {
+        if (!fogTex_) return;
+        // A recompute is not necessarily a visual change. Only upload dirty
+        // blocks, and retry failed uploads instead of acknowledging their generation.
+        if (fogTexGen_ != frameVisGeneration() &&
+            fogUpload_.update(fogTex_,vis,w,h,tak::devFlag("TAK_FOG_FULL_UPLOAD")))
             fogTexGen_ = frameVisGeneration();
-            void* px = nullptr;
-            int pitch = 0;
-            if (SDL_LockTexture(fogTex_, nullptr, &px, &pitch) == 0) {
-                for (int z = 0; z < h; ++z) {
-                    uint32_t* row = reinterpret_cast<uint32_t*>(
-                        static_cast<uint8_t*>(px) + size_t(z) * size_t(pitch));
-                    for (int x = 0; x < w; ++x) {
-                        uint8_t v = vis[size_t(z) * w + x];
-                        uint8_t a = v == 2 ? 0 : (v == 1 ? 110 : 235);
-                        row[x] = uint32_t(a) << 24;   // black with alpha (RGBA32 LE)
-                    }
-                }
-                SDL_UnlockTexture(fogTex_);
-            }
-        }
         float zm = mapView_.zoom();
         // Lift the fog to sit on the terrain relief, exactly like units do, so the
         // cleared area follows a unit up a hill instead of staying at ground level.
@@ -3638,16 +3627,12 @@
         float ox = mapView_.offX(), oy = mapView_.offY();
         const bool cacheMesh = !tak::devFlag("TAK_FOG_MESH_CACHE_OFF");
         const bool keepTransparent = cacheMesh && zm <= 0.25f;
-        const uint32_t meshGeneration = keepTransparent ? 0 : frameVisGeneration();
+        const uint32_t meshGeneration = keepTransparent ? 0 : fogUpload_.generation();
         auto submitFog = [&] {
-            bodySubmit_.draw(ren_, fogTex_, fogVerts_, !tak::devFlag("TAK_FOG_SDL_SUBMIT"));
+            fogSubmit_.draw(ren_, fogTex_, fogVerts_, !tak::devFlag("TAK_FOG_SDL_SUBMIT"),
+                tak::devFlag("TAK_FOG_RETAIN_OFF")?0:fogMeshRevision_,
+                {(fogMeshX_-ox)*zm,(fogMeshY_-oy)*zm});
         };
-        if (cacheMesh && fogMeshValid_ && fogMeshGeneration_ == meshGeneration &&
-            fogMeshW_ == w && fogMeshH_ == h && fogMeshWinW_ == winW_ && fogMeshWinH_ == winH_ &&
-            fogMeshX_ == ox && fogMeshY_ == oy && fogMeshZoom_ == zm) {
-            submitFog();
-            return;
-        }
         // A SKIRT of quads past the map edge. The terrain is a FLAT mosaic -- relief
         // is painted into the tile art -- while this mesh is deliberately lifted, so
         // that the cleared area follows a unit up a hill. Over a plateau the lifted
@@ -3665,6 +3650,20 @@
         int gx1 = std::clamp(int((ox + winW_ / zm + maxLx) / 16) + 2, 0, w + skirt);
         int gz0 = std::clamp(int(oy / 16) - 1, 0, h);
         int gz1 = std::clamp(int((oy + winH_ / zm + maxLy) / 16) + 2, 0, h + skirt);
+        const bool retainRegion=keepTransparent && !tak::devFlag("TAK_FOG_PAN_CACHE_OFF");
+        const bool covered=retainRegion
+            ? gx0>=fogGridX0_ && gz0>=fogGridZ0_ && gx1<=fogGridX1_ && gz1<=fogGridZ1_
+            : fogMeshX_==ox && fogMeshY_==oy;
+        if (cacheMesh && fogMeshValid_ && covered && fogMeshGeneration_==meshGeneration &&
+            fogMeshW_==w && fogMeshH_==h && fogMeshWinW_==winW_ && fogMeshWinH_==winH_ && fogMeshZoom_==zm) {
+            submitFog();return;
+        }
+        // Retain a margin around a distant view so panning normally needs only
+        // a translation, not new height samples, triangles, or GPU uploads.
+        if(retainRegion) {
+            gx0=std::max(0,gx0-64);gz0=std::max(0,gz0-64);
+            gx1=std::min(w+skirt,gx1+64);gz1=std::min(h+skirt,gz1+64);
+        }
         // One height sample per grid CORNER, shared by all four adjacent quads.
         // vert() used to pay two independent bilinear samples per corner PER QUAD
         // (terrainLift + terrainLiftX each re-sampling), 8 samples per cell -- at a
@@ -3729,6 +3728,8 @@
                 fogVerts_.push_back(a); fogVerts_.push_back(c); fogVerts_.push_back(d);
                 gx=end-1;
             }
+        fogGridX0_=gx0;fogGridZ0_=gz0;fogGridX1_=gx1;fogGridZ1_=gz1;
+        ++fogMeshRevision_;
         fogMeshValid_ = true;
         fogMeshGeneration_ = meshGeneration;
         fogMeshW_ = w; fogMeshH_ = h; fogMeshWinW_ = winW_; fogMeshWinH_ = winH_;
