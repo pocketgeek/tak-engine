@@ -335,7 +335,7 @@
                 size_t page;
                 int slotX,slotY,pixelX,pixelY,width,height;
                 bool dirty=true;
-                size_t opaqueOffset=0;
+                size_t opaqueOffset=0,maskBegin=0,maskEnd=0;
             };
             std::vector<Work> work;
             work.reserve(items.size());
@@ -499,7 +499,29 @@
                     w.opaqueOffset=pointCount;pointCount+=w.geom->shadowVerts.size();
                 }
                 opaque.resize(pointCount);
-                const auto transformOpaque=[&](size_t begin,size_t end) {
+                struct MaskWork {
+                    const SDL_Vertex* source;
+                    std::vector<SDL_Vertex>* batch;
+                    size_t offset,count;
+                };
+                std::vector<MaskWork> masks;
+                size_t maskPointCount=0;
+                for (Work& w:work) if (w.page==p && w.dirty) {
+                    w.maskBegin=masks.size();
+                    size_t offset=0;
+                    for (const auto& run:w.geom->maskedShadowRuns) {
+                        auto& batch=maskBatches[shadowCoverageTextures_.at(run.first)];
+                        const size_t count=size_t(run.second),oldSize=batch.size();
+                        batch.resize(oldSize+count);
+                        masks.push_back({w.geom->maskedShadowVerts.data()+offset,&batch,oldSize,count});
+                        offset+=count;maskPointCount+=count;
+                    }
+                    w.maskEnd=masks.size();
+                }
+                // Resolve textures and allocate batches on the render thread.
+                // Map element references survive rehash; workers only access the
+                // finished vectors and write disjoint slices in original run order.
+                const auto transform=[&](size_t begin,size_t end) {
                     for(size_t wi=begin;wi<end;++wi) {
                         const Work& w=work[wi];
                         if(w.page!=p || !w.dirty)continue;
@@ -510,31 +532,22 @@
                             dst[i]={src[i].x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f,
                                     src[i].y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f};
                         }
+                        for(size_t mi=w.maskBegin;mi<w.maskEnd;++mi) {
+                            const auto& task=masks[mi];
+                            SDL_Vertex* __restrict vertices=task.batch->data()+task.offset;
+                            for(size_t i=0;i<task.count;++i) {
+                                SDL_Vertex v=task.source[i];
+                                v.position.x=v.position.x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f;
+                                v.position.y=v.position.y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f;
+                                vertices[i]=v;
+                            }
+                        }
                     }
                 };
-                // Workers write disjoint preallocated slices. Neither vertex order
-                // nor the atlas coordinate arithmetic depends on scheduling.
-                // The forced reference bake also verifies worker preparation
-                // against serial preparation through atlas pixel comparisons.
-                if(!force && pointCount>=32768 && !tak::devFlag("TAK_SHADOW_SERIAL_PREP"))
-                    pool_.parallelFor(work.size(),transformOpaque);
-                else transformOpaque(0,work.size());
-                for (const Work& w:work) if (w.page==p && w.dirty) {
-                    int offset=0;
-                    for (const auto& run:w.geom->maskedShadowRuns) {
-                        SDL_Texture* coverage=shadowCoverageTextures_.at(run.first);
-                        auto& batch=maskBatches[coverage];
-                        const size_t oldSize=batch.size();
-                        batch.resize(oldSize+size_t(run.second));
-                        for (int i=0;i<run.second;++i) {
-                            SDL_Vertex v=w.geom->maskedShadowVerts[size_t(offset+i)];
-                            v.position.x=v.position.x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f;
-                            v.position.y=v.position.y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f;
-                            batch[oldSize+size_t(i)]=v;
-                        }
-                        offset+=run.second;
-                    }
-                }
+                // Forced reference bakes stay serial for atlas pixel comparisons.
+                if(!force && pointCount+maskPointCount>=32768 && !tak::devFlag("TAK_SHADOW_SERIAL_PREP"))
+                    pool_.parallelFor(work.size(),transform);
+                else transform(0,work.size());
                 SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_NONE);
                 if (shadowOpaqueSubmit_.draw(ren_,opaque,
                         !tak::devFlag("TAK_SHADOW_SDL_SUBMIT"))!=0) {

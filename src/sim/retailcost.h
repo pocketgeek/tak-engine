@@ -55,13 +55,20 @@ public:
     }
 
     void reset(int width, int height, int startCell, int direction,
-               int initialDistance, int weight = 98304) {
+               int initialDistance, int weight = 98304, std::vector<Cell> plane = {}) {
         width_ = width; height_ = height;
-        cells.assign(size_t(width) * height, {});
+        // A tracer hands its existing visited/goal plane to phase 2. Do not
+        // allocate and clear another map-sized plane just to throw it away.
+        if (plane.empty()) cells.assign(size_t(width) * height, {});
+        else {
+            if (plane.size()!=size_t(width)*height)
+                throw std::invalid_argument("invalid search plane size");
+            cells=std::move(plane);
+        }
         nodes.clear(); heap.clear(); free_.clear();
         processed = 0; heuristicWeight = weight; pendingRoot_ = false;
         endpoint = -1;
-        cells.at(size_t(startCell)).flags = 1;
+        cells.at(size_t(startCell)).flags |= 1;
         cells[size_t(startCell)].direction = uint8_t(direction & 7);
         insert({startCell, 0, weighted(initialDistance), 0, 0, 100});
     }

@@ -330,3 +330,131 @@ the retail script scheduling/restoration regression and their math/driver
 equivalence gates. The final local suites pass 88/88 in Release and 91/91 in
 optimized Debug. All retained changes are committed and pushed; unproven
 triangle-sort and target-damage experiments are absent from the final engine.
+
+
+## Six-area optimization pass
+
+This pass starts from `a47a715`. It investigates all six remaining areas rather
+than assuming that fewer instructions or allocations necessarily make the game
+faster. Measurements use the same Linux/NVIDIA machine and sequential workloads
+as above; builds, tests and other benchmarks do not overlap timing runs.
+
+A fresh 3,600-tick, 16,000-unit Crusades combat profile attributes 22.0% of CPU
+samples to navigation movement, 10.6% to unit script ticking, 8.7% to path service,
+8.4% to body rectangle queries and 5.2% to target acquisition. These inclusive
+categories overlap. The harness's periodic hashing also costs 5.7%; it is not
+rendering work. The previous all-thread patrol profile supplies the rendering
+and snapshot baseline.
+
+### Retained changes
+
+- **Shadow preparation:** resolve masked coverage textures and allocate output
+  batches on the render thread, then transform opaque and masked vertices in the
+  same worker jobs. Output ranges are disjoint and preserve original run order.
+  SDL calls remain on the render thread. Small batches and forced reference
+  bakes remain serial. Masks, geometry, blending and animation cadence are
+  unchanged.
+- **Movement and path requests:** use a hash table for ID lookup. Scheduling still
+  follows the retail player's entity-slot traversal, never container iteration.
+  Reacquire iterators after finish callbacks, which may insert other requests
+  and rehash the table. Completion and cancellation regressions exercise this.
+- **Heavy-combat pathfinding:** hand the tracer's existing cell plane directly to
+  cost search. Previously cost search allocated and cleared a second map-sized
+  plane, then immediately discarded it in favor of the tracer's plane. Preserve
+  flags, directions, start-node state, heap order and all work charges. On
+  Ultima Online B1, the discarded allocation was about 31 MiB per handoff.
+
+The search handoff regression compares cell state and expansion against the
+former reset-then-replace sequence, including cells outside the explored route.
+No search budget, route heuristic, movement rule, target selection, script
+schedule or unit cap changes in this pass.
+
+### Measurements
+
+The request lookup change alone took 22.445 / 22.366 seconds to 22.199 / 22.222
+in paired 900-tick Crusades combat runs: approximately 0.9% less wall time.
+Adding cell-plane handoff measured 21.514 / 21.680 seconds. Standard-balance
+combat measured 22.942 to 22.137 seconds. All 30 checkpoints match in every run.
+These fixtures start with 16,000 units and include combat deaths.
+
+The actual Ultima Online B1 fixture (2,016 × 2,016 cells, eight Absurd AIs,
+Crusades, 512 initial units, 900 ticks) measured 5.478 / 5.299 seconds before the
+pass and 3.130 seconds with the retained changes. A candidate with additional,
+subsequently rejected changes measured 3.199 seconds. Every checkpoint matches.
+This approximately 40% reduction is an early-match result, not a promise of
+sustaining 4× in a developed match.
+
+For the 16,000-unit patrol rendering fixture, each run lasts 80 seconds and
+excludes its first 20 seconds. It uses 1280×960, zoom 0.25, AA4, shadows enabled,
+no vsync and completed-frame timing. Roughly 2,000–4,000 units are visible; all
+16,000 remain alive. Full local simulation also runs on this fixture's main
+thread, so frame-time improvements include simulation savings.
+
+| Build | Frame ms | Drawing ms |
+|---|---:|---:|
+| Original, first | 76.883 | 24.056 |
+| Original, repeat | 76.400 | 24.120 |
+| Retained changes, first | 67.957 | 23.249 |
+| Retained changes, repeat | 64.548 | 23.022 |
+| Retained changes, later control 1 | 68.935 | 23.499 |
+| Retained changes, later control 2 | 68.419 | 23.422 |
+
+Across these runs the improvement is approximately 12% in frame time and 3% in
+drawing time. Run-to-run variation remains visible; the figures are workload
+measurements, not general FPS guarantees. The simulations within the rendering
+fixture are not isolated simulation-speed benchmarks.
+
+### Experiments removed
+
+The other requested areas were profiled and tested; no benefit is assumed just
+because an operation was removed:
+
+- **Model geometry:** cached fan UVs, conditional trigonometry for already
+  prepared pieces, and constructing temporary metadata only on fallback paths.
+  No reliable overall benefit survived the paired rendering comparisons.
+- **Animation execution:** a special case for division by the usual 30 Hz rate
+  was slightly slower in an isolated piece-command workload. Compact opcode
+  dispatch was approximately 9% faster in a small interpreter workload but
+  essentially identical in the actual 16,000-unit patrol simulation (20.961
+  versus 20.971 seconds). The interpreter changes were removed.
+- **Snapshot conversion:** sharing the exact flight-vector magnitude between
+  animation queries and avoiding unused ground-step arithmetic did not establish
+  a repeatable frame-time benefit in the tested batch; removed.
+- **Collision storage:** 16 inline occupant pointers avoided small allocations
+  but added storage and access costs. Focused movement runs measured
+  7.214 / 7.274 seconds before versus 7.212 / 7.221 after—within practical noise.
+  The custom storage was removed.
+
+The first combined rejected batch measured 65.029 ms/frame against a subsequent
+64.548 ms control. A later geometry/dispatch batch also failed the paired game
+comparison despite its favorable interpreter microbenchmark. All rejected
+variants retained the recorded simulation hashes; correctness alone was not a
+reason to keep them. Frame copying, collision scans, interpreter instructions,
+model preparation and target acquisition therefore remain optimization targets.
+
+### Verification and portability
+
+Both build trees are rebuilt for all shared-code changes. The retained shadow
+path passed a 30-second, 16,000-unit moving-army observation with geometry,
+projected-shadow and atlas-pixel verifiers enabled. The forced reference atlas
+bake uses serial preparation. This is a bounded observation, not a scripted
+completion gate. Accelerated OpenGL tests pass 1,152 geometry comparisons and
+shadow coverage, ordered masks and compositing checks.
+
+Windows x64 and macOS ARM64 CI now additionally run the asset-independent path
+scheduler and retail render-query regressions, alongside the existing script
+regressions. Runtime GPU performance and pixel validation here are Linux/NVIDIA
+measurements; no native Windows/macOS GPU speedup is claimed. No dependencies
+were added.
+
+The final retained source passes 88/88 Release and 91/91 optimized Debug tests,
+including the added callback-growth and cell-plane handoff regressions. The
+optimized Debug suite enables the body, script-thread and animated-piece index
+verifiers. The deterministic-math guard passes; GCC/Clang O0/O2/O3 retain golden
+`dcef618cd2e4d558`. The local ARM cross leg skips for missing target headers;
+native ARM64 coverage comes from macOS CI.
+
+The final retained executable completes the 3,600-tick Crusades combat run in
+79.008 seconds (120 game seconds, 1.519×), retaining all 120 baseline checkpoints
+and final hash `07ba752e5ce5e06b`. It ends with 11,236 living units from an initial
+16,000; this is not a sustained-16,000-unit speed guarantee.

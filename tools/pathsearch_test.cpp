@@ -92,6 +92,42 @@ int main() {
         check(valid && delivered>0 && !service.pendingCount(),
               "scheduler counts survive promotions, replacements, owner changes, cancellations, clear and completion");
     }
+    {
+        // Compare phase-2 handoff with the former reset-then-replace sequence,
+        // including trace flags/directions outside the cells visited by cost search.
+        std::vector<RetailCostSearch::Cell> plane(32*32);
+        for(size_t i=0;i<plane.size();++i)plane[i].direction=uint8_t(i&7);
+        plane[30*32+30].flags=4;
+        plane[3*32+3].flags=0x18;
+        RetailCostSearch reference,transferred;
+        reference.reset(32,32,3*32+3,2,500);
+        reference.cells=plane;
+        reference.cells[3*32+3].flags|=1;
+        reference.cells[3*32+3].direction=2;
+        reference.cells[3*32+3].node=0;
+        const auto* storage=plane.data();
+        transferred.reset(32,32,3*32+3,2,500,98304,std::move(plane));
+        bool equal=transferred.cells.data()==storage;
+        auto same=[&] {
+            if(reference.heap!=transferred.heap || reference.processed!=transferred.processed ||
+               reference.endpoint!=transferred.endpoint)return false;
+            for(size_t i=0;i<reference.cells.size();++i) {
+                const auto& a=reference.cells[i];const auto& b=transferred.cells[i];
+                if(a.flags!=b.flags || a.direction!=b.direction || a.node!=b.node)return false;
+            }
+            return true;
+        };
+        equal &= same();
+        auto grade=[](int x,int z){return x==15 && z<25 ? 0:6;};
+        auto distance=[](int x,int z){return retailGoalDistance(30-x,30-z);};
+        for(int i=0;i<600 && !reference.empty();++i) {
+            const auto a=reference.pop(grade,distance,0,4);
+            const auto b=transferred.pop(grade,distance,0,4);
+            equal &= a==b && same();
+            if(a!=RetailCostSearch::Result::Searching)break;
+        }
+        check(equal,"phase-2 transfers trace storage without changing search state or expansion");
+    }
     std::printf("[retail direction boundaries]\n");
     check(pathDirFromDelta(12, 5) == 5 && pathDirFromDelta(13, 5) == 6,
           "24:10 boundary stays diagonal; beyond it becomes cardinal");
@@ -538,6 +574,27 @@ int main() {
         for (int n=0;n<100 && svc.pendingCount();++n) tick();
         check(valid && !svc.pendingCount() && finished==3 && active==-1,
               "successive searches prepare and finish a single shared cache");
+    }
+    for(bool cancel:{false,true}) {
+        PathService svc;svc.setBudget(cancel ? 8 : 12000);
+        bool finished=false;
+        auto request=[&](int id) {svc.request(id,{2,2},{20,20},24,24,{}, {},0,false);};
+        svc.setGradeHost({{}, {}, [&](int id) {
+            if(id!=1)return;
+            finished=true;
+            // Force the lookup table to grow while the original entry is held.
+            for(int other=10;other<522;++other)request(other);
+        }});
+        request(1);
+        auto tick=[&] {svc.tick([](int,int x,int z){return x<0 || z<0 || x>=24 || z>=24 ? 0:6;},
+            [](int,const std::vector<PathCell>&,Fixed,Fixed,bool,bool,bool,bool){});};
+        if(cancel) {
+            for(int n=0;n<20 && !svc.requests();++n)tick();
+            svc.cancel(1);
+        } else for(int n=0;n<20 && svc.pending(1);++n)tick();
+        check(finished && !svc.pending(1) && svc.pendingCount()==512 && RetailReplayProbe::counts(svc),
+              cancel ? "cancellation callback can grow the request table" :
+                       "completion callback can grow the request table");
     }
     std::printf("\n%s\n", fails ? "FAILED" : "ALL PASS");
     return fails ? 1 : 0;

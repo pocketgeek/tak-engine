@@ -286,11 +286,7 @@ public:
             // potentially many simulation ticks after attempt initialization.
             if (currentHeading) heading=currentHeading();
             cost.reset(trace.width, trace.height, startCell, (heading + 4096) >> 13,
-                       initialDistance, weight);
-            cost.cells = std::move(trace.cells);
-            auto& start = cost.cells.at(size_t(startCell));
-            start.flags |= 1; start.direction = uint8_t(((heading + 4096) >> 13) & 7);
-            start.node = 0;
+                       initialDistance, weight, std::move(trace.cells));
             const int count = trace.width * trace.height;
             nodeLimit = retry > 2 ? count * 2 : retry > 0 ? count / (10 / retry) : count / 20;
             spread = 4; phase = 2;

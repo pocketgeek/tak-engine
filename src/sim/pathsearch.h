@@ -7,7 +7,7 @@
 
 #include <cstdint>
 #include <functional>
-#include <map>
+#include <unordered_map>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -343,11 +343,13 @@ class PathService {
     uint64_t requests_ = 0;      // admissions, i.e. how often a route was asked for
 
     int budget_ = kPathBudgetDefault;
-    std::map<int, Entry> q_;    // unit id order: deterministic
+    // Requests are looked up by ID only. RetailSearchScheduler owns traversal
+    // order (player and allocated entity slot), never this container's order.
+    std::unordered_map<int, Entry> q_;
     // Derived queue counts: avoid walking thousands of scattered map nodes
     // each tick merely to reconstruct the scheduler's ten player records.
     std::array<int,10> pendingByPlayer_{},priorityByPlayer_{};
-    void eraseRequest(std::map<int,Entry>::iterator it);
+    void eraseRequest(std::unordered_map<int,Entry>::iterator it);
     RetailSearchWorker worker_;
     RetailSearchScheduler scheduler_;
     std::array<int,10> poolFirst_{},poolSize_{};

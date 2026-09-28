@@ -66,10 +66,13 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test
+          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test
 
-      - name: Retail script scheduling and restoration
-        run: ./build/retail_script_test.exe
+      - name: Retail scripts, path scheduling and render queries
+        run: |
+          ./build/retail_script_test.exe
+          ./build/pathsearch_test.exe
+          ./build/retail_visual_test.exe
 
       - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
         run: |

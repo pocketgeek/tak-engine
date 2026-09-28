@@ -571,7 +571,7 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     e.ring = ring;
 }
 
-void PathService::eraseRequest(std::map<int,Entry>::iterator it) {
+void PathService::eraseRequest(std::unordered_map<int,Entry>::iterator it) {
     --pendingByPlayer_[size_t(it->second.player)];
     priorityByPlayer_[size_t(it->second.player)]-=it->second.priority;
     q_.erase(it);
@@ -583,7 +583,8 @@ void PathService::cancel(int unitId) {
     if (it == q_.end()) return;
     if (scheduler_.active==RetailSearchScheduler::Request{
         it->second.player,unitId-poolFirst_[size_t(it->second.player)]}) retireActive();
-    eraseRequest(it);
+    // A finish callback may queue other requests and rehash the lookup table.
+    eraseRequest(q_.find(unitId));
 }
 
 void PathService::tick(const std::function<int(int,int,int)>& score,
@@ -671,7 +672,8 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
                 if (gradeHost_.finish) gradeHost_.finish(id);
                 activeId_=-1;
                 --players[size_t(e.player)].pending;
-                eraseRequest(it);
+                // Entry references survive callback insertions; iterators do not.
+                eraseRequest(q_.find(id));
             }
             return RetailSearchScheduler::Slice{result.work,complete};
         });
