@@ -97,6 +97,10 @@ server, and Cartographer map editor.
 Game libraries are bundled; your system still provides windowing, audio, and
 graphics support. On macOS, right-click → **Open** on the first launch if needed.
 For the ZIP, launch **TAK Engine.app**, rather than its internal executable.
+
+Development packages after 0.7.8 label the client **Total Annihilation: Kingdoms**
+(**Total Annihilation - Kingdoms** for Windows shortcuts and the macOS app folder),
+omit server launchers, and start the Windows client without a console window.
 The `-debug` downloads are for diagnostics and development.
 
 ## Getting started

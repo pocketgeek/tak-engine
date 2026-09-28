@@ -159,7 +159,7 @@ bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot,
                       " --data \"" + dataRoot + "\" --no-auth --local";
     STARTUPINFOA si{}; si.cb = sizeof si;
     std::vector<char> mut(cmd.begin(), cmd.end()); mut.push_back('\0');
-    if (!CreateProcessA(nullptr, mut.data(), nullptr, nullptr, FALSE, 0,
+    if (!CreateProcessA(nullptr, mut.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
                         nullptr, nullptr, &si, &gLocalProc))
         return false;
     gLocalServerUp = true;
@@ -1948,3 +1948,11 @@ int main(int argc, char** argv) {
     SDL_Quit();
     return 0;
 }
+
+#ifdef _WIN32
+// The GUI subsystem keeps Explorer launches console-free. The CRT still parses
+// arguments for us; command-line launches and redirected handles remain usable.
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    return main(__argc, __argv);
+}
+#endif

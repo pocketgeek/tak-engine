@@ -608,6 +608,12 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(geometrysubmit_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(geometrysubmit_test PRIVATE ${_tak_sdl2})
     add_test(NAME geometrysubmit COMMAND geometrysubmit_test)
+    add_executable(audio_device_test tools/audio_device_test.cpp src/client/options.cpp)
+    target_compile_definitions(audio_device_test PRIVATE SDL_MAIN_HANDLED
+      SDL_GetNumAudioDevices=TAK_Test_GetNumAudioDevices
+      SDL_OpenAudioDevice=TAK_Test_OpenAudioDevice)
+    target_link_libraries(audio_device_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME audio_device COMMAND audio_device_test)
     add_executable(menu_music_test tools/menu_music_test.cpp)
     target_compile_definitions(menu_music_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(menu_music_test PRIVATE tak-formats ${_tak_sdl2})
@@ -741,11 +747,8 @@ if(TAK_BUILD_CLIENT)
       message(STATUS "FFmpeg not found — menu .bik videos disabled (GAF door art fallback).")
     endif()
     if(WIN32)
-      # SDL2::SDL2 drags in -mwindows (the GUI subsystem, whose CRT startup expects
-      # WinMain). We deliberately keep our own console main() (SDL_MAIN_HANDLED, so no
-      # SDL_main/WinMain), so force the console subsystem back on -- otherwise the
-      # MinGW link fails with "undefined reference to WinMain".
-      target_link_options(takclient PRIVATE -mconsole)
+      # WinMain forwards to our SDL_MAIN_HANDLED main without allocating a console.
+      set_target_properties(takclient PROPERTIES WIN32_EXECUTABLE TRUE)
     endif()
 
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
@@ -809,7 +812,6 @@ if(UNIX AND NOT APPLE)
   install(FILES res/icons/takserver.png    DESTINATION share/icons/hicolor/256x256/apps RENAME tak-server.png)
   install(FILES res/linux/tak-client.desktop
                 res/linux/tak-cartographer.desktop
-                res/linux/tak-server.desktop
           DESTINATION share/applications)
 
   set(CPACK_PACKAGE_NAME "tak-engine")
@@ -867,7 +869,8 @@ elseif(WIN32)
   set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/pocketgeek/tak-engine")
   set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
   set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")        # shortcuts point at the install root
-  set(CPACK_PACKAGE_EXECUTABLES "takclient" "TAK Engine")
+  # Windows shortcut filenames cannot contain a colon.
+  set(CPACK_PACKAGE_EXECUTABLES "takclient" "Total Annihilation - Kingdoms")
   set(CPACK_NSIS_MUI_FINISHPAGE_RUN "takclient.exe")
 
   include(CPack)

@@ -79,7 +79,7 @@ jobs:
       - name: Project version
         run: echo "VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
 
-      # Drag-and-drop disk image: a "TAK Engine.app" bundle (Finder-launchable
+      # Drag-and-drop disk image: a "Total Annihilation - Kingdoms.app" bundle (Finder-launchable
       # with NO Terminal window -- only .app bundles get that; a bare Unix binary
       # double-clicked in Finder always opens Terminal) plus an /Applications
       # symlink, packed with hdiutil. Ad-hoc codesigned so Apple Silicon will run
@@ -87,7 +87,7 @@ jobs:
       # notarization identity).
       - name: App bundle + DMG
         run: |
-          APPDIR="dist-dmg/TAK Engine.app"
+          APPDIR="dist-dmg/Total Annihilation - Kingdoms.app"
           mkdir -p "$APPDIR/Contents/MacOS" "$APPDIR/Contents/Resources"
           cp STREAMING-LICENSES.txt "$APPDIR/Contents/Resources/"
           cp build/takclient build/takserver "$APPDIR/Contents/MacOS/"
@@ -95,7 +95,7 @@ jobs:
           plutil -lint "$APPDIR/Contents/Info.plist"
           codesign --force --deep -s - "$APPDIR"
           ln -s /Applications dist-dmg/Applications
-          hdiutil create -volname "TAK Engine" -srcfolder dist-dmg -ov -format UDZO \
+          hdiutil create -volname "Total Annihilation - Kingdoms" -srcfolder dist-dmg -ov -format UDZO \
             "tak-engine-$VERSION-macos-arm64.dmg"
           hdiutil verify "tak-engine-$VERSION-macos-arm64.dmg"
 
@@ -104,7 +104,7 @@ jobs:
       - name: Bundle + zip
         run: |
           mkdir -p dist-macos
-          cp -R "dist-dmg/TAK Engine.app" dist-macos/
+          cp -R "dist-dmg/Total Annihilation - Kingdoms.app" dist-macos/
           cp build/takclient build/takserver dist-macos/
           (cd dist-macos && zip -ry "../takclient-$VERSION-macos-arm64.zip" .)
 

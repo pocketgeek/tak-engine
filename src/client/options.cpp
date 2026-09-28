@@ -63,10 +63,10 @@ void initAudioCaps() {
     if (g_capsReady) return;
     g_capsReady = true;
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return;
-    SDL_AudioSpec spec{};
-    if (SDL_GetDefaultAudioInfo(nullptr, &spec, 0) == 0 && spec.channels >= 1)
-        g_defaultCaps = std::clamp(int(spec.channels), 1, 8);
     int n = SDL_GetNumAudioDevices(0);
+    SDL_AudioSpec spec{};
+    if (n != 0 && SDL_GetDefaultAudioInfo(nullptr, &spec, 0) == 0 && spec.channels >= 1)
+        g_defaultCaps = std::clamp(int(spec.channels), 1, 8);
     for (int i = 0; i < n; ++i)
         if (const char* dn = SDL_GetAudioDeviceName(i, 0)) {
             SDL_AudioSpec ds{};
@@ -132,6 +132,13 @@ const std::string& currentAudioDevice() { return g_audioDevice; }
 
 SDL_AudioDeviceID openAudioDevice(int iscapture, const SDL_AudioSpec* want,
                                   SDL_AudioSpec* got, int allowed) {
+    // WASAPI retries an absent endpoint for up to eight seconds per open. Menu
+    // music, clicks and movies would each pay that delay on a soundless system.
+    // Recheck on every request so plugging in/selecting a device can recover.
+    if (SDL_GetNumAudioDevices(iscapture) == 0) {
+        SDL_SetError("No active audio device");
+        return 0;
+    }
     if (!g_audioDevice.empty()) {
         SDL_AudioDeviceID d = SDL_OpenAudioDevice(g_audioDevice.c_str(), iscapture, want, got, allowed);
         if (d) return d;
