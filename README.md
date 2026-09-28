@@ -301,20 +301,24 @@ Choose a server through the multiplayer menu, sign in, then create or join a
 game. An unused account name is registered on first sign-in. Players connect
 to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
+
+Multiplayer automatically verifies and transfers missing or differing maps before play.
+Downloaded maps remain available in the map picker; generated maps are saved on every
+participant and the server when the match starts. See [map sharing and storage](docs/map-transfer.md).
+
 Choose the per-player unit limit on the game-creation screen: the button cycles
 through 250, 500, 1,000, and 2,000. The lobby displays this value without allowing
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-The current development build uses **protocol 191**, which adds mobile infinite-production rally orders and prevents
-stationary structures from entering navigation steering. Restart/update both client and server
+The current development build uses **protocol 193**, which adds verified automatic
+map transfer and includes the balanced random-map generator. Restart/update both client and server
 together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and
 0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
 clients and recordings are rejected.
-The connection checks gameplay definitions, but
-that fingerprint does not cover every file: keep gameplay overrides, scripts,
-models, and maps compatible too.
+The connection checks gameplay definitions, scripts, and models. Selected map
+contents are verified separately and transferred automatically when needed.
 
 Clients record matches in their per-user application data directory beside
 `settings.ini`. Replays contain commands and match setup, not game assets.

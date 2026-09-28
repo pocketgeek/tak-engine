@@ -147,7 +147,9 @@ void applyEvent(World& world, const tak::net::Event& e) {
         if (u.alive() && u.player == p) world.stop(u.id);
 }
 
-void setupRegistry(TypeRegistry& reg, const hpi::Vfs& vfs, bool crusades) {
+void setupRegistry(TypeRegistry& reg, const hpi::Vfs& input, bool crusades) {
+    // Map sprite banks must not change unit weapon/nimbus timing in one room.
+    hpi::Vfs vfs(&input, true);
     reg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
     // Crusades overlay first (first-definition-wins), then the base roster. The
     // VFS already merges base + Iron Plague + community units into one namespace,
@@ -443,7 +445,8 @@ void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs&
 
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg) {
-    const hpi::Vfs& vfs = *cfg.vfs;
+    hpi::Vfs generatedData(cfg.vfs, true);
+    const hpi::Vfs& vfs = tak::mapgen::isGeneratedMapId(cfg.mapPath) ? generatedData : *cfg.vfs;
     world.setGameSeed(cfg.startSeed);
     // A "~gen1~" mapPath is a random-map recipe: generate it in memory (identically
     // on client and referee -- the params ride the mapId, generation is integer-only).

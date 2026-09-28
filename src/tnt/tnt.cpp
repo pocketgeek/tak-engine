@@ -78,7 +78,7 @@ Map Map::load(const std::vector<uint8_t>& d, const std::string& origin) {
         }
     }
 
-    if (pMinimap && pMinimap + 8 <= d.size()) {
+    if (pMinimap && uint64_t(pMinimap) + 8 <= d.size()) {
         m.minimapW = int(u32(&d[pMinimap]));
         m.minimapH = int(u32(&d[pMinimap + 4]));
         size_t n = size_t(m.minimapW) * m.minimapH;
@@ -90,11 +90,11 @@ Map Map::load(const std::vector<uint8_t>& d, const std::string& origin) {
     // layout as the small one. Preserved so a load->save round-trips it verbatim
     // (the game shows it as the in-game map overview).
     uint32_t pOverview = u32(&d[48]);
-    if (pOverview && pOverview + 8 <= d.size()) {
+    if (pOverview && uint64_t(pOverview) + 8 <= d.size()) {
         m.overviewW = int(u32(&d[pOverview]));
         m.overviewH = int(u32(&d[pOverview + 4]));
         size_t n = size_t(m.overviewW) * m.overviewH;
-        if (pOverview + 8 + n <= d.size())
+        if (uint64_t(pOverview) + 8 + n <= d.size())
             m.overview.assign(d.begin() + pOverview + 8, d.begin() + pOverview + 8 + n);
         else { m.overviewW = m.overviewH = 0; }
     }

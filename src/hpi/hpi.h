@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <memory>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -194,17 +196,32 @@ private:
 // Vfs::read / Vfs::list, so this is the ONLY way the engine touches game files.
 class Vfs {
 public:
+    using Files = std::map<std::string, std::vector<uint8_t>>;
+    Vfs() = default;
+    // A room-local view: no downloaded resource can affect another running room.
+    explicit Vfs(const Vfs* base, bool skipMapResources = false) : base_(base), skipMaps_(skipMapResources) {}
+    void setMapFiles(std::shared_ptr<const Files> files) { mapFiles_ = std::move(files); }
+    // Downloaded maps are discoverable but their resources remain archive-local.
+    void refreshMapCache(const std::filesystem::path& root);
+    std::optional<std::pair<std::string, std::shared_ptr<const Files>>>
+        cachedMap(const std::string& path) const;
+
     // Push a layer on TOP (highest precedence). `prefix` (e.g. "music/") maps the
     // layer's own namespace under that virtual directory; "" mounts it as-is.
     void addLayer(MountSet ms, const std::string& prefix = "", bool mapResources = false);
 
-    bool has(const std::string& path) const;
+    bool has(const std::string& path, bool skipMapResources = false) const;
     // skipMapResources keeps generated terrain independent of downloaded map reskins.
     std::vector<uint8_t> read(const std::string& path, bool skipMapResources = false) const; // throws if absent
     std::optional<std::vector<uint8_t>> tryRead(const std::string& path, bool skipMapResources = false) const;
-    std::vector<std::string> list(const std::string& prefix) const;    // union, deduped
+    std::vector<std::string> list(const std::string& prefix, bool skipMapResources = false) const;    // union, deduped
 
 private:
+    const Vfs* base_ = nullptr;
+    bool skipMaps_ = false;
+    struct CachedMap { std::shared_ptr<Archive> archive; std::string path; };
+    std::map<std::string, CachedMap> cachedMaps_;
+    std::shared_ptr<const Files> mapFiles_;
     struct Layer { MountSet ms; std::string prefix; bool mapResources = false; };   // prefix keyed, "" or trailing '/'
     std::vector<Layer> layers_;                          // back = highest precedence
 };

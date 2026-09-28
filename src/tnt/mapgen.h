@@ -5,7 +5,7 @@
 // client and the server referee build the BYTE-IDENTICAL map from the same seed --
 // the generated terrain/features feed the hashed lockstep sim, so it must agree on
 // every peer. The parameters ride inside the mapId string ("~gen1~<hex>"), which the
-// lobby threads to every peer. Protocol 192 requires support for v3 recipes.
+// lobby threads to every peer. Protocol 193 requires v3 recipes and verified map sharing.
 
 #include "tnt/tnt.h"
 

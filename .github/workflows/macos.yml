@@ -57,7 +57,7 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test
+          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test
 
       - name: Retail scripts, paths, rendering and map generation
         run: |
@@ -65,6 +65,7 @@ jobs:
           ./build/pathsearch_test
           ./build/retail_visual_test
           ./build/mapgen_test
+          ./build/map_transfer_test
 
       - name: Verify fully static (only system libs/frameworks linked)
         run: |

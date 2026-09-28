@@ -92,6 +92,7 @@ add_library(tak-formats
   src/net/protocol.cpp
   src/net/conn.cpp
   src/net/client.cpp
+  src/net/mappackage.cpp
   src/net/crypto.cpp
   src/net/auth.cpp
   src/util/png.cpp
@@ -297,6 +298,10 @@ target_link_libraries(retail_scheduler_test PRIVATE tak-formats)
 add_executable(retail_ai_test tools/retail_ai_test.cpp)
 target_link_libraries(retail_ai_test PRIVATE tak-formats)
 add_test(NAME retail_ai COMMAND retail_ai_test)
+add_executable(map_transfer_test tools/map_transfer_test.cpp)
+target_link_libraries(map_transfer_test PRIVATE tak-formats)
+add_test(NAME map_transfer COMMAND map_transfer_test)
+
 add_executable(mapgen_test tools/mapgen_test.cpp)
 target_link_libraries(mapgen_test PRIVATE tak-formats)
 add_test(NAME mapgen COMMAND mapgen_test)
@@ -413,6 +418,7 @@ add_executable(flyer_combat_test tools/flyer_combat_test.cpp)
 target_link_libraries(flyer_combat_test PRIVATE tak-formats)
 set(TAK_TEST_DATA "" CACHE PATH "Retail install for the data-backed tests (optional)")
 if(TAK_TEST_DATA)
+    add_test(NAME map_transfer_data COMMAND map_transfer_test "${TAK_TEST_DATA}")
     add_test(NAME mapgen_roster COMMAND mapgen_test "${TAK_TEST_DATA}")
     add_test(NAME mapgen_naval COMMAND mapgen_test "${TAK_TEST_DATA}" --naval)
     add_test(NAME campaign_roster COMMAND campaign_test "${TAK_TEST_DATA}")

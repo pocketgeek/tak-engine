@@ -3,8 +3,7 @@
 New recipes use generator version 3. The map ID still carries the seed and
 parameters in `~gen1~` followed by hexadecimal bytes; the first two payload bytes
 are the generator version. Versions 1 and 2 keep the old generation algorithm.
-Protocol 192 prevents clients without version-3 support from joining a server
-that can create these maps. Existing simulation/pathfinding rules are unchanged.
+Protocol 193 requires both version-3 generation and verified map-transfer support. Existing simulation/pathfinding rules are unchanged.
 
 ## Layout and placement
 
@@ -110,3 +109,15 @@ hashes. Thirty-second Crusades client/referee matches on generated Mainland and
 Islands each reached tick 900 without a mismatch. The accelerated terrain-cache
 regression also passed on a generated map, covering mipmaps, panning, zoom,
 filtering, edits, and renderer reset.
+
+## Saved maps and multiplayer
+
+The lobby distributes generated-map recipes, not independently chosen random seeds.
+Once the match starts, the host, every client (including spectators), and the server
+save a reusable `Maps/Generated-<recipe SHA-256>.kmp` under their data root. The archive
+contains the terrain, starting positions, original recipe, and retail tile artwork.
+Repeated starts of the same recipe reuse that file. Previewing/canceling does not save
+it. Saved maps appear in the map picker in subsequent games.
+
+Custom maps use [verified automatic transfer](map-transfer.md). Received maps also
+remain selectable, with a short fingerprint in the name to distinguish versions.

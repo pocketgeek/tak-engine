@@ -58,6 +58,7 @@ public:
     // Block until every queued chunk is composited and uploaded. Screenshot paths
     // only -- normal play never waits.
     void finishChunks();
+    void quiesce(); // cancel pending reads before changing the VFS
 
     // A low-res whole-map overview (one texel per 32px block), drawn UNDER the chunk
     // grid so a not-yet-composited chunk shows blurry terrain instead of a black

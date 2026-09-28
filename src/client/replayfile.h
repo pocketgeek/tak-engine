@@ -13,7 +13,7 @@
 #include "sim/matchsetup.h"    // tak::sim::MatchConfig
 
 struct ReplayFile {
-    std::string mapId;
+    std::string mapId, mapDigest;
     std::string mission;          // campaign mission stem ("" = skirmish)
     std::string engineVersion;    // build that recorded it
     std::string error;            // why a load was refused (shown to the user)

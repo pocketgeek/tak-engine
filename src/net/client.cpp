@@ -6,6 +6,7 @@
 
 #include "net/auth.h"
 #include "net/crypto.h"
+#include "tnt/mapgen.h"
 
 namespace tak::net {
 
@@ -81,6 +82,10 @@ bool MpClient::poll() {
         }
         state_ = State::Done;
         return false;
+    }
+    mapSend_.pump(conn_);
+    if (startRequested_ && state_ == State::InRoom && room_.mapsReady) {
+        send(Msg::StartGame); startRequested_ = false;
     }
     pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
     uint64_t now = nowMs();
@@ -295,6 +300,7 @@ static void readSlots(Reader& r, RoomView& v) {
     v.opts.randomStarts = r.u8();
     v.opts.doubleSight = r.u8();
     v.hostId = r.u32();
+    v.mapsReady = r.u8() != 0;
     for (int i = 0; i < kMaxSlots; ++i) {
         SlotInfo& s = v.slots[i];
         s.type = r.u8(); s.faction = r.u8(); s.color = r.u8(); s.team = r.u8();
@@ -364,12 +370,27 @@ void MpClient::onFrame(const Frame& f) {
             }
             break;
         }
+        case Msg::MapOffer: case Msg::MapRequest: case Msg::MapChunk: case Msg::MapError:
+            mapFrame(f); break;
         case Msg::LobbyState: {
             int keep = room_.mySlot;
             readSlots(r, room_);
             room_.mySlot = keep;
             gameSpeed_ = room_.opts.speed;
             if (state_ == State::Lobby) state_ = State::InRoom;
+            if (!room_.mission.empty() || mapgen::isGeneratedMapId(room_.mapId)) {
+                mapReadyRoom_ = room_.id; mapStatus_ = "MAP READY";
+            } else if (room_.hostId == myId_ && mapOfferedRoom_ != room_.id) {
+                try {
+                    if (!mapPackage_) mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
+                        hpi::OverridePolicy(std::min<uint8_t>(room_.opts.overridePolicy, 2))), room_.mapId);
+                    send(Msg::MapOffer, maps::offer(room_.id, room_.mapId, *mapPackage_));
+                    mapOfferedRoom_ = room_.id; mapStatus_ = "CHECKING MAP WITH SERVER";
+                } catch (const std::exception& e) {
+                    mapStatus_ = e.what(); Writer error; error.u32(room_.id); error.str(mapStatus_);
+                    send(Msg::MapError, error); mapOfferedRoom_ = room_.id;
+                }
+            }
             break;
         }
         case Msg::SpeedUpdate: { uint8_t s = r.u8(); if (r.ok) { gameSpeed_ = s; room_.opts.speed = s; } break; }
@@ -380,9 +401,24 @@ void MpClient::onFrame(const Frame& f) {
             break;
         }
         case Msg::GameStarting: {
+            RoomView check; Reader header(f.payload.data(), f.payload.size()); readSlots(header, check);
+            if (header.ok && check.mission.empty() && !mapgen::isGeneratedMapId(check.mapId) && mapReadyRoom_ != check.id) {
+                pendingMapStart_ = f; return;
+            }
             int keep = room_.mySlot;
             readSlots(r, room_);
             gameSpeed_ = room_.opts.speed;
+            if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
+                try {
+                    const auto data = hpi::mountRetailRoot(mapRoot_,
+                        hpi::OverridePolicy(std::min<uint8_t>(room_.opts.overridePolicy, 2)));
+                    maps::saveGenerated(mapRoot_, data, room_.mapId);
+                } catch (const std::exception& e) {
+                    mapStatus_ = std::string("MAP SAVE FAILED: ") + e.what();
+                    chat_.push_back({"SYSTEM", mapStatus_});
+                    std::fprintf(stderr, "%s\n", mapStatus_.c_str());
+                }
+            }
             missionOutcome_ = 0;   // fresh game/replay
             slotLoaded_.fill(false);
 
@@ -466,6 +502,15 @@ void MpClient::listGames() { send(Msg::ListGames); }
 void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
                           bool spectate, bool priv, const std::string& mission) {
+    mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
+    mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset();
+    mapStatus_ = "CHECKING MAP";
+    if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
+        try {
+            mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
+                hpi::OverridePolicy(std::min<uint8_t>(o.overridePolicy, 2))), mapId);
+        } catch (const std::exception& e) { err_ = mapStatus_ = e.what(); return; }
+    }
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
     w.u8(o.crusades); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
@@ -483,6 +528,8 @@ void MpClient::joinGame(uint32_t id, const std::string& password) {
 
 void MpClient::leaveGame() {
     send(Msg::LeaveGame);
+    mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
+    mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
     room_ = RoomView{};
     state_ = State::Lobby;
 }
@@ -507,7 +554,7 @@ void MpClient::kick(int slot) { Writer w; w.u8(uint8_t(slot)); send(Msg::Kick, w
 
 void MpClient::chat(const std::string& text) { Writer w; w.str(text); send(Msg::Chat, w); }
 
-void MpClient::startGame() { send(Msg::StartGame); }
+void MpClient::startGame() { startRequested_ = true; }
 
 // ---- game play ------------------------------------------------------------
 
@@ -549,3 +596,59 @@ void MpClient::sendHash(uint32_t tick, uint64_t hash) {
 }
 
 }  // namespace tak::net
+
+namespace tak::net {
+void MpClient::acceptMap(std::shared_ptr<maps::Package> package, uint32_t room) {
+    mapPackage_ = std::move(package); mapReadyRoom_ = room; mapReceive_ = {};
+    mapStatus_ = "MAP VERIFIED";
+    try { maps::saveCache(mapRoot_, *mapPackage_); }
+    catch (const std::exception& e) {
+        mapStatus_ = std::string("MAP VERIFIED; SAVE FAILED: ") + e.what();
+        chat_.push_back({"SYSTEM", mapStatus_}); std::fprintf(stderr, "%s\n", mapStatus_.c_str());
+    }
+    Writer w; w.u32(room); w.str(mapPackage_->digest); send(Msg::MapReady, w);
+    if (pendingMapStart_) {
+        auto start = std::move(*pendingMapStart_); pendingMapStart_.reset(); onFrame(start);
+    }
+}
+void MpClient::mapFrame(const Frame& f) {
+    try {
+        Reader r(f.payload.data(), f.payload.size());
+        if (f.kind == Msg::MapOffer) {
+            auto id = r.u32(); auto mapId = r.str(), digest = r.str(); auto size = r.u32();
+            if (!r.ok || r.p != r.end) throw std::runtime_error("invalid map offer");
+            if (room_.id && room_.id != id && !expectingSpectate_ && !expectingRejoin_) return;
+            if (mapReceive_.room == id && mapReceive_.digest == digest) return;
+            if (mapPackage_ && mapPackage_->digest == digest) { acceptMap(mapPackage_, id); return; }
+            mapReadyRoom_ = 0; mapReceive_.begin(id, size, digest);
+            if (auto cached = maps::loadCache(mapRoot_, digest)) { acceptMap(std::move(cached), id); return; }
+            try {
+                auto local = maps::build(hpi::mountRetailRoot(mapRoot_,
+                    hpi::OverridePolicy(std::min<uint8_t>(room_.opts.overridePolicy, 2))), mapId);
+                if (local->digest == digest) { acceptMap(std::move(local), id); return; }
+            } catch (const std::exception&) {} // Missing/different map: request the host's copy.
+            Writer request; request.u32(id); send(Msg::MapRequest, request);
+            mapStatus_ = "DOWNLOADING MAP 0%";
+        } else if (f.kind == Msg::MapRequest) {
+            auto id = r.u32();
+            if (!r.ok || id != room_.id || room_.hostId != myId_ || !mapPackage_ || mapSend_.package)
+                throw std::runtime_error("unexpected map upload request");
+            mapSend_ = {id, 0, mapPackage_}; mapStatus_ = "UPLOADING MAP TO SERVER";
+        } else if (f.kind == Msg::MapChunk) {
+            Reader header(f.payload.data(), f.payload.size());
+            if (header.u32() != mapReceive_.room || !mapReceive_.room) return; // left the old room
+            if (mapReceive_.append(r)) {
+                const auto id = mapReceive_.room;
+                acceptMap(maps::decode(std::move(mapReceive_.bytes), mapReceive_.digest), id);
+            } else mapStatus_ = "DOWNLOADING MAP " + std::to_string(100 * mapReceive_.bytes.size() / mapReceive_.size) + "%";
+        } else if (f.kind == Msg::MapError) {
+            auto id = r.u32(); auto why = r.str();
+            if (r.ok && id == room_.id) { mapStatus_ = "MAP ERROR: " + why; err_ = mapStatus_; }
+        }
+    } catch (const std::exception& e) {
+        mapStatus_ = std::string("MAP ERROR: ") + e.what(); mapReadyRoom_ = 0;
+        Writer w; w.u32(mapReceive_.room ? mapReceive_.room : room_.id); w.str(mapStatus_);
+        send(Msg::MapError, w); mapReceive_ = {}; mapSend_ = {}; err_ = mapStatus_;
+    }
+}
+}

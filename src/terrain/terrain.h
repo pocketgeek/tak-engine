@@ -21,6 +21,9 @@ class Compositor {
 public:
     explicit Compositor(const hpi::Vfs& vfs);
 
+    // Caller must first stop all consumers holding section references.
+    void clear() { std::lock_guard<std::mutex> lk(mu_); cache_.clear(); }
+
     // Render the whole map at full resolution (width*16 x height*16 px).
     jpeg::Image renderMap(const tnt::Map& map);
 
@@ -31,7 +34,7 @@ public:
                      std::vector<uint8_t>& dst, int dstW, int dx, int dy);
 
     // Decode (or fetch the cached) section JPG for `key` and return it. The
-    // returned reference stays valid for the Compositor's lifetime (cache_ is a
+    // returned reference stays valid until clear() or destruction (cache_ is a
     // std::map -- node-stable across inserts). Thread-safe. Throws if absent.
     // Used by the tile-atlas terrain renderer to upload each section once.
     const jpeg::Image& sectionImage(uint32_t key, bool stockTerrain = false) {

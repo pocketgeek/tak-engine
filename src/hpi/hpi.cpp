@@ -564,6 +564,38 @@ std::string MountSet::sourceOf(const std::string& path) const {
 
 // ---- Vfs: layered runtime read-path over a retail install root -------------
 
+void Vfs::refreshMapCache(const std::filesystem::path& root) {
+    cachedMaps_.clear();
+    std::error_code ec;
+    const auto folder = root / "MapCache";
+    if (!std::filesystem::is_directory(folder, ec)) return;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        if (ec) break;
+        auto digest = utf8(entry.path().stem());
+        if (entry.path().extension() != ".kmp" || digest.size() != 64 ||
+            digest.find_first_not_of("0123456789abcdef") != std::string::npos) continue;
+        try {
+            auto archive = std::make_shared<Archive>(entry.path());
+            for (const auto& file : archive->entries()) {
+                auto path = MountSet::key(file.path);
+                if (file.isDirectory || !path.ends_with(".tnt")) continue;
+                const auto alias = "kmap/" + tak::vpath::stem(path) + " [" + digest.substr(0,16) + "].tnt";
+                cachedMaps_.emplace(alias, CachedMap{archive,path});
+                break;
+            }
+        } catch (const std::exception&) {} // An incomplete/unreadable cache is not a playable map.
+    }
+}
+std::optional<std::pair<std::string, std::shared_ptr<const Vfs::Files>>>
+Vfs::cachedMap(const std::string& path) const {
+    auto it = cachedMaps_.find(MountSet::key(path));
+    if (it == cachedMaps_.end()) return base_ ? base_->cachedMap(path) : std::nullopt;
+    auto files = std::make_shared<Files>();
+    for (const auto& file : it->second.archive->entries())
+        if (!file.isDirectory) (*files)[MountSet::key(file.path)] = it->second.archive->read(file);
+    return std::make_pair(it->second.path, std::move(files));
+}
+
 void Vfs::addLayer(MountSet ms, const std::string& prefix, bool mapResources) {
     std::string p = MountSet::key(prefix);
     if (!p.empty() && p.back() != '/') p += '/';
@@ -574,13 +606,25 @@ void Vfs::addLayer(MountSet ms, const std::string& prefix, bool mapResources) {
 // layer's virtual prefix, strip the prefix and delegate to that MountSet.
 std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path, bool skipMapResources) const {
     std::string kp = MountSet::key(path);
+    skipMapResources = skipMapResources || skipMaps_;
+    if (mapFiles_ && !skipMapResources) {
+        auto found = mapFiles_->find(kp);
+        if (found != mapFiles_->end()) return found->second;
+    }
     for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
-        if (skipMapResources && it->mapResources) continue;
+        if ((skipMapResources || mapFiles_) && it->mapResources) continue;
         if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
         std::string sub = path.substr(it->prefix.size());
         if (it->ms.has(sub)) return it->ms.read(sub);
     }
-    return std::nullopt;
+    if (!skipMapResources) {
+        auto it = cachedMaps_.find(tak::vpath::replaceExtension(kp,".tnt"));
+        if (it != cachedMaps_.end() && (kp.ends_with(".tnt") || kp.ends_with(".ota"))) {
+            const auto source = tak::vpath::replaceExtension(it->second.path,tak::vpath::extension(kp));
+            if (auto entry = it->second.archive->find(source)) return it->second.archive->read(*entry);
+        }
+    }
+    return base_ ? base_->tryRead(path, skipMapResources || bool(mapFiles_)) : std::nullopt;
 }
 
 std::vector<uint8_t> Vfs::read(const std::string& path, bool skipMapResources) const {
@@ -588,20 +632,31 @@ std::vector<uint8_t> Vfs::read(const std::string& path, bool skipMapResources) c
     throw std::runtime_error("not in data set: " + path);
 }
 
-bool Vfs::has(const std::string& path) const {
-    std::string kp = MountSet::key(path);
+bool Vfs::has(const std::string& path, bool skipMapResources) const {
+    skipMapResources = skipMapResources || skipMaps_;
+    const std::string kp = MountSet::key(path);
+    if (mapFiles_ && !skipMapResources && mapFiles_->count(kp)) return true;
     for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
+        if ((skipMapResources || mapFiles_) && it->mapResources) continue;
         if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
         if (it->ms.has(path.substr(it->prefix.size()))) return true;
     }
-    return false;
+    if (!skipMapResources && (kp.ends_with(".tnt") || kp.ends_with(".ota"))) {
+        auto it = cachedMaps_.find(tak::vpath::replaceExtension(kp,".tnt"));
+        if (it != cachedMaps_.end())
+            return it->second.archive->find(tak::vpath::replaceExtension(it->second.path,tak::vpath::extension(kp))) != nullptr;
+    }
+    return base_ && base_->has(path, skipMapResources || bool(mapFiles_));
 }
 
-std::vector<std::string> Vfs::list(const std::string& prefix) const {
+std::vector<std::string> Vfs::list(const std::string& prefix, bool skipMapResources) const {
+    skipMapResources = skipMapResources || skipMaps_;
     std::string kp = MountSet::key(prefix);
     std::unordered_map<std::string, std::string> out;   // key -> winning original path
+    if (base_) for (const auto& p : base_->list(prefix, skipMapResources || bool(mapFiles_))) out[MountSet::key(p)] = p;
     // Lowest precedence first, so higher layers overwrite the reported source.
     for (const auto& L : layers_) {
+        if ((skipMapResources || mapFiles_) && L.mapResources) continue;
         // The virtual prefix each of this layer's paths carries.
         if (L.prefix.empty()) {
             for (const auto& p : L.ms.list(prefix))
@@ -622,6 +677,15 @@ std::vector<std::string> Vfs::list(const std::string& prefix) const {
                 out[MountSet::key(L.prefix + p)] = L.prefix + p;
         }
     }
+    if (!skipMapResources) for (const auto& [p, archive] : cachedMaps_) {
+        if (kp.empty() || p.starts_with(kp.back() == '/' ? kp : kp + '/')) {
+            out[p] = p;
+            const auto ota = tak::vpath::replaceExtension(p,".ota");
+            if (archive.archive->find(tak::vpath::replaceExtension(archive.path,".ota"))) out[ota] = ota;
+        }
+    }
+    if (mapFiles_ && !skipMapResources) for (const auto& [p, bytes] : *mapFiles_)
+        if (kp.empty() || p == kp || p.starts_with(kp.back() == '/' ? kp : kp + '/')) out[p] = p;
     std::vector<std::string> paths;
     paths.reserve(out.size());
     for (const auto& [k, p] : out) paths.push_back(p);
@@ -670,7 +734,10 @@ bool affectsGameplay(const std::string& path) {
     return false;
 }
 
-uint64_t gameplayHash(const Vfs& vfs) {
+uint64_t gameplayHash(const Vfs& input) {
+    // Community map features/art are transferred and checked per room. They must
+    // not prevent a player without that map from passing the base-game handshake.
+    Vfs vfs(&input, true);
     // Every gameplay entry the sim consumes (see affectsGameplay), EXCEPT maps --
     // those are per-game, checked separately. Two installs with identical retail
     // gameplay files hash the same; a modified/overridden gameplay file changes it.
@@ -905,6 +972,7 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
             vfs.addLayer(MountSet(ov, std::move(cfg)), "");
         }
     }
+    vfs.refreshMapCache(root);
     return vfs;
 }
 

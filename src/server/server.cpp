@@ -12,6 +12,8 @@
 // that blames the referee if every client agrees against it). Without --data the
 // server is a pure relay and clients cross-check hashes among themselves (M3).
 
+#include "net/mappackage.h"
+#include "tnt/mapgen.h"
 #include "net/netcompat.h"
 
 #include <algorithm>
@@ -120,6 +122,10 @@ struct Client {
     uint64_t lastRecvMs = 0;
     uint64_t lastPingMs = 0;
     bool loaded = false;
+    uint32_t mapReadyRoom = 0, mapOfferedRoom = 0;
+    tak::net::maps::Receiver mapReceive;
+    tak::net::maps::Sender mapSend;
+
     uint32_t ackTick = 0;   // latest tick this client reported a hash for (flow control)
     // kCmdCapPerTick is a per-TICK budget, so it has to be tracked per client
     // across messages. Clamping each message independently caps nothing: the
@@ -158,6 +164,9 @@ static constexpr int kPauseByRequest = -2;
 struct Room {
     uint32_t id = 0;
     std::string name, password, mapId;
+    std::shared_ptr<tak::net::maps::Package> mapPackage;
+    std::unique_ptr<tak::hpi::Vfs> mapVfs;
+
     std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
     uint32_t hostId = 0;
@@ -431,6 +440,10 @@ private:
     void sendAuthResult(Client& c, AuthStatus st, const tak::crypto::Digest* sig,
                         const std::string& msg);
     void lobbyMsg(Client& c, const Frame& f);
+    void mapMsg(Client& c, const Frame& f);
+    void acceptMap(Room& r, std::shared_ptr<tak::net::maps::Package> package);
+    bool mapsReady(const Room& r) const;
+
     void gameMsg(Client& c, const Frame& f);
 
     void sendReject(Client& c, const std::string& why);
@@ -495,6 +508,7 @@ void Server::writeReplay(Room& r) {
     // compare its own hashes against what actually happened.
     tak::net::ReplayHeader h;
     h.mapId = r.mapId;
+    if (r.mapPackage) h.mapDigest = r.mapPackage->digest;
     h.mission = r.mission;
     h.engineVersion = tak::kVersion;
     h.crusades = r.opts.crusades;
@@ -826,6 +840,7 @@ void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
     w.u8(r.opts.stressTest); w.u8(r.opts.fogExplored); w.u8(r.opts.benchmark);
     w.u8(r.opts.randomStarts); w.u8(r.opts.doubleSight);
     w.u32(r.hostId);
+    w.u8(mapsReady(r) ? 1 : 0);
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = (fromStart && r.running) ? r.startSlots[i] : r.slots[i];
         w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team); w.u8(s.ready);
@@ -847,6 +862,13 @@ void Server::broadcastLobby(Room& r) {
         auto it = clients_.find(sid);
         if (it != clients_.end()) it->second->conn.send(Msg::LobbyState, w);
     }
+    if (r.mapPackage) for (auto& [id, peer] : clients_) {
+        if (peer->roomId == r.id && peer->mapOfferedRoom != r.id) {
+            peer->conn.send(Msg::MapOffer, tak::net::maps::offer(r.id, r.mapId, *r.mapPackage));
+            peer->mapOfferedRoom = r.id;
+        }
+    }
+
 }
 
 void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptClient) {
@@ -1002,6 +1024,10 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // receive buffer legitimately runs dry BETWEEN chunks while history is
             // still coming, and a buffer-depth guess releases the gate early.
             w.u32(uint32_t(room.log.size()));
+            if (room.mapPackage) {
+                c.mapReadyRoom = 0; c.mapOfferedRoom = room.id;
+                c.conn.send(Msg::MapOffer, tak::net::maps::offer(room.id, room.mapId, *room.mapPackage));
+            }
             c.conn.send(Msg::GameStarting, w);
             c.replaying = true; c.replayPos = 0;   // streamed below, paced by txPending()
             // Unpause if this was the player we were waiting on.
@@ -1042,6 +1068,10 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             Writer w; writeSlots(w, room, /*fromStart=*/true);
             w.u8(0xFF); w.u32(room.seed); w.u64(0);
             w.u32(uint32_t(room.log.size()));   // replay boundary (see above)
+            if (room.mapPackage) {
+                c.mapReadyRoom = 0; c.mapOfferedRoom = room.id;
+                c.conn.send(Msg::MapOffer, tak::net::maps::offer(room.id, room.mapId, *room.mapPackage));
+            }
             c.conn.send(Msg::GameStarting, w);
             c.replaying = true; c.replayPos = 0;   // streamed below, paced by txPending()
             std::fprintf(stderr, "game %u: client %u SPECTATING (replaying %zu ticks)\n",
@@ -1071,6 +1101,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
 // slot-preserving branch of dropClient, which is exactly the rejoin path this is
 // meant to protect. The fix ran everywhere except where it was needed.
 void Server::dropPendingCommands(Client& c, Room& r) {
+    c.mapSend = {}; c.mapReceive = {}; c.mapReadyRoom = c.mapOfferedRoom = 0;
     c.cmdQueue.clear();
     c.cmdDropped = 0;
     if (c.slot < 0) return;
@@ -1128,9 +1159,80 @@ void Server::leaveRoom(Client& c, const char* reason) {
     std::fprintf(stderr, "client %u left game %u (%s)\n", c.id, rid, reason);
 }
 
+bool Server::mapsReady(const Room& r) const {
+    if (!r.mission.empty() || tak::mapgen::isGeneratedMapId(r.mapId)) return true;
+    if (!r.mapPackage) return false;
+    for (const auto& [id, peer] : clients_)
+        if (peer->roomId == r.id && peer->mapReadyRoom != r.id) return false;
+    return true;
+}
+void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> package) {
+    room.mapPackage = std::move(package);
+    std::fprintf(stderr, "game %u: map verified %s (%zu bytes)\n", room.id,
+                 room.mapPackage->digest.c_str(), room.mapPackage->bytes.size());
+    room.mapVfs = std::make_unique<tak::hpi::Vfs>(&dataFor(room.opts.overridePolicy).vfs);
+    room.mapVfs->setMapFiles(room.mapPackage->files);
+    try { tak::net::maps::saveCache(dataRoot_, *room.mapPackage); }
+    catch (const std::exception& e) { std::fprintf(stderr, "map cache: %s\n", e.what()); }
+    broadcastLobby(room);
+}
+void Server::mapMsg(Client& c, const Frame& f) {
+    Room* room = roomOf(c); if (!room) return;
+    try {
+        Reader rd(f.payload.data(), f.payload.size());
+        if (f.kind == Msg::MapOffer) {
+            if (room->running || room->hostId != c.id || room->mapPackage || c.mapReceive.size) return;
+            auto id = rd.u32(); auto name = rd.str(), hash = rd.str(); auto size = rd.u32();
+            if (!rd.ok || rd.p != rd.end || id != room->id || name != room->mapId ||
+                !room->mission.empty() || tak::mapgen::isGeneratedMapId(name))
+                throw std::runtime_error("invalid map offer");
+            c.mapReceive.begin(id, size, hash);
+            if (auto cached = tak::net::maps::loadCache(dataRoot_, hash)) {
+                c.mapReceive = {}; acceptMap(*room, std::move(cached)); return;
+            }
+            try {
+                auto local = tak::net::maps::build(dataFor(room->opts.overridePolicy).vfs, name);
+                if (local->digest == hash) { c.mapReceive = {}; acceptMap(*room, std::move(local)); return; }
+            } catch (const std::exception&) {}
+            std::fprintf(stderr, "game %u: requesting missing/different map from host (%u bytes)\n", room->id, size);
+            Writer request; request.u32(room->id); c.conn.send(Msg::MapRequest, request);
+        } else if (f.kind == Msg::MapChunk) {
+            if (room->running || room->hostId != c.id || room->mapPackage) return;
+            if (c.mapReceive.append(rd)) {
+                auto package = tak::net::maps::decode(std::move(c.mapReceive.bytes), c.mapReceive.digest);
+                c.mapReceive = {}; acceptMap(*room, std::move(package));
+            }
+        } else if (f.kind == Msg::MapRequest) {
+            auto id = rd.u32();
+            if (!rd.ok || id != room->id || !room->mapPackage || c.mapSend.package) return;
+            c.mapSend = {room->id, 0, room->mapPackage};
+        } else if (f.kind == Msg::MapReady) {
+            auto id = rd.u32(); auto hash = rd.str();
+            if (!rd.ok || id != room->id || !room->mapPackage || hash != room->mapPackage->digest)
+                throw std::runtime_error("map verification failed");
+            c.mapReadyRoom = room->id;
+            if (!room->running) broadcastLobby(*room);
+        } else if (f.kind == Msg::MapError) {
+            auto id = rd.u32(); auto why = rd.str();
+            if (rd.ok && id == room->id) {
+                c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
+                Writer chat; chat.str("SERVER"); chat.str(c.name + ": " + why);
+                broadcastRoom(*room, Msg::Chat, chat);
+            }
+        }
+    } catch (const std::exception& e) {
+        c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
+        Writer error; error.u32(room->id); error.str(e.what()); c.conn.send(Msg::MapError, error);
+    }
+}
+
 void Server::tryStart(Client& c) {
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
+    if (!mapsReady(*r)) {
+        Writer w; w.u32(r->id); w.str("waiting for every player and the server to verify the map");
+        c.conn.send(Msg::MapError, w); return;
+    }
     // Validate: >=2 used slots, every human ready, unique colors among used slots.
     // A campaign mission is exempt from the 2-player minimum: its opponents are the
     // mission script's units, not lobby slots, so one seated human is enough.
@@ -1149,6 +1251,7 @@ void Server::tryStart(Client& c) {
     DataSet& dataSet = dataFor(r->opts.overridePolicy);
     const bool wantMission = !r->mission.empty();
     std::string mapResolved = wantMission ? std::string()
+                                          : r->mapPackage ? r->mapPackage->mapPath
                                           : tak::hpi::findMap(dataSet.vfs, r->mapId);
     if (!wantMission && mapResolved.empty()) {
         char msg[192];
@@ -1159,6 +1262,13 @@ void Server::tryStart(Client& c) {
         std::fprintf(stderr, "game %u: refusing to start -- map '%s' not in server data\n",
                      r->id, r->mapId.c_str());
         return;
+    }
+    if (!wantMission && tak::mapgen::isGeneratedMapId(r->mapId)) {
+        try { tak::net::maps::saveGenerated(dataRoot_, dataSet.vfs, r->mapId); }
+        catch (const std::exception& e) {
+            Writer w; w.u32(r->id); w.str(std::string("cannot save generated map: ") + e.what());
+            c.conn.send(Msg::MapError, w); return;
+        }
     }
     r->running = true;
     r->tick = 0;
@@ -1229,7 +1339,7 @@ void Server::tryStart(Client& c) {
             for (int i = 0; i < kMaxSlots; ++i)
                 if (r->slots[i].type == 1 || r->slots[i].type == 2) maxSlot = i;
             tak::sim::MatchConfig cfg;
-            cfg.vfs = &ds->vfs;
+            cfg.vfs = r->mapVfs ? r->mapVfs.get() : &ds->vfs;
             cfg.mapPath = mapPath;
             cfg.unitCap = r->opts.unitCap;
             cfg.monarchExpendable = r->opts.monarchExpendable != 0;
@@ -1387,6 +1497,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 // The unit limit is fixed when the room is created.
                 o.unitCap = r->opts.unitCap;
                 // Lobby: adopt the remaining options and rebroadcast the slot table.
+                o.overridePolicy = r->opts.overridePolicy;
                 r->opts = o;
                 broadcastLobby(*r);
             } else if (r->opts.speedUnlock && r->opts.speed != o.speed) {
@@ -1742,6 +1853,10 @@ void Server::onFrame(Client& c, const Frame& f) {
     if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
+    if (c.state == Client::InGame && (f.kind == Msg::MapOffer || f.kind == Msg::MapRequest ||
+        f.kind == Msg::MapChunk || f.kind == Msg::MapReady || f.kind == Msg::MapError)) {
+        mapMsg(c, f); return;
+    }
     switch (c.state) {
         case Client::Handshake: handshake(c, f); break;
         case Client::Auth: authMsg(c, f); break;
@@ -1800,7 +1915,7 @@ int Server::run() {
         // chunk per idle second, since a paused room no longer pulls the
         // deadline in.
         for (const auto& [id, c] : clients_)
-            if (c->replaying && now + 10 < soonest) soonest = now + 10;
+            if ((c->replaying || c->mapSend.package) && now + 10 < soonest) soonest = now + 10;
         int timeout = int(soonest > now ? soonest - now : 0);
 
         int n = TAK_POLL(pfds.data(), (unsigned)pfds.size(), timeout);
@@ -1944,6 +2059,7 @@ int Server::run() {
             if (!c->replaying) continue;
             auto rit = rooms_.find(c->roomId);
             if (rit == rooms_.end()) { c->replaying = false; continue; }
+            if (rit->second.mapPackage && c->mapReadyRoom != rit->second.id) continue;
             const auto& log = rit->second.log;
             while (c->replayPos < log.size() &&
                    c->conn.txPending() < kReplayChunkBytes)
@@ -1953,6 +2069,7 @@ int Server::run() {
         // Flush all pending writes (bundles just queued) + keepalive + timeouts.
         now = nowMs();
         for (auto& [id, c] : clients_) {
+            c->mapSend.pump(c->conn);
             if (!c->conn.flushWrite()) { dead.push_back(id); continue; }
             if (c->state != Client::Handshake && now - c->lastRecvMs > kPingIdleMs &&
                 now - c->lastPingMs > kPingIdleMs) {

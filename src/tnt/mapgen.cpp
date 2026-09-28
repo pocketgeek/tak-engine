@@ -57,7 +57,8 @@ Params sanitize(Params p) {
     return p;
 }
 
-Result generate(const Params& raw, const tak::hpi::Vfs& vfs) {
+Result generate(const Params& raw, const tak::hpi::Vfs& input) {
+    tak::hpi::Vfs vfs(&input, true);
     Params p = sanitize(raw);
     if (p.formatVer >= 3) return generateBalanced(p, vfs);
     Result r;

@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 192;      // 192: version-3 balanced generated-map recipes
+constexpr uint32_t kNetVersion = 193;      // 193: verified room map packages and automatic transfer
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering
                                            // 189: authored corpse decisions and death owner lifetimes
@@ -260,6 +260,12 @@ enum class Msg : uint8_t {
     AuthProof,          // C->S: the client's proof  (existing account)
     AuthRegister,       // C->S: StoredKey + ServerKey  (creating a new account)
     AuthResult,         // S->C: status, server signature, message
+    MapOffer,          // both: room, map id, SHA-256, byte count
+    MapRequest,        // both: room; request the offered package
+    MapChunk,          // both: room, offset, <=64 KiB raw bytes
+    MapReady,          // C->S: room, verified SHA-256
+    MapError,          // both: room, explanation
+
 };
 
 // The outcome of a login, as carried by Msg::AuthResult.

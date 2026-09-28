@@ -32,6 +32,7 @@ static void check(bool cond, const char* what, const std::string& detail = {}) {
 static ReplayHeader sample() {
     ReplayHeader h;
     h.mapId = "Inner Circle";
+    h.mapDigest = std::string(64, 'a');
     h.mission = "camp03";
     h.engineVersion = "9.9.9";
     h.crusades = 1;
@@ -71,6 +72,7 @@ int main() {
         check(fmt == kReplayFormat, "format version survives", std::to_string(fmt));
         check(proto == kNetVersion, "protocol version survives", std::to_string(proto));
         check(out.mapId == in.mapId, "mapId");
+        check(out.mapDigest == in.mapDigest, "verified map copy survives recording");
         check(out.mission == in.mission, "mission (a campaign replay is not a skirmish)");
         check(out.engineVersion == in.engineVersion, "engine version");
         check(out.seed == in.seed, "seed (was recorded, then discarded by the loader)");

@@ -42,6 +42,18 @@ MapView::~MapView() {
 
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     invalidateRenderTargets();
+    quiesce();
+    comp_.clear();
+    for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
+    sections_.clear();
+    tileBatch_.clear();
+    tileBatchDirty_ = true;
+    builtZoom_ = -1;   // force a rebuild against the new map
+    map_ = genOrLoad(vfs, mapPath);
+    queueAllSections();
+}
+
+void MapView::quiesce() {
     // Quiesce the decode worker first: it reads map_, which is about to be swapped.
     {
         std::unique_lock<std::mutex> lk(secMu_);
@@ -50,13 +62,6 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
         decoded_.clear();      // stale decodes queued against the OLD map
         secPending_.clear();
     }
-    for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
-    sections_.clear();
-    tileBatch_.clear();
-    tileBatchDirty_ = true;
-    builtZoom_ = -1;   // force a rebuild against the new map
-    map_ = genOrLoad(vfs, mapPath);
-    queueAllSections();
 }
 
 void MapView::queueAllSections() {

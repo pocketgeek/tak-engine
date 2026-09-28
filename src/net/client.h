@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "net/auth.h"
+#include "net/mappackage.h"
 #include "net/conn.h"
 #include "net/protocol.h"
 #include "net/replayhdr.h"
@@ -34,6 +35,7 @@ struct RoomView {
     std::string mission;   // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
     uint32_t hostId = 0;
+    bool mapsReady = false;
     SlotInfo slots[kMaxSlots];
     int mySlot = -1;
 };
@@ -47,6 +49,10 @@ public:
     // data (or, under Full overrides, gameplay overrides) doesn't match.
     void setDataHash(uint64_t h) { dataHash_ = h; }
 
+    void setMapRoot(const std::filesystem::path& root) { mapRoot_ = root; }
+    const std::shared_ptr<maps::Package>& mapPackage() const { return mapPackage_; }
+    const std::string& mapStatus() const { return mapStatus_; }
+    bool mapReady() const { return mapReadyRoom_ == room_.id && room_.id != 0; }
     bool connect(const std::string& host, uint16_t port, const std::string& name);
     void disconnect(const std::string& reason = "bye");
     ~MpClient();
@@ -200,6 +206,16 @@ private:
     void send(Msg kind, const Writer& w) { conn_.send(kind, w); }
     void send(Msg kind) { conn_.send(kind); }
 
+    void mapFrame(const Frame& f);
+    void acceptMap(std::shared_ptr<maps::Package> package, uint32_t room);
+    std::filesystem::path mapRoot_;
+    std::shared_ptr<maps::Package> mapPackage_;
+    maps::Receiver mapReceive_;
+    maps::Sender mapSend_;
+    uint32_t mapReadyRoom_ = 0, mapOfferedRoom_ = 0;
+    std::string mapStatus_;
+    bool startRequested_ = false;
+    std::optional<Frame> pendingMapStart_;
     Conn conn_;
     State state_ = State::Offline;
     std::string err_;

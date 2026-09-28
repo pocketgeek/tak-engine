@@ -84,7 +84,18 @@
         // rebuild the registry, so our world and hash agree with the server's
         // referee. remountPolicy already rebuilds the registry for the current
         // crusades setting; handle a crusades-only change separately.
+        resetMinimap();
+        mapView_.quiesce();
         remountPolicy(room.opts.overridePolicy);
+        vfs_.setMapFiles(mp_ && mp_->mapPackage() && room.mission.empty() &&
+            !tak::mapgen::isGeneratedMapId(room.mapId) ? mp_->mapPackage()->files : room.mission.empty()
+                ? std::make_shared<const tak::hpi::Vfs::Files>() : nullptr);
+        featureDefs_.clear(); featurePals_.clear();
+        for (auto& [name, art] : featureArt_) {
+            for (auto texture : art.frames) if (texture) gpuvram::destroy(texture);
+            for (auto texture : art.shadowFrames) if (texture) gpuvram::destroy(texture);
+        }
+        featureArt_.clear();
         if ((room.opts.crusades != 0) != crusades_) {
             crusades_ = room.opts.crusades != 0;
             registry_ = tak::sim::TypeRegistry{};
@@ -140,7 +151,9 @@
         // (mapView_), so the rendered map, the local sim, and the referee all agree.
         // Without this, picking a non-default map drew the launch map's terrain under a
         // different map's sim -- phantom water, a monarch out in it, and misaligned fog.
-        if (std::string rp = tak::hpi::findMap(vfs_, room.mapId); !rp.empty()) mapPath_ = rp;
+        mapPath_ = mp_ && mp_->mapPackage() && !tak::mapgen::isGeneratedMapId(room.mapId)
+            ? mp_->mapPackage()->mapPath : tak::hpi::findMap(vfs_, room.mapId);
+        if (mapPath_.empty()) throw std::runtime_error("selected map is missing: " + room.mapId);
         resetMinimap();   // its thread reads the map being swapped
         loadScreen_->step("LOADING TERRAIN", 30);
         mapView_.reload(vfs_, mapPath_);
@@ -808,7 +821,7 @@ void GameView::autoplayStep() {
             static const int wantReady = [] {
                 const char* w = tak::devEnv("TAK_MP_WAIT"); return w ? std::atoi(w) : 2;
             }();
-            if (ready >= wantReady) { mp_->startGame(); mpStarted_ = true; }
+            if (ready >= wantReady && mp_->room().mapsReady) { mp_->startGame(); mpStarted_ = true; }
         } else if (mp_->isRejoin()) {
             // Rejoin OR spectate (checked BEFORE the state branches -- the replayed
             // bundles may already have flipped the state to InGame): reset the sim

@@ -838,6 +838,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<tak::net::MpClient> mp;
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
+        mp->setMapRoot(dataRoot);
         if (playerName.empty()) playerName = settings.playerName;
         if (playerName.empty()) playerName = "player";
         // Hello carries the PURE-RETAIL gameplay fingerprint (no overrides), so the
@@ -980,7 +981,19 @@ int main(int argc, char** argv) {
             std::string mapPath;
             const auto rpol0 = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
             tak::hpi::Vfs probeVfs = tak::hpi::mountRetailRoot(dataRoot, rpol0);
-            if (!rf.mission.empty()) {
+            if (!rf.mapDigest.empty()) {
+                auto package = tak::net::maps::loadCache(dataRoot, rf.mapDigest);
+                if (!package) try {
+                    auto local = tak::net::maps::build(probeVfs, rf.mapId);
+                    if (local->digest == rf.mapDigest) package = std::move(local);
+                } catch (const std::exception&) {}
+                if (!package) {
+                    replayFailed("the verified map copy for this replay is missing");
+                    if (fromMenu) continue;
+                    return 1;
+                }
+                mapPath = package->mapPath; probeVfs.setMapFiles(package->files);
+            } else if (!rf.mission.empty()) {
                 mapPath = "missions/" + rf.mission + ".tnt";
                 if (!probeVfs.has(mapPath)) {
                     replayFailed("mission '" + rf.mission + "' is not in this game data");

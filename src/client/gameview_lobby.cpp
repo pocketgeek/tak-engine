@@ -123,6 +123,8 @@ std::string mapDisplayName(const std::string& id) {
     }
 
     void GameView::buildMapList() {
+        resetMinimap(); mapView_.quiesce();
+        vfs_.refreshMapCache(installRoot_);
         mapList_.clear();
         for (auto& [name, path] : tak::hpi::listMaps(vfs_)) {
             MapInfo mi; mi.name = name; mi.path = path;
@@ -711,12 +713,14 @@ std::string mapDisplayName(const std::string& id) {
             bx = x + 142;
         }
         // start (host): enabled when >=2 used slots and all humans ready and colors unique
-        bool canStart = host && startValid(room);
+        bool canStart = host && startValid(room) && room.mapsReady;
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
             mp_->leaveGame(); lobbyScreen_ = LobbyScreen::Browser;
             mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
+        if (!room.mapsReady) blockText(mp_->mapStatus().empty() ? "WAITING FOR MAP VERIFICATION" : mp_->mapStatus(),
+            bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
         // The game starts at normal speed; the host can allow it to be changed
         // in-game, and the host's -/+ keys then re-cadence the match live.
         y += 40;

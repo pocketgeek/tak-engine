@@ -33,10 +33,11 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 8;   // 8: double-sight match option
+inline constexpr uint32_t kReplayFormat = 9;   // 9: verified map package digest
 
 struct ReplayHeader {
     std::string mapId;
+    std::string mapDigest;
     std::string mission;          // campaign mission stem ("" = skirmish)
     std::string engineVersion;    // tak::kVersion of the build that recorded it
     uint8_t crusades = 0, forfeitSelfDestruct = 0;
@@ -79,6 +80,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     w.str(h.engineVersion);
     w.u64(h.dataHash);
     w.u8(h.doubleSight);
+    w.str(h.mapDigest);
     w.u8(uint8_t(kMaxSlots));
     for (int i = 0; i < kMaxSlots; ++i) {
         w.u8(h.slotType[i]);
@@ -114,6 +116,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
         h.dataHash = r.u64();
     }
     h.doubleSight = fmt >= 8 ? r.u8() : 0;
+    h.mapDigest = fmt >= 9 ? r.str() : "";
     const uint8_t nslots = r.u8();
     if (!r.ok || nslots > kMaxSlots) return false;
     for (int i = 0; i < nslots; ++i) {

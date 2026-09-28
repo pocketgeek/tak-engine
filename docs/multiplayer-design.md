@@ -25,8 +25,9 @@ substrate underneath it is kept.
 - **Durable sessions:** a dropped player's slot is held; they can rejoin and
   the client catches up automatically.
 
-Non-goals for v1 (tracked in §10): spectators/watch mode, in-lobby map file
-transfer, allied mana sharing / unit gifting, mid-game diplomacy, persistent
+The current implementation supports spectators and [verified map transfer](map-transfer.md).
+
+Remaining non-goals for v1 (tracked in §10): allied mana sharing / unit gifting, mid-game diplomacy, persistent
 accounts or ratings, wire encryption (deploy behind a TLS proxy — and on
 untrusted networks that proxy is *not* optional, see resume tokens in §4).
 
@@ -478,7 +479,7 @@ design and none block v1:
 
 - **Spectators** ("Watching" lobby checkbox, host-deniable) — a watcher is a
   bundle subscriber with no slot; needs per-team fog toggling.
-- **In-lobby map transfer** to joiners missing the map.
+- **In-lobby map transfer:** implemented in protocol 193; see [map transfer](map-transfer.md).
 - **Alliance economy:** `AutoShareMana` with limit/percentage, unit gifting
   (`ShareUnits`).
 - **Mid-game diplomacy:** requires mutable `Player::team` as a sequenced
