@@ -335,6 +335,7 @@
                 size_t page;
                 int slotX,slotY,pixelX,pixelY,width,height;
                 bool dirty=true;
+                size_t opaqueOffset=0;
             };
             std::vector<Work> work;
             work.reserve(items.size());
@@ -494,18 +495,31 @@
                 // cannot overlap; independent points keep this loop vectorizable
                 // without changing the established float operation order.
                 size_t pointCount=0;
-                for (const Work& w:work) if (w.page==p && w.dirty) pointCount+=w.geom->shadowVerts.size();
+                for (Work& w:work) if (w.page==p && w.dirty) {
+                    w.opaqueOffset=pointCount;pointCount+=w.geom->shadowVerts.size();
+                }
                 opaque.resize(pointCount);
-                size_t pointOffset=0;
-                for (const Work& w:work) if (w.page==p && w.dirty) {
-                    const SDL_FPoint* __restrict src=w.geom->shadowVerts.data();
-                    const size_t count=w.geom->shadowVerts.size();
-                    SDL_FPoint* __restrict dst=count ? opaque.data()+pointOffset : nullptr;
-                    for (size_t i=0;i<count;++i) {
-                        dst[i]={src[i].x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f,
-                                src[i].y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f};
+                const auto transformOpaque=[&](size_t begin,size_t end) {
+                    for(size_t wi=begin;wi<end;++wi) {
+                        const Work& w=work[wi];
+                        if(w.page!=p || !w.dirty)continue;
+                        const SDL_FPoint* __restrict src=w.geom->shadowVerts.data();
+                        const size_t count=w.geom->shadowVerts.size();
+                        SDL_FPoint* __restrict dst=count ? opaque.data()+w.opaqueOffset : nullptr;
+                        for (size_t i=0;i<count;++i) {
+                            dst[i]={src[i].x*scaleX-float(w.pixelX)+float(w.slotX)+1.0f,
+                                    src[i].y*scaleY-float(w.pixelY)+float(w.slotY)+1.0f};
+                        }
                     }
-                    pointOffset+=count;
+                };
+                // Workers write disjoint preallocated slices. Neither vertex order
+                // nor the atlas coordinate arithmetic depends on scheduling.
+                // The forced reference bake also verifies worker preparation
+                // against serial preparation through atlas pixel comparisons.
+                if(!force && pointCount>=32768 && !tak::devFlag("TAK_SHADOW_SERIAL_PREP"))
+                    pool_.parallelFor(work.size(),transformOpaque);
+                else transformOpaque(0,work.size());
+                for (const Work& w:work) if (w.page==p && w.dirty) {
                     int offset=0;
                     for (const auto& run:w.geom->maskedShadowRuns) {
                         SDL_Texture* coverage=shadowCoverageTextures_.at(run.first);

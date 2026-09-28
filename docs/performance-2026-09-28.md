@@ -215,3 +215,35 @@ These are individual paired observations, not confidence intervals.
 A separate triangle-sort experiment replaced stable sorting with indexed
 tie-breaking. Drawing remained 25.11 ms/frame in both 80-second patrol runs;
 it was removed because it did not demonstrate a benefit.
+
+### Follow-up: parallel shadow-atlas preparation
+
+Large opaque shadow batches now transform their vertices into atlas coordinates
+on the existing worker pool. The main thread assigns disjoint output slices in
+the original order before dispatching work. Packing, arithmetic, masks, coverage
+and compositing stay unchanged. Small batches stay serial; SDL and GPU calls
+remain on the main thread. This optimization is independent of renderer backend.
+
+Four sequential 80-second 16,000-unit patrol runs, excluding the first 20 seconds,
+compare serial → workers → workers → serial with the same executable:
+
+| Preparation | Frames sampled | Frame ms | Drawing ms |
+|---|---:|---:|---:|
+| Serial, first | 727 | 82.666 | 25.894 |
+| Workers, first | 770 | 77.922 | 24.102 |
+| Workers, second | 774 | 77.583 | 24.028 |
+| Serial, second | 730 | 82.303 | 26.047 |
+
+The paired means show approximately 7% less drawing time and 6% less frame time
+in this fixture. Simulation work per rendered frame also varies with frame
+cadence; these results do not establish a separate simulation speedup.
+`TAK_SHADOW_SERIAL_PREP=1` restores serial preparation for comparisons.
+
+`TAK_SHADOW_CACHE_VERIFY=1` now forces serial preparation for the reference bake.
+A 25-second moving-army observation compared used atlas pixels, including tile
+padding, against that bake without mismatches. Geometry and projected shadow
+verifiers were also enabled. The observation ended at its time limit, not a
+scripted completion gate. Both full suites pass (88 Release / 91 optimized
+Debug), including software geometry and shadow checks. Native Windows/macOS
+performance measurements remain unavailable; the script scheduling/restoration
+regression passes on both Windows x64 and macOS ARM64 CI at `6870a64`.
