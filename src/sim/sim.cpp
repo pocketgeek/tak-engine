@@ -10205,8 +10205,20 @@ uint64_t World::stateHash() const {
         mix(uint32_t(corpse.corpseStatue));mix(uint32_t(corpse.corpseWork.v));mix(corpse.corpseBlocks);
         mix(uint32_t(corpse.deathAnimationTicks));mix(corpse.deathHasCorpse);
     }
+    // Features are 16-bit values serialized as eight bytes by mix(). On large
+    // maps this is millions of cells per lockstep check. Combine the final
+    // multiplication and six zero-byte multiplications without changing a byte
+    // of the hash stream (or omitting empty terrain from desync detection).
+    constexpr uint64_t featureTailFactor=[] {
+        uint64_t factor=1;
+        for (int i=0;i<7;++i) factor*=1099511628211ULL;
+        return factor;
+    }();
     for (const auto& cell:mapPlacementCells_) {
-        mix(cell.feature);
+        h ^= uint8_t(cell.feature);
+        h *= 1099511628211ULL;
+        h ^= uint8_t(cell.feature >> 8);
+        h *= featureTailFactor;
         if (cell.feature==0xfffe) { mix(cell.backX);mix(cell.backZ); }
     }
     mix(uint64_t(gameRng_));   // shared RNG stream position must agree
