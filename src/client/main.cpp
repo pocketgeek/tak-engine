@@ -1727,7 +1727,7 @@ int main(int argc, char** argv) {
             if(tak::devEnv("TAK_POINT_TEST") && gameView)ready=ready && gameView->debugPointDrawCount_>=3;
             if(tak::devEnv("TAK_SMOKE_TEST") && gameView)ready=ready && gameView->debugSmokeDrawCount_>=2;
             if(tak::devEnv("TAK_DAMAGE_FLAME_TEST") && gameView)ready=ready && gameView->debugDamageFlameDrawCount_>=1;
-            if(tak::devEnv("TAK_FEATURE_FLAME_TEST") && gameView)ready=ready && gameView->debugFeatureFlameDrawCount_>=2 && gameView->debugFeatureSmokeDrawCount_>=1;
+            if(tak::devEnv("TAK_FEATURE_FLAME_TEST") && gameView)ready=ready && gameView->debugFeatureFlameDrawCount_>=gameView->debugFeatureFlameExpected_ && gameView->debugFeatureSmokeDrawCount_>=1;
             if(tak::devEnv("TAK_SHOT_FLAME") && gameView)ready=ready && gameView->debugFlameDrawCount_>=3;
 #endif
             static bool shotArmed = false;

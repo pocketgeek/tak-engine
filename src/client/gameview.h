@@ -680,6 +680,7 @@ public:
     int debugNimbusDrawCount_ = 0;
     int debugDamageFlameDrawCount_ = 0;
     int debugFeatureFlameDrawCount_ = 0;
+    int debugFeatureFlameExpected_ = 2;
     int debugFeatureSmokeDrawCount_ = 0;
     int debugFlameDrawCount_ = 0; // render-thread screenshot admission only
 #endif

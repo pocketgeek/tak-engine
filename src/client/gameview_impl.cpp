@@ -1550,12 +1550,38 @@
         // and have a dragon breathe on it -- the splash must ignite the tree
         // (spread + burnt swap then follow on their own).
         float tx = cx + 60, tz = cz - 60;
+        bool burnTarget=false;
+        std::string burnType;
+        const bool flameProbe=tak::devFlag("TAK_FEATURE_FLAME_TEST");
+        float closest=std::numeric_limits<float>::max();
         for (const auto& ft : world_.features())
             if (ft.alive && ft.type >= 0 &&
                 world_.featureTypes()[size_t(ft.type)].flamable) {
+                if(flameProbe && !world_.featureTypes()[size_t(ft.type)].hasBurnAnim)continue;
+                const auto& name=world_.featureTypes()[size_t(ft.type)].name;
+                if(flameProbe) {
+                    const auto definition=featureDefs_.find(name);
+                    if(definition==featureDefs_.end() ||
+                       (definition->second.valueOr("seqnamefrontflame","").empty() &&
+                        definition->second.valueOr("seqnamebackflame","").empty()))continue;
+                }
                 float ddx = ft.x.toFloat() - cx, ddz = ft.z.toFloat() - cz;
-                if (ddx * ddx + ddz * ddz < 400 * 400) { tx = ft.x.toFloat() + 20; tz = ft.z.toFloat(); break; }
+                const float distance=ddx*ddx+ddz*ddz;
+                if (distance < (flameProbe ? closest : 400 * 400)) {
+                    tx = ft.x.toFloat() + 20; tz = ft.z.toFloat();burnTarget=true;closest=distance;
+                    burnType=name;
+                    if(!flameProbe)break;
+                }
             }
+        if(flameProbe) {
+            if(!burnTarget)throw std::runtime_error("feature flame probe requires a map feature with authored burn animation");
+#ifndef NDEBUG
+            const auto& definition=featureDefs_.at(burnType);
+            debugFeatureFlameExpected_=int(!definition.valueOr("seqnamefrontflame","").empty())+
+                int(!definition.valueOr("seqnamebackflame","").empty());
+#endif
+            std::fprintf(stderr,"feature flame probe: target near %.0f,%.0f\n",tx,tz);
+        }
         int dr = spawn("tardrag", tx - 260, tz - 40, 1.57f, 1);
         int ar = spawn("araarch", tx, tz, -1.57f, 0);
         world_.attack(dr, ar, false);

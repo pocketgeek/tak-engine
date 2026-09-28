@@ -176,3 +176,18 @@ input, not engine smoke behavior. The dragon/tree flame capture remains open.
 
 The `41f9e72` Linux, Windows, macOS and determinism CI runs all completed
 successfully. Native Windows/macOS performance measurements remain outstanding.
+
+### Follow-up: live flame capture
+
+The flame probe now chooses the nearest burnable feature with authored flame
+art, rather than silently attacking bare ground when the map-center search
+finds nothing. Its capture gate uses that feature's authored front/back layer
+count. Black Forest's `tarplant03` defines one front layer and no back layer;
+the old two-layer requirement could never complete for this target.
+
+The corrected probe completes on Black Forest through ordinary dragon attacks.
+The captured frame shows the dragon's fire, burning plant and smoke, with native
+animation export verification enabled. No engine ignition or rendering change
+was needed. Both legacy feature probes are now resolved. All targets were
+rebuilt in Release and optimized Debug. The `24b08d6` Linux, Windows and macOS
+CI builds also completed successfully.
