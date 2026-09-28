@@ -191,3 +191,27 @@ animation export verification enabled. No engine ignition or rendering change
 was needed. Both legacy feature probes are now resolved. All targets were
 rebuilt in Release and optimized Debug. The `24b08d6` Linux, Windows and macOS
 CI builds also completed successfully.
+
+### Follow-up: active script threads
+
+Retail VM scheduling now maintains a derived 16-bit active-slot index. It visits
+the same slots in ascending order and rechecks after each executed thread, so
+new children in later slots still execute during the same tick. Reset and raw
+state restoration rebuild the index; it is neither serialized nor hashed.
+Animation safety queries also avoid reading inactive thread records.
+
+The differential scheduling regression compares all thread words, statics,
+host events and random state against the original full-slot scan through 300
+steps of saturation, reuse, calls, sleeps, wakeups and resets. Both full suites
+pass (88 Release / 91 optimized Debug), with index and native-export checks
+enabled. Every checkpoint matches in 900-tick standard and Crusades combat.
+
+An accompanying active-only simulation prefetch experiment was rejected:
+combat wall time regressed about 2%. With the existing full-thread prefetch
+restored, reversed-order paired runs measured 22.663 → 22.430 seconds for
+standard combat and 22.106 → 21.847 for Crusades, approximately 1% less time.
+These are individual paired observations, not confidence intervals.
+
+A separate triangle-sort experiment replaced stable sorting with indexed
+tie-breaking. Drawing remained 25.11 ms/frame in both 80-second patrol runs;
+it was removed because it did not demonstrate a benefit.

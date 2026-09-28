@@ -379,6 +379,7 @@ int main(int argc,char** argv) {
             for (auto& value:vm.statics) std::cin>>value;
             for (auto& thread:vm.threads) for (auto& value:thread.words) std::cin>>value;
             std::cin>>vm.active>>host.seed;
+            vm.rebuildThreadIndex();
             for (unsigned tick=0;tick<nt;++tick) {
                 int elapsed; std::cin>>elapsed;
                 host.events.clear(); vm.tick(file,elapsed,host);
@@ -1862,6 +1863,24 @@ int main(int argc,char** argv) {
                0x10021001,34,0x10013000,0x10021001,0,0x10065000};
     tak::cob::RetailVm vm;
     Host host;
+    {
+        tak::cob::RetailVm indexed,reference;
+        Host indexedHost,referenceHost;
+        for(unsigned step=0;step<300;++step) {
+            if(step%41==0){indexed.clearThreads();reference.clearThreads();}
+            if(step%11==0){indexed.finish(step%16);reference.finish(step%16);}
+            if(step%3==0)for(int n=0;n<5;++n)
+                if(indexed.start(file,int(step%2))!=reference.start(file,int(step%2)))return 1;
+            indexedHost.events.clear();referenceHost.events.clear();
+            indexed.tick(file,int(step%2),indexedHost);
+            reference.tick(file,int(step%2),referenceHost,true);
+            if(indexed.active!=reference.active || indexed.statics!=reference.statics ||
+               indexedHost.seed!=referenceHost.seed || indexedHost.events!=referenceHost.events)return 1;
+            for(size_t slot=0;slot<16;++slot)
+                if(indexed.threads[slot].words!=reference.threads[slot].words)return 1;
+        }
+        std::cout<<"PASS: indexed thread scheduling matches full scan through slot reuse, saturation, calls, sleep, wakeup and reset\n";
+    }
     if (vm.start(file,0)!=0) return 1;
     vm.tick(file,1,host);
     if (vm.active!=2 || vm.threads[0].flags()!=0x2800000 || vm.threads[1].words[3]!=1) return 1;

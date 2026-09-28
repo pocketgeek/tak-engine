@@ -3,6 +3,7 @@
 #include "cob/cob.h"
 #include <array>
 #include <bit>
+#include <cstdlib>
 #include <span>
 #include <stdexcept>
 
@@ -32,16 +33,31 @@ public:
 
     explicit RetailVm(size_t staticCount=0):statics(staticCount) {}
 
+    // Derived from flags, never serialized or hashed. Rebuild after importing
+    // raw thread records; ordinary start/finish operations maintain it.
+    void rebuildThreadIndex() {
+        threadMask_=0;
+        for(size_t i=0;i<threads.size();++i)
+            if(threads[i].flags())threadMask_|=uint32_t(1)<<i;
+    }
+    void clearThreads() {
+        for(auto& thread:threads)thread.flags()=0;
+        active=0;threadMask_=0;
+    }
+    uint32_t activeThreadMask() const { return threadMask_; }
+
     int start(const File& file,int script,std::span<const uint32_t> args={}) {
         if (script<0 || size_t(script)>=file.scripts.size()) return -1;
-        for (size_t i=0;i<threads.size();++i) {
+        const uint32_t free=~threadMask_&0xffffu;
+        if(free) {
+            const size_t i=std::countr_zero(free);
             auto& t=threads[i];
-            if (t.flags()) continue;
             t.flags()=0x1000000; t.pc()=file.scripts[size_t(script)].entry;
             t.words[2]=0xffffffffu; t.words[8]=0; t.words[7]=1;
             // Arguments occupy locals, but CREATE_LOCAL owns the stack top.
             for (size_t n=0;n<args.size();++n) t.local(int(n))=args[n];
             ++active;
+            threadMask_|=uint32_t(1)<<i;
             return int(i);
         }
         return -1;
@@ -51,9 +67,12 @@ public:
         auto& t=threads.at(slot);
         if (!t.flags()) return;
         t.flags()=0; --active;
-        for (auto& parent:threads)
+        threadMask_&=~(uint32_t(1)<<slot);
+        for(uint32_t pending=threadMask_;pending;pending&=pending-1) {
+            auto& parent=threads[std::countr_zero(pending)];
             if ((parent.flags()&0xfff00000u)==0x2800000 && parent.words[6]==slot)
                 parent.flags()=0x1000000;
+        }
     }
 
     // Host: waiting(turn,piece,axis), random(bound), get(value,args),
@@ -167,13 +186,31 @@ public:
         throw std::runtime_error("simulation COB instruction budget exceeded");
     }
 
-    template<class Host> void tick(const File& file,int32_t elapsed,Host& host) {
-        if (active) for (size_t i=0;i<threads.size();++i)
-            // Empty slots have no wait state or instructions to execute. Check
-            // each slot when reached: an earlier thread may have started it.
-            if (threads[i].flags()) run(file,i,elapsed,host);
+    template<class Host> void tick(const File& file,int32_t elapsed,Host& host,bool reference=false) {
+#ifndef NDEBUG
+        static const bool verify=std::getenv("TAK_VERIFY_THREAD_INDEX")!=nullptr;
+        if(verify) {
+            uint32_t expected=0;
+            for(size_t i=0;i<threads.size();++i)if(threads[i].flags())expected|=uint32_t(1)<<i;
+            if(expected!=threadMask_)throw std::runtime_error("COB thread index differs from active flags");
+        }
+#endif
+        if(!active)return;
+        if(reference) {
+            for(size_t i=0;i<threads.size();++i)if(threads[i].flags())run(file,i,elapsed,host);
+            return;
+        }
+        // Re-read after each run: a child started in a later slot executes this
+        // tick, but a newly reused earlier slot waits until the next tick.
+        uint32_t remaining=0xffffu;
+        while(const uint32_t pending=threadMask_&remaining) {
+            const unsigned slot=std::countr_zero(pending);
+            run(file,slot,elapsed,host);
+            remaining=0xffffu<<(slot+1);
+        }
     }
-
+private:
+    uint32_t threadMask_=0;
 };
 
 } // namespace tak::cob

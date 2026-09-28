@@ -94,8 +94,7 @@ void Vm::enableRetailAnimation() {
 void Vm::reset() {
     threads_.clear();
     if(native_) {
-        for(auto& t:native_->state.vm.threads) t.flags()=0;
-        native_->state.vm.active=0;
+        native_->state.vm.clearThreads();
     }
 }
 std::span<const RetailPiece> Vm::retailPieces() const {
@@ -109,15 +108,16 @@ int32_t Vm::getStatic(size_t i) const {
 std::vector<uint32_t> Vm::threadPcs() const {
     std::vector<uint32_t> out;
     if(native_) {
-        for(const auto& t:native_->state.vm.threads) if(t.words[0]) out.push_back(t.words[1]);
+        for(uint32_t pending=native_->state.vm.activeThreadMask();pending;pending&=pending-1)
+            out.push_back(native_->state.vm.threads[std::countr_zero(pending)].words[1]);
     } else for(const auto& t:threads_) out.push_back(t.pc);
     return out;
 }
 bool Vm::mayReachExplosion(std::span<const uint8_t> reachability) const {
     const auto unsafe=[&](size_t pc) {return pc>=reachability.size() || reachability[pc];};
     if(native_) {
-        for(const auto& thread:native_->state.vm.threads)
-            if(thread.words[0] && unsafe(thread.words[1]))return true;
+        for(uint32_t pending=native_->state.vm.activeThreadMask();pending;pending&=pending-1)
+            if(unsafe(native_->state.vm.threads[std::countr_zero(pending)].words[1]))return true;
     } else {
         const auto reachable=[&](const auto& thread) {
             if(thread.dead)return false;

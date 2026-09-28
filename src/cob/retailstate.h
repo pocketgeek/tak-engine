@@ -45,6 +45,7 @@ struct RetailScriptState {
         if (restored.vm.active!=size_t(std::count_if(restored.vm.threads.begin(),restored.vm.threads.end(),
                 [](const auto& t){return t.words[0]!=0;})))
             throw std::runtime_error("invalid saved COB active count");
+        restored.vm.rebuildThreadIndex();
         for (size_t n=0;n<file.numStatics;++n) restored.vm.statics[n]=word(0xa48+n*4);
         for (size_t i=0;i<pieces.size();++i) {
             auto& p=restored.pieces[i]; size_t offset=0xa48+file.numStatics*4+i*0x6c;
