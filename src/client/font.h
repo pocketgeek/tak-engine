@@ -16,6 +16,7 @@ public:
     Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPath);
 
     bool ok() const { return ok_; }
+    void setLetterSpacing(float pixels) { letterSpacing_ = pixels; }
 
     int width(const std::string& text, float scale = 1) const;
 
@@ -42,7 +43,8 @@ private:
         SDL_Texture* tex = nullptr;
         int w = 0, h = 0, yoff = 0;
     };
-    static float advance(const Glyph& g);
+    float advance(const Glyph& g) const;
+    float letterSpacing_ = 2;
     Glyph glyphs_[256] = {};
     bool ok_ = false;
 };

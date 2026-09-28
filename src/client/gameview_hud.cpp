@@ -1775,105 +1775,85 @@ namespace {
 
     void GameView::drawUnitCounts(int winW) {
         int cnt[tak::sim::kMaxPlayers] = {};
-        std::string sd[tak::sim::kMaxPlayers];
-        int np = frameNumPlayers();
-        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-            if (!u.alive() || !u.type) continue;
-            int t = u.player;
-            if (t < 0 || t >= np) continue;
-            ++cnt[t];
-            if (sd[t].empty()) sd[t] = u.type->side;
+        std::string sides[tak::sim::kMaxPlayers];
+        const int np = frameNumPlayers();
+        for (const UnitR* up : front().live) {
+            if (!up->alive() || !up->type || up->player < 0 || up->player >= np) continue;
+            ++cnt[up->player];
+            if (sides[up->player].empty()) sides[up->player] = up->type->side;
         }
-        // In a net game (or replay) this is a full scoreboard: every player is
-        // listed with their name, team, and defeat status. Offline it stays the
-        // compact "who has units" readout.
-        bool board = mp_ || replayMode_;
-        // Are there real alliances (a team with 2+ members)? If so, show a team tag.
-        bool teams = false;
-        { int tc[tak::sim::kMaxPlayers] = {};
-          for (int t = 0; t < np; ++t) tc[framePlayer(t).team % tak::sim::kMaxPlayers]++;
-          for (int t = 0; t < tak::sim::kMaxPlayers; ++t) if (tc[t] > 1) teams = true; }
-        int rows = 0;
-        bool allAi = true;
-        std::string labels[tak::sim::kMaxPlayers];
-        const float px = 2.0f, hx = 1.6f;
-        const float lh = 7 * px + 8, x = 14;
-        float y = 14;
-        const float nameX = x + (teams ? 32 : 0);
-        float nameW = blockWidth("PLAYER", hx);
-        float killsW = blockWidth("KILLS", hx);
-        float scoreW = blockWidth("SCORE", hx);
-        float manaW = blockWidth("MANA", hx);
-        for (int t = 0; t < np; ++t) {
-            if ((!board && cnt[t] == 0) || (framePlayer(t).built == 0 && cnt[t] == 0)) continue;
-            ++rows;
-            allAi = allAi && playerAi_[t & 7];
-            auto& label = labels[t];
-            if (mp_ && !playerName_[t & 7].empty()) {
-                label = playerName_[t & 7].substr(0, 12);
-                if (playerAi_[t & 7]) label = "AI - " + label;
-            } else {
-                label = sd[t].empty() ? std::string("--") : sd[t];
-                std::transform(label.begin(), label.end(), label.begin(), ::toupper);
-                if (np > 2) label = "P" + std::to_string(t + 1) + " " + label;
-            }
-            nameW = std::max(nameW, blockWidth(label, px) +
-                (framePlayer(t).defeated ? 8 + blockWidth("OUT", hx) : 0));
-            killsW = std::max(killsW, blockWidth(std::to_string(framePlayer(t).kills), px));
-            const auto& pl = framePlayer(t);
-            scoreW = std::max(scoreW, blockWidth(std::to_string(pl.score), px));
-            manaW = std::max(manaW, blockWidth(std::to_string(int(pl.mana)) + " +" +
-                std::to_string(int(pl.income + 0.5f)), hx));
-        }
-        // AI-only spectating needs player status, kills, and score. Size columns
-        // to their contents instead of reserving a wide spectator economy panel.
-        const bool showMana = spectating_ && !allAi;
-        const float colMana = nameX + nameW + 20;
-        const float colKills = showMana ? colMana + manaW + 20 : colMana;
-        const float colScore = colKills + killsW + 20;
-        const float panelW = colScore + scoreW - x + 16;
+        // Retail's compact F4 table: white serif text, faction/colour emblems,
+        // translucent player rows, and Name / Kills / Losses / Score columns.
+        const float scale = std::min(uiScale_ * 0.5f, std::max(0.25f, (winW - 24.0f) / 460.0f));
+        const float x = 12, top = 12, rowH = 32 * scale;
+        const float nameW = 190 * scale, numberW = 90 * scale;
+        const float width = nameW + 3 * numberW;
+        float fontScale = 1, fontTop = 0, fontH = 7;
+        if (scoreboardFont_.ok()) scoreboardFont_.vbounds("Ag0123456789", 1, fontTop, fontH);
+        fontScale = 20 * scale / std::max(1.0f, fontH);
+        auto textWidth = [&](const std::string& text, float s) {
+            return scoreboardFont_.ok() ? float(scoreboardFont_.width(text, s)) : blockWidth(text, s);
+        };
+        auto text = [&](const std::string& value, float tx, float y, float available,
+                        bool center, SDL_Color color) {
+            float s = fontScale;
+            float tw = textWidth(value, s);
+            if (tw > available) { s *= available / tw; tw = textWidth(value, s); }
+            if (center) tx += (available - tw) * 0.5f;
+            const float baseline = y + (rowH - fontH * s) * 0.5f - fontTop * s;
+            if (scoreboardFont_.ok()) {
+                scoreboardFont_.draw(ren_, value, tx + scale, baseline + scale, s, {0,0,0,220});
+                scoreboardFont_.draw(ren_, value, tx, baseline, s, color);
+            } else blockText(value, tx, baseline, s, color);
+        };
+        const SDL_Color white{245,245,245,255};
+        text("Name", x, top, nameW, false, white);
+        text("Kills", x + nameW, top, numberW, true, white);
+        text("Losses", x + nameW + numberW, top, numberW, true, white);
+        text("Score", x + nameW + 2 * numberW, top, numberW, true, white);
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
-        SDL_FRect bg{x - 8, y - 8, panelW, (rows + 1) * lh + 8};
-        SDL_RenderFillRectF(ren_, &bg);
-        char buf[80];
-        blockText("PLAYER", nameX, y + 3, hx, SDL_Color{150, 150, 155, 255});
-        if (showMana) blockText("MANA", colMana, y + 3, hx, SDL_Color{150, 150, 155, 255});
-        blockText("KILLS", colKills, y + 3, hx, SDL_Color{150, 150, 155, 255});
-        blockText("SCORE", colScore, y + 3, hx, SDL_Color{150, 150, 155, 255});
-        y += lh;
+        float y = top + rowH;
         for (int t = 0; t < np; ++t) {
-            if (!board && cnt[t] == 0) continue;
-            // A slot nobody ever occupied has never spawned anything -- not even a
-            // Monarch, which every real player gets at setup. Those used to be listed
-            // on the F4 board as defeated, so an 8-slot game with 3 players showed five
-            // phantom opponents marked OUT. Skip them entirely; `built` is the end-of-
-            // game spawn counter, so a real player is >= 1 from the first tick and a
-            // player who has since been wiped out still shows (correctly) as OUT.
-            if (framePlayer(t).built == 0 && cnt[t] == 0) continue;
-            bool dead = framePlayer(t).defeated;
-            SDL_Color c = playerColor(t);
-            if (dead) { c.r /= 2; c.g /= 2; c.b /= 2; }   // dim a knocked-out player
-            if (teams) {   // small team tag, e.g. "T2"
-                std::snprintf(buf, sizeof buf, "T%d", framePlayer(t).team + 1);
-                blockText(buf, x, y, 1.8f, dead ? SDL_Color{110, 110, 115, 255}
-                                                : SDL_Color{170, 175, 185, 255});
+            const auto& player = framePlayer(t);
+            if (player.built == 0 && cnt[t] == 0) continue;
+            SDL_FRect row{x, y, width, rowH};
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
+            SDL_RenderFillRectF(ren_, &row);
+            SDL_SetRenderDrawColor(ren_, 157, 145, 100, 155);
+            SDL_RenderDrawLineF(ren_, x, y, x + width, y);
+            SDL_RenderDrawLineF(ren_, x, y + rowH, x + width, y + rowH);
+            std::string name = playerName_[t & 7];
+            if (name.empty()) name = "P" + std::to_string(t + 1) + " " + sides[t];
+            if (playerAi_[t & 7] && name.rfind("AI ", 0) != 0) name = "AI " + name;
+            if (player.defeated) name += " (OUT)";
+            const SDL_Color color = player.defeated ? SDL_Color{160,160,160,255} : white;
+            std::string side = sides[t];
+            // Keep the emblem after defeat, when no living unit supplies a side.
+            if (!side.empty()) scoreboardSides_[t & 7] = side;
+            else side = scoreboardSides_[t & 7];
+            std::transform(side.begin(), side.end(), side.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            std::string seq = side == "aramon" || side == "ara" ? "AraTeam" :
+                              side == "taros" || side == "tar" ? "TarTeam" :
+                              side == "veruna" || side == "ver" ? "VerTeam" :
+                              side == "zhon" || side == "zon" ? "ZonTeam" :
+                              side == "creon" || side == "cre" ? "CreTeam" : "";
+            const std::string key = seq + std::to_string(colorSlot_[t & 7]);
+            auto [it, inserted] = scoreboardLogos_.try_emplace(key, nullptr);
+            if (inserted && !seq.empty())
+                it->second = loadGuiFrame("colorlogos2", seq, colorSlot_[t & 7]);
+            SDL_FRect emblem{x + 2 * scale, y + 2 * scale, 28 * scale, 28 * scale};
+            if (it->second) SDL_RenderCopyF(ren_, it->second, nullptr, &emblem);
+            else {
+                const auto c = playerColor(t);
+                SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);
+                SDL_RenderFillRectF(ren_, &emblem);
             }
-            const auto& s = labels[t];
-            blockText(s, nameX, y, px, c);
-            if (showMana) {   // current mana + income, e.g. "1234 +18"
-                const PlayerR& pl = framePlayer(t);
-                std::snprintf(buf, sizeof buf, "%d +%d", int(pl.mana), int(pl.income + 0.5f));
-                blockText(buf, colMana, y, hx, c);
-            }
-            std::snprintf(buf, sizeof buf, "%d", framePlayer(t).kills);
-            blockText(buf, colKills, y, px, c);
-            blockText(std::to_string(framePlayer(t).score), colScore, y, px, c);
-            if (dead) blockText("OUT", nameX + blockWidth(s, px) + 8, y, hx,
-                                SDL_Color{210, 90, 70, 255});
-            y += lh;
+            text(name, x + 36 * scale, y, nameW - 42 * scale, false, color);
+            text(std::to_string(player.kills), x + nameW, y, numberW, true, color);
+            text(std::to_string(player.losses), x + nameW + numberW, y, numberW, true, color);
+            text(std::to_string(player.score), x + nameW + 2 * numberW, y, numberW, true, color);
+            y += rowH;
         }
-        (void)winW;
     }
 
     void GameView::drawObjectivesPanel(int winW, int /*winH*/) {

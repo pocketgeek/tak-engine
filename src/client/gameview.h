@@ -226,6 +226,11 @@ public:
         } catch (const std::exception& e) {
             std::fprintf(stderr, "font load: %s\n", e.what());
         }
+        try {
+            scoreboardFont_ = Font(ren_, vfs_, "fonts/ig_times new roman (100).gaf");
+            scoreboardFont_.setLetterSpacing(0);
+        }
+        catch (const std::exception&) {}
         loadOrderButtons();
         sounds_.init(vfs_);
         soundClasses_.load(vfs_);   // music is started per-state by manageMusic()
@@ -2058,7 +2063,7 @@ private:
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
     float speedMult() const;
-    bool showCounts_ = false;   // F4: per-faction live unit counts
+    bool showCounts_ = false;   // F4: player names, kills, losses, and score
     bool spectating_ = false;   // watching a live net game (no control, no fog)
     std::string playerName_[8];   // net games: display name per player (from lobby)
     std::optional<uint8_t> resultParticipants_; // frozen starting roster; keep defeated/disconnected players
@@ -3160,7 +3165,7 @@ private:
     void lobbyInput(const SDL_Event& e, int winW, int winH);
     std::string* lbFieldBuf();
 
-    // F4: per-faction live unit counts, top-left.
+    // F4: player names, kills, losses, and score, top-left.
     // F7 diagnostic: tint elevated cells, and for each unit show its cell height,
     // computed lift, its RAW (unlifted) foot position (magenta dot) vs its LIFTED
     // foot position (cyan dot). Lets us see whether a unit that looks "on the wall"
@@ -3430,7 +3435,9 @@ private:
     bool amphib_ = false;
     int amphibPhase_ = 0, amphibSquad_ = 0, transportId_ = -1;
     float amphibLandX_ = 0, amphibLandZ_ = 0, amphibSeaX_ = 0, amphibSeaZ_ = 0;
-    Font hudFont_, bigFont_, statFont_;
+    Font hudFont_, bigFont_, statFont_, scoreboardFont_;
+    std::unordered_map<std::string, SDL_Texture*> scoreboardLogos_;
+    std::string scoreboardSides_[8];
 
     std::string notice_;
     float noticeTimer_ = 0;

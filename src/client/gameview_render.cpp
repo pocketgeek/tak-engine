@@ -2179,6 +2179,9 @@
         hudFont_.destroyGlyphs();
         bigFont_.destroyGlyphs();
         statFont_.destroyGlyphs();
+        scoreboardFont_.destroyGlyphs();
+        for (auto& [name, texture] : scoreboardLogos_) if (texture) gpuvram::destroy(texture);
+        scoreboardLogos_.clear();
     }
 
     void GameView::buildAtlasLayout() {
