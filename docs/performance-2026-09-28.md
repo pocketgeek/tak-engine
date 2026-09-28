@@ -247,3 +247,30 @@ scripted completion gate. Both full suites pass (88 Release / 91 optimized
 Debug), including software geometry and shadow checks. Native Windows/macOS
 performance measurements remain unavailable; the script scheduling/restoration
 regression passes on both Windows x64 and macOS ARM64 CI at `6870a64`.
+
+The scatter-targeting experiment reused its maximum-damage calculation for the
+eligibility gate and scorer. Every 900-tick checkpoint matched in both balances,
+but wall times were 22.992 → 23.099 seconds (standard) and 22.506 → 22.528
+(Crusades). It was removed: fewer category lookups did not improve these
+workloads. Target selection and random-draw ordering remain unchanged.
+
+### Follow-up: sparse body buckets
+
+The occupancy broad phase records which spatial buckets contain entries and
+clears only those buckets when rebuilding. Previously every bucket was visited,
+including empty regions of a large map. Previous entries are cleared before a
+terrain-size change; candidate insertion, current footprint checks and
+last-unit-wins occupancy remain unchanged.
+
+Ultima Online B1 (2,016 × 2,016 terrain cells), eight Absurd AIs, Crusades, 512
+initial units and 900 ticks: baseline 5.529 / 5.556 seconds; sparse clearing
+5.333 / 5.403 seconds, with the second pair run in reverse order. That is about
+3% less wall time in this early-match fixture, not a guarantee of sustained 4×
+in a developed match. All 30 checkpoints match across all four runs.
+
+Dense 16,000-unit combat is essentially unchanged: standard 23.017 → 22.980
+seconds; Crusades 22.439 → 22.498. Every checkpoint matches in both balances.
+Both full suites pass with the body full-scan verifier enabled in optimized
+Debug, as does a separate 400-unit live combat/movement check. Accelerated
+OpenGL validation passes all 1,152 geometry comparisons plus shadow coverage,
+atlas, ordered-mask and compositing checks on the NVIDIA GPU.

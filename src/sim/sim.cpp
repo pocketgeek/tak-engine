@@ -4606,9 +4606,12 @@ int World::mapFeatureGrade(int cx,int cz) const {
 }
 
 void World::rebuildBodyIndex() const {
+    // Clear only populated buckets, before resizing for a possible terrain
+    // change. Sparse armies on large maps should not scan every empty bucket.
+    for(size_t tile:bodyUsedTiles_)bodyTiles_[tile].clear();
+    bodyUsedTiles_.clear();
     bodyTilesW_=(hW_+7)/8; bodyTilesH_=(hH_+7)/8;
     bodyTiles_.resize(size_t(bodyTilesW_)*bodyTilesH_);
-    for (auto& bucket:bodyTiles_) bucket.clear();
     bodyTileBounds_.assign(units_.size(),{-1,-1,-1,-1});
     bodyFootprints_.resize(units_.size());
     bodyIndexValid_=true;
@@ -4630,8 +4633,12 @@ void World::updateBodyIndex(const Unit& u) const {
     // Leave old memberships until the next tick. They are harmless false
     // positives; stamping retains the last eligible unit in vector order.
     for (int tz=bounds[1];tz<bounds[3];++tz)
-        for (int tx=bounds[0];tx<bounds[2];++tx)
-            bodyTiles_[size_t(tz)*bodyTilesW_+tx].push_back(int(index));
+        for (int tx=bounds[0];tx<bounds[2];++tx) {
+            const size_t tile=size_t(tz)*bodyTilesW_+tx;
+            auto& bucket=bodyTiles_[tile];
+            if(bucket.empty())bodyUsedTiles_.push_back(tile);
+            bucket.push_back(int(index));
+        }
 }
 
 World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId) const {

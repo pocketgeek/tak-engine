@@ -2106,6 +2106,7 @@ private:
     mutable bool bodyIndexValid_=false;
     mutable int bodyTilesW_=0,bodyTilesH_=0;
     mutable std::vector<std::vector<int>> bodyTiles_;
+    mutable std::vector<size_t> bodyUsedTiles_;
     mutable std::vector<std::array<int,4>> bodyTileBounds_;
     mutable std::vector<std::array<int,4>> bodyFootprints_;
     void rebuildBodyIndex() const;
