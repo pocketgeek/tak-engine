@@ -128,7 +128,7 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target takclient takserver cartographer stream_test menu_music_test
+          cmake --build build --target takclient takserver cartographer stream_test menu_music_test nvml_test windowsgpu_test
 
       - name: Streaming encode test
         run: |
@@ -136,6 +136,8 @@ jobs:
           ./build/stream_test libx264 overload
           ./build/stream_test libx264 native
           ./build/menu_music_test
+          ./build/nvml_test
+          ./build/windowsgpu_test
 
       # Windows and macOS each gate on their binaries being static; Linux did not, and it
       # is the platform where a leak is most costly: CPack derives package dependencies

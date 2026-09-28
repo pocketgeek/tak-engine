@@ -334,6 +334,15 @@ The in-game stats panel shows **Real Time**, **Game Time**, **Client CPU**
 launches a local server for a skirmish or campaign, **Server CPU** shows that
 server process’s share of total CPU capacity (0–100%). It is omitted for remote
 servers; unavailable samples display N/A.
+Development builds after 0.7.8 query NVIDIA through the driver-provided NVML library
+on Windows and Linux, without launching `nvidia-smi` or bundling extra libraries.
+AMD Linux uses amdgpu sysfs, Intel Linux uses i915 perf counters (subject to kernel
+permissions), and macOS uses IORegistry. Windows AMD/Intel use Windows GPU Engine
+counters across all processes, reporting the busiest engine at 0–100%; adapter
+identity and dedicated memory come from DXGI and Windows memory counters.
+These use built-in Windows libraries, with no extra downloads. Unsupported
+counters (including Linux Xe utilization) display N/A. On multi-GPU systems,
+NVIDIA uses its first adapter; the Windows fallback reports the busiest adapter.
 
 **Settings → Benchmark** provides a repeatable eight-AI load test and reports
 frame rate, simulation speed, memory, and other available performance metrics.

@@ -54,10 +54,11 @@ inline double gpuBusyPercent(uint64_t oldBusy, uint64_t oldTime, uint64_t busy, 
     return std::clamp(100.0 * double(busy-oldBusy) / double(time-oldTime), 0.0, 100.0);
 }
 
-// Whole-device GPU statistics only: NVIDIA nvidia-smi, Linux AMD sysfs, or
-// macOS IOAccelerator, or Linux Intel i915 perf engine counters (busiest engine).
+// Whole-device GPU statistics: NVIDIA NVML, Windows PDH GPU Engine counters,
+// Linux AMD sysfs, macOS IOAccelerator, or Linux Intel i915 perf counters.
+// Windows PDH and i915 report the busiest engine, not a sum of parallel engines.
 // Unsupported or permission-blocked drivers report unavailable, never process-only
-// utilization. Queries may spawn a process: use sparingly or off the render thread.
+// utilization. Driver queries run off the render thread; no subprocess is launched.
 struct GpuSample {
     double utilPct = -1;    // GPU utilization %, -1 if unknown
     size_t memUsed = 0;     // device VRAM used (all processes), bytes; 0 if unknown

@@ -1,5 +1,6 @@
 #include "util/procmetrics.h"
-#include "util/winprocess.h"
+#include "util/nvml.h"
+#include "util/windowsgpu.h"
 
 #include <algorithm>
 #include <chrono>
@@ -193,20 +194,6 @@ SystemCpuSample systemCpuSample() {
 // ---- GPU stats (whole device) -----------------------------------------------
 
 namespace {
-std::string runCmd(const char* cmd) {
-    std::string out;
-#if defined(_WIN32)
-    // The only caller supplies a fixed ASCII nvidia-smi command line.
-    return tak::captureHiddenProcess(std::wstring(cmd, cmd + std::strlen(cmd)));
-#else
-    FILE* p = popen(cmd, "r");
-    if (!p) return out;
-    char buf[256];
-    while (std::fgets(buf, sizeof buf, p)) out += buf;
-    pclose(p);
-    return out;
-#endif
-}
 #if !defined(_WIN32) && !defined(__APPLE__)
 bool readLL(const char* path, long long& out) {
     FILE* f = std::fopen(path, "r");
@@ -320,41 +307,10 @@ GpuSample gpuSample() {
     }
     return g;
 #else
-    // NVIDIA (any OS with the driver in PATH): one nvidia-smi CSV line.
+    if (auto nvidia = nvidiaGpuSample(); nvidia.ok) return nvidia;
 #if defined(_WIN32)
-    const char* nv = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name "
-                     "--format=csv,noheader,nounits";
-#else
-    const char* nv = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name "
-                     "--format=csv,noheader,nounits 2>/dev/null";
+    return windowsGpuSample();
 #endif
-    std::string o = runCmd(nv);
-    if (!o.empty()) {
-        std::string line = o.substr(0, o.find('\n'));   // "util, usedMiB, totalMiB, Name"
-        size_t p1 = line.find(','), p2 = p1 == std::string::npos ? p1 : line.find(',', p1 + 1),
-               p3 = p2 == std::string::npos ? p2 : line.find(',', p2 + 1);
-        if (p1 != std::string::npos && p2 != std::string::npos) {
-            // Unsupported driver counters (N/A, [Not Supported]) are not 0%.
-            const std::string value = line.substr(0, p1);
-            char* end = nullptr;
-            const double percent = std::strtod(value.c_str(), &end);
-            if (end != value.c_str() && std::isfinite(percent) && percent >= 0)
-                g.utilPct = std::clamp(percent, 0.0, 100.0);
-            g.systemWide = true;
-            g.memUsed = size_t(std::atoll(line.substr(p1 + 1, p2 - p1 - 1).c_str())) << 20;
-            if (p3 != std::string::npos) {
-                g.memTotal = size_t(std::atoll(line.substr(p2 + 1, p3 - p2 - 1).c_str())) << 20;
-                g.name = line.substr(p3 + 1);
-            } else {
-                g.memTotal = size_t(std::atoll(line.substr(p2 + 1).c_str())) << 20;
-            }
-            while (!g.name.empty() && g.name.front() == ' ') g.name.erase(g.name.begin());
-            while (!g.name.empty() && (g.name.back() == ' ' || g.name.back() == '\r' || g.name.back() == '\n'))
-                g.name.pop_back();
-            g.ok = true;
-            return g;
-        }
-    }
 #if !defined(_WIN32) && !defined(__APPLE__)
     // AMD (Linux amdgpu): sysfs. gpu_busy_percent is 0..100; VRAM figures are bytes.
     for (int c = 0; c < 4; ++c) {

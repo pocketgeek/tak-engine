@@ -141,11 +141,19 @@ the requested rate does not guarantee a particular final unit count. A slow
 simulation can take longer than 60 seconds of wall-clock time.
 
 The in-game stats panel shows **Units** (your living units) with **Kills** directly
-below it. Spectators see the total living units in the match. **Time** is real
-elapsed match time; **Game Time** advances with the simulation. **CPU** measures
-total system utilization across all logical cores, from 0% to 100%.
+below it. Spectators see the total living units in the match. **Real Time** is real
+elapsed match time; **Game Time** advances with the simulation. **Client CPU** measures
+the client's share of total CPU capacity, from 0% to 100%. **Server CPU** measures
+the local server's share and is omitted when connected to a remote server.
 **GPU** shows the driver-reported utilization, or **N/A** when unavailable.
 GPU utilization is whole-device, from 0% to 100%, including other applications.
+NVIDIA uses the driver-installed NVML library on Windows and Linux; it launches
+no helper process and requires no bundled NVIDIA library. AMD Linux uses amdgpu
+sysfs; macOS uses IORegistry. Windows AMD/Intel use the system GPU Engine counters,
+summing processes on each engine and reporting the busiest engine at 0–100%.
+The name and dedicated-memory readings follow that same adapter. This uses
+built-in Windows libraries, with no extra downloads. On multi-GPU systems,
+NVIDIA uses its first adapter; the Windows fallback chooses the busiest adapter.
 Intel Linux i915 uses system-wide perf engine counters and reports the busiest
 engine. Access follows the kernel perf permissions; blocked counters show N/A.
 The newer Xe driver is not yet supported by this sampler. No process-only
