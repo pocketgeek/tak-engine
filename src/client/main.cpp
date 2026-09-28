@@ -576,7 +576,7 @@ int main(int argc, char** argv) {
     }
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
-    std::string winTitle = std::string("takclient ") + tak::kVersion;
+    std::string winTitle = std::string("Total Annihilation: Kingdoms ") + tak::kVersion;
     SDL_Window* win = SDL_CreateWindow(winTitle.c_str(), SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, winW, winH,
                                        SDL_WINDOW_RESIZABLE);
@@ -1345,7 +1345,7 @@ int main(int argc, char** argv) {
             fpsAcc += dt; ++fpsFrames;
             if (fpsAcc >= 0.25f) {
                 char title[64];
-                std::snprintf(title, sizeof title, "takclient %s  |  %.0f fps",
+                std::snprintf(title, sizeof title, "Total Annihilation: Kingdoms %s  |  %.0f fps",
                               tak::kVersion, float(fpsFrames) / fpsAcc);
                 SDL_SetWindowTitle(win, title);
                 fpsAcc = 0; fpsFrames = 0;
