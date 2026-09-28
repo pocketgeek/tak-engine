@@ -1,3 +1,4 @@
+#include "util/virtualpath.h"
 #include "client/streaming.h"
 #include <set>
 #include <functional>
@@ -2880,7 +2881,7 @@
         if (!featureDefs_.empty()) return;
         try {
             for (const std::string& path : vfs_.list("features")) {
-                if (std::filesystem::path(path).extension() != ".tdf") continue;
+                if (tak::vpath::extension(path) != ".tdf") continue;
                 try {
                     auto root = vtdf(path);
                     for (const auto& n : root.childOrder) {

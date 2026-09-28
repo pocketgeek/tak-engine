@@ -1,3 +1,4 @@
+#include "util/virtualpath.h"
 #include "sim/matchsetup.h"
 
 #include "sim/detmath.h"
@@ -160,9 +161,7 @@ void setupRegistry(TypeRegistry& reg, const hpi::Vfs& vfs, bool crusades) {
 std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
                                                          const std::string& mapPath) {
     std::vector<std::pair<float, float>> out;
-    std::filesystem::path ota = mapPath;
-    ota.replace_extension(".ota");
-    std::string otaPath = ota.generic_string();
+    std::string otaPath = tak::vpath::replaceExtension(mapPath,".ota");
     if (!vfs.has(otaPath)) return out;
     try {
         auto b = vfs.read(otaPath);
@@ -208,7 +207,7 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
     gaf::FeatureBurnTiming burnTiming(vfs);
     try {
         for (const std::string& path : vfs.list("features")) {
-            if (std::filesystem::path(path).extension() != ".tdf") continue;
+            if (tak::vpath::extension(path) != ".tdf") continue;
             try {
                 auto fb = vfs.read(path);
                 auto root = tak::tdf::parseText(std::string(fb.begin(), fb.end()), path);
@@ -451,11 +450,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     double mapGravity = 112.0;
     bool noSeaLevelTrigger = false;
     if (!generated) {
-        auto ota = std::filesystem::path(cfg.mapPath);
-        ota.replace_extension(".ota");
-        if (vfs.has(ota.generic_string())) {
-            const auto bytes = vfs.read(ota.generic_string());
-            const auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), ota.generic_string());
+        auto ota = tak::vpath::replaceExtension(cfg.mapPath,".ota");
+        if (vfs.has(ota)) {
+            const auto bytes = vfs.read(ota);
+            const auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), ota);
             if (const auto* gh = root.child("globalheader")) {
                 windMin = int(gh->numberOr("minwindspeed", 100));
                 windMax = int(gh->numberOr("maxwindspeed", 2000));

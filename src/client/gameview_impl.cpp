@@ -1,3 +1,4 @@
+#include "util/virtualpath.h"
 #include "client/retailaim.h"
 #include "gaf/nimbus.h"
 #include "client/gameview.h"
@@ -3331,8 +3332,8 @@
         }
         if (!pals.count("ara")) return;   // no palettes available
         for (const std::string& path : vfs_.list("textures")) {
-            if (std::filesystem::path(path).extension() != ".gaf") continue;
-            std::string stem = std::filesystem::path(path).stem().string();
+            if (tak::vpath::extension(path) != ".gaf") continue;
+            std::string stem = tak::vpath::stem(path);
             std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
             const auto* pal = &pals.at("ara");
             auto pit = pals.find(stem.substr(0, 3));
@@ -3545,8 +3546,7 @@
     }
 
     std::string GameView::mapSibling(const char* ext) const {
-        std::filesystem::path p = mapPath_; p.replace_extension(ext);
-        return p.generic_string();
+        return tak::vpath::replaceExtension(mapPath_,ext);
     }
 
     void GameView::remountPolicy(uint8_t p) {
@@ -4334,8 +4334,8 @@
     }
 
     std::string GameView::readOta(const std::string& tntPath) const {
-        std::filesystem::path ota = tntPath; ota.replace_extension(".ota");
-        try { auto d = vfs_.read(ota.generic_string()); return std::string(d.begin(), d.end()); }
+        const auto ota = tak::vpath::replaceExtension(tntPath,".ota");
+        try { auto d = vfs_.read(ota); return std::string(d.begin(), d.end()); }
         catch (...) { return {}; }
     }
 

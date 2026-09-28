@@ -1,3 +1,4 @@
+#include "util/virtualpath.h"
 #include "client/gameview.h"
 
 // Out-of-line GameView method definitions (lobby concern), split from the
@@ -125,8 +126,7 @@ std::string mapDisplayName(const std::string& id) {
         mapList_.clear();
         for (auto& [name, path] : tak::hpi::listMaps(vfs_)) {
             MapInfo mi; mi.name = name; mi.path = path;
-            std::filesystem::path op = path; op.replace_extension(".ota");
-            std::string otaPath = op.generic_string();
+            std::string otaPath = tak::vpath::replaceExtension(path,".ota");
             if (vfs_.has(otaPath)) {
                 try {
                     auto b = vfs_.read(otaPath);

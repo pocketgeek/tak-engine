@@ -1,3 +1,4 @@
+#include "util/virtualpath.h"
 #include "hpi/hpi.h"
 #include "gaf/nimbus.h"
 #include "gaf/animationtiming.h"
@@ -31,6 +32,25 @@
 namespace tak::hpi {
 
 namespace {
+
+// Native disk names use UTF-8 at the VFS boundary, independent of the Windows
+// process locale. Archive keys remain their original bytes.
+std::string utf8(const std::filesystem::path& p) {
+    const auto u=p.generic_u8string();
+    return std::string(u.begin(),u.end());
+}
+std::optional<std::filesystem::path> looseFile(const std::filesystem::path& root,
+                                               const std::string& name) {
+    try {
+        auto p=root/std::filesystem::u8path(name);
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(p,ec)) return p;
+    } catch (const std::filesystem::filesystem_error&) {
+        // Legacy archive names need not be UTF-8. An unrepresentable loose-file
+        // candidate must not prevent reading the byte-identical archive entry.
+    }
+    return {};
+}
 
 uint32_t u32(const uint8_t* p) {
     return p[0] | (p[1] << 8) | (p[2] << 16) | (uint32_t(p[3]) << 24);
@@ -424,7 +444,7 @@ MountSet::MountSet(const std::filesystem::path& dir, MountConfig cfg)
     // Case-insensitive filename sort, like the retail FindFirstFile scan (so a
     // tie in file date breaks the same way it did originally).
     auto ci = [](const fs::path& a, const fs::path& b) {
-        std::string x = a.filename().string(), y = b.filename().string();
+        std::string x = utf8(a.filename()), y = utf8(b.filename());
         for (char& c : x) c = char(std::tolower(static_cast<unsigned char>(c)));
         for (char& c : y) c = char(std::tolower(static_cast<unsigned char>(c)));
         return x < y;
@@ -437,11 +457,11 @@ MountSet::MountSet(const std::filesystem::path& dir, MountConfig cfg)
         if (fs::is_directory(dir_))
             for (const auto& e : fs::directory_iterator(dir_)) {
                 if (!e.is_regular_file()) continue;
-                std::string ext = e.path().extension().string();
+                std::string ext = utf8(e.path().extension());
                 for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
                 if (ext != want) continue;
                 if (!cfg_.archiveNames.empty()) {   // name whitelist (retail root)
-                    std::string fn = e.path().filename().string();
+                    std::string fn = utf8(e.path().filename());
                     for (char& c : fn) c = char(std::tolower(static_cast<unsigned char>(c)));
                     if (std::find(cfg_.archiveNames.begin(), cfg_.archiveNames.end(), fn)
                         == cfg_.archiveNames.end()) continue;
@@ -474,7 +494,7 @@ MountSet::MountSet(const std::filesystem::path& dir, MountConfig cfg)
 
 bool MountSet::has(const std::string& path) const {
     if (cfg_.keep && !cfg_.keep(path)) return false;
-    if (cfg_.includeLoose && std::filesystem::is_regular_file(dir_ / path)) return true;
+    if (cfg_.includeLoose && looseFile(dir_,path).has_value()) return true;
     return map_.count(key(path)) != 0;
 }
 
@@ -482,9 +502,9 @@ std::vector<uint8_t> MountSet::read(const std::string& path) const {
     if (cfg_.keep && !cfg_.keep(path)) throw std::runtime_error("filtered: " + path);
     // 1. A loose file on disk overrides archives (the engine fopen()s first).
     if (cfg_.includeLoose) {
-        std::filesystem::path loose = dir_ / path;
-        if (std::filesystem::is_regular_file(loose)) {
-            std::ifstream f(loose, std::ios::binary);
+        auto loose = looseFile(dir_,path);
+        if (loose) {
+            std::ifstream f(*loose, std::ios::binary);
             return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
         }
     }
@@ -513,13 +533,13 @@ std::vector<std::string> MountSet::list(const std::string& prefix) const {
         if (under(k)) out[k] = w.entry.path;
     // ...then loose files override (same precedence as read()).
     if (cfg_.includeLoose) {
-        fs::path base = kp.empty() ? dir_ : dir_ / prefix;
+        fs::path base = kp.empty() ? dir_ : dir_ / fs::u8path(prefix);
         std::error_code ec;
         if (fs::is_directory(base, ec))
             for (auto it = fs::recursive_directory_iterator(base, ec);
                  !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
                 if (!it->is_regular_file(ec)) continue;
-                std::string rel = fs::relative(it->path(), dir_, ec).generic_string();
+                std::string rel = utf8(fs::relative(it->path(), dir_, ec));
                 if (rel.empty()) continue;
                 if (cfg_.keep && !cfg_.keep(rel)) continue;
                 out[key(rel)] = rel;
@@ -534,12 +554,11 @@ std::vector<std::string> MountSet::list(const std::string& prefix) const {
 
 std::string MountSet::sourceOf(const std::string& path) const {
     if (cfg_.includeLoose) {
-        std::filesystem::path loose = dir_ / path;
-        if (std::filesystem::is_regular_file(loose)) return loose.string() + " (loose)";
+        if (auto loose = looseFile(dir_,path)) return utf8(*loose) + " (loose)";
     }
     auto it = map_.find(key(path));
     if (it == map_.end()) return "<absent>";
-    return archiveFiles_[size_t(it->second.archive)].filename().string() +
+    return utf8(archiveFiles_[size_t(it->second.archive)].filename()) +
            "!" + it->second.entry.path;
 }
 
@@ -784,7 +803,7 @@ static std::set<std::string> rootFileNames(const std::filesystem::path& root) {
         for (const auto& e : fs::directory_iterator(root, ec)) {
             if (ec) break;
             if (!e.is_regular_file(ec)) continue;
-            std::string n = e.path().filename().string();
+            std::string n = utf8(e.path().filename());
             for (char& c : n) c = char(std::tolower(static_cast<unsigned char>(c)));
             have.insert(n);
         }
@@ -817,7 +836,7 @@ std::string rootManifest(const std::filesystem::path& root) {
         for (const auto& e : fs::directory_iterator(root, ec)) {
             if (ec) break;
             if (!e.is_regular_file(ec)) continue;
-            std::string l = e.path().filename().string();
+            std::string l = utf8(e.path().filename());
             for (char& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
             if (std::find(kRootHpiNames.begin(), kRootHpiNames.end(), l) == kRootHpiNames.end()) continue;
             present[l] = fs::file_size(e.path(), ec);
@@ -840,7 +859,7 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
         for (const auto& e : fs::directory_iterator(root, ec)) {
             if (ec) break;
             if (!e.is_directory(ec)) continue;
-            std::string n = e.path().filename().string();
+            std::string n = utf8(e.path().filename());
             std::string l = n;
             for (char& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
             std::string w = want;
@@ -888,11 +907,10 @@ std::vector<std::pair<std::string, std::string>> listMaps(const Vfs& vfs) {
     std::unordered_map<std::string, std::string> byName;   // lower(name) -> path
     for (const char* ns : {"Maps", "kmap"})
         for (const std::string& p : vfs.list(ns)) {
-            std::filesystem::path fp(p);
-            std::string ext = fp.extension().string();
+            std::string ext = tak::vpath::extension(p);
             for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
             if (ext != ".tnt") continue;
-            std::string name = fp.stem().string();
+            std::string name = tak::vpath::stem(p);
             std::string lname = name;
             for (char& c : lname) c = char(std::tolower(static_cast<unsigned char>(c)));
             byName.emplace(lname, p);   // first namespace (Maps) wins a name tie
@@ -900,7 +918,7 @@ std::vector<std::pair<std::string, std::string>> listMaps(const Vfs& vfs) {
     std::vector<std::pair<std::string, std::string>> out;
     out.reserve(byName.size());
     for (const auto& [ln, path] : byName)
-        out.push_back({std::filesystem::path(path).stem().string(), path});
+        out.push_back({tak::vpath::stem(path), path});
     std::sort(out.begin(), out.end());
     return out;
 }
@@ -919,11 +937,10 @@ std::string findMap(const Vfs& vfs, const std::string& name) {
     for (char& c : want) c = char(std::tolower(static_cast<unsigned char>(c)));
     for (const char* ns : {"Maps", "kmap"})
         for (const std::string& p : vfs.list(ns)) {
-            std::filesystem::path fp(p);
-            std::string ext = fp.extension().string();
+            std::string ext = tak::vpath::extension(p);
             for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
             if (ext != ".tnt") continue;
-            std::string stem = fp.stem().string();
+            std::string stem = tak::vpath::stem(p);
             for (char& c : stem) c = char(std::tolower(static_cast<unsigned char>(c)));
             if (stem == want) return p;
         }

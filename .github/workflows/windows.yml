@@ -66,7 +66,7 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test
+          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test
 
       - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
         run: |
@@ -76,6 +76,9 @@ jobs:
             echo "::error::takclient.exe still imports a non-static media DLL -- not fully static"; exit 1
           fi
           echo "OK: no SDL2/jpeg/zlib/ffmpeg DLL imports -- fully static"
+
+      - name: Unicode map discovery regression
+        run: ./build/vfs_names_test.exe
 
       - name: Streaming encode test
         run: |

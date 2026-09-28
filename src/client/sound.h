@@ -1,4 +1,5 @@
 #pragma once
+#include "util/virtualpath.h"
 
 // 32-voice positional WAV mixer + music player, and the soundclasses TDF map.
 // Script sound classes control voice admission; output-channel panning remains
@@ -57,11 +58,10 @@ public:
         // VFS). A missing sounds dir must NOT skip audio init (music shares the
         // device); just index whatever's there.
         for (const std::string& path : vfs.list("sounds")) {
-            std::filesystem::path fp(path);
-            std::string ext = fp.extension().string();
+            std::string ext = tak::vpath::extension(path);
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
             if (ext != ".wav") continue;
-            std::string stem = fp.stem().string();
+            std::string stem = tak::vpath::stem(path);
             std::transform(stem.begin(), stem.end(), stem.begin(), ::tolower);
             index_[stem] = path;
         }
@@ -676,7 +676,7 @@ public:
     void load(const tak::hpi::Vfs& vfs) {
         try {
             for (const std::string& path : vfs.list("gamedata/soundclasses")) {
-                if (std::filesystem::path(path).extension() != ".tdf") continue;
+                if (tak::vpath::extension(path) != ".tdf") continue;
                 try {
                     auto sb = vfs.read(path);
                     auto root = tak::tdf::parseText(std::string(sb.begin(), sb.end()), path);

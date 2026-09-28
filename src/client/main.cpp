@@ -1,3 +1,4 @@
+#include "util/virtualpath.h"
 // takclient — interactive TAK asset viewer.
 //
 //   takclient map <map.tnt> <terrain-dir>       scrollable terrain (drag/arrows,
@@ -504,7 +505,7 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr,"--mission requires a mission stem (or use --campaign <stem>)\n");
                 return 1;
             }
-            cliCampaign=std::filesystem::path(args.front()).stem().string();
+            cliCampaign=tak::vpath::stem(args.front());
             std::transform(cliCampaign.begin(),cliCampaign.end(),cliCampaign.begin(),::tolower);
             args.clear();
         }
@@ -1157,7 +1158,7 @@ int main(int argc, char** argv) {
 
     bool running = true;
     float netAccum = 0;
-    std::string serverMapId = args.empty() ? "" : std::filesystem::path(args[0]).stem().string();
+    std::string serverMapId = args.empty() ? "" : tak::vpath::stem(args[0]);
     int ktPhase = keytest ? 0 : -1;
     float ktClock = 0;
     bool keytestSelectOnly = selonly;
@@ -1190,7 +1191,7 @@ int main(int argc, char** argv) {
         return gameView->replayDiverged() ? 1 : 0;
     }
     if (gameView && mp && mpHeadless) {
-        std::string mapId = std::filesystem::path(args[0]).stem().string();
+        std::string mapId = tak::vpath::stem(args[0]);
         // The harness runs the sim INLINE (single-threaded == deterministic + reproducible)
         // unless TAK_SIM_THREAD asks to verify the threaded sim against the referee.
         gameView->setSimThreadMode(tak::devEnv("TAK_SIM_THREAD") != nullptr);
