@@ -491,8 +491,10 @@
                 const float z=5000+(float(i/columns)-float(rows-1)*0.5f)*40;
                 if(spawn(name,x,z,float(i%8)*0.785398163f,localPlayer_)) ++spawned;
             }
-            noFog_=true;edgeScrollOn_=false;
-            const float zoom=std::min(1.5f,std::min(1400.f/(columns*40),760.f/(rows*40)));
+            noFog_=!tak::devFlag("TAK_PROFILE_FOG");edgeScrollOn_=false;
+            float zoom=std::min(1.5f,std::min(1400.f/(columns*40),760.f/(rows*40)));
+            if(const char* requested=tak::devEnv("TAK_PROFILE_ZOOM"))
+                zoom=std::clamp(float(std::atof(requested)),0.05f,1.5f);
             mapView_.setZoom(zoom);
             mapView_.setOffset(5000-760/zoom,5000-terrainLift(5000,5000)-420/zoom);
             std::fprintf(stderr,"shadow benchmark: requested=%d spawned=%d columns=%d zoom=%.3f type=%s\n",

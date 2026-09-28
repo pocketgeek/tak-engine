@@ -327,6 +327,12 @@ remains visible. Accelerated renderers use cached shadow silhouettes and tiles,
 with fallbacks where needed. Animated boat shadows are an intentional enhancement
 over retail Glide, controlled by the same Shadows option.
 
+At distant zoom, tiny stationary units can use cached body images; moving,
+selected, and special-effect units retain their full geometry. Wide-map rendering
+also reuses fog geometry and combines fog cells over flat terrain. See the
+[distant rendering measurements](docs/distant-rendering-performance.md) for
+limits and local comparisons.
+
 Unit scripts control corpse selection and the handoff from death animation to
 wreck. Buildings also use the authored palette shading and per-piece shadow
 flags observed in retail Glide.

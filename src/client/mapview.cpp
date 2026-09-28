@@ -1,6 +1,7 @@
 #include "client/mapview.h"
 
 #include "client/gpuvram.h"
+#include "client/dev.h"
 #include "hpi/hpi.h"           // tak::hpi::Vfs::read (ctor / reload)
 #include "tnt/mapgen.h"        // "~gen1~" random-map ids -> procedural map
 
@@ -197,7 +198,7 @@ void MapView::draw(int winW, int winH) {
 
     for (auto& [tex, verts] : tileBatch_)
         if (tex && !verts.empty())
-            SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
+            tileSubmit_.draw(ren_, tex, verts, !tak::devFlag("TAK_TERRAIN_SDL_SUBMIT"));
 }
 
 void MapView::setBilinear(bool b) {

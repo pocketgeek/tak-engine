@@ -47,6 +47,7 @@
 #include "client/cursors.h"
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/aascalereset.h"   // RAII 1:1 render-scale guard (extracted leaf)
+#include "client/distantmodels.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
@@ -1262,6 +1263,10 @@ private:
     };
     tak::OpaqueShadowSubmit shadowOpaqueSubmit_;
     tak::GeometrySubmit bodySubmit_;
+    tak::DistantModels distantModelCache_;
+    std::vector<tak::DistantModels::Item> distantModelItems_;
+    std::vector<SDL_Vertex> shadowCompositeBatch_;
+    void drawShadowBatch(std::span<const UnitGeom* const> shadows);
     std::optional<bool> batchShadowMasks_;
     void drawUnitShadow(const UnitGeom& g) {
         if (!batchShadowMasks_.has_value()) {
@@ -3185,6 +3190,13 @@ private:
     std::vector<SDL_Vertex> fogVerts_;
     std::vector<float> fogLift_;      // per-corner heightAbove scratch (see drawFog)
     uint32_t fogTexGen_ = ~0u;        // vis generation last uploaded to fogTex_
+    // Fog relief geometry depends on the camera and terrain, not on time.
+    // At distant zoom retain transparent cells too, so visibility only updates
+    // the texture instead of rebuilding millions of vertices four times/sec.
+    bool fogMeshValid_ = false;
+    uint32_t fogMeshGeneration_ = 0;
+    int fogMeshW_ = 0, fogMeshH_ = 0, fogMeshWinW_ = 0, fogMeshWinH_ = 0;
+    float fogMeshX_ = 0, fogMeshY_ = 0, fogMeshZoom_ = 0;
 
     // Positions along a build-drag line, spaced by the building's footprint.
     std::vector<std::pair<float, float>> buildLinePositions(

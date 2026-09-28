@@ -66,7 +66,7 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test
+          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test
 
       - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
         run: |
@@ -83,6 +83,7 @@ jobs:
           ./build/audio_device_test.exe
           ./build/nvml_test.exe
           ./build/windowsgpu_test.exe
+          SDL_VIDEODRIVER=dummy ./build/distant_models_test.exe
           subsystem=$(objdump -p build/takclient.exe | grep '^Subsystem')
           [[ "$subsystem" == *"(Windows GUI)"* ]]
 

@@ -1,3 +1,4 @@
+#include "client/shadowcomposite.h"
 #include "util/virtualpath.h"
 #include "client/streaming.h"
 #include <set>
@@ -266,6 +267,29 @@
             return occluded || conjuring || working || !u.constructionParticles.empty() ||
                    dancing(u) || headbanging(u);
         };
+
+        // Keep construction, clipped models, translucent bodies and special
+        // effects on their original path. Tiny ordinary bodies can submit one
+        // cached quad; simulation and animation VMs continue at their normal rate.
+        distantModelItems_.resize(visUnits_.size());
+        selSet_.clear();
+        selSet_.insert(selection_.begin(),selection_.end());
+        for(size_t i=0;i<visUnits_.size();++i) {
+            const auto& u=*visUnits_[i];const auto& g=geomPool_[i];
+            auto& item=distantModelItems_[i];
+            item.id=u.id;item.revision=g.revision;item.x=g.ax;item.y=g.ay;
+            item.zoom=zm0;item.source=g.verts;item.runs=g.runs;item.texture=nullptr;
+            item.eligible=!tak::devFlag("TAK_DISTANT_MODELS_OFF") && !special(u,g) &&
+                !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel && !(u.type && u.type->ghost) &&
+                !selSet_.contains(u.id);
+        }
+        distantModelCache_.prepare(ren_,distantModelItems_,SDL_GetTicks64());
+        static uint64_t distantLogAt=0;
+        if(tak::devFlag("TAK_DISTANT_STATS") && SDL_GetTicks64()-distantLogAt>=1000) {
+            distantLogAt=SDL_GetTicks64();
+            std::fprintf(stderr,"DISTANT models=%zu refreshed=%zu visible=%zu\n",
+                distantModelCache_.used,distantModelCache_.refreshed,visUnits_.size());
+        }
 
         // Retail-style per-unit silhouette coverage. Each projected
         // unit is rasterized into its own atlas tile, so folds inside one model form
@@ -587,6 +611,8 @@
         // full-scene copy. Ground and airborne layers retain their existing
         // placement relative to bodies and scenery.
         if (!kNoShadow) {
+            std::vector<const UnitGeom*> groundShadows;
+            groundShadows.reserve(items.size());
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_MOD);
             for (const auto& it : items) {
                 if (!it.u) continue;
@@ -622,8 +648,9 @@
                 // actually visible, and it costs nothing because it is ONE boundary
                 // rather than one per unit.
                 if (it.layer == 1) { airShadows_.push_back(&gsh); continue; }
-                drawUnitShadow(gsh);
+                groundShadows.push_back(&gsh);
             }
+            drawShadowBatch(groundShadows);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         }
         profShadowMs_ += (double(SDL_GetPerformanceCounter()) - _sh0) / _ptFreq;
@@ -675,6 +702,13 @@
                     drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
                     continue;
                 }
+                const auto& distant=distantModelItems_[size_t(gslot)];
+                if(distant.texture) {
+                    if(distant.texture!=segTex) {closeSeg();segTex=distant.texture;segStart=destOff;}
+                    copyTasks_.push_back({gslot,0,6,destOff});
+                    destOff+=6;segCount+=6;
+                    continue;
+                }
                 int src = 0;
                 for (const auto& r : g.runs) {
                     if (r.first != segTex) { closeSeg(); segTex = r.first; segStart = destOff; }
@@ -688,9 +722,13 @@
         pool_.parallelFor(copyTasks_.size(), [this](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) {
                 const CopyTask& t = copyTasks_[i];
-                const auto& gv = geomPool_[size_t(t.geom)].verts;
-                std::copy(gv.begin() + t.src, gv.begin() + t.src + t.count,
-                          bodyVerts_.begin() + t.dst);
+                const auto& distant=distantModelItems_[size_t(t.geom)];
+                if(distant.texture)std::copy(distant.quad.begin(),distant.quad.end(),bodyVerts_.begin()+t.dst);
+                else {
+                    const auto& gv = geomPool_[size_t(t.geom)].verts;
+                    std::copy(gv.begin() + t.src, gv.begin() + t.src + t.count,
+                              bodyVerts_.begin() + t.dst);
+                }
             }
         });
         // The deferred air shadows run INSIDE the body window but belong to the shadow
@@ -701,7 +739,7 @@
             if (airShadows_.empty()) return;
             const double _as0 = double(SDL_GetPerformanceCounter());
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_MOD);
-            for (const UnitGeom* gp : airShadows_) drawUnitShadow(*gp);
+            drawShadowBatch(airShadows_);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             airShadows_.clear();
             const double ms = (double(SDL_GetPerformanceCounter()) - _as0) / _ptFreq;
@@ -1413,8 +1451,7 @@
         // Selection membership as a hash set: the old code did frameUnitP(id) (a
         // linear scan) per selected unit and std::find(selection_) per world unit
         // -- both O(n^2) once a big army was selected, which tanked the frame.
-        selSet_.clear();
-        selSet_.insert(selection_.begin(), selection_.end());
+        // The distant-body pass already populated selSet_ for this frame.
         // Selection rings: iterate units once, batched into a single draw
         // (viewport-culled, thin quads).
         overlayBatch_.clear();
@@ -2114,6 +2151,8 @@
     }
 
     void GameView::invalidateRenderTargets() {
+        fogMeshValid_ = false;
+        distantModelCache_.clear();
         for(auto& geometry:geomPool_)geometry.geometryKey.clear();
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
@@ -2176,6 +2215,8 @@
         kill(panelTex_);
         kill(botTex_);
         kill(mapPreviewTex_);
+        distantModelCache_.clear();
+        distantModelItems_.clear();
         hudFont_.destroyGlyphs();
         bigFont_.destroyGlyphs();
         statFont_.destroyGlyphs();
@@ -2266,6 +2307,27 @@
         if(out.children.size()<object.children.size())out.children.resize(object.children.size());
         for (size_t i=0;i<object.children.size();++i)
             preparePiece(object.children[i],meta.children[i],out.transform,anim,cy,sy,out.children[i]);
+    }
+
+    void GameView::drawShadowBatch(std::span<const UnitGeom* const> shadows) {
+        SDL_Texture* texture=nullptr;
+        shadowCompositeBatch_.clear();
+        auto flush=[&] {
+            if(!shadowCompositeBatch_.empty()) {
+                bodySubmit_.draw(ren_,texture,shadowCompositeBatch_,!tak::devFlag("TAK_SHADOW_SDL_SUBMIT"));
+                shadowCompositeBatch_.clear();
+            }
+        };
+        for(const auto* g:shadows) {
+            if(!shadowSilhouetteAtlasActive_ || !g->shadowAtlasPage || tak::devFlag("TAK_SHADOW_BATCH_OFF")) {
+                flush();texture=nullptr;drawUnitShadow(*g);continue;
+            }
+            if(texture!=g->shadowAtlasPage) {flush();texture=g->shadowAtlasPage;}
+            tak::appendShadowComposite(shadowCompositeBatch_,g->shadowAtlasSrc,g->shadowAtlasDst,
+                                       shadowSilhouetteWidth_,shadowSilhouetteHeight_,255-kShadowLevel);
+            profShadowVerts_+=g->shadowVerts.size()+g->maskedShadowVerts.size();
+        }
+        flush();
     }
 
     void GameView::buildUnitGeom(const UnitR& u, UnitGeom& g, std::vector<Tri>& scratch) {
@@ -3214,6 +3276,7 @@
     }
 
     void GameView::loadFeatures() {
+        fogMeshValid_ = false;
         features_.clear();   // full rebuild -- safe to call again on a map change
         featInstIds_.clear();
         const auto& names = mapView_.map().featureNames;
@@ -3537,6 +3600,7 @@
         if (vis.empty()) return;
         int w = frameVisW(), h = frameVisH();
         if (!fogTex_) {
+            fogMeshValid_ = false;
             fogTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                         SDL_TEXTUREACCESS_STREAMING, w, h);
             SDL_SetTextureBlendMode(fogTex_, SDL_BLENDMODE_BLEND);
@@ -3571,6 +3635,18 @@
         float maxLy = float(255 - std::max(heightRef_, 0)) * kHeightScale_;
         float maxLx = float(255 - std::max(heightRef_, 0)) * kHeightScaleX_;
         float ox = mapView_.offX(), oy = mapView_.offY();
+        const bool cacheMesh = !tak::devFlag("TAK_FOG_MESH_CACHE_OFF");
+        const bool keepTransparent = cacheMesh && zm <= 0.25f;
+        const uint32_t meshGeneration = keepTransparent ? 0 : frameVisGeneration();
+        auto submitFog = [&] {
+            bodySubmit_.draw(ren_, fogTex_, fogVerts_, !tak::devFlag("TAK_FOG_SDL_SUBMIT"));
+        };
+        if (cacheMesh && fogMeshValid_ && fogMeshGeneration_ == meshGeneration &&
+            fogMeshW_ == w && fogMeshH_ == h && fogMeshWinW_ == winW_ && fogMeshWinH_ == winH_ &&
+            fogMeshX_ == ox && fogMeshY_ == oy && fogMeshZoom_ == zm) {
+            submitFog();
+            return;
+        }
         // A SKIRT of quads past the map edge. The terrain is a FLAT mosaic -- relief
         // is painted into the tile art -- while this mesh is deliberately lifted, so
         // that the cleared area follows a unit up a hill. Over a plateau the lifted
@@ -3624,19 +3700,39 @@
         fogVerts_.clear();
         for (int gz = gz0; gz < gz1; ++gz)
             for (int gx = gx0; gx < gx1; ++gx) {
-                bool any = false;
+                bool any = keepTransparent;
                 for (int dz = -1; dz <= 1 && !any; ++dz)
                     for (int dx = -1; dx <= 1 && !any; ++dx)
                         any = fogged(gx + dx, gz + dz);
                 if (!any) continue;
-                SDL_Vertex a = vert(gx, gz), b = vert(gx + 1, gz),
-                           c = vert(gx + 1, gz + 1), d = vert(gx, gz + 1);
+                // On flat terrain adjacent fog cells share the same projection
+                // and linear UV mapping. One horizontal strip is exactly the
+                // same surface, without thousands of subpixel triangles. Stop
+                // at the map edge where clamped UVs change their slope.
+                int end = gx + 1;
+                if (keepTransparent) {
+                    const size_t row = size_t(gz-gz0)*cw;
+                    const float level = fogLift_[row+size_t(gx-gx0)];
+                    auto flatCorner = [&](int x) {
+                        const size_t i=row+size_t(x-gx0);
+                        return fogLift_[i]==level && fogLift_[i+cw]==level;
+                    };
+                    if (flatCorner(gx) && flatCorner(end)) {
+                        const int limit=gx<w ? std::min(gx1,w) : gx1;
+                        while (end<limit && flatCorner(end+1)) ++end;
+                    }
+                }
+                SDL_Vertex a = vert(gx, gz), b = vert(end, gz),
+                           c = vert(end, gz + 1), d = vert(gx, gz + 1);
                 fogVerts_.push_back(a); fogVerts_.push_back(b); fogVerts_.push_back(c);
                 fogVerts_.push_back(a); fogVerts_.push_back(c); fogVerts_.push_back(d);
+                gx=end-1;
             }
-        if (!fogVerts_.empty())
-            SDL_RenderGeometry(ren_, fogTex_, fogVerts_.data(), int(fogVerts_.size()),
-                               nullptr, 0);
+        fogMeshValid_ = true;
+        fogMeshGeneration_ = meshGeneration;
+        fogMeshW_ = w; fogMeshH_ = h; fogMeshWinW_ = winW_; fogMeshWinH_ = winH_;
+        fogMeshX_ = ox; fogMeshY_ = oy; fogMeshZoom_ = zm;
+        submitFog();
     }
 
     void GameView::drawGhost() {

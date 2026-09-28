@@ -14,6 +14,7 @@
 
 #include "terrain/terrain.h"   // tak::terrain::Compositor (by-value member)
 #include "tnt/tnt.h"           // tak::tnt::Map (by-value member)
+#include "client/geometrysubmit.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -124,6 +125,7 @@ private:
     // Per-frame tile-quad batch, keyed by section texture; cached across frames
     // when the view is static (idle spectating rebuilds nothing).
     std::map<SDL_Texture*, std::vector<SDL_Vertex>> tileBatch_;
+    tak::GeometrySubmit tileSubmit_;
     float builtOffX_ = 1e30f, builtOffY_ = 1e30f, builtZoom_ = -1;
     int builtW_ = -1, builtH_ = -1;
     bool tileBatchDirty_ = true;   // set when a section uploads / view changes
