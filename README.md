@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.8-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.9-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -41,26 +41,27 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.8
+## New in 0.7.9
 
-- **More faithful wrecks:** restored the scripted explosion corpses for 29 unit
-  types across all five factions, including ships, siege weapons, and buildings.
-  Seven other types now correctly leave no wreck when their ordinary-death
-  scripts request none.
-- **Authored death timing:** death animations and wreck appearances now follow
-  each unit's script, replacing the generic four-second handoff. Immediate ruins,
-  delayed deaths, self-destruct, and unfinished construction retain their separate
-  rules.
-- **Glide-style building lighting:** buildings use the game's palette shading
-  tables and scripted piece flags. Scripted shadow suppression reaches the
-  renderer, while shared texture pages and cached geometry keep the work bounded.
-- **Reliable stream shutdown:** fixed a timing race when stopping a YouTube
-  stream, including during application shutdown.
+- **Windows startup fixes:** support accented map filenames, avoid repeated audio
+  initialization delays when no sound device is active, and launch without a
+  console window. Packages use the game title and omit server shortcuts.
+- **Direct GPU statistics:** NVIDIA uses the installed NVML driver library;
+  AMD and Intel on Windows use system GPU counters. No helper processes or
+  extra vendor libraries are shipped. Stats and benchmarks share the same sampler.
+- **Retail-style F4 table:** faction emblems, compact translucent rows, and
+  Name, Kills, Losses, and Score columns. Your score also appears in the side panel.
+- **Smoother large-map checks:** reduced placement-grid hashing cost while
+  preserving identical desync-check results. This reduces one measured source
+  of hitches; sustained 4× speed on huge maps is not guaranteed.
+- **Setup-only Double Sight/Radar:** choose it when creating the game; the
+  lobby displays its status as information.
 
-See the [0.7.8 validation report](docs/release-0.7.8-validation.md),
-[native death lifecycle audit](docs/native-death-lifecycle-2026-09-27.md), and
-[explosion-corpse roster](docs/explosion-corpses-2026-09-27.md) for evidence
-and verification scope.
+See the [0.7.9 validation report](docs/release-0.7.9-validation.md) and
+[large-map measurements](docs/large-map-hash-performance.md).
+Version 0.7.8 restored scripted corpses and death timing, improved building
+lighting, and fixed streaming shutdown; its
+[validation report](docs/release-0.7.8-validation.md) documents those changes.
 
 Version 0.7.7 added automatic clearing of reclaimable construction obstacles,
 in-place lodestone upgrades for all factions, more accurate contextual cursors,
@@ -77,13 +78,13 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.8** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.9** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
 | --- | --- |
 | Windows x64 | `windows-x64-setup.exe` installer, or the portable ZIP |
-| macOS Apple Silicon | `macos-arm64.dmg`; drag **TAK Engine** to Applications |
+| macOS Apple Silicon | `macos-arm64.dmg`; drag **Total Annihilation - Kingdoms** to Applications |
 | Ubuntu 22.04 / 24.04 / 26.04 | Matching `ubuntu…-amd64.deb` |
 | Debian 12 / 13 | Matching `debian…-amd64.deb` |
 | Fedora 44 | `fedora44-x86_64.rpm` |
@@ -96,9 +97,9 @@ server, and Cartographer map editor.
 
 Game libraries are bundled; your system still provides windowing, audio, and
 graphics support. On macOS, right-click → **Open** on the first launch if needed.
-For the ZIP, launch **TAK Engine.app**, rather than its internal executable.
+For the ZIP, launch **Total Annihilation - Kingdoms.app**, rather than its internal executable.
 
-Development packages after 0.7.8 label the client **Total Annihilation: Kingdoms**
+Packages label the client **Total Annihilation: Kingdoms**
 (**Total Annihilation - Kingdoms** for Windows shortcuts and the macOS app folder),
 omit server launchers, and start the Windows client without a console window.
 The `-debug` downloads are for diagnostics and development.
@@ -301,7 +302,7 @@ to the server; only the server needs an incoming network port available.
 Single-player starts its own private server automatically.
 
 Use the **same engine build and compatible game data** on every participant.
-**Version 0.7.8 uses protocol 189** for script-controlled corpse selection
+**Versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and
 0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
 clients and recordings are rejected.
@@ -335,7 +336,7 @@ The in-game stats panel shows **Real Time**, **Game Time**, **Client CPU**
 launches a local server for a skirmish or campaign, **Server CPU** shows that
 server process’s share of total CPU capacity (0–100%). It is omitted for remote
 servers; unavailable samples display N/A.
-Development builds after 0.7.8 query NVIDIA through the driver-provided NVML library
+NVIDIA statistics query the GPU through the driver-provided NVML library
 on Windows and Linux, without launching `nvidia-smi` or bundling extra libraries.
 AMD Linux uses amdgpu sysfs, Intel Linux uses i915 perf counters (subject to kernel
 permissions), and macOS uses IORegistry. Windows AMD/Intel use Windows GPU Engine
