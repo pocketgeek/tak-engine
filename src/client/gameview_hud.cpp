@@ -1793,22 +1793,44 @@ namespace {
           for (int t = 0; t < np; ++t) tc[framePlayer(t).team % tak::sim::kMaxPlayers]++;
           for (int t = 0; t < tak::sim::kMaxPlayers; ++t) if (tc[t] > 1) teams = true; }
         int rows = 0;
-        for (int t = 0; t < np; ++t)
-            if ((board || cnt[t] > 0) && (framePlayer(t).built > 0 || cnt[t] > 0)) ++rows;
-        // A spectator sees the full economy: an extra MANA column (income) per faction.
-        const bool showMana = spectating_;
-        const float px = 2.6f, hx = 1.9f;          // row / header font scales (bigger)
-        const float lh = 7 * px + 12, x = 14;
+        bool allAi = true;
+        std::string labels[tak::sim::kMaxPlayers];
+        const float px = 2.0f, hx = 1.6f;
+        const float lh = 7 * px + 8, x = 14;
         float y = 14;
-        const float nameX = x + (teams ? 46 : 0);
-        // Player/team identity, spectator economy, and kills only. Live
-        // performance metrics and clocks belong in the side stats panel.
-        const float panelW = showMana ? 640.0f : 440.0f;
-        const float colKills = x + panelW - 70;
-        const float colMana = colKills - 176;
+        const float nameX = x + (teams ? 32 : 0);
+        float nameW = blockWidth("PLAYER", hx);
+        float killsW = blockWidth("KILLS", hx);
+        float manaW = blockWidth("MANA", hx);
+        for (int t = 0; t < np; ++t) {
+            if ((!board && cnt[t] == 0) || (framePlayer(t).built == 0 && cnt[t] == 0)) continue;
+            ++rows;
+            allAi = allAi && playerAi_[t & 7];
+            auto& label = labels[t];
+            if (mp_ && !playerName_[t & 7].empty()) {
+                label = playerName_[t & 7].substr(0, 12);
+                if (playerAi_[t & 7]) label = "AI - " + label;
+            } else {
+                label = sd[t].empty() ? std::string("--") : sd[t];
+                std::transform(label.begin(), label.end(), label.begin(), ::toupper);
+                if (np > 2) label = "P" + std::to_string(t + 1) + " " + label;
+            }
+            nameW = std::max(nameW, blockWidth(label, px) +
+                (framePlayer(t).defeated ? 8 + blockWidth("OUT", hx) : 0));
+            killsW = std::max(killsW, blockWidth(std::to_string(framePlayer(t).kills), px));
+            const auto& pl = framePlayer(t);
+            manaW = std::max(manaW, blockWidth(std::to_string(int(pl.mana)) + " +" +
+                std::to_string(int(pl.income + 0.5f)), hx));
+        }
+        // AI-only spectating needs just player status and kills. Size columns
+        // to their contents instead of reserving a wide spectator economy panel.
+        const bool showMana = spectating_ && !allAi;
+        const float colMana = nameX + nameW + 20;
+        const float colKills = showMana ? colMana + manaW + 20 : colMana;
+        const float panelW = colKills + killsW - x + 16;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 180);
-        SDL_FRect bg{x - 8, y - 8, panelW, (rows + 1) * lh + 12};
+        SDL_FRect bg{x - 8, y - 8, panelW, (rows + 1) * lh + 8};
         SDL_RenderFillRectF(ren_, &bg);
         char buf[80];
         blockText("PLAYER", nameX, y + 3, hx, SDL_Color{150, 150, 155, 255});
@@ -1832,18 +1854,7 @@ namespace {
                 blockText(buf, x, y, 1.8f, dead ? SDL_Color{110, 110, 115, 255}
                                                 : SDL_Color{170, 175, 185, 255});
             }
-            // Label: the player's name in a net game, else the faction. A faction
-            // can repeat with >2 players, so the offline label carries a P# prefix.
-            std::string s;
-            if (mp_ && !playerName_[t & 7].empty()) {
-                s = playerName_[t & 7];
-                if (s.size() > 12) s = s.substr(0, 12);
-                if (playerAi_[t & 7]) s = "AI - " + s;   // computer opponents: "AI - <name>"
-            } else {
-                s = sd[t].empty() ? std::string("--") : sd[t];
-                std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-                if (np > 2) s = "P" + std::to_string(t + 1) + " " + s;
-            }
+            const auto& s = labels[t];
             blockText(s, nameX, y, px, c);
             if (showMana) {   // current mana + income, e.g. "1234 +18"
                 const PlayerR& pl = framePlayer(t);
@@ -1852,7 +1863,7 @@ namespace {
             }
             std::snprintf(buf, sizeof buf, "%d", framePlayer(t).kills);
             blockText(buf, colKills, y, px, c);
-            if (dead) blockText("OUT", nameX + blockWidth(s, px) + 8, y, 1.7f,
+            if (dead) blockText("OUT", nameX + blockWidth(s, px) + 8, y, hx,
                                 SDL_Color{210, 90, 70, 255});
             y += lh;
         }

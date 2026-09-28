@@ -242,7 +242,7 @@ builders, but units they produce inherit their squad.
 | **T** | Toggle camera tracking of the selection |
 | **Tab** | Toggle the full-screen map; press again to return |
 | **F1** | Toggle unit information |
-| **F4** | Toggle player status and kills (spectators also see mana) |
+| **F4** | Toggle player status and kills (spectators also see mana except in AI-only games) |
 | **F9** | YouTube streaming setup / status |
 | **O**, with no units selected | Toggle campaign objectives when available |
 | **Pause** | Pause / resume the game or replay |
