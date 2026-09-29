@@ -25,6 +25,7 @@
 #include "cartographer/overlay.h"
 #include "cartographer/ruleedit.h"
 #include "cartographer/preferences.h"
+#include "cartographer/thumbnails.h"
 #include <fstream>
 #include <charconv>
 #include <limits>
@@ -337,11 +338,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // fresh overview reflecting the paint).
     bool edited = false;
     bool minimapRefreshNeeded=true;
-    std::stop_source minimapCancel;
+    auto minimapCancel=std::make_shared<std::atomic_bool>(false);
     uint64_t minimapRevision=0;
     bool minimapPreviewPending=false;
     Uint64 minimapDue=0;
-    auto invalidateMinimap=[&] {minimapCancel.request_stop();++minimapRevision;minimapPreviewPending=true;minimapDue=SDL_GetTicks64()+250;};
+    auto invalidateMinimap=[&] {minimapCancel->store(true,std::memory_order_relaxed);++minimapRevision;minimapPreviewPending=true;minimapDue=SDL_GetTicks64()+250;};
     // Unsaved-changes flag for the exit prompt. Set by every edit (terrain,
     // features, units, starts, scenario props, use-only, triggers), cleared on a
     // successful save. Broader than `edited` (which only gates minimap regen).
@@ -480,27 +481,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         return t;
     };
 
-    // Lazy section thumbnails: render a prefab's terrain (Compositor) once into a
-    // small texture, cached by path. Only visible cells ever render.
-    std::map<std::string, SDL_Texture*> thumbs;
-    auto thumbFor = [&](const std::string& path) -> SDL_Texture* {
-        auto it = thumbs.find(path);
-        if (it != thumbs.end()) return it->second;
-        SDL_Texture* t = nullptr;
-        if (const tak::tnt::Map* sec = sections.load(vfs, path)) {
-            tak::jpeg::Image img = mapView.compositor().renderMap(*sec);
-            if (img.width > 0 && img.height > 0) {
-                t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
-                                      SDL_TEXTUREACCESS_STATIC, img.width, img.height);
-                if (t) {
-                    SDL_UpdateTexture(t, nullptr, img.rgba.data(), img.width * 4);
-                    SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
-                }
-            }
-        }
-        thumbs[path] = t;   // cache even null (a prefab that won't render)
-        return t;
-    };
+    cart::Thumbnails thumbs(ren,vfs);
+    auto thumbFor=[&](const std::string& path) {return thumbs.get(path);};
 
     int lastStampX=-1,lastStampY=-1;
     auto stampAtMouse = [&](int mx, int my, int w, int h) {
@@ -676,8 +658,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto& source=mapView.map();tak::tnt::Map snapshot;
             snapshot.blocksX=source.blocksX;snapshot.blocksY=source.blocksY;snapshot.stockTerrain=source.stockTerrain;
             snapshot.tileKeys=source.tileKeys;snapshot.tileCols=source.tileCols;snapshot.tileRows=source.tileRows;
-            minimapJobRevision=minimapRevision;minimapPreviewPending=false;minimapCancel=std::stop_source{};
-            minimapJob=std::async(std::launch::async,[map=std::move(snapshot),&assets=vfs,kingdom=world,stop=minimapCancel.get_token()]() {
+            minimapJobRevision=minimapRevision;minimapPreviewPending=false;minimapCancel=std::make_shared<std::atomic_bool>(false);
+            minimapJob=std::async(std::launch::async,[map=std::move(snapshot),&assets=vfs,kingdom=world,stop=minimapCancel]() {
                 tak::terrain::Compositor compositor(assets);
                 return cart::minimapPreview(map,compositor,cart::loadWorldPalette(assets,kingdom),stop);
             });
@@ -1209,13 +1191,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             auto nextUnits=cart::toPlaced(nextScenario);
             std::set<std::string> nextUseOnly;
             if(!nextMetadata.useOnlyUnits.empty())for(const auto& type:cart::loadUseOnly(nextVfs,stem+".tdf"))nextUseOnly.insert(type);
-            minimapCancel.request_stop();if(minimapJob.valid())minimapJob.wait();
+            minimapCancel->store(true,std::memory_order_relaxed);if(minimapJob.valid())minimapJob.wait();
+            thumbs.reset();
             mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);minimapSource=nullptr;invalidateMinimap();
             scenario=std::move(nextMetadata);scen=std::move(nextScenario);units=std::move(nextUnits);useOnly=std::move(nextUseOnly);
             mapName=chosen;mapPath=path;world=scenario.kingdom.empty()?"aramon":scenario.kingdom;
             sections.scan(vfs,world);features.scan(vfs,world);
-            for(auto& [key,t]:thumbs)if(t)SDL_DestroyTexture(t);
-            thumbs.clear();
             for(auto& [key,t]:featTex)if(t)SDL_DestroyTexture(t);
             featTex.clear();
             selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
@@ -2704,9 +2685,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         }
     }
 
-    minimapCancel.request_stop();
+    minimapCancel->store(true,std::memory_order_relaxed);
     if(interactive) {clearRecovery();persistPreferences();}
-    for (auto& [k, t] : thumbs) if (t) SDL_DestroyTexture(t);
+    thumbs.reset();
     for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
     return 0;
 }

@@ -2,6 +2,8 @@
 #include "cartographer/editor.h"
 #include "cartographer/document.h"
 #include "cartographer/newmap.h"
+#include "cartographer/thumbnails.h"
+#include "cartographer/sections.h"
 #include "terrain/terrain.h"
 #include "cartographer/textedit.h"
 #include "hpi/hpi.h"
@@ -222,18 +224,60 @@ static int regionWorkflow(const char* data) {
         fs::remove_all(root);std::cout<<"PASS: region canvas drawing, movement, handles, cancellation, undo/redo and reopen\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }
+static int thumbnailWorkflow(const char* data) {
+    if(SDL_Init(SDL_INIT_VIDEO)!=0)return 2;
+    int result=0;
+    {
+        auto assets=tak::hpi::mountRetailRoot(data);cart::SectionLibrary sections;sections.scan(assets,"zhon");
+        if(sections.list().size()<5) {SDL_Quit();return 2;}
+        auto* surface=SDL_CreateRGBSurfaceWithFormat(0,512,512,32,SDL_PIXELFORMAT_RGBA32);
+        auto* renderer=surface?SDL_CreateSoftwareRenderer(surface):nullptr;
+        if(!renderer) {if(surface)SDL_FreeSurface(surface);SDL_Quit();return 2;}
+        {
+            cart::Thumbnails thumbnails(renderer,assets,2);
+            auto awaitTexture=[&](const std::string& path) {
+                const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
+                SDL_Texture* texture=nullptr;
+                while(!(texture=thumbnails.get(path))) {
+                    if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error("thumbnail worker timeout");
+                    SDL_Delay(1);
+                }
+                return texture;
+            };
+            try {
+                const auto& path=sections.list().front().path;
+                const auto* source=sections.load(assets,path);tak::terrain::Compositor compositor(assets);
+                const auto reference=compositor.renderMap(*source);
+                auto* texture=awaitTexture(path);int w=0,h=0;SDL_QueryTexture(texture,nullptr,nullptr,&w,&h);
+                if(w!=reference.width || h!=reference.height)throw std::runtime_error("thumbnail lost source resolution");
+                if(w>512 || h>512)throw std::runtime_error("thumbnail fixture exceeds test surface");
+                SDL_Rect dst{0,0,w,h};SDL_RenderCopy(renderer,texture,nullptr,&dst);SDL_RenderPresent(renderer);
+                std::vector<uint8_t> rgba(size_t(w)*h*4);
+                if(SDL_RenderReadPixels(renderer,&dst,SDL_PIXELFORMAT_RGBA32,rgba.data(),w*4)!=0 || rgba!=reference.rgba)
+                    throw std::runtime_error("asynchronous thumbnail differs from source compositor");
+                for(int i=1;i<4;++i)awaitTexture(sections.list()[i].path);
+                if(thumbnails.entries()>2)throw std::runtime_error("thumbnail cache exceeds entry budget");
+                thumbnails.get(sections.list()[4].path);thumbnails.reset();
+                if(thumbnails.loading() || thumbnails.entries())throw std::runtime_error("thumbnail reset retained work");
+                awaitTexture(path);
+            } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';result=1;}
+        }
+        SDL_DestroyRenderer(renderer);SDL_FreeSurface(surface);
+    }
+    SDL_Quit();if(!result)std::cout<<"PASS: background thumbnail raster, cache eviction and reset with work pending\n";return result;
+}
 static int minimapWorkflow(const char* data,const char* mapName="Ulasem Arena") {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-minimap-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
     auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,mapName);
     const auto original=tak::tnt::Map::load(vfs.read(path),path);tak::terrain::Compositor compositor(vfs);
-    std::stop_source cancelled;cancelled.request_stop();
+    auto cancelled=std::make_shared<std::atomic_bool>(true);
     const auto otaBytes=vfs.read(path.substr(0,path.size()-4)+".ota");
     auto world=tak::tnt::Scenario::parse(std::string(otaBytes.begin(),otaBytes.end())).kingdom;
     std::transform(world.begin(),world.end(),world.begin(),[](unsigned char c){return char(std::tolower(c));});
     const auto palette=cart::loadWorldPalette(vfs,world);
-    if(!cart::minimapPreview(original,compositor,palette,cancelled.get_token()).rgba.empty())throw std::runtime_error("cancelled minimap produced pixels");
+    if(!cart::minimapPreview(original,compositor,palette,cancelled).rgba.empty())throw std::runtime_error("cancelled minimap produced pixels");
     const auto originalPreview=cart::minimapPreview(original,compositor,palette).rgba;
     std::vector<std::string> args={"cartographer",mapName,"--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
@@ -435,6 +479,7 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
+    if(argc==3 && std::string(argv[2])=="thumbnails")return thumbnailWorkflow(argv[1]);
     if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);

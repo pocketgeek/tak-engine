@@ -6,7 +6,8 @@
 #include "tnt/tnt.h"
 
 #include <string>
-#include <stop_token>
+#include <atomic>
+#include <memory>
 
 namespace tak::hpi { class Vfs; }
 namespace tak::terrain { class Compositor; }
@@ -29,7 +30,7 @@ void generateMinimaps(tak::tnt::Map& map, tak::terrain::Compositor& comp,
 struct MinimapPreview {int width=126,height=126;std::vector<uint8_t> rgba;};
 // Display-only preview; does not alter document minimap bytes or undo history.
 MinimapPreview minimapPreview(const tak::tnt::Map& map,tak::terrain::Compositor& comp,
-                              const tak::gaf::Palette& palette,std::stop_token stop={});
+                              const tak::gaf::Palette& palette,std::shared_ptr<const std::atomic_bool> stop={});
 
 // Build a fresh flat map of wUnits x hUnits (1 Unit = 32 cells = 512px), tiled
 // with a default ground section for `world`, sea level from that side's

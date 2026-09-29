@@ -50,13 +50,13 @@ uint8_t nearestIndex(const tak::gaf::Palette& pal, int r, int g, int b) {
 
 // Average each 32px block to one RGB, giving a blocksX x blocksY colour grid.
 std::vector<uint8_t> blockColourGrid(const tak::tnt::Map& map,
-                                     tak::terrain::Compositor& comp,std::stop_token stop={},int width=0,int height=0) {
+                                     tak::terrain::Compositor& comp,std::shared_ptr<const std::atomic_bool> stop={},int width=0,int height=0) {
     const int gw=width?width:map.blocksX,gh=height?height:map.blocksY;
     std::vector<uint8_t> grid(size_t(gw) * gh * 3, 0);
     std::vector<uint8_t> block(32 * 32 * 4);
     std::map<uint64_t,std::array<uint8_t,3>> averages;
     for (int by = 0; by < gh; ++by) {
-        if(stop.stop_requested())return {};
+        if(stop && stop->load(std::memory_order_relaxed))return {};
         for (int bx = 0; bx < gw; ++bx) {
             const int sx=bx*map.blocksX/gw,sy=by*map.blocksY/gh;
             const size_t i=size_t(sy)*map.blocksX+sx;
@@ -92,7 +92,7 @@ std::vector<uint8_t> indexedMinimap(const std::vector<uint8_t>& grid, int gw, in
 } // namespace
 
 MinimapPreview minimapPreview(const tak::tnt::Map& map,tak::terrain::Compositor& comp,
-                              const tak::gaf::Palette& palette,std::stop_token stop) {
+                              const tak::gaf::Palette& palette,std::shared_ptr<const std::atomic_bool> stop) {
     MinimapPreview result;
     if(map.blocksX<=0 || map.blocksY<=0)return result;
     const auto grid=blockColourGrid(map,comp,stop,result.width,result.height);

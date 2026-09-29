@@ -473,6 +473,31 @@ Online B1 map: 2.81 s end to end, peak RSS 964,612 KiB. This includes source
 loading, reference-image construction, editor startup, three previews and saving;
 it is not an isolated preview benchmark or a before/after memory comparison.
 
+## Background terrain thumbnails checkpoint
+
+Terrain section thumbnails now load and composite in a worker with its own
+decode cache. The UI requests visible entries and keeps drawing while the
+single pending job finishes; texture upload/destruction remain on the SDL
+thread. A separate `Thumbnails` module owns worker and texture lifetimes.
+Opening another document joins and resets it before replacing the asset index.
+
+The cache retains full-resolution images for brush previews, evicting least
+recently used entries at 128 images or 32 MiB (one oversized image may remain).
+The worker's decoded-section cache is cleared every eight completed requests.
+Malformed/missing and oversized non-prefab inputs are cached as unavailable;
+no image larger than 4096×4096 is allocated by this thumbnail path.
+
+A real-asset test compares the uploaded thumbnail's exact RGBA pixels against
+the original compositor, forces cache eviction and resets with work pending.
+All eleven editor tests pass in Release and under AddressSanitizer/LeakSanitizer.
+Feature sprites still decode synchronously; asynchronous save/export remains
+outstanding.
+
+The preceding minimap checkpoint exposed an Apple standard-library limitation
+in CI (`std::stop_token` unavailable). Cancellation now uses a shared atomic
+flag, preserving cancellation and lifetime semantics without that dependency.
+The macOS build must verify this portability fix after push.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated
