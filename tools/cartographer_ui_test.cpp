@@ -77,7 +77,33 @@ static int generationWorkflow(const char* data) {
         fs::remove_all(root);std::cout<<"PASS: background generation, preview/discard, accept and saved recipe\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }
+static int overlayWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-overlay-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);
+    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    int stage=0;bool failed=false;auto began=std::chrono::steady_clock::now();
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int) {
+        auto click=[&](int x,int y) {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+            e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        const std::string title=SDL_GetWindowTitle(window);
+        if(std::chrono::steady_clock::now()-began>std::chrono::seconds(30)) {failed=true;key(SDLK_ESCAPE);SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);return;}
+        if(stage==0) {click(250,10);click(250,212);++stage;}
+        else if(stage==1 && title.find("[Terrain overlay]")!=std::string::npos) {failed|=title.ends_with(" *");click(250,10);click(250,252);++stage;}
+        else if(stage==2) {failed|=title!="Cartographer -- Ulasem Arena";SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);++stage;}
+        SDL_Delay(1);
+    });
+    fs::remove_all(root);
+    if(result || failed || stage!=3) {std::cerr<<"overlay menu workflow failed\n";return 1;}
+    std::cout<<"PASS: background water overlay, unchanged document and hide control\n";return 0;
+}
 int main(int argc,char** argv) {
+    if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);
     if(argc!=2)return 2;
     namespace fs=std::filesystem;

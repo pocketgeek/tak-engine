@@ -170,6 +170,21 @@ bookmark. Bookmarks are navigation state, not saved map content or persistent
 preferences. Four Release tests pass; new brush cases cover protected objects,
 marker replacement, remapping prefab names and off-map no-ops.
 
+## Terrain overlay checkpoint
+
+View offers movement, buildability, water-depth and slope overlays. Movement and
+buildability use the selected Units-palette type and a private engine World with
+its real movement classes and map features. The legend explicitly excludes
+placed-unit occupancy; flying-unit movement represents air transit, not landing.
+Water depth uses the minimum of the four terrain corners and slope their spread.
+Overlays cover individual map cells and clear after document changes so stale
+analysis is not displayed as current. Hide terrain overlay returns to normal art.
+
+Analysis runs in a worker with a busy/cancel modal protecting its borrowed asset
+registry/VFS. Rendering remains active. Five Release editor tests pass, including
+per-cell buildability comparison to World::canPlace, depth/slope corner cases,
+and the SDL menu/show/hide workflow without modifying the document.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
@@ -178,7 +193,7 @@ marker replacement, remapping prefab names and off-map no-ops.
    multiline fields, complete cross-platform packaging/launch usability.
 3. Browser/selection interaction coverage, feature selection,
    model previews where useful, additional view controls and live minimap refresh.
-4. Engine-backed terrain/buildability overlays, clickable map validation,
+4. Placed-unit occupancy in overlays, richer clickable map validation,
    reachable starts/mana/naval-output checks, full reproducible generator controls.
 5. Region canvas manipulation, expanded typed-rule validation, rule reuse/reordering,
    temporary-map playtesting through the normal client/server launch path.

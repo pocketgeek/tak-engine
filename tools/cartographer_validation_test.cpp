@@ -2,6 +2,7 @@
 #include "cartographer/triggers.h"
 #include "cartographer/regions.h"
 #include "cartographer/generator.h"
+#include "cartographer/overlay.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <iostream>
@@ -43,6 +44,22 @@ int main() {
         (*files)["units/test.fbi"]={fbi.begin(),fbi.end()};vfs.setMapFiles(files);registry.loadDir(vfs,"units");
         check(registry.find("test")!=nullptr,"synthetic unit loaded");
         tak::tnt::Map map;map.width=map.height=32;map.heights.resize(1024,60);map.features.resize(1024,0xffff);
+        auto movement=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Movement,"test");
+        check(movement.width==32 && movement.rgba[(12*32+12)*4+1]==210,"flat ground movement overlay is passable");
+        map.seaLevel=100;
+        movement=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Movement,"test");
+        check(movement.rgba[(12*32+12)*4]==235,"ground movement overlay rejects deep water");
+        auto depth=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::WaterDepth,"");
+        check(depth.rgba[2]==160 && depth.rgba[3]==150,"water depth uses sea minus low corner");
+        map.seaLevel=0;
+        map.heights[12*32+12]=100;
+        auto slope=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Slope,"");
+        check(slope.rgba[(11*32+11)*4]==255 && slope.rgba[0]==0,"slope overlay reads four-corner spread");
+        auto build=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Buildability,"test");
+        tak::sim::World reference;reference.setTerrain(map.heights,32,32,0,&map.features);reference.buildNavClasses(registry);
+        for(int z=0;z<32;++z)for(int x=0;x<32;++x)
+            check((build.rgba[(z*32+x)*4+1]==210)==reference.canPlace(registry.find("test"),x*16.f+8,z*16.f+8),"buildability overlay agrees with engine placement at every cell");
+        map.heights[12*32+12]=60;
         tak::tnt::Scenario metadata;metadata.starts.push_back({1,12,12});
         tak::crt::Scenario scenario;scenario.regions.push_back({"Area",15,15,5,5});
         std::vector<cart::PlacedUnit> units(1);units[0].type="TEST";units[0].x=200;units[0].z=200;units[0].name="First";

@@ -20,6 +20,7 @@
 #include "cartographer/validation.h"
 #include "cartographer/regions.h"
 #include "cartographer/generator.h"
+#include "cartographer/overlay.h"
 #include <fstream>
 #include <charconv>
 #include "cartographer/features.h"
@@ -314,6 +315,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // successful save. Broader than `edited` (which only gates minimap regen).
     bool dirty = mapPath.empty() || !recoveredFrom.empty();
     bool historyPending=false, resetHistory=false;
+    bool overlayInvalidated=false;
     cart::History history;
     auto historySnapshot = [&]() {return cart::historyState(mapView.map(),scenario,scen,units,useOnly,mapName);};
     history.reset(historySnapshot(),!dirty);
@@ -612,7 +614,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING };
     static constexpr int kMaxFields = 9;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -946,6 +948,20 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     bool useOnlyOpen = false;
     int useOnlyScroll = 0;
     SDL_Rect uoList{}, uoDone{}, uoClear{};   // render-computed hit rects
+    std::future<cart::TerrainOverlay> overlayJob;
+    std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> overlayTexture(nullptr,SDL_DestroyTexture);
+    std::string overlayLegend;
+    int overlayWidth=0,overlayHeight=0;
+    bool discardOverlay=false,quitAfterOverlay=false;
+    auto buildOverlay=[&](cart::OverlayKind kind) {
+        const auto type=selectedType>=0 && selectedType<int(unitTypes.size())?lowerText(unitTypes[selectedType]):std::string{};
+        auto snapshot=mapView.map();
+        discardOverlay=quitAfterOverlay=false;
+        overlayJob=std::async(std::launch::async,[&,snapshot=std::move(snapshot),type,kind] {
+            return cart::terrainOverlay(snapshot,unitRegistry,vfs,kind,type);
+        });
+        modal=M_ANALYZING;SDL_StopTextInput();
+    };
     std::vector<cart::MapIssue> mapIssues;
     size_t issueIndex=0;
     auto showMapIssue=[&]() {
@@ -1031,7 +1047,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             featTex.clear();
             selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
             selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
-            edited=false;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
+            edited=false;overlayInvalidated=true;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
             editRule=nullptr;editUnit=draggingUnit=draggingStart=-1;scrGroup=-1;
             modal=M_NONE;SDL_StopTextInput();return true;
         } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
@@ -1043,7 +1059,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     const std::vector<std::vector<std::string>> menuRows={
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
-        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selected units","Store view bookmark","Restore view bookmark"},
+        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selected units","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay"},
         {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
@@ -1064,6 +1080,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==1)mapView.setZoom(1);
             if(row==2)showGrid=!showGrid;
             if(row==3)showRegions=!showRegions;
+            if(row>=7 && row<=10)buildOverlay(static_cast<cart::OverlayKind>(row-7));
+            if(row==11) {overlayTexture.reset();overlayLegend.clear();}
             if(row==4) {
                 bool any=false;float x0=0,z0=0,x1=0,z1=0;
                 for(int i:selectedUnits.indices)if(i>=0 && i<int(units.size())) {
@@ -1114,6 +1132,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     auto restoreHistory = [&](const cart::HistoryState* state) {
         if(!state)return;
+        overlayInvalidated=true;
         mapView.quiesce();
         auto map=tak::tnt::Map::load(state->terrain,"undo history");
         map.seaLevel=state->seaLevel;map.stockTerrain=state->stockTerrain;
@@ -1170,8 +1189,27 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             } catch(const std::exception& error) {openMessage("GENERATION FAILED",error.what());}
             if(quitAfterGeneration) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         }
+        if(overlayJob.valid() && overlayJob.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+            try {
+                auto result=overlayJob.get();modal=M_NONE;
+                if(!discardOverlay) {
+                    overlayTexture.reset(SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,result.width,result.height));
+                    if(!overlayTexture)throw std::runtime_error(SDL_GetError());
+                    SDL_UpdateTexture(overlayTexture.get(),nullptr,result.rgba.data(),result.width*4);
+                    SDL_SetTextureBlendMode(overlayTexture.get(),SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureScaleMode(overlayTexture.get(),SDL_ScaleModeNearest);
+                    overlayWidth=result.width;overlayHeight=result.height;overlayLegend=std::move(result.legend);
+                }
+            } catch(const std::exception& error) {openMessage("OVERLAY FAILED",error.what());}
+            if(quitAfterOverlay) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if(overlayJob.valid()) {
+                if(e.type==SDL_QUIT) {discardOverlay=true;quitAfterOverlay=true;}
+                if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE)discardOverlay=true;
+                continue;
+            }
             if(generatorJob.valid()) {
                 if(e.type==SDL_QUIT) {cancelGeneration=true;quitAfterGeneration=true;}
                 if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE)cancelGeneration=true;
@@ -1730,9 +1768,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         // the confirm's applyModal has closed itself.
         if (wantNew) { wantNew = false; openModal(M_NEW); }
 
+        if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
             commitHistory();
-        const std::string title="Cartographer -- "+mapName+(modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":"")+(dirty?" *":"");
+        const std::string title="Cartographer -- "+mapName+(modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_ANALYZING?" [Analyzing]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
         if(interactive && !recoveryFolder.empty()) {
             if(recoveryJob.valid() && recoveryJob.wait_for(std::chrono::seconds(0))==std::future_status::ready)collectRecovery();
@@ -1758,6 +1797,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         SDL_Rect canvas{kPaletteW, kMenuH, canvasW, canvasH};
         SDL_RenderSetViewport(ren, &canvas);
         mapView.draw(canvasW, canvasH);
+        if(overlayTexture) {
+            SDL_FRect destination{-mapView.offX()*mapView.zoom(),-mapView.offY()*mapView.zoom(),overlayWidth*16*mapView.zoom(),overlayHeight*16*mapView.zoom()};
+            SDL_RenderCopyF(ren,overlayTexture.get(),nullptr,&destination);
+            fillRect(ren,4,4,std::min(canvasW-8,cart::textWidth(overlayLegend,1)+8),17,15,20,30);
+            cart::drawText(ren,overlayLegend,8,9,1,240,240,210);
+        }
         // Grid overlay: section (512px) lines bright, block (32px) lines faint.
         if (showGrid) {
             float zm = mapView.zoom();
@@ -2131,6 +2176,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             cart::drawText(ren,"Your current map changes only when accepted.",ct.x,ct.y+370,1,195,210,225);
             mOK=cart::drawButton(ren,ct.x+ct.w-150,ct.y+ct.h-20,70,18,"ACCEPT",true);
             mCancel=cart::drawButton(ren,ct.x+ct.w-74,ct.y+ct.h-20,70,18,"DISCARD",false);
+        } else if(modal==M_ANALYZING) {
+            const auto ct=cart::drawPanel(ren,w,h,400,105,"ANALYZING TERRAIN");
+            cart::drawText(ren,discardOverlay?"Discarding result when analysis finishes...":"Applying engine terrain and footprint rules...",ct.x,ct.y,1,225,230,240);
+            cart::drawText(ren,"Esc cancels. Map editing resumes when ready.",ct.x,ct.y+25,1,190,205,220);
         } else if(modal==M_GENERATING) {
             const auto ct=cart::drawPanel(ren,w,h,400,105,"GENERATING MAP");
             const std::string dots((SDL_GetTicks64()/400)%4,'.');

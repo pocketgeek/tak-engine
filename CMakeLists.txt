@@ -826,14 +826,14 @@ if(TAK_BUILD_CLIENT)
     add_test(NAME cartographer_document COMMAND cartographer_document_test)
 
     add_executable(cartographer_validation_test tools/cartographer_validation_test.cpp
-      src/cartographer/validation.cpp src/cartographer/triggers.cpp src/cartographer/regions.cpp src/cartographer/generator.cpp)
+      src/cartographer/validation.cpp src/cartographer/triggers.cpp src/cartographer/regions.cpp src/cartographer/generator.cpp src/cartographer/overlay.cpp)
     target_link_libraries(cartographer_validation_test PRIVATE tak-formats)
     add_test(NAME cartographer_validation COMMAND cartographer_validation_test)
 
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     get_target_property(_cartographer_sources cartographer SOURCES)
@@ -843,7 +843,8 @@ if(TAK_BUILD_CLIENT)
     if(TAK_TEST_DATA)
       add_test(NAME cartographer_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}")
       add_test(NAME cartographer_generation_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" generation)
-      set_tests_properties(cartographer_ui cartographer_generation_ui PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
+      add_test(NAME cartographer_overlay_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" overlay)
+      set_tests_properties(cartographer_ui cartographer_generation_ui cartographer_overlay_ui PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     if(WIN32)
       set_target_properties(cartographer PROPERTIES WIN32_EXECUTABLE TRUE)
