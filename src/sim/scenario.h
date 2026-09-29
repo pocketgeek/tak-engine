@@ -28,7 +28,7 @@ class ScenarioScript {
 public:
     // scen: the parsed .crt (typed rules + regions). reg: type lookup.
     // viewPlayer: the local human's slot (for message filtering; -1 = show all).
-    // maxPlayer: number of world slots (scenario .crt players are clamped into it).
+    // maxPlayer: number of world slots (out-of-range groups are never reassigned).
     // mapWCells/mapHCells: map size in 16px cells (for "Anywhere"/whole-map).
     ScenarioScript(const tak::crt::Scenario& scen, const TypeRegistry& reg,
                    int viewPlayer, int maxPlayer, int mapWCells, int mapHCells);

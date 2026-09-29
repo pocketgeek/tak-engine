@@ -138,7 +138,7 @@ target_compile_definitions(tak-formats PUBLIC TAK_HAVE_BUILD_ID_H=1)
 # propagates to takclient and takserver. No-op on POSIX.
 if(WIN32)
   # bcrypt: BCryptGenRandom, the OS CSPRNG behind crypto::randomBytes.
-  target_link_libraries(tak-formats PUBLIC ws2_32 bcrypt)
+  target_link_libraries(tak-formats PUBLIC ws2_32 bcrypt shell32)
   # Fold the GCC/C++ runtime into each .exe so a Windows box needs no MinGW DLLs.
   # -static also pulls winpthread. SDL2/jpeg/zlib are always static too, so
   # nothing is shipped alongside -- windows.yml gates on the .exe importing no
@@ -828,6 +828,11 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(cartographer_document_test PRIVATE tak-formats)
     add_test(NAME cartographer_document COMMAND cartographer_document_test)
 
+    add_executable(cartographer_playtest_test tools/cartographer_playtest_test.cpp
+      src/cartographer/playtest.cpp src/cartographer/document.cpp src/cartographer/units.cpp)
+    target_link_libraries(cartographer_playtest_test PRIVATE tak-formats)
+    add_test(NAME cartographer_playtest COMMAND cartographer_playtest_test)
+
     add_executable(cartographer_validation_test tools/cartographer_validation_test.cpp
       src/cartographer/validation.cpp src/cartographer/triggers.cpp src/cartographer/regions.cpp src/cartographer/generator.cpp src/cartographer/overlay.cpp src/cartographer/ruleedit.cpp)
     target_link_libraries(cartographer_validation_test PRIVATE tak-formats)
@@ -839,7 +844,7 @@ if(TAK_BUILD_CLIENT)
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     get_target_property(_cartographer_sources cartographer SOURCES)

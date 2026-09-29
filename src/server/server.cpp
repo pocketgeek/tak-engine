@@ -15,6 +15,7 @@
 #include "net/mappackage.h"
 #include "tnt/mapgen.h"
 #include "net/netcompat.h"
+#include "util/winargv.h"
 
 #include <algorithm>
 #include <atomic>
@@ -381,7 +382,7 @@ private:
         r.slots[slot].name = *avail[rng() % avail.size()];
     }
     void buildDataSet(DataSet& ds, tak::hpi::OverridePolicy pol) {
-        ds.vfs = tak::hpi::mountRetailRoot(dataRoot_, pol);
+        ds.vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot_), pol);
         tak::sim::setupRegistry(ds.reg, ds.vfs, false);
         if (!ds.vfs.list("unitscb").empty()) {
             tak::sim::setupRegistry(ds.regCb, ds.vfs, true);
@@ -1172,7 +1173,7 @@ void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> pack
                  room.mapPackage->digest.c_str(), room.mapPackage->bytes.size());
     room.mapVfs = std::make_unique<tak::hpi::Vfs>(&dataFor(room.opts.overridePolicy).vfs);
     room.mapVfs->setMapFiles(room.mapPackage->files);
-    try { tak::net::maps::saveCache(dataRoot_, *room.mapPackage); }
+    try { tak::net::maps::saveCache(std::filesystem::u8path(dataRoot_), *room.mapPackage); }
     catch (const std::exception& e) { std::fprintf(stderr, "map cache: %s\n", e.what()); }
     broadcastLobby(room);
 }
@@ -1187,7 +1188,7 @@ void Server::mapMsg(Client& c, const Frame& f) {
                 !room->mission.empty() || tak::mapgen::isGeneratedMapId(name))
                 throw std::runtime_error("invalid map offer");
             c.mapReceive.begin(id, size, hash);
-            if (auto cached = tak::net::maps::loadCache(dataRoot_, hash)) {
+            if (auto cached = tak::net::maps::loadCache(std::filesystem::u8path(dataRoot_), hash)) {
                 c.mapReceive = {}; acceptMap(*room, std::move(cached)); return;
             }
             try {
@@ -1264,7 +1265,7 @@ void Server::tryStart(Client& c) {
         return;
     }
     if (!wantMission && tak::mapgen::isGeneratedMapId(r->mapId)) {
-        try { tak::net::maps::saveGenerated(dataRoot_, dataSet.vfs, r->mapId); }
+        try { tak::net::maps::saveGenerated(std::filesystem::u8path(dataRoot_), dataSet.vfs, r->mapId); }
         catch (const std::exception& e) {
             Writer w; w.u32(r->id); w.str(std::string("cannot save generated map: ") + e.what());
             c.conn.send(Msg::MapError, w); return;
@@ -1357,7 +1358,14 @@ void Server::tryStart(Client& c) {
                     ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
                 cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm, s.type == 2, s.type == 2 && s.aiLevel == 0};
             }
-            auto spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg);
+            std::vector<std::pair<float,float>> spots;
+            try { spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg); }
+            catch (const std::exception& e) {
+                r->ref.reset(); r->running = false; r->ai.clear();
+                Writer error; error.u32(r->id); error.str(e.what());
+                c.conn.send(Msg::MapError, error);
+                return;
+            }
             // setupMatch returns start positions in USED-slot order; remap to slot index.
             std::vector<std::pair<float, float>> slotPos(size_t(maxSlot + 1), {0.f, 0.f});
             for (int i = 0, k = 0; i <= maxSlot; ++i)
@@ -2093,7 +2101,7 @@ int Server::run() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int serverMain(int argc, char** argv) {
     // Test overrides for the reconnect timers (seconds).
     if (const char* g = std::getenv("TAK_GRACE_MS")) kGraceMs = uint64_t(std::atoll(g));
     if (const char* b = std::getenv("TAK_PAUSE_BUDGET_MS")) kPauseBudgetMs = uint64_t(std::atoll(b));
@@ -2165,4 +2173,12 @@ int main(int argc, char** argv) {
         }
     }
     return s.run();
+}
+
+int main(int argc,char** argv) {
+#ifdef _WIN32
+    return tak::utf8Main(serverMain);
+#else
+    return serverMain(argc,argv);
+#endif
 }

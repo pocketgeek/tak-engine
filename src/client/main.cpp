@@ -14,6 +14,7 @@
 // Must precede SDL.h: on Windows this pulls in winsock2 (with WIN32_LEAN_AND_MEAN)
 // before SDL's <windows.h> would otherwise pull the incompatible winsock v1.
 #include "net/netcompat.h"
+#include "util/winargv.h"
 
 #include "campaign/campaign.h"
 #include <utility>
@@ -30,6 +31,7 @@
 #include "gui/gui.h"
 #include "hpi/hpi.h"
 #include "net/client.h"
+#include "net/mappackage.h"
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
 #include "net/lockstep.h"
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
@@ -155,13 +157,12 @@ int pickFreePort() {
 // an unauthenticated server must not be reachable from the network.
 bool spawnLocalServer(const std::string& serverBin, const std::string& dataRoot, int port) {
 #ifdef _WIN32
-    std::string cmd = "\"" + serverBin + ".exe\" --port " + std::to_string(port) +
-                      " --data \"" + dataRoot + "\" --no-auth --local";
-    STARTUPINFOA si{}; si.cb = sizeof si;
-    std::vector<char> mut(cmd.begin(), cmd.end()); mut.push_back('\0');
-    if (!CreateProcessA(nullptr, mut.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
-                        nullptr, nullptr, &si, &gLocalProc))
-        return false;
+    const auto executable=std::filesystem::u8path(serverBin).wstring();
+    auto cmd=tak::quoteWindowsArgument(executable)+L" --port "+std::to_wstring(port)+
+        L" --data "+tak::quoteWindowsArgument(std::filesystem::u8path(dataRoot).wstring())+L" --no-auth --local";
+    STARTUPINFOW si{};si.cb=sizeof(si);
+    if(!CreateProcessW(executable.c_str(),cmd.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,
+                       nullptr,nullptr,&si,&gLocalProc))return false;
     gLocalServerUp = true;
     return true;
 #else
@@ -200,17 +201,19 @@ std::string resolveServerBin(const char* argv0) {
     std::error_code ec;
     auto tryDir = [&](const fs::path& dir) -> std::string {
         if (dir.empty()) return {};
-        fs::path p = dir / "takserver";
-        return fs::exists(p, ec) ? p.string() : std::string{};
-    };
-#if defined(__linux__)
-    { char buf[4096]; ssize_t n = ::readlink("/proc/self/exe", buf, sizeof buf - 1);
-      if (n > 0) { buf[n] = '\0'; auto r = tryDir(fs::path(buf).parent_path()); if (!r.empty()) return r; } }
-#elif defined(_WIN32)
-    { char buf[MAX_PATH]; DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-      if (n > 0 && n < MAX_PATH) { auto r = tryDir(fs::path(buf).parent_path()); if (!r.empty()) return r; } }
+#ifdef _WIN32
+        const fs::path p=dir/"takserver.exe";
+#else
+        const fs::path p=dir/"takserver";
 #endif
-    if (auto r = tryDir(fs::path(argv0).parent_path()); !r.empty()) return r;
+        if(!fs::is_regular_file(p,ec))return {};
+        const auto text=p.u8string();return {text.begin(),text.end()};
+    };
+    if(char* base=SDL_GetBasePath()) {
+        const auto directory=fs::u8path(base);SDL_free(base);
+        if(auto result=tryDir(directory);!result.empty())return result;
+    }
+    if (auto r = tryDir(fs::u8path(argv0).parent_path()); !r.empty()) return r;
     if (const char* path = std::getenv("PATH")) {
         std::string ps(path);
         for (size_t s = 0; s <= ps.size();) {
@@ -228,7 +231,12 @@ std::string resolveServerBin(const char* argv0) {
         }
     }
     // Nothing found -- return the old argv[0]-relative guess so the caller can report it.
-    return (fs::path(argv0).parent_path() / "takserver").string();
+#ifdef _WIN32
+    const auto fallback=fs::u8path(argv0).parent_path()/"takserver.exe";
+#else
+    const auto fallback=fs::u8path(argv0).parent_path()/"takserver";
+#endif
+    const auto text=fallback.u8string();return {text.begin(),text.end()};
 }
 }  // namespace
 
@@ -351,6 +359,7 @@ int main(int argc, char** argv) {
 #ifdef NDEBUG
             "usage: takclient --data <retail-install-dir>\n"
             "  Launches the game and its front-end menu.\n"
+            "  --play-map <snapshot.kmp>   open a Cartographer snapshot in a private lobby\n"
             "  --version, -v   print version and exit\n"
             "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ overrides/.\n");
 #else
@@ -368,16 +377,16 @@ int main(int argc, char** argv) {
         return 0;
     }
 #ifdef NDEBUG
-    // Hardened release CLI: only --data (plus the meta --version/--help) is honoured.
+    // Hardened release CLI: data folder and the documented Cartographer handoff only.
     // Every gameplay/dev/test flag and every TAK_* env var is debug-only, so a shipped
     // build has no hidden switches -- the game is configured through the menu + Options.
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--version" || a == "-v") { std::printf("takclient (TAK engine) %s\n", tak::kVersion); return 0; }
         if (a == "--help" || a == "-h") { std::printf("usage: takclient --data <retail-install-dir>\n"); return 0; }
-        if (a == "--data") { ++i; continue; }   // its value is consumed by the parser below
+        if ((a == "--data" || a == "--play-map") && i + 1 < argc) { ++i; continue; }   // its value is consumed by the parser below
         std::fprintf(stderr,
-            "takclient: unknown option '%s' -- release builds accept only --data and --version.\n", a.c_str());
+            "takclient: unknown option '%s' -- release builds accept --data, --play-map, --help and --version.\n", a.c_str());
         return 2;
     }
 #endif
@@ -397,7 +406,7 @@ int main(int argc, char** argv) {
     // model mode: --statics <bitmask> seeds the VM's static slots (bit i -> static i).
     // Walk/attack scripts gate on an "am I moving" static whose SLOT differs per unit.
     uint32_t staticMask = 1;
-    std::string serverHost, playerName, dataRoot, overridesArg;
+    std::string serverHost, playerName, dataRoot, overridesArg, playMap;
     // Multiplayer account (menu-entered, or --user/--pass for the harnesses). The
     // password is used once and wiped; it is never written to settings.
     std::string loginUser, loginPass;
@@ -426,7 +435,8 @@ int main(int argc, char** argv) {
     std::vector<std::string> args;
     for (int i = argStart; i < argc; ++i) {
         std::string a = argv[i];
-        if (a == "--shot" && i + 1 < argc) shot = argv[++i];
+        if (a == "--play-map" && i + 1 < argc) { playMap = argv[++i]; mode = "game"; }
+        else if (a == "--shot" && i + 1 < argc) shot = argv[++i];
         else if (a == "--cob" && i + 1 < argc) cobPath = argv[++i];
         else if (a == "--anim" && i + 1 < argc) anim = argv[++i];
         else if (a == "--statics" && i + 1 < argc) staticMask = uint32_t(std::stoul(argv[++i]));
@@ -571,8 +581,22 @@ int main(int argc, char** argv) {
             SDL_Quit();
             return 1;
         }
-        vfs = tak::hpi::mountRetailRoot(dataRoot, pol);
+        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), pol);
         gInstallRoot = dataRoot;   // the loading screen reads Movies/Gui from here
+    }
+    if (!playMap.empty()) {
+        try {
+            const auto snapshot = tak::net::maps::importSnapshot(vfs, std::filesystem::u8path(playMap));
+            tak::net::maps::saveCache(std::filesystem::u8path(dataRoot), *snapshot);
+            vfs.refreshMapCache(std::filesystem::u8path(dataRoot));
+            // MapCache exposes a digest-qualified picker name, not the source
+            // archive's internal path. Select that exact revision.
+            args = {tak::vpath::stem(snapshot->mapPath) + " [" + snapshot->digest.substr(0,16) + "]"};
+            if(tak::hpi::findMap(vfs,args.front()).empty())throw std::runtime_error("Verified test map is missing from the map catalog");
+        } catch (const std::exception& e) {
+            tak::errorBox("Cannot test map", e.what());
+            std::fprintf(stderr, "Test Map: %s\n", e.what()); SDL_Quit(); return 1;
+        }
     }
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
@@ -838,7 +862,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<tak::net::MpClient> mp;
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
-        mp->setMapRoot(dataRoot);
+        mp->setMapRoot(std::filesystem::u8path(dataRoot));
         if (playerName.empty()) playerName = settings.playerName;
         if (playerName.empty()) playerName = "player";
         // Hello carries the PURE-RETAIL gameplay fingerprint (no overrides), so the
@@ -850,7 +874,7 @@ int main(int argc, char** argv) {
         if (!dataRoot.empty()) {
             if (!retailHash)
                 retailHash = tak::hpi::gameplayHash(
-                    tak::hpi::mountRetailRoot(dataRoot, tak::hpi::OverridePolicy::None));
+                    tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), tak::hpi::OverridePolicy::None));
             mp->setDataHash(retailHash);
         }
         // A freshly-spawned local server takes a moment to mount + listen (~0.25s
@@ -980,7 +1004,7 @@ int main(int argc, char** argv) {
             // it is missing the recording cannot be replayed at all.)
             std::string mapPath;
             const auto rpol0 = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
-            tak::hpi::Vfs probeVfs = tak::hpi::mountRetailRoot(dataRoot, rpol0);
+            tak::hpi::Vfs probeVfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), rpol0);
             if (!rf.mapDigest.empty()) {
                 auto package = tak::net::maps::loadCache(dataRoot, rf.mapDigest);
                 if (!package) try {
@@ -1086,7 +1110,7 @@ int main(int argc, char** argv) {
                                                   // Campaign result/progression and the next
                                                   // session still need the front-end catalog.
                                                   (fromMenu || !campaignStem.empty())
-                                                      ? tak::hpi::mountRetailRoot(dataRoot, pol) : std::move(vfs),
+                                                      ? tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), pol) : std::move(vfs),
                                                   mapPath, dataRoot, pol, demo,
                                                   scenario,
                                                   navy || amphib || firetest || facetest || mp,
@@ -1982,9 +2006,9 @@ int main(int argc, char** argv) {
 }
 
 #ifdef _WIN32
-// The GUI subsystem keeps Explorer launches console-free. The CRT still parses
-// arguments for us; command-line launches and redirected handles remain usable.
+// The GUI subsystem keeps Explorer launches console-free; preserve Unicode
+// arguments from Explorer, Cartographer, and command-line launches.
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
-    return main(__argc, __argv);
+    return tak::utf8Main(main);
 }
 #endif

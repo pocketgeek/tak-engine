@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 196;      // 196: authored map companions and corrected CRT control/message operands
+constexpr uint32_t kNetVersion = 197;      // 197: shared authored CRT match setup
                                            // 195: directed mana sharing and chat recipients
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering

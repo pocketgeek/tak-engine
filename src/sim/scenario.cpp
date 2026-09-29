@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <charconv>
 
 namespace tak::sim {
 
@@ -23,14 +24,11 @@ ScenarioScript::ScenarioScript(const tak::crt::Scenario& scen, const TypeRegistr
                                int viewPlayer, int maxPlayer, int mapWCells, int mapHCells)
     : reg_(reg), view_(viewPlayer), maxPlayer_(std::max(1, maxPlayer)),
       mapW_(mapWCells), mapH_(mapHCells), regions_(scen.regions) {
-    // Fold each .crt player's groups into the clamped world-slot range so a
-    // scenario authored for 8 players still runs on a 4-slot scenario world.
+    // Never transfer an absent player's rules to another owner. Production match
+    // setup rejects unseated authored players before constructing the runner.
     players_.assign(size_t(maxPlayer_), {});
-    for (size_t p = 0; p < scen.players.size(); ++p) {
-        int slot = std::min(int(p), maxPlayer_ - 1);
-        for (const auto& g : scen.players[p])
-            players_[size_t(slot)].push_back(g);
-    }
+    for (size_t p = 0; p < scen.players.size() && p < players_.size(); ++p)
+        players_[p] = scen.players[p];
     disabled_.resize(players_.size());
     fired_.resize(players_.size());
     state_.resize(players_.size());
@@ -71,14 +69,14 @@ void ScenarioScript::regionCenter(const std::string& loc, float& x, float& z) co
 int ScenarioScript::parsePlayer(const std::string& s) const {
     std::string lo = lower(s);
     if (lo.rfind("all", 0) == 0) return -1;             // All Players
-    // Trailing number: "Player 3" -> slot 2 (clamped).
-    int i = int(s.size()) - 1, val = 0, mul = 1;
-    bool any = false;
-    while (i >= 0 && std::isdigit(static_cast<unsigned char>(s[size_t(i)]))) {
-        val += (s[size_t(i)] - '0') * mul; mul *= 10; --i; any = true;
-    }
-    if (!any) return -1;
-    return std::clamp(val - 1, 0, maxPlayer_ - 1);
+    // Trailing number: "Player 3" -> slot 2. Invalid recipients never alias
+    // the final real player (nor broadcast to everybody).
+    const auto begin=s.find_last_not_of("0123456789");
+    const size_t start=begin==std::string::npos?0:begin+1;
+    int value=0;
+    const auto result=std::from_chars(s.data()+start,s.data()+s.size(),value);
+    return result.ec==std::errc() && value>0 && value<=maxPlayer_ ? value-1 : maxPlayer_;
+
 }
 
 int ScenarioScript::countControl(World& w, int player, const std::string& typeName,

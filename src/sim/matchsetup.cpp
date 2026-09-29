@@ -16,6 +16,9 @@
 
 #include "hpi/hpi.h"
 #include "sim/mission.h"
+#include "sim/scenario.h"
+#include "tnt/ota.h"
+#include <stdexcept>
 #include "tdf/tdf.h"
 
 #include <cstdio>
@@ -557,6 +560,70 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     world.setMonarchExpendable(cfg.monarchExpendable);
     world.setDoubleSight(cfg.doubleSight);
 
+    // Cartographer scenarios use authored placements instead of skirmish monarchs.
+    // Read the same map-local CRT on every peer, before any default units spawn.
+    if (cfg.loadCrt && !generated && !cfg.stressTest && !cfg.benchmark) {
+        const auto otaPath = tak::vpath::replaceExtension(cfg.mapPath, ".ota");
+        const auto otaBytes = vfs.tryRead(otaPath);
+        if (otaBytes && tak::tnt::Scenario::parse(std::string(otaBytes->begin(), otaBytes->end())).hasScenario) {
+            const auto crtPath = tak::vpath::replaceExtension(cfg.mapPath, ".crt");
+            if (!vfs.has(crtPath)) throw std::runtime_error("Scenario map is missing its CRT file");
+            auto scenario = tak::crt::parse(vfs.read(crtPath));
+            if (scenario.version != 1) throw std::runtime_error("Scenario CRT file is damaged");
+            auto requirePlayer = [&](int player) {
+                if (player < 0 || player >= kMaxPlayers)
+                    throw std::runtime_error("The scenario's ninth/neutral player is not supported yet");
+                if (player >= int(cfg.slots.size()) || !cfg.slots[size_t(player)].used)
+                    throw std::runtime_error("Seat player " + std::to_string(player + 1) + " in the lobby to play this scenario");
+            };
+            // Do not silently discard authored stats the simulation cannot represent.
+            for (const auto& type : scenario.customTypes)
+                if (type.stat[0] != 100 || type.stat[1] != 100 || type.stat[2] != 100 || type.stat[3] != 0)
+                    throw std::runtime_error("Scenario custom unit-type stats are not supported yet: " + type.name);
+            for (size_t p = 0; p < scenario.players.size(); ++p)
+                if (!scenario.players[p].empty()) requirePlayer(int(p));
+            for (const auto& placed : scenario.units) {
+                requirePlayer(placed.player);
+                auto name = placed.objectName;
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (!reg.find(name)) throw std::runtime_error("Scenario unit type is missing: " + placed.objectName);
+                if (placed.x < 0 || placed.z < 0 || placed.x >= map.width || placed.z >= map.height)
+                    throw std::runtime_error("Scenario unit is outside the map: " + placed.objectName);
+                if (placed.armor != 100 || placed.weapon != 100)
+                    throw std::runtime_error("Scenario per-unit armor/weapon overrides are not supported yet: " + placed.objectName);
+            }
+            std::vector<std::pair<float,float>> centers(cfg.slots.size(), {0,0});
+            std::vector<int> counts(cfg.slots.size(), 0);
+            for (const auto& placed : scenario.units) {
+                auto name = placed.objectName;
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                const auto* type = reg.find(name);
+                const float x = float(placed.x) * 16 + 8, z = float(placed.z) * 16 + 8;
+                const int id = world.spawn(type, x, z, float(placed.angle) * 3.14159265f / 180.0f, placed.player);
+                if (auto* unit = world.unit(id)) {
+                    unit->hp = Fixed::fromFloat(type->maxHp * float(std::clamp(placed.health, 0, 100)) / 100.0f);
+                    unit->veteran = std::clamp(placed.veteran, 0, 9);
+                    if (type->isStructure()) world.blockFoot(*type, x, z, true);
+                } else throw std::runtime_error("Could not place scenario unit: " + placed.objectName);
+                centers[size_t(placed.player)].first += x;
+                centers[size_t(placed.player)].second += z;
+                ++counts[size_t(placed.player)];
+            }
+            std::vector<std::pair<float,float>> assigned;
+            const auto starts = parseStartPositions(vfs, cfg.mapPath);
+            for (size_t p = 0; p < cfg.slots.size(); ++p) if (cfg.slots[p].used) {
+                world.player(int(p)).mana = cfg.startMana;
+                if (counts[p]) assigned.push_back({centers[p].first / counts[p], centers[p].second / counts[p]});
+                else assigned.push_back(p < starts.size() ? starts[p] : std::pair<float,float>{float(map.width)*8, float(map.height)*8});
+            }
+            world.setScenario(std::make_unique<ScenarioScript>(scenario, reg, cfg.scenarioViewPlayer,
+                                                              world.numPlayers(), map.width, map.height));
+            // Rules/regions without placements extend an ordinary skirmish;
+            // keep its authored start positions and default monarchs.
+            if (!scenario.units.empty()) return assigned;
+        }
+    }
+
     // Assign the used slots to start positions (ring fallback if the map has too few).
     int used = 0;
     for (auto& s : cfg.slots) if (s.used) ++used;
@@ -1003,6 +1070,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     MatchConfig cfg;
     cfg.vfs = &vfs;
     cfg.mapPath = base + ".tnt";
+    cfg.loadCrt = false;              // campaign units/rules come from OTA/COB
     cfg.slots = slots;                 // no used slots -> setupMatch spawns no monarchs
     cfg.unitCap = int(gh->numberOr("maxunits", 500));
     setupMatch(world, reg, cfg);       // terrain + features + player teams

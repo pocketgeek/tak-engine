@@ -47,24 +47,37 @@ the flag value and suffix in action 25 messages.
 
 ## Current engine integration and limits
 
-`src/sim/scenario.cpp` implements the CRT runner. The standalone debug scenario
-path attaches it to `World`; the world ticks it and hashes its rule state.
+`src/sim/scenario.cpp` implements the CRT runner. Shared match setup attaches it
+to `World` when the map OTA declares `hasscenario=1`; the world ticks it and hashes its rule state.
 Messages are filtered for the local viewer without changing that state. The
 current runner fires on a condition group's false-to-true transition and supports
 explicit rule disabling. This describes the implementation, not a claim that all
 retail trigger execution semantics have been verified.
 
-Ordinary skirmish client/server setup does **not yet attach CRT rules or spawn
-CRT placements**. Campaign missions use a different OTA/mission-script path.
-Protocol 196 preserves CRT and editor companions in transferred/cached maps,
-but preservation alone does not enable their execution. Wiring the production
-Cartographer Test Map workflow remains part of the active editor goal.
+Protocol 197 loads authored placements instead of default skirmish monarchs,
+including ownership, position, heading, health and veterancy. All authored owners
+must have occupied lobby slots. The initial camera position uses their units'
+centroid. Rule/region-only maps retain the normal monarch starts. Campaigns retain their separate OTA/mission-script setup.
 
-Other runtime limitations remain: out-of-range CRT player groups are currently
-folded into the last available world slot; the ninth/neutral slot needs a proper
-policy; per-placement/custom armor and weapon overrides are not fully applied;
-not every wildcard/action combination is supported. These need resolution before
-claiming complete authored-scenario playtest support or retail parity.
+Cartographer's **Test Map (F5)** saves a temporary KMP and launches
+`takclient --data <install> --play-map <snapshot.kmp>`. This documented production
+handoff validates the snapshot through the normal map-package whitelist, caches
+its verified revision, and opens a private local-server lobby. It does not enable
+any standalone/debug simulation. The editing session stays open. Temporary source
+files are removed when the editor observes game exit; closing the editor first
+leaves the running game and its temporary source undisturbed. Verified MapCache
+copies remain selectable, as with downloaded maps.
+
+Unsupported ninth/neutral owners, unseated owners, missing types, off-map units,
+nondefault custom-type stats and per-placement armor/weapon overrides produce a
+visible start error rather than being clamped, discarded or silently ignored.
+Out-of-range rule groups are never assigned to another player. Unique names and
+vertical placement fields remain preserved in the CRT but are not runtime unit
+identity/altitude overrides. Standard match elimination rules still apply; this
+is not yet a complete custom single-player mission/outcome system. The normal
+lobby requires at least two participants. Use Only restrictions, every wildcard/
+action combination, and retail trigger timing are not fully implemented/verified;
+this is not a claim of complete authored-scenario or retail parity.
 
 `scenario_test` covers truncation/version rejection, control-count operand order,
 region/owner/alive filtering, `Any Unit`, flag interpolation, and matching rule

@@ -49,11 +49,13 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   takclient` alone leaves a **stale `takserver`** (its referee sim then disagrees
   with the freshly-built clients and trips the referee-suspect check). Building
   all targets relinks `takclient` AND `takserver` together.
-- **Release vs debug CLI.** A RELEASE `build/takclient` is hardened: it accepts ONLY
-  `--data <dir>` and `--version` (`--help` prints that), reads NO `TAK_*` env vars, and
-  always launches the front-end menu — every mode keyword (`game`/`map`/`replay`/`model`),
-  gameplay/dev/test flag, and env hook is `#ifndef NDEBUG` (see `src/client/dev.h` for the
-  env wrapper). So all the CLI-driven flows below need the DEBUG `build-dbg/` binaries.
+- **Release vs debug CLI.** A RELEASE `build/takclient` is hardened: it accepts
+  `--data <dir>`, `--play-map <snapshot.kmp>`, and `--version` (`--help` lists these),
+  reads NO `TAK_*` env vars, and normally launches the front-end menu — every mode keyword (`game`/`map`/`replay`/`model`),
+  gameplay/dev/test flag, and env hook remains debug-only (see `src/client/dev.h`).
+  `--play-map` is the documented production Cartographer handoff: validate/cache
+  one snapshot and open the normal private local-server lobby; it does not enable
+  standalone simulation or any debug hooks. So all the CLI-driven flows below need the DEBUG `build-dbg/` binaries.
 - Play (debug build): `./build-dbg/takclient game "<map name>" --data <retail-install-dir> [--side X --aiside Y]`
   — the engine reads a retail install directly (root `*.hpi` + `Maps/` + `Music/`
   + `overrides/`); maps are referenced by NAME, resolved via the VFS. `--overrides

@@ -18,6 +18,8 @@ struct Package {
 // Unit definitions/scripts remain covered by the base gameplay-data agreement.
 std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId);
 std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& digest);
+// Validate a local single-map KMP using the same whitelist as network maps.
+std::shared_ptr<Package> importSnapshot(const hpi::Vfs& base, const std::filesystem::path& path);
 bool validDigest(const std::string& digest);
 Writer offer(uint32_t room, const std::string& mapId, const Package& package);
 struct Receiver {

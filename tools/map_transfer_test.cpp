@@ -3,6 +3,8 @@
 #include "sim/matchsetup.h"
 #include "tnt/mapgen.h"
 #include "tnt/tnt.h"
+#include "tnt/ota.h"
+#include "sim/scenario.h"
 #include "crt/crt.h"
 #include <chrono>
 #include <cstdlib>
@@ -47,6 +49,20 @@ int main(int argc, char** argv) try {
             };
             crt::Scenario authored;authored.players.resize(2);
             authored.players[0].push_back({{{20,{}}},{{13,{"All Players","Transferred scenario"}}}});
+            if(std::getenv("TAK_MAP_TEST_SCENARIO")) {
+                auto starts=sim::parseStartPositions(original,package->mapPath);
+                check(starts.size()>=2,"scenario transfer fixture needs two start positions");
+                for(int p=0;p<2;++p) {
+                    crt::Unit unit;unit.objectName=sim::kMonarchs[p];unit.player=p;
+                    unit.x=int(starts[size_t(p)].first/16);unit.z=int(starts[size_t(p)].second/16);
+                    authored.units.push_back(unit);
+                }
+                authored.players[0][0].conditions[0].opcode=0;
+                for(auto& entry:entries) if(entry.path=="kmap/transfer test.ota") {
+                    auto metadata=tnt::Scenario::parse(std::string(entry.data.begin(),entry.data.end()));
+                    metadata.hasScenario=true;const auto text=metadata.write();entry.data={text.begin(),text.end()};
+                }
+            }
             companion(".crt",crt::write(authored));
             companion(".tdf",{});
             const std::string names="TAK_EDITOR_RULE_NAMES 1\n0 0 \"Transfer rule\"\n";
@@ -96,7 +112,10 @@ int main(int argc, char** argv) try {
                 check(view.has("kmap/transfer test.editor") && view.has("kmap/transfer test.tdf") &&
                       view.read("kmap/transfer test.tdf").empty(),"editor metadata or empty restriction lost over network");
             }
-            sim::setupMatch(world, reg, cfg); client.reportLoaded(hpi::gameplayHash(base));
+            sim::setupMatch(world, reg, cfg);
+            if(std::getenv("TAK_MAP_TEST_SCENARIO"))
+                check(world.scenario() && world.units().size()==2,"network peer did not initialize authored scenario");
+            client.reportLoaded(hpi::gameplayHash(base));
         };
         auto until = std::chrono::steady_clock::now() + std::chrono::seconds(90);
         while (std::chrono::steady_clock::now() < until) {
@@ -240,6 +259,24 @@ int main(int argc, char** argv) try {
     check(listed.size()==1,"download absent from subsequent map picker");
     check(!catalog.has("terrain/00001234.jpg"),"cached map art leaked globally");
     check(net::maps::build(catalog,listed.front().first)->digest==p->digest,"reselected download changed identity");
+    {
+        const auto snapshotPath=root/"Test Snapshot.kmp";
+        auto changed=std::make_shared<hpi::Vfs::Files>(*p->files);
+        changed->at("kmap/test.txt")={'e','d','i','t','e','d'};
+        std::vector<hpi::PackFile> members;
+        for(const auto& [name,data]:*changed)members.push_back({name,data});
+        auto writeSnapshot=[&] {
+            const auto bytes=hpi::pack(members);
+            std::ofstream output(snapshotPath,std::ios::binary|std::ios::trunc);
+            output.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+        };
+        writeSnapshot();
+        const auto imported=net::maps::importSnapshot(catalog,snapshotPath);
+        check(imported->files->at("kmap/test.txt")==changed->at("kmap/test.txt"),"older cached map shadowed current playtest snapshot");
+        check(imported->digest!=p->digest,"edited snapshot has stale fingerprint");
+        members.push_back({"kmap/second.tnt",map.save()});writeSnapshot();
+        rejects([&]{net::maps::importSnapshot(catalog,snapshotPath);},"ambiguous multi-map playtest bundle accepted");
+    }
     auto corrupt = p->bytes; corrupt.back() ^= 1;
     rejects([&]{net::maps::decode(corrupt,p->digest);}, "corruption accepted");
     auto bad = std::make_shared<hpi::Vfs::Files>(*files);

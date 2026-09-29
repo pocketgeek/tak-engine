@@ -192,6 +192,13 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   **View** can hide features, units, starts and regions; layer choices are remembered.
   Terrain thumbnails and feature sprites load in the background; the minimap
   refreshes after terrain edits.
+  **Test Map (F5)** opens a temporary snapshot in the normal private game lobby,
+  leaving the editor and unsaved document open. Seat the players used by your
+  scenario, then start. Authored placements and rules run on both client and server.
+  Neutral-player and custom armor/weapon overrides are currently rejected with an
+  explanation; [scenario limits](docs/crt-triggers.md) describe the remaining gaps.
+  Close the test game to return to editing. Verified snapshots remain in the map
+  cache, like other downloaded maps; the temporary source is removed after exit.
   A first-launch guide introduces editing and saving. Hover over toolbar controls,
   filters or the minimap for action help and shortcuts.
   The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.
@@ -404,8 +411,8 @@ it to change.
 
 Use the **same engine build and compatible game data** on every participant.
 Version **0.7.12 uses protocol 195** for directed mana sharing and chat.
-Current checkout builds use **protocol 196** to preserve authored map companions
-during transfer; rebuild/update clients and servers together.
+Current checkout builds use **protocol 197** for shared authored-scenario setup
+and preserved map companions; rebuild/update clients and servers together.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and

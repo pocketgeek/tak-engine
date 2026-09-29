@@ -1,4 +1,6 @@
+#include "util/winargv.h"
 #include "cartographer/recovery.h"
+#include "cartographer/playtest.h"
 #include "cartographer/scenarioinfo.h"
 // Cartographer -- a clean-room re-implementation of the retail TA:Kingdoms map
 // editor (see docs/cartographer-port.md). Static-analysis RE of the shipped
@@ -220,7 +222,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // precedence). The Vfs must outlive the MapView (it borrows it by ref).
     tak::hpi::Vfs vfs;
     try {
-        vfs = tak::hpi::mountRetailRoot(dataRoot, tak::hpi::OverridePolicy::Full);
+        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), tak::hpi::OverridePolicy::Full);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "mount %s: %s\n", dataRoot.c_str(), e.what());
         return 1;
@@ -1218,7 +1220,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     openDocument = [&](const std::string& request) {
         try {
-            auto nextVfs=tak::hpi::mountRetailRoot(dataRoot,tak::hpi::OverridePolicy::Full);
+            auto nextVfs=tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot),tak::hpi::OverridePolicy::Full);
             std::string path,chosen=request;
             const auto disk=std::filesystem::u8path(request);
             if(std::filesystem::is_regular_file(disk)) {
@@ -1268,25 +1270,46 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             modal=M_NONE;SDL_StopTextInput();return true;
         } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
     };
+    cart::Playtest playtest;
+    auto testMap = [&] {
+        if(playtest.running()) {openMessage("TEST MAP", "A test is already running. Close its game window before starting another.");return;}
+        try {
+            std::unique_ptr<char,decltype(&SDL_free)> base(SDL_GetBasePath(),SDL_free);
+            if(!base)throw std::runtime_error("Cannot locate the game executable");
+            const auto client=cart::Playtest::clientPath(std::filesystem::u8path(base.get()));
+            // A distinct map name keeps earlier cached playtests from shadowing edits.
+            const auto name="Test "+std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+            auto snapshot=mapView.map();
+            if(edited) {
+                mapView.quiesce();
+                cart::generateMinimaps(snapshot,mapView.compositor(),cart::loadWorldPalette(vfs,world));
+            }
+            const auto files=cart::documentFiles(snapshot,scenario,scen,units,useOnly,name);
+            std::string error;
+            if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error))throw std::runtime_error(error);
+            openMessage("TEST MAP", "Opened a private game lobby from a snapshot. Seat the players used by your scenario, then start. Close the game to return here. Your document and save destination are unchanged.");
+        } catch(const std::exception& e) {openMessage("TEST MAP FAILED",e.what());}
+    };
     int menuOpen=-1;
     std::string hoveredHint;Uint64 hintSince=0;
     struct ViewBookmark {float x,z,zoom;};
     std::optional<ViewBookmark> viewBookmark;
     const std::vector<std::string> menuNames={"FILE","EDIT","VIEW","SCENARIO","HELP"};
     const std::vector<std::vector<std::string>> menuRows={
-        {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
+        {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Test Map (F5)","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
         {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts"},
         {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
         if(menu==0) {
+            if(row==5)testMap();
             if(row==0) {if(dirty)openConfirm("NEW MAP","Discard unsaved changes?",[&]{wantNew=true;});else openModal(M_NEW);}
             if(row==1)openModal(M_OPENPATH);
             if(row==2) {if(saveBundle(outDir+"/"+mapName+".kmp"))openMessage("SAVED",outDir+"/"+mapName+".kmp");else openMessage("SAVE FAILED",saveError);}
             if(row==3)openModal(M_SAVEAS);
             if(row==4) {if(saveMap(outDir+"/"+mapName+".tnt"))openMessage("EXPORTED",outDir+"/"+mapName+".tnt");else openMessage("EXPORT FAILED",saveError);}
-            if(row==5) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
+            if(row==6) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         } else if(menu==1) {
             if(row<2) {SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=row?SDLK_y:SDLK_z;key.key.keysym.mod=KMOD_CTRL;SDL_PushEvent(&key);}
             else if(row==2) {clearArm=true;editMode=MODE_PLACE;}
@@ -1398,6 +1421,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int frameNumber=0;
     bool running = true;
     while (running) {
+        if(const auto result=playtest.poll();result && *result!=0)
+            openMessage("TEST MAP ENDED", "The game exited with an error ("+std::to_string(*result)+"). Your map is still open here.");
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
         kUIScale=std::max(.5f,std::min({preferences.scalePercent/100.f,float(w)/900.0f,float(h)/600.0f}));
@@ -1524,6 +1549,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE && menuOpen>=0) {menuOpen=-1;continue;}
                 if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
                     const int mx=e.button.x,my=e.button.y;
+                    if(my>=25 && my<41 && mx>=756 && mx<872) {testMap();continue;}
                     if(my<22 && mx>=96 && mx<96+int(menuNames.size())*72) {const int item=(mx-96)/72;menuOpen=menuOpen==item?-1:item;continue;}
                     if(menuOpen>=0) {
                         const int column=menuOpen;menuOpen=-1;
@@ -1965,6 +1991,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 openModal(M_RESIZE);     // Scenario -> Resize
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_u) {
                 useOnlyOpen = true;      // Scenario -> Use Only (unit restriction)
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F5) {
+                testMap();
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_c) {
                 checkMap();              // Scenario -> Check Map
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_t) {
@@ -2456,6 +2484,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         static const char* modes[]={"PLACE","SELECT","ERASE","PAN"};
         for(int i=0;i<4;++i)cart::drawButton(ren,400+i*64,25,60,16,modes[i],int(editMode)==i);
         cart::drawButton(ren,668,25,80,16,"REGIONS",regionCanvas);
+        cart::drawButton(ren,756,25,116,16,playtest.running()?"TEST RUNNING":"TEST MAP (F5)",false);
 
         for(size_t i=0;i<menuNames.size();++i) {
             const int x=96+int(i)*72;
@@ -2834,7 +2863,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                         "Erase: remove objects under the pointer. Terrain removal uses Clear Area (K). Changes can be undone with Ctrl+Z.",
                         "Pan: drag to move the view. Right-drag pans in any mode. Mouse wheel zooms around the pointer."};
                     hint=hints[(hx-400)/64];
-                } else if(hx>=668 && hx<748)hint="Regions: draw trigger areas in Place mode; select, move or resize them in Select mode. Enter edits the selected region.";
+                } else if(hx>=756 && hx<872)hint="Test Map (F5): open a temporary snapshot in the game's private lobby without saving or closing this document.";
+                else if(hx>=668 && hx<748)hint="Regions: draw trigger areas in Place mode; select, move or resize them in Select mode. Enter edits the selected region.";
             } else if(hx<kPaletteW && hy>=kMenuH && hy<kPaletteTop) {
                 if(hy<kMenuH+30)hint="Search this browser by name or identifier (Ctrl+F). Escape returns keyboard focus to the map.";
                 else if(hy<kMenuH+53)hint="Click to cycle browser categories or unit roles. Search and filters work together.";
@@ -2868,6 +2898,6 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 #ifndef TAK_CARTOGRAPHER_TEST
 int main(int argc,char** argv) {return cart::runEditor(argc,argv);}
 #ifdef _WIN32
-int WINAPI WinMain(HINSTANCE,HINSTANCE,LPSTR,int) {return main(__argc,__argv);}
+int WINAPI WinMain(HINSTANCE,HINSTANCE,LPSTR,int) {return tak::utf8Main(main);}
 #endif
 #endif

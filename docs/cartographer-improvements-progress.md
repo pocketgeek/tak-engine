@@ -2,7 +2,7 @@
 
 The scope is all six areas in the [usability review](cartographer-usability-review-2026-09-29.md).
 This is an implementation ledger, not a claim that the complete goal is finished.
-Simulation and pathfinding rules are unchanged.
+Existing pathfinding rules are unchanged. Authored CRT maps now use shared client/server setup; ordinary skirmish and campaign setup retain their existing paths.
 Later checkpoints supersede earlier outstanding items; the final Remaining Work
 list tracks what is still unfinished.
 
@@ -779,6 +779,43 @@ The same terrain-cache workflow passed on Ultima Online B1 63x63 in 2.00 seconds
 peak RSS 622,184 KiB; this is a whole-workflow measurement, not a frame-rate claim.
 All Release targets were rebuilt. Simulation and pathfinding code are unchanged.
 
+## Production Test Map checkpoint
+
+The toolbar, File menu and F5 launch an immutable temporary snapshot through the
+normal Release client and private local server. The editor stays open; testing
+does not save/rename the document or mark its undo history clean. A process owner
+reports launch failures, prevents simultaneous tests and removes the temporary
+source after observed game exit. Closing the editor leaves an already-running
+game undisturbed. Verified cache copies remain selectable like downloaded maps.
+
+The documented `--play-map <snapshot.kmp>` production option uses the normal map
+resource whitelist and digest-qualified cache selection. Older cached revisions
+cannot shadow current edits. This adds no standalone simulation/debug hooks.
+Windows launch uses Unicode arguments and CreateProcessW; executable discovery
+covers sibling installs and the packaged macOS app layout.
+
+Protocol 197 initializes authored CRT placements/rules in shared match setup,
+including positions, headings, health, veterancy and initial camera centers.
+Rule/region-only maps retain skirmish monarch starts. Campaign OTA/COB setup opts
+out. Unseated or neutral owners, damaged CRTs, unknown types, off-map units and
+unsupported stat overrides refuse to start with an explanation. They are not
+silently reassigned or dropped; editor validation also explains unsupported
+neutral/stat data. Remaining runtime limits are in `docs/crt-triggers.md`.
+
+Validation: 29 selected Release tests and 21 ASAN/LSAN tests passed, including
+process launch/cleanup, Unicode/space-containing arguments, failed/duplicate
+launches, cache revision selection, authored placements, rule execution and
+client/server state agreement. A real network transfer passed 300 matching ticks
+across host, peer, referee and late spectator (hash `816b529f844de6f8`). A Release
+client launched its own server, opened the private lobby and verified a snapshot
+without debug flags. Native gcc/clang O0/O2/O3 determinism checks retained golden
+`dcef618cd2e4d558`; ARM cross-build legs lacked target headers/libraries.
+
+Five changed Windows source files cross-compiled successfully. Full Windows
+link/runtime validation is still unavailable locally because the configured
+static Windows FFmpeg prefix is missing; no retail game was launched. Linux
+Release targets are rebuilt together. macOS live launch remains unverified.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
@@ -789,8 +826,9 @@ All Release targets were rebuilt. Simulation and pathfinding code are unchanged.
    model previews where useful and additional view controls.
 4. Naval-output clearance and fuller resource checks, plus profiling occupancy
    overlays on dense large scenarios; whole-map movement components are covered.
-5. Expanded typed-rule validation and temporary-map playtesting through the
-   normal client/server launch path; common objective templates are implemented.
+5. Expanded typed-rule validation and optional trigger diagnostics; temporary
+   snapshots now launch through the normal client/server path. Complete custom
+   mission outcomes, neutral owners and stat overrides remain runtime limitations.
 6. Asynchronous save/export and further large-map profiling, broader document/UI
    coverage and final documentation cleanup. Pending terrain work now survives
    unrelated edits; thumbnails, feature art and minimaps load in the background.

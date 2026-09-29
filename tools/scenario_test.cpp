@@ -1,5 +1,7 @@
 #include "sim/scenario.h"
 #include "sim/sim.h"
+#include "sim/matchsetup.h"
+#include "tnt/ota.h"
 #include "hpi/hpi.h"
 #include <iostream>
 #include <stdexcept>
@@ -28,7 +30,7 @@ int main() try {
         check(crt::parse(residue).version==1,"retail record residue rejected");
     }
     auto files=std::make_shared<hpi::Vfs::Files>();
-    for(const char* name:{"soldier","builder"}) {
+    for(const char* name:{"soldier","builder","araking","tarnecro"}) {
         const auto text=std::string("[UNITINFO]{\nunitname=")+name+";\nobjectname="+name+
             ";\nmaxdamage=100;\nfootprintx=1;\nfootprintz=1;\ncanmove=1;\nmaxvelocity=1;\n}";
         (*files)[std::string("units/")+name+".fbi"]={text.begin(),text.end()};
@@ -79,6 +81,50 @@ int main() try {
         check(all.size()==2 && all[1].text=="Remaining 0 items","unset flag message should use zero");
         uint64_t clientHash=0,serverHash=0;human.foldHash(clientHash);server.foldHash(serverHash);
         check(clientHash==serverHash,"message filtering changed deterministic rule state");
+    }
+    {
+        tnt::Map map;map.width=map.height=64;map.blocksX=map.blocksY=32;
+        map.heights.assign(4096,40);map.features.assign(4096,0xffff);
+        map.tileKeys.assign(1024,0);map.tileCols.assign(1024,0);map.tileRows.assign(1024,0);
+        (*files)["kmap/authored.tnt"]=map.save();
+        tnt::Scenario metadata;metadata.hasScenario=true;
+        const auto ota=metadata.write();(*files)["kmap/authored.ota"]={ota.begin(),ota.end()};
+        crt::Scenario scene;scene.players.resize(9);
+        scene.units.push_back({"SOLDIER","first",10,12,200,0,75,100,100,180,3});
+        scene.units.push_back({"builder","second",30,32,200,1});
+        scene.players[0].push_back({{{0,{}}},{{13,{"Player 1","Authored world"}},{2,{"begun","1"}}}});
+        (*files)["kmap/authored.crt"]=crt::write(scene);
+        sim::MatchConfig config;config.vfs=&vfs;config.mapPath="kmap/authored.tnt";
+        config.slots={{true,0,0},{true,1,1}};config.scenarioViewPlayer=0;
+        sim::World client,server;
+        const auto positions=sim::setupMatch(client,registry,config);
+        config.scenarioViewPlayer=-1;sim::setupMatch(server,registry,config);
+        check(client.units().size()==2 && client.units()[0].player==0 && client.units()[1].player==1,"authored placements lost or default monarchs added");
+        check(positions[0]==std::pair<float,float>{168,200},"camera does not start at authored units");
+        check(client.units()[0].hp.toFloat()==75 && client.units()[0].veteran==3,"authored health/veterancy lost");
+        for(int tick=0;tick<60;++tick) {
+            client.tick(1.f/30);server.tick(1.f/30);
+            check(client.stateHash()==server.stateHash(),"authored setup or triggers diverged between peers");
+        }
+        check(client.scenario() && client.scenario()->drainMessages().size()==1,"normal match setup did not attach authored rules");
+        {
+            auto rulesOnly=scene;rulesOnly.units.clear();(*files)["kmap/authored.crt"]=crt::write(rulesOnly);
+            sim::World w;sim::setupMatch(w,registry,config);
+            check(w.scenario() && w.units().size()==2 && w.units()[0].type==registry.find("araking"),
+                  "rules-only map lost its default monarchs");
+        }
+        auto refuses=[&](const crt::Scenario& invalid,const char* message) {
+            (*files)["kmap/authored.crt"]=crt::write(invalid);sim::World w;bool rejected=false;
+            try {sim::setupMatch(w,registry,config);}catch(const std::exception&) {rejected=true;}
+            check(rejected,message);check(w.units().empty(),"failed scenario left partial placements");
+        };
+        auto invalid=scene;invalid.units[1].player=8;refuses(invalid,"neutral placement silently reassigned");
+        invalid=scene;invalid.players[8].push_back(scene.players[0][0]);refuses(invalid,"neutral rules silently reassigned");
+        invalid=scene;invalid.units[0].weapon=150;refuses(invalid,"unsupported weapon override silently ignored");
+        invalid=scene;invalid.units[0].objectName="missing";refuses(invalid,"unknown placed unit silently dropped");
+        invalid=scene;invalid.units[0].x=64;refuses(invalid,"off-map placement accepted");
+        invalid=scene;invalid.customTypes.push_back({"soldier",{200,100,100,0}});refuses(invalid,"custom health override silently ignored");
+        config.slots.resize(1);refuses(scene,"unseated player's placements silently reassigned");
     }
     std::cout<<"PASS: CRT control operands, wildcard counts, region/owner filters and flag messages\n";
     return 0;

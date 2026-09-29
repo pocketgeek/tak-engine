@@ -130,11 +130,19 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
     std::vector<bool> terrainAccepted;terrainAccepted.reserve(units.size());
     std::set<std::string> restrictions,names,regions;
     for(const auto& type:useOnly)restrictions.insert(folded(type));
+    if(!useOnly.empty())issue("Use Only restrictions are saved, but the current match runtime does not enforce them");
+    for(const auto& type:scenario.customTypes)
+        if(type.stat[0]!=100 || type.stat[1]!=100 || type.stat[2]!=100 || type.stat[3]!=0)
+            issue(type.name+": custom unit-type stats are preserved but cannot be played yet");
+    if(scenario.players.size()>8 && !scenario.players[8].empty())
+        issue("Neutral-player rules are preserved but cannot be played yet");
     for(const auto& unit:units) {
         terrainAccepted.push_back(false);
         const auto label=unit.name.empty()?unit.type:unit.name;
         if(!inside(unit.x,unit.z)) {issue(label+": outside map",-1,-1,true);continue;}
         if(unit.player<0 || unit.player>8)issue(label+": invalid owner",unit.x,unit.z,true);
+        if(unit.player==8)issue(label+": neutral-player placement is preserved but cannot be played yet",unit.x,unit.z);
+        if(unit.armor!=100 || unit.weapon!=100)issue(label+": armor/weapon overrides are preserved but cannot be played yet",unit.x,unit.z);
         if(!unit.name.empty() && !names.insert(folded(unit.name)).second)issue(label+": duplicate unique name",unit.x,unit.z,true);
         if(!restrictions.empty() && !restrictions.count(folded(unit.type)))issue(label+": excluded by Use Only",unit.x,unit.z);
         const auto* type=registry.find(folded(unit.type));

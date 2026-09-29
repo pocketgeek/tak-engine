@@ -116,14 +116,7 @@ void writeAtomic(const std::filesystem::path& path, const std::vector<uint8_t>& 
 bool validDigest(const std::string& s) {
     return s.size() == 64 && s.find_first_not_of("0123456789abcdef") == std::string::npos;
 }
-std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {
-    std::string path = hpi::findMap(vfs, mapId);
-    if (path.empty() || mapgen::isGeneratedMapId(path)) throw std::runtime_error("map not installed: " + mapId);
-    path = hpi::MountSet::key(path);
-    if (auto cached = vfs.cachedMap(path)) {
-        auto files = std::make_shared<hpi::Vfs::Files>(*cached->second);
-        return decode(encode(cached->first, std::move(files))->bytes, "");
-    }
+static std::shared_ptr<Package> buildUncached(const hpi::Vfs& vfs, const std::string& path) {
     auto files = std::make_shared<hpi::Vfs::Files>();
     (*files)[path] = vfs.read(path);
     const auto map = tnt::Map::load(files->at(path), path);
@@ -136,6 +129,39 @@ std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {
     }
     for (const auto& resource : featureResources(map, vfs)) (*files)[resource] = vfs.read(resource);
     return decode(encode(path, files)->bytes, "");
+}
+
+std::shared_ptr<Package> importSnapshot(const hpi::Vfs& base, const std::filesystem::path& path) {
+    hpi::Archive archive(path);
+    auto files = std::make_shared<hpi::Vfs::Files>();
+    std::string mapPath;
+    size_t total = 0;
+    for (const auto& entry : archive.entries()) if (!entry.isDirectory) {
+        if (entry.decompressedSize > kMaxBytes - total) throw std::runtime_error("Test map exceeds the map transfer size limit");
+        total += entry.decompressedSize;
+        const auto key = hpi::MountSet::key(entry.path);
+        if (tak::vpath::extension(key) == ".tnt") {
+            if (!mapPath.empty()) throw std::runtime_error("Test Map requires a KMP containing exactly one map");
+            mapPath = key;
+        }
+        if (!files->emplace(key, archive.read(entry)).second)
+            throw std::runtime_error("Test map has duplicate file names");
+    }
+    if (mapPath.empty()) throw std::runtime_error("Test map contains no terrain");
+    hpi::Vfs view(&base);
+    view.setMapFiles(files);
+    return buildUncached(view, mapPath); // snapshot wins over an older cached map at the same path
+}
+
+std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {
+    std::string path = hpi::findMap(vfs, mapId);
+    if (path.empty() || mapgen::isGeneratedMapId(path)) throw std::runtime_error("map not installed: " + mapId);
+    path = hpi::MountSet::key(path);
+    if (auto cached = vfs.cachedMap(path)) {
+        auto files = std::make_shared<hpi::Vfs::Files>(*cached->second);
+        return decode(encode(cached->first, std::move(files))->bytes, "");
+    }
+    return buildUncached(vfs, path);
 }
 std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& digest) {
     if (bytes.empty() || bytes.size() > kMaxBytes) throw std::runtime_error("invalid map package size");

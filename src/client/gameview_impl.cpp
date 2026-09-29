@@ -3630,7 +3630,7 @@
         auto pol = tak::hpi::OverridePolicy(p <= 2 ? p : 2);
         if (pol == policy_ || installRoot_.empty()) return;
         policy_ = pol;
-        vfs_ = tak::hpi::mountRetailRoot(installRoot_, pol);
+        vfs_ = tak::hpi::mountRetailRoot(std::filesystem::u8path(installRoot_), pol);
         registry_ = tak::sim::TypeRegistry{};
         tak::sim::setupRegistry(registry_, vfs_, crusades_);
     }
