@@ -186,6 +186,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   **Enter** opens the selected region's name and coordinates. Editing supports
   undo/redo and periodic recovery copies. **Scenario → Check Map** reports
   terrain, start, mana and scenario issues in a clickable results list.
+  **Scenario → Regenerate from Recipe** restores a generated map's settings;
+  preview changes before accepting them. Reproduction needs the same game assets.
 
 Each ordinary skirmish starts with your Monarch. Build your economy and army;
 Zhon's mobile conjurers replace the conventional keep-based production chain.

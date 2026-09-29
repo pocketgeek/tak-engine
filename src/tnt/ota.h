@@ -21,6 +21,7 @@ struct Scenario {
         "Copyright 1998 Cavedog Entertainment. All rights reserved.";
     std::string missionName;
     std::string missionDescription;
+    std::string generatorRecipe;      // optional TAK engine extension, independent of the description
     std::string kingdom;              // lowercase world: aramon/taros/veruna/zhon
     int sizeW = 0, sizeH = 0;         // in Units (cells>>5); OTA "size = W x H"
     std::string useOnlyUnits;         // "<name>.tdf", or empty when unrestricted
@@ -31,7 +32,8 @@ struct Scenario {
 
     // Parse an .ota (GlobalHeader TDF). Missing fields keep their defaults.
     static Scenario parse(const std::string& text);
-    // Serialize to Cartographer's exact byte layout (CRLF, tab indent, key order).
+    // Retail field layout (CRLF, tab indent, key order), with optional TAK
+    // extensions for generator recipes and otherwise unrepresentable text.
     std::string write() const;
 };
 

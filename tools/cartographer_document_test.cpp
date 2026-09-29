@@ -41,6 +41,8 @@ int main() {
         auto untouched=painted.features;
         check(!cart::stampSection(painted,prefab,16,16,{false}) && painted.features==untouched,"off-map protected stamp does nothing");
         tak::tnt::Scenario meta;meta.kingdom="zhon";
+        meta.generatorRecipe="~gen1~test-metadata";
+        check(tak::tnt::Scenario::parse(meta.write()).generatorRecipe==meta.generatorRecipe,"generator metadata survives OTA roundtrip");
         for(const std::string text : {"First line\nSecond line", "\r\n\t", "  Leading and trailing ; ", "https://example.test/{map}", "été 水 ; test", "}\n[Other]\n{\nkey=value;\n}"}) {
             auto rich=meta;rich.missionDescription=text;rich.missionName=text;
             const auto encoded=rich.write();const auto decoded=tak::tnt::Scenario::parse(encoded);

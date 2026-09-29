@@ -28,6 +28,25 @@ static int generationWorkflow(const char* data) {
     SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    std::vector<uint8_t> originalTerrain;
+    auto readTerrain=[&] {tak::hpi::Archive archive(root/"Generated preview.kmp");for(const auto& entry:archive.entries())if(entry.path.ends_with(".tnt"))return archive.read(entry);return std::vector<uint8_t>{};};
+    auto useSidecarRecipe=[&] {
+        std::vector<tak::hpi::PackFile> files;
+        {
+            tak::hpi::Archive archive(root/"Generated preview.kmp");
+            for(const auto& entry:archive.entries())if(!entry.isDirectory) {
+                auto bytes=archive.read(entry);
+                if(entry.path.ends_with(".ota")) {
+                    auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
+                    files.push_back({entry.path.substr(0,entry.path.size()-4)+".recipe",{metadata.generatorRecipe.begin(),metadata.generatorRecipe.end()}});
+                    metadata.generatorRecipe.clear();const auto ota=metadata.write();bytes={ota.begin(),ota.end()};
+                }
+                files.push_back({entry.path,std::move(bytes)});
+            }
+        }
+        std::string error;
+        if(!cart::writeDocumentFiles(root,{{"Generated preview.kmp",tak::hpi::pack(files)}},error))throw std::runtime_error(error);
+    };
     int stage=0;std::string failure;const auto begun=std::chrono::steady_clock::now();
     const auto result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int) {
         const std::string title=SDL_GetWindowTitle(window);
@@ -40,6 +59,11 @@ static int generationWorkflow(const char* data) {
             e.button.x=int((w/sx/2-36)*sx);e.button.y=int((h/sy/2+93)*sy);SDL_PushEvent(&e);
             e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
         };
+        auto click=[&](int x,int y) {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;
+            e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        auto recipeMenu=[&] {click(320,10);click(330,192);};
         switch(stage) {
         case 0: key(SDLK_n,KMOD_CTRL);++stage;break;
         case 1: text("Generated preview");randomButton();++stage;break;
@@ -59,23 +83,53 @@ static int generationWorkflow(const char* data) {
         case 9: text("123456");key(SDLK_RETURN);++stage;break;
         case 10: if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}break;
         case 11: check(title=="Cartographer -- Generated preview *","accept adopts unsaved generated map");key(SDLK_s,KMOD_CTRL);++stage;break;
-        case 12: check(!title.ends_with(" *"),"generated map saved");key(SDLK_RETURN);++stage;break;
-        case 13: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);++stage;break;}
+        case 12: check(!title.ends_with(" *"),"generated map saved");originalTerrain=readTerrain();key(SDLK_RETURN);key(SDLK_p);++stage;break;
+        case 13: key(SDLK_TAB);text("Authored description");key(SDLK_RETURN);key(SDLK_s,KMOD_CTRL);++stage;break;
+        case 14: key(SDLK_RETURN);key(SDLK_n,KMOD_CTRL);++stage;break; // change in-memory generator seed
+        case 15: useSidecarRecipe();key(SDLK_ESCAPE);key(SDLK_o,KMOD_CTRL);++stage;break;
+        case 16: text((root/"Generated preview.kmp").string());key(SDLK_RETURN);++stage;break;
+        case 17: recipeMenu();++stage;break;
+        case 18: key(SDLK_RETURN);++stage;break;
+        case 19: if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}break;
+        case 20: key(SDLK_s,KMOD_CTRL);++stage;break;
+        case 21: check(readTerrain()==originalTerrain,"restored recipe reproduces saved terrain exactly");key(SDLK_RETURN);recipeMenu();++stage;break;
+        case 22: key(SDLK_RETURN);++stage;break;
+        case 23: if(title.find("[Generated preview]")!=std::string::npos) {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);
+            click(int(w/sx/2-166),int(h/sy/2+212));++stage;
+        }break;
+        case 24: text("789012");for(int i=0;i<8;++i)key(SDLK_TAB);text("16");key(SDLK_TAB);text("12");key(SDLK_RETURN);++stage;break;
+        case 25: if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}break;
+        case 26: check(title.ends_with(" *"),"regeneration is an unsaved edit");key(SDLK_z,KMOD_CTRL);++stage;break;
+        case 27: check(!title.ends_with(" *"),"undo regeneration restores saved revision");key(SDLK_y,KMOD_CTRL);++stage;break;
+        case 28: check(title.ends_with(" *"),"redo regeneration restores new seed");key(SDLK_s,KMOD_CTRL);++stage;break;
+        case 29: key(SDLK_RETURN);key(SDLK_z,KMOD_CTRL);++stage;break;
+        case 30: key(SDLK_s,KMOD_CTRL);++stage;break;
+        case 31: key(SDLK_RETURN);++stage;break;
+        case 32: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);++stage;break;}
         }
         SDL_Delay(1);
     });
     try {
         if(result || !failure.empty())throw std::runtime_error(failure.empty()?"editor failed":failure);
-        if(stage!=14)throw std::runtime_error("generation workflow exited early");
+        if(stage!=33)throw std::runtime_error("generation workflow exited early");
         tak::hpi::Archive archive(root/"Generated preview.kmp");bool found=false;
         for(const auto& entry:archive.entries())if(entry.path.ends_with(".ota")) {
             const auto bytes=archive.read(entry);const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
-            if(metadata.starts.size()!=2 || !metadata.missionDescription.starts_with("Generator recipe: "))throw std::runtime_error("generated metadata missing");
-            const auto params=tak::mapgen::decodeMapId(metadata.missionDescription.substr(18));
+            if(metadata.starts.size()!=2 || metadata.missionDescription!="Authored description")throw std::runtime_error("generated metadata missing");
+            const auto params=tak::mapgen::decodeMapId(metadata.generatorRecipe);
             if(params.seed!=123456 || params.players!=2)throw std::runtime_error("generated recipe differs from chosen options");
             found=true;
         }
         if(!found)throw std::runtime_error("generated metadata absent");
+        if(readTerrain()!=originalTerrain)throw std::runtime_error("undo regeneration did not preserve saved terrain");
+        tak::hpi::Archive backup(root/"Generated preview.kmp.bak");bool variant=false;
+        for(const auto& entry:backup.entries())if(entry.path.ends_with(".ota")) {
+            const auto bytes=backup.read(entry);const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
+            const auto params=tak::mapgen::decodeMapId(metadata.generatorRecipe);
+            variant=params.seed==789012 && params.widthCells==16*32 && params.heightCells==12*32;
+        }
+        if(!variant)throw std::runtime_error("preview Settings did not regenerate with the edited seed");
         fs::remove_all(root);std::cout<<"PASS: background generation, preview/discard, accept and saved recipe\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }

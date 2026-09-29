@@ -54,6 +54,7 @@ Scenario Scenario::parse(const std::string& text) {
     s.copyright = gh->valueOr("copyright", s.copyright);
     s.missionName = gh->valueOr("missionname", "");
     s.missionDescription = gh->valueOr("missiondescription", "");
+    s.generatorRecipe = gh->valueOr("takgeneratorrecipe", "");
     s.kingdom = gh->valueOr("kingdom", "");
     s.useOnlyUnits = gh->valueOr("useonlyunits", "");
     s.hasScenario = gh->numberOr("hasscenario", 0) != 0;
@@ -84,6 +85,7 @@ Scenario Scenario::parse(const std::string& text) {
     restoreText(textFields, "copyright", s.copyright);
     restoreText(textFields, "missionname", s.missionName);
     restoreText(textFields, "missiondescription", s.missionDescription);
+    restoreText(textFields, "takgeneratorrecipe", s.generatorRecipe);
     restoreText(textFields, "kingdom", s.kingdom);
     restoreText(textFields, "useonlyunits", s.useOnlyUnits);
     restoreText(textFields, "type", s.mapType);
@@ -104,6 +106,7 @@ std::string Scenario::write() const {
     line(1, "Copyright=" + legacyText(copyright) + ";");
     line(1, "missionname=" + legacyText(missionName) + ";");
     line(1, "missiondescription=" + legacyText(missionDescription) + ";");
+    if(!generatorRecipe.empty())line(1, "takgeneratorrecipe=" + legacyText(generatorRecipe) + ";");
     line(1, "kingdom=" + legacyText(kingdom) + ";");
     line(1, "numplayers=" + std::to_string(starts.size()) + ";");
     line(1, "size=" + std::to_string(sizeW) + " x " + std::to_string(sizeH) + ";");
@@ -135,6 +138,7 @@ std::string Scenario::write() const {
     preserve("copyright", copyright);
     preserve("missionname", missionName);
     preserve("missiondescription", missionDescription);
+    preserve("takgeneratorrecipe", generatorRecipe);
     preserve("kingdom", kingdom);
     preserve("useonlyunits", useOnlyUnits);
     preserve("type", mapType);

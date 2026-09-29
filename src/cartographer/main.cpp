@@ -281,6 +281,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             auto b = vfs.read(otaPath);
             scenario = tak::tnt::Scenario::parse(std::string(b.begin(), b.end()));
         } catch (const std::exception&) { /* no .ota: keep defaults */ }
+        scenario.generatorRecipe=cart::mapGeneratorRecipe(vfs,mapPath,scenario.generatorRecipe);
     } else {
         int fw = newW > 0 ? newW : 8, fh = newH > 0 ? newH : 8;
         cart::SectionLibrary ns; ns.scan(vfs, newWorld);
@@ -293,6 +294,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         mapName = "Untitled";
         scenario.kingdom = newWorld; scenario.sizeW = fw; scenario.sizeH = fh;
         scenario.missionName = mapName;
+        scenario.generatorRecipe=fm.recipe;
         scenario.starts = std::move(fm.starts);
         mapViewPtr = std::make_unique<MapView>(ren, vfs, std::move(fm.map));
         SDL_SetWindowTitle(win, "Cartographer -- Untitled");
@@ -631,7 +633,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
     enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES };
-    static constexpr int kMaxFields = 9;
+    static constexpr int kMaxFields = 11;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
     std::string mfOriginal[kMaxFields];
@@ -645,12 +647,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int mDropOpen = -1;                       // which field's dropdown list is open (-1 none)
     std::vector<SDL_Rect> mDropRects;         // hit rects of the open list's rows
     SDL_Rect mRandom{};                       // New Map: the RANDOM button rect
+    SDL_Rect mRegenerate{};
     // Dropdown option lists (New Map): map sizes in units, and the four worlds.
     const std::vector<std::string> kSizeOpts = {"8", "16", "24", "32", "48", "64"};
     const std::vector<std::string> kWorldOpts = {"aramon", "veruna", "taros", "zhon", "creon"};
     tak::mapgen::Params generatorParams;
+    bool regeneratingCurrent=false;
     std::array<std::string,4> generatorDraft;
     const std::vector<std::string> generatorLayouts={tak::mapgen::layoutName(0),tak::mapgen::layoutName(1),tak::mapgen::layoutName(2)};
+    const std::vector<std::string> legacyGeneratorLayouts={tak::mapgen::layoutName(0)};
     const char* mLabel[kMaxFields] = {};
     std::string mTitle;
     int mN = 0;                              // active field count
@@ -708,12 +713,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             mLabel[0] = "SCENARIO NAME"; mf[0] = scenario.missionName;        mfNumeric[0] = false;
             mLabel[1] = "DESCRIPTION";   mf[1] = scenario.missionDescription; mfNumeric[1] = false;
         } else if(m==M_GENERATOR) {
-            for(int i=0;i<4;++i)generatorDraft[i]=mf[i];
-            mTitle="RANDOM MAP SETTINGS";mN=8;
+            mTitle="RANDOM MAP SETTINGS";mN=11;
             const auto fields=cart::generatorFields(generatorParams);
             const char* labels[]={"SEED (REPRODUCIBLE)","PLAYERS (2-8)","LAYOUT","TREES (0-255)","ROCKS (0-255)","MANA (0-255)","WATER INTENSITY (0-255)","RELIEF (0-255)"};
             for(int i=0;i<8;++i) {mf[i]=fields[i];mLabel[i]=labels[i];mfNumeric[i]=i!=2;}
-            mfChoices[2]=&generatorLayouts;
+            mfChoices[2]=generatorParams.formatVer<3?&legacyGeneratorLayouts:&generatorLayouts;
+            if(generatorParams.formatVer<3)mLabel[2]="LAYOUT (LEGACY RECIPE)";
+            mLabel[8]="WIDTH (1-64 UNITS)";mf[8]=generatorDraft[1];mfNumeric[8]=true;
+            mLabel[9]="HEIGHT (1-64 UNITS)";mf[9]=generatorDraft[2];mfNumeric[9]=true;
+            mLabel[10]="WORLD";mf[10]=generatorDraft[3];mfNumeric[10]=false;mfChoices[10]=&kWorldOpts;
         } else if(m==M_REGION) {
             editRegion=unitIdx;
             tak::crt::Region region;
@@ -751,7 +759,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             // Name is typed; size + world are dropdowns. RANDOM is a separate
             // button (drawn in the render pass) that generates procedural terrain
             // for the chosen size/world and jumps straight to it.
-            generatorParams.seed=uint64_t(SDL_GetPerformanceCounter());
+            regeneratingCurrent=false;generatorParams.seed=uint64_t(SDL_GetPerformanceCounter());
             mTitle = "NEW MAP"; mN = 4;
             mLabel[0] = "MAP NAME";  mf[0] = "Untitled"; mfNumeric[0] = false;
             mLabel[1] = "WIDTH";     mf[1] = "8";  mfChoices[1] = &kSizeOpts;
@@ -790,6 +798,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     std::string generatingName,generatingWorld;
     bool cancelGeneration=false,quitAfterGeneration=false;
     auto adoptFreshMap=[&](FreshMap fm,const std::string& nm,const std::string& wld) {
+        const auto previousName=scenario.missionName,previousDescription=scenario.missionDescription;
         sections.scan(vfs,wld);features.scan(vfs,wld);
         for(auto& [key,texture]:featTex)if(texture)SDL_DestroyTexture(texture);
         featTex.clear();paletteKey.clear();
@@ -801,12 +810,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         scenario = tak::tnt::Scenario{};
         scenario.kingdom = wld; scenario.sizeW = mapView.map().width/32; scenario.sizeH = mapView.map().height/32;
         scenario.missionName = nm;
+        scenario.generatorRecipe=fm.recipe;
         if(!fm.recipe.empty())scenario.missionDescription="Generator recipe: "+fm.recipe;
+        if(regeneratingCurrent) {scenario.missionName=previousName;scenario.missionDescription=previousDescription;}
         scenario.starts = std::move(fm.starts);
         mapName = nm;
         selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
         regionDrag.cancel();regionSelected=-1;
-        units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();resetHistory=true;
+        units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
+        resetHistory=!regeneratingCurrent;regeneratingCurrent=false;
         selected = sections.list().empty() ? -1 : 0;
         selectedFeat = features.list().empty() ? -1 : 0;
         paletteScroll = 0;
@@ -825,6 +837,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const char* worlds[]={"aramon","taros","veruna","zhon","creon"};
             for(uint8_t i=0;i<5;++i)if(wld==worlds[i])params.mapType=i;
             params=tak::mapgen::sanitize(params);
+            generatorParams=params;
             generatingName=nm;generatingWorld=wld;cancelGeneration=quitAfterGeneration=false;
             // The busy modal prevents VFS replacement until this read-only job ends.
             generatorJob=std::async(std::launch::async,[&,params,wld] {
@@ -846,11 +859,25 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             adoptFreshMap(std::move(map),nm,wld);
         } catch(const std::exception& error) {openMessage("NEW MAP FAILED",error.what());}
     };
+    auto openGeneratorRecipe=[&]() {
+        std::string error;auto params=generatorParams;
+        if(!cart::restoreGeneratorRecipe(scenario.generatorRecipe,scenario.missionDescription,params,error)) {openMessage("GENERATOR RECIPE",error);return;}
+        generatorParams=params;
+        regeneratingCurrent=true;
+        const char* worlds[]={"aramon","taros","veruna","zhon","creon"};
+        generatorDraft={mapName,std::to_string(params.widthCells/32),std::to_string(params.heightCells/32),worlds[params.mapType]};
+        openModal(M_GENERATOR);
+    };
     auto applyModal = [&]() {
         const auto applying=modal;
         if(modal==M_GENERATOR) {
             cart::GeneratorFields fields;for(int i=0;i<8;++i)fields[i]=mf[i];std::string error;
             if(!cart::parseGeneratorFields(fields,generatorParams,error)) {openMessage("GENERATOR SETTINGS",error);return;}
+            for(int i=8;i<10;++i) {
+                int units=0;const auto parsed=std::from_chars(mf[i].data(),mf[i].data()+mf[i].size(),units);
+                if(parsed.ec!=std::errc{} || parsed.ptr!=mf[i].data()+mf[i].size() || units<1 || units>64) {openMessage("GENERATOR SETTINGS","Width and height must be whole numbers from 1 to 64. The preview shows the generator's adjusted size.");return;}
+            }
+            generatorDraft[1]=mf[8];generatorDraft[2]=mf[9];generatorDraft[3]=mf[10];
             applyNewMap(true);return;
         } else if(modal==M_REGION) {
             int cells[4];
@@ -1089,7 +1116,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     }
                 } else if(lowerText(pathText(disk.extension()))==".tnt") {
                     const auto base=pathText(disk.stem());path="kmap/"+base+".tnt";
-                    for(const char* ext:{".tnt",".ota",".crt",".tdf"}) {
+                    for(const char* ext:{".tnt",".ota",".crt",".tdf",".recipe"}) {
                         const auto input=disk.parent_path()/std::filesystem::u8path(base+ext);std::ifstream stream(input,std::ios::binary);
                         if(stream)(*files)[tak::hpi::MountSet::key("kmap/"+base+ext)]={std::istreambuf_iterator<char>(stream),{}};
                     }
@@ -1103,6 +1130,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto stem=path.substr(0,path.rfind('.'));
             tak::tnt::Scenario nextMetadata;
             if(nextVfs.has(stem+".ota")) {const auto data=nextVfs.read(stem+".ota");nextMetadata=tak::tnt::Scenario::parse(std::string(data.begin(),data.end()));}
+            nextMetadata.generatorRecipe=cart::mapGeneratorRecipe(nextVfs,path,nextMetadata.generatorRecipe);
             auto nextScenario=cart::loadScenario(nextVfs,stem+".crt");
             auto nextUnits=cart::toPlaced(nextScenario);
             std::set<std::string> nextUseOnly;
@@ -1133,7 +1161,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
         {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selected units","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI"},
-        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results"},
+        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
         if(menu==0) {
@@ -1181,6 +1209,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==4)openScripting();
             if(row==6) {regionsOpen=true;regionSelected=scen.regions.empty()?-1:0;}
             if(row==7) {modal=M_ISSUES;issueScroll=0;}
+            if(row==8)openGeneratorRecipe();
             if(row==5) {if(!mapIssues.empty())issueIndex=(issueIndex+1)%mapIssues.size();showMapIssue();}
         } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
             "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move the selected units. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
@@ -1339,6 +1368,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 } else continue;
             }
             if(modal==M_GENERATED && generatedPreview) {
+                if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,mRegenerate)) {
+                    generatedPreview.reset();generatedTexture.reset();openModal(M_GENERATOR);continue;
+                }
                 const bool accept=(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_RETURN) ||
                     (e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,mOK));
                 const bool cancel=e.type==SDL_QUIT || (e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) ||
@@ -1536,7 +1568,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                         continue;
                     }
                     if (cart::pointIn(mx, my, mOK)) { applyModal(); continue; }
-                    if (modal == M_NEW && cart::pointIn(mx, my, mRandom)) { openModal(M_GENERATOR); continue; }
+                    if (modal == M_NEW && cart::pointIn(mx, my, mRandom)) {
+                        for(int i=0;i<4;++i)generatorDraft[i]=mf[i];
+                        openModal(M_GENERATOR); continue;
+                    }
                     if (cart::pointIn(mx, my, mCancel)) { modal = M_NONE; SDL_StopTextInput(); continue; }
                     // A choice field opens its dropdown; a text field takes focus.
                     for (int i = 0; i < mN; ++i)
@@ -2377,7 +2412,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 cart::drawText(ren,std::to_string(start.number),int(x)+5,int(y)-3,1,255,240,120);
             }
             cart::drawText(ren,std::to_string(map.width/32)+" x "+std::to_string(map.height/32)+"  "+std::to_string(generatedPreview->starts.size())+" PLAYERS",ct.x,ct.y,1,230,235,245);
-            cart::drawText(ren,"Your current map changes only when accepted.",ct.x,ct.y+370,1,195,210,225);
+            cart::drawText(ren,"Accept replaces terrain, objects, starts and scenario rules.",ct.x,ct.y+370,1,195,210,225);
+            cart::drawText(ren,"Discard keeps your current map unchanged.",ct.x,ct.y+386,1,195,210,225);
+            mRegenerate=cart::drawButton(ren,ct.x,ct.y+ct.h-20,100,18,"SETTINGS",false);
             mOK=cart::drawButton(ren,ct.x+ct.w-150,ct.y+ct.h-20,70,18,"ACCEPT",true);
             mCancel=cart::drawButton(ren,ct.x+ct.w-74,ct.y+ct.h-20,70,18,"DISCARD",false);
         } else if(modal==M_ISSUES) {

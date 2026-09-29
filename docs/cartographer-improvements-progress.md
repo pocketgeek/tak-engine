@@ -324,6 +324,31 @@ an Ultima Online B1 (63×63) snapshot. One Release run took 2.36 seconds end to 
 with 823 MiB peak RSS, including fixture preparation, opening, two analyses and
 shutdown; this is a workflow measurement, not the isolated validation cost.
 
+## Generator recipe restoration checkpoint
+
+Scenario > Regenerate from Recipe restores seed, player count, layout, densities,
+dimensions and world. The settings dialog now exposes dimensions/world directly;
+the preview shows the actual sanitized dimensions. Its Settings button returns
+to those inputs for another preview. Accept replaces terrain/objects/starts/rules;
+Discard preserves the current map. Regeneration of an existing document is one
+undoable edit and preserves its authored name/description.
+
+Recipes now have an optional `takgeneratorrecipe` OTA metadata field, independent
+of editable descriptions. Existing editor description recipes and game-created
+`.recipe` sidecars are imported. Malformed/non-roundtripping recipes fail visibly
+instead of using the decoder's default seed. New maps, save/reopen, undo/recovery
+and loose/KMP exports preserve the metadata. Reproduction assumes the same game
+assets; the engine generator and simulation were not changed.
+
+The generation UI workflow saves a generated map, edits its description, converts
+the fixture to the game's sidecar storage form, resets the in-memory seed, reopens
+and regenerates byte-identical TNT data. It then changes the seed and dimensions
+through Preview > Settings and verifies save, undo and redo. All Release targets
+were rebuilt after extending shared OTA metadata. Platform CI for the preceding
+region/validation checkpoint passed on Windows, macOS and Linux.
+The focused Release editor/map-transfer/generator/campaign suite passes (14 tests),
+as do all eight editor tests under AddressSanitizer/LeakSanitizer.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect concurrent
@@ -333,7 +358,7 @@ shutdown; this is a workflow measurement, not the isolated validation cost.
 3. Browser/selection interaction coverage, feature selection,
    model previews where useful, additional view controls and live minimap refresh.
 4. Placed-unit occupancy in overlays/validation, exhaustive land/water component
-   and naval-output checks, fuller resource checks and reproducible generator controls.
+   and naval-output checks, and fuller resource checks.
 5. Expanded typed-rule validation, rule names/objective templates,
    temporary-map playtesting through the normal client/server launch path.
 6. Coalescing pending terrain work, asynchronous expensive operations, large-map

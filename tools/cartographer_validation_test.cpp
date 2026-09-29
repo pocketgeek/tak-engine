@@ -50,6 +50,11 @@ int main() {
         check(cart::parseGeneratorFields(fields,parsed,generatorError),"generator fields parse");
         check(tak::mapgen::encodeMapId(params)==tak::mapgen::encodeMapId(parsed),"all generator options roundtrip exactly");
         const auto original=tak::mapgen::encodeMapId(parsed);
+        tak::mapgen::Params restored;
+        check(cart::restoreGeneratorRecipe(original,"A description edited by the author",restored,generatorError) && tak::mapgen::encodeMapId(restored)==original,"saved generator recipe restores independently of description");
+        check(cart::restoreGeneratorRecipe("","Generator recipe: "+original+"\nAuthor notes",restored,generatorError),"legacy description recipe restores");
+        check(!cart::restoreGeneratorRecipe(original+"garbage","Generator recipe: "+original,restored,generatorError) && tak::mapgen::encodeMapId(restored)==original,"invalid recipe does not fall back to defaults or a different description recipe");
+        check(!cart::restoreGeneratorRecipe("","No recipe",restored,generatorError),"missing recipe gives a visible error");
         fields[0]="18446744073709551616";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError) && tak::mapgen::encodeMapId(parsed)==original,"seed overflow leaves settings unchanged");
         fields=cart::generatorFields(params);fields[3]="256";
@@ -72,6 +77,9 @@ int main() {
               first.map.tileKeys==second.map.tileKeys && first.map.tileCols==second.map.tileCols && first.map.tileRows==second.map.tileRows,
               "editor settings reproduce actual generator output");
         auto files=std::make_shared<tak::hpi::Vfs::Files>();
+        (*files)["kmap/recipe-test.recipe"]={original.begin(),original.end()};vfs.setMapFiles(files);
+        check(cart::mapGeneratorRecipe(vfs,"kmap/recipe-test.tnt","")==original,"game-generated map recipe sidecar imports");
+        check(cart::mapGeneratorRecipe(vfs,"kmap/recipe-test.tnt","embedded")=="embedded","explicit metadata recipe wins over sidecar");
         const std::string fbi="[UNITINFO] { \nUnitName=TEST;\nName=Test Unit;\nFootprintX=1;\nFootprintZ=1;\nMaxSlope=20;\nMaxWaterDepth=0;\nCanMove=1;\nMaxVelocity=1;\n }";
         (*files)["units/test.fbi"]={fbi.begin(),fbi.end()};vfs.setMapFiles(files);registry.loadDir(vfs,"units");
         check(registry.find("test")!=nullptr,"synthetic unit loaded");

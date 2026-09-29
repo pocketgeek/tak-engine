@@ -1,6 +1,16 @@
 #include "cartographer/generator.h"
+#include "hpi/hpi.h"
+#include "util/virtualpath.h"
 #include <charconv>
+#include <algorithm>
+#include <cctype>
 namespace cart {
+std::string mapGeneratorRecipe(const tak::hpi::Vfs& vfs,const std::string& mapPath,const std::string& embedded) {
+    if(!embedded.empty())return embedded;
+    const auto path=tak::vpath::replaceExtension(mapPath,".recipe");
+    if(!vfs.has(path))return {};
+    const auto bytes=vfs.read(path);return {bytes.begin(),bytes.end()};
+}
 GeneratorFields generatorFields(const tak::mapgen::Params& p) {
     return {std::to_string(p.seed),std::to_string(p.players),tak::mapgen::layoutName(p.layout),
         std::to_string(p.treeDensity),std::to_string(p.rockDensity),std::to_string(p.manaDensity),
@@ -24,5 +34,21 @@ bool parseGeneratorFields(const GeneratorFields& f,tak::mapgen::Params& p,std::s
         *density[i-3]=uint8_t(value);
     }
     p=next;error.clear();return true;
+}
+bool restoreGeneratorRecipe(const std::string& recipe,const std::string& description,
+                            tak::mapgen::Params& params,std::string& error) {
+    auto encoded=recipe;
+    constexpr std::string_view prefix="Generator recipe: ";
+    if(encoded.empty() && description.starts_with(prefix))encoded=description.substr(prefix.size(),description.find_first_of("\r\n")-prefix.size());
+    if(encoded.empty()) {error="This map has no saved generator recipe. Use New Map > Random to create one.";return false;}
+    // decodeMapId intentionally supplies defaults on malformed input. The editor
+    // must reject that fallback: otherwise Regenerate could replace a map with an
+    // unrelated seed while appearing to restore its original settings.
+    std::transform(encoded.begin(),encoded.end(),encoded.begin(),[](unsigned char c){return char(std::tolower(c));});
+    const auto restored=tak::mapgen::decodeMapId(encoded);
+    if(!tak::mapgen::isGeneratedMapId(encoded) || tak::mapgen::encodeMapId(restored)!=encoded) {
+        error="The saved generator recipe is malformed or cannot be restored exactly.";return false;
+    }
+    params=restored;error.clear();return true;
 }
 }
