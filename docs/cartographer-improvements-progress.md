@@ -394,13 +394,31 @@ Unicode destination metadata. All eight editor tests pass in Release and under
 AddressSanitizer/LeakSanitizer. Corrupt/truncated archives and additional
 save/resize failure interactions still need broader coverage.
 
+## Feature selection checkpoint
+
+Features now support click/Shift-click and box selection in Select mode, group
+movement, Ctrl+C/X/V/D, Delete, Enter for identifiers/cell coordinates, and
+View → Frame Selection. Selected cells have visible outlines. Clipboard entries
+store names rather than map-local numeric IDs, allowing paste across documents.
+Moves and pastes reject the whole operation if any target would overwrite an
+unselected feature, terrain marker or map boundary. Overlapping cells within a
+moving selection are supported. Terrain heights/art remain untouched.
+
+Selection resets on document replacement, resize and undo/redo. Gesture edits use the
+existing history transactions. Tests cover feature-name remapping, protected
+markers, atomic collision rejection, group dragging, deletion, undo/redo, save
+and reopening. All nine editor tests pass in Release and under
+AddressSanitizer/LeakSanitizer. Feature operations live
+in a separate module; sprite-extent picking and a richer feature inspector are
+still opportunities beyond the current cell-based selection.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated
    recovery archives and additional cleanup failure paths.
 2. Better font/Unicode, additional layout preferences,
    and verification of cross-platform packaging/launch usability.
-3. Browser/selection interaction coverage, feature selection,
+3. Broader browser/selection interaction coverage,
    model previews where useful, additional view controls and live minimap refresh.
 4. Placed-unit occupancy in overlays/validation, exhaustive land/water component
    and naval-output checks, and fuller resource checks.

@@ -2,6 +2,7 @@
 #include "cartographer/document.h"
 #include "cartographer/history.h"
 #include "cartographer/selection.h"
+#include "cartographer/featureselection.h"
 #include "cartographer/sections.h"
 #include "cartographer/preferences.h"
 #include <random>
@@ -46,6 +47,21 @@ int main() {
         tak::tnt::Map map;map.width=map.height=32;map.blocksX=map.blocksY=16;
         map.heights.resize(1024,60);map.features.resize(1024,0xffff);
         map.tileKeys.resize(256);map.tileCols.resize(256);map.tileRows.resize(256);
+        auto featureMap=map;featureMap.featureNames={"Tree","Rock"};featureMap.features[33]=0;featureMap.features[34]=1;
+        featureMap.features[35]=0xFFFB;
+        cart::FeatureSelection features;features.box(featureMap,0,0,5,5,false);
+        check(features.cells==std::set<int>{33,34},"feature box excludes terrain markers");
+        const auto originalFeatures=featureMap.features;
+        check(!features.move(featureMap,1,0) && featureMap.features==originalFeatures,"group cannot overwrite terrain marker");
+        check(features.move(featureMap,0,1) && featureMap.features[65]==0 && featureMap.features[66]==1 && featureMap.features[33]==0xFFFF,"group move preserves types and spacing");
+        check(features.move(featureMap,1,0) && featureMap.features[66]==0 && featureMap.features[67]==1 && featureMap.features[65]==0xFFFF,"overlapping selected cells move without losing a feature");
+        features.copy(featureMap);check(features.remove(featureMap),"delete selected features");
+        check(featureMap.features[35]==0xFFFB,"feature deletion preserves terrain markers");
+        featureMap.featureNames={"Rock","Tree"};
+        check(features.paste(featureMap,5,5) && featureMap.features[165]==1 && featureMap.features[166]==0,"clipboard resolves feature names across map tables");
+        const auto beforeRejected=featureMap.features;
+        check(!features.paste(featureMap,5,5) && featureMap.features==beforeRejected,"paste collision is atomic");
+        check(!features.paste(featureMap,31,31) && featureMap.features==beforeRejected,"off-map paste is atomic");
         auto painted=map,prefab=map;
         painted.featureNames={"Tree"};painted.features[0]=0;painted.features[1]=0xFFFB;
         prefab.featureNames={"Rock"};prefab.features[0]=0xFFFF;prefab.features[1]=0;prefab.features[2]=0xFFFB;

@@ -220,6 +220,65 @@ static int regionWorkflow(const char* data) {
         fs::remove_all(root);std::cout<<"PASS: region canvas drawing, movement, handles, cancellation, undo/redo and reopen\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }
+static int featureWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-features-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);
+    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    auto map=tak::tnt::Map::load(vfs.read(path),path);
+    if(map.featureNames.empty())return 2;
+    map.features.assign(map.features.size(),0xFFFF);map.features[10*map.width+10]=0;map.features[10*map.width+12]=0;
+    tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"Features.kmp",cart::documentFiles(map,metadata,{}, {},{},"Features"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    bool failed=false;int lastFrame=0;
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto mouse=[&](Uint32 type,int x,int y) {
+            SDL_Event e{};e.type=type;
+            if(type==SDL_MOUSEMOTION) {e.motion.state=SDL_BUTTON_LMASK;e.motion.x=int(x*sx);e.motion.y=int(y*sy);}
+            else {e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);}
+            SDL_PushEvent(&e);
+        };
+        auto click=[&](int x,int y) {mouse(SDL_MOUSEBUTTONDOWN,x,y);mouse(SDL_MOUSEBUTTONUP,x,y);};
+        auto drag=[&](int x,int y,int tx,int ty) {mouse(SDL_MOUSEBUTTONDOWN,x,y);mouse(SDL_MOUSEMOTION,tx,ty);mouse(SDL_MOUSEBUTTONUP,tx,ty);};
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text((root/"Features.kmp").string());key(SDLK_RETURN);break;
+        case 2:key(SDLK_1);click(180,32);click(480,32);break;
+        case 3:drag(345,189,425,237);break; // select both features
+        case 4:drag(361,205,393,253);break; // move two columns, three rows
+        case 5:failed|=!dirty;key(SDLK_z,KMOD_CTRL);break;
+        case 6:failed|=dirty;key(SDLK_y,KMOD_CTRL);break;
+        case 7:failed|=!dirty;drag(377,237,457,285);break;
+        case 8:key(SDLK_DELETE);break;
+        case 9:key(SDLK_z,KMOD_CTRL);break;
+        case 10:key(SDLK_s,KMOD_CTRL);break;
+        case 11:failed|=dirty;key(SDLK_RETURN);key(SDLK_o,KMOD_CTRL);break;
+        case 12:text((root/"Features.kmp").string());key(SDLK_RETURN);break;
+        case 13:failed|=dirty;key(SDLK_s,KMOD_CTRL);break;
+        case 14:key(SDLK_RETURN);break;
+        case 15:{SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);break;}
+        }
+    });
+    try {
+        if(result || failed || lastFrame<15 || lastFrame>16)throw std::runtime_error("feature UI workflow failed at frame "+std::to_string(lastFrame));
+        tak::hpi::Archive archive(root/"Features.kmp");bool found=false;
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".tnt")) {
+            const auto saved=tak::tnt::Map::load(archive.read(entry),entry.path);
+            auto expected=map.features;expected[10*map.width+10]=expected[10*map.width+12]=0xFFFF;
+            expected[13*map.width+12]=expected[13*map.width+14]=0;
+            if(saved.features!=expected)throw std::runtime_error("feature group positions not preserved");
+            found=true;
+        }
+        if(!found)throw std::runtime_error("saved feature terrain missing");
+        fs::remove_all(root);std::cout<<"PASS: feature box selection, group drag, delete, undo/redo, save and reopen\n";return 0;
+    } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
+}
 static int validationWorkflow(const char* data,const char* mapName="Ulasem Arena") {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-validation-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -321,6 +380,7 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
+    if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);

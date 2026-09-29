@@ -184,7 +184,9 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   positions, named regions, and scenario rules, and exports `.kmp` map bundles.
   The **Regions** tool draws, moves and resizes trigger areas on the map;
   **Enter** opens the selected region's name and coordinates. Editing supports
-  undo/redo and periodic recovery copies. **Scenario → Check Map** reports
+  undo/redo and periodic recovery copies. Units and features support box selection,
+  group movement, copy/paste and deletion; feature moves protect occupied cells.
+  **Scenario → Check Map** reports
   terrain, start, mana and scenario issues in a clickable results list.
   **Scenario → Regenerate from Recipe** restores a generated map's settings;
   preview changes before accepting them. Reproduction needs the same game assets.

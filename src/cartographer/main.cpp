@@ -18,6 +18,7 @@
 #include "cartographer/history.h"
 #include "cartographer/textedit.h"
 #include "cartographer/selection.h"
+#include "cartographer/featureselection.h"
 #include "cartographer/validation.h"
 #include "cartographer/regions.h"
 #include "cartographer/generator.h"
@@ -539,6 +540,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     enum EditMode { MODE_PLACE,MODE_SELECT,MODE_ERASE,MODE_PAN };
     EditMode editMode=MODE_PLACE;
     cart::UnitSelection selectedUnits;
+    cart::FeatureSelection selectedFeatures;
     bool selectionBox=false,selectionAppend=false;
     int selectionX0=0,selectionZ0=0,selectionX1=0,selectionZ1=0;
     std::string paletteSearch;
@@ -824,7 +826,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(regeneratingCurrent) {scenario.missionName=previousName;scenario.missionDescription=previousDescription;}
         scenario.starts = std::move(fm.starts);
         mapName = nm;
-        selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
+        selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
         regionDrag.cancel();regionSelected=-1;
         units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
         resetHistory=!regeneratingCurrent;regeneratingCurrent=false;
@@ -942,6 +944,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
             cart::resizeMap(mapView.editMap(), mapView.compositor(),
                             cart::loadWorldPalette(vfs, wld), wu, hu);
+            selectedFeatures.clear();
             scenario.sizeW = wu; scenario.sizeH = hu;
             mapView.tilesEdited();
             edited = true; dirty = true; historyPending=true;
@@ -1167,7 +1170,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             thumbs.clear();
             for(auto& [key,t]:featTex)if(t)SDL_DestroyTexture(t);
             featTex.clear();
-            selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
+            selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
             regionDrag.cancel();regionSelected=-1;
             selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
             edited=false;overlayInvalidated=true;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
@@ -1210,15 +1213,17 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==11) {overlayTexture.reset();overlayLegend.clear();}
             if(row==4) {
                 bool any=false;float x0=0,z0=0,x1=0,z1=0;
-                for(int i:selectedUnits.indices)if(i>=0 && i<int(units.size())) {
-                    const auto& u=units[i];
-                    if(!any) {x0=x1=u.x;z0=z1=u.z;any=true;}
-                    else {x0=std::min(x0,u.x);x1=std::max(x1,u.x);z0=std::min(z0,u.z);z1=std::max(z1,u.z);}
-                }
+                auto include=[&](float x,float z) {
+                    if(!any) {x0=x1=x;z0=z1=z;any=true;}
+                    else {x0=std::min(x0,x);x1=std::max(x1,x);z0=std::min(z0,z);z1=std::max(z1,z);}
+                };
+                if(tool==FEATURES) {
+                    for(int i:selectedFeatures.cells)if(cart::FeatureSelection::selectable(mapView.map(),i))include(float(i%mapView.map().width*16),float(i/mapView.map().width*16));
+                } else for(int i:selectedUnits.indices)if(i>=0 && i<int(units.size()))include(units[i].x,units[i].z);
                 if(any) {
                     const float zoom=std::min({1.f,float(w)/std::max(128.f,x1-x0+128),float(h)/std::max(128.f,z1-z0+128)});
                     mapView.setZoom(zoom);mapView.setOffset((x0+x1)/2-w/(2*zoom),(z0+z1)/2-h/(2*zoom));
-                } else openMessage("FRAME SELECTION","Select one or more units first.");
+                } else openMessage("FRAME SELECTION","Select one or more units or features first.");
             }
             if(row==5)viewBookmark=ViewBookmark{mapView.offX(),mapView.offY(),mapView.zoom()};
             if(row==6) {
@@ -1236,7 +1241,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==8)openGeneratorRecipe();
             if(row==5) {if(!mapIssues.empty())issueIndex=(issueIndex+1)%mapIssues.size();showMapIssue();}
         } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
-            "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move the selected units. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
+            "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
     };
 
     bool recoveryFilesPresent=!recoveredFrom.empty();
@@ -1270,7 +1275,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         scen=tak::crt::parse(state->scenario);units=cart::toPlaced(scen);
         regionDrag.cancel();regionSelected=-1;
         useOnly=state->useOnly;mapName=state->name;dirty=history.dirty();edited=true;
-        selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
+        selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
         editRule=nullptr;draggingUnit=draggingStart=-1;scrGroup=-1;
         const auto nextWorld=scenario.kingdom.empty()?"aramon":scenario.kingdom;
         if(nextWorld!=world) {
@@ -1741,6 +1746,29 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     continue;
                 }
             }
+            if(e.type==SDL_KEYDOWN && tool==FEATURES && !regionCanvas) {
+                const auto key=e.key.keysym.sym;const bool ctrl=e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI);
+                if(ctrl && (key==SDLK_c || key==SDLK_x || key==SDLK_d))selectedFeatures.copy(mapView.map());
+                if(key==SDLK_DELETE || (ctrl && key==SDLK_x)) {
+                    if(selectedFeatures.remove(mapView.editMap())) {edited=dirty=historyPending=true;}continue;
+                }
+                if(ctrl && (key==SDLK_v || key==SDLK_d)) {
+                    int mx,my;SDL_GetMouseState(&mx,&my);int cx=0,cz=0;
+                    if(!mouseCell(int(mx/kUIScale),int(my/kUIScale),cx,cz)) {cx=int((mapView.offX()+canvasW/(2*mapView.zoom()))/16);cz=int((mapView.offY()+canvasH/(2*mapView.zoom()))/16);}
+                    if(selectedFeatures.paste(mapView.editMap(),cx,cz)) {edited=dirty=historyPending=true;editMode=MODE_SELECT;}
+                    else if(!selectedFeatures.clipboard.empty())openMessage("FEATURES NOT PASTED","Choose an empty area large enough for the whole group. Existing features and terrain markers are protected.");
+                    continue;
+                }
+                if(ctrl && key==SDLK_c)continue;
+                if(key==SDLK_RETURN && !selectedFeatures.cells.empty()) {
+                    std::string info=std::to_string(selectedFeatures.cells.size())+" selected feature(s).";
+                    for(int i:selectedFeatures.cells)if(cart::FeatureSelection::selectable(mapView.map(),i)) {
+                        info+="\n"+mapView.map().featureNames[mapView.map().features[i]]+" ("+std::to_string(i%mapView.map().width)+", "+std::to_string(i/mapView.map().width)+")";
+                        if(info.size()>700) {info+="\n...";break;}
+                    }
+                    openMessage("SELECTED FEATURES",info);continue;
+                }
+            }
             if(e.type==SDL_KEYDOWN && tool==UNITS && !regionCanvas) {
                 const auto key=e.key.keysym.sym;const bool ctrl=e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI);
                 if(ctrl && (key==SDLK_c || key==SDLK_x || key==SDLK_d))selectedUnits.copy(units);
@@ -1874,6 +1902,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 }
                 if(editMode==MODE_SELECT && tool!=UNITS) {
                     if(tool==STARTS)draggingStart=startAt(e.button.x,e.button.y);
+                    if(tool==FEATURES) {
+                        int cx,cz;if(mouseCell(e.button.x,e.button.y,cx,cz)) {
+                            const int i=cz*mapView.map().width+cx;
+                            if(cart::FeatureSelection::selectable(mapView.map(),i)) {
+                                selectedFeatures.click(i,SDL_GetModState()&KMOD_SHIFT);
+                                selectedFeatures.dragging=true;selectedFeatures.dragX=cx;selectedFeatures.dragZ=cz;
+                            } else {selectionBox=true;selectionAppend=SDL_GetModState()&KMOD_SHIFT;selectionX0=selectionX1=e.button.x;selectionZ0=selectionZ1=e.button.y;}
+                        }
+                    }
                     continue;
                 }
                 if(editMode==MODE_SELECT && tool==UNITS) {
@@ -1928,10 +1965,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if(selectionBox) {
                     auto wx=[&](int x){return mapView.offX()+(x-kPaletteW)/mapView.zoom();};
                     auto wz=[&](int z){return mapView.offY()+(z-kMenuH)/mapView.zoom();};
-                    selectedUnits.box(units,wx(selectionX0),wz(selectionZ0),wx(selectionX1),wz(selectionZ1),selectionAppend);
+                    if(tool==FEATURES)selectedFeatures.box(mapView.map(),int(std::floor(wx(selectionX0)/16)),int(std::floor(wz(selectionZ0)/16)),int(std::floor(wx(selectionX1)/16)),int(std::floor(wz(selectionZ1)/16)),selectionAppend);
+                    else selectedUnits.box(units,wx(selectionX0),wz(selectionZ0),wx(selectionX1),wz(selectionZ1),selectionAppend);
                     selectionBox=false;
                 }
-                selectedUnits.dragOrigins.clear();
+                selectedUnits.dragOrigins.clear();selectedFeatures.dragging=false;
                 lastStampX=lastStampY=-1;
                 draggingStart = -1; draggingUnit = -1;
                 if (clearDrag) {   // Clear Area: confirm, then remove units + features
@@ -1951,7 +1989,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                                     "Remove all units and features in this area?  (" +
                                         std::to_string(nUnits) + " unit(s), " +
                                         std::to_string(cells) + " cells)",
-                                    [&units, &mapView, &edited, &unitsEdited, &dirty, &historyPending, &selectedUnits,
+                                    [&units, &mapView, &edited, &unitsEdited, &dirty, &historyPending, &selectedUnits, &selectedFeatures,
                                      lox, hix, loz, hiz]() {
                             auto& m = mapView.editMap();
                             for (int z = loz; z <= hiz; ++z)
@@ -1962,7 +2000,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                                     int ux = int(u.x / 16.0f), uz = int(u.z / 16.0f);
                                     return ux >= lox && ux <= hix && uz >= loz && uz <= hiz;
                                 }), units.end());
-                            selectedUnits.indices.clear();
+                            selectedUnits.indices.clear();selectedFeatures.clear();
                             edited = true; unitsEdited = true; dirty = true; historyPending=true;
                         });
                     }
@@ -1975,6 +2013,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if(editMode==MODE_ERASE) {if(tool==FEATURES)placeFeature(e.motion.x,e.motion.y,true);continue;}
                 if(editMode==MODE_SELECT && tool!=UNITS) {
                     int cx,cz;
+                    if(tool==FEATURES) {
+                        if(selectionBox) {selectionX1=e.motion.x;selectionZ1=e.motion.y;}
+                        else if(mouseCell(e.motion.x,e.motion.y,cx,cz) && selectedFeatures.drag(mapView.editMap(),cx,cz))edited=dirty=historyPending=true;
+                    }
                     if(tool==STARTS && draggingStart>=0 && mouseCell(e.motion.x,e.motion.y,cx,cz)) {
                         scenario.starts[size_t(draggingStart)].xpos=cx;scenario.starts[size_t(draggingStart)].zpos=cz;dirty=true;historyPending=true;
                     }
@@ -2118,6 +2160,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                                   sp->w * zm, sp->h * zm};
                     SDL_RenderCopyF(ren, t, nullptr, &dst);
                 }
+        }
+        if(tool==FEATURES)for(int i:selectedFeatures.cells)if(cart::FeatureSelection::selectable(mapView.map(),i)) {
+            const float zoom=mapView.zoom();
+            SDL_FRect cell{(i%mapView.map().width*16-mapView.offX())*zoom,(i/mapView.map().width*16-mapView.offY())*zoom,16*zoom,16*zoom};
+            SDL_SetRenderDrawColor(ren,255,225,100,255);SDL_RenderDrawRectF(ren,&cell);
         }
         // Placed units: a player-coloured square with the type name above it.
         for (int i = 0; i < int(units.size()); ++i) {
@@ -2297,7 +2344,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(tool==TERRAIN)status+=stampLayers.objects?"   BRUSH: TERRAIN + OBJECTS":"   BRUSH: OBJECTS PROTECTED";
         if (tool == UNITS)
             status += "   PLAYER: " + std::to_string(currentPlayer) +
-                      "   UNITS: " + std::to_string(units.size())+"   SELECTED: "+std::to_string(selectedUnits.indices.size());
+                      "   UNITS: " + std::to_string(units.size())+"   SELECTED: "+std::to_string(tool==FEATURES?selectedFeatures.cells.size():selectedUnits.indices.size());
         else
             status += "   STARTS: " + std::to_string(scenario.starts.size());
         status += dirty?"   UNSAVED":"   SAVED";
