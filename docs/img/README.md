@@ -35,3 +35,22 @@ retail archives, extracted assets, and temporary capture files out of Git.
 The army capture uses `TAK_PATROL_PERF=1 TAK_PATROL_PERF_ZOOM=0.9`,
 `--time 1 --nofog`, and the same renderer/preferences as the other game shots.
 The 16,000 count is for the entire fixture, not the number visible in the image.
+
+## Cartographer screenshots for 0.7.13
+
+`cartographer.png` and `cartographer-model.png` were freshly captured on
+2026-09-29 from the 0.7.13 release source (`af7f653`, before the version-only
+release stamp). Both are unmodified 921 × 691 PNG captures of the actual editor.
+The map is Ulasem Arena using the user's retail data.
+
+- `cartographer.png`: Units browser, map canvas, feature art and minimap. A
+  scratch capture harness sends the same Tab events as the keyboard and waits
+  for background art/minimap work before capturing the live editor renderer.
+- `cartographer-model.png`: F6 model inspector showing an Aramon Archer from
+  the unit browser. Captured through the editor's model workflow test after
+  asynchronous model/texture loading. This is a visual inspector, not a combat
+  scene. The capture uses SDL's dummy video driver/software renderer.
+
+Both images were visually inspected. No asset geometry, units or UI were added
+after capture. The 0.7.12 game gallery above remains representative and has not
+been relabeled as newly captured.

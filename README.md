@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.12-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.13-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -44,22 +44,47 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.12
+## New in 0.7.13
 
-<a href="docs/img/diplomacy.jpg"><img src="docs/img/diplomacy.jpg" width="70%" alt="Diplomacy with outgoing mana and chat recipient checkboxes; gift buttons disabled for an ineligible selection"></a>
+<table>
+  <tr><td><a href="docs/img/cartographer.png"><img src="docs/img/cartographer.png" alt="Cartographer with a searchable unit browser, terrain canvas and minimap"></a><br><sub>Cartographer: unit browser and map canvas</sub></td>
+  <td><a href="docs/img/cartographer-model.png"><img src="docs/img/cartographer-model.png" alt="Cartographer's rotatable 3D preview of an Aramon Archer"></a><br><sub>F6 model inspector</sub></td></tr>
+</table>
 
-*Diplomacy test scene after gifting: no eligible units remain selected.*
+- **Cartographer desktop workflow:** packaged editor launchers, remembered game
+  data and window preferences, readable scalable text, menus, searchable map
+  opening and recent files.
+- **Safer editing:** undo/redo, background saves and exports, recovery snapshots,
+  cropping checks, and protection for placed objects during terrain edits.
+- **Finding and placing things:** searchable terrain, unit and feature browsers,
+  thumbnails, group selection/editing, a searchable placed-unit list, named map
+  labels, and rotatable **F6** model previews.
+- **Map and scenario tools:** engine-backed placement/passability overlays,
+  navigable validation results, reproducible random-map previews, editable
+  regions, typed rule operands, and objective templates.
+- **Test Map (F5):** opens an isolated snapshot in the game's normal private
+  lobby, with authored scenario setup shared by client and server. Optional
+  trigger logs help diagnose scenario execution.
+- **Diplomacy:** unit-gifting and mana-sharing controls are hidden for non-allies;
+  chat recipient controls remain available.
 
-- **Diplomacy on D:** all players, eligible-unit gifting, outgoing mana-sharing
-  checkboxes for teammates, and checkboxes choosing who receives your chat.
+Version **0.7.13 uses protocol 198**. Update clients and servers together.
+See the [release notes](docs/release-0.7.13-notes.md),
+[validation report](docs/release-0.7.13-validation.md), and
+[Cartographer guide](docs/user-guide.md#map-editor). The editor preserves unsupported
+scenario data, but full retail mission-runtime parity is not claimed; current
+limits are documented in the guide and [trigger reference](docs/crt-triggers.md).
+
+### Previously in 0.7.12
+
+- **Diplomacy on D:** allied unit gifting, outgoing mana-sharing checkboxes for
+  teammates, and checkboxes choosing who receives your chat.
 - **Hard/Absurd expansion:** earlier expansion builders, reserved mana sites, and
-  new deposits prioritized over nearby upgrades. See [expansion results](docs/ai-expansion-2026-09-29.md).
-- **Memory/resource fixes:** loading fonts, model/editor teardown, stopped-stream
-  buffers, and a terrain reload worker race. See [the memory audit](docs/memory-audit-2026-09-29.md).
+  new deposits prioritized over nearby upgrades.
+- **Memory/resource fixes:** font loading, model/editor teardown, stopped-stream
+  buffers, and a terrain reload worker race.
 
-These changes ship in **0.7.12** and require **protocol 195**. Update clients and
-servers together. See the [release notes](docs/release-0.7.12-notes.md) and
-[full validation report](docs/release-0.7.12-validation.md).
+See the [0.7.12 validation report](docs/release-0.7.12-validation.md).
 
 ### Previously in 0.7.11
 
@@ -120,7 +145,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.12** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.13** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -417,8 +442,7 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.12 uses protocol 195** for directed mana sharing and chat.
-Current checkout builds use **protocol 198** for shared authored-scenario setup
+Version **0.7.13 uses protocol 198** for shared authored-scenario setup
 and preserved map companions; rebuild/update clients and servers together.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
