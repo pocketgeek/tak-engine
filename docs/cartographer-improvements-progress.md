@@ -620,6 +620,29 @@ Long dialog titles are clipped to their title bar instead of spilling outside
 it. Preference round-trip coverage includes the guide state. All fourteen
 editor tests pass in Release and under AddressSanitizer/LeakSanitizer.
 
+## Whole-map movement connectivity checkpoint
+
+Check Map now scans every passable cell for each distinct mobile nav-grid and
+footprint profile, including naval and hover profiles. Equivalent unit types
+share a scan; each scan's temporary storage is released before the next.
+Passability comes from engine `NavGrid::fits` with the same footprint clamp as
+`World::pathExists`. Four-neighbour connectivity is sufficient because the engine
+forbids diagonal corner cutting: every allowed diagonal has an orthogonal route.
+No simulation/pathfinding code or rules were changed.
+
+Disconnected profiles produce one located warning with the region count and
+largest/second-largest sizes. The warning states terrain/features scope and
+allows intentional islands. This complements start-to-start approach checks;
+it is not naval factory output-clearance validation or future traffic prediction.
+
+Tests account for all passable cells, compare region representatives with the
+engine connectivity query, check footprint clearance and diagonal isolation,
+and cover naval pools separated by land. All fourteen editor tests pass in
+Release and under AddressSanitizer/LeakSanitizer, with focused repeats after the
+naval fixture addition. The Ultima Online B1 63x63 real-asset validation workflow
+passed in 2.62 seconds, peak RSS 964,620 KiB (whole workflow including editor,
+fixture creation/loading, cancellation and result interactions, not scan-only).
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
@@ -628,8 +651,8 @@ editor tests pass in Release and under AddressSanitizer/LeakSanitizer.
    and verification of cross-platform packaging/launch usability.
 3. Broader browser/selection interaction coverage,
    model previews where useful and additional view controls.
-4. Exhaustive land/water component and naval-output checks, fuller resource
-   checks, and profiling occupancy overlays on dense large scenarios.
+4. Naval-output clearance and fuller resource checks, plus profiling occupancy
+   overlays on dense large scenarios; whole-map movement components are covered.
 5. Expanded typed-rule validation, rule names/objective templates,
    temporary-map playtesting through the normal client/server launch path.
 6. Coalescing pending terrain work, asynchronous expensive operations, large-map

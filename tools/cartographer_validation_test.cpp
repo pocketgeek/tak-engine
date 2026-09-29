@@ -113,6 +113,27 @@ int main() {
         tak::crt::Rule truncated{13,{"Player 1",std::string("a\0b",3)}};
         check(operandHas(true,truncated,"embedded NUL"),"embedded NUL cannot silently truncate CRT operand");
         tak::tnt::Map map;map.width=map.height=32;map.heights.resize(1024,60);map.features.resize(1024,0xffff);
+        {
+            auto isolated=map;for(int z=0;z<32;++z)isolated.heights[z*32+16]=255;
+            tak::sim::World observer;observer.setTerrain(isolated.heights,32,32,0,&isolated.features);observer.buildNavClasses(registry);
+            const auto* type=registry.find("test");const auto& grid=observer.navFor(type);
+            const auto regions=cart::movementRegions(grid,1);
+            check(regions.size()==2,"whole-map scan finds both isolated land regions");
+            int total=0;for(const auto& region:regions)total+=region.cells;
+            int passable=0;for(int z=0;z<32;++z)for(int x=0;x<32;++x)passable+=grid.fits(x,z,1);
+            check(total==passable,"component scan accounts for every engine-passable cell");
+            for(size_t i=0;i<regions.size();++i)for(size_t j=0;j<regions.size();++j)
+                check(observer.pathExists(type,regions[i].x*16.f+8,regions[i].z*16.f+8,regions[j].x*16.f+8,regions[j].z*16.f+8)==(i==j),"region representatives agree with engine connectivity");
+            auto wide=cart::movementRegions(grid,3);int wideTotal=0;for(const auto& region:wide)wideTotal+=region.cells;
+            check(wide.size()==2 && wideTotal<total,"larger footprints use engine clearance");
+            auto tiny=tak::sim::NavGrid(std::vector<uint8_t>(16,60),4,4);tiny.block(1,0,1,1,true);tiny.block(0,1,1,1,true);
+            check(cart::movementRegions(tiny,1).size()==2,"diagonal contact does not join regions through blocked corners");
+            std::vector<uint8_t> water(64,0);for(int z=0;z<8;++z)water[z*8+4]=100;
+            tak::sim::NavGrid::Limits limits;limits.minWaterDepth=1;limits.maxWaterDepth=100;limits.maxSlope=limits.maxWaterSlope=20;
+            tak::sim::NavGrid naval(water,8,8,50,limits);
+            const auto pools=cart::movementRegions(naval,1);
+            check(pools.size()==2 && pools[0].cells+pools[1].cells==48,"naval profiles detect two pools separated by land");
+        }
         auto movement=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Movement,"test");
         check(movement.width==32 && movement.rgba[(12*32+12)*4+1]==210,"flat ground movement overlay is passable");
         map.seaLevel=100;
@@ -185,6 +206,7 @@ int main() {
         check(has(cart::validateMap(map,metadata,{}, {},{},diagnostics,vfs),"No recognized mana deposits"),"missing mana economy diagnosed");
         auto disconnected=map;disconnected.featureNames={"TestMana"};disconnected.features[8*32+24]=0;
         for(int z=0;z<32;++z)disconnected.heights[z*32+16]=255;
+        check(has(cart::validateMap(disconnected,metadata,{}, {},{},diagnostics,vfs),"disconnected movement regions"),"Check Map reports disconnected regions beyond start-route checks");
         metadata.starts={{1,4,8},{2,27,8}};
         auto connectivity=cart::validateMap(disconnected,metadata,{}, {},{},diagnostics,vfs);
         check(has(connectivity,"no ground approach route to another start") && has(connectivity,"no ground approach route to a mana deposit"),"engine connectivity diagnoses isolated starts and mana");

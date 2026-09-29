@@ -3,7 +3,7 @@
 #include "tnt/ota.h"
 #include "tnt/tnt.h"
 #include <set>
-namespace tak::sim { class TypeRegistry; }
+namespace tak::sim { class TypeRegistry; class NavGrid; }
 namespace tak::hpi { class Vfs; }
 namespace cart {
 struct MapIssue {
@@ -12,6 +12,9 @@ struct MapIssue {
     std::string message;
     float x=-1,z=-1; // world position; negative means no navigable location
 };
+struct MovementRegion {int cells=0,x=0,z=0;};
+// Every cell is classified by the engine's footprint-aware nav predicate.
+std::vector<MovementRegion> movementRegions(const tak::sim::NavGrid& grid,int footprint);
 // Shared by Check Map and the rule form; warnings permit intentional scripts.
 std::vector<MapIssue> validateRuleOperands(bool action,const tak::crt::Rule& rule,
     const tak::crt::Scenario& scenario,const tak::sim::TypeRegistry& registry);

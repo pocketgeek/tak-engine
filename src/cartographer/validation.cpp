@@ -15,6 +15,31 @@ std::string folded(std::string value) {
     return value;
 }
 }
+std::vector<MovementRegion> movementRegions(const tak::sim::NavGrid& grid,int footprint) {
+    footprint=std::clamp(footprint,1,15);
+    const int width=grid.width(),height=grid.height();grid.ensureClearance();
+    std::vector<uint8_t> cells(size_t(width)*height);
+    for(int z=0;z<height;++z)for(int x=0;x<width;++x)cells[size_t(z)*width+x]=grid.fits(x,z,footprint)?1:0;
+    std::vector<MovementRegion> regions;std::vector<int> pending;
+    for(int seed=0;seed<int(cells.size());++seed)if(cells[seed]==1) {
+        MovementRegion region{0,seed%width,seed/width};pending.push_back(seed);cells[seed]=2;
+        while(!pending.empty()) {
+            const int cell=pending.back();pending.pop_back();++region.cells;
+            const int x=cell%width,z=cell/width;
+            // Engine components forbid diagonal corner cutting: every allowed
+            // diagonal has an orthogonal route, so four neighbours give exactly
+            // the same connectivity without reproducing the path search.
+            auto visit=[&](int next) {if(cells[next]==1) {cells[next]=2;pending.push_back(next);}};
+            if(x>0)visit(cell-1);
+            if(x+1<width)visit(cell+1);
+            if(z>0)visit(cell-width);
+            if(z+1<height)visit(cell+width);
+        }
+        regions.push_back(region);
+    }
+    std::stable_sort(regions.begin(),regions.end(),[](const auto& a,const auto& b){return a.cells>b.cells;});
+    return regions;
+}
 std::vector<MapIssue> validateRuleOperands(bool action,const tak::crt::Rule& rule,
     const tak::crt::Scenario& scenario,const tak::sim::TypeRegistry& registry) {
     std::vector<MapIssue> issues;
@@ -152,6 +177,22 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
             else {if(!blocked.empty())blocked+=", ";blocked+=type.name.empty()?id:type.name;}
         }
         if(!blocked.empty())issue("Mana deposit: engine rejects lodestone footprint for "+blocked,x,z);
+    }
+    // Classify all distinct mobile movement/footprint profiles, not just routes
+    // between starts. Reuse equivalent profiles and release each scan before
+    // starting the next so large maps do not retain one label grid per type.
+    std::map<std::pair<const tak::sim::NavGrid*,int>,std::vector<std::string>> profiles;
+    for(const auto& [id,type]:registry.types()) {
+        if(type.canFly || type.maxVel.v<=0 || (!restrictions.empty() && !restrictions.count(folded(id))))continue;
+        profiles[{&world->navFor(&type),std::clamp(std::max(type.footX,type.footZ),1,15)}].push_back(type.name.empty()?id:type.name);
+    }
+    for(const auto& [profile,types]:profiles) {
+        const auto regions=movementRegions(*profile.first,profile.second);
+        if(regions.size()<2)continue;
+        const auto& separate=regions[1];
+        std::string label=types.front();if(types.size()>1)label+=" and "+std::to_string(types.size()-1)+" equivalent unit types";
+        issue(label+": "+std::to_string(regions.size())+" disconnected movement regions (terrain/features); largest "+
+              std::to_string(regions[0].cells)+" cells, next "+std::to_string(separate.cells)+". Islands may be intentional.",separate.x*16.f+8,separate.z*16.f+8);
     }
     // Add occupants only after the terrain/connectivity checks, so diagnostics
     // distinguish authored terrain from units that may move during play.

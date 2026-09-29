@@ -199,7 +199,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   Flag fields accept new names or suggest existing flags from that player’s rules;
   use the arrow button or **Alt+Down** to open the suggestions.
   **Scenario → Check Map** reports
-  terrain, start, mana and scenario issues in a clickable results list.
+  terrain, start, mana and scenario issues in a clickable results list, including
+  disconnected movement regions for distinct mobile unit profiles and footprints.
   **Scenario → Regenerate from Recipe** restores a generated map's settings;
   preview changes before accepting them. Reproduction needs the same game assets.
 
