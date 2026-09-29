@@ -1,16 +1,45 @@
 #include "cartographer/validation.h"
 #include "cartographer/triggers.h"
 #include "cartographer/regions.h"
+#include "cartographer/generator.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <iostream>
+#include <fstream>
+#include <chrono>
 #include <stdexcept>
 static void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 int main() {
     try {
+        tak::mapgen::Params params;params.seed=UINT64_MAX;params.players=8;params.layout=tak::mapgen::Islands;
+        auto fields=cart::generatorFields(params);std::string generatorError;
+        tak::mapgen::Params parsed;
+        check(cart::parseGeneratorFields(fields,parsed,generatorError),"generator fields parse");
+        check(tak::mapgen::encodeMapId(params)==tak::mapgen::encodeMapId(parsed),"all generator options roundtrip exactly");
+        const auto original=tak::mapgen::encodeMapId(parsed);
+        fields[0]="18446744073709551616";
+        check(!cart::parseGeneratorFields(fields,parsed,generatorError) && tak::mapgen::encodeMapId(parsed)==original,"seed overflow leaves settings unchanged");
+        fields=cart::generatorFields(params);fields[3]="256";
+        check(!cart::parseGeneratorFields(fields,parsed,generatorError),"density range checked");
+        fields=cart::generatorFields(params);fields[1]="3players";
+        check(!cart::parseGeneratorFields(fields,parsed,generatorError),"partial numeric input rejected");
         tak::hpi::Vfs vfs;tak::sim::TypeRegistry registry;
+        const auto root=std::filesystem::temp_directory_path()/("tak-editor-generator-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        struct Cleanup {std::filesystem::path path;~Cleanup(){std::error_code e;std::filesystem::remove_all(path,e);}} cleanup{root};
+        std::filesystem::create_directories(root/"features"/"aramon");
+        {
+            std::ofstream file(root/"features"/"aramon"/"fixture.tdf");
+            for(int i=1;i<=3;++i)file<<"[AraMana0"<<i<<"] {\nfootprintx=2;\nfootprintz=2;\nblocking=0;\n}\n";
+        }
+        vfs.addLayer(tak::hpi::MountSet(root));
+        params.layout=tak::mapgen::Mainland;params.waterDensity=params.reliefDensity=0;
+        fields=cart::generatorFields(params);check(cart::parseGeneratorFields(fields,parsed,generatorError),"edited generator settings parse");
+        const auto first=tak::mapgen::generate(params,vfs),second=tak::mapgen::generate(parsed,vfs);
+        check(first.starts==second.starts && first.map.heights==second.map.heights && first.map.features==second.map.features &&
+              first.map.tileKeys==second.map.tileKeys && first.map.tileCols==second.map.tileCols && first.map.tileRows==second.map.tileRows,
+              "editor settings reproduce actual generator output");
         auto files=std::make_shared<tak::hpi::Vfs::Files>();
-        const std::string fbi="[UNITINFO] { UnitName=TEST; Name=Test Unit; FootprintX=1; FootprintZ=1; MaxSlope=20; MaxWaterDepth=0; CanMove=1; MaxVelocity=1; }";
+        const std::string fbi="[UNITINFO] { \nUnitName=TEST;\nName=Test Unit;\nFootprintX=1;\nFootprintZ=1;\nMaxSlope=20;\nMaxWaterDepth=0;\nCanMove=1;\nMaxVelocity=1;\n }";
         (*files)["units/test.fbi"]={fbi.begin(),fbi.end()};vfs.setMapFiles(files);registry.loadDir(vfs,"units");
         check(registry.find("test")!=nullptr,"synthetic unit loaded");
         tak::tnt::Map map;map.width=map.height=32;map.heights.resize(1024,60);map.features.resize(1024,0xffff);

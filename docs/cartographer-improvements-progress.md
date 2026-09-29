@@ -99,6 +99,27 @@ region rename/reference preservation, failed-edit atomicity, referenced deletion
 CRT roundtrip, and actual SDL menu/create/save interactions with saved bounds
 verified from the resulting bundle.
 
+## Generator controls checkpoint
+
+New Map > Random now opens settings for the full 64-bit seed, player count,
+Mainland/Lakes/Islands layout, tree/rock/mana density, water intensity and relief.
+Parsing rejects overflow, partial numbers and out-of-range values without
+changing the accepted settings. Generated map descriptions record the engine's
+exact sanitized recipe. The editor uses the existing generator unchanged.
+
+Random generation runs in a worker while a busy modal keeps rendering/input
+responsive and prevents replacement of its borrowed VFS. Escape discards the
+result when the worker finishes; it does not interrupt generation internally.
+The old document is retained until successful completion. Generation failures
+are visible. Flat-map generation also stages the new world's section library
+before replacing the document.
+
+All three Release editor tests pass. Parameter roundtrips and reproduced engine
+terrain/start output use synthetic base assets (the generator intentionally
+ignores map-resource overrides). Busy-modal cancellation, successful generation
+through SDL input, and preview/accept interaction still need dedicated coverage;
+a preview before adoption is not implemented yet.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
