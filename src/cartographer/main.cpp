@@ -420,6 +420,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int selectedFeat = features.list().empty() ? -1 : 0; // feature index (FEATURES)
     int paletteScroll = 0;
     bool showGrid = false;
+    cart::StampLayers stampLayers;
     static const float kZoomLevels[5] = {1.0f, 0.75f, 0.5f, 0.25f, 0.125f};
 
     // Feature-sprite textures (GAF frame 0), cached by feature name, used both in
@@ -480,7 +481,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(snapX==lastStampX && snapY==lastStampY)return;
         lastStampX=snapX;lastStampY=snapY;
         mapView.quiesce();
-        if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY)) {
+        if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY,stampLayers)) {
             mapView.tilesEdited();
             edited = true; dirty = true; historyPending=true;
         }
@@ -1036,11 +1037,13 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
     };
     int menuOpen=-1;
+    struct ViewBookmark {float x,z,zoom;};
+    std::optional<ViewBookmark> viewBookmark;
     const std::vector<std::string> menuNames={"FILE","EDIT","VIEW","SCENARIO","HELP"};
     const std::vector<std::vector<std::string>> menuRows={
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
-        {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)"},
-        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions"},
+        {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
+        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selected units","Store view bookmark","Restore view bookmark"},
         {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
@@ -1053,13 +1056,31 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==5) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         } else if(menu==1) {
             if(row<2) {SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=row?SDLK_y:SDLK_z;key.key.keysym.mod=KMOD_CTRL;SDL_PushEvent(&key);}
-            else {clearArm=true;editMode=MODE_PLACE;}
+            else if(row==2) {clearArm=true;editMode=MODE_PLACE;}
+            else {stampLayers.objects=!stampLayers.objects;lastStampX=lastStampY=-999999;}
         } else if(menu==2) {
             int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
             if(row==0) {mapView.setZoom(std::min(float(w)/(mapView.map().width*16),float(h)/(mapView.map().height*16)));mapView.setOffset(0,0);}
             if(row==1)mapView.setZoom(1);
             if(row==2)showGrid=!showGrid;
             if(row==3)showRegions=!showRegions;
+            if(row==4) {
+                bool any=false;float x0=0,z0=0,x1=0,z1=0;
+                for(int i:selectedUnits.indices)if(i>=0 && i<int(units.size())) {
+                    const auto& u=units[i];
+                    if(!any) {x0=x1=u.x;z0=z1=u.z;any=true;}
+                    else {x0=std::min(x0,u.x);x1=std::max(x1,u.x);z0=std::min(z0,u.z);z1=std::max(z1,u.z);}
+                }
+                if(any) {
+                    const float zoom=std::min({1.f,float(w)/std::max(128.f,x1-x0+128),float(h)/std::max(128.f,z1-z0+128)});
+                    mapView.setZoom(zoom);mapView.setOffset((x0+x1)/2-w/(2*zoom),(z0+z1)/2-h/(2*zoom));
+                } else openMessage("FRAME SELECTION","Select one or more units first.");
+            }
+            if(row==5)viewBookmark=ViewBookmark{mapView.offX(),mapView.offY(),mapView.zoom()};
+            if(row==6) {
+                if(viewBookmark) {mapView.setZoom(viewBookmark->zoom);mapView.setOffset(viewBookmark->x,viewBookmark->z);}
+                else openMessage("VIEW BOOKMARK","Store a view bookmark first.");
+            }
         } else if(menu==3) {
             if(row==0)openModal(M_SCENARIO);
             if(row==1)openModal(M_RESIZE);
@@ -1955,7 +1976,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(menuOpen>=0) {
             const int x=96+menuOpen*72;const auto& rows=menuRows[size_t(menuOpen)];
             fillRect(ren,x,22,240,int(rows.size())*20,46,48,58);
-            for(size_t i=0;i<rows.size();++i)cart::drawText(ren,rows[i],x+8,28+int(i)*20,1,235,235,240);
+            for(size_t i=0;i<rows.size();++i) {
+                std::string label=rows[i];
+                if(menuOpen==1 && i==3)label=std::string(stampLayers.objects?"[ ] ":"[X] ")+"Brush: protect objects";
+                cart::drawText(ren,label,x+8,28+int(i)*20,1,235,235,240);
+            }
         }
 
         // Status bar: cursor cell, tool, zoom, start count.
@@ -1966,6 +1991,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         char zbuf[16];
         std::snprintf(zbuf, sizeof zbuf, "%d%%", int(mapView.zoom() * 100 + 0.5f));
         std::string status = coord + "   TOOL: " + names[int(tool)] + "   ZOOM: " + zbuf;
+        if(tool==TERRAIN)status+=stampLayers.objects?"   BRUSH: TERRAIN + OBJECTS":"   BRUSH: OBJECTS PROTECTED";
         if (tool == UNITS)
             status += "   PLAYER: " + std::to_string(currentPlayer) +
                       "   UNITS: " + std::to_string(units.size())+"   SELECTED: "+std::to_string(selectedUnits.indices.size());

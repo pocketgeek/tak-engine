@@ -821,7 +821,7 @@ if(TAK_BUILD_CLIENT)
     endif()
 
     add_executable(cartographer_document_test tools/cartographer_document_test.cpp
-      src/cartographer/document.cpp src/cartographer/history.cpp src/cartographer/units.cpp)
+      src/cartographer/document.cpp src/cartographer/history.cpp src/cartographer/units.cpp src/cartographer/sections.cpp)
     target_link_libraries(cartographer_document_test PRIVATE tak-formats)
     add_test(NAME cartographer_document COMMAND cartographer_document_test)
 

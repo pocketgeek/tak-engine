@@ -39,6 +39,11 @@ private:
 // REMAPPED by name (a prefab's feature indices point into ITS own name table, so
 // each is resolved to a name and re-interned in map.featureNames; the 0xFFFF/
 // 0xFFFB/0xFFFC sentinels pass through). Returns false if fully off-map.
-bool stampSection(tak::tnt::Map& map, const tak::tnt::Map& section, int bx, int by);
+// Art and height are coupled (cliff art has baked lighting). When objects are
+// protected, preserve existing object anchors, add no prefab objects, and update
+// terrain-only road/blocker markers where there is no object anchor.
+struct StampLayers { bool objects=true; };
+bool stampSection(tak::tnt::Map& map, const tak::tnt::Map& section, int bx, int by,
+                  StampLayers layers={});
 
 } // namespace cart

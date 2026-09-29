@@ -155,13 +155,28 @@ missing `/tmp/tak-ffmpeg-win`; macOS linking/signing cannot be verified here.
 CI package build/launch evidence remains required before calling packaging
 fully verified. No additional runtime library dependency was introduced.
 
+## Brush protection and view controls checkpoint
+
+Edit > Brush: protect objects toggles whether terrain stamps replace the object
+layer. Protected stamps retain existing object anchors and add no prefab objects;
+road/blocker markers still follow the new terrain on cells without objects.
+The TNT format has one feature/marker slot per cell, so an existing object takes
+precedence where a new terrain marker would otherwise occupy that cell. Terrain
+art and heights remain coupled; rotating baked-lighting artwork is not offered.
+The menu checkmark and status bar show the active policy.
+
+View now includes Frame selected units and store/restore of one session view
+bookmark. Bookmarks are navigation state, not saved map content or persistent
+preferences. Four Release tests pass; new brush cases cover protected objects,
+marker replacement, remapping prefab names and off-map no-ops.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
    editing/recovery lifecycle edge cases.
 2. Searchable Open/recent maps, remembered window/layout/scale, better font and
    multiline fields, complete cross-platform packaging/launch usability.
-3. Browser/selection interaction coverage, layer protection, feature selection,
+3. Browser/selection interaction coverage, feature selection,
    model previews where useful, additional view controls and live minimap refresh.
 4. Engine-backed terrain/buildability overlays, clickable map validation,
    reachable starts/mana/naval-output checks, full reproducible generator controls.

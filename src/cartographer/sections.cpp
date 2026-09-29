@@ -43,7 +43,7 @@ const tak::tnt::Map* SectionLibrary::load(const tak::hpi::Vfs& vfs, const std::s
     }
 }
 
-bool stampSection(tak::tnt::Map& map, const tak::tnt::Map& section, int bx, int by) {
+bool stampSection(tak::tnt::Map& map, const tak::tnt::Map& section, int bx, int by, StampLayers layers) {
     if (bx + section.blocksX <= 0 || by + section.blocksY <= 0 ||
         bx >= map.blocksX || by >= map.blocksY)
         return false;
@@ -86,8 +86,12 @@ bool stampSection(tak::tnt::Map& map, const tak::tnt::Map& section, int bx, int 
             size_t si = size_t(sy) * section.width + sx;
             size_t mi = size_t(my) * map.width + mx;
             if (si < section.heights.size()) map.heights[mi] = section.heights[si];
-            if (si < section.features.size())
-                map.features[mi] = internFeature(section.features[si]);
+            if (si < section.features.size()) {
+                const uint16_t source=section.features[si];
+                if(layers.objects)map.features[mi]=internFeature(source);
+                else if(map.features[mi]>=0xFFFA || map.features[mi]>=map.featureNames.size())
+                    map.features[mi]=source>=0xFFFA?source:0xFFFF;
+            }
         }
     }
     return true;

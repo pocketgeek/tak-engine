@@ -1,6 +1,7 @@
 #include "cartographer/document.h"
 #include "cartographer/history.h"
 #include "cartographer/selection.h"
+#include "cartographer/sections.h"
 #include <random>
 #include <chrono>
 #include <fstream>
@@ -19,6 +20,18 @@ int main() {
         tak::tnt::Map map;map.width=map.height=32;map.blocksX=map.blocksY=16;
         map.heights.resize(1024,60);map.features.resize(1024,0xffff);
         map.tileKeys.resize(256);map.tileCols.resize(256);map.tileRows.resize(256);
+        auto painted=map,prefab=map;
+        painted.featureNames={"Tree"};painted.features[0]=0;painted.features[1]=0xFFFB;
+        prefab.featureNames={"Rock"};prefab.features[0]=0xFFFF;prefab.features[1]=0;prefab.features[2]=0xFFFB;
+        prefab.heights.assign(1024,90);prefab.tileKeys.assign(256,42);
+        check(cart::stampSection(painted,prefab,0,0,{false}),"protected terrain stamp succeeds");
+        check(painted.features[0]==0 && painted.featureNames==std::vector<std::string>{"Tree"},"protected stamp keeps existing object and adds no prefab names");
+        check(painted.features[1]==0xFFFF && painted.features[2]==0xFFFB,"protected stamp updates terrain markers without adding objects");
+        check(painted.heights[0]==90 && painted.tileKeys[0]==42,"terrain art and heights change together");
+        check(cart::stampSection(painted,prefab,0,0),"normal terrain stamp succeeds");
+        check(painted.features[0]==0xFFFF && painted.featureNames[painted.features[1]]=="Rock","normal stamp replaces/remaps objects");
+        auto untouched=painted.features;
+        check(!cart::stampSection(painted,prefab,16,16,{false}) && painted.features==untouched,"off-map protected stamp does nothing");
         tak::tnt::Scenario meta;meta.kingdom="zhon";
         tak::crt::Scenario scenario;scenario.players.resize(9);
         tak::crt::RuleGroup group;group.conditions.push_back({});group.actions.push_back({});
