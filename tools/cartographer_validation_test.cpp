@@ -3,6 +3,7 @@
 #include "cartographer/regions.h"
 #include "cartographer/generator.h"
 #include "cartographer/overlay.h"
+#include "cartographer/ruleedit.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <iostream>
@@ -12,6 +13,21 @@
 static void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 int main() {
     try {
+        std::vector<tak::crt::RuleGroup> rules(2);
+        rules[0].conditions.push_back({0,{}});rules[0].actions.push_back({18,{"100"}});rules[0].actions.push_back({14,{}});
+        rules[1].conditions.push_back({1,{"60"}});rules[1].actions.push_back({5,{}});
+        cart::RuleClipboard clipboard;int group=0,row=0;
+        check(clipboard.copy(rules,group,row,cart::RuleColumn::Action),"copy action");
+        check(!clipboard.paste(rules,group,row,cart::RuleColumn::Condition),"cannot paste action as condition");
+        check(clipboard.paste(rules,group,row,cart::RuleColumn::Action) && row==1 && rules[0].actions[1].slot[0]=="100","paste preserves action operands");
+        check(cart::moveRule(rules,group,row,cart::RuleColumn::Action,1) && row==2 && rules[0].actions[1].opcode==14,"reorder action updates selection");
+        check(!cart::moveRule(rules,group,row,cart::RuleColumn::Action,1),"cannot move beyond action list");
+        check(clipboard.copy(rules,0,0,cart::RuleColumn::Group,true),"copy player rules");
+        std::vector<tak::crt::RuleGroup> other;group=row=-1;
+        check(clipboard.paste(other,group,row,cart::RuleColumn::Group) && other.size()==2,"paste complete player rules");
+        other[0].actions[0].slot[0]="200";
+        check(rules[0].actions[0].slot[0]=="100","clipboard creates independent records");
+        check(cart::moveRule(other,group,row,cart::RuleColumn::Group,1) && group==1 && other[0].conditions[0].opcode==1,"reorder rule groups");
         tak::mapgen::Params params;params.seed=UINT64_MAX;params.players=8;params.layout=tak::mapgen::Islands;
         auto fields=cart::generatorFields(params);std::string generatorError;
         tak::mapgen::Params parsed;

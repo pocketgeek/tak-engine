@@ -21,6 +21,7 @@
 #include "cartographer/regions.h"
 #include "cartographer/generator.h"
 #include "cartographer/overlay.h"
+#include "cartographer/ruleedit.h"
 #include <fstream>
 #include <charconv>
 #include "cartographer/features.h"
@@ -990,6 +991,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     SDL_Rect rRuleList{}, rCondList{}, rActList{}, rPickList{};   // render-computed
     SDL_Rect rPrevP{}, rNextP{}, rAddRule{}, rDelRule{}, rAddCond{}, rDelCond{},
              rAddAct{}, rDelAct{}, rScrDone{}, rPickCancel{};
+    cart::RuleColumn ruleColumn=cart::RuleColumn::Group;
+    cart::RuleClipboard ruleClipboard;
+    SDL_Rect ruleCopy{},rulePaste{},ruleDuplicate{},ruleUp{},ruleDown{},playerCopy{},playerPaste{};
     auto scrGroups = [&]() -> std::vector<tak::crt::RuleGroup>& {
         return scen.players[size_t(scrPlayer)];
     };
@@ -997,9 +1001,34 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         auto& gs = scrGroups();
         return (scrGroup >= 0 && scrGroup < int(gs.size())) ? &gs[size_t(scrGroup)] : nullptr;
     };
+    auto ruleOperation=[&](int operation) {
+        auto& groups=scrGroups();
+        int row=ruleColumn==cart::RuleColumn::Action?scrActSel:scrCondSel;
+        bool changed=false;
+        if(operation==0)ruleClipboard.copy(groups,scrGroup,row,ruleColumn);
+        if(operation==1) {changed=ruleClipboard.paste(groups,scrGroup,row,ruleColumn);if(changed && ruleClipboard.column==cart::RuleColumn::Group)ruleColumn=cart::RuleColumn::Group;}
+        if(operation==2) {cart::RuleClipboard duplicate;if(duplicate.copy(groups,scrGroup,row,ruleColumn))changed=duplicate.paste(groups,scrGroup,row,ruleColumn);}
+        if(operation==3 || operation==4)changed=cart::moveRule(groups,scrGroup,row,ruleColumn,operation==3?-1:1);
+        if(operation==5)ruleClipboard.copy(groups,scrGroup,row,ruleColumn,true);
+        if(operation==6 && ruleClipboard.column==cart::RuleColumn::Group) {scrGroup=int(groups.size())-1;changed=ruleClipboard.paste(groups,scrGroup,row,cart::RuleColumn::Group);ruleColumn=cart::RuleColumn::Group;}
+        if(changed) {
+            if(ruleColumn==cart::RuleColumn::Action)scrActSel=row;
+            else if(ruleColumn==cart::RuleColumn::Condition)scrCondSel=row;
+            else scrCondSel=scrActSel=-1;
+            auto reveal=[](int selected,int height,int& scroll) {
+                if(selected<0)return;
+                if(selected*12<scroll)scroll=selected*12;
+                else if((selected+1)*12>scroll+height)scroll=std::max(0,(selected+1)*12-height);
+            };
+            reveal(scrGroup,rRuleList.h,scrRuleScroll);
+            if(ruleColumn==cart::RuleColumn::Action)reveal(scrActSel,rActList.h,scrActScroll);
+            if(ruleColumn==cart::RuleColumn::Condition)reveal(scrCondSel,rCondList.h,scrCondScroll);
+            dirty=true;historyPending=true;
+        }
+    };
     auto openScripting = [&]() {
         if (int(scen.players.size()) < 9) scen.players.resize(9);   // retail writes 9
-        scriptOpen = true; scrPlayer = 0;
+        scriptOpen = true; scrPlayer = 0;ruleColumn=cart::RuleColumn::Group;
         scrGroup = scen.players[0].empty() ? -1 : 0;
         scrCondSel = scrActSel = -1;
         scrRuleScroll = scrCondScroll = scrActScroll = 0;
@@ -1414,6 +1443,21 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             // The Scripting (trigger) overlay swallows input while up.
             if (scriptOpen) {
                 constexpr int kRow = 12;
+                if(!pickOpen && e.type==SDL_KEYDOWN) {
+                    const auto key=e.key.keysym.sym;const auto mod=e.key.keysym.mod;
+                    if(mod&(KMOD_CTRL|KMOD_GUI)) {
+                        if(key==SDLK_c) {ruleOperation(0);continue;}
+                        if(key==SDLK_v) {ruleOperation(1);continue;}
+                        if(key==SDLK_d) {ruleOperation(2);continue;}
+                    }
+                    if((mod&KMOD_ALT) && (key==SDLK_UP || key==SDLK_DOWN)) {ruleOperation(key==SDLK_UP?3:4);continue;}
+                }
+                if(!pickOpen && e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                    const SDL_Rect buttons[]={ruleCopy,rulePaste,ruleDuplicate,ruleUp,ruleDown,playerCopy,playerPaste};
+                    bool handled=false;
+                    for(int i=0;i<7;++i)if(cart::pointIn(e.button.x,e.button.y,buttons[i])) {ruleOperation(i);handled=true;break;}
+                    if(handled)continue;
+                }
                 // Nested opcode picker (choose a condition/action type to add).
                 if (pickOpen) {
                     const auto& defs = pickAction ? cart::actionDefs() : cart::conditionDefs();
@@ -1461,13 +1505,13 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     bool dbl = e.button.clicks >= 2;
                     if (cart::pointIn(mx, my, rScrDone)) scriptOpen = false;
                     else if (cart::pointIn(mx, my, rPrevP)) {
-                        scrPlayer = (scrPlayer + 8) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
+                        ruleColumn=cart::RuleColumn::Group;scrPlayer = (scrPlayer + 8) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
                         scrCondSel = scrActSel = -1; scrRuleScroll = scrCondScroll = scrActScroll = 0;
                     } else if (cart::pointIn(mx, my, rNextP)) {
-                        scrPlayer = (scrPlayer + 1) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
+                        ruleColumn=cart::RuleColumn::Group;scrPlayer = (scrPlayer + 1) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
                         scrCondSel = scrActSel = -1; scrRuleScroll = scrCondScroll = scrActScroll = 0;
                     } else if (cart::pointIn(mx, my, rAddRule)) {
-                        gs.push_back({}); scrGroup = int(gs.size()) - 1; scrCondSel = scrActSel = -1; dirty = true; historyPending=true;
+                        ruleColumn=cart::RuleColumn::Group;gs.push_back({}); scrGroup = int(gs.size()) - 1; scrCondSel = scrActSel = -1; dirty = true; historyPending=true;
                     } else if (cart::pointIn(mx, my, rDelRule) && g) {
                         gs.erase(gs.begin() + scrGroup); dirty = true; historyPending=true;
                         scrGroup = gs.empty() ? -1 : std::min(scrGroup, int(gs.size()) - 1);
@@ -1487,19 +1531,19 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     } else if (cart::pointIn(mx, my, rRuleList)) {
                         int row = (my - rRuleList.y + scrRuleScroll) / kRow;
                         if (row >= 0 && row < int(gs.size())) {
-                            scrGroup = row; scrCondSel = scrActSel = -1;
+                            scrGroup = row;ruleColumn=cart::RuleColumn::Group; scrCondSel = scrActSel = -1;
                             scrCondScroll = scrActScroll = 0;
                         }
                     } else if (g && cart::pointIn(mx, my, rCondList)) {
                         int row = (my - rCondList.y + scrCondScroll) / kRow;
                         if (row >= 0 && row < int(g->conditions.size())) {
-                            scrCondSel = row;
+                            scrCondSel = row;ruleColumn=cart::RuleColumn::Condition;
                             if (dbl) openRuleEditor(&g->conditions[size_t(row)], false);
                         }
                     } else if (g && cart::pointIn(mx, my, rActList)) {
                         int row = (my - rActList.y + scrActScroll) / kRow;
                         if (row >= 0 && row < int(g->actions.size())) {
-                            scrActSel = row;
+                            scrActSel = row;ruleColumn=cart::RuleColumn::Action;
                             if (dbl) openRuleEditor(&g->actions[size_t(row)], true);
                         }
                     }
@@ -2092,10 +2136,17 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
             int colW = (ct.w - 20) / 3;
             int x0 = ct.x, x1 = ct.x + colW + 10, x2 = ct.x + 2 * colW + 20;
-            cart::drawText(ren, "RULES", x0, ct.y + 20, 1, 150, 200, 150);
-            cart::drawText(ren, "CONDITIONS", x1, ct.y + 20, 1, 150, 200, 150);
-            cart::drawText(ren, "ACTIONS", x2, ct.y + 20, 1, 150, 200, 150);
-            int listY = ct.y + 32, listH = ct.h - 32 - 24;
+            ruleCopy=cart::drawButton(ren,ct.x,ct.y+21,52,16,"COPY",false);
+            rulePaste=cart::drawButton(ren,ct.x+58,ct.y+21,52,16,"PASTE",false);
+            ruleDuplicate=cart::drawButton(ren,ct.x+116,ct.y+21,64,16,"DUPLICATE",false);
+            ruleUp=cart::drawButton(ren,ct.x+186,ct.y+21,38,16,"UP",false);
+            ruleDown=cart::drawButton(ren,ct.x+230,ct.y+21,38,16,"DOWN",false);
+            playerCopy=cart::drawButton(ren,ct.x+274,ct.y+21,86,16,"COPY PLAYER",false);
+            playerPaste=cart::drawButton(ren,ct.x+366,ct.y+21,92,16,"APPEND PLAYER",false);
+            cart::drawText(ren, ruleColumn==cart::RuleColumn::Group?"RULES *":"RULES", x0, ct.y + 46, 1, 150, 200, 150);
+            cart::drawText(ren, ruleColumn==cart::RuleColumn::Condition?"CONDITIONS *":"CONDITIONS", x1, ct.y + 46, 1, 150, 200, 150);
+            cart::drawText(ren, ruleColumn==cart::RuleColumn::Action?"ACTIONS *":"ACTIONS", x2, ct.y + 46, 1, 150, 200, 150);
+            int listY = ct.y + 58, listH = ct.h - 58 - 24;
             rRuleList = {x0, listY, colW, listH};
             rCondList = {x1, listY, colW, listH};
             rActList = {x2, listY, colW, listH};
@@ -2141,7 +2192,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             rDelCond = cart::drawButton(ren, x1 + 48, by, 44, 16, "-COND", false);
             rAddAct = cart::drawButton(ren, x2, by, 40, 16, "+ACT", true);
             rDelAct = cart::drawButton(ren, x2 + 44, by, 40, 16, "-ACT", false);
-            cart::drawText(ren, "double-click a condition/action to edit its parameters",
+            cart::drawText(ren, "Ctrl+C/V/D: copy/paste/duplicate. Alt+Up/Down: reorder selected column.",
                            ct.x, by - 12, 1, 150, 154, 168);
 
             // Nested opcode picker (choose a condition/action type to add).

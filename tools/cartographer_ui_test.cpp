@@ -142,7 +142,15 @@ int main(int argc,char** argv) {
         case 16: text("UI test region");key(SDLK_TAB);text("10");key(SDLK_TAB);text("11");key(SDLK_TAB);text("20");key(SDLK_TAB);text("21");key(SDLK_RETURN);break;
         case 17: check(dirty,"region creation marks document dirty");key(SDLK_ESCAPE);key(SDLK_s,KMOD_CTRL);break;
         case 18: check(!dirty,"region save succeeds");key(SDLK_RETURN);break;
-        case 19: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 19: key(SDLK_t);break;
+        case 20: {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);
+            click(int(w/sx/2-354),int(h/sy/2+240));break;
+        }
+        case 21: key(SDLK_d,KMOD_CTRL);break;
+        case 22: key(SDLK_ESCAPE);key(SDLK_s,KMOD_CTRL);break;
+        case 23: check(!dirty,"duplicated script rules saved");key(SDLK_RETURN);break;
+        case 24: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
         default: if(frame>30) {failure="editor did not exit";key(SDLK_ESCAPE);key(SDLK_RETURN);}
         }
     });
@@ -161,6 +169,7 @@ int main(int argc,char** argv) {
                 bool regionFound=false;
                 for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {
                     const auto scenario=tak::crt::parse(archive.read(entry));
+                    if(scenario.players.empty() || scenario.players[0].size()!=2)throw std::runtime_error("script duplicate workflow did not save two rules");
                     for(const auto& r:scenario.regions)if(r.name=="UI test region" && r.x1==10 && r.z1==11 && r.x2==20 && r.z2==21)regionFound=true;
                 }
                 if(!regionFound)throw std::runtime_error("region UI workflow did not save expected CRT bounds");

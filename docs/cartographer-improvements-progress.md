@@ -185,6 +185,20 @@ registry/VFS. Rendering remains active. Five Release editor tests pass, includin
 per-cell buildability comparison to World::canPlace, depth/slope corner cases,
 and the SDL menu/show/hide workflow without modifying the document.
 
+## Rule reuse and ordering checkpoint
+
+The scripting panel now copies, pastes and duplicates groups, conditions and
+actions; moves the selected item up/down; and copies/appends a player's complete
+rule set. Copies preserve operands and are independent of their source. Actions
+cannot be pasted into condition slots. The active column is marked, and moved or
+inserted selections scroll into view. Ctrl+C/V/D and Alt+Up/Down mirror the visible
+controls. Player paste appends instead of replacing existing rules.
+
+Focused tests cover operand preservation, kind rejection, independent records,
+boundaries and group/action ordering. The SDL workflow creates a rule, duplicates
+it with Ctrl+D, saves, and verifies both CRT groups. Rule names, searchable
+objective templates and fuller semantic validation remain unfinished.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
@@ -195,7 +209,7 @@ and the SDL menu/show/hide workflow without modifying the document.
    model previews where useful, additional view controls and live minimap refresh.
 4. Placed-unit occupancy in overlays, richer clickable map validation,
    reachable starts/mana/naval-output checks, full reproducible generator controls.
-5. Region canvas manipulation, expanded typed-rule validation, rule reuse/reordering,
+5. Region canvas manipulation, expanded typed-rule validation, rule names/objective templates,
    temporary-map playtesting through the normal client/server launch path.
 6. Local terrain invalidation, asynchronous expensive operations, large-map
    profiling, broader document/UI coverage and final documentation cleanup.
