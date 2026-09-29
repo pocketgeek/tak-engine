@@ -6,6 +6,7 @@
 // feature-name table); the game resolves the same name at load.
 
 #include <cstdint>
+#include <future>
 #include <map>
 #include <string>
 #include <vector>
@@ -36,10 +37,20 @@ public:
     const FeatureRef* byName(const std::string& name) const;   // nullptr if absent
     // Decode (and cache) a feature's sprite; empty (.w==0) if the art won't load.
     const FeatSprite* sprite(const tak::hpi::Vfs& vfs, const FeatureRef& r);
+    // Nonblocking editor path: nullptr while art is queued/decoding. A worker
+    // owns only a copied feature reference and borrows the immutable VFS.
+    const FeatSprite* requestSprite(const tak::hpi::Vfs& vfs,const FeatureRef& r);
+    // Must precede replacing the borrowed VFS. scan() also drains old work.
+    void quiesce();
+    bool loading() const {return job_.valid();}
 
 private:
     std::vector<FeatureRef> refs_;
+    std::map<std::string,size_t> names_;
     std::map<std::string, FeatSprite> spriteCache_;   // keyed by feature name
+    struct Result {std::string name;FeatSprite sprite;};
+    std::future<Result> job_; // destroyed/joined before the cache and references
+    static FeatSprite decodeSprite(const tak::hpi::Vfs& vfs,const FeatureRef& r);
 };
 
 } // namespace cart

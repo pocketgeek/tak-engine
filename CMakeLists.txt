@@ -832,6 +832,9 @@ if(TAK_BUILD_CLIENT)
       src/cartographer/validation.cpp src/cartographer/triggers.cpp src/cartographer/regions.cpp src/cartographer/generator.cpp src/cartographer/overlay.cpp src/cartographer/ruleedit.cpp)
     target_link_libraries(cartographer_validation_test PRIVATE tak-formats)
     add_test(NAME cartographer_validation COMMAND cartographer_validation_test)
+    add_executable(cartographer_features_test tools/cartographer_features_test.cpp src/cartographer/features.cpp)
+    target_link_libraries(cartographer_features_test PRIVATE tak-formats)
+    add_test(NAME cartographer_feature_art COMMAND cartographer_features_test)
 
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps

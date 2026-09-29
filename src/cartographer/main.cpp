@@ -466,11 +466,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // Feature-sprite textures (GAF frame 0), cached by feature name, used both in
     // the palette and to draw placed features on the canvas.
     std::map<std::string, SDL_Texture*> featTex;
+    auto featureSpriteFor=[&](const cart::FeatureRef& ref) {
+        return interactive?features.requestSprite(vfs,ref):features.sprite(vfs,ref);
+    };
     auto featTextureFor = [&](const cart::FeatureRef& r) -> SDL_Texture* {
         auto it = featTex.find(r.name);
         if (it != featTex.end()) return it->second;
         SDL_Texture* t = nullptr;
-        const cart::FeatSprite* sp = features.sprite(vfs, r);
+        const cart::FeatSprite* sp = featureSpriteFor(r);
+        if(!sp)return nullptr; // Pending work must not become a cached failure.
         if (sp && sp->w > 0) {
             t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
                                   sp->w, sp->h);
@@ -1247,7 +1251,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             std::set<std::string> nextUseOnly;
             if(!nextMetadata.useOnlyUnits.empty())for(const auto& type:cart::loadUseOnly(nextVfs,stem+".tdf"))nextUseOnly.insert(type);
             minimapCancel->store(true,std::memory_order_relaxed);if(minimapJob.valid())minimapJob.wait();
-            thumbs.reset();
+            thumbs.reset();features.quiesce();
             mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);minimapSource=nullptr;invalidateMinimap();
             scenario=std::move(nextMetadata);scen=std::move(nextScenario);units=std::move(nextUnits);useOnly=std::move(nextUseOnly);
             mapName=chosen;mapPath=path;world=scenario.kingdom.empty()?"aramon":scenario.kingdom;
@@ -2282,7 +2286,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     const cart::FeatureRef* r = features.byName(mp.featureNames[v]);
                     if (!r) continue;
                     SDL_Texture* t = featTextureFor(*r);
-                    const cart::FeatSprite* sp = features.sprite(vfs, *r);
+                    const cart::FeatSprite* sp = featureSpriteFor(*r);
                     if (!t || !sp || sp->w == 0) {   // no art: a small marker
                         SDL_SetRenderDrawColor(ren, 90, 200, 90, 220);
                         SDL_Rect dot{int(bx) - 2, int(by) - 2, 4, 4};
@@ -2362,9 +2366,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     ghost=thumbFor(section.path);
                 }
             } else if(tool==FEATURES && selectedFeat>=0) {
-                const auto& feature=features.list()[size_t(selectedFeat)];const auto* sprite=features.sprite(vfs,feature);
+                const auto& feature=features.list()[size_t(selectedFeat)];
                 ghost=featTextureFor(feature);
-                if(sprite)box={(int(wx/16)*16-mapView.offX()-sprite->xoff)*mapView.zoom(),(int(wz/16)*16-mapView.offY()-sprite->yoff)*mapView.zoom(),sprite->w*mapView.zoom(),sprite->h*mapView.zoom()};
+                const auto* sprite=featureSpriteFor(feature);
+                if(sprite && sprite->w>0)box={(int(wx/16)*16-mapView.offX()-sprite->xoff)*mapView.zoom(),(int(wz/16)*16-mapView.offY()-sprite->yoff)*mapView.zoom(),sprite->w*mapView.zoom(),sprite->h*mapView.zoom()};
+                else box={(int(wx/16)*16-mapView.offX())*mapView.zoom(),(int(wz/16)*16-mapView.offY())*mapView.zoom(),16*mapView.zoom(),16*mapView.zoom()};
             } else {
                 const auto* type=tool==UNITS?unitInfo(selectedType):nullptr;
                 const float width=(type?type->footX:1)*16*mapView.zoom(),height=(type?type->footZ:1)*16*mapView.zoom();
@@ -2410,7 +2416,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 auto* texture=tool==FEATURES?featTextureFor(features.list()[size_t(i)]):thumbFor(sections.list()[size_t(i)].path);
                 if(texture) {
                     if(tool==FEATURES) {
-                        const auto* sprite=features.sprite(vfs,features.list()[size_t(i)]);
+                        const auto* sprite=featureSpriteFor(features.list()[size_t(i)]);
                         const float scale=std::min(float(kThumb)/std::max(sprite->w,1),float(kThumb)/std::max(sprite->h,1));
                         SDL_Rect fit{x+(kThumb-int(sprite->w*scale))/2,y+(kThumb-int(sprite->h*scale))/2,int(sprite->w*scale),int(sprite->h*scale)};
                         SDL_RenderCopy(ren,texture,nullptr,&fit);

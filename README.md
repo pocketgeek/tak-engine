@@ -190,7 +190,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   Units and features support box selection,
   group movement, copy/paste and deletion; feature moves protect occupied cells.
   **View** can hide features, units, starts and regions; layer choices are remembered.
-  Terrain thumbnails load in the background, and the minimap refreshes after terrain edits.
+  Terrain thumbnails and feature sprites load in the background; the minimap
+  refreshes after terrain edits.
   A first-launch guide introduces editing and saving. Hover over toolbar controls,
   filters or the minimap for action help and shortcuts.
   The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.

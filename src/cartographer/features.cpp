@@ -5,6 +5,7 @@
 #include "tdf/tdf.h"
 
 #include <algorithm>
+#include <chrono>
 #include "util/virtualpath.h"
 
 namespace cart {
@@ -17,7 +18,8 @@ std::string lower(std::string s) {
 } // namespace
 
 void FeatureLibrary::scan(const tak::hpi::Vfs& vfs, const std::string& world) {
-    refs_.clear();
+    quiesce();
+    refs_.clear();names_.clear();
     spriteCache_.clear();
     const std::string dirs[] = {"features/" + lower(world), "features/all worlds"};
     for (const std::string& dir : dirs) {
@@ -46,17 +48,33 @@ void FeatureLibrary::scan(const tak::hpi::Vfs& vfs, const std::string& world) {
     std::sort(refs_.begin(), refs_.end(), [](const FeatureRef& a, const FeatureRef& b) {
         return a.category != b.category ? a.category < b.category : a.name < b.name;
     });
+    for(size_t i=0;i<refs_.size();++i)names_.emplace(refs_[i].name,i);
 }
 
 const FeatureRef* FeatureLibrary::byName(const std::string& name) const {
-    std::string lo = lower(name);
-    for (const auto& r : refs_) if (r.name == lo) return &r;
-    return nullptr;
+    const auto found=names_.find(lower(name));
+    return found==names_.end()?nullptr:&refs_[found->second];
 }
 
 const FeatSprite* FeatureLibrary::sprite(const tak::hpi::Vfs& vfs, const FeatureRef& r) {
     auto it = spriteCache_.find(r.name);
     if (it != spriteCache_.end()) return &it->second;
+    return &spriteCache_.emplace(r.name,decodeSprite(vfs,r)).first->second;
+}
+void FeatureLibrary::quiesce() {
+    if(job_.valid()) {job_.wait();job_=std::future<Result>{};}
+}
+const FeatSprite* FeatureLibrary::requestSprite(const tak::hpi::Vfs& vfs,const FeatureRef& r) {
+    if(job_.valid() && job_.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+        auto result=job_.get();spriteCache_.emplace(std::move(result.name),std::move(result.sprite));
+    }
+    if(auto found=spriteCache_.find(r.name);found!=spriteCache_.end())return &found->second;
+    if(!job_.valid())job_=std::async(std::launch::async,[&vfs,r] {
+        return Result{r.name,decodeSprite(vfs,r)};
+    });
+    return nullptr;
+}
+FeatSprite FeatureLibrary::decodeSprite(const tak::hpi::Vfs& vfs,const FeatureRef& r) {
     FeatSprite fs;
     // Palette: <world>_features.pcx, else <world>.pcx, else aramon_features.
     const std::string palCands[] = {r.world + "_features.pcx", r.world + ".pcx",
@@ -84,7 +102,7 @@ const FeatSprite* FeatureLibrary::sprite(const tak::hpi::Vfs& vfs, const Feature
             }
         } catch (const std::exception&) {}
     }
-    return &spriteCache_.emplace(r.name, std::move(fs)).first->second;
+    return fs;
 }
 
 } // namespace cart

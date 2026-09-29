@@ -738,6 +738,29 @@ save/reopen; template operands also pass the existing validator. The picker
 screenshot was inspected for clipping and readable descriptions. Test Map and
 full CRT runtime integration remain unfinished.
 
+## Background feature art checkpoint
+
+Interactive feature palettes, placed features and placement previews now request
+sprite decoding from one background worker. Pending requests are distinct from
+failed art, so a temporary placeholder cannot permanently cache a missing
+texture. Pixels and anchors retain the existing decoder's results; SDL texture
+creation remains on the UI thread. Noninteractive screenshot/export paths load
+synchronously so captured art is complete. A pending preview retains its snapped
+cell outline.
+
+The worker copies its feature descriptor, reads the immutable asset VFS, and is
+joined before that VFS is replaced. Rescanning a world discards previous work and
+cached art. Feature-name lookup is indexed rather than scanning the complete
+palette for every visible feature. The existing per-world sprite/texture caches
+remain; this does not claim a new memory cap or selective GAF-frame decoding.
+
+All sixteen editor tests pass in Release and ASAN/LSAN. The new synthetic-art
+test covers pixel/anchor parity, asynchronous completion, failure caching,
+copying request data, source replacement and destruction with work pending.
+The Ultima Online B1 63x63 live-minimap workflow passed in 2.86 seconds with peak
+RSS 968,320 KiB; this measures the whole editor/fixture workflow, not an isolated
+sprite benchmark. No terrain or simulation behavior changed.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
