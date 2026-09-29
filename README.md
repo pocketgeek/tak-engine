@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.9-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.10-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -41,24 +41,31 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.9
+## New in 0.7.10
 
-- **Windows startup fixes:** support accented map filenames, avoid repeated audio
-  initialization delays when no sound device is active, and launch without a
-  console window. Packages use the game title and omit server shortcuts.
-- **Direct GPU statistics:** NVIDIA uses the installed NVML driver library;
-  AMD and Intel on Windows use system GPU counters. No helper processes or
-  extra vendor libraries are shipped. Stats and benchmarks share the same sampler.
-- **Retail-style F4 table:** faction emblems, compact translucent rows, and
-  Name, Kills, Losses, and Score columns. Your score also appears in the side panel.
-- **Smoother large-map checks:** reduced placement-grid hashing cost while
-  preserving identical desync-check results. This reduces one measured source
-  of hitches; sustained 4× speed on huge maps is not guaranteed.
-- **Setup-only Double Sight/Radar:** choose it when creating the game; the
-  lobby displays its status as information.
+- **Large-map performance:** terrain chunk caching, fog geometry reuse, fewer
+  distant model and shadow submissions, and less pathfinding, script scheduling,
+  and collision-grid overhead. These improve measured workloads; 4× simulation
+  speed and 16,000-unit real-time play are not guaranteed.
+- **Random maps and map sharing:** balanced generation with validated routes,
+  automatic transfer of missing or differing maps, and generated maps saved on
+  the host, clients, and server when play starts.
+- **Team support:** **Alt+G** gives eligible selected units to an ally. Allied
+  vision remains shared, and excess mana goes first to allies with the lowest
+  storage fill percentage.
+- **Setup and player identity:** choose unit limits and Allow Speed Change when
+  creating a game; the lobby displays them. Leaving a skirmish lobby returns to
+  creation. **Options → Player Name** sets the name for new local games.
+- **Presentation and controls:** restored Unit Info fonts and button feedback,
+  corrected stationary building rendering, mobile-builder production rally
+  orders, and embedded Windows/macOS application icons.
 
-See the [0.7.9 validation report](docs/release-0.7.9-validation.md) and
-[large-map measurements](docs/large-map-hash-performance.md).
+See the [0.7.10 validation report](docs/release-0.7.10-validation.md),
+[performance measurements](docs/performance-2026-09-28.md), and
+[map sharing guide](docs/map-transfer.md).
+Version 0.7.9 added Windows startup/audio fixes, direct GPU telemetry, and the
+retail-style score table; see its [validation report](docs/release-0.7.9-validation.md).
+
 Version 0.7.8 restored scripted corpses and death timing, improved building
 lighting, and fixed streaming shutdown; its
 [validation report](docs/release-0.7.8-validation.md) documents those changes.
@@ -78,7 +85,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.9** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.10** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -110,7 +117,7 @@ The `-debug` downloads are for diagnostics and development.
 ## Getting started
 
 1. Install or unpack TAK Engine.
-2. Launch **TAK Engine** and choose your original game's installation folder
+2. Launch **Total Annihilation: Kingdoms** and choose your original game's installation folder
    when prompted. Select the folder containing the retail `.hpi` archives;
    no extraction is needed. The engine remembers this location.
 3. Choose the single-player door for a skirmish, multiplayer to join a server,
@@ -316,7 +323,7 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-The current development build uses **protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
+Version **0.7.10 uses protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
 storage fill percentage, alongside verified automatic
 map transfer and the balanced random-map generator. Restart/update both client and server
 together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
