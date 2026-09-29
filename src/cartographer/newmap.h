@@ -25,7 +25,7 @@ tak::gaf::Palette loadWorldPalette(const tak::hpi::Vfs& vfs, const std::string& 
 // exact downsample/overview-dims are inferred, so this is a functional (loadable,
 // visually faithful) minimap, not a byte-exact retail reproduction.
 void generateMinimaps(tak::tnt::Map& map, tak::terrain::Compositor& comp,
-                      const tak::gaf::Palette& pal);
+                      const tak::gaf::Palette& pal, std::shared_ptr<const std::atomic_bool> stop={});
 
 struct MinimapPreview {int width=126,height=126;std::vector<uint8_t> rgba;};
 // Display-only preview; does not alter document minimap bytes or undo history.

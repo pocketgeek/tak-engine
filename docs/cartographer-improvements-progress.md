@@ -816,6 +816,25 @@ link/runtime validation is still unavailable locally because the configured
 static Windows FFmpeg prefix is missing; no retail game was launched. Linux
 Release targets are rebuilt together. macOS live launch remains unverified.
 
+## Background save/export checkpoint
+
+Explicit Save, Save As and loose export now give a worker a copied document.
+Minimap generation, serialization, compression and staged filesystem writes no
+longer run on the UI thread. A progress view continues pumping window events;
+Escape/Cancel requests cancellation before publication. Once replacement begins,
+the short transaction finishes or rolls back instead of abandoning partial files.
+Only successful writes mark history clean or update the recent-file list. The
+worker borrows the immutable asset source while the modal prevents map replacement,
+and all work completes before returning to editing or honoring a close request.
+
+All eighteen editor tests pass in Release and ASAN/LSAN. New coverage verifies
+snapshot independence from later source edits, cancellation without touching the
+old save/backup, replacement backups, complete loose companions, and failure
+without partial publication or leaked staging directories. Existing save/resize,
+undo/redo and recovery UI workflows still pass. A headless save of Ultima Online
+B1 63x63 completed in 0.41 seconds with peak RSS 260,688 KiB; that is a whole
+load/save workflow measurement, not a claim about interactive frame rate.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
@@ -829,8 +848,8 @@ Release targets are rebuilt together. macOS live launch remains unverified.
 5. Expanded typed-rule validation and optional trigger diagnostics; temporary
    snapshots now launch through the normal client/server path. Complete custom
    mission outcomes, neutral owners and stat overrides remain runtime limitations.
-6. Asynchronous save/export and further large-map profiling, broader document/UI
-   coverage and final documentation cleanup. Pending terrain work now survives
+6. Further large-map profiling, broader document/UI coverage and final
+   documentation cleanup. Save/export now runs in the background. Pending terrain work survives
    unrelated edits; thumbnails, feature art and minimaps load in the background.
 
 No retail GUI launch is needed for the completed work. The separate untracked

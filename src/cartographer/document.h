@@ -6,6 +6,7 @@
 #include "tnt/tnt.h"
 
 #include <filesystem>
+#include <atomic>
 #include <set>
 
 namespace cart {
@@ -22,10 +23,10 @@ std::vector<tak::hpi::PackFile> documentFiles(
 // use a KMP for an atomic whole-document save.
 bool writeDocumentFiles(const std::filesystem::path& directory,
                         const std::vector<tak::hpi::PackFile>&,
-                        std::string& error);
+                        std::string& error, const std::atomic_bool* cancel = nullptr);
 bool writeDocumentBundle(const std::filesystem::path&,
                          const std::vector<tak::hpi::PackFile>&,
-                         std::string& error);
+                         std::string& error, const std::atomic_bool* cancel = nullptr);
 bool validDocumentName(const std::string&);
 
 } // namespace cart

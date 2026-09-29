@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <stdexcept>
 
 namespace cart {
 
@@ -104,9 +105,10 @@ MinimapPreview minimapPreview(const tak::tnt::Map& map,tak::terrain::Compositor&
 }
 
 void generateMinimaps(tak::tnt::Map& map, tak::terrain::Compositor& comp,
-                      const tak::gaf::Palette& pal) {
+                      const tak::gaf::Palette& pal, std::shared_ptr<const std::atomic_bool> stop) {
     if (map.blocksX <= 0 || map.blocksY <= 0) return;
-    std::vector<uint8_t> grid = blockColourGrid(map, comp);
+    std::vector<uint8_t> grid = blockColourGrid(map, comp, stop);
+    if(stop && stop->load())throw std::runtime_error("Save cancelled");
 
     // Small minimap: retail's fixed 126x126.
     map.minimapW = 126; map.minimapH = 126;

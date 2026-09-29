@@ -61,13 +61,15 @@ std::vector<tak::hpi::PackFile> documentFiles(
 }
 
 bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::PackFile>& files,
-                        std::string& error) {
+                        std::string& error, const std::atomic_bool* cancel) {
     fs::path stage;
     std::vector<bool> existed;
     size_t installed=0;
     bool preserveStage=false;
     error.clear();
     try {
+        auto checkCancel=[&] {if(cancel && cancel->load())throw std::runtime_error("Save cancelled");};
+        checkCancel();
         const fs::path dir=directory.empty()?fs::path("."):directory;
         if(!fs::is_directory(dir)) throw std::runtime_error("Save folder does not exist");
         std::set<std::string> names;
@@ -83,6 +85,7 @@ bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::P
             stage=dir/(".tak-save-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+"-"+std::to_string(serial++));
         } while(!fs::create_directory(stage));
         for(size_t i=0;i<files.size();++i) {
+            checkCancel();
             write(stage/(std::to_string(i)+".new"),files[i].data);
             const auto target=dir/fs::u8path(files[i].path);
             existed.push_back(fs::exists(target));
@@ -91,6 +94,9 @@ bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::P
                 fs::copy_file(target,stage/(std::to_string(i)+".backup"));
             }
         }
+        // Cancellation ends at publication: finish this short transaction atomically
+        // (or roll it back) instead of abandoning a partly installed document.
+        checkCancel();
         // Finish every write/backup before replacing any member of the document.
         for(size_t i=0;i<files.size();++i) if(existed[i])
             replace(stage/(std::to_string(i)+".backup"),dir/fs::u8path(files[i].path+".bak"));
@@ -117,15 +123,16 @@ bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::P
 }
 
 bool writeDocumentBundle(const fs::path& path, const std::vector<tak::hpi::PackFile>& files,
-                         std::string& error) {
+                         std::string& error, const std::atomic_bool* cancel) {
     try {
+        if(cancel && cancel->load())throw std::runtime_error("Save cancelled");
         const auto name=path.stem().u8string();
         const std::string stem(name.begin(),name.end());
         if(!validDocumentName(stem)) throw std::runtime_error("Invalid map filename");
         auto members=files;
         for(auto& member:members) member.path="kmap/"+stem+"/"+member.path;
         const auto filename=path.filename().u8string();
-        return writeDocumentFiles(path.parent_path(),{{std::string(filename.begin(),filename.end()),tak::hpi::pack(members)}},error);
+        return writeDocumentFiles(path.parent_path(),{{std::string(filename.begin(),filename.end()),tak::hpi::pack(members)}},error,cancel);
     } catch(const std::exception& e) { error=e.what();return false; }
 }
 } // namespace cart

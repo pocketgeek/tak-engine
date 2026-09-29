@@ -1,6 +1,7 @@
 #include "util/winargv.h"
 #include "cartographer/recovery.h"
 #include "cartographer/playtest.h"
+#include "cartographer/savejob.h"
 #include "cartographer/scenarioinfo.h"
 // Cartographer -- a clean-room re-implementation of the retail TA:Kingdoms map
 // editor (see docs/cartographer-port.md). Static-analysis RE of the shipped
@@ -363,34 +364,59 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
     bool wantNew = false;   // deferred "open New Map" after a discard confirmation
     std::string saveError;
-    auto serializeDocument = [&](const std::string& name) {
-        mapView.quiesce();
-        if (edited) {
-            std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
-            std::transform(wld.begin(),wld.end(),wld.begin(),[](unsigned char c){return char(std::tolower(c));});
-            cart::generateMinimaps(mapView.editMap(),mapView.compositor(),cart::loadWorldPalette(vfs,wld));
-            minimapRefreshNeeded=true;
-        }
-        return cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,name);
-    };
-    auto saveMap = [&](const std::string& tntPath) -> bool {
+    auto saveDocument = [&](const std::string& destination,bool bundle) -> bool {
         try {
-            const auto path=std::filesystem::u8path(tntPath);
-            const auto base=path.stem().u8string();
             commitHistory();
-            const bool ok=cart::writeDocumentFiles(path.parent_path(),serializeDocument(std::string(base.begin(),base.end())),saveError);
-            if(ok) {history.markSaved();dirty=false;preferences.remember(pathText(std::filesystem::absolute(path)));if(interactive)persistPreferences();}return ok;
+            cart::SaveSnapshot snapshot;
+            snapshot.map=mapView.map();snapshot.metadata=scenario;snapshot.scenario=scen;
+            snapshot.units=units;snapshot.useOnly=useOnly;snapshot.vfs=&vfs;
+            snapshot.destination=std::filesystem::u8path(destination);
+            snapshot.bundle=bundle;snapshot.rebuildMinimaps=edited;
+            const auto path=snapshot.destination;
+            auto progress=std::make_shared<cart::SaveProgress>();
+            auto job=cart::saveInBackground(std::move(snapshot),progress);
+            const std::string title=SDL_GetWindowTitle(win);
+            std::vector<SDL_Event> deferred;
+            if(interactive) {
+                SDL_SetWindowTitle(win,(title+" - SAVING").c_str());
+                while(job.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready) {
+                    int width,height;SDL_GetRendererOutputSize(ren,&width,&height);
+                    const int w=int(width/kUIScale),h=int(height/kUIScale);
+                    const SDL_Rect cancel{w/2-70,h/2+34,140,24};
+                    SDL_Event event;
+                    while(SDL_PollEvent(&event)) {
+                        const bool escape=event.type==SDL_KEYDOWN && event.key.keysym.sym==SDLK_ESCAPE;
+                        const bool click=event.type==SDL_MOUSEBUTTONDOWN && event.button.button==SDL_BUTTON_LEFT &&
+                            cart::pointIn(int(event.button.x/kUIScale),int(event.button.y/kUIScale),cancel);
+                        if(escape || click || event.type==SDL_QUIT)progress->cancel=true;
+                        // Preserve events already queued behind Save (including a
+                        // close request), but let SDL keep painting/resizing now.
+                        if(!escape && !click && event.type!=SDL_MOUSEMOTION && event.type!=SDL_WINDOWEVENT && deferred.size()<4096)
+                            deferred.push_back(event);
+                    }
+                    SDL_RenderSetClipRect(ren,nullptr);
+                    SDL_SetRenderDrawColor(ren,30,34,44,255);SDL_RenderClear(ren);
+                    const auto panel=cart::drawPanel(ren,w,h,520,190,"SAVING MAP SNAPSHOT");
+                    const char* labels[]={"PREPARING SNAPSHOT","GENERATING MINIMAPS","SERIALIZING MAP","PACKING / WRITING FILES","FINISHING"};
+                    cart::drawText(ren,progress->cancel?"CANCELLING...":labels[progress->phase.load()],panel.x,panel.y+10,1,230,235,245);
+                    cart::drawText(ren,"The previous save stays intact until publication.",panel.x,panel.y+34,1,190,200,215);
+                    cart::drawButton(ren,cancel.x,cancel.y,cancel.w,cancel.h,"CANCEL (ESC)",false);
+                    SDL_RenderPresent(ren);SDL_Delay(8);
+                }
+                SDL_SetWindowTitle(win,title.c_str());
+                for(auto& event:deferred)SDL_PushEvent(&event);
+            }
+            const auto result=job.get();saveError=result.error;
+            if(result.ok) {
+                history.markSaved();dirty=false;
+                preferences.remember(pathText(std::filesystem::absolute(path)));
+                if(interactive)persistPreferences();
+            }
+            return result.ok;
         } catch(const std::exception& e) {saveError=e.what();return false;}
     };
-    auto saveBundle = [&](const std::string& kmpPath) -> bool {
-        try {
-            const auto path=std::filesystem::u8path(kmpPath);
-            const auto base=path.stem().u8string();
-            commitHistory();
-            const bool ok=cart::writeDocumentBundle(path,serializeDocument(std::string(base.begin(),base.end())),saveError);
-            if(ok) {history.markSaved();dirty=false;preferences.remember(pathText(std::filesystem::absolute(path)));if(interactive)persistPreferences();}return ok;
-        } catch(const std::exception& e) {saveError=e.what();return false;}
-    };
+    auto saveMap = [&](const std::string& path) {return saveDocument(path,false);};
+    auto saveBundle = [&](const std::string& path) {return saveDocument(path,true);};
 
     // Section-prefab palette for this map's world (falls back to aramon).
     cart::SectionLibrary sections;

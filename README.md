@@ -184,7 +184,9 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   positions, named regions, and scenario rules, and exports `.kmp` map bundles.
   The **Regions** tool draws, moves and resizes trigger areas on the map;
   **Enter** opens the selected region's name and coordinates. Editing supports
-  undo/redo and periodic recovery copies; recovery tries the previous snapshot
+  undo/redo and periodic recovery copies. Save/export prepares minimaps, packs and
+  writes a snapshot in the background, with progress and Escape cancellation before
+  publication; the short replacement step finishes or rolls back. Recovery tries the previous snapshot
   if the newest copy is damaged. Shrinking a map asks before cropping terrain
   and features; move outlying units, starts and regions inside first.
   Units and features support box selection,
