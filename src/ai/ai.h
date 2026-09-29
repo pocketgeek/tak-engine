@@ -123,6 +123,7 @@ public:
 
 private:
     friend struct PlacementProbe;
+    std::vector<std::pair<float,float>> plannedManaSites_; // reservations until emitted orders reach the world
     // --- deterministic RNG (retail-style LCG) --------------------------------
     int rand(int n) {
         rng_ = rng_ * 1103515245u + 12345u;

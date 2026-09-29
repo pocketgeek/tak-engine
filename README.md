@@ -41,6 +41,17 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
+## Since 0.7.11 (current source)
+
+- **Diplomacy on D:** all players, eligible-unit gifting, outgoing mana-sharing
+  checkboxes for teammates, and checkboxes choosing who receives your chat.
+- **Hard/Absurd expansion:** earlier expansion builders, reserved mana sites, and
+  new deposits prioritized over nearby upgrades. See [expansion results](docs/ai-expansion-2026-09-29.md).
+- **Memory/resource fixes:** loading fonts, model/editor teardown, stopped-stream
+  buffers, and a terrain reload worker race. See [the memory audit](docs/memory-audit-2026-09-29.md).
+
+These changes require **protocol 195** and are not in the published 0.7.11 packages.
+
 ## New in 0.7.11
 
 - **Defensive Passive AI:** continues growing its army and defenses near home
@@ -66,9 +77,8 @@ See the [0.7.11 validation report](docs/release-0.7.11-validation.md) and
 - **Random maps and map sharing:** balanced generation with validated routes,
   automatic transfer of missing or differing maps, and generated maps saved on
   the host, clients, and server when play starts.
-- **Team support:** **Alt+G** gives eligible selected units to an ally. Allied
-  vision remains shared, and excess mana goes first to allies with the lowest
-  storage fill percentage.
+- **Team support:** allied unit gifting, shared vision, and surplus mana sent
+  first to allies with the lowest storage fill percentage.
 - **Setup and player identity:** choose unit limits and Allow Speed Change when
   creating a game; the lobby displays them. Leaving a skirmish lobby returns to
   creation. **Options → Player Name** sets the name for new local games.
@@ -229,7 +239,7 @@ issued with a left-click; **Shift** queues the order.
 | **W** | Cycle the active weapon of a selected unit with multiple weapons |
 | **K** | Toggle cloak for selected units that can cloak |
 | **O** | Open / close selected gates |
-| **Alt+G** | Open allied unit gifting; give eligible selected units to an ally (monarchs, airborne units, unfinished units, passengers, and loaded transports cannot be given) |
+| **D** | Open diplomacy: give eligible selected units, toggle outgoing mana sharing with teammates, and choose chat recipients |
 | **Ctrl+Shift+D** | Toggle self-destruct for selected units; press again to cancel |
 
 ### Selection
@@ -340,8 +350,12 @@ Downloaded maps remain available in the map picker; generated maps are saved on 
 participant and the server when the match starts. See [map sharing and storage](docs/map-transfer.md).
 
 Allies share vision automatically. Excess mana is distributed to allied players
-with the lowest storage fill percentage first. To transfer units, select them,
-press **Alt+G**, and choose an ally. Ineligible units remain yours; transfers
+with the lowest storage fill percentage first, among teammates you allow in
+**D — Diplomacy**. Mana sharing starts enabled for teammates; chat starts enabled
+for everyone and controls who receives your messages. The dialog lists all players,
+with gifts and mana sharing unavailable for opponents. Gift buttons are disabled
+without eligible selected units. Giving units keeps the dialog open and updates
+the buttons. Ineligible units remain yours; transfers
 respect the recipient's unit limits, remove transferred units from your control
 groups, and change them to the recipient's colors. Campaigns do not offer gifting.
 See [unit gifting](docs/unit-gifting.md) for eligibility details.
@@ -351,7 +365,8 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.11 uses protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
+The current source uses **protocol 195** for directed mana sharing and chat.
+The **0.7.11 release uses protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
 storage fill percentage, alongside verified automatic
 map transfer and the balanced random-map generator. Restart/update both client and server
 together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection

@@ -258,7 +258,7 @@ int main(int argc,char** argv) {
                 }
                 check(started,"Absurd Aramon starts its first Keep without repeating rejected approaches");
             }
-            for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard}) {
+            for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
                 sim::World w;terrain(w);w.buildNavClasses(reg);w.player(0).mana=10000;
                 w.setManaSpots({{2800,800}});
                 auto king=*reg.find("araking");king.commander=false; // expansion builder using the same menu
@@ -267,7 +267,28 @@ int main(int argc,char** argv) {
                 ai::Controller controller(0,reg,p,1,difficulty,{{3400,800}});
                 auto cs=think(controller,w);
                 bool build=std::any_of(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Build;});
-                check(build==(difficulty==ai::Difficulty::Hard),"Hard expands beyond the normal and defensive home limits");
+                check(build==(difficulty==ai::Difficulty::Hard || difficulty==ai::Difficulty::Absurd),"Hard and Absurd expand beyond the normal and defensive home limits");
+            }
+            for(auto difficulty:{ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);w.player(0).mana=10000;
+                w.setManaSpots({{2800,800},{2800,1200}});
+                auto builder=*reg.find("araking");builder.commander=false;
+                const int first=w.spawn(&builder,400,800,0,0);
+                w.spawn(&builder,400,1200,0,0);
+                ai::Profile p;p.weight["aralode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                const auto cs=think(controller,w);
+                std::vector<net::Command> sites;
+                for(const auto& c:cs)if(c.kind==net::Cmd::Build)sites.push_back(c);
+                check(sites.size()==2 && (sites[0].x!=sites[1].x || sites[0].z!=sites[1].z),
+                      "expansion builders reserve different mana spots before lockstep applies orders");
+                sim::Order approach;approach.x=sim::Fixed::fromInt(1600);approach.z=sim::Fixed::fromInt(800);
+                sim::Order build;build.buildType=reg.find("aralode");
+                build.x=sim::Fixed::fromInt(2800);build.z=sim::Fixed::fromInt(800);
+                w.unit(first)->orders={approach,build};
+                const auto later=think(controller,w,uint32_t(ai::paramsFor(difficulty).thinkPeriod));
+                check(std::any_of(later.begin(),later.end(),[](const auto& c){return c.kind==net::Cmd::Build && c.z==1200;}),
+                      "expansion respects a mana site reserved behind movement waypoints");
             }
             {
                 sim::World w;terrain(w);w.buildNavClasses(reg);

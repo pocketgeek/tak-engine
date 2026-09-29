@@ -151,7 +151,7 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     n.desiredFactories = std::clamp(int(n.income / 40.0f) + 1, 1, 8);
     n.desiredArmy = std::clamp(12 + int(n.income * 1.5f), 12, 180);
     const bool aggressive = diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd;
-    n.builderCap = aggressive ? std::clamp(3 + int(n.income / 80), 3, 8) : 2;
+    n.builderCap = aggressive ? std::clamp(4 + int(n.income / 60), 4, 12) : 2;
     n.desiredDefenses = std::clamp(1 + int(n.income / 50), 1, 6);
     if (aggressive || diff_ == Difficulty::Passive) {
         // Income limits production speed, not the eventual size of the force.
@@ -181,6 +181,8 @@ int Controller::desire(BuildCat c, const Needs& n) const {
             if (n.factories == 0) return 90;                        // then: some production
             return n.factories < n.desiredFactories ? 70 : 0;       // scale with income
         case BuildCat::Builder:
+            if ((diff_==Difficulty::Hard || diff_==Difficulty::Absurd) &&
+                n.factories>0 && n.income>=20 && n.builders<n.builderCap) return 88;
             return n.builders < n.builderCap ? 65 : 0;              // a handful, then stop
         case BuildCat::Army:
             return n.army < n.desiredArmy ? 50 : 0;
@@ -214,7 +216,8 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
             // Zhon's factories can ALSO build economy. Keep them producing an
             // opening force instead of sending every handler off to a lodestone.
             if (cat == BuildCat::Army && needs.army < std::max(4, needs.factories * 3)) return 85;
-            if (cat == BuildCat::Economy && needs.economyProjects >= std::max(1, needs.factories / 3)) return 40;
+            if (cat == BuildCat::Economy && needs.economyProjects >=
+                (aggressive ? std::max(2,needs.factories/2) : std::max(1,needs.factories/3))) return 40;
         }
         return value;
     };
@@ -360,6 +363,8 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             if (p.type->commander) { auto h = homeOf(world); ox = h.first; oz = h.second; }
             float x, z;
             if (placeSite(world, pick, p, ox, oz, x, z)) {
+                if (pick->onMana && (diff_==Difficulty::Hard || diff_==Difficulty::Absurd))
+                    plannedManaSites_.emplace_back(x,z);
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                 return true;
             } else {
@@ -461,9 +466,26 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     if (t->onMana && world.hasManaSpots()) {
         float bestD = 1e18f;
         bool found = false;
+        std::vector<std::pair<float,float>> reservedSites;
+        if (aggressive) {
+            reservedSites=plannedManaSites_;
+            // Walking builders do not occupy their deposits yet. Gather queued
+            // destinations once, rather than scan every unit for every deposit.
+            for (const auto& u:world.units()) {
+                if(!u.alive() || u.id==builder.id || !world.allied(player_,u.player))continue;
+                for(const auto& order:u.orders)
+                    if(order.buildType && order.buildType->onMana)
+                        reservedSites.emplace_back(order.x.toFloat(),order.z.toFloat());
+            }
+        }
         for (const auto& [sx, sz] : world.manaSpots()) {
+            if (std::any_of(reservedSites.begin(),reservedSites.end(),[&](const auto& spot) {
+                const float dx=spot.first-sx,dz=spot.second-sz;return dx*dx+dz*dz<32*32;
+            })) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
             float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
+            // Claim new income before replacing a nearby existing lodestone.
+            if (aggressive && world.lodestoneUpgradeSource(t,sx,sz,player_)) d+=1e12f;
             if (d < bestD) { bestD = d; outX = sx; outZ = sz; found = true; }
         }
         return found;
@@ -631,6 +653,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if (world.player(player_).defeated) return;
 
     if (!home_) home_=homeOf(world);
+    plannedManaSites_.clear();
     Needs needs = assessNeeds(world);   // one empire assessment drives every producer
     // Snapshot the idle producers, then act on up to producersPerThink of them -- the
     // per-think cap is what paces the economy across difficulties (Easy builds one

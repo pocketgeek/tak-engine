@@ -191,6 +191,16 @@ int main(int argc, char** argv) {
         }
     }
     report(seconds);
+    int deposits=0,remoteDeposits=0,remoteDefenses=0;float furthest=0;
+    for(const auto& u:w.units()) {
+        if(!u.alive() || u.player!=1 || !u.type || u.underConstruction)continue;
+        const float dx=u.x.toFloat()-spots[1].first,dz=u.z.toFloat()-spots[1].second;
+        const float distance=std::sqrt(dx*dx+dz*dz);
+        if(u.type->onMana) {++deposits;if(distance>900)++remoteDeposits;furthest=std::max(furthest,distance);}
+        if(distance>900 && u.type->isStructure() && u.type->weapon.damage>0)++remoteDefenses;
+    }
+    std::printf("expansion: completed_deposits=%d remote_deposits=%d furthest=%.0f remote_defenses=%d\n",
+        deposits,remoteDeposits,furthest,remoteDefenses);
     std::printf("commands issued:");
     for (const auto& [k, n] : cmdCount)
         std::printf(" kind%d=%d", k, n);
