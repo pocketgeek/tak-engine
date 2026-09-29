@@ -675,9 +675,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     std::string mfOriginal[kMaxFields];
     std::string mf[kMaxFields];              // field buffers
     bool mfNumeric[kMaxFields] = {};
-    // A field with a non-null choice list is a dropdown (click opens the list),
-    // not a typed text box. Used by the New Map dialog for size/world selection.
+    // Choice lists are read-only unless explicitly editable (flag suggestions).
     const std::vector<std::string>* mfChoices[kMaxFields] = {};
+    bool mfEditableChoice[kMaxFields] = {};
+    int scrPlayer = 0;                     // 0..8
     int mDropScroll=0;
     std::vector<std::string> ruleChoices[kMaxFields];
     int mDropOpen = -1;                       // which field's dropdown list is open (-1 none)
@@ -745,6 +746,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     auto openModal = [&](Modal m, int unitIdx = -1) {
         mfocus = 0; editUnit = unitIdx;descriptionScroll=0;descriptionFollowCaret=true;modalError.clear();
         mDropOpen = -1;
+        for (auto& editable : mfEditableChoice) editable=false;
         for (auto& c : mfChoices) c = nullptr;   // default: plain text fields
         if (m == M_SCENARIO) {
             mTitle = "SCENARIO PROPERTIES"; mN = 2;
@@ -1022,8 +1024,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             for(int i=mN;i<5;++i)candidate.slot[i].clear();
             for(const auto& problem:cart::validateRuleOperands(editRuleAction,candidate,scen,unitRegistry))
                 if(problem.severity==cart::MapIssue::Severity::Error) {modalError=problem.message;return;}
-            *editRule=std::move(candidate);
-            editRule = nullptr; dirty = true; historyPending=true;
+            bool changed=false;
+            for(int i=0;i<5;++i)changed|=candidate.slot[i]!=editRule->slot[i];
+            if(changed) {*editRule=std::move(candidate);dirty=true;historyPending=true;}
+            editRule = nullptr;
         } else if (modal == M_CONFIRM) {
             if (confirmAction) confirmAction();
             confirmAction = nullptr;
@@ -1046,8 +1050,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             mf[i] = r->slot[size_t(i)];
             const auto kind=params[size_t(i)];
             mfNumeric[i] = kind==cart::PKind::Value;
-            mfChoices[i] = nullptr;
+            mfChoices[i] = nullptr;mfEditableChoice[i]=kind==cart::PKind::Flag;
             auto& choices=ruleChoices[i];choices.clear();
+            if(kind==cart::PKind::Flag && scrPlayer<int(scen.players.size()))choices=cart::ruleFlags(scen.players[scrPlayer]);
             if(kind==cart::PKind::Location) {choices.push_back("Anywhere");for(const auto& region:scen.regions)choices.push_back(region.name);}
             if(kind==cart::PKind::UnitType) {choices.push_back("Any Unit");choices.insert(choices.end(),unitTypes.begin(),unitTypes.end());}
             if(kind==cart::PKind::Player) {choices.push_back("All Players");for(int p=1;p<=8;++p)choices.push_back("Player "+std::to_string(p));}
@@ -1106,7 +1111,6 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     // --- Scenario Scripting (per-player trigger rules) overlay (phase 5) ------
     bool scriptOpen = false;
-    int scrPlayer = 0;                     // 0..8
     int scrGroup = -1;                     // selected rule-group in this player
     int scrCondSel = -1, scrActSel = -1;   // selected condition / action row
     int scrRuleScroll = 0, scrCondScroll = 0, scrActScroll = 0;
@@ -1600,7 +1604,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if(e.type==SDL_MOUSEWHEEL && mDropOpen>=0 && mfChoices[mDropOpen]) {
                     mDropScroll=std::clamp(mDropScroll-e.wheel.y*3,0,std::max(0,int(mfChoices[mDropOpen]->size())-8));continue;
                 }
-                if (e.type == SDL_TEXTINPUT && mN > 0 && !mfChoices[mfocus]) {
+                if (e.type == SDL_TEXTINPUT && mN > 0 && (!mfChoices[mfocus] || mfEditableChoice[mfocus])) {
+                    mDropOpen=-1;
                     fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1,std::max(1,(mBox[mfocus].w-8)/6));
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
@@ -1608,7 +1613,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                         mfocus = (mfocus + ((e.key.keysym.mod&KMOD_SHIFT)?std::max(1,mN)-1:1)) % std::max(1, mN);
                         mDropOpen = -1;fieldEditor.focus(mf[mfocus]);
                     }
-                    else if ((k == SDLK_LEFT || k == SDLK_RIGHT) && mN > 0 && mfChoices[mfocus]) {
+                    else if(k==SDLK_DOWN && (e.key.keysym.mod&KMOD_ALT) && mN>0 && mfChoices[mfocus]) {mDropOpen=mfocus;mDropScroll=0;}
+                    else if ((k == SDLK_LEFT || k == SDLK_RIGHT) && mN > 0 && mfChoices[mfocus] && !mfEditableChoice[mfocus]) {
                         // Cycle a focused dropdown field with the arrow keys.
                         const auto& opts = *mfChoices[mfocus];
                         int cur = 0;
@@ -1621,7 +1627,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     else if (k == SDLK_ESCAPE) {
                         if (mDropOpen >= 0) mDropOpen = -1;   // first Esc closes an open list
                         else { modal = M_NONE; SDL_StopTextInput(); }
-                    } else if(mN>0 && !mfChoices[mfocus])fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1,std::max(1,(mBox[mfocus].w-8)/6));
+                    } else if(mN>0 && (!mfChoices[mfocus] || mfEditableChoice[mfocus]))fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1,std::max(1,(mBox[mfocus].w-8)/6));
                 } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                            e.button.button == SDL_BUTTON_LEFT) {
                     int mx = e.button.x, my = e.button.y;
@@ -1630,7 +1636,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     if (mDropOpen >= 0) {
                         for (size_t i = 0; i < mDropRects.size(); ++i)
                             if (cart::pointIn(mx, my, mDropRects[i])) {
-                                mf[mDropOpen] = (*mfChoices[mDropOpen])[i+mDropScroll]; break;
+                                mf[mDropOpen] = (*mfChoices[mDropOpen])[i+mDropScroll];fieldEditor.focus(mf[mDropOpen]); break;
                             }
                         mDropOpen = -1;
                         continue;
@@ -1646,7 +1652,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     // A choice field opens its dropdown; a text field takes focus.
                     for (int i = 0; i < mN; ++i)
                         if (cart::pointIn(mx, my, mBox[i])) {
-                            if (mfChoices[i]) { mDropOpen = i; mfocus = i;mDropScroll=0; }
+                            if (mfChoices[i] && (!mfEditableChoice[i] || mx>=mBox[i].x+mBox[i].w-24)) { mDropOpen = i; mfocus = i;mDropScroll=0; }
                             else {mfocus=i;
                                 if(modal==M_SCENARIO && i==1) {
                                     fieldEditor.click(mf[i],std::max(1,(mBox[i].w-8)/6),(my-mBox[i].y-4)/12+descriptionScroll,(mx-mBox[i].x-4)/6,SDL_GetModState()&KMOD_SHIFT);
@@ -2639,6 +2645,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             for (int i = 0; i < mN; ++i) {
                 if(modal==M_SCENARIO && i==1)
                     mBox[i]=cart::drawTextArea(ren,ct.x,ct.y+40,ct.w,160,"DESCRIPTION (SHIFT+ENTER: NEW LINE)",mf[i],mfocus==i,fieldEditor,descriptionScroll,descriptionFollowCaret);
+                else if(mfChoices[i] && mfEditableChoice[i]) {
+                    mBox[i]=cart::drawField(ren,ct.x,ct.y+i*40,ct.w-24,mLabel[i],mf[i],mfocus==i,mfocus==i?&fieldEditor:nullptr);
+                    mBox[i].w+=24;
+                    cart::drawButton(ren,mBox[i].x+mBox[i].w-24,mBox[i].y,24,mBox[i].h,"v",mDropOpen==i);
+                }
                 else if (mfChoices[i])
                     mBox[i] = cart::drawChoice(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
                                                mf[i], mDropOpen == i);

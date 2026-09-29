@@ -182,7 +182,7 @@ static int ruleTextWorkflow(const char* data) {
     auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     tak::crt::Scenario scenario;scenario.players.resize(9);scenario.players[0].resize(1);
     auto& group=scenario.players[0][0];group.conditions.push_back({1,{"12345"}});
-    for(int i=0;i<12;++i)group.actions.push_back({25,{"Player1","Message "+std::to_string(i)+" "+std::string(45,'x'),"progress",std::string(63,'y')}});
+    for(int i=0;i<12;++i)group.actions.push_back({25,{"Player 1","Message "+std::to_string(i)+" "+std::string(45,'x'),"progress",std::string(63,'y')}});
     const auto expected=cart::ruleDetails(group,cart::RuleColumn::Group,0);
     std::string error;
     if(!cart::writeDocumentBundle(root/"Rules.kmp",cart::documentFiles(map,metadata,scenario,{}, {},"Rules"),error))throw std::runtime_error(error);
@@ -194,7 +194,8 @@ static int ruleTextWorkflow(const char* data) {
         const int w=int(pw/sx),h=int(ph/sy);
         auto click=[&](int x,int y) {SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);};
         auto pixels=[&]() {SDL_Rect r{int((w/2-376)*sx),int((h/2+133)*sy),int(752*sx),int(78*sy)};std::vector<uint8_t> out(size_t(r.w)*r.h*4);if(SDL_RenderReadPixels(renderer,&r,SDL_PIXELFORMAT_RGBA32,out.data(),r.w*4))failed=true;return out;};
-        failed|=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        if(frame<=11 || frame>=14)failed|=dirty;
         switch(frame) {
         case 0: key(SDLK_o,KMOD_CTRL);break;
         case 1: text((root/"Rules.kmp").string());key(SDLK_RETURN);break;
@@ -206,15 +207,30 @@ static int ruleTextWorkflow(const char* data) {
         case 7: {
             failed|=before!=pixels();
             if(const char* capture=SDL_getenv("TAK_EDITOR_TEST_CAPTURE")) {std::vector<uint8_t> rgba(size_t(pw)*ph*4);if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(capture,pw,ph,rgba);}
-            key(SDLK_ESCAPE);break;
+            break;
         }
-        case 8: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
-        default: if(frame>12) {failed=true;key(SDLK_ESCAPE);key(SDLK_RETURN);}
+        case 8: click(w/2+180,h/2-166);key(SDLK_RETURN);break;
+        case 9: key(SDLK_TAB);key(SDLK_TAB);text("temporary_flag");key(SDLK_DOWN,KMOD_ALT);break;
+        case 10: click(w/2,h/2+28);key(SDLK_RETURN);break;
+        case 11: key(SDLK_RETURN);break;
+        case 12: key(SDLK_TAB);key(SDLK_TAB);text("new_flag");key(SDLK_RETURN);break;
+        case 13: failed|=!dirty;key(SDLK_ESCAPE);key(SDLK_s,KMOD_CTRL);break;
+        case 14: key(SDLK_RETURN);break;
+        case 15: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        default: if(frame>19) {failed=true;key(SDLK_ESCAPE);key(SDLK_RETURN);}
         }
     });
+    {
+        tak::hpi::Archive archive(root/"Rules.kmp");bool found=false;
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {
+            const auto saved=tak::crt::parse(archive.read(entry));
+            found=!saved.players.empty() && !saved.players[0].empty() && !saved.players[0][0].actions.empty() && saved.players[0][0].actions[0].slot[2]=="new_flag";
+        }
+        failed|=!found;
+    }
     fs::remove_all(root);
-    if(result || failed || lastFrame>12) {std::cerr<<"rule text workflow failed\n";return 1;}
-    std::cout<<"PASS: full rule text clipboard, page navigation and unchanged document\n";return 0;
+    if(result || failed || lastFrame>19) {std::cerr<<"rule text workflow failed\n";return 1;}
+    std::cout<<"PASS: full rule text clipboard, page navigation, flag suggestions and new flag persistence\n";return 0;
 }
 static int regionWorkflow(const char* data) {
     namespace fs=std::filesystem;

@@ -554,6 +554,23 @@ original rendered text, and confirms the document remains unmodified. Its
 screenshot was visually checked for layout and clipping. All thirteen editor
 tests pass in Release and under AddressSanitizer/LeakSanitizer.
 
+## Existing flag suggestions checkpoint
+
+Scenario flag fields now offer sorted, deduplicated suggestions from the selected
+player's rules, using typed flag operands rather than matching arbitrary text.
+Names remain case-sensitive and editable: authors can type a new flag, or use
+the arrow button / Alt+Down to choose an existing one. Other players' flag lists
+are not mixed in. Unknown opcodes and empty operands do not add suggestions.
+This only changes authoring; scenario execution is unchanged.
+
+The editor workflow now chooses an existing flag after temporarily typing a new
+name, verifies that accepting the unchanged rule leaves the document clean,
+then types a new flag and checks its persisted CRT operand. This also exposed
+and fixed the previous unconditional dirty marker when accepting an unchanged
+rule. Unit coverage checks flag operand positions, duplicates and malformed
+opcodes. All thirteen editor tests pass in Release and under
+AddressSanitizer/LeakSanitizer.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated

@@ -38,6 +38,11 @@ int main() {
         check(detail.find("Condition 1: Gametime greater than 12345")!=std::string::npos && detail.find(std::string(63,'x'))!=std::string::npos && detail.find(std::string(63,'y'))!=std::string::npos,"full rule details preserve every long operand");
         check(cart::ruleDetails(detailed,cart::RuleColumn::Action,0).find("Condition")==std::string::npos,"selected-action detail does not include other columns");
         check(cart::ruleDetails(detailed,cart::RuleColumn::Action,5).empty(),"stale rule detail selection is safe");
+        tak::crt::RuleGroup flags;
+        flags.conditions={{17,{"z","2"}},{18,{"a","3"}},{999,{"ignored"}}};
+        flags.actions={{2,{"z","1"}},{3,{"5","new_flag"}},{4,{"2",""}}};
+        check(cart::ruleFlags({flags})==std::vector<std::string>({"a","new_flag","z"}),"flag choices use typed operands, sort, deduplicate and ignore invalid opcodes/empty values");
+        check(cart::ruleFlags({}).empty(),"empty player has no flag suggestions");
         cart::RuleClipboard clipboard;int group=0,row=0;
         check(clipboard.copy(rules,group,row,cart::RuleColumn::Action),"copy action");
         check(!clipboard.paste(rules,group,row,cart::RuleColumn::Condition),"cannot paste action as condition");

@@ -21,6 +21,20 @@ bool RuleClipboard::paste(std::vector<tak::crt::RuleGroup>& target,int& group,in
     const int at=row>=0 && row<int(list.size())?row+1:int(list.size());
     list.insert(list.begin()+at,*rule);row=at;return true;
 }
+std::vector<std::string> ruleFlags(const std::vector<tak::crt::RuleGroup>& groups) {
+    std::vector<std::string> result;
+    auto collect=[&](const auto& rules,const auto& defs) {
+        for(const auto& rule:rules) {
+            if(rule.opcode<0 || rule.opcode>=int(defs.size()))continue;
+            const auto& params=defs[rule.opcode].params;
+            for(size_t i=0;i<params.size() && i<5;++i)
+                if(params[i]==PKind::Flag && !rule.slot[i].empty())result.push_back(rule.slot[i]);
+        }
+    };
+    for(const auto& group:groups) {collect(group.conditions,conditionDefs());collect(group.actions,actionDefs());}
+    std::sort(result.begin(),result.end());result.erase(std::unique(result.begin(),result.end()),result.end());
+    return result;
+}
 std::string ruleDetails(const tak::crt::RuleGroup& group,RuleColumn selected,int row) {
     std::string text;
     auto append=[&](bool action,int i) {

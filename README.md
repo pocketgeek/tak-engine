@@ -191,6 +191,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.
   **T** opens scenario scripting; its full-text area wraps long operands, supports
   **Page Up/Page Down** scrolling, and offers **Copy Text** for the selected rule.
+  Flag fields accept new names or suggest existing flags from that player’s rules;
+  use the arrow button or **Alt+Down** to open the suggestions.
   **Scenario → Check Map** reports
   terrain, start, mana and scenario issues in a clickable results list.
   **Scenario → Regenerate from Recipe** restores a generated map's settings;
