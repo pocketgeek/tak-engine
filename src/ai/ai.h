@@ -24,9 +24,10 @@
 
 namespace tak::ai {
 
-// The retail AI profile (ai/default.txt): per-unit build weight and hard limit.
-// weight = probability share in the weighted-random build pick; limit = hard cap
-// (-1 = unlimited). Missing weight => the AI never builds that unit.
+// Retail AI profile weights and policy limits. Normal/Easy retain scaled limits;
+// sustained-growth modes raise them to their force/production targets. A zero
+// limit remains disabled; -1 is unlimited. Actual UnitType limits always apply.
+// Missing weight => the AI never builds that unit.
 struct Profile {
     std::unordered_map<std::string, int> weight, limit;
 };
@@ -89,11 +90,14 @@ struct Needs {
     // Own live units per type, filled in the same assessNeeds pass -- weightedPick's
     // limit checks read this instead of re-scanning all units per menu entry.
     std::unordered_map<const tak::sim::UnitType*, int> counts;
+    int   economyProjects = 0; // producers committed to income/storage construction
+    int   population = 0;      // includes construction and this think's planned units
     int   economy = 0;         // count: income/storage structures
-    int   factories = 0;       // count: structures that train units
+    int   factories = 0;       // count: static or mobile production units
     int   builders = 0;        // count: mobile builders (incl. the Monarch)
     int   defenses = 0;
     int   desiredArmy = 0;
+    int   desiredDefenses = 1;
     int   army = 0;            // count: mobile combatants
     int   builderCap = 2;      // stop making builders past this (a handful, not a horde)
     int   desiredFactories = 1;// how many factories the current income wants to feed

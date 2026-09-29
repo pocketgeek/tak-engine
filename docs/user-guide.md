@@ -80,10 +80,10 @@ Skirmish lobbies let you choose a map, faction, colour, teams, and one of five
 
 | Difficulty | Behaviour |
 | --- | --- |
-| **Passive** | builds an income-scaled defensive army and defenses near home; never sends attacks |
+| **Passive** | keeps building an army and defenses near home as mana allows, up to the game cap; never sends attacks |
 | **Easy** | builds up slowly and gathers an army before attacking; no raids |
 | **Normal** | harasses with small **raiding parties** while massing a main army sized to its mana income |
-| **Hard** | expands more aggressively; probes with raids while saving an income-scaled heavy force |
+| **Hard** | continues expanding income and production; spends on raids while saving a heavy force |
 | **Absurd** | Hard, with **double mana income** from recurring and reclaim sources |
 
 From **Normal** up the AI doesn't trickle units in: it peels off a few for **raids**

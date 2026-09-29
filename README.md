@@ -160,10 +160,10 @@ enemy units outside current sight remain untargetable.
 
 | AI | What to expect |
 | --- | --- |
-| Passive | Builds a defensive force at home; sends no attacks |
+| Passive | Keeps growing its army and defenses at home as mana allows; sends no attacks |
 | Easy | Builds slowly and gathers an army before attacking |
 | Normal | Sends probing raids while saving a larger attacking force |
-| Hard | Expands more aggressively, with raids and larger attack waves |
+| Hard | Keeps expanding income and production, spending on raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
 
 Choose **Generate Random Map** under the map preview to configure a Mainland,

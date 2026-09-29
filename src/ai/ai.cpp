@@ -1,6 +1,7 @@
 #include "ai/ai.h"
 
 #include <cstdlib>
+#include <climits>
 
 #include "hpi/hpi.h"
 #include "sim/detmath.h"
@@ -123,6 +124,19 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     n.income = me.income;   // spend the income actually available
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type) continue;
+        if (u.type->isBuilder) {
+            const auto* site = u.buildSiteId ? world.unit(u.buildSiteId) : nullptr;
+            bool economyProject = site && site->underConstruction && site->type &&
+                                  categoryOf(site->type) == BuildCat::Economy;
+            // Approach waypoints precede the actual build order. Count the queued
+            // destination too, so distant expansions do not enlist every producer.
+            for (const auto& order : u.orders)
+                if (order.buildType && categoryOf(order.buildType) == BuildCat::Economy) {
+                    economyProject = true; break;
+                }
+            if (economyProject) ++n.economyProjects;
+        }
+        ++n.population;
         ++n.counts[u.type];
         switch (categoryOf(u.type)) {
             case BuildCat::Economy:  ++n.economy;   break;
@@ -136,7 +150,18 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
     // of mobile builders is plenty (more just spiral the economy). Hard/Absurd run hotter.
     n.desiredFactories = std::clamp(int(n.income / 40.0f) + 1, 1, 8);
     n.desiredArmy = std::clamp(12 + int(n.income * 1.5f), 12, 180);
-    n.builderCap = (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd) ? 3 : 2;
+    const bool aggressive = diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd;
+    n.builderCap = aggressive ? std::clamp(3 + int(n.income / 80), 3, 8) : 2;
+    n.desiredDefenses = std::clamp(1 + int(n.income / 50), 1, 6);
+    if (aggressive || diff_ == Difficulty::Passive) {
+        // Income limits production speed, not the eventual size of the force.
+        n.desiredArmy = world.unitCap() > 0 ? world.unitCap() : INT_MAX;
+        n.desiredFactories = std::clamp(1 + int(n.income / 25), 1, 32);
+        if (me.storage > 0 && me.mana > me.storage * 0.6f)
+            n.desiredFactories = std::min(n.desiredFactories + 1, 32);
+        if (diff_ == Difficulty::Passive)
+            n.desiredDefenses = std::clamp(2 + int(n.income / 40) + n.army / 12, 2, 48);
+    }
     return n;
 }
 
@@ -149,8 +174,9 @@ int Controller::desire(BuildCat c, const Needs& n) const {
             // Bootstrap income BEFORE the pricey first factory -- building a 1700-mana
             // keep out of the opening treasury with no income starves everything after.
             if (n.income < 20.0f) return 95;
-            return n.income < 25.0f + 20.0f * n.factories ?
-                ((diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd) ? 80 : 60) : 0; // sustain the factories
+            if (diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd)
+                return n.income < 25.0f + 20.0f * n.factories ? 80 : 60;
+            return n.income < 25.0f + 20.0f * n.factories ? 60 : 0;
         case BuildCat::Factory:
             if (n.factories == 0) return 90;                        // then: some production
             return n.factories < n.desiredFactories ? 70 : 0;       // scale with income
@@ -159,7 +185,7 @@ int Controller::desire(BuildCat c, const Needs& n) const {
         case BuildCat::Army:
             return n.army < n.desiredArmy ? 50 : 0;
         case BuildCat::Defense:
-            return n.defenses < std::clamp(1 + int(n.income / 50), 1, 6) ?
+            return n.defenses < n.desiredDefenses ?
                 (n.army >= 4 ? 55 : 30) : 0;
     }
     return 0;
@@ -178,9 +204,26 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     // A menu entry the AI may build right now: has a positive weight, is under its
     // limit, and savings + income over its build time cover the cost (so a builder
     // never traps itself on a site the mana runs dry beneath).
+    const bool aggressive = diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd;
+    const bool sustained = aggressive || diff_ == Difficulty::Passive;
+    const bool mobileFactory = !producer.type->isStructure() &&
+                               categoryOf(producer.type) == BuildCat::Factory;
+    auto priority = [&](BuildCat cat) {
+        int value = desire(cat, needs);
+        if (mobileFactory && needs.income >= 20 && value > 0) {
+            // Zhon's factories can ALSO build economy. Keep them producing an
+            // opening force instead of sending every handler off to a lodestone.
+            if (cat == BuildCat::Army && needs.army < std::max(4, needs.factories * 3)) return 85;
+            if (cat == BuildCat::Economy && needs.economyProjects >= std::max(1, needs.factories / 3)) return 40;
+        }
+        return value;
+    };
     std::unordered_map<const tak::sim::UnitType*,int> terrainWeights;
     auto usable = [&](const tak::sim::UnitType* ut) -> int {
-        if (!ut) return 0;
+        if (!ut || (world.unitCap() > 0 && needs.population >= world.unitCap())) return 0;
+        auto count = needs.counts.find(ut);
+        const int have = count == needs.counts.end() ? 0 : count->second;
+        if (ut->totalAllowed > 0 && have >= ut->totalAllowed) return 0;
         auto wi = profile_.weight.find(ut->id);
         int w = wi == profile_.weight.end() ? 0 : wi->second;
         if (w <= 0) return 0;
@@ -189,10 +232,17 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         int lim = li == profile_.limit.end() ? -1 : li->second;
         if (lim == 0) return 0;
         if (lim > 0) {
-            auto ci = needs.counts.find(ut);
-            if ((ci == needs.counts.end() ? 0 : ci->second) >=
-                std::max(1, lim * dp_.limitScale / 100))
-                return 0;
+            int limit = std::max(1, lim * dp_.limitScale / 100);
+            const auto cat = categoryOf(ut);
+            // Profile limits pace the old small armies. Keep disabled entries
+            // disabled and enforce actual gameplay limits, but let these modes
+            // grow ordinary troops, defenses and expanding income beyond them.
+            if (sustained && cat == BuildCat::Army) limit = std::max(limit, needs.desiredArmy);
+            if (sustained && cat == BuildCat::Factory) limit = std::max(limit, needs.desiredFactories);
+            if (sustained && cat == BuildCat::Builder) limit = std::max(limit, needs.builderCap);
+            if (sustained && cat == BuildCat::Defense) limit = std::max(limit, needs.desiredDefenses);
+            if (aggressive && cat == BuildCat::Economy && ut->income > 0) limit = INT_MAX;
+            if (have >= limit) return 0;
         }
         if (ut->buildTime > 0) {
             float secs = ut->buildTime / std::max(producer.type->workerTime, 1.0f);
@@ -208,7 +258,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         const auto* ut = registry_.find(id);
         if (usable(ut) <= 0) continue;
         if (ut && (excludeCats & (1 << int(categoryOf(ut))))) continue;
-        best = std::max(best, desire(categoryOf(ut), needs));
+        best = std::max(best, priority(categoryOf(ut)));
     }
     // TAK_AI_PICK: why a producer chose nothing. A stalled economy is almost always
     // "every menu entry scored 0", and this says which gate did it.
@@ -240,7 +290,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     for (const auto& id : menu) {
         const auto* ut = registry_.find(id);
         int w = usable(ut);
-        if (w <= 0 || desire(categoryOf(ut), needs) != best) continue;
+        if (w <= 0 || priority(categoryOf(ut)) != best) continue;
         if (ut && (excludeCats & (1 << int(categoryOf(ut))))) continue;
         total += w;
         if (rand(total) < w) chosen = ut;   // reservoir sample
@@ -640,12 +690,13 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                     if (p->type && p->type->commander) commanderActed = true;
                     ++acted;
                     assigned.push_back(pid);
+                    ++needs.population;
                     ++needs.counts[pick];
                     switch (categoryOf(pick)) {
                         case BuildCat::Army: ++needs.army; break;
                         case BuildCat::Factory: ++needs.factories; break;
                         case BuildCat::Builder: ++needs.builders; break;
-                        case BuildCat::Economy: ++needs.economy; break;
+                        case BuildCat::Economy: ++needs.economy; ++needs.economyProjects; break;
                         case BuildCat::Defense: ++needs.defenses; break;
                     }
                     break;
@@ -659,12 +710,14 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     std::vector<int> exitFactories;
     for (const auto& factory:world.units())
         if (factory.alive() && factory.player==player_ && factory.type && !factory.underConstruction &&
-            factory.type->isStructure() && !registry_.buildable(factory.type->id).empty())
+            categoryOf(factory.type)==BuildCat::Factory)
             exitFactories.push_back(factory.id);
     // Idle newborns and constructors must clear factory doors even when this AI
     // never attacks. Issue ordinary local moves; do not relax body occupancy or
     // change the movement controller to make production succeed.
+    int cleared = 0;
     for (const auto& u : world.units()) {
+        if (cleared >= dp_.producersPerThink * 2) break;
         if (!u.alive() || u.player!=player_ || !u.type || u.type->isStructure() ||
             u.underConstruction || u.embarked() || !u.orders.empty() || u.buildSiteId ||
             std::find(assigned.begin(),assigned.end(),u.id)!=assigned.end()) continue;
@@ -672,11 +725,13 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
             const auto* found=world.unit(factoryId);
             if (!found) continue;
             const auto& factory=*found;
-            const float clearance=float(std::max(factory.type->footX,factory.type->footZ))*8+64;
+            const bool mobile = !factory.type->isStructure();
+            if (mobile && categoryOf(u.type) != BuildCat::Army) continue;
+            const float clearance=mobile ? 180.0f : float(std::max(factory.type->footX,factory.type->footZ))*8+64;
             const float dx=u.x.toFloat()-factory.x.toFloat(),dz=u.z.toFloat()-factory.z.toFloat();
             if (dx*dx+dz*dz>clearance*clearance) continue;
             bool moved=false;
-            for (float r : {clearance+48,clearance+96,clearance+160}) {
+            for (float r : {clearance+48,clearance+96,clearance+160,clearance+240,clearance+320}) {
                 for (int i=0;i<16;++i) {
                     const float a=float((u.id+i)%16)*0.392699082f;
                     const float x=factory.x.toFloat()+detmath::cos(a)*r;
@@ -686,7 +741,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                     if (!world.canPlace(u.type,x,z) || (!u.type->canFly &&
                         !world.pathExists(u.type,x,z,u.x.toFloat(),u.z.toFloat()))) continue;
                     emit(sink,tak::net::Cmd::Move,u.id,"",x,z);
-                    assigned.push_back(u.id);moved=true;break;
+                    assigned.push_back(u.id);++cleared;moved=true;break;
                 }
                 if (moved) break;
             }

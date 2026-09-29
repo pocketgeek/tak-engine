@@ -136,6 +136,75 @@ int main(int argc,char** argv) {
         check(earned[0]>0 && std::abs(earned[1]-earned[0]*2)<0.001,
               "Absurd doubles recurring, feature, ordered-corpse and automatic-corpse income");
     }
+    {
+        // Self-contained production tree: profile caps must not stop a defensive
+        // or aggressive AI while mana and the actual game cap allow more troops.
+        auto files=std::make_shared<hpi::Vfs::Files>();
+        auto file=[&](const std::string& path,const std::string& text) {
+            std::string lines;
+            for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+            (*files)[path]={lines.begin(),lines.end()};
+        };
+        auto type=[&](const char* id,const char* fields) {
+            file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+                ";objectname="+id+";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;"+fields+"}");
+        };
+        type("soldier","canmove=1;maxvelocity=1;");
+        type("scout","canmove=1;maxvelocity=1;");
+        type("unique","canmove=1;maxvelocity=1;totalallowed=1;");
+        type("factory","builder=1;workertime=30;");
+        type("handler","builder=1;workertime=30;canmove=1;maxvelocity=1;");
+        type("lode","mogriumincome=20;");
+        type("worker","builder=1;workertime=30;canmove=1;maxvelocity=1;");
+        file("canbuild/worker/lode.tdf","[CANBUILD]{sortbias=0;}");
+        for (const char* parent : {"factory","handler"})
+            for (const char* child : {"soldier","scout","unique"})
+                file(std::string("canbuild/")+parent+"/"+child+".tdf","[CANBUILD]{sortbias=0;}");
+        file("canbuild/handler/lode.tdf","[CANBUILD]{sortbias=0;}");
+        hpi::Vfs vfs;vfs.setMapFiles(files);
+        sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+            sim::World w;terrain(w);w.buildNavClasses(reg);w.setUnitCap(250);
+            w.player(0).mana=10000;w.player(0).income=200;
+            w.spawn(reg.find("factory"),400,800,0,0);
+            for (int i=0;i<190;++i)w.spawn(reg.find("soldier"),1600+float(i%20)*40,1600+float(i/20)*40,0,0);
+            ai::Profile p;p.weight["soldier"]=100;p.limit["soldier"]=1;
+            ai::Controller controller(0,reg,p,1,difficulty);
+            auto trains=[](const auto& cs){return std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Train;});};
+            check(trains(think(controller,w))==(difficulty==ai::Difficulty::Normal ? 0 : 1),
+                  "sustained modes keep producing past old army/profile ceilings; Normal retains its target");
+            w.setUnitCap(191);
+            check(trains(think(controller,w))==0,"continued production respects the actual player cap");
+            w.setUnitCap(250);p.limit["soldier"]=0;
+            check(trains(think(controller,w))==0,"disabled profile entries stay disabled");
+            p.weight["soldier"]=0;p.weight["unique"]=100;
+            w.spawn(reg.find("unique"),3000,2000,0,0);
+            check(trains(think(controller,w))==0,"actual per-type gameplay caps remain enforced");
+        }
+        {
+            sim::World w;terrain(w);w.buildNavClasses(reg);
+            w.player(0).mana=10000;w.player(0).income=25;
+            const int handler=w.spawn(reg.find("handler"),800,800,0,0);
+            ai::Profile p;p.weight["soldier"]=100;p.weight["lode"]=100;
+            ai::Controller controller(0,reg,p,1,ai::Difficulty::Normal);
+            auto cs=think(controller,w);
+            check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==handler && c.kind==net::Cmd::Build && std::string(c.type)=="soldier";}),
+                  "mobile production creature makes an opening army before more economy");
+            const int defender=w.spawn(reg.find("soldier"),880,800,0,0);
+            ai::Profile none;ai::Controller passive(0,reg,none,1,ai::Difficulty::Passive);
+            cs=think(passive,w);
+            check(attacks(cs)==0 && std::any_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==defender && c.kind==net::Cmd::Move;}),
+                  "defensive troops clear mobile production sites without an attack order");
+            for (int i=0;i<3;++i)w.spawn(reg.find("soldier"),1200+float(i)*40,800,0,0);
+            int worker=w.spawn(reg.find("worker"),1600,800,0,0);
+            sim::Order approach;approach.x=sim::Fixed::fromInt(2000);approach.z=sim::Fixed::fromInt(800);
+            sim::Order build=approach;build.buildType=reg.find("lode");
+            w.unit(worker)->orders={approach,build};
+            cs=think(controller,w);
+            check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==handler && c.kind==net::Cmd::Build && std::string(c.type)=="soldier";}),
+                  "economy construction behind approach waypoints leaves mobile production making troops");
+        }
+    }
     if (argc>1) {
         auto vfs=hpi::mountRetailRoot(argv[1]);
         for (bool crusades : {false,true}) {
