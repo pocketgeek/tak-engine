@@ -4401,6 +4401,36 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     }
 }
 
+bool World::canGiveUnit(int unitId, int fromPlayer, int toPlayer) const {
+    if (fromPlayer < 0 || fromPlayer >= numPlayers() || toPlayer < 0 ||
+        toPlayer >= numPlayers() || fromPlayer == toPlayer || !allied(fromPlayer, toPlayer) ||
+        players_[size_t(fromPlayer)].defeated || players_[size_t(toPlayer)].defeated) return false;
+    const Unit* u = unit(unitId);
+    // Retail Diplomacy::ShareUnits (0x4b6a80) excludes airborne units,
+    // passengers, loaded carriers and commanders. Never transfer unfinished sites.
+    return u && u->alive() && u->hp > Fixed() && u->type && u->player == fromPlayer &&
+        !u->type->commander && !u->underConstruction && u->flightGroundMode != 2 &&
+        !u->inTransport && u->cargo.empty() && !atUnitCap(toPlayer) && !atTypeCap(toPlayer, u->type);
+}
+
+bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
+    if (!canGiveUnit(unitId, fromPlayer, toPlayer)) return false;
+    Unit& u = *unit(unitId);
+    cancelBuilds(unitId);
+    stop(unitId);
+    if (players_[size_t(fromPlayer)].unitCount > 0) --players_[size_t(fromPlayer)].unitCount;
+    ++players_[size_t(toPlayer)].unitCount;
+    u.player = toPlayer;
+    u.rally.clear();
+    u.selfDestructT = -1;
+    u.squad = 0;
+    u.lastHitBy = 0;
+    u.lastHitPlayer = -1;
+    u.captureProg = 0;
+    gPlayersValid_ = false;
+    return true;
+}
+
 // Switch a unit's allegiance: contact charm (cancapture) and mind-control weapons
 // both land here, so a converted unit behaves identically either way -- it drops
 // its old orders, comes up at half health if it was nearly dead, and forgets who
@@ -8531,8 +8561,8 @@ void World::tick(float dt) {
     // Apply income, then share the economy across allies: mana that would
     // overflow a player's storage flows to teammates that still have headroom,
     // so a maxed-out ally feeds the team instead of wasting mogrium. It is truly
-    // wasted only when the whole team is capped. Deterministic -- collected and
-    // handed out in player-index order. A solo/FFA player (a team of one) has no
+    // wasted only when the whole team is capped. Deterministic -- collected in
+    // player order, shared by lowest fill percentage. A solo/FFA player has no
     // teammate to receive the surplus, so this reduces exactly to the old clamp.
     for (size_t player=0;player<players_.size();++player) {
         auto& tm=players_[player];
@@ -8567,17 +8597,40 @@ void World::tick(float dt) {
         int team = players_[size_t(lead)].team;
         if (team < 0 || team >= kMaxPlayers || teamDone[team]) continue;
         teamDone[team] = true;
-        float pool = 0;   // surplus above caps, gathered from the whole team
+        double pool = 0;   // surplus above caps, gathered from the whole team
         for (int i = 0; i < np; ++i)
             if (!players_[size_t(i)].retailResources && players_[size_t(i)].team == team && players_[size_t(i)].mana > cap(i)) {
                 pool += players_[size_t(i)].mana - cap(i);
                 players_[size_t(i)].mana = cap(i);
             }
-        for (int i = 0; i < np && pool > 0; ++i)
-            if (!players_[size_t(i)].retailResources && players_[size_t(i)].team == team) {
-                double give = std::min(cap(i) - players_[size_t(i)].mana, double(pool));
-                if (give > 0) { players_[size_t(i)].creditMana(give); pool -= float(give); }
-            }
+        std::array<int, kMaxPlayers> needy{};
+        int count = 0;
+        for (int i = 0; i < np; ++i)
+            if (!players_[size_t(i)].retailResources && !players_[size_t(i)].defeated &&
+                players_[size_t(i)].team == team && players_[size_t(i)].mana < cap(i))
+                needy[size_t(count++)] = i;
+        auto fill = [&](int i) { return players_[size_t(i)].mana / double(cap(i)); };
+        std::sort(needy.begin(), needy.begin()+count, [&](int a, int b) {
+            return fill(a) != fill(b) ? fill(a) < fill(b) : a < b;
+        });
+        // Raise the emptiest stores together toward the next fill percentage.
+        // Equal need shares proportionally to capacity, without slot preference.
+        double capacity = 0, stored = 0, level = 0;
+        int receiving = 0;
+        for (int n = 0; n < count && pool > 0; ++n) {
+            const int i = needy[size_t(n)];
+            capacity += cap(i);
+            stored += players_[size_t(i)].mana;
+            receiving = n+1;
+            const double next = n+1 < count ? fill(needy[size_t(n+1)]) : 1.0;
+            level = std::min(next, (stored+pool)/capacity);
+            if (level < next) break;
+        }
+        for (int n = 0; n < receiving; ++n) {
+            const int i = needy[size_t(n)];
+            const double give = std::min(pool, std::max(0.0, level*cap(i)-players_[size_t(i)].mana));
+            if (give > 0) { players_[size_t(i)].creditMana(give); pool -= give; }
+        }
         // Any pool left (every member capped) is wasted, as before.
     }
     // ...and once it has filled, the god manifests. This has to happen HERE, in the

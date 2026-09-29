@@ -21,6 +21,7 @@ on:
       - 'tools/pathsearch_test.cpp'
       - 'tools/authtest.cpp'
       - 'tools/cmdflow_test.cpp'
+      - 'tools/unit_gift_test.cpp'
       - 'tools/check-detmath.sh'
       - 'tools/check-determinism.sh'
       - '.github/workflows/determinism.yml'
@@ -34,6 +35,7 @@ on:
       - 'tools/pathsearch_test.cpp'
       - 'tools/authtest.cpp'
       - 'tools/cmdflow_test.cpp'
+      - 'tools/unit_gift_test.cpp'
       - 'tools/check-detmath.sh'
       - 'tools/check-determinism.sh'
       - '.github/workflows/determinism.yml'
@@ -148,7 +150,8 @@ jobs:
       - name: Build + run
         run: |
           cmake -B build -G Ninja
-          cmake --build build --target pathsearch_test authtest cmdflow_test
+          cmake --build build --target pathsearch_test authtest cmdflow_test unit_gift_test
           ./build/pathsearch_test
           ./build/authtest
           ./build/cmdflow_test
+          ./build/unit_gift_test

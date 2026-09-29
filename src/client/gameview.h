@@ -2072,6 +2072,11 @@ private:
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
     float speedMult() const;
+    bool giveUnitsMenu_ = false;
+    std::unordered_set<int> pendingGiftSelection_;
+    std::vector<std::pair<SDL_FRect, int>> giveUnitsHots_;
+    void drawGiveUnitsMenu(int winW, int winH);
+    void giveSelectedUnits(int recipient);
     bool showCounts_ = false;   // F4: player names, kills, losses, and score
     bool spectating_ = false;   // watching a live net game (no control, no fog)
     std::string playerName_[8];   // net games: display name per player (from lobby)

@@ -1981,6 +1981,7 @@
         // In-game exit menu overlay -- drawn last so it sits above the HUD. Screen
         // space (like the game-over banner); hit-rects are rebuilt here each frame
         // and consumed by input() (see the exitMenu_ branch).
+        if (giveUnitsMenu_) drawGiveUnitsMenu(winW, winH);
         if (exitMenu_) {
             exitHots_.clear();
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);

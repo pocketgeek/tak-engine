@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 193;      // 193: verified room map packages and automatic transfer
+constexpr uint32_t kNetVersion = 194;      // 194: allied unit gifts
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering
                                            // 189: authored corpse decisions and death owner lifetimes

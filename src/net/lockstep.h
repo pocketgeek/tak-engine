@@ -33,6 +33,7 @@ enum class Cmd : uint8_t {
                    // -N formation N (N=1..10). A unit is in exactly one squad; formations
                    // move at their slowest member's speed and their stragglers rejoin.
     ReclaimArea,   // persistent area clear: x/z through x2/z2, chooses each next target in sim
+    GiveUnit,      // unitId = owned eligible unit, targetId = allied recipient player
 };
 
 struct Command {

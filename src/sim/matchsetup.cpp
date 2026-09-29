@@ -38,13 +38,16 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     const auto* producer=world.unit(c.unitId);
     const bool repeatingMobile = producer && producer->type &&
         !producer->type->isStructure() && producer->repeatType;
-    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol) return;
+    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::GiveUnit) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
     };
     auto redirect = [&] { if (!c.queue && !repeatingMobile) world.cancelBuilds(c.unitId); };
     switch (c.kind) {
+        case Cmd::GiveUnit:
+            world.giveUnit(c.unitId, int(c.player), c.targetId);
+            break;
         case Cmd::Move:
             if (owns(c.unitId)) { redirect(); world.order(c.unitId, c.x, c.z, c.queue); }
             break;

@@ -73,6 +73,22 @@
             }
             return;
         }
+        if (giveUnitsMenu_) {
+            if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
+            if (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_ESCAPE ||
+                hotkeys_.match(e.key.keysym.sym, e.key.keysym.mod) == tak::Act::GiveUnits))
+                giveUnitsMenu_ = false;
+            if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                for (const auto& [r, recipient] : giveUnitsHots_)
+                    if (e.button.x >= r.x && e.button.x < r.x+r.w &&
+                        e.button.y >= r.y && e.button.y < r.y+r.h) {
+                        if (recipient >= 0) giveSelectedUnits(recipient);
+                        giveUnitsMenu_ = false;
+                        break;
+                    }
+            }
+            return;
+        }
         // In-game chat capture. While composing, keyboard goes to the draft;
         // mouse events still fall through so the camera stays usable.
         if (chatTyping_) {
@@ -511,3 +527,20 @@
         return pick->id;
     }
 #endif
+
+void GameView::giveSelectedUnits(int recipient) {
+    // The referee checks eligibility when each command executes, including caps
+    // changed by earlier gifts in this same selection.
+    for (int id : selection_) {
+        const auto* u = frameUnitP(id);
+        if (!u || !u->alive() || u->player != localPlayer_) continue;
+        tak::net::Command c;
+        c.kind = tak::net::Cmd::GiveUnit;
+        c.unitId = id;
+        c.targetId = recipient;
+        issue(c);
+        pendingGiftSelection_.insert(id);
+    }
+    trackSel_ = false;
+    lastRecalledSquad_ = 0;
+}

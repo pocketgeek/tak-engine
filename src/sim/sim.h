@@ -1594,6 +1594,8 @@ public:
     // Per-player unit limit: production and new builds stall a player once it has
     // this many live units (0 = unlimited). Set at match start (from the lobby).
     // The count it tests (Player::unitCount) is deterministic, so all peers agree.
+    bool canGiveUnit(int unitId, int fromPlayer, int toPlayer) const;
+    bool giveUnit(int unitId, int fromPlayer, int toPlayer);
     void setUnitCap(int c) { unitCap_ = c; }
     void setHumanPlayers(uint32_t mask) { humanMask_ = mask; }
     int unitCap() const { return unitCap_; }

@@ -3923,7 +3923,12 @@
         // A previously selected enemy must stop exposing its live state on leaving sight.
         std::erase_if(selection_, [this](int id) {
             const auto* u = frameUnitP(id);
-            return !u || !u->alive() || !canPickUnit(*u);
+            return !u || !u->alive() || !canPickUnit(*u) ||
+                (pendingGiftSelection_.contains(id) && u->player != localPlayer_);
+        });
+        std::erase_if(pendingGiftSelection_, [this](int id) {
+            const auto* u = frameUnitP(id);
+            return !u || !u->alive() || u->player != localPlayer_;
         });
     }
 
@@ -4086,6 +4091,13 @@
         // Everything below is a REBINDABLE action: resolve the pressed chord to an
         // Act via the user's hotkey config (src/client/hotkeys) and dispatch.
         switch (hotkeys_.match(int32_t(key), mod)) {
+            case tak::Act::GiveUnits:
+                if (!spectating_ && !replayMode_ && missionStem_.empty()) {
+                    giveUnitsMenu_ = true;
+                    giveUnitsHots_.clear();
+                    dragging_ = false;
+                }
+                return true;
             case tak::Act::ToggleCounts: showCounts_ = !showCounts_; return true;
             case tak::Act::UnitInfo: toggleUnitInfo(); return true;
             case tak::Act::FullScreenRadar:

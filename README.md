@@ -197,6 +197,7 @@ issued with a left-click; **Shift** queues the order.
 | **W** | Cycle the active weapon of a selected unit with multiple weapons |
 | **K** | Toggle cloak for selected units that can cloak |
 | **O** | Open / close selected gates |
+| **Alt+G** | Open allied unit gifting; give eligible selected units to an ally (monarchs, airborne units, unfinished units, passengers, and loaded transports cannot be given) |
 | **Ctrl+Shift+D** | Toggle self-destruct for selected units; press again to cancel |
 
 ### Selection
@@ -311,8 +312,9 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-The current development build uses **protocol 193**, which adds verified automatic
-map transfer and includes the balanced random-map generator. Restart/update both client and server
+The current development build uses **protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
+storage fill percentage, alongside verified automatic
+map transfer and the balanced random-map generator. Restart/update both client and server
 together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and
 0.7.5 use protocol 184. These builds cannot share a match. Older incompatible

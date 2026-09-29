@@ -42,6 +42,7 @@ const std::vector<HotkeyDef>& hotkeyDefs() {
         {Act::SelectFlying,   "select.flying",      "SELECT FLYING",   "SELECTION", {SDLK_y, HK_CTRL}},
         {Act::SelfDestruct,   "unit.selfdestruct",  "SELF-DESTRUCT",   "SELECTION", {SDLK_d, HK_CTRL | HK_SHIFT}},
 
+        {Act::GiveUnits,      "unit.give",          "GIVE SELECTED UNITS", "SELECTION", {SDLK_g, HK_ALT}},
         {Act::ToggleCounts,   "view.counts",        "UNIT COUNTS",     "VIEW",      {SDLK_F4, 0}},
         // Retail: `TAB = fsr;` in gamedata/keys.tdf, commented "Full-screen radar
         // toggle". The command is registered twice in the binary, as the console
