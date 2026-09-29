@@ -1,8 +1,13 @@
 #include <map>
 #include "client/modelview.h"
+#include "client/modelpiece.h"
+#include <cctype>
+#include <stdexcept>
 
 #include "client/gpuvram.h"
 #include "gaf/gaf.h"
+#include "util/virtualpath.h"
+#include <set>
 
 #include <algorithm>
 #include <cmath>
@@ -19,7 +24,12 @@ ModelView::ModelView(SDL_Renderer* ren, const std::string& path, const std::stri
     : ren_(ren), model_(tak::tdo::load(path)) {
     if (!texDir.empty() && !palettePath.empty()) loadTextures(texDir, palettePath);
     if (!cobPath.empty() && !anim.empty()) {
-        vm_ = std::make_unique<tak::cob::Vm>(tak::cob::load(cobPath));
+        initializeScript(tak::cob::load(cobPath),anim,staticMask);
+    }
+}
+
+void ModelView::initializeScript(tak::cob::File file,const std::string& anim,uint32_t staticMask) {
+        vm_ = std::make_unique<tak::cob::Vm>(std::move(file));
         for (int i = 0; i < 32; ++i)
             if (staticMask & (1u << i)) vm_->setStatic(i, 1);
         // Run Create FIRST, exactly as the game does when a unit enters play: it is
@@ -30,16 +40,64 @@ ModelView::ModelView(SDL_Renderer* ren, const std::string& path, const std::stri
         if (vm_->start("Create")) {
             for (int i = 0; i < 30; ++i) vm_->tick(1.0f / 30.0f);
         }
-        if (!vm_->start(anim))
-            std::fprintf(stderr, "no script '%s' in %s\n", anim.c_str(),
-                         cobPath.c_str());
+        if (!anim.empty() && !vm_->start(anim))
+            std::fprintf(stderr, "no script '%s' in model preview\n", anim.c_str());
         // Map piece numbers to lowercase object names.
         for (const auto& p : vm_->file().pieces) {
             std::string n = p;
             std::transform(n.begin(), n.end(), n.begin(), ::tolower);
             pieceNames_.push_back(n);
         }
+}
+
+ModelView::Asset ModelView::loadAsset(const tak::hpi::Vfs& vfs,const std::string& type,const std::atomic_bool* cancel) {
+    auto check=[&] {if(cancel && cancel->load())throw std::runtime_error("Preview cancelled");};
+    auto lower=[](std::string s) {for(char& c:s)c=char(std::tolower(static_cast<unsigned char>(c)));return s;};
+    check();const auto id=lower(type);Asset result;
+    result.model=tak::tdo::load(vfs.read("objects3d/"+id+".3do"));
+    if(const auto bytes=vfs.tryRead("scripts/"+id+".cob"))result.script=tak::cob::load(*bytes,id);
+    std::map<std::string,tak::gaf::Palette> palettes;
+    for(const char* side:{"ara","tar","ver","zon","cre","aid","mon","npc","lif","mis"}) {
+        const auto path="palettes/"+std::string(side)+"_textures.pcx";
+        if(const auto bytes=vfs.tryRead(path))palettes.emplace(side,tak::gaf::Palette::fromBytes(*bytes,path));
     }
+    if(!palettes.count("ara"))throw std::runtime_error("Missing model texture palette");
+    result.palette=palettes.count(id.substr(0,3))?palettes.at(id.substr(0,3)):palettes.at("ara");
+    std::set<std::string> needed;
+    const auto gather=[&](auto&& self,const tak::tdo::Object& object,bool root)->void {
+        if(!skipLiveModelPiece(lower(object.name),root))for(size_t i=0;i<object.primitives.size();++i) {
+            const auto& primitive=object.primitives[i];
+            if(int32_t(i)!=object.selectionPrimitive && primitive.indices.size()>=3 && !primitive.texture.empty())needed.insert(lower(primitive.texture));
+        }
+        for(const auto& child:object.children)self(self,child,false);
+    };
+    gather(gather,result.model.root,true);
+    for(const auto& path:vfs.list("textures")) {
+        check();if(needed.empty())break;
+        if(tak::vpath::extension(path)!=".gaf")continue;
+        const auto bank=lower(tak::vpath::stem(path)).substr(0,3);
+        const auto& palette=palettes.count(bank)?palettes.at(bank):palettes.at("ara");
+        for(auto& sequence:tak::gaf::load(vfs.read(path),palette,5,path)) {
+            const auto name=lower(sequence.name);
+            if(!sequence.frames.empty() && needed.erase(name))result.textures.emplace(name,std::move(sequence.frames.front()));
+        }
+    }
+    result.missingTextures.assign(needed.begin(),needed.end());
+    check();return result;
+}
+
+ModelView::ModelView(SDL_Renderer* renderer,Asset asset):ren_(renderer),model_(std::move(asset.model)),palette_(asset.palette) {
+    liveModel_=true;
+    for(auto& [name,frame]:asset.textures) {
+        if(frame.width<=0 || frame.height<=0)continue;
+        std::unique_ptr<SDL_Texture,TextureDeleter> texture(gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,frame.width,frame.height));
+        if(!texture || SDL_UpdateTexture(texture.get(),nullptr,frame.rgba.data(),frame.width*4)!=0)throw std::runtime_error(SDL_GetError());
+        SDL_SetTextureBlendMode(texture.get(),SDL_BLENDMODE_BLEND);
+        textures_.emplace(name,std::move(texture));
+    }
+    // Preview initialization hides unused pieces. This is a visual inspector,
+    // not a second gameplay world or a claim of complete unit behavior playback.
+    if(asset.script)initializeScript(std::move(*asset.script),"",0);
 }
 
 void ModelView::input(const SDL_Event& e) {
@@ -48,16 +106,17 @@ void ModelView::input(const SDL_Event& e) {
         pitch_ = std::clamp(pitch_ + e.motion.yrel * 0.01f, -1.4f, 1.4f);
         spin_ = false;
     } else if (e.type == SDL_MOUSEWHEEL) {
-        zoom_ *= e.wheel.y > 0 ? 1.15f : 0.87f;
+        if(e.wheel.y)zoom_=std::clamp(zoom_*(e.wheel.y>0?1.15f:0.87f),0.1f,10.f);
     }
 }
 
 void ModelView::draw(int winW, int winH, float dt) {
+    if(winW!=lastW_ || winH!=lastH_) {fitted_=false;lastW_=winW;lastH_=winH;}
     if (spin_) yaw_ += dt * 0.8f;
     if (vm_) vm_->tick(dt);
 
     tris_.clear();
-    walk(model_.root, Xform{});
+    walk(model_.root, Xform{},true);
     if (tris_.empty()) return;
 
     // Center and fit every frame (cheap, and stays correct as it spins).
@@ -144,11 +203,14 @@ const tak::cob::PieceState* ModelView::pieceFor(const std::string& objName) cons
     return nullptr;
 }
 
-void ModelView::walk(const tak::tdo::Object& o, const Xform& parent) {
+void ModelView::walk(const tak::tdo::Object& o, const Xform& parent,bool root) {
     const tak::cob::PieceState* ps = pieceFor(o.name);
-    if (ps && !ps->visible) return;
     Xform xf = scriptTransform(parent,o.x,o.y,o.z,ps);
-    for (const auto& p : o.primitives) {
+    std::string name=o.name;for(char& c:name)c=char(std::tolower(static_cast<unsigned char>(c)));
+    const bool hidden=(ps && !ps->visible) || (liveModel_ && skipLiveModelPiece(name,root));
+    for (size_t pi=0;!hidden && pi<o.primitives.size();++pi) {
+        if(liveModel_ && int32_t(pi)==o.selectionPrimitive)continue;
+        const auto& p=o.primitives[pi];
         if (p.indices.size() < 3) continue;
         SDL_Texture* tex = nullptr;
         if (!p.texture.empty()) {
@@ -172,8 +234,11 @@ void ModelView::walk(const tak::tdo::Object& o, const Xform& parent) {
                 depth += d;
                 static const SDL_FPoint uv[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
                 tri.v[k].tex_coord = uv[idx[k] & 3];
-                tri.v[k].color = tex ? SDL_Color{255, 255, 255, 255}
-                                     : SDL_Color{170, 170, 180, 255};
+                tri.v[k].color = tex ? SDL_Color{255,255,255,255} : SDL_Color{170,170,180,255};
+                if(!tex && palette_ && !p.texture.empty())tri.v[k].color={255,0,255,255};
+                else if(!tex && palette_ && p.colorIndex<256) {
+                    const auto* c=palette_->rgba[p.colorIndex];tri.v[k].color={c[0],c[1],c[2],255};
+                }
             }
             tri.depth = depth / 3;
             tris_.push_back(tri);

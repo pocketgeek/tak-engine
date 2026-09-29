@@ -29,6 +29,7 @@
 #include "cartographer/overlay.h"
 #include "cartographer/ruleedit.h"
 #include "cartographer/preferences.h"
+#include "util/scenariotrace.h"
 #include "cartographer/thumbnails.h"
 #include <fstream>
 #include <charconv>
@@ -40,6 +41,7 @@
 #include "cartographer/triggers.h"
 #include "cartographer/units.h"
 #include "client/mapview.h"
+#include "client/modelview.h"
 #include "client/settings.h"
 #include "client/dirpicker.h"
 #include "util/appicon.h"
@@ -702,7 +704,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS };
     static constexpr int kMaxFields = 11;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -757,19 +759,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // Pop a message box (word-wrapped to ~46 cols) — used by Check Map.
     auto openMessage = [&](const std::string& title, const std::string& text) {
         mMsg.clear();
-        std::string line;
-        std::string word;
-        auto flush = [&]() { if (!line.empty()) { mMsg.push_back(line); line.clear(); } };
-        for (size_t i = 0; i <= text.size(); ++i) {
-            char c = i < text.size() ? text[i] : ' ';
-            if (c == ' ' || c == '\n') {
-                if (line.size() + word.size() + 1 > 46) flush();
-                if (!line.empty()) line += ' ';
-                line += word; word.clear();
-                if (c == '\n') flush();
-            } else word += c;
-        }
-        flush();
+        for(const auto& line:cart::TextEdit::lines(text,46))mMsg.push_back(text.substr(line.begin,line.end-line.begin));
         mTitle = title; modal = M_MESSAGE; mN = 0; mfocus = 0;
     };
     // A yes/no confirmation that runs `action` on OK (used by Clear Area).
@@ -1124,6 +1114,53 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     bool useOnlyOpen = false;
     int useOnlyScroll = 0;
     SDL_Rect uoList{}, uoDone{}, uoClear{};   // render-computed hit rects
+    std::string objectSearch;
+    cart::TextEdit objectEditor;
+    std::vector<int> objectMatches;
+    int objectScroll=0,objectRow=0;
+    SDL_Rect objectList{},objectSearchBox{},objectClose{};
+    const auto objectOwner=[](int player) {return player==8?std::string("Neutral"):"Player "+std::to_string(player+1);};
+    auto filterObjects=[&] {
+        objectMatches.clear();const auto query=lowerText(objectSearch);
+        for(size_t i=0;i<units.size();++i) {
+            const auto& unit=units[i];const auto* type=unitRegistry.find(lowerText(unit.type));
+            if(lowerText(unit.name+" "+unit.type+" "+(type?type->name:std::string{})+" "+objectOwner(unit.player)).find(query)!=std::string::npos)objectMatches.push_back(int(i));
+        }
+        objectScroll=objectRow=0;
+    };
+    auto openObjects=[&] {objectSearch.clear();objectEditor.focus(objectSearch);filterObjects();modal=M_OBJECTS;SDL_StartTextInput();};
+    auto chooseObject=[&](int row,bool edit) {
+        if(row<0 || row>=int(objectMatches.size()))return;
+        const int index=objectMatches[row];const auto& unit=units[index];
+        selectedUnits.indices={index};selectedUnits.dragOrigins.clear();tool=UNITS;regionCanvas=false;editMode=MODE_SELECT;revealTool();
+        int w,h;SDL_GetRendererOutputSize(ren,&w,&h);
+        if(std::isfinite(unit.x) && std::isfinite(unit.z)) {
+            const float x=std::clamp(unit.x,0.f,mapView.map().width*16.f),z=std::clamp(unit.z,0.f,mapView.map().height*16.f);
+            mapView.setOffset(x-(w/kUIScale-kPaletteW)/(2*mapView.zoom()),z-(h/kUIScale-kMenuH-kStatusH)/(2*mapView.zoom()));
+        }
+        modal=M_NONE;SDL_StopTextInput();if(edit)openModal(M_UNIT,index);
+    };
+    std::future<ModelView::Asset> modelJob;
+    std::shared_ptr<std::atomic_bool> modelCancel;
+    std::unique_ptr<ModelView> modelPreview;
+    std::string modelTitle;
+    std::string modelWarning;
+    SDL_Rect modelArea{},modelClose{};
+    Uint64 modelTime=0;
+    bool quitAfterModel=false;
+    auto previewModel=[&] {
+        std::string type;
+        if(selectedUnits.indices.size()==1) {
+            const int index=*selectedUnits.indices.begin();
+            if(index>=0 && index<int(units.size()))type=lowerText(units[index].type);
+        }
+        if(type.empty() && selectedType>=0 && selectedType<int(unitTypes.size()))type=lowerText(unitTypes[selectedType]);
+        if(type.empty()) {openMessage("UNIT MODEL","Choose a unit in the Units browser first.");return;}
+        const auto* definition=unitRegistry.find(type);modelTitle=definition?definition->name:type;
+        modelPreview.reset();modelWarning.clear();modelCancel=std::make_shared<std::atomic_bool>(false);quitAfterModel=false;
+        modelJob=std::async(std::launch::async,[&vfs,type,cancel=modelCancel] {return ModelView::loadAsset(vfs,type,cancel.get());});
+        modal=M_MODEL_LOADING;SDL_StopTextInput();
+    };
     std::future<cart::TerrainOverlay> overlayJob;
     std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> overlayTexture(nullptr,SDL_DestroyTexture);
     std::string overlayLegend;
@@ -1313,10 +1350,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 mapView.quiesce();
                 cart::generateMinimaps(snapshot,mapView.compositor(),cart::loadWorldPalette(vfs,world));
             }
-            const auto files=cart::documentFiles(snapshot,scenario,scen,units,useOnly,name);
+            auto files=cart::documentFiles(snapshot,scenario,scen,units,useOnly,name);
+            if(preferences.tracePlaytest)for(auto& file:files)if(file.path.ends_with(".ota")) {
+                const std::string marker="\n[TAKPlaytest]\n{\nauthoredscenario=1;\ntrace=1;\n}\n";
+                file.data.insert(file.data.end(),marker.begin(),marker.end());
+            }
             std::string error;
             if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error))throw std::runtime_error(error);
-            openMessage("TEST MAP", "Opened a private game lobby from a snapshot. Seat the players used by your scenario, then start. Close the game to return here. Your document and save destination are unchanged.");
+            const auto log=preferences.tracePlaytest?" Trigger log: "+pathText(tak::scenarioTracePath(preferencesFolder,playtest.snapshot())):std::string{};
+            openMessage("TEST MAP", "Opened a private game lobby from a snapshot. Seat the players used by your scenario, then start. Close the game to return here. Your document and save destination are unchanged."+log);
         } catch(const std::exception& e) {openMessage("TEST MAP FAILED",e.what());}
     };
     int menuOpen=-1;
@@ -1327,8 +1369,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     const std::vector<std::vector<std::string>> menuRows={
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Test Map (F5)","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
-        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts"},
-        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe"},
+        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)"},
+        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe","Log Test Map triggers","Placed units"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
         if(menu==0) {
@@ -1345,6 +1387,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             else {stampLayers.objects=!stampLayers.objects;lastStampX=lastStampY=-999999;}
         } else if(menu==2) {
             int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
+            if(row==17)previewModel();
             if(row==0) {mapView.setZoom(std::min(float(w)/(mapView.map().width*16),float(h)/(mapView.map().height*16)));mapView.setOffset(0,0);}
             if(row==1)mapView.setZoom(1);
             if(row==2) {showGrid=!showGrid;persistPreferences();}
@@ -1385,6 +1428,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==6) {regionsOpen=true;regionSelected=scen.regions.empty()?-1:0;}
             if(row==7) {modal=M_ISSUES;issueScroll=0;}
             if(row==8)openGeneratorRecipe();
+            if(row==9) {preferences.tracePlaytest=!preferences.tracePlaytest;persistPreferences();}
+            if(row==10)openObjects();
             if(row==5) {if(!mapIssues.empty())issueIndex=(issueIndex+1)%mapIssues.size();showMapIssue();}
         } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
             "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
@@ -1481,6 +1526,21 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             } catch(const std::exception& error) {openMessage("GENERATION FAILED",error.what());}
             if(quitAfterGeneration) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         }
+        if(modelJob.valid() && modelJob.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+            try {
+                auto asset=modelJob.get();modal=M_NONE;
+                if(!modelCancel->load()) {
+                    if(!asset.missingTextures.empty()) {
+                        modelWarning="Missing textures (magenta): ";
+                        for(const auto& name:asset.missingTextures) {if(modelWarning.size()>65) {modelWarning+="...";break;}modelWarning+=name+" ";}
+                    }
+                    modelPreview=std::make_unique<ModelView>(ren,std::move(asset));modelTime=SDL_GetTicks64();modal=M_MODEL;
+                }
+            } catch(const std::exception& error) {
+                modal=M_NONE;if(!modelCancel->load())openMessage("MODEL PREVIEW FAILED",error.what());
+            }
+            if(quitAfterModel) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
+        }
         if(overlayJob.valid() && overlayJob.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
             try {
                 auto result=overlayJob.get();modal=M_NONE;
@@ -1504,6 +1564,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(quitAfterCheck) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         }
         while (SDL_PollEvent(&e)) {
+            if(modelJob.valid()) {
+                if(e.type==SDL_QUIT) {modelCancel->store(true);quitAfterModel=true;}
+                if((e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) ||
+                   (e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(int(e.button.x/kUIScale),int(e.button.y/kUIScale),modelClose)))modelCancel->store(true);
+                continue;
+            }
             if(checkJob.valid()) {
                 if(e.type==SDL_QUIT) {discardCheck=true;quitAfterCheck=true;}
                 if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE)discardCheck=true;
@@ -1669,6 +1735,28 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             }
             // A modal dialog swallows all input while up.
             if (modal != M_NONE) {
+                if(modal==M_OBJECTS) {
+                    if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) {modal=M_NONE;SDL_StopTextInput();}
+                    else if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_RETURN)chooseObject(objectRow,(e.key.keysym.mod&KMOD_SHIFT)!=0);
+                    else if(e.type==SDL_KEYDOWN && (e.key.keysym.sym==SDLK_DOWN || e.key.keysym.sym==SDLK_UP) && !objectMatches.empty()) {
+                        objectRow=std::clamp(objectRow+(e.key.keysym.sym==SDLK_DOWN?1:-1),0,int(objectMatches.size())-1);
+                        if(objectRow*30<objectScroll)objectScroll=objectRow*30;
+                        if((objectRow+1)*30>objectScroll+objectList.h)objectScroll=(objectRow+1)*30-objectList.h;
+                    } else if(e.type==SDL_MOUSEWHEEL)objectScroll=std::clamp(objectScroll-e.wheel.y*60,0,std::max(0,int(objectMatches.size())*30-objectList.h));
+                    else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                        if(cart::pointIn(e.button.x,e.button.y,objectClose)) {modal=M_NONE;SDL_StopTextInput();}
+                        else if(cart::pointIn(e.button.x,e.button.y,objectList))chooseObject((e.button.y-objectList.y+objectScroll)/30,false);
+                        else if(cart::pointIn(e.button.x,e.button.y,objectSearchBox))objectEditor.click(objectSearch,0,0,(e.button.x-objectSearchBox.x-4)/6);
+                    } else if(objectEditor.input(e,objectSearch))filterObjects();
+                    continue;
+                }
+                if(modal==M_MODEL) {
+                    const bool close=e.type==SDL_QUIT || (e.type==SDL_KEYDOWN && (e.key.keysym.sym==SDLK_ESCAPE || e.key.keysym.sym==SDLK_RETURN)) ||
+                        (e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,modelClose));
+                    if(close) {modelPreview.reset();modal=M_NONE;if(e.type==SDL_QUIT)SDL_PushEvent(&e);}
+                    else if(e.type==SDL_MOUSEWHEEL || (e.type==SDL_MOUSEMOTION && cart::pointIn(e.motion.x,e.motion.y,modelArea)))modelPreview->input(e);
+                    continue;
+                }
                 if(modal==M_ISSUES) {
                     if(e.type==SDL_KEYDOWN && (e.key.keysym.sym==SDLK_ESCAPE || e.key.keysym.sym==SDLK_RETURN))modal=M_NONE;
                     else if(e.type==SDL_MOUSEWHEEL)issueScroll=std::clamp(issueScroll-e.wheel.y*36,0,std::max(0,issueContentHeight-issueList.h));
@@ -2021,6 +2109,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 openModal(M_RESIZE);     // Scenario -> Resize
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_u) {
                 useOnlyOpen = true;      // Scenario -> Use Only (unit restriction)
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F6) {
+                previewModel();
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F5) {
                 testMap();
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_c) {
@@ -2256,7 +2346,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
             commitHistory();
-        const std::string title="Cartographer -- "+mapName+(modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
+        const std::string title="Cartographer -- "+mapName+(modal==M_OBJECTS?" [Placed units]":modal==M_MODEL_LOADING?" [Loading model]":modal==M_MODEL?" [Unit model]":modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
         if(interactive && recoverySession) {
             if(recoveryJob.valid() && recoveryJob.wait_for(std::chrono::seconds(0))==std::future_status::ready)collectRecovery();
@@ -2380,10 +2470,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 const float angle=units[i].angle*3.14159265f/180;
                 SDL_RenderDrawLineF(ren,sx,sy,sx+std::sin(angle)*22,sy-std::cos(angle)*22);
             }
-            if (mapView.zoom() > 0.28f)   // label only when there's room
-                cart::drawText(ren, units[i].type,
-                               int(sx) - cart::textWidth(units[i].type, 1) / 2,
+            if (mapView.zoom() > 0.28f) {  // label only when there's room
+                const auto& label=units[i].name.empty()?units[i].type:units[i].name;
+                cart::drawText(ren, label,
+                               int(sx) - cart::textWidth(label, 1) / 2,
                                int(sy) - 15, 1, 235, 235, 245);
+            }
         }
         if(selectionBox) {
             SDL_SetRenderDrawColor(ren,255,220,110,255);
@@ -2535,7 +2627,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             for(size_t i=0;i<rows.size();++i) {
                 std::string label=rows[i];
                 if(menuOpen==1 && i==3)label=std::string(stampLayers.objects?"[ ] ":"[X] ")+"Brush: protect objects";
-                if(menuOpen==2 && (i==2 || i==3 || i>=14)) {
+                if(menuOpen==3 && i==9)label=std::string(preferences.tracePlaytest?"[X] ":"[ ] ")+"Log Test Map triggers";
+                if(menuOpen==2 && (i==2 || i==3 || (i>=14 && i<=16))) {
                     const bool shown=i==2?showGrid:i==3?showRegions:i==14?showFeatures:i==15?showUnits:showStarts;
                     label=std::string(shown?"[X] ":"[ ] ")+label;
                 }
@@ -2760,6 +2853,34 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             cart::drawText(ren,"Naval checks use the initial output pose; trigger outcomes need playtesting.",ct.x,ct.y+ct.h-48,1,180,190,205);
             issueRecheck=cart::drawButton(ren,ct.x,ct.y+ct.h-20,90,18,"CHECK MAP",false);
             issueClose=cart::drawButton(ren,ct.x+ct.w-70,ct.y+ct.h-20,70,18,"CLOSE",true);
+        } else if(modal==M_OBJECTS) {
+            const auto ct=cart::drawPanel(ren,w,h,620,420,"PLACED UNITS - SELECT AND LOCATE");
+            objectSearchBox=cart::drawField(ren,ct.x,ct.y,ct.w,"SEARCH NAME, TYPE OR OWNER",objectSearch,true,&objectEditor);
+            objectList={ct.x,ct.y+36,ct.w,ct.h-85};
+            SDL_RenderSetClipRect(ren,&objectList);
+            for(int row=objectScroll/30;row<int(objectMatches.size()) && row*30<objectScroll+objectList.h;++row) {
+                const int index=objectMatches[row];const auto& unit=units[index];const auto* type=unitRegistry.find(lowerText(unit.type));
+                const int y=objectList.y+row*30-objectScroll;
+                fillRect(ren,objectList.x,y,objectList.w,29,row==objectRow?55:27,row==objectRow?65:32,row==objectRow?80:40);
+                cart::drawText(ren,std::to_string(index+1)+": "+(unit.name.empty()?(type?type->name:unit.type):unit.name),ct.x+5,y+3,1,235,235,215);
+                cart::drawText(ren,unit.type+" - "+objectOwner(unit.player)+" - X "+std::to_string(unit.x)+" Z "+std::to_string(unit.z),ct.x+5,y+16,1,170,195,220);
+            }
+            if(objectMatches.empty())cart::drawText(ren,"No placed units match.",ct.x+5,objectList.y+5,1,205,210,220);
+            SDL_RenderSetClipRect(ren,nullptr);
+            cart::drawText(ren,std::to_string(objectMatches.size())+" matches. Click/Enter: select; Shift+Enter: properties.",ct.x,ct.y+ct.h-40,1,205,215,230);
+            objectClose=cart::drawButton(ren,ct.x+ct.w-100,ct.y+ct.h-20,100,18,"CLOSE (ESC)",true);
+        } else if(modal==M_MODEL_LOADING || modal==M_MODEL) {
+            const auto ct=cart::drawPanel(ren,w,h,520,440,"UNIT MODEL: "+modelTitle);
+            modelArea={ct.x,ct.y,ct.w,ct.h-65};
+            fillRect(ren,modelArea.x,modelArea.y,modelArea.w,modelArea.h,20,24,30);
+            if(modelPreview) {
+                SDL_RenderSetViewport(ren,&modelArea);
+                const auto now=SDL_GetTicks64();modelPreview->draw(modelArea.w,modelArea.h,std::min(.1f,float(now-modelTime)/1000));modelTime=now;
+                SDL_RenderSetViewport(ren,nullptr);
+            } else cart::drawText(ren,modelCancel->load()?"CANCELLING...":"Loading model and textures...",ct.x+12,ct.y+12,1,230,235,245);
+            cart::drawText(ren,"Drag to rotate; wheel to zoom. Visual inspection only.",ct.x,ct.y+ct.h-40,1,200,215,230);
+            if(!modelWarning.empty())cart::drawText(ren,modelWarning,ct.x,ct.y+ct.h-55,1,255,155,225);
+            modelClose=cart::drawButton(ren,ct.x+ct.w-100,ct.y+ct.h-20,100,18,"CLOSE (ESC)",true);
         } else if(modal==M_ANALYZING || modal==M_CHECKING) {
             const auto ct=cart::drawPanel(ren,w,h,400,105,"ANALYZING TERRAIN");
             cart::drawText(ren,(modal==M_CHECKING?discardCheck:discardOverlay)?"Discarding result when analysis finishes...":"Applying engine terrain and footprint rules...",ct.x,ct.y,1,225,230,240);
@@ -2928,7 +3049,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     minimapCancel->store(true,std::memory_order_relaxed);
     if(interactive) {clearRecovery();persistPreferences();}
-    thumbs.reset();unitPortraits.reset();
+    thumbs.reset();unitPortraits.reset();modelPreview.reset();
     for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
     return 0;
 }

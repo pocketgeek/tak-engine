@@ -236,6 +236,12 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
 
 void ScenarioScript::start(World&) { started_ = true; }
 
+void ScenarioScript::trace(int player,int group,int action,const crt::Rule* rule) noexcept {
+    if(!trace_)return;
+    try {trace_(clock_,player,group,action,rule);}
+    catch(...) {trace_={};} // A failed diagnostic sink cannot interrupt lockstep.
+}
+
 void ScenarioScript::step(World& w, float dt) {
     // Advance per-player timers first (so a "Timer < 1" fires after the tick the
     // countdown was set, not the same tick).
@@ -259,7 +265,11 @@ void ScenarioScript::step(World& w, float dt) {
                 if (!evalCond(w, p, c)) { all = false; break; }
             uint8_t& fired = fired_[size_t(p)][size_t(g)];
             if (all && !fired) {
-                for (const auto& a : grp.actions) runAction(w, p, g, a);
+                trace(p,g,-1,nullptr);
+                for(size_t i=0;i<grp.actions.size();++i) {
+                    const auto& a=grp.actions[i];trace(p,g,int(i),&a);
+                    runAction(w,p,g,a);
+                }
                 fired = 1;
             } else if (!all) {
                 fired = 0;

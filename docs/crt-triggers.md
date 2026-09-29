@@ -71,6 +71,15 @@ files are removed when the editor observes game exit; closing the editor first
 leaves the running game and its temporary source undisturbed. Verified MapCache
 copies remain selectable, as with downloaded maps.
 
+Cartographer's optional **Log Test Map triggers** setting adds a local diagnostic
+request to its temporary snapshot. Only the client explicitly launched with
+`--play-map` installs the trace sink; a map received through multiplayer cannot
+enable diagnostics. Logs record firing groups and attempted actions, are bounded
+to 4 MiB of records, and live outside the temporary snapshot directory. Trace
+callbacks are not hashed; a sink exception disables logging without interrupting
+rule execution. `scenario_test` compares traced, untraced and failing-sink rule
+hashes, as well as log ordering, escaping and truncation.
+
 Unsupported ninth/neutral owners, unseated owners, missing types, off-map units,
 nondefault custom-type stats and per-placement armor/weapon overrides produce a
 visible start error rather than being clamped, discarded or silently ignored.

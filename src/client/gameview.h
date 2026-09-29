@@ -52,6 +52,7 @@
 #include "client/featureindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
+#include "client/modelpiece.h"
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
 #include "client/projectilemodelscale.h"
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
@@ -445,6 +446,7 @@ public:
 
     bool inLobbyPhase() const;
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
+    void setScenarioTrace(tak::sim::ScenarioScript::TraceSink sink) {scenarioTrace_=std::move(sink);}
     void setMissionStem(const std::string& s) { missionStem_ = s; }
     void setResumePath(const std::string& p) { mpResumePath_ = p; }
     // Single-player from the menu: it's a private local game, so open the lobby on
@@ -855,6 +857,7 @@ public:
     }
 
 private:
+    tak::sim::ScenarioScript::TraceSink scenarioTrace_;
     // Which cursor to show this frame, from the current UI/order state and what is under
     // the pointer -- the retail two-level scheme (an armed order beats plain hover).
     // `fightTint` is set when the cursor is the fight-move ('f') Attack glyph, which the
@@ -908,20 +911,8 @@ private:
     static void pieceMetaFor(const tak::tdo::Object& o, bool isRoot, PieceMeta& m) {
         std::string oname = o.name;
         std::transform(oname.begin(), oname.end(), oname.begin(), ::tolower);
-        auto ends = [&](const char* suf) {
-            size_t n = std::strlen(suf);
-            return oname.size() >= n && oname.compare(oname.size() - n, n, suf) == 0;
-        };
-        // Hidden pieces: ground-reference plates and deactivated-state duplicates
-        // (*off), which the game shows only via activation scripts we don't run. The
-        // live-unit ROOT is treated as the flat base plate (AraGP, zonnull, or the unit
-        // name like zontrain/zonharpy1) with the real model in its children, so its
-        // own primitives are skipped. Static corpse models can instead put their
-        // visible mesh in the root, so their loader passes isRoot=false.
-        m.skip = isRoot || ends("gp") || ends("null") || ends("off") ||
-                 oname.find("ground") != std::string::npos ||
-                 oname.find("gpoly") != std::string::npos ||
-                 oname.find("gpoint") != std::string::npos;
+        // Same helper-piece policy for live rendering and editor previews.
+        m.skip=skipLiveModelPiece(oname,isRoot);
         m.primTex.clear();
         m.primTex.reserve(o.primitives.size());
         for (const auto& p : o.primitives) {

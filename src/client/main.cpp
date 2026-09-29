@@ -1,4 +1,5 @@
 #include "util/virtualpath.h"
+#include "util/scenariotrace.h"
 // takclient — interactive TAK asset viewer.
 //
 //   takclient map <map.tnt> <terrain-dir>       scrollable terrain (drag/arrows,
@@ -584,9 +585,19 @@ int main(int argc, char** argv) {
         vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), pol);
         gInstallRoot = dataRoot;   // the loading screen reads Movies/Gui from here
     }
+    std::shared_ptr<tak::ScenarioTraceLog> playtestTrace;
     if (!playMap.empty()) {
         try {
             const auto snapshot = tak::net::maps::importSnapshot(vfs, std::filesystem::u8path(playMap));
+            const auto& ota=snapshot->files->at(tak::vpath::replaceExtension(snapshot->mapPath,".ota"));
+            const auto metadata=tak::tdf::parseText(std::string(ota.begin(),ota.end()));
+            const auto* test=metadata.child("takplaytest");
+            if(test && test->numberOr("trace",0)!=0) {
+                std::unique_ptr<char,decltype(&SDL_free)> folder(SDL_GetPrefPath("TAKengine","Cartographer"),SDL_free);
+                if(!folder)throw std::runtime_error("Cannot locate the trigger log folder");
+                playtestTrace=std::make_shared<tak::ScenarioTraceLog>(tak::scenarioTracePath(
+                    std::filesystem::u8path(folder.get()),std::filesystem::u8path(playMap)));
+            }
             tak::net::maps::saveCache(std::filesystem::u8path(dataRoot), *snapshot);
             vfs.refreshMapCache(std::filesystem::u8path(dataRoot));
             // MapCache exposes a digest-qualified picker name, not the source
@@ -1126,6 +1137,9 @@ int main(int argc, char** argv) {
 #endif
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
+            if(playtestTrace)gameView->setScenarioTrace([log=playtestTrace](int32_t tick,int player,int group,int action,const tak::crt::Rule* rule) {
+                log->append(tick,player,group,action,rule);
+            });
             if (mp) {
                 gameView->setMpClient(mp.get());
                 gameView->setLocalServerPid(localServerPid());

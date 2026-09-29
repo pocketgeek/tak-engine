@@ -1,5 +1,7 @@
 #include <fstream>
 #include "cartographer/editor.h"
+#include "client/modelview.h"
+#include "sim/matchsetup.h"
 #include "cartographer/document.h"
 #include "cartographer/ruleedit.h"
 #include "cartographer/newmap.h"
@@ -27,6 +29,92 @@ static void text(const std::string& value) {
     for(size_t i=0;i<value.size();i+=20) {
         SDL_Event e{};e.type=SDL_TEXTINPUT;const auto part=value.substr(i,20);SDL_strlcpy(e.text.text,part.c_str(),sizeof(e.text.text));SDL_PushEvent(&e);
     }
+}
+static int objectsWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-objects-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    std::vector<cart::PlacedUnit> units{{"ARAARCH",0,168,168},{"ARAARCH",1,808,808}};
+    units[0].name="East watch";units[1].name="West watch";std::string error;
+    if(!cart::writeDocumentBundle(root/"Objects.kmp",cart::documentFiles(map,metadata,{},units,{},"Objects"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    bool failed=false;int lastFrame=0;
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;const std::string title=SDL_GetWindowTitle(window);const bool dirty=title.ends_with(" *");
+        auto openList=[&] {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+            for(const auto point:{SDL_Point{330,10},SDL_Point{330,232}}) {SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(point.x*sx);e.button.y=int(point.y*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);}
+        };
+        if(frame<=8 || frame==10 || frame>=12)failed|=dirty;
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text((root/"Objects.kmp").string());key(SDLK_RETURN);break;
+        case 2:openList();break;
+        case 3:failed|=title.find("[Placed units]")==std::string::npos;text("no match");key(SDLK_RETURN);break;
+        case 4:failed|=title.find("[Placed units]")==std::string::npos;key(SDLK_a,KMOD_CTRL);text("West");key(SDLK_RETURN);break;
+        case 5:failed|=title!="Cartographer -- Objects";key(SDLK_RETURN);break;
+        case 6:key(SDLK_ESCAPE);openList();break;
+        case 7:text("PLAYER 2");key(SDLK_RETURN,KMOD_SHIFT);break;
+        case 8:key(SDLK_TAB);key(SDLK_a,KMOD_CTRL);text("75");key(SDLK_RETURN);break;
+        case 9:failed|=!dirty;key(SDLK_z,KMOD_CTRL);break;
+        case 10:key(SDLK_y,KMOD_CTRL);break;
+        case 11:failed|=!dirty;key(SDLK_s,KMOD_CTRL);break;
+        case 12:key(SDLK_RETURN);break;
+        case 13:{SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);break;}
+        default:if(frame>15)std::_Exit(3);
+        }
+    });
+    bool found=false;{
+        tak::hpi::Archive archive(root/"Objects.kmp");
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {
+            const auto saved=cart::toPlaced(tak::crt::parse(archive.read(entry)));
+            if(saved.size()!=2 || saved[0].health!=100 || saved[1].health!=75 || saved[1].name!="West watch")throw std::runtime_error("object list edited the wrong unit");found=true;
+        }
+    }
+    fs::remove_all(root);if(result || failed || !found || lastFrame<13 || lastFrame>14)return 1;
+    std::cout<<"PASS: placed-unit search, empty match, name/owner locate, properties, undo/redo and save\n";return 0;
+}
+static int modelWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-model-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);
+    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    const auto vfs=tak::hpi::mountRetailRoot(data);
+    for(const char* id:tak::sim::kMonarchs) {
+        const auto asset=ModelView::loadAsset(vfs,id);
+        if(asset.model.root.vertices.empty() && asset.model.root.children.empty())throw std::runtime_error("empty monarch preview");
+        if(asset.textures.empty())throw std::runtime_error("untextured monarch preview");
+    }
+    bool rejected=false;std::atomic_bool cancelled=true;
+    try {ModelView::loadAsset(vfs,"araarch",&cancelled);}catch(const std::exception&){rejected=true;}
+    if(!rejected)throw std::runtime_error("cancelled model load completed");
+    rejected=false;try {ModelView::loadAsset(vfs,"no-such-model");}catch(const std::exception&){rejected=true;}
+    if(!rejected)throw std::runtime_error("missing model accepted");
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    int stage=0,frames=0;bool failed=false;const auto started=std::chrono::steady_clock::now();
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int) {
+        const std::string title=SDL_GetWindowTitle(window);failed|=title.ends_with(" *");
+        if(std::chrono::steady_clock::now()-started>std::chrono::seconds(30)) {std::cerr<<"model workflow timed out at "<<stage<<'\n';std::_Exit(3);}
+        if(stage==0) {key(SDLK_TAB);key(SDLK_TAB);key(SDLK_F6);key(SDLK_ESCAPE);++stage;}
+        else if(stage==1 && title=="Cartographer -- Ulasem Arena") {key(SDLK_F6);++stage;}
+        else if(stage==2 && title.find("[Unit model]")!=std::string::npos) {if(++frames<10)return;
+            int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);
+            if(const char* path=SDL_getenv("TAK_EDITOR_TEST_CAPTURE")) {
+                std::vector<uint8_t> pixels(size_t(w)*h*4);if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,pixels.data(),w*4)==0)tak::png::write(path,w,h,pixels);
+            }
+            SDL_Event rotate{};rotate.type=SDL_MOUSEMOTION;rotate.motion.x=w/2;rotate.motion.y=h/2;
+            rotate.motion.state=SDL_BUTTON_LMASK;rotate.motion.xrel=50;rotate.motion.yrel=20;SDL_PushEvent(&rotate);
+            SDL_Event zoom{};zoom.type=SDL_MOUSEWHEEL;zoom.wheel.y=1;SDL_PushEvent(&zoom);++stage;
+        } else if(stage==3) {key(SDLK_ESCAPE);++stage;}
+        else if(stage==4) {failed|=title!="Cartographer -- Ulasem Arena";SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);++stage;}
+        SDL_Delay(1);
+    });
+    fs::remove_all(root);
+    if(result || failed || stage!=5)return 1;
+    std::cout<<"PASS: five faction model assets, preview/cancel/rotate/zoom/close, unchanged document\n";return 0;
 }
 static int generationWorkflow(const char* data) {
     namespace fs=std::filesystem;
@@ -700,6 +788,8 @@ int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==2 && std::string(argv[1])=="font")return fontWorkflow();
+    if(argc==3 && std::string(argv[2])=="objects")return objectsWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="model")return modelWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="thumbnails")return thumbnailWorkflow(argv[1]);
     if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);

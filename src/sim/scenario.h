@@ -17,6 +17,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace tak::sim {
 
@@ -48,8 +49,14 @@ public:
     std::vector<Msg> drainMessages();
 
     bool showClock() const { return showClock_; }   // "Display gameclock" latched
+    // Optional local diagnostics, never hashed or enabled by network map data.
+    // action == -1 announces a firing group; other records precede its actions.
+    using TraceSink=std::function<void(int32_t tick,int player,int group,int action,const crt::Rule*)>;
+    void setTraceSink(TraceSink sink) {trace_=std::move(sink);}
 
 private:
+    TraceSink trace_;
+    void trace(int player,int group,int action,const crt::Rule* rule) noexcept;
     struct Timer { float value = 0; bool countUp = false; };
     struct PState {
         std::map<std::string, int32_t> flags;    // sorted -> deterministic hashing

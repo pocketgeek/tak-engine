@@ -3,6 +3,8 @@
 #include "sim/matchsetup.h"
 #include "tnt/ota.h"
 #include "hpi/hpi.h"
+#include "util/scenariotrace.h"
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 
@@ -75,12 +77,36 @@ int main() try {
         group.actions.push_back({25,{"Player 2","Remaining ","unset"," items"}});
         scenario.players[0].push_back(group);scenario=crt::parse(crt::write(scenario));
         sim::ScenarioScript human(scenario,registry,0,2,64,64),server(scenario,registry,-1,2,64,64);
+        std::vector<int> actions;
+        human.setTraceSink([&](int32_t tick,int player,int group,int action,const crt::Rule* rule) {
+            check(tick==0 && player==0 && group==0,"trace group/tick differs from execution");
+            actions.push_back(rule?rule->opcode:-1);
+            check(action==int(actions.size())-2,"trace action order differs");
+        });
         human.start(world);server.start(world);human.step(world,1.f/30);server.step(world,1.f/30);
         const auto visible=human.drainMessages();const auto all=server.drainMessages();
         check(visible.size()==1 && visible[0].text=="Collected 42 items","flag message interpolation or recipient filtering");
         check(all.size()==2 && all[1].text=="Remaining 0 items","unset flag message should use zero");
         uint64_t clientHash=0,serverHash=0;human.foldHash(clientHash);server.foldHash(serverHash);
         check(clientHash==serverHash,"message filtering changed deterministic rule state");
+        check(actions==std::vector<int>({-1,2,25,25}),"trace did not record group and each attempted action");
+        sim::ScenarioScript failed(scenario,registry,0,2,64,64);
+        int calls=0;failed.setTraceSink([&](auto...){++calls;throw std::runtime_error("diagnostic failure");});
+        failed.start(world);failed.step(world,1.f/30);uint64_t failedHash=0;failed.foldHash(failedHash);
+        check(calls==1 && failedHash==serverHash,"failed trace sink changed execution or was not disabled");
+        human.step(world,1.f/30);check(actions.size()==4,"trace repeated a group without a rising edge");
+        const auto root=std::filesystem::temp_directory_path()/("tak-trigger-log-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto path=tak::scenarioTracePath(root,root/"test-source"/"snapshot.kmp");
+        {
+            tak::ScenarioTraceLog log(path,200);
+            crt::Rule rule{13,{"Player 1","line\nbreak\r\t\"quote\\"}};
+            for(int i=0;i<20;++i)log.append(i,0,1,0,&rule);
+        }
+        std::ifstream stream(path);const std::string log{std::istreambuf_iterator<char>(stream),{}};
+        check(log.find("tick=0 player=1 group=2 action=1 opcode=13")!=std::string::npos,"readable trigger coordinates missing");
+        check(log.find("line\\x0abreak\\x0d\\x09\\\"quote\\\\")!=std::string::npos,"trace operands can break log lines");
+        check(log.find("LOG LIMIT REACHED")!=std::string::npos && log.find("tick=19")==std::string::npos,"trigger log is unbounded");
+        stream.close();std::filesystem::remove_all(root);
     }
     {
         crt::Scenario scene;scene.players.resize(2);

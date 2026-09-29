@@ -395,6 +395,17 @@ Search the terrain, feature and unit browsers; unit rows include build portraits
 friendly names and internal identifiers. Place, Select, Erase and Pan are separate
 tools. Right-drag pans. Selection supports group movement, copy/paste, duplication,
 deletion and properties. The Regions tool draws and resizes named trigger areas.
+**Scenario → Placed units** searches placed units by authored name, type/friendly
+name, or owner. Click or press Enter to select and locate a match; Shift+Enter
+opens its properties. Named units display their names on the map when zoom allows.
+**F6** or **View → Unit model preview** opens the selected unit's 3D model (or
+the current unit-browser entry). Drag to rotate, use the wheel to zoom, and press
+Escape to close. Models/textures load from the archives in the background.
+The preview initializes the model script and uses the game renderer's helper-piece
+policy; it is a visual inspector, not a full gameplay animation simulator.
+Missing textures are reported and shown in magenta.
+
+![Cartographer 3D unit model preview](img/cartographer-model.png)
 View offers a minimap, Fit Map, Frame Selection, a bookmark, layer visibility,
 UI scaling, and engine-backed movement/buildability/water/slope overlays.
 
@@ -414,6 +425,15 @@ Seat the scenario's players and start; the editor and unsaved document stay open
 The snapshot enables authored placements/rules on both client and server without
 changing ordinary retail-map skirmish setup. See [scenario runtime limits](crt-triggers.md)
 for unsupported neutral owners, stat overrides and other current limitations.
+
+Enable **Scenario → Log Test Map triggers** before F5 for local execution
+diagnostics. The launch message gives the persistent log path, under Cartographer's
+preferences folder in `playtest-logs`. Each file records game tick, player, rule
+group, and action opcode/operands. Player/group/action numbers start at one;
+game time uses 30 ticks per second. An action record means execution was attempted,
+not that the requested operation succeeded. Records stop after a 4 MiB budget.
+The option is off by default, is remembered, and does not enable logging on peers
+or the server. It does not change simulation hashes or ordinary saved maps.
 
 Build the `cartographer` target, then launch it with a map name and retail data:
 

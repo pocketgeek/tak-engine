@@ -206,6 +206,7 @@
                                                    : ("Player " + std::to_string(i + 1));
         }
         auto spots = tak::sim::setupMatch(world_, registry_, cfg);
+        if(auto* script=world_.scenario())script->setTraceSink(scenarioTrace_);
         // Rebuild the rendered feature sprites (features_) from the map we actually
         // loaded -- they were built once in the ctor from the launch map, so on a
         // different chosen map the trees/houses you SEE would be the launch map's,

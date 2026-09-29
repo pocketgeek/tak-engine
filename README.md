@@ -196,9 +196,12 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   the minimap refreshes after terrain edits. Check Map reports starts, mana,
   terrain connectivity, missing resources and initial naval output clearance.
   Buildability overlays include preplaced units using the engine's placement rules.
+  **F6** opens a rotatable 3D preview of a selected unit or browser entry.
   **Test Map (F5)** opens a temporary snapshot in the normal private game lobby,
   leaving the editor and unsaved document open. Seat the players used by your
   scenario, then start. Authored placements and rules run on both client and server.
+  **Scenario → Log Test Map triggers** optionally records firing groups and
+  attempted actions in a bounded local log; the launch message shows its path.
   Neutral-player and custom armor/weapon overrides are currently rejected with an
   explanation; [scenario limits](docs/crt-triggers.md) describe the remaining gaps.
   Close the test game to return to editing. Verified snapshots remain in the map

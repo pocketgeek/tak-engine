@@ -1,7 +1,8 @@
 # Cartographer improvements
 
 The scope is all six areas in the [usability review](cartographer-usability-review-2026-09-29.md).
-This is an implementation ledger; completed workflows and remaining limitations are listed below.
+The six-area editor implementation is complete. This ledger records the changes,
+validation and explicit platform/runtime limitations below.
 Existing pathfinding rules are unchanged. Authored CRT maps now use shared client/server setup; ordinary skirmish and campaign setup retain their existing paths.
 Later checkpoints supersede earlier outstanding items; the final scope section
 separates implemented workflows from optional extensions and runtime limitations.
@@ -878,6 +879,45 @@ the user guide now includes that capture and correct save/packaging instructions
 The generator UI workflow now creates eight starts, saves/reopens the map and
 reproduces its recipe; the expanded workflow passed in Release and ASAN/LSAN.
 
+## Playtest diagnostics, model inspector and placed-unit list
+
+Scenario > Log Test Map triggers is a saved, default-off preference. F5 adds the
+request only to its temporary snapshot; the client explicitly launched with
+`--play-map` creates a persistent local log and installs the diagnostic sink.
+Receiving a map through multiplayer does not enable logging, and the server and
+other peers remain unaffected. Logs contain game ticks, 1-based player/group/action
+numbers and action opcodes/operands, with escaped control characters and a 4 MiB
+record budget. They report attempted execution, not successful outcomes. Sink
+exceptions disable diagnostics without interrupting simulation. The launch message
+shows the file path, and long message words/paths now wrap safely at UTF-8 boundaries.
+
+F6 or View > Unit model preview opens the selected placed unit or unit-browser
+entry. Background decoding reads the actual model, textures, faction palettes
+and script from the VFS. SDL uploads/rendering remain on the UI thread. Drag
+rotates, the wheel zooms within bounds, and Escape cancels/closes without editing
+the document. The existing model viewer is reused; helper-piece skipping is
+shared with game rendering, hidden parents still transform visible children,
+and Create initializes piece visibility. This is a visual inspector, not a full
+combat/movement replay. Missing textures get an explicit warning and magenta
+surfaces (the mounted Taros monarch model references absent `harparm7`).
+
+Scenario > Placed units provides a searchable placed-unit list alongside the
+region list. Search by unique name, type, friendly name or owner; click/Enter
+selects and centers the unit, and Shift+Enter opens its existing inspector.
+Only visible list rows are drawn. Authored names replace type labels on the
+canvas at readable zoom levels. Search/navigation do not dirty the document;
+property edits retain normal undo/redo and save behavior.
+
+Validation covers tracing enabled/disabled/failing-sink hash agreement, ordered
+records, escaping and log limits; assets from all five factions; asynchronous
+preview cancellation, rotation/zoom/close; and named/owner unit lookup, empty
+results, selection, inspector edits, undo/redo and save. A real Release client
+created the requested log, launched its own local server and verified the snapshot.
+The final focused sweep passed 26 Release tests and 21 ASAN/LSAN tests. The
+native preview was captured and inspected. Five changed Windows sources
+cross-compiled, including the client entry point, editor, model viewer, network
+setup and scenario runner. No new dynamic dependencies or retail launch were added.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
@@ -892,16 +932,17 @@ Cartographer or mission-runtime parity.
   passed; the configured static Windows FFmpeg prefix is missing for full linking.
 - The embedded font covers Latin, Greek and Cyrillic; it is not a full Unicode
   shaping/fallback system. UI scale, window size and layer choices are remembered.
-- Unit portraits, footprint outlines and facing indicators are available;
-  animated 3D model previews and terrain-art rotation are not implemented.
-  Terrain stamps preserve authored lighting/relief; feature protection is explicit.
+- Unit portraits, footprint outlines, facing indicators and a 3D model inspector
+  are available. The inspector is not a full unit-behavior simulator. Terrain
+  stamps preserve authored lighting/relief; arbitrary terrain-art rotation is
+  intentionally unavailable, and feature protection is explicit.
 - Check Map is advisory. Naval checks use the initial output pose, and resource
   checks do not validate every possible sound/animation referenced by scripts.
 - Scenario runtime limits remain in `crt-triggers.md`: neutral/stat overrides,
   unique-name/vertical overrides, Use Only enforcement, custom mission outcomes,
   and full retail trigger timing are separate engine work. Optional trigger
-  execution logging is not present. Unsupported saved data is retained, and
-  validation/start errors describe the supported subset.
+  execution logging is available for Test Map. Unsupported saved data is retained,
+  and validation/start errors describe the supported subset.
 - Loose export rolls back ordinary write failures but is not power-loss-atomic.
   KMP is the normal single-file save. Cancel cannot interrupt an in-progress
   compression call or a replacement transaction. Recovery is not a substitute

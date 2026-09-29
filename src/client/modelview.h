@@ -10,14 +10,28 @@
 #include "client/modelmath.h"   // Tri / Xform (tris_ is std::vector<Tri>)
 #include "cob/vm.h"             // std::unique_ptr<tak::cob::Vm> member
 #include "tdo/tdo.h"            // tak::tdo::Model (by-value member) / Object
+#include "gaf/gaf.h"
+#include "hpi/hpi.h"
 
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
+#include <optional>
+#include <atomic>
 
 class ModelView {
 public:
+    struct Asset {
+        tak::tdo::Model model;
+        std::map<std::string,tak::gaf::Frame> textures;
+        std::optional<tak::cob::File> script;
+        tak::gaf::Palette palette{};
+        std::vector<std::string> missingTextures;
+    };
+    // CPU-only decode for background editor previews. No extracted files needed.
+    static Asset loadAsset(const tak::hpi::Vfs&,const std::string& type,const std::atomic_bool* cancel=nullptr);
+    ModelView(SDL_Renderer*,Asset asset);
     // `staticMask` seeds the VM's static slots: bit i sets static i to 1. Walk and
     // attack scripts routinely open with a gate on an "am I moving" static, and
     // WHICH slot differs per unit (crechie wants static1 set and static3 clear,
@@ -33,9 +47,10 @@ public:
 
 private:
     void loadTextures(const std::string& texDir, const std::string& palettePath);
+    void initializeScript(tak::cob::File file,const std::string& anim,uint32_t staticMask);
     void project(float x, float y, float z, SDL_FPoint& out, float& depth) const;
     const tak::cob::PieceState* pieceFor(const std::string& objName) const;
-    void walk(const tak::tdo::Object& o, const Xform& parent);
+    void walk(const tak::tdo::Object& o, const Xform& parent,bool root=false);
 
     SDL_Renderer* ren_;
     tak::tdo::Model model_;
@@ -46,4 +61,7 @@ private:
     std::vector<Tri> tris_;
     float yaw_ = 0.7f, pitch_ = 0.4f, zoom_ = 1.0f, fit_ = 1.0f;
     bool spin_ = true, fitted_ = false;
+    bool liveModel_=false;
+    int lastW_=0,lastH_=0;
+    std::optional<tak::gaf::Palette> palette_;
 };
