@@ -761,6 +761,24 @@ The Ultima Online B1 63x63 live-minimap workflow passed in 2.86 seconds with pea
 RSS 968,320 KiB; this measures the whole editor/fixture workflow, not an isolated
 sprite benchmark. No terrain or simulation behavior changed.
 
+## Local terrain-work invalidation checkpoint
+
+A brush edit now cancels only pending chunks overlapping its changed blocks and
+filtering gutters. Unaffected queued, completed and in-flight work survives;
+repeated edits before the next draw coalesce into one replacement request.
+Per-job cancellation also lets the worker stop between source tiles or output
+rows. Full resets still discard all work and synchronize before replacing the
+asset source. Immutable tile snapshots and cancellation checks prevent old
+results from overwriting newer edits.
+
+The terrain-cache regression now checks pending-work preservation, selective
+cancellation and repeated edits, in addition to pixel parity, filtering gutters,
+in-flight replacement, pan/zoom reuse and cleanup. All seventeen selected tests
+(the terrain-cache test plus sixteen editor tests) pass in Release and ASAN/LSAN.
+The same terrain-cache workflow passed on Ultima Online B1 63x63 in 2.00 seconds,
+peak RSS 622,184 KiB; this is a whole-workflow measurement, not a frame-rate claim.
+All Release targets were rebuilt. Simulation and pathfinding code are unchanged.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
@@ -773,8 +791,9 @@ sprite benchmark. No terrain or simulation behavior changed.
    overlays on dense large scenarios; whole-map movement components are covered.
 5. Expanded typed-rule validation and temporary-map playtesting through the
    normal client/server launch path; common objective templates are implemented.
-6. Coalescing pending terrain work, asynchronous expensive operations, large-map
-   profiling, broader document/UI coverage and final documentation cleanup.
+6. Asynchronous save/export and further large-map profiling, broader document/UI
+   coverage and final documentation cleanup. Pending terrain work now survives
+   unrelated edits; thumbnails, feature art and minimaps load in the background.
 
 No retail GUI launch is needed for the completed work. The separate untracked
 retail-weapon probe is unrelated and is not part of this goal.

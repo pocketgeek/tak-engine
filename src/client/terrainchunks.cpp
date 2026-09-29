@@ -12,6 +12,7 @@ TerrainChunks::~TerrainChunks() {
     cv_.notify_all();worker_.join();clear();
 }
 void TerrainChunks::clear() {
+    for(const auto& [key,cancelled]:pending_)cancelled->store(true,std::memory_order_relaxed);
     {std::lock_guard lock(mutex_);++epoch_;jobs_.clear();done_.clear();}
     cv_.notify_all();pending_.clear();visible_.clear();
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
@@ -19,13 +20,24 @@ void TerrainChunks::clear() {
 }
 void TerrainChunks::invalidate(int bx0,int by0,int bx1,int by1) {
     if(bx0>=bx1 || by0>=by1)return;
-    // In-flight jobs own tile snapshots. Discard their old results without
-    // waiting for the worker; keep unaffected resident images and source mips.
-    {std::lock_guard lock(mutex_);++epoch_;jobs_.clear();done_.clear();}
-    cv_.notify_all();pending_.clear();
+    const auto affected=[&](const Key& key) {
+        const auto [level,cx,cy]=key;
+        return bx0<(cx+1)*32+1 && bx1>cx*32-1 && by0<(cy+1)*32+1 && by1>cy*32-1;
+    };
+    // Jobs own immutable tile snapshots. Cancel only edited chunks (including
+    // gutters); continuous painting must not starve unrelated pending images.
+    for(auto i=pending_.begin();i!=pending_.end();) {
+        if(affected(i->first)) {i->second->store(true,std::memory_order_relaxed);i=pending_.erase(i);}
+        else ++i;
+    }
+    {
+        std::lock_guard lock(mutex_);
+        const auto cancelled=[](const Job& job) {return job.cancelled->load(std::memory_order_relaxed);};
+        std::erase_if(jobs_,cancelled);std::erase_if(done_,cancelled);
+    }
+    cv_.notify_all();
     for(auto i=cache_.begin();i!=cache_.end();) {
-        const auto [level,cx,cy]=i->first;
-        if(bx0<(cx+1)*32+1 && bx1>cx*32-1 && by0<(cy+1)*32+1 && by1>cy*32-1) {
+        if(affected(i->first)) {
             bytes_-=size_t(i->second.w+2)*(i->second.h+2)*4;
             gpuvram::destroy(i->second.texture);i=cache_.erase(i);
         } else ++i;
@@ -58,6 +70,7 @@ void TerrainChunks::compose(Job& j) {
     std::vector<const jpeg::Image*> images;images.reserve(j.tiles.size());
     std::map<uint32_t,const jpeg::Image*> decoded;
     for(const auto& t:j.tiles) {
+        if(j.cancelled->load(std::memory_order_relaxed))return;
         auto [entry,added]=decoded.try_emplace(t.key,nullptr);
         if(added)try {entry->second=&mip(t.key,level,j.stockTerrain);}catch(...) {}
         images.push_back(entry->second);
@@ -65,17 +78,20 @@ void TerrainChunks::compose(Job& j) {
     j.pixels.resize(size_t(j.w+2)*(j.h+2)*4);
     // A texel of real neighbouring terrain on every side prevents filtering
     // seams. At the map boundary repeat its edge, rather than wrapping a tile.
-    for(int y=-1;y<=j.h;++y)for(int x=-1;x<=j.w;++x) {
-        const int gx=std::clamp((cx*span>>level)+x,0,j.mapW-1);
-        const int gy=std::clamp((cy*span>>level)+y,0,j.mapH-1);
-        const size_t index=size_t(gy/tile-j.by)*j.bw+gx/tile-j.bx;
-        const auto* image=images[index];if(!image)continue;
-        const auto& t=j.tiles[index];
-        const int sx=(int(t.col)*tile)%image->width,sy=(int(t.row)*tile)%image->height;
-        const size_t from=(size_t(std::min(sy+gy%tile,image->height-1))*image->width+
-                                 std::min(sx+gx%tile,image->width-1))*4;
-        const size_t to=(size_t(y+1)*(j.w+2)+x+1)*4;
-        std::memcpy(j.pixels.data()+to,image->rgba.data()+from,4);
+    for(int y=-1;y<=j.h;++y) {
+        if(j.cancelled->load(std::memory_order_relaxed))return;
+        for(int x=-1;x<=j.w;++x) {
+            const int gx=std::clamp((cx*span>>level)+x,0,j.mapW-1);
+            const int gy=std::clamp((cy*span>>level)+y,0,j.mapH-1);
+            const size_t index=size_t(gy/tile-j.by)*j.bw+gx/tile-j.bx;
+            const auto* image=images[index];if(!image)continue;
+            const auto& t=j.tiles[index];
+            const int sx=(int(t.col)*tile)%image->width,sy=(int(t.row)*tile)%image->height;
+            const size_t from=(size_t(std::min(sy+gy%tile,image->height-1))*image->width+
+                                     std::min(sx+gx%tile,image->width-1))*4;
+            const size_t to=(size_t(y+1)*(j.w+2)+x+1)*4;
+            std::memcpy(j.pixels.data()+to,image->rgba.data()+from,4);
+        }
     }
 }
 void TerrainChunks::work() {
@@ -85,7 +101,7 @@ void TerrainChunks::work() {
         if(stop_)return;
         auto job=std::move(jobs_.front());jobs_.pop_front();busy_=true;lock.unlock();
         try {compose(job);}catch(...) {job.pixels.clear();}
-        lock.lock();if(job.epoch==epoch_)done_.push_back(std::move(job));
+        lock.lock();if(job.epoch==epoch_ && !job.cancelled->load(std::memory_order_relaxed))done_.push_back(std::move(job));
         busy_=false;cv_.notify_all();
     }
 }
@@ -118,7 +134,9 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             if(done_.empty() || (uploaded && uploaded+done_.front().pixels.size()>(size_t(8)<<20)))break;
             job=std::move(done_.front());done_.pop_front();
         }
-        cv_.notify_all();pending_.erase(job.key);
+        cv_.notify_all();
+        if(job.cancelled->load(std::memory_order_relaxed))continue;
+        pending_.erase(job.key);
         if(job.pixels.empty() || std::find(visible_.begin(),visible_.end(),job.key)==visible_.end())continue;
         const size_t size=job.pixels.size();
         while(bytes_+size>budget || !gpuvram::wouldFit(size)) {
@@ -157,7 +175,8 @@ void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,f
             const auto at=size_t(by)*map.blocksX+bx;
             job.tiles.push_back({map.tileKeys[at],map.tileCols[at],map.tileRows[at]});
         }
-        pending_.insert(key);
+        job.cancelled=std::make_shared<std::atomic_bool>(false);
+        pending_.emplace(key,job.cancelled);
         {std::lock_guard lock(mutex_);jobs_.push_back(std::move(job));}cv_.notify_all();
     }
 }

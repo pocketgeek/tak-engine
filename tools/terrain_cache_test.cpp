@@ -55,6 +55,19 @@ int main(int argc,char** argv) try {
             float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);check(sx==scale && sy==scale,"AA scale unchanged");
             map.invalidateRenderTargets();check(map.chunkStats().bytes==0,"reset frees images");warm();check(read()==first,"reset recreates same pixels");
         }
+        // A local brush edit must retain unrelated queued/in-flight snapshots,
+        // even before their textures have reached the render thread.
+        SDL_RenderSetScale(renderer,1,1);map.setZoom(1);map.setOffset(800,800);
+        map.invalidateRenderTargets();draw();
+        const auto pending=map.chunkStats().pending;
+        check(pending>=4,"fixture queued visible chunks");
+        map.tilesEdited(100,100,1,1);
+        check(map.chunkStats().pending==pending,"offscreen stamp must retain pending visible chunks");
+        map.tilesEdited(25,25,1,1);
+        check(map.chunkStats().pending==pending-1,"interior stamp cancels only its pending chunk");
+        map.tilesEdited(25,25,1,1);
+        check(map.chunkStats().pending==pending-1,"repeated edits coalesce before the next draw");
+        warm();check(map.chunkStats().ready==map.chunkStats().visible,"retained and replacement snapshots finish together");
         // Full-detail texels, including both sides of a chunk boundary, match
         // the independent CPU terrain compositor. This catches crop/gutter seams.
         SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);
