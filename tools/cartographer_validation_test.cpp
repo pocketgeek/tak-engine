@@ -1,5 +1,6 @@
 #include "cartographer/validation.h"
 #include "cartographer/triggers.h"
+#include "cartographer/regions.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <iostream>
@@ -34,7 +35,19 @@ int main() {
         rule.slot[location]="Missing region";check(has(run(),"unknown region"),"unresolved location diagnosed");
         rule.slot[location]="AREA";check(!has(run(),"unknown region"),"region matching ignores case");
         rule.slot[location].clear();check(!has(run(),"unknown region"),"empty location means whole map in engine");
-        check(map.heights[0]==60 && units[0].name=="First" && scenario.regions[0].x1==15,"validation preserves document");
+        std::string error;
+        rule.slot[location]="AREA";
+        check(cart::setRegion(scenario,0,{"Renamed",12,13,4,5},32,32,error),"region rename and resize");
+        check(rule.slot[location]=="Renamed" && scenario.regions[0].x1==4 && scenario.regions[0].x2==12,"rename updates location references and normalizes bounds");
+        check(!cart::removeRegion(scenario,0,error),"cannot delete a referenced region");
+        check(!cart::setRegion(scenario,-1,{"renamed",1,1,2,2},32,32,error),"case insensitive unique region names");
+        check(!cart::setRegion(scenario,-1,{"Anywhere",1,1,2,2},32,32,error),"whole map token reserved");
+        check(!cart::setRegion(scenario,0,{"Outside",0,0,32,32},32,32,error),"inclusive bounds stay within map");
+        check(scenario.regions[0].name=="Renamed" && rule.slot[location]=="Renamed","failed region edit is atomic");
+        auto roundtrip=tak::crt::parse(tak::crt::write(scenario));
+        check(roundtrip.regions[0].x2==12 && roundtrip.players[0][0].conditions[0].slot[location]=="Renamed","region and rewritten rules survive CRT roundtrip");
+        rule.slot[location]="Anywhere";check(cart::removeRegion(scenario,0,error),"unused region can be deleted");
+        check(map.heights[0]==60 && units[0].name=="First","validation preserves document");
         std::cout<<"PASS: editor engine placement and scenario validation\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -4,6 +4,7 @@
 #include "tnt/ota.h"
 #include <chrono>
 #include <filesystem>
+#include "crt/crt.h"
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -27,8 +28,14 @@ int main(int argc,char** argv) {
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     std::string failure;
     auto check=[&](bool value,const char* message){if(!value && failure.empty())failure=message;};
-    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer*,int frame) {
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
         const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        auto click=[&](int x,int y) {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;
+            e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+            e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
         switch(frame) {
         case 0: key(SDLK_p);break;
         case 1: text("Editor integration test");key(SDLK_TAB);text("Saved after undo and redo");key(SDLK_RETURN);break;
@@ -44,7 +51,12 @@ int main(int argc,char** argv) {
         case 11: check(!dirty,"Save As marks renamed document saved");key(SDLK_RETURN);key(SDLK_o,KMOD_CTRL);break;
         case 12: text("Map which does not exist");key(SDLK_RETURN);break;
         case 13: check(std::string(SDL_GetWindowTitle(window)).find("Copied map")!=std::string::npos,"failed open preserves current document");key(SDLK_RETURN);break;
-        case 14: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 14: click(320,10);click(330,152);break; // Scenario > Regions
+        case 15: key(SDLK_n,KMOD_CTRL);break;
+        case 16: text("UI test region");key(SDLK_TAB);text("10");key(SDLK_TAB);text("11");key(SDLK_TAB);text("20");key(SDLK_TAB);text("21");key(SDLK_RETURN);break;
+        case 17: check(dirty,"region creation marks document dirty");key(SDLK_ESCAPE);key(SDLK_s,KMOD_CTRL);break;
+        case 18: check(!dirty,"region save succeeds");key(SDLK_RETURN);break;
+        case 19: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
         default: if(frame>30) {failure="editor did not exit";key(SDLK_ESCAPE);key(SDLK_RETURN);}
         }
     });
@@ -59,6 +71,14 @@ int main(int argc,char** argv) {
                 found=true;
             }
             if(!found)throw std::runtime_error("saved bundle lacks metadata");
+            if(std::string(file)=="Copied map.kmp") {
+                bool regionFound=false;
+                for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {
+                    const auto scenario=tak::crt::parse(archive.read(entry));
+                    for(const auto& r:scenario.regions)if(r.name=="UI test region" && r.x1==10 && r.z1==11 && r.x2==20 && r.z2==21)regionFound=true;
+                }
+                if(!regionFound)throw std::runtime_error("region UI workflow did not save expected CRT bounds");
+            }
         }
         // UTF-8 editing must erase a character, not leave partial byte sequences.
         cart::TextEdit edit;std::string unicode="A\xc3\xa9\xe6\xb0\xb4";edit.focus(unicode,false);

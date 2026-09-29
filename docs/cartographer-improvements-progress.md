@@ -79,6 +79,26 @@ Validation currently uses the editor's standard balance registry. Results are a
 snapshot; rerun after edits. Three Release tests pass, including synthetic map
 validation against actual engine placement, and document/UI workflows.
 
+## Region authoring checkpoint
+
+Scenario > Regions opens a scrollable list with create, edit, delete and locate
+operations. Properties edit the name and inclusive corner cells, allowing a
+region to be moved/resized precisely; canvas overlays show its extent and name.
+View > Toggle regions controls visibility. Region names are unique, reserved
+whole-map tokens are rejected, renaming rewrites typed rule location references,
+and deletion refuses regions still referenced by rules. These operations use the
+existing document history and CRT save path. Canvas drag handles are still pending.
+
+Rule parameter dialogs now offer scrollable location, unit-type and player
+choices while retaining existing authored values. Numeric operands filter input,
+and all operands must fit the CRT limit before the rule is changed. This is not
+complete semantic rule validation or the planned template/reordering workflow.
+
+Three tests pass in Release and AddressSanitizer/LeakSanitizer. Coverage includes
+region rename/reference preservation, failed-edit atomicity, referenced deletion,
+CRT roundtrip, and actual SDL menu/create/save interactions with saved bounds
+verified from the resulting bundle.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
@@ -89,7 +109,7 @@ validation against actual engine placement, and document/UI workflows.
    model previews where useful, additional view controls and live minimap refresh.
 4. Engine-backed terrain/buildability overlays, clickable map validation,
    reachable starts/mana/naval-output checks, full reproducible generator controls.
-5. Region authoring, named units, typed rule inputs, rule reuse/reordering,
+5. Region canvas manipulation, expanded typed-rule validation, rule reuse/reordering,
    temporary-map playtesting through the normal client/server launch path.
 6. Local terrain invalidation, asynchronous expensive operations, large-map
    profiling, broader document/UI coverage and final documentation cleanup.
