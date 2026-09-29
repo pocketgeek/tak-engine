@@ -820,12 +820,25 @@ if(TAK_BUILD_CLIENT)
           OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/takclient.ico")
     endif()
 
+    add_executable(cartographer_document_test tools/cartographer_document_test.cpp
+      src/cartographer/document.cpp src/cartographer/history.cpp src/cartographer/units.cpp)
+    target_link_libraries(cartographer_document_test PRIVATE tak-formats)
+    add_test(NAME cartographer_document COMMAND cartographer_document_test)
+
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
+    get_target_property(_cartographer_sources cartographer SOURCES)
+    add_executable(cartographer_ui_test tools/cartographer_ui_test.cpp ${_cartographer_sources})
+    target_compile_definitions(cartographer_ui_test PRIVATE SDL_MAIN_HANDLED TAK_CARTOGRAPHER_TEST)
+    target_link_libraries(cartographer_ui_test PRIVATE tak-formats ${_tak_sdl2})
+    if(TAK_TEST_DATA)
+      add_test(NAME cartographer_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}")
+      set_tests_properties(cartographer_ui PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
+    endif()
     if(WIN32)
       target_link_options(cartographer PRIVATE -mconsole)
     endif()

@@ -19,6 +19,12 @@
 #include <SDL.h>
 
 #include "cartographer/dialog.h"
+#include "cartographer/editor.h"
+#include "cartographer/document.h"
+#include "cartographer/history.h"
+#include "cartographer/textedit.h"
+#include <fstream>
+#include <charconv>
 #include "cartographer/features.h"
 #include "cartographer/font5x7.h"
 #include "cartographer/newmap.h"
@@ -26,6 +32,8 @@
 #include "cartographer/triggers.h"
 #include "cartographer/units.h"
 #include "client/mapview.h"
+#include "client/settings.h"
+#include "client/dirpicker.h"
 #include "util/appicon.h"
 #include "terrain/terrain.h"
 #include "util/jpeg.h"
@@ -40,6 +48,8 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <future>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <set>
@@ -47,13 +57,13 @@
 
 namespace {
 
-constexpr int kMenuH = 22;    // top menu-bar strip
+constexpr int kMenuH = 44;    // top menu-bar strip
 constexpr int kStatusH = 22;  // bottom status strip
 // UI magnification. The whole editor is drawn in a fixed logical coordinate
 // space and scaled up by this factor via SDL_RenderSetScale, so every panel,
 // glyph, and dialog doubles uniformly on hi-DPI displays. Input coordinates are
 // divided back down to logical space at the event source.
-constexpr int kUIScale = 4;
+float kUIScale = 1.5f;
 
 // A fresh map for the New dialog / --new launch: either a flat ground stamp or
 // procedural terrain from the engine's map generator (the "~gen1~" generator the
@@ -93,14 +103,15 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,SDL_Renderer*,int)>& frameHook) {
     std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath;
     int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
+    bool explicitOutput=false;
     bool randomTerrain = false;   // --random: generate procedural terrain for --new
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--data" && i + 1 < argc) dataRoot = argv[++i];
-        else if (a == "--out" && i + 1 < argc) outDir = argv[++i];   // Save destination
+        else if (a == "--out" && i + 1 < argc) {outDir = argv[++i];explicitOutput=true;}   // Save destination
         else if (a == "--save" && i + 1 < argc) exportPath = argv[++i];  // headless export+exit
         else if (a == "--bundle" && i + 1 < argc) bundlePath = argv[++i];  // headless: write a .kmp + exit
         else if (a == "--stamp" && i + 3 < argc) {   // headless: stamp <name> <bx> <by>
@@ -124,6 +135,17 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
         }
     }
+    if(dataRoot.empty()) {
+        const auto saved=tak::loadSettings();
+        if(!saved.dataDir.empty() && tak::hpi::validInstall(std::filesystem::u8path(saved.dataDir),nullptr))
+            dataRoot=saved.dataDir;
+    }
+    if(dataRoot.empty() && (!std::getenv("SDL_VIDEODRIVER") || (std::string(std::getenv("SDL_VIDEODRIVER"))!="dummy" && std::string(std::getenv("SDL_VIDEODRIVER"))!="offscreen"))) {
+        auto picked=tak::pickDirectory("Choose your Total Annihilation Kingdoms installation","");
+        if(!picked.empty() && tak::hpi::validInstall(std::filesystem::u8path(picked),nullptr)) {
+            dataRoot=picked;auto settings=tak::loadSettings();settings.dataDir=picked;tak::saveSettings(settings);
+        }
+    }
     if (dataRoot.empty()) {
         std::fprintf(stderr,
             "Cartographer -- TA:Kingdoms map editor\n"
@@ -135,9 +157,11 @@ int main(int argc, char** argv) {
             "         [--save <file.tnt>]  headless: save loose .tnt/.ota/.crt and exit\n"
             "         [--bundle <file.kmp>] headless: save a packed .kmp map and exit\n"
             "in-editor: Tab tools, 1-5 zoom, G grid, N new, P/R/U/C/T/K scenario menu,\n"
-            "           Ctrl+S save loose, Ctrl+B save .kmp\n");
+            "           Ctrl+S save .kmp, Ctrl+Shift+S export loose files\n");
         return 2;
     }
+
+    if(!explicitOutput) outDir=(std::filesystem::u8path(dataRoot)/"Maps").string();
 
     SDL_SetMainReady();   // we own main() (SDL_MAIN_HANDLED); tell SDL not to hijack it
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -145,9 +169,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     struct SdlLifetime { ~SdlLifetime() { SDL_Quit(); } } sdlLifetime;
+    SDL_Rect display{0,0,1600,1000};SDL_GetDisplayUsableBounds(0,&display);
+    const int initialWidth=std::min(1600,std::max(800,int(display.w*.9f)));
+    const int initialHeight=std::min(1000,std::max(600,int(display.h*.9f)));
     SDL_Window* win = SDL_CreateWindow(
         ("Cartographer -- " + mapName).c_str(), SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED, 1280 * kUIScale, 800 * kUIScale, SDL_WINDOW_RESIZABLE);
+        SDL_WINDOWPOS_CENTERED, initialWidth, initialHeight, SDL_WINDOW_RESIZABLE);
     std::unique_ptr<SDL_Window,decltype(&SDL_DestroyWindow)> windowOwner(win,SDL_DestroyWindow);
     {   // Application icon: the compass-rose badge (src/util/appicon).
         std::vector<uint8_t> ic = tak::appicon::render(tak::appicon::Kind::Cartographer, 64);
@@ -179,38 +206,37 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "mount %s: %s\n", dataRoot.c_str(), e.what());
         return 1;
     }
-    // --new WxH --save: build a fresh flat map for --world and save it headless.
-    // Without --save, --new instead opens the editor on the fresh map (built
-    // below), same as pressing N in-editor; --new --bundle exits via that path.
-    if (newW > 0 && newH > 0 && !exportPath.empty()) {
-        cart::SectionLibrary nsections;
-        nsections.scan(vfs, newWorld);
-        tak::terrain::Compositor ncomp(vfs);
-        tak::tnt::Map nm = cart::newBlankMap(vfs, nsections, ncomp, newWorld, newW, newH);
-        if (nm.width == 0) {
-            std::fprintf(stderr, "new: no sections for world '%s'\n", newWorld.c_str());
-            return 1;
+    const bool interactive=shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty();
+    std::filesystem::path recoveryFolder, recoveredFrom;
+    if(char* pref=SDL_GetPrefPath("TAKengine","Cartographer")) {
+        recoveryFolder=std::filesystem::u8path(pref);SDL_free(pref);
+    }
+    const auto recoveryFile=recoveryFolder/("recovery-"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".kmp");
+    if(interactive && mapName.empty() && !newW && !recoveryFolder.empty()) {
+        std::error_code ec;std::filesystem::path newest;
+        for(const auto& entry:std::filesystem::directory_iterator(recoveryFolder,ec)) {
+            const auto filename=entry.path().filename().string();
+            if(filename.starts_with("recovery-") && entry.path().extension()==".kmp" &&
+               (newest.empty() || entry.last_write_time(ec)>std::filesystem::last_write_time(newest,ec))) newest=entry.path();
         }
-        tak::tnt::Scenario nsc;
-        nsc.kingdom = newWorld;
-        nsc.missionName = mapName.empty() ? "Untitled" : mapName;
-        nsc.sizeW = newW; nsc.sizeH = newH;
-        std::string base = exportPath.empty()
-            ? (outDir + "/" + (mapName.empty() ? "new" : mapName) + ".tnt") : exportPath;
-        std::string otaP = base.substr(0, base.rfind('.')) + ".ota";
-        auto put = [](const std::string& p, const void* d, size_t n) {
-            std::FILE* f = std::fopen(p.c_str(), "wb");
-            if (!f) return false;
-            bool ok = std::fwrite(d, 1, n, f) == n; std::fclose(f);
-            std::fprintf(stderr, "saved %s (%zu bytes)\n", p.c_str(), n);
-            return ok;
-        };
-        std::vector<uint8_t> tb = nm.save();
-        std::string ot = nsc.write();
-        bool ok = put(base, tb.data(), tb.size()) & put(otaP, ot.data(), ot.size());
-        std::fprintf(stderr, "new: %dx%d Units (%dx%d cells) world=%s\n",
-                     newW, newH, nm.width, nm.height, newWorld.c_str());
-        return ok ? 0 : 1;
+        if(!newest.empty()) {
+            const SDL_MessageBoxButtonData buttons[]={{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT,1,"Recover"},{0,2,"Discard recovery"},{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT,0,"Cancel"}};
+            SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION,win,"Recover map","An unsaved map recovery is available.",3,buttons,nullptr};
+            int choice=0;SDL_ShowMessageBox(&box,&choice);
+            if(choice==0)return 0;
+            if(choice==2) {std::filesystem::remove(newest,ec);std::filesystem::remove(newest.string()+".bak",ec);}
+            if(choice==1) {
+                try {
+                    auto files=std::make_shared<tak::hpi::Vfs::Files>();
+                    tak::hpi::Archive archive(newest);
+                    for(const auto& entry:archive.entries()) if(!entry.isDirectory) {
+                        (*files)[tak::hpi::MountSet::key(entry.path)]=archive.read(entry);
+                        if(std::filesystem::path(entry.path).extension()==".tnt")mapName=std::filesystem::path(entry.path).stem().string();
+                    }
+                    vfs.setMapFiles(files);recoveredFrom=newest;
+                } catch(const std::exception& e) {SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Recovery failed",e.what(),win);return 1;}
+            }
+        }
     }
 
     // Resolve the map name to its .tnt VFS path (Maps/<name>.tnt or a .kmp's
@@ -265,15 +291,6 @@ int main(int argc, char** argv) {
                  mapView.map().blocksY, scenario.missionName.c_str(),
                  scenario.kingdom.c_str(), scenario.starts.size());
 
-    auto writeFile = [](const std::string& path, const void* data, size_t n) -> bool {
-        std::FILE* f = std::fopen(path.c_str(), "wb");
-        if (!f) { std::fprintf(stderr, "save: cannot open %s\n", path.c_str()); return false; }
-        size_t w = std::fwrite(data, 1, n, f);
-        std::fclose(f);
-        std::fprintf(stderr, "saved %s (%zu bytes)\n", path.c_str(), w);
-        return w == n;
-    };
-
     // The map's scenario .crt, kept in full so a save preserves the trigger
     // rules, regions, and custom types the unit tool doesn't edit. `units` is
     // the editor's working view (map pixels); `scen` is everything else.
@@ -295,78 +312,44 @@ int main(int argc, char** argv) {
     // Unsaved-changes flag for the exit prompt. Set by every edit (terrain,
     // features, units, starts, scenario props, use-only, triggers), cleared on a
     // successful save. Broader than `edited` (which only gates minimap regen).
-    bool dirty = false;
-    bool wantNew = false;   // deferred "open New Map" after a discard confirmation
-    // Save the map as loose <stem>.tnt + <stem>.ota. Loose Maps/<name>.* is
-    // read directly by the engine VFS, so a saved map is immediately playable.
-    auto saveMap = [&](const std::string& tntPath) -> bool {
-        if (edited) {
-            std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
-            cart::generateMinimaps(mapView.editMap(), mapView.compositor(),
-                                   cart::loadWorldPalette(vfs, wld));
-        }
-        std::vector<uint8_t> tnt = mapView.map().save();
-        bool ok = writeFile(tntPath, tnt.data(), tnt.size());
-        std::string stem = tntPath.substr(0, tntPath.rfind('.'));
-        std::string base = stem.substr(stem.rfind('/') + 1);
-        // Use-only restriction: write/clear the sibling .tdf and set the OTA
-        // reference BEFORE serializing the OTA (which embeds the filename).
-        if (!useOnly.empty()) {
-            std::vector<std::string> types(useOnly.begin(), useOnly.end());   // sorted (set)
-            std::string tdf = cart::writeUseOnly(types);
-            ok &= writeFile(stem + ".tdf", tdf.data(), tdf.size());
-            scenario.useOnlyUnits = base + ".tdf";
-            // Check-Map warning also fires at save (retail behaviour): placed
-            // units whose type is not allowed will not appear in the game.
-            int restricted = 0;
-            for (const auto& u : units) if (!useOnly.count(u.type)) ++restricted;
-            if (restricted)
-                std::fprintf(stderr, "check-map: %d placed unit(s) have restricted "
-                             "types and will not show up in the game\n", restricted);
-        } else {
-            scenario.useOnlyUnits.clear();
-        }
-        std::string otaText = scenario.write();
-        ok &= writeFile(stem + ".ota", otaText.data(), otaText.size());
-        // The scenario .crt: written whenever the map has (or had) placed units
-        // or trigger rules, preserving everything the unit tool doesn't edit.
-        if (!units.empty() || !scen.units.empty() || !scen.regions.empty()) {
-            std::vector<uint8_t> crt = cart::saveScenario(scen, units);
-            ok &= writeFile(stem + ".crt", crt.data(), crt.size());
-        }
-        return ok;
+    bool dirty = mapPath.empty() || !recoveredFrom.empty();
+    bool historyPending=false, resetHistory=false;
+    cart::History history;
+    auto historySnapshot = [&]() {return cart::historyState(mapView.map(),scenario,scen,units,useOnly,mapName);};
+    history.reset(historySnapshot(),!dirty);
+    auto commitHistory = [&]() {
+        if(resetHistory) {history.reset(historySnapshot(),false);resetHistory=false;}
+        else if(historyPending) history.commit(historySnapshot());
+        historyPending=false;dirty=history.dirty();
     };
-
-    // Save the finished map as a single .kmp bundle: an HPI archive holding
-    // kmap/<name>/<name>.{tnt,ota,crt,txt} (+ .tdf when restricted), the retail
-    // distributable-map format the engine mounts directly.
-    auto saveBundle = [&](const std::string& kmpPath) -> bool {
+    bool wantNew = false;   // deferred "open New Map" after a discard confirmation
+    std::string saveError;
+    auto serializeDocument = [&](const std::string& name) {
+        mapView.quiesce();
         if (edited) {
             std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
-            cart::generateMinimaps(mapView.editMap(), mapView.compositor(),
-                                   cart::loadWorldPalette(vfs, wld));
+            std::transform(wld.begin(),wld.end(),wld.begin(),[](unsigned char c){return char(std::tolower(c));});
+            cart::generateMinimaps(mapView.editMap(),mapView.compositor(),cart::loadWorldPalette(vfs,wld));
         }
-        std::string base = mapName.empty() ? "new" : mapName;
-        std::string dir = "kmap/" + base + "/";
-        auto bytesOf = [](const std::string& s) {
-            return std::vector<uint8_t>(s.begin(), s.end());
-        };
-        std::vector<tak::hpi::PackFile> pf;
-        pf.push_back({dir + base + ".tnt", mapView.map().save()});
-        if (!useOnly.empty()) {
-            std::vector<std::string> types(useOnly.begin(), useOnly.end());
-            pf.push_back({dir + base + ".tdf", bytesOf(cart::writeUseOnly(types))});
-            scenario.useOnlyUnits = base + ".tdf";
-        } else {
-            scenario.useOnlyUnits.clear();
-        }
-        pf.push_back({dir + base + ".ota", bytesOf(scenario.write())});
-        pf.push_back({dir + base + ".crt", cart::saveScenario(scen, units)});
-        pf.push_back({dir + base + ".txt", bytesOf(scenario.missionDescription.empty()
-                                                       ? scenario.missionName
-                                                       : scenario.missionDescription)});
-        std::vector<uint8_t> kmp = tak::hpi::pack(pf);
-        return writeFile(kmpPath, kmp.data(), kmp.size());
+        return cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,name);
+    };
+    auto saveMap = [&](const std::string& tntPath) -> bool {
+        try {
+            const auto path=std::filesystem::u8path(tntPath);
+            const auto base=path.stem().u8string();
+            commitHistory();
+            const bool ok=cart::writeDocumentFiles(path.parent_path(),serializeDocument(std::string(base.begin(),base.end())),saveError);
+            if(ok) {history.markSaved();dirty=false;}return ok;
+        } catch(const std::exception& e) {saveError=e.what();return false;}
+    };
+    auto saveBundle = [&](const std::string& kmpPath) -> bool {
+        try {
+            const auto path=std::filesystem::u8path(kmpPath);
+            const auto base=path.stem().u8string();
+            commitHistory();
+            const bool ok=cart::writeDocumentBundle(path,serializeDocument(std::string(base.begin(),base.end())),saveError);
+            if(ok) {history.markSaved();dirty=false;}return ok;
+        } catch(const std::exception& e) {saveError=e.what();return false;}
     };
 
     // Section-prefab palette for this map's world (falls back to aramon).
@@ -393,7 +376,7 @@ int main(int argc, char** argv) {
                 const tak::tnt::Map* sec = sections.load(vfs, s.path);
                 if (sec && cart::stampSection(mapView.editMap(), *sec, bx, by)) {
                     mapView.tilesEdited();
-                    edited = true; dirty = true;
+                    edited = true; dirty = true; historyPending=true;
                     return true;
                 }
             }
@@ -407,6 +390,7 @@ int main(int argc, char** argv) {
                      stampBX, stampBY, hit ? "OK" : "no such section");
         bool ok = hit && saveMap(exportPath.empty() ? (outDir + "/" + mapName + "-edit.tnt")
                                                      : exportPath);
+        if(!ok) std::fprintf(stderr,"save: %s\n",saveError.c_str());
         return ok ? 0 : 1;
     }
 
@@ -414,11 +398,13 @@ int main(int argc, char** argv) {
     // / convert path, also how the save is regression-tested).
     if (!exportPath.empty()) {
         bool ok = saveMap(exportPath);
+        if(!ok) std::fprintf(stderr,"save: %s\n",saveError.c_str());
         return ok ? 0 : 1;
     }
     // Headless one-shot: --bundle <file.kmp> writes the packed map and exits.
     if (!bundlePath.empty()) {
         bool ok = saveBundle(bundlePath);
+        if(!ok) std::fprintf(stderr,"save: %s\n",saveError.c_str());
         return ok ? 0 : 1;
     }
 
@@ -474,6 +460,7 @@ int main(int argc, char** argv) {
         return t;
     };
 
+    int lastStampX=-1,lastStampY=-1;
     auto stampAtMouse = [&](int mx, int my, int w, int h) {
         if (selected < 0 || mx < kPaletteW) return;   // palette side, not the canvas
         const auto& s = sections.list()[size_t(selected)];
@@ -486,9 +473,12 @@ int main(int argc, char** argv) {
         int blkY = int((mapView.offY() + ly / mapView.zoom()) / 32.0f);
         int snapX = (blkX / sec->blocksX) * sec->blocksX;
         int snapY = (blkY / sec->blocksY) * sec->blocksY;
+        if(snapX==lastStampX && snapY==lastStampY)return;
+        lastStampX=snapX;lastStampY=snapY;
+        mapView.quiesce();
         if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY)) {
             mapView.tilesEdited();
-            edited = true; dirty = true;
+            edited = true; dirty = true; historyPending=true;
         }
         (void)w; (void)h;
     };
@@ -521,14 +511,14 @@ int main(int argc, char** argv) {
         auto& mp = mapView.editMap();
         if (cx < 0 || cz < 0 || cx >= mp.width || cz >= mp.height) return;
         size_t ci = size_t(cz) * mp.width + cx;
-        if (erase) { mp.features[ci] = 0xFFFF; edited = true; dirty = true; return; }
+        if (erase) { mp.features[ci] = 0xFFFF; edited = true; dirty = true; historyPending=true; return; }
         const std::string& name = features.list()[size_t(selectedFeat)].name;
         uint16_t idx = 0xFFFF;   // intern the feature name into the map's table
         for (size_t i = 0; i < mp.featureNames.size(); ++i)
             if (mp.featureNames[i] == name) { idx = uint16_t(i); break; }
         if (idx == 0xFFFF) { mp.featureNames.push_back(name); idx = uint16_t(mp.featureNames.size() - 1); }
         mp.features[ci] = idx;
-        edited = true; dirty = true;
+        edited = true; dirty = true; historyPending=true;
     };
     int draggingStart = -1;           // index into scenario.starts while dragging
     bool clearArm = false, clearDrag = false;   // Clear Area drag-box (screen px)
@@ -552,7 +542,7 @@ int main(int argc, char** argv) {
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH };
     static constexpr int kMaxFields = 6;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -571,6 +561,8 @@ int main(int argc, char** argv) {
     std::string mTitle;
     int mN = 0;                              // active field count
     int mfocus = 0;
+    cart::TextEdit fieldEditor;
+    std::function<bool(const std::string&)> openDocument;
     int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
     tak::crt::Rule* editRule = nullptr;      // M_RULE: rule whose params are edited
     std::vector<std::string> mMsg;           // M_MESSAGE: wrapped text lines
@@ -607,6 +599,13 @@ int main(int argc, char** argv) {
             mTitle = "SCENARIO PROPERTIES"; mN = 2;
             mLabel[0] = "SCENARIO NAME"; mf[0] = scenario.missionName;        mfNumeric[0] = false;
             mLabel[1] = "DESCRIPTION";   mf[1] = scenario.missionDescription; mfNumeric[1] = false;
+        } else if (m == M_SAVEAS) {
+            mTitle="SAVE MAP AS";mN=2;
+            mLabel[0]="MAP FILE NAME";mf[0]=mapName;mfNumeric[0]=false;
+            mLabel[1]="FOLDER";mf[1]=outDir;mfNumeric[1]=false;
+        } else if (m == M_OPENPATH) {
+            mTitle="OPEN MAP";mN=1;
+            mLabel[0]="MAP NAME OR KMP / TNT FILE PATH";mf[0]="";mfNumeric[0]=false;
         } else if (m == M_RESIZE) {
             mTitle = "RESIZE MAP"; mN = 2;
             mLabel[0] = "WIDTH (UNITS)";  mf[0] = std::to_string(mapView.map().width / 32);  mfNumeric[0] = true;
@@ -636,7 +635,7 @@ int main(int argc, char** argv) {
         } else {
             return;   // nothing to open
         }
-        modal = m;
+        modal = m;fieldEditor.focus(mf[mfocus]);
         SDL_StartTextInput();
     };
     // Build a fresh map from the New Map dialog's fields and switch to it. `random`
@@ -650,6 +649,7 @@ int main(int argc, char** argv) {
         std::string wld = mf[3];
         std::transform(wld.begin(), wld.end(), wld.begin(), ::tolower);
         if (wld.empty()) wld = "aramon";
+        mapView.quiesce();
         sections.scan(vfs, wld);
         features.scan(vfs, wld);
         FreshMap fm = buildFreshMap(vfs, sections, mapView.compositor(), wld, wu, hu, random);
@@ -659,6 +659,7 @@ int main(int argc, char** argv) {
                         "'. Try aramon, veruna, taros or zhon.");
             return;
         }
+        mapView.quiesce();
         mapView.editMap() = std::move(fm.map);
         mapView.tilesEdited();
         mapView.setOffset(0, 0);
@@ -668,28 +669,61 @@ int main(int argc, char** argv) {
         scenario.missionName = nm;
         scenario.starts = std::move(fm.starts);
         mapName = nm;
-        units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
+        units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();resetHistory=true;
         selected = sections.list().empty() ? -1 : 0;
         selectedFeat = features.list().empty() ? -1 : 0;
         paletteScroll = 0;
         edited = true;
         SDL_SetWindowTitle(win, ("Cartographer -- " + mapName).c_str());
-        dirty = false;
+        dirty = true; historyPending=true;
         modal = M_NONE; SDL_StopTextInput();
     };
     auto applyModal = [&]() {
-        if (modal == M_SCENARIO) {
+        const auto applying=modal;
+        if(modal==M_SAVEAS) {
+            if(!cart::validDocumentName(mf[0])) {openMessage("INVALID NAME","Choose a map name without path separators or reserved filename characters.");return;}
+            const auto nextName=mf[0],nextDir=mf[1];
+            const auto path=(std::filesystem::u8path(nextDir)/std::filesystem::u8path(nextName+".kmp")).string();
+            auto performSave=[&,path,nextName,nextDir] {
+                if(!saveBundle(path)) {openMessage("SAVE FAILED",saveError);return;}
+                mapName=nextName;outDir=nextDir;historyPending=true;commitHistory();history.markSaved();dirty=false;
+                openMessage("SAVED",path);
+            };
+            if(std::filesystem::exists(std::filesystem::u8path(path)) && (nextName!=mapName || nextDir!=outDir)) {
+                openConfirm("REPLACE MAP", "Replace the existing map? Its previous version will be retained as a .bak file.",performSave);return;
+            }
+            performSave();return;
+        } else if(modal==M_OPENPATH) {
+            const auto request=mf[0];
+            if(dirty) {openConfirm("OPEN MAP","Discard unsaved changes and open this map?",[&,request] {openDocument(request);});return;}
+            if(!openDocument(request))return;
+        } else if (modal == M_SCENARIO) {
             scenario.missionName = mf[0];
-            scenario.missionDescription = mf[1]; dirty = true;
+            scenario.missionDescription = mf[1]; dirty = true; historyPending=true;
         } else if (modal == M_RESIZE) {
-            int wu = std::max(1, std::atoi(mf[0].c_str()));
-            int hu = std::max(1, std::atoi(mf[1].c_str()));
+            int wu=0,hu=0;
+            const auto widthResult=std::from_chars(mf[0].data(),mf[0].data()+mf[0].size(),wu);
+            const auto heightResult=std::from_chars(mf[1].data(),mf[1].data()+mf[1].size(),hu);
+            if(widthResult.ec!=std::errc{} || widthResult.ptr!=mf[0].data()+mf[0].size() ||
+               heightResult.ec!=std::errc{} || heightResult.ptr!=mf[1].data()+mf[1].size() || wu<1 || wu>64 || hu<1 || hu>64) {
+                openMessage("RESIZE MAP","Width and height must be whole numbers from 1 to 64.");return;
+            }
+            for(const auto& start:scenario.starts) if(start.xpos>=wu*32 || start.zpos>=hu*32) {
+                openMessage("RESIZE MAP","Move or remove start positions outside the new map first.");return;
+            }
+            for(const auto& unit:units) if(unit.x>=wu*512 || unit.z>=hu*512) {
+                openMessage("RESIZE MAP","Move or remove units outside the new map first.");return;
+            }
+            for(const auto& region:scen.regions) if(region.x2>=wu*32 || region.z2>=hu*32) {
+                openMessage("RESIZE MAP","Resize or remove regions outside the new map first.");return;
+            }
+            mapView.quiesce();
             std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
             cart::resizeMap(mapView.editMap(), mapView.compositor(),
                             cart::loadWorldPalette(vfs, wld), wu, hu);
             scenario.sizeW = wu; scenario.sizeH = hu;
             mapView.tilesEdited();
-            edited = true; dirty = true;
+            edited = true; dirty = true; historyPending=true;
         } else if (modal == M_NEW) {
             applyNewMap(false);   // CREATE = flat stamp; closes on success
             return;               // (RANDOM is handled at its button click)
@@ -702,15 +736,16 @@ int main(int argc, char** argv) {
             u.veteran = std::clamp(std::atoi(mf[4].c_str()), 0, 9);
             int a = std::atoi(mf[5].c_str()) % 360; if (a < 0) a += 360;
             u.angle = float(a);
-            unitsEdited = true; dirty = true;
+            unitsEdited = true; dirty = true; historyPending=true;
         } else if (modal == M_RULE && editRule) {
             for (int i = 0; i < mN; ++i) editRule->slot[i] = mf[i];
             for (int i = mN; i < 5; ++i) editRule->slot[i].clear();
-            editRule = nullptr; dirty = true;
+            editRule = nullptr; dirty = true; historyPending=true;
         } else if (modal == M_CONFIRM) {
             if (confirmAction) confirmAction();
             confirmAction = nullptr;
         }
+        if(modal!=applying)return;
         modal = M_NONE; SDL_StopTextInput();
     };
     // Open the param editor for a condition/action rule (fields = its opcode's
@@ -728,7 +763,7 @@ int main(int argc, char** argv) {
             mfNumeric[i] = false;   // slots hold ASCII (numbers, names, flags)
             mfChoices[i] = nullptr; // rule slots are typed, not dropdowns
         }
-        modal = M_RULE;
+        modal = M_RULE;fieldEditor.focus(mf[0]);
         if (mN > 0) SDL_StartTextInput();
     };
 
@@ -784,6 +819,123 @@ int main(int argc, char** argv) {
         scrRuleScroll = scrCondScroll = scrActScroll = 0;
     };
 
+    openDocument = [&](const std::string& request) {
+        try {
+            auto nextVfs=tak::hpi::mountRetailRoot(dataRoot,tak::hpi::OverridePolicy::Full);
+            std::string path,chosen=request;
+            const auto disk=std::filesystem::u8path(request);
+            if(std::filesystem::is_regular_file(disk)) {
+                auto files=std::make_shared<tak::hpi::Vfs::Files>();
+                if(disk.extension()==".kmp") {
+                    tak::hpi::Archive archive(disk);
+                    for(const auto& entry:archive.entries()) if(!entry.isDirectory && entry.path.starts_with("kmap/")) {
+                        (*files)[tak::hpi::MountSet::key(entry.path)]=archive.read(entry);
+                        if(std::filesystem::path(entry.path).extension()==".tnt")path=tak::hpi::MountSet::key(entry.path);
+                    }
+                } else if(disk.extension()==".tnt") {
+                    const auto base=disk.stem().string();path="kmap/"+base+".tnt";
+                    for(const char* ext:{".tnt",".ota",".crt",".tdf"}) {
+                        const auto input=disk.parent_path()/(base+ext);std::ifstream stream(input,std::ios::binary);
+                        if(stream)(*files)[tak::hpi::MountSet::key("kmap/"+base+ext)]={std::istreambuf_iterator<char>(stream),{}};
+                    }
+                }
+                if(path.empty())throw std::runtime_error("Choose a KMP bundle or TNT map");
+                nextVfs.setMapFiles(files);chosen=std::filesystem::path(path).stem().string();
+            } else path=tak::hpi::findMap(nextVfs,request);
+            if(path.empty())throw std::runtime_error("Map not found. Enter an installed map name or a full KMP / TNT path.");
+            (void)tak::tnt::Map::load(nextVfs.read(path),path);
+            const auto stem=path.substr(0,path.rfind('.'));
+            tak::tnt::Scenario nextMetadata;
+            if(nextVfs.has(stem+".ota")) {const auto data=nextVfs.read(stem+".ota");nextMetadata=tak::tnt::Scenario::parse(std::string(data.begin(),data.end()));}
+            auto nextScenario=cart::loadScenario(nextVfs,stem+".crt");
+            auto nextUnits=cart::toPlaced(nextScenario);
+            std::set<std::string> nextUseOnly;
+            if(!nextMetadata.useOnlyUnits.empty())for(const auto& type:cart::loadUseOnly(nextVfs,stem+".tdf"))nextUseOnly.insert(type);
+            mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);
+            scenario=std::move(nextMetadata);scen=std::move(nextScenario);units=std::move(nextUnits);useOnly=std::move(nextUseOnly);
+            mapName=chosen;mapPath=path;world=scenario.kingdom.empty()?"aramon":scenario.kingdom;
+            sections.scan(vfs,world);features.scan(vfs,world);
+            for(auto& [key,t]:thumbs)if(t)SDL_DestroyTexture(t);
+            thumbs.clear();
+            for(auto& [key,t]:featTex)if(t)SDL_DestroyTexture(t);
+            featTex.clear();
+            selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
+            edited=false;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
+            editRule=nullptr;editUnit=draggingUnit=draggingStart=-1;scrGroup=-1;
+            modal=M_NONE;SDL_StopTextInput();return true;
+        } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
+    };
+    int menuOpen=-1;
+    const std::vector<std::string> menuNames={"FILE","EDIT","VIEW","SCENARIO","HELP"};
+    const std::vector<std::vector<std::string>> menuRows={
+        {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
+        {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)"},
+        {"Fit map","100% terrain zoom","Toggle grid (G)"},
+        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)"},
+        {"Editor controls","About"}};
+    auto menuAction = [&](int menu,int row) {
+        if(menu==0) {
+            if(row==0) {if(dirty)openConfirm("NEW MAP","Discard unsaved changes?",[&]{wantNew=true;});else openModal(M_NEW);}
+            if(row==1)openModal(M_OPENPATH);
+            if(row==2) {if(saveBundle(outDir+"/"+mapName+".kmp"))openMessage("SAVED",outDir+"/"+mapName+".kmp");else openMessage("SAVE FAILED",saveError);}
+            if(row==3)openModal(M_SAVEAS);
+            if(row==4) {if(saveMap(outDir+"/"+mapName+".tnt"))openMessage("EXPORTED",outDir+"/"+mapName+".tnt");else openMessage("EXPORT FAILED",saveError);}
+            if(row==5) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
+        } else if(menu==1) {
+            if(row<2) {SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=row?SDLK_y:SDLK_z;key.key.keysym.mod=KMOD_CTRL;SDL_PushEvent(&key);}
+            else clearArm=true;
+        } else if(menu==2) {
+            int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
+            if(row==0) {mapView.setZoom(std::min(float(w)/(mapView.map().width*16),float(h)/(mapView.map().height*16)));mapView.setOffset(0,0);}
+            if(row==1)mapView.setZoom(1);
+            if(row==2)showGrid=!showGrid;
+        } else if(menu==3) {
+            if(row==0)openModal(M_SCENARIO);
+            if(row==1)openModal(M_RESIZE);
+            if(row==2)useOnlyOpen=true;
+            if(row==3)checkMap();
+            if(row==4)openScripting();
+        } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
+            "Choose terrain or objects in the left browser. Left-click places; right-drag pans except in Features, where it erases. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
+    };
+
+    bool recoveryFilesPresent=!recoveredFrom.empty();
+    std::future<std::string> recoveryJob;
+    Uint64 nextRecovery=SDL_GetTicks64()+60000;
+    std::string recoveryStatus;
+    auto collectRecovery = [&]() {
+        if(recoveryJob.valid()) {
+            const auto error=recoveryJob.get();
+            recoveryStatus=error.empty()?"Recovery saved":"Recovery failed: "+error;
+        }
+    };
+    auto clearRecovery = [&]() {
+        if(!recoveryFilesPresent && !recoveryJob.valid())return;
+        collectRecovery();std::error_code ec;
+        for(const auto& path:{recoveryFile,recoveredFrom}) if(!path.empty()) {
+            std::filesystem::remove(path,ec);std::filesystem::remove(path.string()+".bak",ec);
+        }
+        recoveredFrom.clear();recoveryFilesPresent=false;
+    };
+
+    auto restoreHistory = [&](const cart::HistoryState* state) {
+        if(!state)return;
+        mapView.quiesce();
+        auto map=tak::tnt::Map::load(state->terrain,"undo history");
+        map.seaLevel=state->seaLevel;map.stockTerrain=state->stockTerrain;
+        mapView.editMap()=std::move(map);mapView.tilesEdited();
+        scenario=tak::tnt::Scenario::parse(state->metadata);
+        scen=tak::crt::parse(state->scenario);units=cart::toPlaced(scen);
+        useOnly=state->useOnly;mapName=state->name;dirty=history.dirty();edited=true;
+        editRule=nullptr;draggingUnit=draggingStart=-1;scrGroup=-1;
+        const auto nextWorld=scenario.kingdom.empty()?"aramon":scenario.kingdom;
+        if(nextWorld!=world) {
+            world=nextWorld;sections.scan(vfs,world);features.scan(vfs,world);
+            for(auto& [key,texture]:featTex)if(texture)SDL_DestroyTexture(texture);
+            featTex.clear();selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
+        }
+    };
+
     if (!shotPath.empty()) {
         mapView.setZoom(0.3f);          // fit-ish view for the shot
         mapView.finishChunks();         // wait for the terrain to decode+upload
@@ -791,10 +943,13 @@ int main(int argc, char** argv) {
     // A bare launch (no map named, no --new size) opens on the blank map with
     // the New Map dialog already up, so the first thing is "what shall we make?".
     if (mapPath.empty() && newW == 0 && shotPath.empty()) openModal(M_NEW);
+    int frameNumber=0;
     bool running = true;
     while (running) {
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
+        kUIScale=std::max(.5f,std::min({2.0f,float(w)/900.0f,float(h)/600.0f}));
+        SDL_RenderSetScale(ren,kUIScale,kUIScale);
         w /= kUIScale; h /= kUIScale;   // physical -> logical (SDL_RenderSetScale)
         int canvasH = h - kMenuH - kStatusH;
         int canvasW = w - kPaletteW;
@@ -818,6 +973,20 @@ int main(int argc, char** argv) {
                 } else running = false;
                 continue;
             }
+            if(modal==M_NONE && !scriptOpen && !useOnlyOpen) {
+                if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE && menuOpen>=0) {menuOpen=-1;continue;}
+                if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                    const int mx=e.button.x,my=e.button.y;
+                    if(my<22 && mx>=96 && mx<96+int(menuNames.size())*72) {const int item=(mx-96)/72;menuOpen=menuOpen==item?-1:item;continue;}
+                    if(menuOpen>=0) {
+                        const int column=menuOpen;menuOpen=-1;
+                        const int x=96+column*72,row=(my-22)/20;
+                        if(mx>=x && mx<x+240 && my>=22 && row<int(menuRows[size_t(column)].size()))menuAction(column,row);
+                        continue;
+                    }
+                }
+                if(menuOpen>=0)continue;
+            }
             // The Use Only checklist overlay swallows input while up.
             if (useOnlyOpen) {
                 if (e.type == SDL_MOUSEWHEEL) {
@@ -829,12 +998,12 @@ int main(int argc, char** argv) {
                 } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     int mx = e.button.x, my = e.button.y;
                     if (cart::pointIn(mx, my, uoDone)) useOnlyOpen = false;
-                    else if (cart::pointIn(mx, my, uoClear)) { useOnly.clear(); dirty = true; }
+                    else if (cart::pointIn(mx, my, uoClear)) { useOnly.clear(); dirty = true; historyPending=true; }
                     else if (cart::pointIn(mx, my, uoList)) {
                         int row = (my - uoList.y + useOnlyScroll) / 14;
                         if (row >= 0 && row < int(unitTypes.size())) {
                             const std::string& t = unitTypes[size_t(row)];
-                            if (useOnly.count(t)) useOnly.erase(t); else useOnly.insert(t); dirty = true;
+                            if (useOnly.count(t)) useOnly.erase(t); else useOnly.insert(t); dirty = true; historyPending=true;
                         }
                     }
                 }
@@ -848,11 +1017,11 @@ int main(int argc, char** argv) {
                         // Only exit if the save actually succeeded -- otherwise
                         // keep the editor alive and say so, so a failed write
                         // (read-only dir, disk full) can't silently lose work.
-                        if (saveMap(outDir + "/" + mapName + ".tnt")) {
+                        if (saveBundle(outDir + "/" + mapName + ".kmp")) {
                             dirty = false; running = false; modal = M_NONE;
                         } else {
                             openMessage("SAVE FAILED",
-                                        "Could not write the map; your changes were NOT saved.");
+                                        saveError);
                         }
                     };
                     if (e.type == SDL_KEYDOWN) {
@@ -868,13 +1037,13 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 if (e.type == SDL_TEXTINPUT && mN > 0 && !mfChoices[mfocus]) {
-                    for (const char* c = e.text.text; *c; ++c)
-                        if (!mfNumeric[mfocus] || (*c >= '0' && *c <= '9')) mf[mfocus] += *c;
+                    fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1);
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
-                    if (k == SDLK_BACKSPACE && mN > 0 && !mfChoices[mfocus] && !mf[mfocus].empty())
-                        mf[mfocus].pop_back();
-                    else if (k == SDLK_TAB) { mfocus = (mfocus + 1) % std::max(1, mN); mDropOpen = -1; }
+                    if (k == SDLK_TAB) {
+                        mfocus = (mfocus + ((e.key.keysym.mod&KMOD_SHIFT)?std::max(1,mN)-1:1)) % std::max(1, mN);
+                        mDropOpen = -1;fieldEditor.focus(mf[mfocus]);
+                    }
                     else if ((k == SDLK_LEFT || k == SDLK_RIGHT) && mN > 0 && mfChoices[mfocus]) {
                         // Cycle a focused dropdown field with the arrow keys.
                         const auto& opts = *mfChoices[mfocus];
@@ -884,11 +1053,11 @@ int main(int argc, char** argv) {
                         cur = (cur + (k == SDLK_RIGHT ? 1 : int(opts.size()) - 1)) % int(opts.size());
                         mf[mfocus] = opts[size_t(cur)];
                     }
-                    else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) applyModal();
+                    else if ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && !(modal==M_SCENARIO && mfocus==1 && (e.key.keysym.mod&KMOD_SHIFT))) applyModal();
                     else if (k == SDLK_ESCAPE) {
                         if (mDropOpen >= 0) mDropOpen = -1;   // first Esc closes an open list
                         else { modal = M_NONE; SDL_StopTextInput(); }
-                    }
+                    } else if(mN>0 && !mfChoices[mfocus])fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1);
                 } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                            e.button.button == SDL_BUTTON_LEFT) {
                     int mx = e.button.x, my = e.button.y;
@@ -909,7 +1078,7 @@ int main(int argc, char** argv) {
                     for (int i = 0; i < mN; ++i)
                         if (cart::pointIn(mx, my, mBox[i])) {
                             if (mfChoices[i]) { mDropOpen = i; mfocus = i; }
-                            else mfocus = i;
+                            else {mfocus=i;fieldEditor.focus(mf[i]);}
                             break;
                         }
                 }
@@ -936,8 +1105,8 @@ int main(int argc, char** argv) {
                                 tak::crt::Rule r; r.opcode = row;
                                 for (size_t i = 0; i < defs[size_t(row)].params.size() && i < 5; ++i)
                                     r.slot[i] = cart::defaultParam(defs[size_t(row)].params[i]);
-                                if (pickAction) { g->actions.push_back(r); scrActSel = int(g->actions.size()) - 1; dirty = true; }
-                                else { g->conditions.push_back(r); scrCondSel = int(g->conditions.size()) - 1; dirty = true; }
+                                if (pickAction) { g->actions.push_back(r); scrActSel = int(g->actions.size()) - 1; dirty = true; historyPending=true; }
+                                else { g->conditions.push_back(r); scrCondSel = int(g->conditions.size()) - 1; dirty = true; historyPending=true; }
                                 pickOpen = false;
                             }
                         }
@@ -971,23 +1140,23 @@ int main(int argc, char** argv) {
                         scrPlayer = (scrPlayer + 1) % 9; scrGroup = scen.players[size_t(scrPlayer)].empty() ? -1 : 0;
                         scrCondSel = scrActSel = -1; scrRuleScroll = scrCondScroll = scrActScroll = 0;
                     } else if (cart::pointIn(mx, my, rAddRule)) {
-                        gs.push_back({}); scrGroup = int(gs.size()) - 1; scrCondSel = scrActSel = -1; dirty = true;
+                        gs.push_back({}); scrGroup = int(gs.size()) - 1; scrCondSel = scrActSel = -1; dirty = true; historyPending=true;
                     } else if (cart::pointIn(mx, my, rDelRule) && g) {
-                        gs.erase(gs.begin() + scrGroup); dirty = true;
+                        gs.erase(gs.begin() + scrGroup); dirty = true; historyPending=true;
                         scrGroup = gs.empty() ? -1 : std::min(scrGroup, int(gs.size()) - 1);
                         scrCondSel = scrActSel = -1;
                     } else if (cart::pointIn(mx, my, rAddCond)) {
-                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; }
+                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; historyPending=true; }
                         pickOpen = true; pickAction = false; pickScroll = 0;
                     } else if (cart::pointIn(mx, my, rAddAct)) {
-                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; }
+                        if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; historyPending=true; }
                         pickOpen = true; pickAction = true; pickScroll = 0;
                     } else if (cart::pointIn(mx, my, rDelCond) && g && scrCondSel >= 0 &&
                                scrCondSel < int(g->conditions.size())) {
-                        g->conditions.erase(g->conditions.begin() + scrCondSel); scrCondSel = -1; dirty = true;
+                        g->conditions.erase(g->conditions.begin() + scrCondSel); scrCondSel = -1; dirty = true; historyPending=true;
                     } else if (cart::pointIn(mx, my, rDelAct) && g && scrActSel >= 0 &&
                                scrActSel < int(g->actions.size())) {
-                        g->actions.erase(g->actions.begin() + scrActSel); scrActSel = -1; dirty = true;
+                        g->actions.erase(g->actions.begin() + scrActSel); scrActSel = -1; dirty = true; historyPending=true;
                     } else if (cart::pointIn(mx, my, rRuleList)) {
                         int row = (my - rRuleList.y + scrRuleScroll) / kRow;
                         if (row >= 0 && row < int(gs.size())) {
@@ -1010,27 +1179,35 @@ int main(int argc, char** argv) {
                 }
                 continue;
             }
+            if(e.type==SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
+               (e.key.keysym.sym==SDLK_z || e.key.keysym.sym==SDLK_y)) {
+                commitHistory();
+                const bool redo=e.key.keysym.sym==SDLK_y || (e.key.keysym.mod & KMOD_SHIFT);
+                restoreHistory(redo?history.redo():history.undo());continue;
+            }
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                 if (dirty) {
                     // Close any transient overlay so the quit prompt gets input.
                     useOnlyOpen = false; scriptOpen = false; pickOpen = false;
                     modal = M_QUITSAVE; SDL_StopTextInput();
                 } else running = false;
-            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
+            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
                      e.key.keysym.sym == SDLK_s) {
-                bool shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-                // Shift+S writes a "-edit" side copy; only a save of the canonical
-                // map file clears the unsaved-changes flag.
-                if (saveMap(outDir + "/" + mapName + (shift ? "-edit" : "") + ".tnt") && !shift)
-                    dirty = false;
-            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
+                if(e.key.keysym.mod & KMOD_SHIFT) {openModal(M_SAVEAS);continue;}
+                const bool loose = false;
+                const bool ok=loose ? saveMap(outDir+"/"+mapName+".tnt") : saveBundle(outDir+"/"+mapName+".kmp");
+                if(ok) {dirty=false;openMessage("SAVED",outDir+"/"+mapName+(loose?".tnt (loose export)":".kmp"));}
+                else openMessage("SAVE FAILED",saveError);
+            } else if(e.type==SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) && e.key.keysym.sym==SDLK_o) {
+                openModal(M_OPENPATH);
+            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
                        e.key.keysym.sym == SDLK_b) {
                 // Ctrl+B: save the finished map as a single .kmp bundle.
                 bool ok = saveBundle(outDir + "/" + mapName + ".kmp");
                 if (ok) dirty = false;
                 openMessage("SAVE BUNDLE", ok ? ("Saved " + mapName + ".kmp")
-                                              : "Could not write the .kmp bundle.");
-            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL) &&
+                                              : saveError);
+            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
                        e.key.keysym.sym == SDLK_l) {
                 // Land Lasso: toggle between land (terrain-stamp) and object mode.
                 tool = tool == TERRAIN ? FEATURES : TERRAIN;
@@ -1064,7 +1241,7 @@ int main(int argc, char** argv) {
                 // Zoom levels 1..5 = 100/75/50/25/12.5% (retail's five steps).
                 mapView.setZoom(kZoomLevels[e.key.keysym.sym - SDLK_1]);
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                       e.button.button == SDL_BUTTON_LEFT && e.button.y < kMenuH) {
+                       e.button.button == SDL_BUTTON_LEFT && e.button.y >=22 && e.button.y < kMenuH) {
                 // Toolbar buttons: TERRAIN | FEATURES | STARTS (each 72px).
                 int bi = (e.button.x - 96) / 72;
                 if (bi >= 0 && bi < 4) tool = Tool(bi);
@@ -1101,10 +1278,14 @@ int main(int argc, char** argv) {
                     int maxScroll = std::max(0, rows * (kThumb + 4) - canvasH);
                     paletteScroll = std::clamp(paletteScroll - e.wheel.y * 40, 0, maxScroll);
                 } else {
-                    mapView.input(e);   // zoom the canvas
+                    const float before=mapView.zoom();
+                    const float next=std::clamp(before*(e.wheel.y>0?1.2f:1.0f/1.2f),.025f,4.0f);
+                    mapView.setOffset(mapView.offX()+(mxp-kPaletteW)*(1/before-1/next),
+                                      mapView.offY()+(myp-kMenuH)*(1/before-1/next));
+                    mapView.setZoom(next);
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                       e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW) {
+                       e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW && e.button.y>=kMenuH && e.button.y<h-kStatusH) {
                 if (clearArm) {   // Clear Area: begin the drag box
                     clearDrag = true;
                     clx0 = clx1 = e.button.x; cly0 = cly1 = e.button.y;
@@ -1126,7 +1307,7 @@ int main(int argc, char** argv) {
                         u.x = cx * 16.0f + 8; u.z = cz * 16.0f + 8;
                         units.push_back(u);
                         draggingUnit = int(units.size()) - 1;
-                        unitsEdited = true; dirty = true;
+                        unitsEdited = true; dirty = true; historyPending=true;
                     }
                 } else {   // STARTS: grab an existing marker, else place a new one
                     int hit = startAt(e.button.x, e.button.y);
@@ -1138,14 +1319,14 @@ int main(int argc, char** argv) {
                             used = false;
                             for (auto& s : scenario.starts) if (s.number == num) used = true;
                         }
-                        scenario.starts.push_back({num - 1, cx, cz}); dirty = true;
+                        scenario.starts.push_back({num - 1, cx, cz}); dirty = true; historyPending=true;
                         draggingStart = int(scenario.starts.size()) - 1;
                     }
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_RIGHT && tool == STARTS) {
                 int hit = startAt(e.button.x, e.button.y);   // right-click deletes a start
-                if (hit >= 0) { scenario.starts.erase(scenario.starts.begin() + hit); dirty = true; }
+                if (hit >= 0) { scenario.starts.erase(scenario.starts.begin() + hit); dirty = true; historyPending=true; }
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_RIGHT && tool == FEATURES &&
                        e.button.x >= kPaletteW) {
@@ -1153,8 +1334,9 @@ int main(int argc, char** argv) {
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_RIGHT && tool == UNITS) {
                 int hit = unitAt(e.button.x, e.button.y);   // right-click deletes a unit
-                if (hit >= 0) { units.erase(units.begin() + hit); unitsEdited = true; dirty = true; }
+                if (hit >= 0) { units.erase(units.begin() + hit); unitsEdited = true; dirty = true; historyPending=true; }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                lastStampX=lastStampY=-1;
                 draggingStart = -1; draggingUnit = -1;
                 if (clearDrag) {   // Clear Area: confirm, then remove units + features
                     clearDrag = false;
@@ -1173,7 +1355,7 @@ int main(int argc, char** argv) {
                                     "Remove all units and features in this area?  (" +
                                         std::to_string(nUnits) + " unit(s), " +
                                         std::to_string(cells) + " cells)",
-                                    [&units, &mapView, &edited, &unitsEdited, &dirty,
+                                    [&units, &mapView, &edited, &unitsEdited, &dirty, &historyPending,
                                      lox, hix, loz, hiz]() {
                             auto& m = mapView.editMap();
                             for (int z = loz; z <= hiz; ++z)
@@ -1184,7 +1366,7 @@ int main(int argc, char** argv) {
                                     int ux = int(u.x / 16.0f), uz = int(u.z / 16.0f);
                                     return ux >= lox && ux <= hix && uz >= loz && uz <= hiz;
                                 }), units.end());
-                            mapView.tilesEdited(); edited = true; unitsEdited = true; dirty = true;
+                            mapView.tilesEdited(); edited = true; unitsEdited = true; dirty = true; historyPending=true;
                         });
                     }
                     clearArm = false;
@@ -1202,13 +1384,13 @@ int main(int argc, char** argv) {
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
                         units[size_t(draggingUnit)].x = cx * 16.0f + 8;
                         units[size_t(draggingUnit)].z = cz * 16.0f + 8;
-                        unitsEdited = true; dirty = true;
+                        unitsEdited = true; dirty = true; historyPending=true;
                     }
                 } else if (draggingStart >= 0) {
                     int cx, cz;   // drag a start marker to a new cell
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
                         scenario.starts[size_t(draggingStart)].xpos = cx;
-                        scenario.starts[size_t(draggingStart)].zpos = cz; dirty = true;
+                        scenario.starts[size_t(draggingStart)].zpos = cz; dirty = true; historyPending=true;
                     }
                 }
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_RMASK)) {
@@ -1229,6 +1411,24 @@ int main(int argc, char** argv) {
         // the confirm's applyModal has closed itself.
         if (wantNew) { wantNew = false; openModal(M_NEW); }
 
+        if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
+            commitHistory();
+        const std::string title="Cartographer -- "+mapName+(dirty?" *":"");
+        SDL_SetWindowTitle(win,title.c_str());
+        if(interactive && !recoveryFolder.empty()) {
+            if(recoveryJob.valid() && recoveryJob.wait_for(std::chrono::seconds(0))==std::future_status::ready)collectRecovery();
+            if(!dirty)clearRecovery();
+            else if(!recoveryJob.valid() && SDL_GetTicks64()>=nextRecovery && !historyPending) {
+                nextRecovery=SDL_GetTicks64()+60000;
+                try {
+                    auto files=cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,mapName);
+                    recoveryFilesPresent=true;
+                    recoveryJob=std::async(std::launch::async,[files=std::move(files),path=recoveryFile]() {
+                        std::string error;cart::writeDocumentBundle(path,files,error);return error;
+                    });
+                } catch(const std::exception& error) {recoveryStatus=error.what();}
+            }
+        }
         mapView.ensureChunks(canvasW, canvasH);
 
         SDL_SetRenderDrawColor(ren, 24, 26, 32, 255);
@@ -1263,8 +1463,12 @@ int main(int argc, char** argv) {
         {
             const auto& mp = mapView.map();
             float zm = mapView.zoom();
-            for (int cz = 0; cz < mp.height; ++cz)
-                for (int cx = 0; cx < mp.width; ++cx) {
+            const int minX=std::max(0,int((mapView.offX()-512)/16));
+            const int minZ=std::max(0,int((mapView.offY()-512)/16));
+            const int maxX=std::min(mp.width,int((mapView.offX()+canvasW/zm+512)/16)+1);
+            const int maxZ=std::min(mp.height,int((mapView.offY()+canvasH/zm+512)/16)+1);
+            for (int cz = minZ; cz < maxZ; ++cz)
+                for (int cx = minX; cx < maxX; ++cx) {
                     uint16_t v = mp.features[size_t(cz) * mp.width + cx];
                     if (v >= 0xFFFA || v >= mp.featureNames.size()) continue;
                     float bx = (cx * 16.0f - mapView.offX()) * zm;
@@ -1384,10 +1588,21 @@ int main(int argc, char** argv) {
         for (int t = 0; t < 4; ++t) {
             int bx = 96 + t * 72;
             bool active = int(tool) == t;
-            fillRect(ren, bx, 3, 68, kMenuH - 6, active ? 90 : 60, active ? 80 : 62,
+            fillRect(ren, bx, 25, 68, 16, active ? 90 : 60, active ? 80 : 62,
                      active ? 40 : 74);
-            cart::drawText(ren, names[t], bx + 8, 7, 1, active ? 255 : 190,
+            cart::drawText(ren, names[t], bx + 8, 29, 1, active ? 255 : 190,
                            active ? 220 : 190, active ? 120 : 200);
+        }
+
+        for(size_t i=0;i<menuNames.size();++i) {
+            const int x=96+int(i)*72;
+            fillRect(ren,x,2,68,18,menuOpen==int(i)?90:46,menuOpen==int(i)?80:48,menuOpen==int(i)?40:58);
+            cart::drawText(ren,menuNames[i],x+6,7,1,230,230,240);
+        }
+        if(menuOpen>=0) {
+            const int x=96+menuOpen*72;const auto& rows=menuRows[size_t(menuOpen)];
+            fillRect(ren,x,22,240,int(rows.size())*20,46,48,58);
+            for(size_t i=0;i<rows.size();++i)cart::drawText(ren,rows[i],x+8,28+int(i)*20,1,235,235,240);
         }
 
         // Status bar: cursor cell, tool, zoom, start count.
@@ -1403,7 +1618,9 @@ int main(int argc, char** argv) {
                       "   UNITS: " + std::to_string(units.size());
         else
             status += "   STARTS: " + std::to_string(scenario.starts.size());
+        status += dirty?"   UNSAVED":"   SAVED";
         if (!useOnly.empty()) status += "   USEONLY: " + std::to_string(useOnly.size());
+        if(!recoveryStatus.empty()) status+="   "+recoveryStatus;
         if (clearArm) status += "   CLEAR AREA: drag a box (K cancels)";
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
 
@@ -1534,7 +1751,7 @@ int main(int argc, char** argv) {
                                                mf[i], mDropOpen == i);
                 else
                     mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
-                                              mf[i], mfocus == i);
+                                              mf[i], mfocus == i,mfocus==i?&fieldEditor:nullptr);
             }
             // New Map gets a RANDOM shortcut (procedural terrain, jump straight in).
             if (modal == M_NEW) {
@@ -1589,6 +1806,7 @@ int main(int argc, char** argv) {
             uoDone = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "DONE", true);
         }
 
+        if(frameHook)frameHook(win,ren,frameNumber++);
         SDL_RenderPresent(ren);
         if (!shotPath.empty()) {
             int ow, oh; SDL_GetRendererOutputSize(ren, &ow, &oh);
@@ -1602,7 +1820,12 @@ int main(int argc, char** argv) {
         }
     }
 
+    if(interactive)clearRecovery();
     for (auto& [k, t] : thumbs) if (t) SDL_DestroyTexture(t);
     for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
     return 0;
 }
+
+#ifndef TAK_CARTOGRAPHER_TEST
+int main(int argc,char** argv) {return cart::runEditor(argc,argv);}
+#endif

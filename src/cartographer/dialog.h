@@ -5,6 +5,7 @@
 // are just draw + hit-test helpers so each dialog stays a few lines.
 
 #include "cartographer/font5x7.h"
+#include "cartographer/textedit.h"
 
 #include <SDL.h>
 
@@ -20,7 +21,7 @@ inline bool pointIn(int mx, int my, const SDL_Rect& r) {
 // box; returns the value box rect so the caller can hit-test focus clicks.
 inline SDL_Rect drawField(SDL_Renderer* ren, int x, int y, int w,
                           const std::string& label, const std::string& text,
-                          bool focused) {
+                          bool focused, const TextEdit* edit = nullptr) {
     drawText(ren, label, x, y, 1, 190, 195, 205);
     SDL_Rect box{x, y + 10, w, 16};
     SDL_SetRenderDrawColor(ren, focused ? 40 : 24, focused ? 44 : 26, focused ? 60 : 34, 255);
@@ -30,10 +31,17 @@ inline SDL_Rect drawField(SDL_Renderer* ren, int x, int y, int w,
     // Clip the text to the box; show the tail (caret end) when it overflows.
     SDL_RenderSetClipRect(ren, &box);
     int tw = textWidth(text, 1);
-    int tx = tw + 6 <= w ? x + 4 : x + 4 - (tw + 6 - w);
+    const int caretWidth=edit?textWidth(text.substr(0,edit->caret),1):tw;
+    int tx = caretWidth + 6 <= w ? x + 4 : x + 4 - (caretWidth + 6 - w);
+    if(focused && edit && edit->selection()) {
+        const auto a=std::min(edit->caret,edit->anchor),b=std::max(edit->caret,edit->anchor);
+        SDL_SetRenderDrawColor(ren,65,85,130,255);
+        SDL_Rect selected{tx+textWidth(text.substr(0,a),1),y+12,textWidth(text.substr(a,b-a),1),11};
+        SDL_RenderFillRect(ren,&selected);
+    }
     drawText(ren, text, tx, y + 14, 1, 230, 235, 245);
     if (focused) {   // caret
-        int cx = tx + tw + 1;
+        int cx = tx + caretWidth + 1;
         SDL_SetRenderDrawColor(ren, 255, 220, 120, 255);
         SDL_Rect c{cx, y + 13, 1, 9};
         SDL_RenderFillRect(ren, &c);
