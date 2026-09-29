@@ -478,8 +478,10 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                         reservedSites.emplace_back(order.x.toFloat(),order.z.toFloat());
             }
         }
-        for (const auto& [sx, sz] : world.manaSpots()) {
-            if (std::any_of(reservedSites.begin(),reservedSites.end(),[&](const auto& spot) {
+        for (const auto& deposit : world.manaSpots()) {
+            // Apple Clang 15 cannot capture structured bindings in this lambda.
+            const float sx=deposit.first,sz=deposit.second;
+            if (std::any_of(reservedSites.begin(),reservedSites.end(),[sx,sz](const auto& spot) {
                 const float dx=spot.first-sx,dz=spot.second-sz;return dx*dx+dz*dz<32*32;
             })) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
