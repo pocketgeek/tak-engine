@@ -174,6 +174,69 @@ static int overlayWorkflow(const char* data) {
     if(result || failed || stage!=3) {std::cerr<<"overlay menu workflow failed\n";return 1;}
     std::cout<<"PASS: background water overlay, unchanged document and hide control\n";return 0;
 }
+static int resizeSaveWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-resize-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    tak::crt::Scenario scenario;scenario.regions.push_back({"Edge region",map.width-10,map.height-10,map.width-5,map.height-5});
+    const auto width=std::to_string(map.width/32),height=std::to_string(map.height/32);
+    const auto wider=std::to_string(map.width/32+1),higher=std::to_string(map.height/32+1);
+    std::string error;
+    const auto files=cart::documentFiles(map,metadata,scenario,{}, {},"Resize");
+    if(!cart::writeDocumentBundle(root/"Resize.kmp",files,error) || !cart::writeDocumentBundle(root/"Existing.kmp",files,error))throw std::runtime_error(error);
+    auto read=[&](const fs::path& file) {std::ifstream in(file,std::ios::binary);return std::vector<uint8_t>(std::istreambuf_iterator<char>(in),{});};
+    const auto existing=read(root/"Existing.kmp");
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    std::string failure;int lastFrame=0;
+    auto check=[&](bool value,const char* message) {if(!value && failure.empty())failure=message;};
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer*,int frame) {
+        lastFrame=frame;const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text((root/"Resize.kmp").string());key(SDLK_RETURN);break;
+        case 2:key(SDLK_r);break;
+        case 3:text("0");key(SDLK_RETURN);break;
+        case 4:check(!dirty,"invalid resize changed map");key(SDLK_ESCAPE);key(SDLK_r);break;
+        case 5:text(std::to_string(map.width/32-1));key(SDLK_RETURN);break;
+        case 6:check(!dirty,"resize cropped a region");key(SDLK_ESCAPE);key(SDLK_r);break;
+        case 7:key(SDLK_RETURN);break;
+        case 8:check(!dirty,"same-size resize marked map dirty");key(SDLK_r);break;
+        case 9:text(wider);key(SDLK_TAB);text(higher);key(SDLK_RETURN);break;
+        case 10:check(dirty,"expansion did not apply");key(SDLK_z,KMOD_CTRL);break;
+        case 11:check(!dirty,"expansion undo did not restore saved revision");key(SDLK_y,KMOD_CTRL);key(SDLK_r);break;
+        case 12:text(width);key(SDLK_TAB);text(height);key(SDLK_RETURN);break;
+        case 13:key(SDLK_ESCAPE);key(SDLK_z,KMOD_CTRL);break;
+        case 14:check(!dirty,"cancelled crop consumed undo");key(SDLK_y,KMOD_CTRL);key(SDLK_r);break;
+        case 15:text(width);key(SDLK_TAB);text(height);key(SDLK_RETURN);break;
+        case 16:key(SDLK_RETURN);break;
+        case 17:key(SDLK_z,KMOD_CTRL);key(SDLK_s,KMOD_CTRL|KMOD_SHIFT);break;
+        case 18:text("Existing");key(SDLK_RETURN);break;
+        case 19:check(read(root/"Existing.kmp")==existing,"Save As replaced file before confirmation");key(SDLK_ESCAPE);break;
+        case 20:check(std::string(SDL_GetWindowTitle(window)).find("Resize")!=std::string::npos,"cancelled overwrite renamed map");key(SDLK_s,KMOD_CTRL|KMOD_SHIFT);break;
+        case 21:text("Existing");key(SDLK_RETURN);break;
+        case 22:key(SDLK_RETURN);break;
+        case 23:check(!dirty,"confirmed Save As remains dirty");key(SDLK_RETURN);break;
+        case 24:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        default:if(frame>27) {failure="resize/save workflow did not exit";std::_Exit(3);}
+        }
+    });
+    check(read(root/"Existing.kmp.bak")==existing,"overwrite did not retain previous bytes");
+    {
+        tak::hpi::Archive archive(root/"Existing.kmp");bool found=false;
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".tnt")) {
+            const auto saved=tak::tnt::Map::load(archive.read(entry),entry.path);found=saved.width==map.width+32 && saved.height==map.height+32;
+            for(int y=0;y<map.height;++y)for(int x=0;x<map.width;++x)
+                check(saved.heights[y*saved.width+x]==map.heights[y*map.width+x] && saved.features[y*saved.width+x]==map.features[y*map.width+x],"resize/undo changed retained terrain or features");
+        }
+        check(found,"crop undo did not restore expanded dimensions");
+    }
+    fs::remove_all(root);
+    if(result || !failure.empty() || lastFrame>27) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: resize validation, crop confirmation, undo/redo and overwrite cancellation/backup\n";return 0;
+}
 static int ruleTextWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-rules-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -563,6 +626,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="thumbnails")return thumbnailWorkflow(argv[1]);
     if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="resize-save")return resizeSaveWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);

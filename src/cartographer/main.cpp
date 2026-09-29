@@ -962,14 +962,23 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             for(const auto& region:scen.regions) if(std::max(region.x1,region.x2)>=wu*32 || std::max(region.z1,region.z2)>=hu*32) {
                 modalError="Resize or remove regions outside the new map first.";return;
             }
-            mapView.quiesce();minimapSource=nullptr;
-            std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
-            cart::resizeMap(mapView.editMap(), mapView.compositor(),
-                            cart::loadWorldPalette(vfs, wld), wu, hu);
-            selectedFeatures.clear();invalidateMinimap();
-            scenario.sizeW = wu; scenario.sizeH = hu;
-            mapView.tilesEdited();
-            edited = true; dirty = true; historyPending=true;
+            if(wu*32==mapView.map().width && hu*32==mapView.map().height) {modal=M_NONE;SDL_StopTextInput();return;}
+            auto performResize=[&,wu,hu] {
+                try {
+                    mapView.quiesce();
+                    auto resized=mapView.map();
+                    const auto wld=scenario.kingdom.empty()?"aramon":scenario.kingdom;
+                    cart::resizeMap(resized,mapView.compositor(),cart::loadWorldPalette(vfs,wld),wu,hu);
+                    mapView.editMap()=std::move(resized);minimapSource=nullptr;
+                    selectedFeatures.clear();invalidateMinimap();scenario.sizeW=wu;scenario.sizeH=hu;
+                    mapView.tilesEdited();edited=dirty=historyPending=true;
+                    modal=M_NONE;SDL_StopTextInput();
+                } catch(const std::exception& error) {openMessage("RESIZE FAILED",error.what());}
+            };
+            if(wu*32<mapView.map().width || hu*32<mapView.map().height) {
+                openConfirm("CROP MAP","Terrain and features beyond the new right or bottom edge will be removed. Undo can restore them. Continue?",performResize);return;
+            }
+            performResize();return;
         } else if (modal == M_NEW) {
             applyNewMap(false);   // CREATE = flat stamp; closes on success
             return;               // (RANDOM is handled at its button click)

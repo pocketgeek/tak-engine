@@ -590,10 +590,25 @@ workflow kills an autosaving editor, corrupts its primary while retaining a vali
 backup, then restores and saves the original map name/destination. All thirteen
 editor tests pass in Release and under AddressSanitizer/LeakSanitizer.
 
+## Resize and overwrite workflow checkpoint
+
+Shrinking either map dimension now asks before discarding terrain and features
+outside the new right/bottom edges. Existing protection for outlying starts,
+units and regions remains. Resize constructs the replacement terrain/minimap
+before adopting it, so a construction error leaves the document intact and
+shows a failure message. Accepting the current dimensions is a clean no-op.
+
+A real UI workflow checks invalid dimensions, region protection, unchanged-size
+acceptance, expansion undo/redo, crop cancellation without consuming history,
+confirmed crop/undo, Save As overwrite cancellation and confirmed replacement.
+It compares retained heights/features against the source and verifies the
+previous destination's exact bytes in the backup. All fourteen editor tests pass
+in Release and under AddressSanitizer/LeakSanitizer; Cartographer is rebuilt.
+
 ## Remaining work
 
-1. Finish overwrite/resize interaction coverage and broader filesystem failure
-   coverage; damaged recovery and backup fallback are now covered.
+1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
+   resize, damaged recovery and backup fallback now have workflow coverage.
 2. Broader Unicode shaping/fallback, additional layout preferences,
    and verification of cross-platform packaging/launch usability.
 3. Broader browser/selection interaction coverage,
