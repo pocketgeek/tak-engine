@@ -8,9 +8,8 @@
 // spawns, and win/lose stay in lockstep. Display actions push cosmetic
 // messages (NOT hashed) that the client drains for the viewing player.
 //
-// A rule group fires its actions on every tick that ALL its conditions hold
-// (the retail model -- authors gate one-shot effects with flags), unless the
-// group has been disabled by a "Disable rule" action or its player is defeated.
+// A rule group fires on the rising edge of ALL its conditions holding, unless
+// disabled by a "Disable rule" action or its player is defeated.
 
 #include "crt/crt.h"
 
@@ -62,7 +61,7 @@ private:
     // ---- evaluation ----
     bool evalCond(World& w, int player, const tak::crt::Rule& c);
     void runAction(World& w, int player, int group, const tak::crt::Rule& a);
-    int countControl(World& w, int player, const UnitType* t, const std::string& loc) const;
+    int countControl(World& w, int player, const std::string& typeName, const std::string& loc) const;
 
     // ---- parameter helpers ----
     const UnitType* findType(const std::string& name) const;

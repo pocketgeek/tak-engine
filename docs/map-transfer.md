@@ -8,9 +8,16 @@ The game cannot start until the server and every connected player/spectator have
 same package. Late spectators and reconnecting players verify/download before loading
 and catching up. A matching filename alone is never sufficient.
 
-Packages contain the TNT, optional OTA (starts, wind, gravity, scenario settings),
-referenced terrain JPGs, and map feature definitions with their burn/death chains,
-sprites, and palettes. Unit definitions, build lists, and scripts are not transferred;
+Current checkout builds use protocol **196** and preserve the selected map's
+same-stem OTA (starts, wind, gravity, scenario settings), CRT (placements and
+rules), TDF (Use Only restrictions), TXT description, editor rule names, and
+recipe companions, when present. Empty companions are retained. These files
+participate in the fingerprint and survive cache/archive reuse. This preserves
+authored content; it does not yet enable CRT rules in ordinary skirmish setup.
+
+Packages also contain the TNT, referenced terrain JPGs, and map feature definitions
+with their burn/death chains, sprites, and palettes. Unit definitions, build lists,
+and executable scripts are not transferred;
 the existing gameplay-data checks still require compatible game data/mods.
 Map-specific resources are mounted only for the selected game, including on a server
 hosting multiple rooms. Downloaded map resources do not alter the base-game handshake

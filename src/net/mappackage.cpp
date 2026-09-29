@@ -30,6 +30,14 @@ bool safePath(const std::string& p) {
     }
     return true;
 }
+// Only companions of the selected map may travel with it. In particular this
+// must not permit arbitrary gameplay definitions or executable scripts.
+std::set<std::string> companionPaths(const std::string& path) {
+    std::set<std::string> result;
+    for (const char* extension : {".ota", ".crt", ".tdf", ".txt", ".editor", ".recipe"})
+        result.insert(vpath::replaceExtension(path, extension));
+    return result;
+}
 // Follow feature burn/death chains as well as their sprites and palettes. A
 // feature file may define several names, so include dependencies of every
 // definition it brings into the room, not only the initially placed feature.
@@ -119,8 +127,8 @@ std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {
     auto files = std::make_shared<hpi::Vfs::Files>();
     (*files)[path] = vfs.read(path);
     const auto map = tnt::Map::load(files->at(path), path);
-    auto ota = vpath::replaceExtension(path, ".ota");
-    if (auto data = vfs.tryRead(ota)) (*files)[ota] = std::move(*data);
+    for (const auto& companion : companionPaths(path))
+        if (auto data = vfs.tryRead(companion)) (*files)[companion] = std::move(*data);
     for (auto key : std::set<uint32_t>(map.tileKeys.begin(), map.tileKeys.end())) {
         auto tile = tilePath(key);
         // Missing art is an error, not a black map silently propagated to peers.
@@ -135,7 +143,8 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
     if (!digest.empty() && actual != digest) throw std::runtime_error("map checksum mismatch");
     Reader r(bytes.data(), bytes.size());
     if (r.u32() != 2) throw std::runtime_error("unsupported map package version");
-    const auto path = r.str(); const auto ota = vpath::replaceExtension(path, ".ota");
+    const auto path = r.str();
+    const auto companions = companionPaths(path);
     if (!safePath(path) || !(path.starts_with("maps/") || path.starts_with("kmap/")) || !path.ends_with(".tnt"))
         throw std::runtime_error("invalid map path");
     auto files = std::make_shared<hpi::Vfs::Files>();
@@ -148,8 +157,10 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
         const bool feature = name.starts_with("features/") && name.ends_with(".tdf");
         const bool art = (name.starts_with("anims/") && (name.ends_with(".gaf") || name.ends_with(".taf"))) ||
                          (name.starts_with("palettes/") && name.ends_with(".pcx"));
-        if (!r.ok || !safePath(name) || (name != path && name != ota && !terrain && !feature && !art) ||
-            !r.avail(size) || !size || files->count(name)) throw std::runtime_error("invalid map resource");
+        const bool companion = companions.count(name) != 0;
+        // Empty descriptions/restrictions are meaningful; geometry and art are not.
+        if (!r.ok || !safePath(name) || (name != path && !companion && !terrain && !feature && !art) ||
+            !r.avail(size) || (!size && !companion) || files->count(name)) throw std::runtime_error("invalid map resource");
         (*files)[name] = std::vector<uint8_t>(r.p, r.p + size); r.p += size;
     }
     if (!r.ok || r.p != r.end || !files->count(path)) throw std::runtime_error("incomplete map package");
@@ -160,7 +171,8 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
         throw std::runtime_error("invalid map dimensions");
     auto map = tnt::Map::load(data, path);
     std::set<std::string> required{path};
-    if (files->count(ota)) required.insert(ota);
+    for (const auto& companion : companions)
+        if (files->count(companion)) required.insert(companion);
     for (auto key : map.tileKeys) required.insert(tilePath(key));
     hpi::Vfs view; view.setMapFiles(files);
     const auto features = featureResources(map, view);

@@ -3,6 +3,7 @@
 #include "sim/matchsetup.h"
 #include "tnt/mapgen.h"
 #include "tnt/tnt.h"
+#include "crt/crt.h"
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -28,8 +29,8 @@ int main(int argc, char** argv) try {
             std::vector<hpi::PackFile> entries;
             for (const auto& [name,data] : *package->files) {
                 std::string path = name;
-                if (name == package->mapPath) path = "kmap/transfer test.tnt";
-                else if (name.ends_with(".ota")) path = "kmap/transfer test.ota";
+                const auto stem=package->mapPath.substr(0,package->mapPath.size()-4);
+                if(name.starts_with(stem+"."))path="kmap/transfer test"+name.substr(stem.size());
                 if (name == package->mapPath) {
                     auto m=tnt::Map::load(data);
                     m.features[size_t(m.width)*10+10]=uint16_t(m.featureNames.size());
@@ -39,6 +40,17 @@ int main(int argc, char** argv) try {
             }
             const std::string feature="[transfer_tree]\n{\nblocking=1;\nfootprintx=2;\nfootprintz=2;\nreclaimable=1;\nenergy=75;\n}\n";
             entries.push_back({"features/transfer-test.tdf",{feature.begin(),feature.end()}});
+            auto companion=[&](const std::string& suffix,const std::vector<uint8_t>& data) {
+                const auto path="kmap/transfer test"+suffix;
+                std::erase_if(entries,[&](const auto& entry){return entry.path==path;});
+                entries.push_back({path,data});
+            };
+            crt::Scenario authored;authored.players.resize(2);
+            authored.players[0].push_back({{{20,{}}},{{13,{"All Players","Transferred scenario"}}}});
+            companion(".crt",crt::write(authored));
+            companion(".tdf",{});
+            const std::string names="TAK_EDITOR_RULE_NAMES 1\n0 0 \"Transfer rule\"\n";
+            companion(".editor",{names.begin(),names.end()});
             write(std::filesystem::path(argv[3])/"Maps"/"transfer-test.kmp",hpi::pack(entries));
             if (std::getenv("TAK_MAP_TEST_MISMATCH")) {
                 for (auto& entry:entries) if(entry.path.ends_with(".tnt")) {
@@ -75,6 +87,15 @@ int main(int argc, char** argv) try {
             cfg.slots.resize(diplomacy ? 3 : 2); cfg.slots[0] = {true,0,0,1,false,false};
             cfg.slots[1] = {true,1,diplomacy ? 0 : 1,1,false,false};
             if(diplomacy)cfg.slots[2]={true,2,1,1,true,true};
+            if(argc==5) {
+                const auto authored=crt::parse(view.read("kmap/transfer test.crt"));
+                check(authored.players.size()==2 && authored.players[0].size()==1 &&
+                      authored.players[0][0].actions.size()==1 &&
+                      authored.players[0][0].actions[0].slot[1]=="Transferred scenario",
+                      "scenario companion missing on a network participant");
+                check(view.has("kmap/transfer test.editor") && view.has("kmap/transfer test.tdf") &&
+                      view.read("kmap/transfer test.tdf").empty(),"editor metadata or empty restriction lost over network");
+            }
             sim::setupMatch(world, reg, cfg); client.reportLoaded(hpi::gameplayHash(base));
         };
         auto until = std::chrono::steady_clock::now() + std::chrono::seconds(90);
@@ -184,10 +205,36 @@ int main(int argc, char** argv) try {
     (*files)["kmap/test.tnt"] = map.save(); (*files)["terrain/00001234.jpg"] = {1,2,3};
     std::string ota="[GlobalHeader]\n{\ngravity=99;\n}\n";
     (*files)["kmap/test.ota"] = {ota.begin(),ota.end()};
+    crt::Scenario scenario;
+    scenario.players.resize(2);
+    crt::RuleGroup group;
+    group.actions.push_back({0, {"transferred scenario", "", "", "", ""}});
+    scenario.players[1].push_back(group);
+    (*files)["kmap/test.crt"] = crt::write(scenario);
+    (*files)["kmap/test.tdf"] = {}; // An empty restriction list must survive too.
+    (*files)["kmap/test.txt"] = {'m','a','p'};
+    (*files)["kmap/test.editor"] = {'n','a','m','e'};
+    (*files)["kmap/test.recipe"] = {'s','e','e','d'};
+    // Neither another map's metadata nor arbitrary scripts belong in this package.
+    (*files)["kmap/other.crt"] = crt::write(scenario);
+    (*files)["scripts/evil.cob"] = {1};
     hpi::Vfs source; source.setMapFiles(files);
     auto p = net::maps::build(source,"test");
     check(p->digest == net::maps::build(source,"TEST")->digest, "unstable map fingerprint");
-    net::maps::saveCache(root,*p); check(bool(net::maps::loadCache(root,p->digest)), "cache roundtrip");
+    for (const auto* extension : {".ota", ".crt", ".tdf", ".txt", ".editor", ".recipe"}) {
+        const auto path = std::string("kmap/test") + extension;
+        check(p->files->at(path) == files->at(path), "map companion lost or modified");
+        auto changedFiles = std::make_shared<hpi::Vfs::Files>(*files);
+        changedFiles->at(path).push_back(' ');
+        hpi::Vfs changedSource; changedSource.setMapFiles(changedFiles);
+        check(net::maps::build(changedSource,"test")->digest != p->digest,
+              "map companion excluded from fingerprint");
+    }
+    check(!p->files->count("kmap/other.crt") && !p->files->count("scripts/evil.cob"),
+          "unrelated files included in package");
+    net::maps::saveCache(root,*p);
+    const auto cached = net::maps::loadCache(root,p->digest);
+    check(cached && *cached->files == *p->files, "cache companion roundtrip");
     hpi::Vfs catalog; catalog.refreshMapCache(root);
     const auto listed=hpi::listMaps(catalog);
     check(listed.size()==1,"download absent from subsequent map picker");
@@ -220,6 +267,22 @@ int main(int argc, char** argv) try {
     rejects([&]{net::maps::decode(hostile.b,"");},"traversal accepted");
     hostile={}; hostile.u32(2); hostile.str("kmap/test.tnt"); hostile.u32(2); hostile.str("scripts/evil.cob"); hostile.u32(1); hostile.u8(0);
     rejects([&]{net::maps::decode(hostile.b,"");},"script import accepted");
+    auto rawPackage = [&](const std::string& extra, const std::vector<uint8_t>& payload) {
+        net::Writer w; w.u32(2); w.str(p->mapPath); w.u32(uint32_t(p->files->size()+1));
+        for (const auto& [name, data] : *p->files) {
+            w.str(name); w.u32(uint32_t(data.size())); w.b.insert(w.b.end(),data.begin(),data.end());
+        }
+        w.str(extra); w.u32(uint32_t(payload.size())); w.b.insert(w.b.end(),payload.begin(),payload.end());
+        return w.b;
+    };
+    for (const auto* extra : {"kmap/other.crt", "kmap/test.cob", "kmap/test/evil.crt",
+                             "kmap/test.crt/../evil.crt", "kmap/test.editor", "units/test.tdf"})
+        rejects([&]{net::maps::decode(rawPackage(extra,{1}),"");},"unrelated or duplicate companion accepted");
+    auto legacyFiles = std::make_shared<hpi::Vfs::Files>();
+    (*legacyFiles)["kmap/test.tnt"] = map.save();
+    (*legacyFiles)["terrain/00001234.jpg"] = {1,2,3};
+    hpi::Vfs legacy; legacy.setMapFiles(legacyFiles);
+    check(net::maps::build(legacy,"test")->files->size()==2,"map without companions rejected");
     if (argc == 2) {
         auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
         mapgen::Params params; params.waterDensity=0;

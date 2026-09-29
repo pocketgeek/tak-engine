@@ -6,14 +6,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include "util/virtualpath.h"
 
 namespace cart {
 
 tak::crt::Scenario loadScenario(const tak::hpi::Vfs& vfs, const std::string& crtPath) {
-    std::vector<uint8_t> d;
-    try { d = vfs.read(crtPath); } catch (const std::exception&) { return {}; }
-    auto scenario=tak::crt::parse(d);
+    if(!vfs.has(crtPath))return {};
+    auto scenario=tak::crt::parse(vfs.read(crtPath));
+    if(scenario.version==0)throw std::runtime_error("Scenario file is damaged: "+crtPath);
     try {const auto info=vfs.read(tak::vpath::replaceExtension(crtPath,".editor"));applyScenarioInfo(scenario,std::string(info.begin(),info.end()));}
     catch(const std::exception&) {} // Optional editor-only metadata.
     return scenario;

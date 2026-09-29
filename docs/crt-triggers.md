@@ -1,53 +1,71 @@
-# .crt trigger section — format solved, opcodes partially mapped
+# CRT scenarios and trigger execution
 
-Layout after placements (`12 + count*568`):
+The shared format is defined in `src/crt/crt.h` and read/written by
+`src/crt/crt.cpp`. Cartographer retains placements, custom types, per-player
+condition/action groups, and named regions. Its optional rule names live in a
+separate `.editor` companion; they do not change retail CRT bytes.
 
-```
-header  { i32 version = 9; i32 numTriggers }                   // 8 bytes
-records { i32 params[0..4]; char slots[5][64] }                // repeated
-trailer { i32 numDefs; numDefs x { char name[64];
-          u8 uninitialized[192]; i32 x1, z1, x2, z2 } }        // regions, cells
-```
+## File layout
 
-A record's OPCODE is the LAST int before its slots; earlier ints are
-trailing parameters of the previous record. Slots hold operands: unit
-type names, region names, "Player N", variable letters (a..o), numeric
-literals as ASCII, and message text.
+All numeric fields are little-endian. Counts are signed 32-bit integers.
 
-## Opcode map (evidence-based; confidence noted)
+1. Float version (1.0), custom-type count, 272-byte custom-type records.
+2. Placement count, 568-byte unit records.
+3. Player count (retail writes nine); for each player, a group count, then for
+   each group a condition count and records followed by an action count and records.
+4. Region count and 272-byte region records.
 
-| op | operands              | meaning                                   | conf |
-|----|-----------------------|-------------------------------------------|------|
-| 1  | [seconds]             | WHEN elapsed >= N (sets time context)     | high |
-| 2  | [var, value]          | SET variable                              | high |
-| 3  | [value, var]          | IF variable == value                      | med  |
-| 7  | [type, region]        | SPAWN unit at region (owner = Player-N    | high |
-|    |                       | zone when region is one)                  |      |
-| 9  | [type, region]        | order/rampage spawned units?              | low  |
-| 10 | [type, value, region] | award/score bonus (KotH flags, 10000)     | low  |
-| 13 | [type, region]        | SCORE = count of type in region           | high |
-| 16 | [n, type, region]     | IF count(type, region) < n (guards        | high |
-|    |                       | respawn blocks; also per-player checks)   |      |
-| 17 | [var, value]          | variable op (clear/set-0 variant)         | med  |
-| 18 | [var, value]          | variable op (set/add variant)             | med  |
-| 21 | ['N']                 | min-players / declare-defeat?             | low  |
-| ?  | [Player N, "text"]    | SHOW MESSAGE to player at time context    | high |
-| 5, 6, 12, 24 | []            | structural (trigger end / else / eval)    | low  |
+Conditions and actions have **separate opcode spaces**, each with 26 entries.
+Both use 324-byte records: a 32-bit opcode followed by five 64-byte operand
+strings. Unused bytes after string terminators may contain retail memory residue;
+the parser ignores that residue and the writer zero-fills it.
 
-## Verified reconstructions
+Malformed/truncated input or an invalid/non-finite version returns an empty
+scenario with `version == 0`. Cartographer refuses to open a damaged scenario
+rather than treating it as an empty editable document.
 
-- **King of the Hill**: score = ARASWORD in "The Hill" (52,51)-(76,72),
-  timer 600s; per-player `[16][9,ARASWORD,Player N]` + `[7][ARASWORD,
-  Player N]` = maintain a stream of up to 9 Swordsmen at each start
-  zone. The engine now runs all of it.
-- **Savannah Hunt**: score = NPCFARM anywhere, timer 900s; two
-  alternating respawn waves keep 40 Field Hands alive across regions
-  1a..9b; "5 minutes left..." messages to each player at t=600.
-- **Angvir's Maze**: no scoring op — last-alive arena with TARGOD
-  (Belial) spawns at region 'belial' at 600/720/1300/1480/2400/2700s.
-- **Ground War / Varro**: the standard last-alive prologue
-  `[16][1,Any Unit,Anywhere]` (player eliminated when nothing left).
+## Operand definitions
 
-Engine: `crt::loadTriggers` returns records+regions; scenario mode
-derives the scoring rule (op 13 + following op 1), timed and
-maintain-count spawn rules (op 16/7), and timed messages.
+`src/cartographer/triggers.cpp` contains the complete condition/action wording
+and parameter kinds recovered from Cartographer.exe's tables at `0x51c190`.
+The `<...>` placeholders determine operand order, not the type of an operand.
+For example:
+
+| Record | Opcode | Operands |
+|---|---:|---|
+| Condition: control more than | 15 | count, unit type, location |
+| Condition: control less than | 16 | count, unit type, location |
+| Action: create unit | 7 | unit type, location |
+| Action: set flag | 2 | flag, value |
+| Action: display text | 13 | recipient, text |
+| Action: display text with flag | 25 | recipient, prefix, flag, suffix |
+
+The control-count operand order is also present in shipped scenarios, for
+example Ulin's Folly condition 15 with `2`, `ARAAT`, `hill`. The runner now uses
+that order, handles `Any Unit` in control-count comparisons, and includes both
+the flag value and suffix in action 25 messages.
+
+## Current engine integration and limits
+
+`src/sim/scenario.cpp` implements the CRT runner. The standalone debug scenario
+path attaches it to `World`; the world ticks it and hashes its rule state.
+Messages are filtered for the local viewer without changing that state. The
+current runner fires on a condition group's false-to-true transition and supports
+explicit rule disabling. This describes the implementation, not a claim that all
+retail trigger execution semantics have been verified.
+
+Ordinary skirmish client/server setup does **not yet attach CRT rules or spawn
+CRT placements**. Campaign missions use a different OTA/mission-script path.
+Protocol 196 preserves CRT and editor companions in transferred/cached maps,
+but preservation alone does not enable their execution. Wiring the production
+Cartographer Test Map workflow remains part of the active editor goal.
+
+Other runtime limitations remain: out-of-range CRT player groups are currently
+folded into the last available world slot; the ninth/neutral slot needs a proper
+policy; per-placement/custom armor and weapon overrides are not fully applied;
+not every wildcard/action combination is supported. These need resolution before
+claiming complete authored-scenario playtest support or retail parity.
+
+`scenario_test` covers truncation/version rejection, control-count operand order,
+region/owner/alive filtering, `Any Unit`, flag interpolation, and matching rule
+hashes despite different message recipients.

@@ -81,12 +81,14 @@ int ScenarioScript::parsePlayer(const std::string& s) const {
     return std::clamp(val - 1, 0, maxPlayer_ - 1);
 }
 
-int ScenarioScript::countControl(World& w, int player, const UnitType* t,
+int ScenarioScript::countControl(World& w, int player, const std::string& typeName,
                                  const std::string& loc) const {
-    if (!t) return 0;
+    const bool any = lower(typeName) == "any unit";
+    const UnitType* t = findType(typeName);
+    if (!any && !t) return 0;
     int n = 0;
     for (const auto& u : w.units())
-        if (u.alive() && u.player == player && u.type == t &&
+        if (u.alive() && u.player == player && (any || u.type == t) &&
             inRegion(w, u.x.toFloat(), u.z.toFloat(), loc)) ++n;
     return n;
 }
@@ -131,19 +133,18 @@ bool ScenarioScript::evalCond(World& w, int player, const tak::crt::Rule& c) {
             return win && v > 0;
         }
         case 13: case 14: {                                    // control the most/least X at L
-            const UnitType* t = findType(s[0]);
-            int mine = countControl(w, player, t, s[1]);
+            int mine = countControl(w, player, s[0], s[1]);
             bool most = (c.opcode == 13);
             bool win = mine > 0 || !most;
             for (int q = 0; q < maxPlayer_; ++q) {
                 if (q == player) continue;
-                int o = countControl(w, q, t, s[1]);
+                int o = countControl(w, q, s[0], s[1]);
                 if (most ? (o >= mine) : (o < mine)) win = false;
             }
             return win;
         }
-        case 15: return countControl(w, player, findType(s[0]), s[2]) > toInt(s[1]);   // control > N X at L
-        case 16: return countControl(w, player, findType(s[0]), s[2]) < toInt(s[1]);   // control < N X at L
+        case 15: return countControl(w, player, s[1], s[2]) > toInt(s[0]);   // control > N X at L
+        case 16: return countControl(w, player, s[1], s[2]) < toInt(s[0]);   // control < N X at L
         case 17: return ps.flags[s[0]] > toInt(s[1]);          // Flag f > v
         case 18: return ps.flags[s[0]] < toInt(s[1]);          // Flag f < v
         case 19: return true;                                  // Always
@@ -229,7 +230,8 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
         case 22: forceDefeatTeam(w, player, true); break;                      // Defeat me + teammates
         case 23: forceDefeatTeam(w, player, true); break;                      // Victory for opponents
         case 24: forceDefeatOthers(w, player); break;                          // Defeat for opponents
-        case 25: pending_.push_back({clock_, parsePlayer(s[0]), s[1]}); break;  // Display P text flag text
+        case 25: pending_.push_back({clock_, parsePlayer(s[0]),
+                                    s[1] + std::to_string(ps.flags[s[2]]) + s[3]}); break; // Display P text flag text
         default: break;
     }
 }

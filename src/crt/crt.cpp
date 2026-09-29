@@ -61,18 +61,20 @@ void writeRule(Writer& w, const Rule& r) {
 
 Scenario parse(const std::vector<uint8_t>& d) {
     Scenario s;
-    if (d.size() < 12) return s;
+    const auto invalid = [] { Scenario bad; bad.version = 0; return bad; };
+    if (d.size() < 12) return invalid();
     float version;
-    std::memcpy(&version, d.data(), 4);
-    if (std::abs(version - 1.0f) > 0.01f) return s;
+    const uint32_t versionBits = u32(d, 0);
+    std::memcpy(&version, &versionBits, 4);
+    if (!std::isfinite(version) || std::abs(version - 1.0f) > 0.01f) return invalid();
 
     size_t p = 4;
     auto need = [&](size_t n) { return p + n <= d.size(); };
 
     // Custom types.
-    if (!need(4)) return {};
+    if (!need(4)) return invalid();
     int32_t nCustom = i32(d, p); p += 4;
-    if (nCustom < 0 || nCustom > 100000 || !need(size_t(nCustom) * kTypeRec)) return {};
+    if (nCustom < 0 || nCustom > 100000 || !need(size_t(nCustom) * kTypeRec)) return invalid();
     for (int i = 0; i < nCustom; ++i) {
         CustomType c;
         c.name = str(d, p, 256);
@@ -82,9 +84,9 @@ Scenario parse(const std::vector<uint8_t>& d) {
     }
 
     // Placed units.
-    if (!need(4)) return {};
+    if (!need(4)) return invalid();
     int32_t nUnits = i32(d, p); p += 4;
-    if (nUnits < 0 || nUnits > 100000 || !need(size_t(nUnits) * kUnitRec)) return {};
+    if (nUnits < 0 || nUnits > 100000 || !need(size_t(nUnits) * kUnitRec)) return invalid();
     for (int i = 0; i < nUnits; ++i) {
         size_t o = p;
         Unit u;
@@ -104,32 +106,32 @@ Scenario parse(const std::vector<uint8_t>& d) {
     }
 
     // Per-player rule groups.
-    if (!need(4)) return {};
+    if (!need(4)) return invalid();
     int32_t nPlayers = i32(d, p); p += 4;
-    if (nPlayers < 0 || nPlayers > 64) return {};
+    if (nPlayers < 0 || nPlayers > 64) return invalid();
     s.players.resize(nPlayers);
     for (int pl = 0; pl < nPlayers; ++pl) {
-        if (!need(4)) return {};
+        if (!need(4)) return invalid();
         int32_t nGroups = i32(d, p); p += 4;
-        if (nGroups < 0 || nGroups > 100000) return {};
+        if (nGroups < 0 || nGroups > 100000) return invalid();
         for (int g = 0; g < nGroups; ++g) {
             RuleGroup grp;
-            if (!need(4)) return {};
+            if (!need(4)) return invalid();
             int32_t nC = i32(d, p); p += 4;
-            if (nC < 0 || nC > 100000 || !need(size_t(nC) * kRuleRec)) return {};
+            if (nC < 0 || nC > 100000 || !need(size_t(nC) * kRuleRec)) return invalid();
             for (int c = 0; c < nC; ++c) { grp.conditions.push_back(parseRule(d, p)); p += kRuleRec; }
-            if (!need(4)) return {};
+            if (!need(4)) return invalid();
             int32_t nA = i32(d, p); p += 4;
-            if (nA < 0 || nA > 100000 || !need(size_t(nA) * kRuleRec)) return {};
+            if (nA < 0 || nA > 100000 || !need(size_t(nA) * kRuleRec)) return invalid();
             for (int a = 0; a < nA; ++a) { grp.actions.push_back(parseRule(d, p)); p += kRuleRec; }
             s.players[pl].push_back(std::move(grp));
         }
     }
 
     // Regions.
-    if (!need(4)) return {};
+    if (!need(4)) return invalid();
     int32_t nReg = i32(d, p); p += 4;
-    if (nReg < 0 || nReg > 100000 || !need(size_t(nReg) * kRegionRec)) return {};
+    if (nReg < 0 || nReg > 100000 || !need(size_t(nReg) * kRegionRec)) return invalid();
     for (int i = 0; i < nReg; ++i) {
         Region r;
         r.name = str(d, p, 64);

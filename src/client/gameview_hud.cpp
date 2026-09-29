@@ -2189,9 +2189,9 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         blockText(name,x+24*scale,by+(rowH-7*ts)/2,ts,{235,235,240,255});
         const bool ally=p!=localPlayer_ && framePlayer(p).team==framePlayer(localPlayer_).team;
         const bool sharing=ally && !framePlayer(p).defeated && !framePlayer(localPlayer_).defeated;
-        checkbox(294,by,p,DiplomacyAction::Mana,ally && (manaMask & (1u<<p)),sharing);
+        if(ally)checkbox(294,by,p,DiplomacyAction::Mana,manaMask & (1u<<p),sharing);
         checkbox(402,by,p,DiplomacyAction::Chat,chatRecipients_ & (1u<<p),true);
-        button("GIVE SELECTED UNITS",{x+478*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
+        if(ally)button("GIVE SELECTED UNITS",{x+478*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
         by+=44*scale;
     }
     button("CLOSE",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1,DiplomacyAction::Close,true);

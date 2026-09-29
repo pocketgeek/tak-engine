@@ -89,6 +89,16 @@ int main() {
         }
         check(meta.write().find("[TAKText]")==std::string::npos,"ordinary OTA output needs no text extension");
         check(tak::tnt::Scenario::parse(meta.write()+"[TAKText]\n{\nmissiondescription=zz;\n}\n").missionDescription.empty(),"invalid text extension ignored");
+        {
+            auto files=std::make_shared<tak::hpi::Vfs::Files>();
+            (*files)["kmap/damaged.crt"]={0,1,2};
+            tak::hpi::Vfs vfs;vfs.setMapFiles(files);
+            bool rejected=false;
+            try {(void)cart::loadScenario(vfs,"kmap/damaged.crt");}
+            catch(const std::exception&) {rejected=true;}
+            check(rejected,"damaged scenario must not silently become an empty editable map");
+            check(cart::loadScenario(vfs,"kmap/absent.crt").version==1,"optional absent scenario remains supported");
+        }
         tak::crt::Scenario scenario;scenario.players.resize(9);
         tak::crt::RuleGroup group;group.conditions.push_back({});group.actions.push_back({});
         scenario.players[0].push_back(group);

@@ -387,7 +387,7 @@ Allies share vision automatically. Excess mana is distributed to allied players
 with the lowest storage fill percentage first, among teammates you allow in
 **D — Diplomacy**. Mana sharing starts enabled for teammates; chat starts enabled
 for everyone and controls who receives your messages. The dialog lists all players,
-with gifts and mana sharing unavailable for opponents. Gift buttons are disabled
+with gift buttons and mana checkboxes shown only for allies. Gift buttons are disabled
 without eligible selected units. Giving units keeps the dialog open and updates
 the buttons. Ineligible units remain yours; transfers
 respect the recipient's unit limits, remove transferred units from your control
@@ -400,6 +400,8 @@ it to change.
 
 Use the **same engine build and compatible game data** on every participant.
 Version **0.7.12 uses protocol 195** for directed mana sharing and chat.
+Current checkout builds use **protocol 196** to preserve authored map companions
+during transfer; rebuild/update clients and servers together.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and

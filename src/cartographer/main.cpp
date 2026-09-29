@@ -319,7 +319,13 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // rules, regions, and custom types the unit tool doesn't edit. `units` is
     // the editor's working view (map pixels); `scen` is everything else.
     std::string crtPath = mapPath.substr(0, mapPath.rfind('.')) + ".crt";
-    tak::crt::Scenario scen = cart::loadScenario(vfs, crtPath);
+    tak::crt::Scenario scen;
+    try {scen=cart::loadScenario(vfs,crtPath);}
+    catch(const std::exception& error) {
+        std::fprintf(stderr,"open scenario: %s\n",error.what());
+        if(interactive)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Cannot open map",error.what(),win);
+        return 1;
+    }
     std::vector<cart::PlacedUnit> units = cart::toPlaced(scen);
     bool unitsEdited = false;
 

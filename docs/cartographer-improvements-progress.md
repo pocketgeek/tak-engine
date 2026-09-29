@@ -681,6 +681,40 @@ name/edit/undo/redo/save/reopen sequence. All fourteen editor tests pass in Rele
 and under AddressSanitizer/LeakSanitizer. All Release targets were rebuilt because
 the shared in-memory rule structure changed; gameplay logic is unchanged.
 
+## Scenario preservation and execution prerequisites checkpoint
+
+Map packages now preserve exact same-stem CRT, Use Only TDF, TXT, `.editor` and
+`.recipe` companions alongside OTA. Empty companions survive transfer and cache
+reuse, and every companion contributes to the package fingerprint. Other maps'
+companions, duplicate resources and executable scripts remain rejected. Current
+checkout client/server builds require protocol 196; existing package-v2 caches
+remain readable.
+
+The CRT runner's control-count conditions had the count/type operands reversed.
+They now follow the authored table and shipped CRT operand order, including
+`Any Unit` control counts. Flag messages now include the numeric value and suffix.
+This does not yet attach CRT scenarios to normal skirmish setup: the production
+Test Map launch and shared scenario initialization are still outstanding.
+
+Malformed CRT input now returns the documented invalid version instead of a
+valid-looking empty scenario. NaN/infinite versions are rejected. Cartographer
+reports malformed scenario files; Open validates them before replacing the
+current document. Missing optional CRT files remain supported.
+
+Validation: all 24 selected Release tests passed (14 editor workflows, scenario,
+map transfer/data and campaign checks); all 17 selected ASAN/LSAN tests passed.
+The new scenario test exercises every truncated prefix of a representative CRT,
+retail record residue, operand boundaries, filtering and message/hash behavior.
+The real network test transferred authored companions from an isolated host to
+an isolated server, peer and late spectator, saved caches on all four, and ran
+300 matching ticks (hash `504864d2961d486a`). All Release targets were rebuilt.
+The determinism check passed for available native compiler/optimization builds;
+the ARM cross-build legs were skipped because their builds were unavailable.
+
+The separately requested diplomacy adjustment hides gift and mana controls for
+non-allies while preserving chat. The Release client and optimized debug client/
+server were rebuilt; the diplomacy UI workflow and screenshot inspection passed.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
