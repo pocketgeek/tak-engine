@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.10-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.11-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -29,7 +29,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured in v0.7.10. Base and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.11 source build. Base and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -41,7 +41,23 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.10
+## New in 0.7.11
+
+- **Defensive Passive AI:** continues growing its army and defenses near home
+  as mana allows, without sending attacks.
+- **Persistent Hard and Absurd AI:** keep expanding income and production and
+  building troops beyond the former AI policy ceilings. Actual player and
+  unit-type limits still apply. Absurd retains its double mana income.
+- **Zhon production:** mobile producers prioritize an opening army and keep
+  producing troops while other builders expand. Expansion orders remain counted
+  while builders travel, and idle troops clear production sites.
+- **Normal retains its force targets.** Movement and pathfinding rules are
+  unchanged; these changes adjust the AI's production decisions.
+
+See the [0.7.11 validation report](docs/release-0.7.11-validation.md) and
+[AI behavior measurements](docs/ai-growth-2026-09-28.md).
+
+### Previously in 0.7.10
 
 - **Large-map performance:** terrain chunk caching, fog geometry reuse, fewer
   distant model and shadow submissions, and less pathfinding, script scheduling,
@@ -85,7 +101,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.10** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.11** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -335,7 +351,7 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.10 uses protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
+Version **0.7.11 uses protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
 storage fill percentage, alongside verified automatic
 map transfer and the balanced random-map generator. Restart/update both client and server
 together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
