@@ -259,7 +259,8 @@ builders, but units they produce inherit their squad.
 | **Shift+H** | Monarch headbang emote |
 
 Live game speed ranges from 0.5× to 4×. Only the host can change it, and the
-lobby's in-game speed option must be unlocked. Chat is available in live
+game creation screen’s **Allow speed change** option must be enabled (the lobby
+only displays it). Chat is available in live
 networked games (single-player also uses a local server), not replay playback.
 
 ### Mouse and construction
@@ -331,6 +332,10 @@ Clients record matches in their per-user application data directory beside
 [replay playback](docs/user-guide.md#replays) are covered in the user guide.
 
 ## Display and performance
+
+Set **Options → Player Name** and click **Save** to choose your name for new
+local and unauthenticated multiplayer games. Account-based multiplayer uses
+your login name.
 
 Use **Options** to adjust audio, anti-aliasing, filtering, shadows, health bars,
 UI scale, cursor size, and camera behavior. **Smooth GUI Art** requires a restart;

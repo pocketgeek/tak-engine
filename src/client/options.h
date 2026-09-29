@@ -56,6 +56,8 @@ public:
                   std::function<void()> onSave, int audioChannels = 0,
                   std::function<void()> onHotkeys = {}, std::function<void()> onAudioDevice = {});
 
+    ~OptionsScreen() { if (nameEditing_) SDL_StopTextInput(); }
+
     // Feed one SDL event. Returns true when the user leaves (Esc / BACK); the host
     // should then stop showing the screen. Persisting is explicit (the SAVE button
     // fires onSave); BACK does not save.
@@ -66,7 +68,7 @@ public:
 
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle, Button, Dropdown } kind;
+        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName } kind;
         std::string label;
         float lo = 0, hi = 1;
         std::function<float()> get;              // Dropdown: the selected option index
@@ -120,6 +122,8 @@ private:
     std::function<void()> onAudioDevice_;   // host re-opens audio on a live device switch
     bool pendingRebuild_ = false;       // a device change asked for a deferred control rebuild
     std::vector<Control> ctls_;
+    bool nameEditing_ = false, nameSelectAll_ = false;
+    void appendPlayerName(const std::string& text);
     bool dirty_ = false;    // unsaved changes since the last save/open -> SAVE enabled
     float scroll_ = 0;      // content scroll offset (px)
     float contentH_ = 0;    // total laid-out content height

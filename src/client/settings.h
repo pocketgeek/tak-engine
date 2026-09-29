@@ -68,7 +68,7 @@ struct Settings {
     bool  smoothMotion    = true;  // interpolate unit motion between 30Hz sim ticks (glide, not step)
 
     // ---- misc ----
-    std::string playerName;        // default name for multiplayer
+    std::string playerName;        // default name for new local / unauthenticated multiplayer games
     std::string accountName;       // last multiplayer account signed in with. The
                                    // PASSWORD is deliberately not here and is never
                                    // written to disk -- see src/net/auth.h.

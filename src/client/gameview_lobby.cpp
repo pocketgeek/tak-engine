@@ -323,25 +323,28 @@ std::string mapDisplayName(const std::string& id) {
         }
         blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 30;
         lbBtn(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
-              [this] { createCrusades_ = !createCrusades_; }); y += 34;
+              [this] { createCrusades_ = !createCrusades_; }); y += 30;
         lbBtn(x, y, 240, 26, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
-              [this] { createDoubleSight_ = !createDoubleSight_; }); y += 34;
+              [this] { createDoubleSight_ = !createDoubleSight_; }); y += 30;
         lbBtn(x,y,240,26,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this] {
             static constexpr uint16_t limits[]={250,500,1000,2000};
             auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
             createUnitCap_=at==std::end(limits) || ++at==std::end(limits) ? limits[0] : *at;
-        }); y+=34;
+        }); y+=30;
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
         lbBtn(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
                                                : "MONARCH EXPENDABLE: OFF", true,
-              [this] { createMonarchExp_ = !createMonarchExp_; }); y += 34;
+              [this] { createMonarchExp_ = !createMonarchExp_; }); y += 30;
+        lbBtn(x, y, 240, 26, createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON"
+                                              : "ALLOW SPEED CHANGE: OFF", true,
+              [this] { createSpeedUnlock_ = !createSpeedUnlock_; }); y += 30;
         // SP only: spectate mode -- you take no slot and just watch the AIs fight.
         // Seat AIs in the slots below, then START.
         if (singlePlayer_) {
             lbBtn(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
                                              : "SPECTATE (WATCH AIS): OFF", true,
-                  [this] { spSpectate_ = !spSpectate_; }); y += 34;
+                  [this] { spSpectate_ = !spSpectate_; }); y += 30;
         }
         // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
         // may differ) / FULL (gameplay overrides allowed but every player must
@@ -355,14 +358,14 @@ std::string mapDisplayName(const std::string& id) {
             lbBtn(x, y, 240, 26,
                   std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
                   [this] { createFog_ = uint8_t((createFog_ + 1) % 3); });
-            y += 34;
+            y += 30;
         }
         // Random Start Locations: also a room rule, picked here like fog so it is set
         // before the room exists. FIXED = slot N always takes the map's Nth start
         // (spawns are memorisable); RANDOM = the starts are shuffled for the match.
         lbBtn(x, y, 240, 26, std::string("START LOCATIONS: ") +
               (createRandomStarts_ ? "RANDOM" : "FIXED"), true,
-              [this] { createRandomStarts_ = !createRandomStarts_; }); y += 34;
+              [this] { createRandomStarts_ = !createRandomStarts_; }); y += 30;
         static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
         lbBtn(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this] { createOverride_ = uint8_t((createOverride_ + 1) % 3); }); y += 44;
@@ -374,6 +377,7 @@ std::string mapDisplayName(const std::string& id) {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
             o.overridePolicy = createOverride_;
             o.doubleSight = createDoubleSight_ ? 1 : 0;
+            o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
             o.unitCap = createUnitCap_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
             o.fogExplored = std::min<uint8_t>(createFog_, 2);
@@ -383,7 +387,7 @@ std::string mapDisplayName(const std::string& id) {
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(),
                             singlePlayer_ && spSpectate_, singlePlayer_);
             specAutoSeated_ = false;   // arm the one-shot auto-seat for this new room
-            lobbyScreen_ = LobbyScreen::Browser;
+            lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
         });
         if (!singlePlayer_)   // a private single-player game has no browser to go back to
             lbBtn(kLobbyW - x - bw - 122, by, 110, 30, "BROWSER", true,
@@ -717,19 +721,16 @@ std::string mapDisplayName(const std::string& id) {
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
-            mp_->leaveGame(); lobbyScreen_ = LobbyScreen::Browser;
+            mp_->leaveGame();
+            lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
             mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
         if (!room.mapsReady) blockText(mp_->mapStatus().empty() ? "WAITING FOR MAP VERIFICATION" : mp_->mapStatus(),
             bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
         // The game starts at normal speed; the host can allow it to be changed
         // in-game, and the host's -/+ keys then re-cadence the match live.
         y += 40;
-        if (host) {
-            std::string ub = std::string("ALLOW SPEED CHANGE IN-GAME: ") + (room.opts.speedUnlock ? "ON" : "OFF");
-            lbBtn(x, y, 420, 26, ub, true, [this] {
-                auto o = mpRoom().opts; o.speedUnlock = o.speedUnlock ? 0 : 1;
-                mp_->setGameOptions(o); });
-        }
+        blockText(std::string("ALLOW SPEED CHANGE IN-GAME: ") + (room.opts.speedUnlock ? "ON" : "OFF"),
+                  x, y + 6, 2.0f, {205, 210, 225, 255});
         // Unit limit is selected at creation; the room only displays it.
         y += 34;
         char cb[40]; std::snprintf(cb, sizeof cb, "UNIT CAP  %d", int(room.opts.unitCap));

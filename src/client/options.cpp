@@ -188,6 +188,9 @@ void OptionsScreen::build(int channels) {
                          {}, {}, std::move(options)});
     };
 
+    section("PLAYER (NEW GAMES)");
+    ctls_.push_back({Control::PlayerName, "PLAYER NAME", 0, 0, {}, {}, {}, {}, {}});
+
     section("AUDIO");
     // Output device: "System Default" plus every current output device. On startup a
     // saved-but-missing device auto-falls-back to system (see setAudioDevice); here the
@@ -385,9 +388,39 @@ void OptionsScreen::dropViewport(const Control& c, int nOpts, float& y0, float& 
     dropScroll_ = std::clamp(dropScroll_, 0.0f, maxScroll);
 }
 
+void OptionsScreen::appendPlayerName(const std::string& text) {
+    std::string value = nameSelectAll_ ? std::string() : s_.playerName;
+    for (unsigned char c : text) if (c >= 32 && c != 127) value += char(c);
+    char name[33];
+    SDL_utf8strlcpy(name, value.c_str(), sizeof(name));
+    if (s_.playerName != name) { s_.playerName = name; dirty_ = true; }
+    nameSelectAll_ = false;
+}
+
 bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
     applyPendingRebuild();   // fold in a pending device-change rebuild before this event
     layout(winW, winH);
+    if (nameEditing_) {
+        if (e.type == SDL_TEXTINPUT) { appendPlayerName(e.text.text); return false; }
+        if (e.type == SDL_KEYDOWN) {
+            const auto key = e.key.keysym.sym;
+            const bool shortcut = (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
+            if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_TAB) {
+                nameEditing_ = false; SDL_StopTextInput();
+            } else if (shortcut && key == SDLK_a) nameSelectAll_ = true;
+            else if (shortcut && key == SDLK_v) {
+                if (char* text = SDL_GetClipboardText()) { appendPlayerName(text); SDL_free(text); }
+            } else if (key == SDLK_BACKSPACE || (key == SDLK_DELETE && nameSelectAll_)) {
+                if (nameSelectAll_) { s_.playerName.clear(); nameSelectAll_ = false; dirty_ = true; }
+                else if (!s_.playerName.empty()) {
+                    size_t pos = s_.playerName.size()-1;
+                    while (pos && (static_cast<unsigned char>(s_.playerName[pos]) & 0xc0) == 0x80) --pos;
+                    s_.playerName.resize(pos); dirty_ = true;
+                }
+            }
+            return false;
+        }
+    }
     if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
         if (openDrop_ >= 0) { openDrop_ = -1; return false; }   // close the dropdown, not the screen
         return true;
@@ -412,6 +445,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
     };
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        if (nameEditing_) { nameEditing_ = false; SDL_StopTextInput(); }
         float bmx = float(e.button.x), bmy = float(e.button.y);
         // An open dropdown grabs the click: an option selects + closes; the dropdown's
         // own chip toggles it shut; anywhere else just closes it (then falls through so
@@ -453,6 +487,12 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         for (size_t i = 0; i < ctls_.size(); ++i) {
             Control& c = ctls_[i];
             if (!in(c.row, mx, my)) continue;
+            if (c.kind == Control::PlayerName) {
+                nameEditing_ = true; nameSelectAll_ = true; SDL_StartTextInput();
+                SDL_Rect caret{int(c.row.x),int(c.row.y),int(c.row.w),int(c.row.h)};
+                SDL_SetTextInputRect(&caret);
+                return false;
+            }
             if (c.kind == Control::Toggle) {
                 c.set(c.get() > 0.5f ? 0.0f : 1.0f); dirty_ = true; if (onChange_) onChange_(); return false;
             }
@@ -513,6 +553,18 @@ void OptionsScreen::render(int winW, int winH) {
             drawBlockText(ren_, t, pill.x + (pill.w - blockTextWidth(t, 2.0f * u_)) / 2,
                           pill.y + (pill.h - 7 * 2.0f * u_) / 2, 2.0f * u_,
                           on ? SDL_Color{210, 240, 215, 255} : SDL_Color{170, 175, 185, 255});
+        } else if (c.kind == Control::PlayerName) {
+            drawBlockText(ren_, c.label, c.row.x, c.row.y + 12*u_, fpx, {225,230,240,255});
+            const float cw = dropWidth(c);
+            SDL_FRect field{c.row.x+c.row.w-cw,c.row.y+5*u_,cw,24*u_};
+            SDL_SetRenderDrawColor(ren_,nameEditing_ && nameSelectAll_ ? 65 : 35,55,80,255);
+            SDL_RenderFillRectF(ren_, &field);
+            SDL_SetRenderDrawColor(ren_,nameEditing_ ? 220 : 130,180,170,255);
+            SDL_RenderDrawRectF(ren_, &field);
+            std::string text = s_.playerName.empty() && !nameEditing_ ? "player" : s_.playerName;
+            if (nameEditing_ && !nameSelectAll_) text += "_";
+            const float px = std::min(1.6f*u_, (field.w-12*u_)/std::max(1.0f,blockTextWidth(text,1)));
+            drawBlockText(ren_,text,field.x+6*u_,field.y+(field.h-7*px)/2,px,{225,230,240,255});
         } else if (c.kind == Control::Button) {
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
             SDL_FRect chip{c.row.x + c.row.w - 96 * u_, c.row.y + 5 * u_, 96 * u_, 24 * u_};

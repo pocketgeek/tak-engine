@@ -2140,6 +2140,7 @@ private:
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false;
     bool createDoubleSight_ = false;
+    bool createSpeedUnlock_ = false;
     uint16_t createUnitCap_ = tak::net::GameOptions{}.unitCap;
 #ifndef NDEBUG
     bool debugDefeatSent_ = false;
