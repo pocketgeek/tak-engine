@@ -224,6 +224,27 @@ static int regionWorkflow(const char* data) {
         fs::remove_all(root);std::cout<<"PASS: region canvas drawing, movement, handles, cancellation, undo/redo and reopen\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }
+static int fontWorkflow() {
+    if(SDL_Init(SDL_INIT_VIDEO)!=0)return 2;
+    auto* surface=SDL_CreateRGBSurfaceWithFormat(0,128,64,32,SDL_PIXELFORMAT_RGBA32);
+    auto* renderer=surface?SDL_CreateSoftwareRenderer(surface):nullptr;
+    if(!renderer) {if(surface)SDL_FreeSurface(surface);SDL_Quit();return 2;}
+    int result=0;
+    {
+        cart::EditorFont font(renderer);
+        auto pixels=[&](const std::string& text) {
+            SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
+            cart::drawText(renderer,text,20,20,2,255,255,255);SDL_RenderPresent(renderer);
+            std::vector<uint8_t> rgba(128*64*4);SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),128*4);return rgba;
+        };
+        const auto missing=pixels("�"),latin=pixels("é"),greek=pixels("Ω"),cyrillic=pixels("Ж");
+        if(latin==missing || greek==missing || cyrillic==missing || pixels("a")==pixels("A") || latin==pixels("e"))result=1;
+        bool antialiased=false;for(size_t i=0;i<latin.size();i+=4)antialiased|=latin[i]>0 && latin[i]<255;
+        if(!antialiased || cart::textWidth("éΩЖ",1)!=18)result=1;
+    }
+    SDL_DestroyRenderer(renderer);SDL_FreeSurface(surface);SDL_Quit();
+    if(!result)std::cout<<"PASS: embedded mixed-case Unicode glyphs, antialiasing and fixed caret metrics\n";return result;
+}
 static int thumbnailWorkflow(const char* data) {
     if(SDL_Init(SDL_INIT_VIDEO)!=0)return 2;
     int result=0;
@@ -479,6 +500,7 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
+    if(argc==2 && std::string(argv[1])=="font")return fontWorkflow();
     if(argc==3 && std::string(argv[2])=="thumbnails")return thumbnailWorkflow(argv[1]);
     if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);

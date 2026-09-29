@@ -118,7 +118,7 @@ jobs:
         run: |
           mkdir -p dist-win
           cp build/takclient.exe build/takserver.exe build/cartographer.exe dist-win/
-          cp STREAMING-LICENSES.txt dist-win/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-win/
           # Safety net: copy any non-system DLL still imported (should be none now that
           # SDL2/jpeg/zlib are static; graceful if a target ends up dynamic anyway).
           ldd build/takclient.exe build/takserver.exe build/cartographer.exe \
@@ -157,7 +157,7 @@ jobs:
         run: |
           mkdir -p dist-win-debug
           cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe dist-win-debug/
-          cp STREAMING-LICENSES.txt dist-win-debug/
+          cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-win-debug/
           ldd build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win-debug/; done

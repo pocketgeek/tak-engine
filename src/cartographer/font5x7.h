@@ -6,6 +6,7 @@
 // a visible replacement glyph. Basic Latin glyph bitmaps are functional utility data, not a typeface.
 
 #include <SDL.h>
+#include "cartographer/editorfont.h"
 
 #include <cstdint>
 #include <string>
@@ -113,6 +114,7 @@ inline uint32_t nextGlyph(const std::string& text,size_t& position) {
 // Draw `text` at (x,y) scaled by `s`, colour (r,g,b). One batched FillRects call.
 inline void drawText(SDL_Renderer* ren, const std::string& text, int x, int y, int s,
                      Uint8 r, Uint8 g, Uint8 b) {
+    if(drawEditorText(ren,text,x,y,s,r,g,b))return;
     std::vector<SDL_Rect> px;
     int cx = x;
     for(size_t position=0;position<text.size();) {

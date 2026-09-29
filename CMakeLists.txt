@@ -833,13 +833,15 @@ if(TAK_BUILD_CLIENT)
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     get_target_property(_cartographer_sources cartographer SOURCES)
     add_executable(cartographer_ui_test tools/cartographer_ui_test.cpp ${_cartographer_sources})
     target_compile_definitions(cartographer_ui_test PRIVATE SDL_MAIN_HANDLED TAK_CARTOGRAPHER_TEST)
     target_link_libraries(cartographer_ui_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME cartographer_font COMMAND cartographer_ui_test font)
+    set_tests_properties(cartographer_font PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     if(TAK_TEST_DATA)
       add_test(NAME cartographer_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}")
       add_test(NAME cartographer_generation_ui COMMAND cartographer_ui_test "${TAK_TEST_DATA}" generation)
@@ -901,7 +903,7 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 # SDL2 still dlopens its X11/Wayland/audio backends, which every desktop that can run the
 # game already has; those are not declared (they aren't link-time deps of a static SDL2).
 if(UNIX AND NOT APPLE)
-  install(FILES STREAMING-LICENSES.txt DESTINATION share/licenses/tak-engine)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
@@ -951,7 +953,7 @@ if(UNIX AND NOT APPLE)
 
   include(CPack)
 elseif(WIN32)
-  install(FILES STREAMING-LICENSES.txt DESTINATION .)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt DESTINATION .)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.

@@ -209,6 +209,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         return 1;
     }
 
+    cart::EditorFont editorFont(ren);
     auto persistPreferences=[&]() {
         SDL_GetWindowSize(win,&preferences.width,&preferences.height);
         std::string error;if(!cart::saveEditorPreferences(preferencesFolder,preferences,error))std::fprintf(stderr,"editor preferences: %s\n",error.c_str());

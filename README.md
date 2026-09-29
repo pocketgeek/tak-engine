@@ -188,6 +188,7 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   group movement, copy/paste and deletion; feature moves protect occupied cells.
   **View** can hide features, units, starts and regions; layer choices are remembered.
   Terrain thumbnails load in the background, and the minimap refreshes after terrain edits.
+  The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.
   **Scenario → Check Map** reports
   terrain, start, mana and scenario issues in a clickable results list.
   **Scenario → Regenerate from Recipe** restores a generated map's settings;

@@ -518,11 +518,31 @@ blocked starts, blocked mana sites and existing lodestones. The eleven-test
 editor suite passes in Release and under AddressSanitizer/LeakSanitizer, with
 focused repeats for the final start-occupancy addition.
 
+## Embedded readable font checkpoint
+
+Cartographer now draws its UI with antialiased, mixed-case glyphs derived from
+Noto Sans Mono 2.014. The embedded atlas contains 3,488 mapped codepoints,
+including accented Latin, Greek and Cyrillic. Fixed six-pixel logical advances
+preserve field caret, selection and hit-test geometry; rendering uses higher
+resolution alpha masks and lazy texture pages owned by the editor lifetime.
+
+The font source and SIL OFL license are included, and Windows/macOS/Linux/Arch
+packaging copies the license. Normal builds need no new font library or runtime
+dynamic dependency. The checked-in generator uses Pillow/fontTools only when
+regenerating the atlas; a local regeneration produced identical bytes.
+
+The generator form was captured and visually checked with inline validation:
+all fields, errors and buttons fit. A dedicated raster test distinguishes case,
+accented/Greek/Cyrillic glyphs and replacement characters, checks antialiasing,
+and verifies unchanged fixed-width metrics. All twelve editor tests pass in
+Release and under AddressSanitizer/LeakSanitizer. Broader complex-script shaping,
+bidi and CJK fallback remain incomplete; unsupported glyphs show a replacement.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated
    recovery archives and additional cleanup failure paths.
-2. Better font/Unicode, additional layout preferences,
+2. Broader Unicode shaping/fallback, additional layout preferences,
    and verification of cross-platform packaging/launch usability.
 3. Broader browser/selection interaction coverage,
    model previews where useful and additional view controls.
