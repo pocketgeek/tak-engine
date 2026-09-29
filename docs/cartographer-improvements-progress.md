@@ -643,6 +643,23 @@ naval fixture addition. The Ultima Online B1 63x63 real-asset validation workflo
 passed in 2.62 seconds, peak RSS 964,620 KiB (whole workflow including editor,
 fixture creation/loading, cancellation and result interactions, not scan-only).
 
+## Terrain resource validation checkpoint
+
+Check Map now validates terrain tile dimensions and key/column/row array sizes,
+then resolves and decodes every distinct terrain JPEG through the compositor's
+normal VFS and stock-terrain rules. Missing and corrupt images produce located
+errors with the number of affected blocks, rather than remaining invisible
+until rendering leaves those blocks empty. Each key is checked once and decoded
+storage is released between keys.
+
+Tests use an original 32x32 solid-color JPEG fixture (no retail artwork) and
+cover successful decoding, repeated missing keys, corrupt existing images and
+malformed arrays. All fourteen editor tests pass in Release and under
+AddressSanitizer/LeakSanitizer. The Ultima Online B1 63x63 validation workflow
+passed with these checks enabled in 3.11 seconds, peak RSS 880,900 KiB for the
+whole editor/fixture workflow. This is not an isolated scanner benchmark.
+Other asset categories and naval output clearance still need their own checks.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,

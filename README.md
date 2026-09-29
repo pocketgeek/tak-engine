@@ -200,7 +200,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   use the arrow button or **Alt+Down** to open the suggestions.
   **Scenario → Check Map** reports
   terrain, start, mana and scenario issues in a clickable results list, including
-  disconnected movement regions for distinct mobile unit profiles and footprints.
+  disconnected movement regions for distinct mobile unit profiles and footprints,
+  plus missing or corrupt terrain images.
   **Scenario → Regenerate from Recipe** restores a generated map's settings;
   preview changes before accepting them. Reproduction needs the same game assets.
 

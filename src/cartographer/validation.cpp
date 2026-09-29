@@ -1,5 +1,7 @@
 #include "cartographer/validation.h"
 #include "cartographer/triggers.h"
+#include "terrain/terrain.h"
+#include <cstdio>
 #include "sim/matchsetup.h"
 #include <algorithm>
 #include <cctype>
@@ -14,6 +16,28 @@ std::string folded(std::string value) {
     std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return char(std::tolower(c));});
     return value;
 }
+}
+std::vector<MapIssue> validateTerrainResources(const tak::tnt::Map& map,const tak::hpi::Vfs& vfs) {
+    std::vector<MapIssue> issues;
+    const auto count=size_t(std::max(0,map.blocksX))*std::max(0,map.blocksY);
+    if(map.blocksX<=0 || map.blocksY<=0 || map.blocksX!=map.width/2 || map.blocksY!=map.height/2 ||
+       map.tileKeys.size()!=count || map.tileCols.size()!=count || map.tileRows.size()!=count) {
+        issues.push_back({MapIssue::Severity::Error,"Invalid terrain tile dimensions or key/column/row arrays"});return issues;
+    }
+    struct Use {size_t first=0,count=0;};std::map<uint32_t,Use> used;
+    for(size_t i=0;i<count;++i) {auto& use=used[map.tileKeys[i]];if(use.count++==0)use.first=i;}
+    tak::terrain::Compositor compositor(vfs);
+    for(const auto& [key,use]:used) {
+        try {compositor.sectionImage(key,map.stockTerrain);}
+        catch(const std::exception& error) {
+            char id[16];std::snprintf(id,sizeof id,"%08x",key);
+            issues.push_back({MapIssue::Severity::Error,"Unreadable terrain image terrain/"+std::string(id)+".jpg ("+
+                std::to_string(use.count)+" blocks): "+error.what(),float(use.first%map.blocksX)*32+16,float(use.first/map.blocksX)*32+16});
+        }
+        // Decoding is once per resource; do not retain every section on large maps.
+        compositor.clear();
+    }
+    return issues;
 }
 std::vector<MovementRegion> movementRegions(const tak::sim::NavGrid& grid,int footprint) {
     footprint=std::clamp(footprint,1,15);
@@ -87,6 +111,7 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
        map.features.size()!=map.heights.size()) {
         issue("Invalid terrain dimensions or cell arrays",-1,-1,true);return issues;
     }
+    issues=validateTerrainResources(map,vfs);
     auto inside=[&](float x,float z) {return std::isfinite(x) && std::isfinite(z) && x>=0 && z>=0 && x<map.width*16.f && z<map.height*16.f;};
     auto world=std::make_unique<tak::sim::World>();
     world->setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
