@@ -17,6 +17,21 @@ void TerrainChunks::clear() {
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
     cache_.clear();bytes_=0;++revision_;
 }
+void TerrainChunks::invalidate(int bx0,int by0,int bx1,int by1) {
+    if(bx0>=bx1 || by0>=by1)return;
+    // In-flight jobs own tile snapshots. Discard their old results without
+    // waiting for the worker; keep unaffected resident images and source mips.
+    {std::lock_guard lock(mutex_);++epoch_;jobs_.clear();done_.clear();}
+    cv_.notify_all();pending_.clear();
+    for(auto i=cache_.begin();i!=cache_.end();) {
+        const auto [level,cx,cy]=i->first;
+        if(bx0<(cx+1)*32+1 && bx1>cx*32-1 && by0<(cy+1)*32+1 && by1>cy*32-1) {
+            bytes_-=size_t(i->second.w+2)*(i->second.h+2)*4;
+            gpuvram::destroy(i->second.texture);i=cache_.erase(i);
+        } else ++i;
+    }
+    ++revision_;
+}
 void TerrainChunks::resetSource() {
     clear();
     std::unique_lock lock(mutex_);

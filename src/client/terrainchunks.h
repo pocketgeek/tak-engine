@@ -19,6 +19,8 @@ public:
     explicit TerrainChunks(terrain::Compositor& compositor);
     ~TerrainChunks();
     void clear();
+    // Block coordinates, exclusive upper bounds. Includes filtering gutters.
+    void invalidate(int bx0,int by0,int bx1,int by1);
     // Render thread: stop reading the old compositor before its images change.
     void resetSource();
     void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear);

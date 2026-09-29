@@ -77,6 +77,18 @@ void MapView::queueAllSections() {
     secCv_.notify_all();
 }
 
+void MapView::tilesEdited(int bx,int by,int width,int height) {
+    const int x0=std::clamp(bx,0,map_.blocksX),y0=std::clamp(by,0,map_.blocksY);
+    const int x1=std::clamp(bx+width,0,map_.blocksX),y1=std::clamp(by+height,0,map_.blocksY);
+    if(x0>=x1 || y0>=y1)return;
+    chunks_.invalidate(x0,y0,x1,y1);tileBatchDirty_=true;
+    std::set<uint32_t> keys;
+    for(int y=y0;y<y1;++y)for(int x=x0;x<x1;++x)keys.insert(map_.tileKeys[size_t(y)*map_.blocksX+x]);
+    std::lock_guard lock(secMu_);
+    for(uint32_t key:keys)if(secPending_.insert(key).second)decodeQueue_.push_back(key);
+    secCv_.notify_all();
+}
+
 void MapView::input(const SDL_Event& e) {
     if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK)) {
         offX_ -= e.motion.xrel / zoom_;

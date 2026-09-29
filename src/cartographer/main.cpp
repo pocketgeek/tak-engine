@@ -394,7 +394,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if (s.name == name) {
                 const tak::tnt::Map* sec = sections.load(vfs, s.path);
                 if (sec && cart::stampSection(mapView.editMap(), *sec, bx, by)) {
-                    mapView.tilesEdited();
+                    mapView.tilesEdited(bx,by,sec->blocksX,sec->blocksY);
                     edited = true; dirty = true; historyPending=true;
                     return true;
                 }
@@ -497,9 +497,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         int snapY = (blkY / sec->blocksY) * sec->blocksY;
         if(snapX==lastStampX && snapY==lastStampY)return;
         lastStampX=snapX;lastStampY=snapY;
-        mapView.quiesce();
+        // Painting changes tile arrays only. Workers use tile snapshots and
+        // immutable source sections; no whole-map worker/cache reset is needed.
         if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY,stampLayers)) {
-            mapView.tilesEdited();
+            mapView.tilesEdited(snapX,snapY,sec->blocksX,sec->blocksY);
             edited = true; dirty = true; historyPending=true;
         }
         (void)w; (void)h;
@@ -1804,7 +1805,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                                     return ux >= lox && ux <= hix && uz >= loz && uz <= hiz;
                                 }), units.end());
                             selectedUnits.indices.clear();
-                            mapView.tilesEdited(); edited = true; unitsEdited = true; dirty = true; historyPending=true;
+                            edited = true; unitsEdited = true; dirty = true; historyPending=true;
                         });
                     }
                     clearArm = false;

@@ -88,6 +88,7 @@ public:
     // decode+upload and the tile-quad batch rebuilds next frame.
     tak::tnt::Map& editMap() { return map_; }
     void tilesEdited() { chunks_.clear(); queueAllSections(); tileBatchDirty_ = true; }
+    void tilesEdited(int bx,int by,int width,int height);
     tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
 
 private:

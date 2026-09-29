@@ -7,7 +7,9 @@
 static void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 int main(int argc,char** argv) try {
     if(argc!=2 && argc!=3)return 2;
-    SDL_SetMainReady();check(SDL_Init(SDL_INIT_VIDEO)==0,SDL_GetError());
+    SDL_SetMainReady();
+    SDL_SetHint("SDL_SHUTDOWN_DBUS_ON_QUIT","1"); // release SDL's process-global DBus allocations for leak checks
+    check(SDL_Init(SDL_INIT_VIDEO)==0,SDL_GetError());
     auto* window=SDL_CreateWindow("terrain chunks",0,0,640,480,SDL_WINDOW_HIDDEN);
     auto* renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_TARGETTEXTURE);
     if(!renderer)renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
@@ -66,6 +68,23 @@ int main(int argc,char** argv) try {
             for(int c=0;c<4;++c)check(full[to+c]==block[from+c],"full-resolution terrain texel or chunk seam mismatch");
         }
         auto& edited=map.editMap();
+        map.invalidateRenderTargets();warm();
+        const auto resident=map.chunkStats().images;
+        check(resident>=4,"fixture spans four terrain chunks");
+        edited.tileCols[size_t(25)*edited.blocksX+25]^=1;
+        map.tilesEdited(25,25,1,1);
+        check(map.chunkStats().images==resident-1,"interior stamp retains unaffected terrain images");
+        warm();const auto partial=read();
+        map.invalidateRenderTargets();warm();
+        check(read()==partial,"partial terrain rebuild matches full rebuild");
+        edited.tileCols[size_t(32)*edited.blocksX+32]^=1;
+        map.tilesEdited(32,32,1,1);
+        check(map.chunkStats().images==0,"corner edit invalidates neighbouring filtering gutters");
+        draw(); // allow a worker snapshot to start, then change the same tile
+        edited.tileCols[size_t(32)*edited.blocksX+32]^=3;
+        map.tilesEdited(32,32,1,1);warm();const auto raced=read();
+        map.invalidateRenderTargets();warm();
+        check(read()==raced,"old in-flight tile snapshots cannot overwrite new edits");
         const auto before=read();
         for(auto& col:edited.tileCols)col^=1;
         map.tilesEdited();check(map.chunkStats().images==0,"terrain edits invalidate images");warm();

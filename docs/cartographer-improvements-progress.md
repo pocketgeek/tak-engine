@@ -256,6 +256,28 @@ needs no extension. The TXT sidecar still contains the full description. Shared
 TDF parsing is unchanged. Tests cover newlines, whitespace, URLs, braces, Unicode,
 malformed extensions and the real editor's undo/redo/save/reopen sequence.
 
+## Local terrain invalidation checkpoint
+
+Painting now invalidates only intersecting cached terrain images, including
+neighbours whose filtering gutters sample the edited blocks. It preserves source
+mips and other resident chunks, queues section decodes from just the stamp area,
+and no longer stops the workers before every stamp. Chunk jobs own immutable tile
+snapshots; an edit cancels pending results by generation so an older image cannot
+overwrite the new terrain. Pending jobs are still canceled together, so rapid
+painting can defer otherwise unrelated work that has not reached the cache yet.
+Clearing units/features no longer invalidates terrain textures.
+
+The terrain regression verifies retention of unaffected chunks, correct corner
+gutters, and an edit during background composition, comparing each result with a
+full rebuild. Seven focused Release tests pass. The same terrain regression also
+passes on Ultima Online B1 (63×63); this is correctness coverage, not a measured
+FPS claim. Client and editor binaries were rebuilt. Whole-map edits still use a
+full reset, and live minimap refresh/background thumbnail work remains pending.
+The six editor tests and terrain regression also pass AddressSanitizer and
+LeakSanitizer. The terrain harness now requests SDL's DBus shutdown on quit,
+matching the editor test environment; its first leak run identified SDL's
+otherwise-retained process-global DBus allocations.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect concurrent
@@ -268,7 +290,7 @@ malformed extensions and the real editor's undo/redo/save/reopen sequence.
    reachable starts/mana/naval-output checks, full reproducible generator controls.
 5. Region canvas manipulation, expanded typed-rule validation, rule names/objective templates,
    temporary-map playtesting through the normal client/server launch path.
-6. Local terrain invalidation, asynchronous expensive operations, large-map
+6. Coalescing pending terrain work, asynchronous expensive operations, large-map
    profiling, broader document/UI coverage and final documentation cleanup.
 
 No retail GUI launch is needed for the completed work. The separate untracked
