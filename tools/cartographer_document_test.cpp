@@ -46,13 +46,20 @@ int main() {
         check(!meta.hasScenario,"saving does not mutate document metadata");
         check(cart::writeDocumentBundle(root/"Review.kmp",files,error),error.c_str());
         const auto original=read(root/"Review.kmp");
+        tak::hpi::Archive openArchive(root/"Review.kmp"); // editor may retain a mapped archive while saving over it
+        const auto oldEntry=*std::find_if(openArchive.entries().begin(),openArchive.entries().end(),[](const auto& entry){return !entry.isDirectory;});const auto oldBytes=openArchive.read(oldEntry);
         scenario.players[0].clear();
         files=cart::documentFiles(map,meta,scenario,{}, {},"Review");
         check(cart::writeDocumentBundle(root/"Review.kmp",files,error),error.c_str());
         check(read(root/"Review.kmp.bak")==original,"previous bundle retained");
+        check(openArchive.read(oldEntry)==oldBytes,"open archive remains a stable snapshot after replacement");
         check(cart::writeDocumentFiles(root,files,error),error.c_str());
         check(tak::crt::parse(read(root/"Review.crt")).players[0].empty(),"deletion replaces stale scenario");
         check(tak::crt::parse(read(root/"Review.crt.bak")).players[0].size()==1,"loose backup preserved");
+        const auto unicodeDir=root/std::filesystem::path(u8"Cartes été");fs::create_directory(unicodeDir);
+        const auto unicodePath=unicodeDir/std::filesystem::path(u8"Île.kmp");
+        check(cart::writeDocumentBundle(unicodePath,files,error),error.c_str());
+        check(fs::file_size(unicodePath)>0,"UTF-8 destination directory and filename save");
         const auto saved=read(root/"Review.tnt");
         fs::create_directory(root/"blocked");
         check(!cart::writeDocumentFiles(root,{{"Review.tnt",{1,2,3}},{"blocked",{4}}},error),"invalid destination must fail");

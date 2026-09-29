@@ -193,7 +193,9 @@ Archive::Archive(const std::filesystem::path& file) : file_(file) {
 
 bool Archive::Mapping::open(const std::filesystem::path& p) {
 #ifdef _WIN32
-    HANDLE f = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+    // Editors may atomically replace an open archive. Existing mappings keep
+    // reading their original file object; new opens see the replacement.
+    HANDLE f = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) return false;
     LARGE_INTEGER sz{};

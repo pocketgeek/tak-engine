@@ -5,13 +5,13 @@
 #include "tdf/tdf.h"
 
 #include <algorithm>
-#include <filesystem>
+#include "util/virtualpath.h"
 
 namespace cart {
 
 namespace {
 std::string lower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){return char(std::tolower(c));});
     return s;
 }
 } // namespace
@@ -22,7 +22,7 @@ void FeatureLibrary::scan(const tak::hpi::Vfs& vfs, const std::string& world) {
     const std::string dirs[] = {"features/" + lower(world), "features/all worlds"};
     for (const std::string& dir : dirs) {
         for (const std::string& path : vfs.list(dir)) {
-            if (std::filesystem::path(lower(path)).extension() != ".tdf") continue;
+            if (tak::vpath::extension(lower(path)) != ".tdf") continue;
             tak::tdf::Node root;
             try {
                 auto d = vfs.read(path);

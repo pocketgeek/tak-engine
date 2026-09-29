@@ -199,9 +199,33 @@ boundaries and group/action ordering. The SDL workflow creates a rule, duplicate
 it with Ctrl+D, saves, and verifies both CRT groups. Rule names, searchable
 objective templates and fuller semantic validation remain unfinished.
 
+## Recovery and open-archive replacement checkpoint
+
+A two-process integration test edits an installed map, advances the injected
+recovery clock, waits for a real background recovery write, then exits abruptly
+without editor cleanup. A fresh process accepts recovery, saves the restored
+map and verifies the unsaved metadata plus removal of recovery copies. This
+caught and fixed name-based recovery selecting the retail original: recovery
+now uses the exact archive member path. Archives without terrain are rejected.
+The production clock and native recovery prompt are unchanged; tests inject only
+those two dependencies.
+
+Windows archive mappings now permit delete sharing so an editor can atomically
+replace an open map while existing readers retain their old mapped snapshot.
+The document test holds and reads an archive across replacement; platform CI
+will exercise this specifically on Windows. Editor virtual paths no longer use
+Windows locale-dependent filesystem conversions, and native save/backup paths
+retain UTF-8 or native path types. A Unicode directory/filename save is covered.
+
+All Release targets were rebuilt after the shared archive change. The focused
+Release editor/VFS/map-transfer suite passes (9 tests), as do all 6 editor tests
+under AddressSanitizer/LeakSanitizer. Multi-instance recovery ownership,
+recovery destination metadata and remaining resize/overwrite interactions still
+need scrutiny; this checkpoint does not claim every recovery edge case is done.
+
 ## Remaining work
 
-1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
+1. Finish overwrite/resize interaction coverage and inspect concurrent
    editing/recovery lifecycle edge cases.
 2. Searchable Open/recent maps, remembered window/layout/scale, better font and
    multiline fields, complete cross-platform packaging/launch usability.

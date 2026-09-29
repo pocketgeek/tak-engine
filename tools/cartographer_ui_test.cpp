@@ -102,7 +102,52 @@ static int overlayWorkflow(const char* data) {
     if(result || failed || stage!=3) {std::cerr<<"overlay menu workflow failed\n";return 1;}
     std::cout<<"PASS: background water overlay, unchanged document and hide control\n";return 0;
 }
+static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
+    namespace fs=std::filesystem;const fs::path root=folder;
+    fs::create_directories(root);
+    SDL_setenv("XDG_CONFIG_HOME",folder,1);SDL_setenv("XDG_DATA_HOME",folder,1);
+    std::vector<std::string> args={"cartographer"};if(!restore)args.push_back("Ulasem Arena");
+    args.insert(args.end(),{"--data",data,"--out",folder});
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    uint64_t now=0;cart::EditorHooks hooks;hooks.recoveryClock=[&]{return now;};hooks.recoveryChoice=[] {return 1;};
+    const auto begun=std::chrono::steady_clock::now();std::string failure;
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer*,int frame) {
+        if(std::chrono::steady_clock::now()-begun>std::chrono::seconds(20))std::_Exit(3);
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        if(!restore) {
+            if(frame==0)key(SDLK_p);
+            if(frame==1) {text("Recovered unsaved map");key(SDLK_RETURN);}
+            if(frame==2)now=61000;
+            if(frame>2)for(const auto& entry:fs::recursive_directory_iterator(root)) {
+                if(!entry.is_regular_file() || !entry.path().filename().string().starts_with("recovery-") || entry.path().extension()!=".kmp")continue;
+                tak::hpi::Archive archive(entry.path());
+                for(const auto& member:archive.entries())if(member.path.ends_with(".ota")) {
+                    const auto bytes=archive.read(member);
+                    const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
+                    if(metadata.missionName=="Recovered unsaved map")std::_Exit(0); // deliberately bypass editor cleanup
+                }
+            }
+        } else {
+            if(frame==0) {if(!dirty)failure="recovered document is not marked unsaved";key(SDLK_s,KMOD_CTRL);}
+            if(frame==1) {if(dirty)failure="recovered map could not be saved";key(SDLK_RETURN);}
+            if(frame==2) {SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);}
+        }
+        SDL_Delay(1);
+    },hooks);
+    if(result || !failure.empty()) {std::cerr<<failure<<'\n';return 1;}
+    if(restore) {
+        tak::hpi::Archive archive(root/"Ulasem Arena.kmp");bool found=false;
+        for(const auto& member:archive.entries())if(member.path.ends_with(".ota")) {
+            const auto bytes=archive.read(member);const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
+            found=metadata.missionName=="Recovered unsaved map";
+        }
+        if(!found)return 2;
+        for(const auto& entry:fs::recursive_directory_iterator(root))if(entry.path().filename().string().starts_with("recovery-"))return 4;
+    }
+    return 0;
+}
 int main(int argc,char** argv) {
+    if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],std::string(argv[4])=="restore");
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);
     if(argc!=2)return 2;

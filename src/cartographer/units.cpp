@@ -5,7 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
+#include "util/virtualpath.h"
 
 namespace cart {
 
@@ -67,7 +67,7 @@ std::vector<std::string> loadUseOnly(const tak::hpi::Vfs& vfs, const std::string
     tak::tdf::Node root = tak::tdf::parseText(std::string(d.begin(), d.end()), tdfPath);
     for (const std::string& name : root.childOrder) {   // childOrder is lowercased
         std::string up = name;
-        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        std::transform(up.begin(), up.end(), up.begin(), [](unsigned char c){return char(std::toupper(c));});
         out.push_back(up);
     }
     return out;
@@ -82,12 +82,11 @@ std::string writeUseOnly(const std::vector<std::string>& types) {
 std::vector<std::string> unitTypeNames(const tak::hpi::Vfs& vfs) {
     std::vector<std::string> names;
     for (const std::string& p : vfs.list("units")) {
-        std::filesystem::path fp(p);
-        std::string ext = fp.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::string ext = tak::vpath::extension(p);
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){return char(std::tolower(c));});
         if (ext != ".fbi") continue;
-        std::string stem = fp.stem().string();
-        std::transform(stem.begin(), stem.end(), stem.begin(), ::toupper);
+        std::string stem = tak::vpath::stem(p);
+        std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c){return char(std::toupper(c));});
         names.push_back(stem);
     }
     std::sort(names.begin(), names.end());

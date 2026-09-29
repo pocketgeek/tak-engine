@@ -34,6 +34,7 @@
 #include "client/settings.h"
 #include "client/dirpicker.h"
 #include "util/appicon.h"
+#include "util/virtualpath.h"
 #include "terrain/terrain.h"
 #include "util/jpeg.h"
 #include "hpi/hpi.h"
@@ -56,6 +57,7 @@
 #include <string>
 
 namespace {
+std::string pathText(const std::filesystem::path& path) {const auto text=path.u8string();return {text.begin(),text.end()};}
 
 constexpr int kMenuH = 44;    // top menu-bar strip
 constexpr int kStatusH = 22;  // bottom status strip
@@ -104,7 +106,8 @@ void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint8 cg, U
 
 }  // namespace
 
-int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,SDL_Renderer*,int)>& frameHook) {
+int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,SDL_Renderer*,int)>& frameHook,const EditorHooks& hooks) {
+    const auto recoveryClock=[&]() {return hooks.recoveryClock?hooks.recoveryClock():SDL_GetTicks64();};
     std::string dataRoot, mapName, outDir = ".", exportPath, bundlePath, stampName, newWorld = "aramon", shotPath;
     int stampBX = 0, stampBY = 0, newW = 0, newH = 0;
     bool explicitOutput=false;
@@ -132,7 +135,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         std::error_code ec;
         std::filesystem::path here = std::filesystem::current_path(ec);
         if (!ec && tak::hpi::validInstall(here, nullptr)) {
-            dataRoot = here.string();
+            dataRoot = pathText(here);
             std::fprintf(stderr, "data: using the local directory %s\n", dataRoot.c_str());
         }
     }
@@ -162,7 +165,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         return 2;
     }
 
-    if(!explicitOutput) outDir=(std::filesystem::u8path(dataRoot)/"Maps").string();
+    if(!explicitOutput) outDir=pathText(std::filesystem::u8path(dataRoot)/"Maps");
 
     SDL_SetMainReady();   // we own main() (SDL_MAIN_HANDLED); tell SDL not to hijack it
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -209,6 +212,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     }
     const bool interactive=shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty();
     std::filesystem::path recoveryFolder, recoveredFrom;
+    std::string recoveredMapPath;
     if(char* pref=SDL_GetPrefPath("TAKengine","Cartographer")) {
         recoveryFolder=std::filesystem::u8path(pref);SDL_free(pref);
     }
@@ -216,24 +220,25 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     if(interactive && mapName.empty() && !newW && !recoveryFolder.empty()) {
         std::error_code ec;std::filesystem::path newest;
         for(const auto& entry:std::filesystem::directory_iterator(recoveryFolder,ec)) {
-            const auto filename=entry.path().filename().string();
+            const auto filename=pathText(entry.path().filename());
             if(filename.starts_with("recovery-") && entry.path().extension()==".kmp" &&
                (newest.empty() || entry.last_write_time(ec)>std::filesystem::last_write_time(newest,ec))) newest=entry.path();
         }
         if(!newest.empty()) {
             const SDL_MessageBoxButtonData buttons[]={{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT,1,"Recover"},{0,2,"Discard recovery"},{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT,0,"Cancel"}};
             SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION,win,"Recover map","An unsaved map recovery is available.",3,buttons,nullptr};
-            int choice=0;SDL_ShowMessageBox(&box,&choice);
+            int choice=0;if(hooks.recoveryChoice)choice=hooks.recoveryChoice();else SDL_ShowMessageBox(&box,&choice);
             if(choice==0)return 0;
-            if(choice==2) {std::filesystem::remove(newest,ec);std::filesystem::remove(newest.string()+".bak",ec);}
+            if(choice==2) {std::filesystem::remove(newest,ec);auto backup=newest;backup+=".bak";std::filesystem::remove(backup,ec);}
             if(choice==1) {
                 try {
                     auto files=std::make_shared<tak::hpi::Vfs::Files>();
                     tak::hpi::Archive archive(newest);
                     for(const auto& entry:archive.entries()) if(!entry.isDirectory) {
                         (*files)[tak::hpi::MountSet::key(entry.path)]=archive.read(entry);
-                        if(std::filesystem::path(entry.path).extension()==".tnt")mapName=std::filesystem::path(entry.path).stem().string();
+                        if(tak::vpath::extension(entry.path)==".tnt") {mapName=tak::vpath::stem(entry.path);recoveredMapPath=tak::hpi::MountSet::key(entry.path);}
                     }
+                    if(recoveredMapPath.empty())throw std::runtime_error("Recovery archive contains no map terrain");
                     vfs.setMapFiles(files);recoveredFrom=newest;
                 } catch(const std::exception& e) {SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Recovery failed",e.what(),win);return 1;}
             }
@@ -244,11 +249,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // kmap/<name>.tnt), same resolution the game uses. An empty name (or --new
     // without --save) starts a fresh blank map instead -- mapPath stays empty so
     // there are no sibling scenario files to load.
-    std::string mapPath;
+    std::string mapPath=recoveredMapPath;
     tak::tnt::Scenario scenario;
     std::unique_ptr<MapView> mapViewPtr;
     if (!mapName.empty()) {
-        for (const auto& [name, path] : tak::hpi::listMaps(vfs)) {
+        if(mapPath.empty())for (const auto& [name, path] : tak::hpi::listMaps(vfs)) {
             std::string lo = name;
             for (char& c : lo) c = char(std::tolower((unsigned char)c));
             std::string want = mapName;
@@ -727,7 +732,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             mLabel[1] = "WIDTH";     mf[1] = "8";  mfChoices[1] = &kSizeOpts;
             mLabel[2] = "HEIGHT";    mf[2] = "8";  mfChoices[2] = &kSizeOpts;
             std::string w0 = world;
-            std::transform(w0.begin(), w0.end(), w0.begin(), ::tolower);
+            std::transform(w0.begin(), w0.end(), w0.begin(), [](unsigned char c){return char(std::tolower(c));});
             if (std::find(kWorldOpts.begin(), kWorldOpts.end(), w0) == kWorldOpts.end())
                 w0 = "aramon";
             mLabel[3] = "WORLD";     mf[3] = w0;   mfChoices[3] = &kWorldOpts;
@@ -788,7 +793,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         const auto* fields=random?generatorDraft.data():mf;
         std::string nm=fields[0].empty()?"Untitled":fields[0],wld=fields[3];
         int wu=std::clamp(std::atoi(fields[1].c_str()),1,64),hu=std::clamp(std::atoi(fields[2].c_str()),1,64);
-        std::transform(wld.begin(),wld.end(),wld.begin(),::tolower);
+        std::transform(wld.begin(),wld.end(),wld.begin(),[](unsigned char c){return char(std::tolower(c));});
         if(random) {
             auto params=generatorParams;params.widthCells=uint16_t(wu*32);params.heightCells=uint16_t(hu*32);
             const char* worlds[]={"aramon","taros","veruna","zhon","creon"};
@@ -834,7 +839,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         } else if(modal==M_SAVEAS) {
             if(!cart::validDocumentName(mf[0])) {openMessage("INVALID NAME","Choose a map name without path separators or reserved filename characters.");return;}
             const auto nextName=mf[0],nextDir=mf[1];
-            const auto path=(std::filesystem::u8path(nextDir)/std::filesystem::u8path(nextName+".kmp")).string();
+            const auto path=pathText(std::filesystem::u8path(nextDir)/std::filesystem::u8path(nextName+".kmp"));
             auto performSave=[&,path,nextName,nextDir] {
                 if(!saveBundle(path)) {openMessage("SAVE FAILED",saveError);return;}
                 mapName=nextName;outDir=nextDir;historyPending=true;commitHistory();history.markSaved();dirty=false;
@@ -1045,17 +1050,17 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     tak::hpi::Archive archive(disk);
                     for(const auto& entry:archive.entries()) if(!entry.isDirectory && entry.path.starts_with("kmap/")) {
                         (*files)[tak::hpi::MountSet::key(entry.path)]=archive.read(entry);
-                        if(std::filesystem::path(entry.path).extension()==".tnt")path=tak::hpi::MountSet::key(entry.path);
+                        if(tak::vpath::extension(entry.path)==".tnt")path=tak::hpi::MountSet::key(entry.path);
                     }
                 } else if(disk.extension()==".tnt") {
-                    const auto base=disk.stem().string();path="kmap/"+base+".tnt";
+                    const auto base=pathText(disk.stem());path="kmap/"+base+".tnt";
                     for(const char* ext:{".tnt",".ota",".crt",".tdf"}) {
-                        const auto input=disk.parent_path()/(base+ext);std::ifstream stream(input,std::ios::binary);
+                        const auto input=disk.parent_path()/std::filesystem::u8path(base+ext);std::ifstream stream(input,std::ios::binary);
                         if(stream)(*files)[tak::hpi::MountSet::key("kmap/"+base+ext)]={std::istreambuf_iterator<char>(stream),{}};
                     }
                 }
                 if(path.empty())throw std::runtime_error("Choose a KMP bundle or TNT map");
-                nextVfs.setMapFiles(files);chosen=std::filesystem::path(path).stem().string();
+                nextVfs.setMapFiles(files);chosen=tak::vpath::stem(path);
             } else path=tak::hpi::findMap(nextVfs,request);
             if(path.empty())throw std::runtime_error("Map not found. Enter an installed map name or a full KMP / TNT path.");
             (void)tak::tnt::Map::load(nextVfs.read(path),path);
@@ -1142,7 +1147,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     bool recoveryFilesPresent=!recoveredFrom.empty();
     std::future<std::string> recoveryJob;
-    Uint64 nextRecovery=SDL_GetTicks64()+60000;
+    Uint64 nextRecovery=recoveryClock()+60000;
     std::string recoveryStatus;
     auto collectRecovery = [&]() {
         if(recoveryJob.valid()) {
@@ -1154,7 +1159,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(!recoveryFilesPresent && !recoveryJob.valid())return;
         collectRecovery();std::error_code ec;
         for(const auto& path:{recoveryFile,recoveredFrom}) if(!path.empty()) {
-            std::filesystem::remove(path,ec);std::filesystem::remove(path.string()+".bak",ec);
+            std::filesystem::remove(path,ec);auto backup=path;backup+=".bak";std::filesystem::remove(backup,ec);
         }
         recoveredFrom.clear();recoveryFilesPresent=false;
     };
@@ -1820,8 +1825,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(interactive && !recoveryFolder.empty()) {
             if(recoveryJob.valid() && recoveryJob.wait_for(std::chrono::seconds(0))==std::future_status::ready)collectRecovery();
             if(!dirty)clearRecovery();
-            else if(!recoveryJob.valid() && SDL_GetTicks64()>=nextRecovery && !historyPending) {
-                nextRecovery=SDL_GetTicks64()+60000;
+            else if(!recoveryJob.valid() && recoveryClock()>=nextRecovery && !historyPending) {
+                nextRecovery=recoveryClock()+60000;
                 try {
                     auto files=cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,mapName);
                     recoveryFilesPresent=true;

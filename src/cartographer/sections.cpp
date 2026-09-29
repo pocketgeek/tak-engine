@@ -3,7 +3,7 @@
 #include "hpi/hpi.h"
 
 #include <algorithm>
-#include <filesystem>
+#include "util/virtualpath.h"
 
 namespace cart {
 
@@ -15,15 +15,15 @@ void SectionLibrary::scan(const tak::hpi::Vfs& vfs, const std::string& world) {
     std::string root = "sections/" + normalized + "/";   // VFS keys are lowercased
     for (const std::string& p : vfs.list("sections")) {
         std::string lo = p;
-        std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
+        std::transform(lo.begin(), lo.end(), lo.begin(), [](unsigned char c){return char(std::tolower(c));});
         if (lo.rfind(root, 0) != 0) continue;
-        if (std::filesystem::path(lo).extension() != ".tnt") continue;
+        if (tak::vpath::extension(lo) != ".tnt") continue;
         // sections/<world>/<category>/<name>.tnt
-        std::filesystem::path fp(p);
+
         SectionRef r;
         r.path = p;
-        r.name = fp.stem().string();
-        r.category = fp.parent_path().filename().string();
+        r.name = tak::vpath::stem(p);
+        r.category = std::string(tak::vpath::filename(std::string_view(p).substr(0,p.find_last_of("/\\"))));
         sections_.push_back(std::move(r));
     }
     std::sort(sections_.begin(), sections_.end(), [](const SectionRef& a, const SectionRef& b) {
