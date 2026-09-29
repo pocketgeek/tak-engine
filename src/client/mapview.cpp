@@ -43,7 +43,6 @@ MapView::~MapView() {
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     invalidateRenderTargets();
     quiesce();
-    chunks_.resetSource();
     comp_.clear();
     for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
     sections_.clear();
@@ -55,7 +54,9 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
 }
 
 void MapView::quiesce() {
-    // Quiesce the decode worker first: it reads map_, which is about to be swapped.
+    // Both workers can read the VFS; callers also use this before remounting it.
+    chunks_.resetSource();
+    // The section decoder also reads map_, which is about to be swapped.
     {
         std::unique_lock<std::mutex> lk(secMu_);
         decodeQueue_.clear();
