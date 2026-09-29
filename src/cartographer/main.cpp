@@ -667,8 +667,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         openScroll=std::clamp(openScroll,0,std::max(0,int(openMatches.size())*20-openList.h));
     };
     bool regionsOpen=false,showRegions=true;
+    bool regionCanvas=false;
+    cart::RegionDrag regionDrag;
     int regionSelected=-1,regionScroll=0,editRegion=-1;
-    SDL_Rect regionList{},regionNew{},regionEdit{},regionDelete{},regionDone{};
+    SDL_Rect regionList{},regionNew{},regionEdit{},regionDelete{},regionDone{},regionOnMap{};
     int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
     tak::crt::Rule* editRule = nullptr;      // M_RULE: rule whose params are edited
     std::vector<std::string> mMsg;           // M_MESSAGE: wrapped text lines
@@ -803,6 +805,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         scenario.starts = std::move(fm.starts);
         mapName = nm;
         selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
+        regionDrag.cancel();regionSelected=-1;
         units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();resetHistory=true;
         selected = sections.list().empty() ? -1 : 0;
         selectedFeat = features.list().empty() ? -1 : 0;
@@ -1104,6 +1107,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             for(auto& [key,t]:featTex)if(t)SDL_DestroyTexture(t);
             featTex.clear();
             selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
+            regionDrag.cancel();regionSelected=-1;
             selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
             edited=false;overlayInvalidated=true;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
             editRule=nullptr;editUnit=draggingUnit=draggingStart=-1;scrGroup=-1;
@@ -1200,6 +1204,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         mapView.editMap()=std::move(map);mapView.tilesEdited();minimapSource=nullptr;
         scenario=tak::tnt::Scenario::parse(state->metadata);
         scen=tak::crt::parse(state->scenario);units=cart::toPlaced(scen);
+        regionDrag.cancel();regionSelected=-1;
         useOnly=state->useOnly;mapName=state->name;dirty=history.dirty();edited=true;
         selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
         editRule=nullptr;draggingUnit=draggingStart=-1;scrGroup=-1;
@@ -1287,6 +1292,30 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 e.motion.x /= kUIScale; e.motion.y /= kUIScale;
                 e.motion.xrel /= kUIScale; e.motion.yrel /= kUIScale;
             }
+            if(regionDrag.active()) {
+                if(e.type==SDL_QUIT || (e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) ||
+                   (e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_RIGHT) ||
+                   (e.type==SDL_WINDOWEVENT && e.window.event==SDL_WINDOWEVENT_FOCUS_LOST)) {
+                    regionDrag.cancel();
+                    if(e.type!=SDL_QUIT)continue;
+                } else if(e.type==SDL_MOUSEMOTION || (e.type==SDL_MOUSEBUTTONUP && e.button.button==SDL_BUTTON_LEFT)) {
+                    const int x=e.type==SDL_MOUSEMOTION?e.motion.x:e.button.x,z=e.type==SDL_MOUSEMOTION?e.motion.y:e.button.y;
+                    regionDrag.update((mapView.offX()+(x-kPaletteW)/mapView.zoom())/16,
+                                      (mapView.offY()+(z-kMenuH)/mapView.zoom())/16,mapView.map().width,mapView.map().height);
+                    if(e.type==SDL_MOUSEBUTTONUP) {
+                        const int index=regionDrag.index;std::string error;
+                        const auto& a=regionDrag.original;const auto& b=regionDrag.preview;
+                        if(index>=0 && a.x1==b.x1 && a.x2==b.x2 && a.z1==b.z1 && a.z2==b.z2) {regionDrag.cancel();continue;}
+                        if(cart::setRegion(scen,index,regionDrag.preview,mapView.map().width,mapView.map().height,error)) {
+                            regionSelected=index<0?int(scen.regions.size())-1:index;historyPending=true;
+                            commitHistory(); // unchanged click does not dirty the document
+                            if(index<0)editMode=MODE_SELECT;
+                        } else openMessage("REGION NOT CHANGED",error);
+                        regionDrag.cancel();
+                    }
+                    continue;
+                } else continue;
+            }
             if(modal==M_GENERATED && generatedPreview) {
                 const bool accept=(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_RETURN) ||
                     (e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,mOK));
@@ -1361,6 +1390,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     if(cart::pointIn(x,y,regionDone))regionsOpen=false;
                     else if(cart::pointIn(x,y,regionNew))openModal(M_REGION);
                     else if(cart::pointIn(x,y,regionEdit) && regionSelected>=0)openModal(M_REGION,regionSelected);
+                    else if(cart::pointIn(x,y,regionOnMap)) {regionsOpen=false;regionCanvas=showRegions=true;editMode=MODE_SELECT;}
                     else if(cart::pointIn(x,y,regionDelete)) {
                         std::string error;
                         if(cart::removeRegion(scen,regionSelected,error)) {regionSelected=std::min(regionSelected,int(scen.regions.size())-1);dirty=true;historyPending=true;}
@@ -1598,7 +1628,20 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && e.button.y>=22 && e.button.y<kMenuH && e.button.x>=400 && e.button.x<656) {
                 editMode=EditMode((e.button.x-400)/64);continue;
             }
-            if(e.type==SDL_KEYDOWN && tool==UNITS) {
+            if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && e.button.y>=25 && e.button.y<41 && e.button.x>=668 && e.button.x<748) {
+                regionCanvas=!regionCanvas;if(regionCanvas) {showRegions=true;editMode=MODE_PLACE;clearArm=false;}continue;
+            }
+            if(regionCanvas && e.type==SDL_KEYDOWN) {
+                if(e.key.keysym.sym==SDLK_ESCAPE) {regionCanvas=false;continue;}
+                if(e.key.keysym.sym==SDLK_RETURN && regionSelected>=0 && regionSelected<int(scen.regions.size())) {openModal(M_REGION,regionSelected);continue;}
+                if(e.key.keysym.sym==SDLK_DELETE) {
+                    std::string error;
+                    if(cart::removeRegion(scen,regionSelected,error)) {regionSelected=-1;dirty=true;historyPending=true;}
+                    else openMessage("REGION NOT DELETED",error);
+                    continue;
+                }
+            }
+            if(e.type==SDL_KEYDOWN && tool==UNITS && !regionCanvas) {
                 const auto key=e.key.keysym.sym;const bool ctrl=e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI);
                 if(ctrl && (key==SDLK_c || key==SDLK_x || key==SDLK_d))selectedUnits.copy(units);
                 if(key==SDLK_DELETE || (ctrl && key==SDLK_x)) {
@@ -1644,9 +1687,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
                        e.key.keysym.sym == SDLK_l) {
                 // Land Lasso: toggle between land (terrain-stamp) and object mode.
-                tool = tool == TERRAIN ? FEATURES : TERRAIN;
+                tool = tool == TERRAIN ? FEATURES : TERRAIN;regionCanvas=false;
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_k) {
-                clearArm = !clearArm;editMode=MODE_PLACE;    // Edit -> Clear Area (drag a box)
+                clearArm = !clearArm;editMode=MODE_PLACE;regionCanvas=false;    // Edit -> Clear Area (drag a box)
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_n) {
                 // File -> New Map. Guard unsaved edits (New replaces the whole map).
                 if (dirty) openConfirm("NEW MAP", "Discard unsaved changes and start "
@@ -1669,6 +1712,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_g) {
                 showGrid = !showGrid;   // View -> Grid
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_TAB) {
+                regionCanvas=false;
                 tool = Tool((int(tool) + 1) % 4);   // cycle TERRAIN->FEATURES->UNITS->STARTS
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym >= SDLK_1 &&
                        e.key.keysym.sym <= SDLK_5) {
@@ -1678,7 +1722,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                        e.button.button == SDL_BUTTON_LEFT && e.button.y >=22 && e.button.y < kMenuH) {
                 // Toolbar buttons: TERRAIN | FEATURES | STARTS (each 72px).
                 int bi = (e.button.x - 96) / 72;
-                if (bi >= 0 && bi < 4) tool = Tool(bi);
+                if (bi >= 0 && bi < 4) {tool=Tool(bi);regionCanvas=false;}
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x < kPaletteW &&
                        e.button.y >= kPaletteTop && e.button.y < h - kStatusH) {
@@ -1686,6 +1730,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if(tool==UNITS || tool==STARTS)row=(e.button.y-kPaletteTop+paletteScroll)/26;
                 else row=((e.button.y-kPaletteTop+paletteScroll)/kCellH)*cols+(e.button.x-4)/(kThumb+4);
                 if(row>=0 && row<int(paletteItems.size())) {
+                    regionCanvas=false;
                     const int index=paletteItems[size_t(row)];
                     if(tool==UNITS)selectedType=index;
                     else if(tool==FEATURES)selectedFeat=index;
@@ -1708,6 +1753,19 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW && e.button.y>=kMenuH && e.button.y<h-kStatusH) {
                 if(editMode==MODE_PAN)continue;
+                if(regionCanvas) {
+                    const float x=(mapView.offX()+(e.button.x-kPaletteW)/mapView.zoom())/16;
+                    const float z=(mapView.offY()+(e.button.y-kMenuH)/mapView.zoom())/16;
+                    if(regionDrag.begin(scen.regions,regionSelected,x,z,5/(mapView.zoom()*16),editMode==MODE_PLACE,mapView.map().width,mapView.map().height)) {
+                        regionSelected=regionDrag.index;
+                        if(editMode==MODE_ERASE) {
+                            regionDrag.cancel();std::string error;
+                            if(cart::removeRegion(scen,regionSelected,error)) {regionSelected=-1;dirty=true;historyPending=true;}
+                            else openMessage("REGION NOT DELETED",error);
+                        } else if(e.button.clicks>=2 && regionSelected>=0) {regionDrag.cancel();openModal(M_REGION,regionSelected);}
+                    } else regionSelected=-1;
+                    continue;
+                }
                 if(editMode==MODE_ERASE) {
                     if(tool==FEATURES)placeFeature(e.button.x,e.button.y,true);
                     else if(tool==UNITS) {const int hit=unitAt(e.button.x,e.button.y);if(hit>=0) {selectedUnits.indices={hit};selectedUnits.remove(units);dirty=true;historyPending=true;}}
@@ -1813,6 +1871,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
                        e.motion.x >= kPaletteW) {
                 if(editMode==MODE_PAN) {mapView.setOffset(mapView.offX()-pointerDX/mapView.zoom(),mapView.offY()-pointerDZ/mapView.zoom());continue;}
+                if(regionCanvas)continue;
                 if(editMode==MODE_ERASE) {if(tool==FEATURES)placeFeature(e.motion.x,e.motion.y,true);continue;}
                 if(editMode==MODE_SELECT && tool!=UNITS) {
                     int cx,cz;
@@ -1912,13 +1971,21 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 SDL_RenderDrawLine(ren, 0, int(sy), canvasW, int(sy));
             }
         }
-        if(showRegions)for(const auto& region:scen.regions) {
+        auto drawRegion=[&](const tak::crt::Region& region,bool selected) {
             const float zoom=mapView.zoom();
             SDL_FRect box{(std::min(region.x1,region.x2)*16-mapView.offX())*zoom,(std::min(region.z1,region.z2)*16-mapView.offY())*zoom,
                 (std::abs(region.x2-region.x1)+1)*16*zoom,(std::abs(region.z2-region.z1)+1)*16*zoom};
             SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);SDL_SetRenderDrawColor(ren,80,190,245,45);SDL_RenderFillRectF(ren,&box);
-            SDL_SetRenderDrawColor(ren,120,215,255,230);SDL_RenderDrawRectF(ren,&box);
+            SDL_SetRenderDrawColor(ren,selected?255:120,selected?220:215,selected?100:255,230);SDL_RenderDrawRectF(ren,&box);
+            if(selected)for(int y=0;y<3;++y)for(int x=0;x<3;++x)if(x!=1 || y!=1) {
+                SDL_FRect handle{box.x+box.w*x/2-3,box.y+box.h*y/2-3,6,6};SDL_RenderFillRectF(ren,&handle);
+            }
             cart::drawText(ren,region.name,int(box.x)+3,int(box.y)+3,1,180,235,255);
+        };
+        if(showRegions || regionCanvas) {
+            for(int i=0;i<int(scen.regions.size());++i)
+                drawRegion(regionDrag.active() && regionDrag.index==i?regionDrag.preview:scen.regions[i],regionCanvas && regionSelected==i);
+            if(regionDrag.active() && regionDrag.index<0)drawRegion(regionDrag.preview,true);
         }
         // Placed features: draw each non-empty feature-plane cell's sprite at its
         // cell, anchored like the game. Culled to the visible canvas.
@@ -2002,7 +2069,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         }
         // Preview the actual snapped stamp / feature / footprint before committing.
         int previewX,previewZ;SDL_GetMouseState(&previewX,&previewZ);previewX=int(previewX/kUIScale);previewZ=int(previewZ/kUIScale);
-        if(editMode==MODE_PLACE && modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && menuOpen<0 &&
+        if(editMode==MODE_PLACE && !regionCanvas && modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && menuOpen<0 &&
            previewX>=kPaletteW && previewZ>=kMenuH && previewZ<h-kStatusH && !cart::pointIn(previewX,previewZ,miniRect)) {
             const float wx=mapView.offX()+(previewX-kPaletteW)/mapView.zoom(),wz=mapView.offY()+(previewZ-kMenuH)/mapView.zoom();
             SDL_FRect box{};SDL_Texture* ghost=nullptr;
@@ -2092,7 +2159,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         const char* names[4] = {"TERRAIN", "FEATURES", "UNITS", "STARTS"};
         for (int t = 0; t < 4; ++t) {
             int bx = 96 + t * 72;
-            bool active = int(tool) == t;
+            bool active = !regionCanvas && int(tool) == t;
             fillRect(ren, bx, 25, 68, 16, active ? 90 : 60, active ? 80 : 62,
                      active ? 40 : 74);
             cart::drawText(ren, names[t], bx + 8, 29, 1, active ? 255 : 190,
@@ -2101,6 +2168,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
         static const char* modes[]={"PLACE","SELECT","ERASE","PAN"};
         for(int i=0;i<4;++i)cart::drawButton(ren,400+i*64,25,60,16,modes[i],int(editMode)==i);
+        cart::drawButton(ren,668,25,80,16,"REGIONS",regionCanvas);
 
         for(size_t i=0;i<menuNames.size();++i) {
             const int x=96+int(i)*72;
@@ -2140,6 +2208,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 ((myg-kPaletteTop+paletteScroll)/kCellH)*cols+(mxg-4)/(kThumb+4);
             if(row>=0 && row<int(paletteItems.size()))status=paletteLabel(paletteItems[size_t(row)]);
         }
+        if(regionCanvas)status=coord+"   REGIONS: PLACE DRAWS; SELECT MOVES/RESIZES; ENTER NAMES; ESC CANCELS"+(dirty?std::string("   UNSAVED"):std::string("   SAVED"));
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
 
         // Clear Area drag box (screen-space rectangle).
@@ -2156,6 +2225,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             regionNew=cart::drawButton(ren,ct.x,ct.y,64,18,"NEW",false);
             regionEdit=cart::drawButton(ren,ct.x+72,ct.y,64,18,"EDIT",false);
             regionDelete=cart::drawButton(ren,ct.x+144,ct.y,64,18,"DELETE",false);
+            regionOnMap=cart::drawButton(ren,ct.x+216,ct.y,96,18,"EDIT ON MAP",false);
             regionDone=cart::drawButton(ren,ct.x+ct.w-64,ct.y,64,18,"DONE",true);
             regionList={ct.x,ct.y+26,ct.w,ct.h-26};SDL_RenderSetClipRect(ren,&regionList);
             for(int i=0;i<int(scen.regions.size());++i) {

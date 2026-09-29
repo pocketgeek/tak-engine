@@ -103,6 +103,57 @@ static int overlayWorkflow(const char* data) {
     if(result || failed || stage!=3) {std::cerr<<"overlay menu workflow failed\n";return 1;}
     std::cout<<"PASS: background water overlay, unchanged document and hide control\n";return 0;
 }
+static int regionWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-regions-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);
+    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    bool failed=false;int lastFrame=0;
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto mouse=[&](Uint32 type,int x,int y) {
+            SDL_Event e{};e.type=type;
+            if(type==SDL_MOUSEMOTION) {e.motion.state=SDL_BUTTON_LMASK;e.motion.x=int(x*sx);e.motion.y=int(y*sy);}
+            else {e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);}
+            SDL_PushEvent(&e);
+        };
+        auto click=[&](int x,int y) {mouse(SDL_MOUSEBUTTONDOWN,x,y);mouse(SDL_MOUSEBUTTONUP,x,y);};
+        auto drag=[&](int x,int y,int toX,int toY) {mouse(SDL_MOUSEBUTTONDOWN,x,y);mouse(SDL_MOUSEMOTION,toX,toY);mouse(SDL_MOUSEBUTTONUP,toX,toY);};
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        switch(frame) {
+        case 0: key(SDLK_1);click(700,32);break;
+        case 1: drag(361,205,521,365);break; // cells 10,10 through 20,20
+        case 2: failed|=!dirty;drag(441,285,473,317);break; // move two cells
+        case 3: drag(569,413,601,429);break; // resize right/bottom by two/one cells
+        case 4: click(601,429);key(SDLK_z,KMOD_CTRL);break; // no-motion click must not consume undo
+        case 5: key(SDLK_y,KMOD_CTRL);click(480,330);key(SDLK_RETURN);break;
+        case 6: text("Canvas region");key(SDLK_RETURN);break;
+        case 7: mouse(SDL_MOUSEBUTTONDOWN,393,333);mouse(SDL_MOUSEMOTION,280,333);key(SDLK_ESCAPE);mouse(SDL_MOUSEBUTTONUP,280,333);break;
+        case 8: key(SDLK_s,KMOD_CTRL);break;
+        case 9: failed|=dirty;key(SDLK_RETURN);key(SDLK_o,KMOD_CTRL);break;
+        case 10: text((root/"Ulasem Arena.kmp").string());key(SDLK_RETURN);break;
+        case 11: failed|=dirty;key(SDLK_s,KMOD_CTRL);break; // serialize the reopened document too
+        case 12: failed|=dirty;key(SDLK_RETURN);break;
+        case 13: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        default: if(frame>20) {failed=true;key(SDLK_ESCAPE);key(SDLK_RETURN);}
+        }
+    });
+    try {
+        if(result || failed || lastFrame>20)throw std::runtime_error("region canvas UI workflow failed");
+        tak::hpi::Archive archive(root/"Ulasem Arena.kmp");bool found=false;
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {
+            const auto scenario=tak::crt::parse(archive.read(entry));
+            for(const auto& r:scenario.regions)if(r.name=="Canvas region") {
+                if(r.x1!=12 || r.z1!=12 || r.x2!=24 || r.z2!=23)throw std::runtime_error("region bounds differ after draw/move/resize/cancel/undo/reopen");
+                found=true;
+            }
+        }
+        if(!found)throw std::runtime_error("canvas region not saved");
+        fs::remove_all(root);std::cout<<"PASS: region canvas drawing, movement, handles, cancellation, undo/redo and reopen\n";return 0;
+    } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
+}
 static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
     namespace fs=std::filesystem;const fs::path root=folder;
     fs::create_directories(root);
@@ -149,6 +200,7 @@ static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
 }
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],std::string(argv[4])=="restore");
+    if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);
     if(argc!=2)return 2;

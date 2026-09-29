@@ -278,6 +278,22 @@ LeakSanitizer. The terrain harness now requests SDL's DBus shutdown on quit,
 matching the editor test environment; its first leak run identified SDL's
 otherwise-retained process-global DBus allocations.
 
+## Region canvas checkpoint
+
+The Regions toolbar button opens canvas authoring. Place drags out a uniquely
+named rectangle; Select moves it or resizes its eight edge/corner handles. Enter
+or double-click opens its name/bounds inspector. The region list also has an
+Edit on Map button. Erase/Delete retains the existing referenced-region guard.
+Choose another tool or press Escape to leave region mode.
+
+Gestures preview without modifying the document until release. Escape,
+right-click or focus loss cancels; movement preserves dimensions at map edges,
+and resizing cannot invert the rectangle. Each completed gesture is one undo
+step, and clicking a handle without movement does not create a history entry.
+The seven Release editor tests pass, including a new SDL workflow that draws,
+moves, resizes, cancels, undoes/redoes, renames and saves/reopens a region. Engine
+CRT coordinates and trigger behavior are unchanged.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect concurrent
@@ -288,7 +304,7 @@ otherwise-retained process-global DBus allocations.
    model previews where useful, additional view controls and live minimap refresh.
 4. Placed-unit occupancy in overlays, richer clickable map validation,
    reachable starts/mana/naval-output checks, full reproducible generator controls.
-5. Region canvas manipulation, expanded typed-rule validation, rule names/objective templates,
+5. Expanded typed-rule validation, rule names/objective templates,
    temporary-map playtesting through the normal client/server launch path.
 6. Coalescing pending terrain work, asynchronous expensive operations, large-map
    profiling, broader document/UI coverage and final documentation cleanup.

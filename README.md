@@ -181,7 +181,10 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   the original game data. Individual missions remain subject to ongoing fixes.
 - **Replays:** open recorded matches through **Settings → Load Replay**.
 - **Map editing:** Cartographer creates and edits terrain, objects, start
-  positions, and scenario rules, and exports `.kmp` map bundles.
+  positions, named regions, and scenario rules, and exports `.kmp` map bundles.
+  The **Regions** tool draws, moves and resizes trigger areas on the map;
+  **Enter** opens the selected region's name and coordinates. Editing supports
+  undo/redo and periodic recovery copies.
 
 Each ordinary skirmish starts with your Monarch. Build your economy and army;
 Zhon's mobile conjurers replace the conventional keep-based production chain.

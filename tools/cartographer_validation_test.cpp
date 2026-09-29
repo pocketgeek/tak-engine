@@ -13,6 +13,22 @@
 static void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 int main() {
     try {
+        cart::RegionDrag drag;std::vector<tak::crt::Region> regions{{"Region 1",10,10,20,20}};
+        check(drag.begin(regions,-1,30,30,.5f,true,64,64),"begin region drawing");
+        drag.update(25,22,64,64);
+        check(drag.preview.name=="Region 2" && drag.preview.x1==25 && drag.preview.z1==22 && drag.preview.x2==30 && drag.preview.z2==30,"reversed region drawing and unique default name");
+        drag.cancel();check(regions.size()==1 && !drag.active(),"cancel leaves source regions unchanged");
+        check(drag.begin(regions,0,15,15,.5f,false,64,64) && drag.part==cart::RegionDrag::Move,"region body starts move");
+        drag.update(-100,1000,64,64);
+        check(drag.preview.x1==0 && drag.preview.x2==10 && drag.preview.z1==53 && drag.preview.z2==63,"region move clamps without changing size");
+        check(drag.begin(regions,0,20.5f,20.5f,1,false,64,64),"pick corner with grab offset");
+        drag.update(20.5f,20.5f,64,64);
+        check(drag.preview.x2==20 && drag.preview.z2==20,"click near resize handle does not alter bounds");
+        drag.update(24.5f,23.5f,64,64);
+        check(drag.preview.x2==24 && drag.preview.z2==23 && drag.preview.x1==10,"corner drag changes both dimensions");
+        drag.update(-100,-100,64,64);
+        check(drag.preview.x2==10 && drag.preview.z2==10,"resize cannot invert region");
+        check(!drag.begin(regions,-1,-.1f,3,.5f,true,64,64),"negative canvas coordinate is outside map");
         std::vector<tak::crt::RuleGroup> rules(2);
         rules[0].conditions.push_back({0,{}});rules[0].actions.push_back({18,{"100"}});rules[0].actions.push_back({14,{}});
         rules[1].conditions.push_back({1,{"60"}});rules[1].actions.push_back({5,{}});
