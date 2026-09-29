@@ -1,5 +1,6 @@
 #include "cartographer/document.h"
 #include "cartographer/history.h"
+#include "cartographer/selection.h"
 #include <random>
 #include <chrono>
 #include <fstream>
@@ -47,6 +48,28 @@ int main() {
         check(!cart::writeDocumentFiles(root,{{"duplicate",{1}},{"duplicate",{2}}},error),"reject duplicate members");
         check(!cart::writeDocumentBundle(root/"missing"/"Review.kmp",files,error),"missing folder fails");
         check(cart::validDocumentName("My Map") && !cart::validDocumentName("bad/name"),"document names");
+        std::vector<cart::PlacedUnit> selectionUnits(3);
+        selectionUnits[0].x=20;selectionUnits[0].z=30;selectionUnits[0].name="Named";
+        selectionUnits[0].health=73;selectionUnits[0].player=4;
+        selectionUnits[1].x=60;selectionUnits[1].z=50;
+        selectionUnits[2].x=90;selectionUnits[2].z=90;
+        cart::UnitSelection selection;
+        selection.box(selectionUnits,65,55,15,25,false);
+        check(selection.indices==std::set<int>({0,1}),"reversed box selects contained units");
+        selection.beginDrag(selectionUnits,20,30);
+        check(selection.drag(selectionUnits,-100,500,100,100),"group drag moves");
+        check(selectionUnits[0].x==8 && selectionUnits[1].x==48 && selectionUnits[1].z==92,
+              "group drag clamps together and preserves spacing");
+        selection.copy(selectionUnits);
+        check(selection.paste(selectionUnits,95,95,100,100),"paste group near edge");
+        check(selectionUnits.size()==5 && selectionUnits[3].name.empty() && selectionUnits[3].health==73 && selectionUnits[3].player==4,
+              "paste preserves properties without duplicating trigger names");
+        check(selectionUnits[4].x-selectionUnits[3].x==40 && selectionUnits[4].z-selectionUnits[3].z==20,
+              "paste preserves relative placement");
+        check(selection.remove(selectionUnits) && selectionUnits.size()==3 && selection.indices.empty(),"delete selected group only");
+        check(!selection.paste(selectionUnits,0,0,30,30),"reject group too large for map");
+        selectionUnits[1].x=200;selection.indices={0,1};selection.beginDrag(selectionUnits,0,0);
+        check(!selection.drag(selectionUnits,50,50,100,100),"oversize selection cannot distort group");
         cart::History history;
         auto initial=cart::historyState(map,meta,scenario,{}, {},"Review");
         history.reset(initial,true);

@@ -41,14 +41,34 @@ Validation so far:
 - Both tests passed in Release and under AddressSanitizer/LeakSanitizer.
 - The original rule-only fixture now exports its full 712-byte CRT and round-trips.
 
+## Browser and selection checkpoint
+
+Implemented searchable terrain/feature palettes and unit faction/role filters,
+with friendly unit names, internal identifiers and hover details. Place, Select,
+Erase and Pan are separate controls; right-drag always pans. Unit selection
+supports boxes, group dragging, copy/cut/paste, duplicate, deletion and bulk
+property edits. Copies retain statistics and ownership but clear unique names
+so they cannot accidentally alias scenario trigger references. Group operations
+preserve relative spacing and reject groups that cannot fit within the map.
+
+The canvas now shows translucent snapped placement previews, selected-unit
+footprints/facing, and a clickable minimap with the current viewport and starts.
+The minimap refreshes after save/replacement; continuous terrain-edit refresh is
+still pending. Starts have a player list with click-to-center navigation.
+
+Release editor/document tests pass, including the new selection boundary and
+property-preservation checks. Captured and inspected Ulasem Arena with the new
+browser and minimap. This checkpoint has not yet had Windows/macOS interactive
+verification or full browser mouse-interaction coverage.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
    editing/recovery lifecycle edge cases.
 2. Searchable Open/recent maps, remembered window/layout/scale, better font and
    multiline fields, complete cross-platform packaging/launch usability.
-3. Search/category/faction/role browsers, placement previews, separate selection/
-   erase/pan modes, multi-selection/clipboard/inspector, minimap and view controls.
+3. Browser/selection interaction coverage, layer protection, feature selection,
+   model previews where useful, additional view controls and live minimap refresh.
 4. Engine-backed terrain/buildability overlays, clickable map validation,
    reachable starts/mana/naval-output checks, full reproducible generator controls.
 5. Region authoring, named units, typed rule inputs, rule reuse/reordering,

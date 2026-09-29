@@ -4,17 +4,9 @@
 // stack (hpi VFS, tnt loader, terrain compositor, MapView) so terrain looks
 // byte-identical to the game.
 //
-// Working today: mount a retail install, open/create a .tnt map (flat stamp or
-// the engine's procedural generator), render the terrain with pan/zoom in the
-// editor chrome, paint with the section-prefab stamp brush (sections.h), place
-// features (features.h) and units (units.h, via the shared tak::crt), and save.
-// triggers.h carries the RE'd condition/action opcode tables, so a rule can be
-// read and formatted; authoring them in a dialog, the remaining property
-// dialogs, and the HPI/.kmp bundle writer are still to come.
-//
-// (This said "Phase 0 skeleton ... painting tools, the object model, property
-// dialogs and the trigger system land in later phases" long after several of
-// those had landed.)
+// Document serialization and undo live in document/history; selection operations
+// live in selection.h. This file wires the desktop UI and editor rendering.
+// See docs/cartographer-improvements-progress.md for completed and pending work.
 
 #include <SDL.h>
 
@@ -23,6 +15,7 @@
 #include "cartographer/document.h"
 #include "cartographer/history.h"
 #include "cartographer/textedit.h"
+#include "cartographer/selection.h"
 #include <fstream>
 #include <charconv>
 #include "cartographer/features.h"
@@ -39,6 +32,7 @@
 #include "util/jpeg.h"
 #include "hpi/hpi.h"
 #include "tnt/mapgen.h"
+#include "sim/matchsetup.h"
 #include "tnt/ota.h"
 #include "util/png.h"
 
@@ -309,6 +303,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // unedited save stays byte-identical to the source; an edited one gets a
     // fresh overview reflecting the paint).
     bool edited = false;
+    bool minimapRefreshNeeded=true;
     // Unsaved-changes flag for the exit prompt. Set by every edit (terrain,
     // features, units, starts, scenario props, use-only, triggers), cleared on a
     // successful save. Broader than `edited` (which only gates minimap regen).
@@ -330,6 +325,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
             std::transform(wld.begin(),wld.end(),wld.begin(),[](unsigned char c){return char(std::tolower(c));});
             cart::generateMinimaps(mapView.editMap(),mapView.compositor(),cart::loadWorldPalette(vfs,wld));
+            minimapRefreshNeeded=true;
         }
         return cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,name);
     };
@@ -363,6 +359,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     // Unit-type list for the palette (units + scen loaded above, before saveMap).
     std::vector<std::string> unitTypes = cart::unitTypeNames(vfs);
+    tak::sim::TypeRegistry unitRegistry;tak::sim::setupRegistry(unitRegistry,vfs,false);
     std::fprintf(stderr, "cartographer: %zu placed units, %zu unit types\n",
                  units.size(), unitTypes.size());
     std::fprintf(stderr, "cartographer: %zu sections for world '%s'\n",
@@ -410,6 +407,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     // --- Interactive editor state ---------------------------------------------
     constexpr int kPaletteW = 200;   // left section-palette panel
+    constexpr int kPaletteTop=kMenuH+76;
+    constexpr int kCellH=106;
     constexpr int kThumb = 88;       // section thumbnail cell (px)
     const int cols = std::max(1, (kPaletteW - 8) / (kThumb + 4));
     int selected = sections.list().empty() ? -1 : 0;   // section index (TERRAIN)
@@ -489,9 +488,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int currentPlayer = 0;                            // player id new units get
     int draggingUnit = -1;                            // index into units while dragging
     // 8 player marker colours.
-    static const Uint8 kPlayerCol[8][3] = {
+    static const Uint8 kPlayerCol[9][3] = {
         {80,120,255},{230,70,60},{80,200,90},{235,210,80},
-        {200,90,220},{80,210,220},{240,140,40},{200,200,210}};
+        {200,90,220},{80,210,220},{240,140,40},{200,200,210},{150,150,150}};
     // Placed unit whose marker is near screen (mx,my), or -1.
     auto unitAt = [&](int mx, int my) -> int {
         for (int i = int(units.size()) - 1; i >= 0; --i) {
@@ -502,6 +501,56 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         return -1;
     };
     Tool tool = TERRAIN;
+    enum EditMode { MODE_PLACE,MODE_SELECT,MODE_ERASE,MODE_PAN };
+    EditMode editMode=MODE_PLACE;
+    cart::UnitSelection selectedUnits;
+    bool selectionBox=false,selectionAppend=false;
+    int selectionX0=0,selectionZ0=0,selectionX1=0,selectionZ1=0;
+    std::string paletteSearch;
+    cart::TextEdit paletteEditor;
+    bool paletteFocus=false;
+    int categoryIndex=0,factionIndex=0;
+    std::vector<int> paletteItems;
+    std::vector<std::string> paletteCategories{"ALL"};
+    std::string paletteKey;
+    auto lowerText=[](std::string value) {std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return char(std::tolower(c));});return value;};
+    auto unitInfo=[&](int index) {return index>=0 && index<int(unitTypes.size())?unitRegistry.find(lowerText(unitTypes[size_t(index)])):nullptr;};
+    auto unitCategory=[&](int index)->std::string {
+        const auto* type=unitInfo(index);if(!type)return "OTHER";
+        if(type->onMana)return "MANA";
+        if(type->isBuilder)return "BUILDERS";
+        if(type->isStructure())return "BUILDINGS";
+        if(type->canFly)return "AIR";
+        if(type->domain==tak::sim::UnitType::Domain::Water)return "NAVAL";
+        return "GROUND";
+    };
+    auto paletteLabel=[&](int index) {
+        if(tool==UNITS) {const auto* info=unitInfo(index);return info?info->name+" ("+unitTypes[size_t(index)]+")":unitTypes[size_t(index)];}
+        if(tool==FEATURES)return features.list()[size_t(index)].name;
+        if(tool==STARTS)return "PLAYER "+std::to_string(scenario.starts[size_t(index)].number);
+        return sections.list()[size_t(index)].name;
+    };
+    auto refreshPalette=[&]() {
+        const auto key=std::to_string(int(tool))+"/"+std::to_string(categoryIndex)+"/"+std::to_string(factionIndex)+"/"+world+"/"+paletteSearch+"/"+std::to_string(scenario.starts.size());
+        if(key==paletteKey)return;
+        const bool toolChanged=paletteKey.empty() || paletteKey[0]!=key[0];
+        paletteKey=key;
+        const int count=tool==UNITS?int(unitTypes.size()):tool==FEATURES?int(features.list().size()):tool==STARTS?int(scenario.starts.size()):int(sections.list().size());
+        auto category=[&](int i) {return tool==UNITS?unitCategory(i):tool==FEATURES?features.list()[size_t(i)].category:tool==STARTS?std::string("STARTS"):sections.list()[size_t(i)].category;};
+        std::set<std::string> categories;for(int i=0;i<count;++i)categories.insert(category(i));
+        paletteCategories={"ALL"};paletteCategories.insert(paletteCategories.end(),categories.begin(),categories.end());
+        if(toolChanged || categoryIndex>=int(paletteCategories.size()))categoryIndex=0;
+        paletteItems.clear();const auto query=lowerText(paletteSearch);
+        static const char* sides[]={"","ara","tar","ver","zon","cre"};
+        for(int i=0;i<count;++i) {
+            if(categoryIndex && category(i)!=paletteCategories[size_t(categoryIndex)])continue;
+            if(tool==UNITS && factionIndex && !lowerText(unitTypes[size_t(i)]).starts_with(sides[factionIndex]))continue;
+            if(!query.empty() && lowerText(paletteLabel(i)+" "+category(i)).find(query)==std::string::npos)continue;
+            paletteItems.push_back(i);
+        }
+        paletteScroll=0;
+    };
+
     // Place/erase a feature in the .tnt feature plane at the mouse cell.
     auto placeFeature = [&](int mx, int my, bool erase) {
         if (selectedFeat < 0 || mx < kPaletteW) return;
@@ -541,11 +590,27 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         return -1;
     };
 
+    std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> minimapTexture(nullptr,SDL_DestroyTexture);
+    const uint8_t* minimapSource=nullptr;
+    bool minimapDrag=false;
+    auto refreshMinimap=[&]() {
+        const auto& map=mapView.map();
+        if(map.minimap.empty()) {minimapTexture.reset();minimapSource=nullptr;return;}
+        if(!minimapRefreshNeeded && map.minimap.data()==minimapSource)return;
+        auto palette=cart::loadWorldPalette(vfs,world);
+        std::vector<uint8_t> rgba(map.minimap.size()*4);
+        for(size_t i=0;i<map.minimap.size();++i) {const auto& color=palette.rgba[map.minimap[i]];std::copy(color,color+4,rgba.begin()+i*4);}
+        minimapTexture.reset(SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,map.minimapW,map.minimapH));
+        if(minimapTexture) {SDL_UpdateTexture(minimapTexture.get(),nullptr,rgba.data(),map.minimapW*4);SDL_SetTextureScaleMode(minimapTexture.get(),SDL_ScaleModeLinear);}
+        minimapSource=map.minimap.data();minimapRefreshNeeded=false;
+    };
+
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
     enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH };
-    static constexpr int kMaxFields = 6;
+    static constexpr int kMaxFields = 9;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
+    std::string mfOriginal[kMaxFields];
     std::string mf[kMaxFields];              // field buffers
     bool mfNumeric[kMaxFields] = {};
     // A field with a non-null choice list is a dropdown (click opens the list),
@@ -625,16 +690,20 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             mLabel[3] = "WORLD";     mf[3] = w0;   mfChoices[3] = &kWorldOpts;
         } else if (m == M_UNIT && unitIdx >= 0 && unitIdx < int(units.size())) {
             const auto& u = units[size_t(unitIdx)];
-            mTitle = "UNIT PROPERTIES"; mN = 6;
-            mLabel[0] = "PLAYER (0-7)";  mf[0] = std::to_string(u.player);      mfNumeric[0] = true;
+            mTitle = selectedUnits.indices.size()>1?"SELECTED UNIT PROPERTIES":"UNIT PROPERTIES"; mN = 9;
+            mLabel[0] = "PLAYER (0-7, 8=NEUTRAL)";  mf[0] = std::to_string(u.player);      mfNumeric[0] = true;
             mLabel[1] = "HEALTH %";      mf[1] = std::to_string(u.health);      mfNumeric[1] = true;
             mLabel[2] = "ARMOR %";       mf[2] = std::to_string(u.armor);       mfNumeric[2] = true;
             mLabel[3] = "WEAPON %";      mf[3] = std::to_string(u.weapon);      mfNumeric[3] = true;
             mLabel[4] = "VETERAN (0-9)"; mf[4] = std::to_string(u.veteran);     mfNumeric[4] = true;
             mLabel[5] = "ANGLE (DEG)";   mf[5] = std::to_string(int(u.angle));  mfNumeric[5] = true;
+            mLabel[6] = selectedUnits.indices.size()>1?"NAME (SINGLE UNIT ONLY)":"UNIQUE NAME";mf[6]=u.name;mfNumeric[6]=false;
+            mLabel[7] = "X (CELL)";mf[7]=std::to_string(int(u.x/16));mfNumeric[7]=true;
+            mLabel[8] = "Z (CELL)";mf[8]=std::to_string(int(u.z/16));mfNumeric[8]=true;
         } else {
             return;   // nothing to open
         }
+        for(int i=0;i<mN;++i)mfOriginal[i]=mf[i];
         modal = m;fieldEditor.focus(mf[mfocus]);
         SDL_StartTextInput();
     };
@@ -660,7 +729,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             return;
         }
         mapView.quiesce();
-        mapView.editMap() = std::move(fm.map);
+        mapView.editMap() = std::move(fm.map);minimapSource=nullptr;
         mapView.tilesEdited();
         mapView.setOffset(0, 0);
         world = wld;
@@ -669,6 +738,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         scenario.missionName = nm;
         scenario.starts = std::move(fm.starts);
         mapName = nm;
+        selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
         units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();resetHistory=true;
         selected = sections.list().empty() ? -1 : 0;
         selectedFeat = features.list().empty() ? -1 : 0;
@@ -717,7 +787,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             for(const auto& region:scen.regions) if(region.x2>=wu*32 || region.z2>=hu*32) {
                 openMessage("RESIZE MAP","Resize or remove regions outside the new map first.");return;
             }
-            mapView.quiesce();
+            mapView.quiesce();minimapSource=nullptr;
             std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
             cart::resizeMap(mapView.editMap(), mapView.compositor(),
                             cart::loadWorldPalette(vfs, wld), wu, hu);
@@ -728,15 +798,32 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             applyNewMap(false);   // CREATE = flat stamp; closes on success
             return;               // (RANDOM is handled at its button click)
         } else if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size())) {
-            auto& u = units[size_t(editUnit)];
-            u.player  = std::clamp(std::atoi(mf[0].c_str()), 0, 7);
-            u.health  = std::clamp(std::atoi(mf[1].c_str()), 0, 100);
-            u.armor   = std::clamp(std::atoi(mf[2].c_str()), 0, 1000);
-            u.weapon  = std::clamp(std::atoi(mf[3].c_str()), 0, 1000);
-            u.veteran = std::clamp(std::atoi(mf[4].c_str()), 0, 9);
-            int a = std::atoi(mf[5].c_str()) % 360; if (a < 0) a += 360;
-            u.angle = float(a);
-            unitsEdited = true; dirty = true; historyPending=true;
+            const auto& origin=units[size_t(editUnit)];
+            auto targets=selectedUnits.indices;
+            if(!targets.count(editUnit))targets={editUnit};
+            const float dx=mf[7]==mfOriginal[7]?0:std::atoi(mf[7].c_str())*16.0f+8-origin.x;
+            const float dz=mf[8]==mfOriginal[8]?0:std::atoi(mf[8].c_str())*16.0f+8-origin.z;
+            if(targets.size()==1 && mf[6]!=origin.name) {
+                if(mf[6].size()>255) {openMessage("UNIT NAME","Use a name shorter than 256 bytes.");return;}
+                for(int i=0;i<int(units.size());++i)if(i!=editUnit && !mf[6].empty() && lowerText(units[i].name)==lowerText(mf[6])) {
+                    openMessage("UNIT NAME","That unique name is already used by another unit.");return;
+                }
+            }
+            for(int i:targets)if(i>=0 && i<int(units.size()) && (units[i].x+dx<0 || units[i].z+dz<0 || units[i].x+dx>=mapView.map().width*16 || units[i].z+dz>=mapView.map().height*16)) {
+                openMessage("UNIT POSITION","The selection would extend outside the map.");return;
+            }
+            for(int i:targets)if(i>=0 && i<int(units.size())) {
+                auto& u=units[size_t(i)];
+                if(mf[0]!=mfOriginal[0])u.player=std::clamp(std::atoi(mf[0].c_str()),0,8);
+                if(mf[1]!=mfOriginal[1])u.health=std::clamp(std::atoi(mf[1].c_str()),0,100);
+                if(mf[2]!=mfOriginal[2])u.armor=std::clamp(std::atoi(mf[2].c_str()),0,1000);
+                if(mf[3]!=mfOriginal[3])u.weapon=std::clamp(std::atoi(mf[3].c_str()),0,1000);
+                if(mf[4]!=mfOriginal[4])u.veteran=std::clamp(std::atoi(mf[4].c_str()),0,9);
+                if(mf[5]!=mfOriginal[5]) {int angle=std::atoi(mf[5].c_str())%360;u.angle=float(angle<0?angle+360:angle);}
+                if(targets.size()==1)u.name=mf[6];
+                u.x+=dx;u.z+=dz;
+            }
+            unitsEdited=true;dirty=true;historyPending=true;
         } else if (modal == M_RULE && editRule) {
             for (int i = 0; i < mN; ++i) editRule->slot[i] = mf[i];
             for (int i = mN; i < 5; ++i) editRule->slot[i].clear();
@@ -851,7 +938,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             auto nextUnits=cart::toPlaced(nextScenario);
             std::set<std::string> nextUseOnly;
             if(!nextMetadata.useOnlyUnits.empty())for(const auto& type:cart::loadUseOnly(nextVfs,stem+".tdf"))nextUseOnly.insert(type);
-            mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);
+            mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);minimapSource=nullptr;
             scenario=std::move(nextMetadata);scen=std::move(nextScenario);units=std::move(nextUnits);useOnly=std::move(nextUseOnly);
             mapName=chosen;mapPath=path;world=scenario.kingdom.empty()?"aramon":scenario.kingdom;
             sections.scan(vfs,world);features.scan(vfs,world);
@@ -859,6 +946,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             thumbs.clear();
             for(auto& [key,t]:featTex)if(t)SDL_DestroyTexture(t);
             featTex.clear();
+            selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
             selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
             edited=false;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
             editRule=nullptr;editUnit=draggingUnit=draggingStart=-1;scrGroup=-1;
@@ -883,7 +971,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==5) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         } else if(menu==1) {
             if(row<2) {SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=row?SDLK_y:SDLK_z;key.key.keysym.mod=KMOD_CTRL;SDL_PushEvent(&key);}
-            else clearArm=true;
+            else {clearArm=true;editMode=MODE_PLACE;}
         } else if(menu==2) {
             int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
             if(row==0) {mapView.setZoom(std::min(float(w)/(mapView.map().width*16),float(h)/(mapView.map().height*16)));mapView.setOffset(0,0);}
@@ -896,7 +984,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==3)checkMap();
             if(row==4)openScripting();
         } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
-            "Choose terrain or objects in the left browser. Left-click places; right-drag pans except in Features, where it erases. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
+            "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move the selected units. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
     };
 
     bool recoveryFilesPresent=!recoveredFrom.empty();
@@ -923,10 +1011,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         mapView.quiesce();
         auto map=tak::tnt::Map::load(state->terrain,"undo history");
         map.seaLevel=state->seaLevel;map.stockTerrain=state->stockTerrain;
-        mapView.editMap()=std::move(map);mapView.tilesEdited();
+        mapView.editMap()=std::move(map);mapView.tilesEdited();minimapSource=nullptr;
         scenario=tak::tnt::Scenario::parse(state->metadata);
         scen=tak::crt::parse(state->scenario);units=cart::toPlaced(scen);
         useOnly=state->useOnly;mapName=state->name;dirty=history.dirty();edited=true;
+        selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();
         editRule=nullptr;draggingUnit=draggingStart=-1;scrGroup=-1;
         const auto nextWorld=scenario.kingdom.empty()?"aramon":scenario.kingdom;
         if(nextWorld!=world) {
@@ -953,9 +1042,14 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         w /= kUIScale; h /= kUIScale;   // physical -> logical (SDL_RenderSetScale)
         int canvasH = h - kMenuH - kStatusH;
         int canvasW = w - kPaletteW;
+        const float miniScale=140.0f/std::max(mapView.map().width,mapView.map().height);
+        const SDL_Rect miniRect{w-148,kMenuH+8,std::max(1,int(mapView.map().width*miniScale)),std::max(1,int(mapView.map().height*miniScale))};
 
+        refreshPalette();
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            const float pointerDX=e.type==SDL_MOUSEMOTION?float(e.motion.xrel)/kUIScale:0;
+            const float pointerDZ=e.type==SDL_MOUSEMOTION?float(e.motion.yrel)/kUIScale:0;
             if(e.type==SDL_RENDER_TARGETS_RESET || e.type==SDL_RENDER_DEVICE_RESET)
                 mapView.invalidateRenderTargets();
             // Map input from physical window pixels into the logical draw space.
@@ -986,6 +1080,33 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     }
                 }
                 if(menuOpen>=0)continue;
+            }
+            if(modal==M_NONE && !scriptOpen && !useOnlyOpen) {
+                auto navigateMinimap=[&](int x,int y) {
+                    const float wx=std::clamp(float(x-miniRect.x)/miniRect.w,0.0f,1.0f)*mapView.map().width*16;
+                    const float wz=std::clamp(float(y-miniRect.y)/miniRect.h,0.0f,1.0f)*mapView.map().height*16;
+                    mapView.setOffset(wx-canvasW/(2*mapView.zoom()),wz-canvasH/(2*mapView.zoom()));
+                };
+                if(e.type==SDL_MOUSEBUTTONDOWN && cart::pointIn(e.button.x,e.button.y,miniRect)) {minimapDrag=true;navigateMinimap(e.button.x,e.button.y);continue;}
+                if(e.type==SDL_MOUSEMOTION && minimapDrag) {navigateMinimap(e.motion.x,e.motion.y);continue;}
+                if(e.type==SDL_MOUSEBUTTONUP && minimapDrag) {minimapDrag=false;continue;}
+                if(e.type==SDL_KEYDOWN && (e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI)) && e.key.keysym.sym==SDLK_f) {
+                    paletteFocus=true;paletteEditor.focus(paletteSearch);SDL_StartTextInput();continue;
+                }
+                if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                    if(e.button.x<kPaletteW && e.button.y>=kMenuH && e.button.y<kPaletteTop) {
+                        if(e.button.y<kMenuH+30) {paletteFocus=true;paletteEditor.focus(paletteSearch);SDL_StartTextInput();}
+                        else if(e.button.y<kMenuH+53) {categoryIndex=(categoryIndex+1)%int(paletteCategories.size());refreshPalette();}
+                        else if(tool==UNITS) {factionIndex=(factionIndex+1)%6;refreshPalette();}
+                        continue;
+                    }
+                    if(paletteFocus) {paletteFocus=false;SDL_StopTextInput();}
+                }
+                if(paletteFocus && (e.type==SDL_TEXTINPUT || e.type==SDL_KEYDOWN)) {
+                    if(e.type==SDL_KEYDOWN && (e.key.keysym.sym==SDLK_ESCAPE || e.key.keysym.sym==SDLK_RETURN)) {paletteFocus=false;SDL_StopTextInput();}
+                    else {paletteEditor.input(e,paletteSearch);refreshPalette();}
+                    continue;
+                }
             }
             // The Use Only checklist overlay swallows input while up.
             if (useOnlyOpen) {
@@ -1179,6 +1300,24 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 }
                 continue;
             }
+            if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && e.button.y>=22 && e.button.y<kMenuH && e.button.x>=400 && e.button.x<656) {
+                editMode=EditMode((e.button.x-400)/64);continue;
+            }
+            if(e.type==SDL_KEYDOWN && tool==UNITS) {
+                const auto key=e.key.keysym.sym;const bool ctrl=e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI);
+                if(ctrl && (key==SDLK_c || key==SDLK_x || key==SDLK_d))selectedUnits.copy(units);
+                if(key==SDLK_DELETE || (ctrl && key==SDLK_x)) {
+                    if(selectedUnits.remove(units)) {dirty=true;historyPending=true;unitsEdited=true;}continue;
+                }
+                if(ctrl && (key==SDLK_v || key==SDLK_d)) {
+                    int mx,my;SDL_GetMouseState(&mx,&my);int cx=0,cz=0;
+                    if(!mouseCell(int(mx/kUIScale),int(my/kUIScale),cx,cz)) {cx=int((mapView.offX()+canvasW/(2*mapView.zoom()))/16);cz=int((mapView.offY()+canvasH/(2*mapView.zoom()))/16);}
+                    if(selectedUnits.paste(units,cx*16+8,cz*16+8,mapView.map().width*16,mapView.map().height*16)) {dirty=true;historyPending=true;unitsEdited=true;editMode=MODE_SELECT;}
+                    continue;
+                }
+                if(ctrl && key==SDLK_c)continue;
+                if(key==SDLK_RETURN && !selectedUnits.indices.empty()) {openModal(M_UNIT,*selectedUnits.indices.begin());continue;}
+            }
             if(e.type==SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
                (e.key.keysym.sym==SDLK_z || e.key.keysym.sym==SDLK_y)) {
                 commitHistory();
@@ -1212,7 +1351,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 // Land Lasso: toggle between land (terrain-stamp) and object mode.
                 tool = tool == TERRAIN ? FEATURES : TERRAIN;
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_k) {
-                clearArm = !clearArm;    // Edit -> Clear Area (drag a box)
+                clearArm = !clearArm;editMode=MODE_PLACE;    // Edit -> Clear Area (drag a box)
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_n) {
                 // File -> New Map. Guard unsaved edits (New replaces the whole map).
                 if (dirty) openConfirm("NEW MAP", "Discard unsaved changes and start "
@@ -1247,36 +1386,23 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if (bi >= 0 && bi < 4) tool = Tool(bi);
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x < kPaletteW &&
-                       e.button.y >= kMenuH && e.button.y < h - kStatusH) {
-                // Palette click -> select a section/feature (thumbnails) or a unit
-                // type (UNITS = a text list, 14px rows).
-                if (tool == UNITS) {
-                    int row = (e.button.y - kMenuH + paletteScroll) / 14;
-                    if (row >= 0 && row < int(unitTypes.size())) selectedType = row;
-                } else {
-                    int px = e.button.x - 4;
-                    int py = e.button.y - kMenuH + paletteScroll;
-                    int col = px / (kThumb + 4), row = py / (kThumb + 4);
-                    if (col >= 0 && col < cols) {
-                        int idx = row * cols + col;
-                        if (tool == FEATURES) {
-                            if (idx >= 0 && idx < int(features.list().size())) selectedFeat = idx;
-                        } else if (idx >= 0 && idx < int(sections.list().size())) selected = idx;
-                    }
+                       e.button.y >= kPaletteTop && e.button.y < h - kStatusH) {
+                int row=-1;
+                if(tool==UNITS || tool==STARTS)row=(e.button.y-kPaletteTop+paletteScroll)/26;
+                else row=((e.button.y-kPaletteTop+paletteScroll)/kCellH)*cols+(e.button.x-4)/(kThumb+4);
+                if(row>=0 && row<int(paletteItems.size())) {
+                    const int index=paletteItems[size_t(row)];
+                    if(tool==UNITS)selectedType=index;
+                    else if(tool==FEATURES)selectedFeat=index;
+                    else if(tool==STARTS)mapView.setOffset(scenario.starts[size_t(index)].xpos*16-canvasW/(2*mapView.zoom()),scenario.starts[size_t(index)].zpos*16-canvasH/(2*mapView.zoom()));
+                    else selected=index;
                 }
             } else if (e.type == SDL_MOUSEWHEEL) {
                 int mxp, myp; SDL_GetMouseState(&mxp, &myp); mxp /= kUIScale; myp /= kUIScale;
                 if (mxp < kPaletteW) {   // scroll the palette (tool-dependent count)
-                    if (tool == UNITS) {
-                        int maxS = std::max(0, int(unitTypes.size()) * 14 - canvasH);
-                        paletteScroll = std::clamp(paletteScroll - e.wheel.y * 40, 0, maxS);
-                        continue;
-                    }
-                    int n = tool == FEATURES ? int(features.list().size())
-                                             : int(sections.list().size());
-                    int rows = (n + cols - 1) / cols;
-                    int maxScroll = std::max(0, rows * (kThumb + 4) - canvasH);
-                    paletteScroll = std::clamp(paletteScroll - e.wheel.y * 40, 0, maxScroll);
+                    const int contentH=h-kStatusH-kPaletteTop;
+                    const int total=tool==UNITS || tool==STARTS?int(paletteItems.size())*26:((int(paletteItems.size())+cols-1)/cols)*kCellH;
+                    paletteScroll=std::clamp(paletteScroll-e.wheel.y*40,0,std::max(0,total-contentH));
                 } else {
                     const float before=mapView.zoom();
                     const float next=std::clamp(before*(e.wheel.y>0?1.2f:1.0f/1.2f),.025f,4.0f);
@@ -1286,6 +1412,28 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                        e.button.button == SDL_BUTTON_LEFT && e.button.x >= kPaletteW && e.button.y>=kMenuH && e.button.y<h-kStatusH) {
+                if(editMode==MODE_PAN)continue;
+                if(editMode==MODE_ERASE) {
+                    if(tool==FEATURES)placeFeature(e.button.x,e.button.y,true);
+                    else if(tool==UNITS) {const int hit=unitAt(e.button.x,e.button.y);if(hit>=0) {selectedUnits.indices={hit};selectedUnits.remove(units);dirty=true;historyPending=true;}}
+                    else if(tool==STARTS) {const int hit=startAt(e.button.x,e.button.y);if(hit>=0) {scenario.starts.erase(scenario.starts.begin()+hit);dirty=true;historyPending=true;}}
+                    continue;
+                }
+                if(editMode==MODE_SELECT && tool!=UNITS) {
+                    if(tool==STARTS)draggingStart=startAt(e.button.x,e.button.y);
+                    continue;
+                }
+                if(editMode==MODE_SELECT && tool==UNITS) {
+                    const int hit=unitAt(e.button.x,e.button.y);int cx,cz;
+                    if(mouseCell(e.button.x,e.button.y,cx,cz)) {
+                        if(hit>=0) {
+                            selectedUnits.click(hit,SDL_GetModState()&KMOD_SHIFT);
+                            if(e.button.clicks>=2)openModal(M_UNIT,hit);
+                            else selectedUnits.beginDrag(units,cx*16+8,cz*16+8);
+                        } else {selectionBox=true;selectionAppend=SDL_GetModState()&KMOD_SHIFT;selectionX0=selectionX1=e.button.x;selectionZ0=selectionZ1=e.button.y;}
+                    }
+                    continue;
+                }
                 if (clearArm) {   // Clear Area: begin the drag box
                     clearDrag = true;
                     clx0 = clx1 = e.button.x; cly0 = cly1 = e.button.y;
@@ -1297,16 +1445,16 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     int hit = unitAt(e.button.x, e.button.y);
                     int cx, cz;
                     if (hit >= 0 && e.button.clicks >= 2) {
-                        openModal(M_UNIT, hit);   // double-click: edit properties
+                        selectedUnits.indices={hit};openModal(M_UNIT, hit);   // double-click: edit properties
                     } else if (hit >= 0) {
-                        draggingUnit = hit;
+                        selectedUnits.indices={hit};draggingUnit = hit;
                     } else if (selectedType >= 0 && mouseCell(e.button.x, e.button.y, cx, cz)) {
                         cart::PlacedUnit u;
                         u.type = unitTypes[size_t(selectedType)];
                         u.player = currentPlayer;
                         u.x = cx * 16.0f + 8; u.z = cz * 16.0f + 8;
                         units.push_back(u);
-                        draggingUnit = int(units.size()) - 1;
+                        draggingUnit = int(units.size()) - 1;selectedUnits.indices={draggingUnit};
                         unitsEdited = true; dirty = true; historyPending=true;
                     }
                 } else {   // STARTS: grab an existing marker, else place a new one
@@ -1323,19 +1471,14 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                         draggingStart = int(scenario.starts.size()) - 1;
                     }
                 }
-            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                       e.button.button == SDL_BUTTON_RIGHT && tool == STARTS) {
-                int hit = startAt(e.button.x, e.button.y);   // right-click deletes a start
-                if (hit >= 0) { scenario.starts.erase(scenario.starts.begin() + hit); dirty = true; historyPending=true; }
-            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                       e.button.button == SDL_BUTTON_RIGHT && tool == FEATURES &&
-                       e.button.x >= kPaletteW) {
-                placeFeature(e.button.x, e.button.y, true);   // right-click erases
-            } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                       e.button.button == SDL_BUTTON_RIGHT && tool == UNITS) {
-                int hit = unitAt(e.button.x, e.button.y);   // right-click deletes a unit
-                if (hit >= 0) { units.erase(units.begin() + hit); unitsEdited = true; dirty = true; historyPending=true; }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                if(selectionBox) {
+                    auto wx=[&](int x){return mapView.offX()+(x-kPaletteW)/mapView.zoom();};
+                    auto wz=[&](int z){return mapView.offY()+(z-kMenuH)/mapView.zoom();};
+                    selectedUnits.box(units,wx(selectionX0),wz(selectionZ0),wx(selectionX1),wz(selectionZ1),selectionAppend);
+                    selectionBox=false;
+                }
+                selectedUnits.dragOrigins.clear();
                 lastStampX=lastStampY=-1;
                 draggingStart = -1; draggingUnit = -1;
                 if (clearDrag) {   // Clear Area: confirm, then remove units + features
@@ -1355,7 +1498,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                                     "Remove all units and features in this area?  (" +
                                         std::to_string(nUnits) + " unit(s), " +
                                         std::to_string(cells) + " cells)",
-                                    [&units, &mapView, &edited, &unitsEdited, &dirty, &historyPending,
+                                    [&units, &mapView, &edited, &unitsEdited, &dirty, &historyPending, &selectedUnits,
                                      lox, hix, loz, hiz]() {
                             auto& m = mapView.editMap();
                             for (int z = loz; z <= hiz; ++z)
@@ -1366,6 +1509,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                                     int ux = int(u.x / 16.0f), uz = int(u.z / 16.0f);
                                     return ux >= lox && ux <= hix && uz >= loz && uz <= hiz;
                                 }), units.end());
+                            selectedUnits.indices.clear();
                             mapView.tilesEdited(); edited = true; unitsEdited = true; dirty = true; historyPending=true;
                         });
                     }
@@ -1373,6 +1517,20 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 }
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) &&
                        e.motion.x >= kPaletteW) {
+                if(editMode==MODE_PAN) {mapView.setOffset(mapView.offX()-pointerDX/mapView.zoom(),mapView.offY()-pointerDZ/mapView.zoom());continue;}
+                if(editMode==MODE_ERASE) {if(tool==FEATURES)placeFeature(e.motion.x,e.motion.y,true);continue;}
+                if(editMode==MODE_SELECT && tool!=UNITS) {
+                    int cx,cz;
+                    if(tool==STARTS && draggingStart>=0 && mouseCell(e.motion.x,e.motion.y,cx,cz)) {
+                        scenario.starts[size_t(draggingStart)].xpos=cx;scenario.starts[size_t(draggingStart)].zpos=cz;dirty=true;historyPending=true;
+                    }
+                    continue;
+                }
+                if(editMode==MODE_SELECT && tool==UNITS) {
+                    if(selectionBox) {selectionX1=e.motion.x;selectionZ1=e.motion.y;}
+                    else {int cx,cz;if(mouseCell(e.motion.x,e.motion.y,cx,cz) && selectedUnits.drag(units,cx*16+8,cz*16+8,mapView.map().width*16,mapView.map().height*16)) {dirty=true;historyPending=true;}}
+                    continue;
+                }
                 if (clearDrag) {   // Clear Area: grow the box
                     clx1 = e.motion.x; cly1 = e.motion.y;
                 } else if (tool == TERRAIN) {
@@ -1394,14 +1552,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     }
                 }
             } else if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_RMASK)) {
-                if (tool == FEATURES && e.motion.x >= kPaletteW) {
-                    placeFeature(e.motion.x, e.motion.y, true);   // right-drag erases
-                } else {
-                    // Right-drag pans; feed MapView a synthetic left-drag motion.
-                    SDL_Event pan = e;
-                    pan.motion.state = SDL_BUTTON_LMASK;
-                    mapView.input(pan);
-                }
+                mapView.setOffset(mapView.offX()-pointerDX/mapView.zoom(),mapView.offY()-pointerDZ/mapView.zoom());
             } else if (e.type != SDL_MOUSEBUTTONDOWN && e.type != SDL_MOUSEMOTION) {
                 mapView.input(e);
             }
@@ -1429,6 +1580,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 } catch(const std::exception& error) {recoveryStatus=error.what();}
             }
         }
+        refreshMinimap();
         mapView.ensureChunks(canvasW, canvasH);
 
         SDL_SetRenderDrawColor(ren, 24, 26, 32, 255);
@@ -1494,16 +1646,29 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             float sx = (units[i].x - mapView.offX()) * mapView.zoom();
             float sy = (units[i].z - mapView.offY()) * mapView.zoom();
             if (sx < -20 || sy < -20 || sx > canvasW + 20 || sy > canvasH + 20) continue;
-            const Uint8* pc = kPlayerCol[units[i].player & 7];
+            const Uint8* pc = kPlayerCol[std::clamp(units[i].player,0,8)];
             SDL_SetRenderDrawColor(ren, pc[0], pc[1], pc[2], 255);
             SDL_Rect r{int(sx) - 5, int(sy) - 5, 10, 10};
             SDL_RenderFillRect(ren, &r);
             SDL_SetRenderDrawColor(ren, 12, 12, 16, 255);
             SDL_RenderDrawRect(ren, &r);
+            if(selectedUnits.contains(i)) {
+                const auto* type=unitRegistry.find(lowerText(units[i].type));
+                const float width=(type?type->footX:1)*16*mapView.zoom(),height=(type?type->footZ:1)*16*mapView.zoom();
+                SDL_SetRenderDrawColor(ren,255,225,100,255);
+                SDL_FRect footprint{sx-width/2,sy-height/2,width,height};SDL_RenderDrawRectF(ren,&footprint);
+                const float angle=units[i].angle*3.14159265f/180;
+                SDL_RenderDrawLineF(ren,sx,sy,sx+std::sin(angle)*22,sy-std::cos(angle)*22);
+            }
             if (mapView.zoom() > 0.28f)   // label only when there's room
                 cart::drawText(ren, units[i].type,
                                int(sx) - cart::textWidth(units[i].type, 1) / 2,
                                int(sy) - 15, 1, 235, 235, 245);
+        }
+        if(selectionBox) {
+            SDL_SetRenderDrawColor(ren,255,220,110,255);
+            SDL_Rect area{std::min(selectionX0,selectionX1)-kPaletteW,std::min(selectionZ0,selectionZ1)-kMenuH,std::abs(selectionX1-selectionX0),std::abs(selectionZ1-selectionZ0)};
+            SDL_RenderDrawRect(ren,&area);
         }
         // Start-position markers (drawn in canvas-local coords: gold diamonds
         // with the StartPos number). Off-map ones simply fall outside.
@@ -1525,55 +1690,85 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             cart::drawText(ren, std::to_string(scenario.starts[i].number),
                            int(sx) - 2, int(sy) - 3, 1, 20, 14, 0);
         }
+        // Preview the actual snapped stamp / feature / footprint before committing.
+        int previewX,previewZ;SDL_GetMouseState(&previewX,&previewZ);previewX=int(previewX/kUIScale);previewZ=int(previewZ/kUIScale);
+        if(editMode==MODE_PLACE && modal==M_NONE && !scriptOpen && !useOnlyOpen && menuOpen<0 &&
+           previewX>=kPaletteW && previewZ>=kMenuH && previewZ<h-kStatusH && !cart::pointIn(previewX,previewZ,miniRect)) {
+            const float wx=mapView.offX()+(previewX-kPaletteW)/mapView.zoom(),wz=mapView.offY()+(previewZ-kMenuH)/mapView.zoom();
+            SDL_FRect box{};SDL_Texture* ghost=nullptr;
+            if(tool==TERRAIN && selected>=0) {
+                const auto& section=sections.list()[size_t(selected)];const auto* map=sections.load(vfs,section.path);
+                if(map && map->blocksX>0 && map->blocksY>0) {
+                    const int x=(int(wx/32)/map->blocksX)*map->blocksX,z=(int(wz/32)/map->blocksY)*map->blocksY;
+                    box={(x*32-mapView.offX())*mapView.zoom(),(z*32-mapView.offY())*mapView.zoom(),map->blocksX*32*mapView.zoom(),map->blocksY*32*mapView.zoom()};
+                    ghost=thumbFor(section.path);
+                }
+            } else if(tool==FEATURES && selectedFeat>=0) {
+                const auto& feature=features.list()[size_t(selectedFeat)];const auto* sprite=features.sprite(vfs,feature);
+                ghost=featTextureFor(feature);
+                if(sprite)box={(int(wx/16)*16-mapView.offX()-sprite->xoff)*mapView.zoom(),(int(wz/16)*16-mapView.offY()-sprite->yoff)*mapView.zoom(),sprite->w*mapView.zoom(),sprite->h*mapView.zoom()};
+            } else {
+                const auto* type=tool==UNITS?unitInfo(selectedType):nullptr;
+                const float width=(type?type->footX:1)*16*mapView.zoom(),height=(type?type->footZ:1)*16*mapView.zoom();
+                box={(int(wx/16)*16+8-mapView.offX())*mapView.zoom()-width/2,(int(wz/16)*16+8-mapView.offY())*mapView.zoom()-height/2,width,height};
+            }
+            if(ghost) {Uint8 alpha=255;SDL_BlendMode blend;SDL_GetTextureAlphaMod(ghost,&alpha);SDL_GetTextureBlendMode(ghost,&blend);SDL_SetTextureAlphaMod(ghost,120);SDL_SetTextureBlendMode(ghost,SDL_BLENDMODE_BLEND);SDL_RenderCopyF(ren,ghost,nullptr,&box);SDL_SetTextureAlphaMod(ghost,alpha);SDL_SetTextureBlendMode(ghost,blend);}
+            SDL_SetRenderDrawColor(ren,255,220,90,220);SDL_RenderDrawRectF(ren,&box);
+        }
         SDL_RenderSetViewport(ren, nullptr);
+
+        if(minimapTexture) {
+            SDL_RenderCopy(ren,minimapTexture.get(),nullptr,&miniRect);
+            SDL_SetRenderDrawColor(ren,235,225,195,255);SDL_RenderDrawRect(ren,&miniRect);
+            SDL_RenderSetClipRect(ren,&miniRect);
+            const float sx=float(miniRect.w)/(mapView.map().width*16),sz=float(miniRect.h)/(mapView.map().height*16);
+            SDL_FRect view{miniRect.x+mapView.offX()*sx,miniRect.y+mapView.offY()*sz,canvasW/mapView.zoom()*sx,canvasH/mapView.zoom()*sz};
+            SDL_RenderDrawRectF(ren,&view);
+            for(const auto& start:scenario.starts) {SDL_Rect marker{int(miniRect.x+start.xpos*16*sx)-2,int(miniRect.y+start.zpos*16*sz)-2,4,4};SDL_RenderFillRect(ren,&marker);}
+            SDL_RenderSetClipRect(ren,nullptr);
+        }
 
         // Palette panel (left).
         fillRect(ren, 0, kMenuH, kPaletteW, canvasH, 30, 32, 40);
-        SDL_Rect palClip{0, kMenuH, kPaletteW, canvasH};
-        SDL_RenderSetClipRect(ren, &palClip);
-        if (tool == UNITS) {   // a scrollable text list of unit types
-            for (int i = 0; i < int(unitTypes.size()); ++i) {
-                int ty = kMenuH + 2 + i * 14 - paletteScroll;
-                if (ty + 12 < kMenuH || ty > h - kStatusH) continue;
-                if (i == selectedType)
-                    fillRect(ren, 0, ty - 1, kPaletteW, 13, 70, 66, 40);
-                cart::drawText(ren, unitTypes[size_t(i)], 6, ty + 2, 1,
-                               i == selectedType ? 255 : 200, i == selectedType ? 220 : 205,
-                               i == selectedType ? 120 : 215);
+        SDL_Rect palClip{0,kPaletteTop,kPaletteW,h-kStatusH-kPaletteTop};
+        SDL_RenderSetClipRect(ren,&palClip);
+        if(tool==UNITS || tool==STARTS) {
+            for(int row=0;row<int(paletteItems.size());++row) {
+                const int i=paletteItems[size_t(row)],y=kPaletteTop+row*26-paletteScroll;
+                if(y+24<kPaletteTop || y>h-kStatusH)continue;
+                if(tool==UNITS && i==selectedType)fillRect(ren,0,y,kPaletteW,25,70,66,40);
+                if(tool==UNITS) {
+                    const auto* info=unitInfo(i);
+                    cart::drawText(ren,info?info->name:unitTypes[size_t(i)],6,y+3,1,235,230,200);
+                    cart::drawText(ren,unitTypes[size_t(i)]+" - "+unitCategory(i),6,y+14,1,160,175,195);
+                } else cart::drawText(ren,paletteLabel(i),6,y+7,1,235,210,100);
             }
         } else {
-        int palN = tool == FEATURES ? int(features.list().size())
-                                    : int(sections.list().size());
-        int palSel = tool == FEATURES ? selectedFeat : selected;
-        for (int i = 0; i < palN; ++i) {
-            int col = i % cols, row = i / cols;
-            int cx = 4 + col * (kThumb + 4);
-            int cy = kMenuH + 4 + row * (kThumb + 4) - paletteScroll;
-            if (cy + kThumb < kMenuH || cy > h - kStatusH) continue;   // cull
-            SDL_Rect cell{cx, cy, kThumb, kThumb};
-            SDL_Texture* t = tool == FEATURES ? featTextureFor(features.list()[size_t(i)])
-                                              : thumbFor(sections.list()[size_t(i)].path);
-            fillRect(ren, cx, cy, kThumb, kThumb, 44, 46, 54);   // cell backing
-            if (t) {
-                if (tool == FEATURES) {   // feature sprite: fit-centre, keep aspect
-                    const cart::FeatSprite* sp = features.sprite(vfs, features.list()[size_t(i)]);
-                    float sc = std::min(float(kThumb) / std::max(sp->w, 1),
-                                        float(kThumb) / std::max(sp->h, 1));
-                    int dw = int(sp->w * sc), dh = int(sp->h * sc);
-                    SDL_Rect fc{cx + (kThumb - dw) / 2, cy + (kThumb - dh) / 2, dw, dh};
-                    SDL_RenderCopy(ren, t, nullptr, &fc);
-                } else SDL_RenderCopy(ren, t, nullptr, &cell);
-            }
-            if (i == palSel) {   // selection highlight
-                SDL_SetRenderDrawColor(ren, 255, 210, 90, 255);
-                SDL_Rect b{cx - 1, cy - 1, kThumb + 2, kThumb + 2};
-                SDL_RenderDrawRect(ren, &b);
-                SDL_Rect b2{cx - 2, cy - 2, kThumb + 4, kThumb + 4};
-                SDL_RenderDrawRect(ren, &b2);
+            const int selection=tool==FEATURES?selectedFeat:selected;
+            for(int row=0;row<int(paletteItems.size());++row) {
+                const int i=paletteItems[size_t(row)],x=4+(row%cols)*(kThumb+4),y=kPaletteTop+4+(row/cols)*kCellH-paletteScroll;
+                if(y+kCellH<kPaletteTop || y>h-kStatusH)continue;
+                SDL_Rect cell{x,y,kThumb,kThumb};fillRect(ren,x,y,kThumb,kThumb,44,46,54);
+                auto* texture=tool==FEATURES?featTextureFor(features.list()[size_t(i)]):thumbFor(sections.list()[size_t(i)].path);
+                if(texture) {
+                    if(tool==FEATURES) {
+                        const auto* sprite=features.sprite(vfs,features.list()[size_t(i)]);
+                        const float scale=std::min(float(kThumb)/std::max(sprite->w,1),float(kThumb)/std::max(sprite->h,1));
+                        SDL_Rect fit{x+(kThumb-int(sprite->w*scale))/2,y+(kThumb-int(sprite->h*scale))/2,int(sprite->w*scale),int(sprite->h*scale)};
+                        SDL_RenderCopy(ren,texture,nullptr,&fit);
+                    } else SDL_RenderCopy(ren,texture,nullptr,&cell);
+                }
+                if(i==selection) {SDL_SetRenderDrawColor(ren,255,210,90,255);SDL_RenderDrawRect(ren,&cell);}
+                cart::drawText(ren,paletteLabel(i).substr(0,14),x,y+kThumb+4,1,210,210,215);
             }
         }
-        }   // end else (thumbnail palette)
-        SDL_RenderSetClipRect(ren, nullptr);
+        SDL_RenderSetClipRect(ren,nullptr);
+        cart::drawField(ren,4,kMenuH+3,kPaletteW-8,"SEARCH (CTRL+F)",paletteSearch,paletteFocus,paletteFocus?&paletteEditor:nullptr);
+        cart::drawButton(ren,4,kMenuH+33,kPaletteW-8,18,paletteCategories[size_t(categoryIndex)].substr(0,28),false);
+        if(tool==UNITS) {
+            static const char* factionNames[]={"ALL FACTIONS","ARAMON","TAROS","VERUNA","ZHON","CREON"};
+            cart::drawButton(ren,4,kMenuH+54,kPaletteW-8,18,factionNames[factionIndex],false);
+        } else cart::drawText(ren,std::to_string(paletteItems.size())+" MATCHES",6,kMenuH+59,1,180,190,200);
 
         // Chrome strips.
         fillRect(ren, 0, 0, w, kMenuH, 46, 48, 58);
@@ -1593,6 +1788,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             cart::drawText(ren, names[t], bx + 8, 29, 1, active ? 255 : 190,
                            active ? 220 : 190, active ? 120 : 200);
         }
+
+        static const char* modes[]={"PLACE","SELECT","ERASE","PAN"};
+        for(int i=0;i<4;++i)cart::drawButton(ren,400+i*64,25,60,16,modes[i],int(editMode)==i);
 
         for(size_t i=0;i<menuNames.size();++i) {
             const int x=96+int(i)*72;
@@ -1615,13 +1813,18 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         std::string status = coord + "   TOOL: " + names[int(tool)] + "   ZOOM: " + zbuf;
         if (tool == UNITS)
             status += "   PLAYER: " + std::to_string(currentPlayer) +
-                      "   UNITS: " + std::to_string(units.size());
+                      "   UNITS: " + std::to_string(units.size())+"   SELECTED: "+std::to_string(selectedUnits.indices.size());
         else
             status += "   STARTS: " + std::to_string(scenario.starts.size());
         status += dirty?"   UNSAVED":"   SAVED";
         if (!useOnly.empty()) status += "   USEONLY: " + std::to_string(useOnly.size());
         if(!recoveryStatus.empty()) status+="   "+recoveryStatus;
         if (clearArm) status += "   CLEAR AREA: drag a box (K cancels)";
+        if(mxg<kPaletteW && myg>=kPaletteTop && myg<h-kStatusH) {
+            const int row=tool==UNITS || tool==STARTS?(myg-kPaletteTop+paletteScroll)/26:
+                ((myg-kPaletteTop+paletteScroll)/kCellH)*cols+(mxg-4)/(kThumb+4);
+            if(row>=0 && row<int(paletteItems.size()))status=paletteLabel(paletteItems[size_t(row)]);
+        }
         cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
 
         // Clear Area drag box (screen-space rectangle).
