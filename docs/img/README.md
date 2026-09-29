@@ -1,32 +1,31 @@
 # README screenshots
 
-Captured on 2026-09-27 from TAK Engine **v0.7.8**, tagged at commit
-`2276068`.
-All seven scenes were freshly captured from the tagged build. The images are actual engine output at 1600 × 1000, encoded as JPEG at
-quality 90 with full chroma resolution. No units, effects, or UI were added to
-the images afterward.
+Captured on 2026-09-28 from the **v0.7.10** release source, commit `8aab757` (the tagged commit).
+All seven scenes were freshly captured and visually inspected. Images are actual
+engine output at 1600 × 1000, encoded as JPEG at quality 90 with full chroma
+resolution. No units, effects, or UI were added afterward.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.7.8 |
-| `gameplay.jpg` | Aramon base in the local development demo on Ulasem Arena, one simulated second in; camera zoomed to 2× |
+| `title.jpg` | Title menu showing version 0.7.10 |
+| `gameplay.jpg` | Aramon base in the local development demo on Ulasem Arena, one simulated second in; camera follows the selected barracks at 2× zoom |
 | `naval.jpg` | Development naval demo on Cairbray Coast Landing, eight simulated seconds in; ships on water |
-| `lobby.jpg` | Create-game screen with Ulasem Arena preview |
+| `lobby.jpg` | Skirmish creation with Ulasem Arena preview and the new Allow Speed Change setting |
 | `campaign.jpg` | Book of Darien campaign picker with a fresh progress profile |
-| `streaming.jpg` | Streaming setup with the Max 3840 / 60 FPS defaults; no key or live broadcast |
-| `results.jpg` | Post-game results layout rendered with the built-in sample-statistics fixture, not a completed match |
+| `streaming.jpg` | Streaming setup with Max 3840 / 60 FPS defaults; no key or live broadcast |
+| `results.jpg` | Results layout with the built-in sample-statistics fixture, not a completed match |
 
-Captures used an isolated settings directory, smooth GUI art, bilinear
-filtering, shadows, and 4× anti-aliasing. The base view uses the player camera;
-the naval demo has fog disabled to show both fleets.
+Captures used isolated SDL preference directories (`XDG_DATA_HOME` as well as
+`XDG_CONFIG_HOME`). Menu/game captures enabled smooth GUI art, bilinear filtering,
+shadows, and 4× anti-aliasing. Gameplay statistics are hidden; screenshot timing
+is not a performance measurement. The naval demo disables fog to show both fleets.
 
-The debug client's `--shot` path normally selects SDL's software renderer.
-These captures selected `SDL_RENDERER_ACCELERATED` at `SDL_CreateRenderer`
-under GDB, with `SDL_VIDEODRIVER=offscreen`, so they use the normal OpenGL
-rendering path, including shadow silhouettes. No source changes were needed.
-The base capture also adjusted camera zoom and centering under GDB. Only the
-screenshot encoding changed after capture.
+The debug client's `--shot` normally chooses software rendering. GDB selected
+`SDL_RENDERER_ACCELERATED` at `SDL_CreateRenderer`, with the offscreen SDL driver,
+so captures use OpenGL, including shadow silhouettes. No source changes were
+needed. The setup capture uses the real GameView connected to a temporary local
+server, through a scratch SDL harness. Only encoding changed after capture.
 
 When refreshing the gallery, capture the current build, inspect every image,
-update these scene notes and the README captions, and remove unused images.
-Keep retail archives, extracted assets, and temporary capture files out of Git.
+update these scene notes and README captions, and remove unused images. Keep
+retail archives, extracted assets, and temporary capture files out of Git.

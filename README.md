@@ -16,7 +16,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
 <table>
   <tr>
-    <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Aramon barracks and four troops in the local development demo"></a><br><sub>Aramon base on Ulasem Arena</sub></td>
+    <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Aramon barracks and troops in the local development demo"></a><br><sub>Aramon base on Ulasem Arena</sub></td>
     <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna ships fighting on the water at Cairbray Coast Landing"></a><br><sub>Naval combat on Cairbray Coast Landing</sub></td>
   </tr>
   <tr>
@@ -29,7 +29,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured in v0.7.8. Base and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured in v0.7.10. Base and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -166,6 +166,12 @@ enemy units outside current sight remain untargetable.
 | Hard | Expands more aggressively, with raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
 
+Choose **Generate Random Map** under the map preview to configure a Mainland,
+Lakes, or Islands map. The available sizes depend on the layout and player count.
+The preview reflects the selected seed and settings; see
+[random map generation](docs/random-map-generation.md) for the placement and
+connectivity rules.
+
 The AI considers income and available terrain when building its force.
 [The user guide](docs/user-guide.md#playing) explains standing orders,
 production queues, match options, and AI behavior in more detail.
@@ -254,7 +260,7 @@ builders, but units they produce inherit their squad.
 | **Arrow keys** | Pan the camera |
 | **T** | Toggle camera tracking of the selection |
 | **Tab** | Toggle the full-screen map; press again to return |
-| **F1** | Toggle unit information |
+| **F1** | Toggle unit information; **Enter** or **Esc** also closes the dialog |
 | **F4** | Toggle player names, kills, losses, and score |
 | **F9** | YouTube streaming setup / status |
 | **O**, with no units selected | Toggle campaign objectives when available |
@@ -267,8 +273,7 @@ builders, but units they produce inherit their squad.
 
 Live game speed ranges from 0.5× to 4×. Only the host can change it, and the
 game creation screen’s **Allow speed change** option must be enabled (the lobby
-only displays it). Chat is available in live
-networked games (single-player also uses a local server), not replay playback.
+only displays it). Chat is available in live networked games (single-player also uses a local server), not replay playback.
 
 ### Mouse and construction
 
@@ -317,6 +322,13 @@ Single-player starts its own private server automatically.
 Multiplayer automatically verifies and transfers missing or differing maps before play.
 Downloaded maps remain available in the map picker; generated maps are saved on every
 participant and the server when the match starts. See [map sharing and storage](docs/map-transfer.md).
+
+Allies share vision automatically. Excess mana is distributed to allied players
+with the lowest storage fill percentage first. To transfer units, select them,
+press **Alt+G**, and choose an ally. Ineligible units remain yours; transfers
+respect the recipient's unit limits, remove transferred units from your control
+groups, and change them to the recipient's colors. Campaigns do not offer gifting.
+See [unit gifting](docs/unit-gifting.md) for eligibility details.
 
 Choose the per-player unit limit on the game-creation screen: the button cycles
 through 250, 500, 1,000, and 2,000. The lobby displays this value without allowing

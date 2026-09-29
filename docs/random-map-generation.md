@@ -3,7 +3,8 @@
 New recipes use generator version 3. The map ID still carries the seed and
 parameters in `~gen1~` followed by hexadecimal bytes; the first two payload bytes
 are the generator version. Versions 1 and 2 keep the old generation algorithm.
-Protocol 193 requires both version-3 generation and verified map-transfer support. Existing simulation/pathfinding rules are unchanged.
+Protocol 193 introduced version-3 generation and verified map-transfer support;
+0.7.10 uses protocol 194 and retains both. Existing simulation/pathfinding rules are unchanged.
 
 ## Layout and placement
 

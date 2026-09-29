@@ -1,6 +1,7 @@
 # Multiplayer map availability and transfer
 
-Protocol 193 checks the selected map before starting. The host supplies a canonical
+Map verification was introduced in protocol 193 (0.7.10 uses protocol 194).
+The selected map is checked before starting. The host supplies a canonical
 package fingerprint (SHA-256). The server checks its installed map/cache, requests the
 host's copy when missing or different, and offers that verified copy to all players.
 The game cannot start until the server and every connected player/spectator have the
