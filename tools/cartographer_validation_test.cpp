@@ -117,6 +117,12 @@ int main() {
         tak::sim::World reference;reference.setTerrain(map.heights,32,32,0,&map.features);reference.buildNavClasses(registry);
         for(int z=0;z<32;++z)for(int x=0;x<32;++x)
             check((build.rgba[(z*32+x)*4+1]==210)==reference.canPlace(registry.find("test"),x*16.f+8,z*16.f+8),"buildability overlay agrees with engine placement at every cell");
+        std::vector<cart::PlacedUnit> occupants{{"TEST",0,88,88}};
+        reference.spawn(registry.find("test"),88,88);
+        const auto occupiedOverlay=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Buildability,"test",occupants);
+        for(int z=0;z<32;++z)for(int x=0;x<32;++x)
+            check((occupiedOverlay.rgba[(z*32+x)*4+1]==210)==reference.canPlace(registry.find("test"),x*16.f+8,z*16.f+8),"occupied buildability overlay agrees with engine at every cell");
+        check(occupiedOverlay.rgba[(5*32+5)*4]==235 && build.rgba[(5*32+5)*4+1]==210,"preplaced unit changes buildability");
         map.heights[12*32+12]=60;
         tak::tnt::Scenario metadata;metadata.starts={{1,12,12},{2,24,24}};
         tak::crt::Scenario scenario;scenario.regions.push_back({"Area",15,15,5,5});
@@ -128,7 +134,10 @@ int main() {
         metadata.starts[1].number=9;check(has(run(),"must be 1 through 8"),"start number range");metadata.starts[1].number=2;
         map.features[0]=7;check(has(run(),"Missing feature definition"),"invalid feature reference diagnosed");map.features[0]=0xffff;
         map.seaLevel=100;check(has(run(),"engine placement rejects"),"engine rejects ground unit in deep water");map.seaLevel=0;
-        units.push_back(units.front());check(has(run(),"duplicate unique name"),"duplicate names detected");units.pop_back();
+        units.push_back(units.front());check(has(run(),"duplicate unique name"),"duplicate names detected");
+        check(has(run(),"blocked by earlier preplaced units"),"preplaced occupancy diagnosed separately from terrain");
+        units.back().x=400;units.back().name="Second";
+        check(!has(run(),"blocked by earlier preplaced units"),"separated preplaced units remain clear");units.pop_back();
         units[0].x=-1;check(has(run(),"outside map"),"out of bounds detected");units[0].x=200;
         units[0].type="MISSING";check(has(run(),"unknown unit type"),"missing type detected");units[0].type="TEST";
         scenario.players.resize(1);scenario.players[0].resize(1);
@@ -169,6 +178,16 @@ int main() {
         auto connectivity=cart::validateMap(disconnected,metadata,{}, {},{},diagnostics,vfs);
         check(has(connectivity,"no ground approach route to another start") && has(connectivity,"no ground approach route to a mana deposit"),"engine connectivity diagnoses isolated starts and mana");
         check(!has(connectivity,"rejects lodestone footprint"),"flat mana deposit accepts lodestone footprint");
+        tak::sim::World deposits;deposits.setTerrain(disconnected.heights,32,32,0,&disconnected.features);deposits.buildNavClasses(diagnostics);
+        tak::sim::registerMapFeatures(deposits,disconnected,vfs,&diagnostics);
+        check(!deposits.manaSpots().empty(),"occupancy fixture has mana spot");
+        const auto [mx,mz]=deposits.manaSpots().front();
+        occupants={{"TEST",0,mx,mz}};
+        check(has(cart::validateMap(disconnected,metadata,{},occupants,{},diagnostics,vfs),"preplaced units currently block"),"preplaced units blocking lodestones diagnosed");
+        auto atStart=occupants;atStart[0].x=metadata.starts[0].xpos*16.f;atStart[0].z=metadata.starts[0].zpos*16.f;
+        check(has(cart::validateMap(disconnected,metadata,{},atStart,{},diagnostics,vfs),"Start 1: preplaced units currently block"),"preplaced units blocking monarch starts diagnosed");
+        occupants[0].type="TESTSTONE";
+        check(!has(cart::validateMap(disconnected,metadata,{},occupants,{},diagnostics,vfs),"preplaced units currently block"),"existing lodestone is intentional mana occupancy");
         disconnected.heights[8*32+24]=255;
         connectivity=cart::validateMap(disconnected,metadata,{}, {},{},diagnostics,vfs);
         check(has(connectivity,"rejects lodestone footprint"),"steep mana deposit fails actual engine placement");

@@ -496,7 +496,27 @@ outstanding.
 The preceding minimap checkpoint exposed an Apple standard-library limitation
 in CI (`std::stop_token` unavailable). Cancellation now uses a shared atomic
 flag, preserving cancellation and lifetime semantics without that dependency.
-The macOS build must verify this portability fix after push.
+The macOS build for e7eaa90 passed, verifying that portability fix.
+
+## Preplaced occupancy checkpoint
+
+Check Map now adds valid preplaced units to its private engine world after the
+terrain-only checks. It reports when the engine rejects a unit's placement due
+to earlier preplaced units, or when occupants block an otherwise suitable
+monarch start or lodestone site. An existing lodestone is treated as intentional
+occupation of its mana deposit. These are warnings, not reasons to reject an
+authored scenario; mobile occupants may move during play.
+
+The buildability overlay now captures the placed-unit list with the map snapshot
+and includes those occupants in the engine's placement query. Its legend states
+that scope. Movement overlays still show terrain/features, not a prediction of
+future unit traffic. No engine movement or placement semantics were changed.
+
+Tests compare the occupied buildability overlay against an independent World
+placement query at every fixture cell, and cover overlapping/separated units,
+blocked starts, blocked mana sites and existing lodestones. The eleven-test
+editor suite passes in Release and under AddressSanitizer/LeakSanitizer, with
+focused repeats for the final start-occupancy addition.
 
 ## Remaining work
 
@@ -506,8 +526,8 @@ The macOS build must verify this portability fix after push.
    and verification of cross-platform packaging/launch usability.
 3. Broader browser/selection interaction coverage,
    model previews where useful and additional view controls.
-4. Placed-unit occupancy in overlays/validation, exhaustive land/water component
-   and naval-output checks, and fuller resource checks.
+4. Exhaustive land/water component and naval-output checks, fuller resource
+   checks, and profiling occupancy overlays on dense large scenarios.
 5. Expanded typed-rule validation, rule names/objective templates,
    temporary-map playtesting through the normal client/server launch path.
 6. Coalescing pending terrain work, asynchronous expensive operations, large-map

@@ -1,11 +1,13 @@
 #include "cartographer/overlay.h"
 #include "sim/matchsetup.h"
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <memory>
 #include <stdexcept>
 namespace cart {
 TerrainOverlay terrainOverlay(const tak::tnt::Map& map,const tak::sim::TypeRegistry& registry,
-    const tak::hpi::Vfs& vfs,OverlayKind kind,const std::string& unitType) {
+    const tak::hpi::Vfs& vfs,OverlayKind kind,const std::string& unitType,const std::vector<PlacedUnit>& occupants) {
     if(map.width<=0 || map.height<=0 || map.heights.size()!=size_t(map.width)*map.height)
         throw std::runtime_error("Invalid terrain dimensions");
     TerrainOverlay out;out.width=map.width;out.height=map.height;out.rgba.resize(map.heights.size()*4);
@@ -17,8 +19,17 @@ TerrainOverlay terrainOverlay(const tak::tnt::Map& map,const tak::sim::TypeRegis
         world=std::make_unique<tak::sim::World>();
         world->setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
         world->buildNavClasses(registry);tak::sim::registerMapFeatures(*world,map,vfs,&registry);
+        if(kind==OverlayKind::Buildability) {
+            world->setPlayerCount(8);
+            for(const auto& occupant:occupants) {
+                auto name=occupant.type;std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return char(std::tolower(c));});
+                const auto* placed=registry.find(name);
+                if(placed && std::isfinite(occupant.x) && std::isfinite(occupant.z) && occupant.x>=0 && occupant.z>=0 && occupant.x<map.width*16.f && occupant.z<map.height*16.f)
+                    world->spawn(placed,occupant.x,occupant.z,{},std::clamp(occupant.player,0,7));
+            }
+        }
         world->navFor(type).ensureClearance();
-        out.legend=type->name+": GREEN=allowed RED=blocked (terrain/features only)";
+        out.legend=type->name+": GREEN=allowed RED=blocked "+(kind==OverlayKind::Buildability?"(terrain/features/preplaced units)":"(terrain/features only)");
         if(type->canFly && kind==OverlayKind::Movement)out.legend+="; AIR TRANSIT, not landing";
     } else out.legend=kind==OverlayKind::WaterDepth?"WATER DEPTH: brighter blue=deeper (corner minimum)":"SLOPE: darker green=flat, brighter orange=steep (corner spread)";
     for(int z=0;z<map.height;++z)for(int x=0;x<map.width;++x) {

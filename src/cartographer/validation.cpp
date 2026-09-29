@@ -74,9 +74,11 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
         if((feature>=map.featureNames.size() || feature>=featureTypes.size() || featureTypes[feature].name.empty()) && missingFeatures.insert(feature).second)
             issue("Missing feature definition: "+(feature<map.featureNames.size()?map.featureNames[feature]:std::to_string(feature)),float(i%map.width)*16,float(i/map.width)*16,true);
     }
+    std::vector<bool> terrainAccepted;terrainAccepted.reserve(units.size());
     std::set<std::string> restrictions,names,regions;
     for(const auto& type:useOnly)restrictions.insert(folded(type));
     for(const auto& unit:units) {
+        terrainAccepted.push_back(false);
         const auto label=unit.name.empty()?unit.type:unit.name;
         if(!inside(unit.x,unit.z)) {issue(label+": outside map",-1,-1,true);continue;}
         if(unit.player<0 || unit.player>8)issue(label+": invalid owner",unit.x,unit.z,true);
@@ -86,12 +88,14 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
         if(!type) {issue(label+": unknown unit type",unit.x,unit.z,true);continue;}
         // Preplaced scenarios may deliberately bypass construction constraints.
         // Report these as warnings rather than forbidding an authored placement.
-        if(!type->canFly && !world->canPlace(type,unit.x,unit.z))
-            issue(label+": engine placement rejects this terrain or feature footprint",unit.x,unit.z);
+        terrainAccepted.back()=type->canFly || world->canPlace(type,unit.x,unit.z);
+        if(!terrainAccepted.back())issue(label+": engine placement rejects this terrain or feature footprint",unit.x,unit.z);
     }
     if(metadata.starts.empty())issue("No player start positions");
     else if(metadata.starts.size()<2)issue("Fewer than two player starts; ordinary skirmishes need at least two");
     if(metadata.starts.size()>8)issue("More than eight player starts; only eight players can join a match");
+    struct StartCandidate {const tak::sim::UnitType* type;float x,z;int number;};
+    std::vector<StartCandidate> startCandidates;
     std::set<std::pair<int,int>> startCells;
     std::set<int> startNumbers;
     for(size_t i=0;i<metadata.starts.size();++i) {
@@ -104,7 +108,10 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
         std::string blocked;
         for(const char* monarch:tak::sim::kMonarchs) {
             const auto* type=registry.find(monarch);
-            if(type && !type->canFly && !world->canPlace(type,x,z)) {if(!blocked.empty())blocked+=", ";blocked+=type->name;}
+            if(type && !type->canFly) {
+                if(!world->canPlace(type,x,z)) {if(!blocked.empty())blocked+=", ";blocked+=type->name;}
+                else startCandidates.push_back({type,x,z,start.number});
+            }
         }
         if(!blocked.empty())issue(label+": unsuitable for "+blocked,x,z);
     }
@@ -135,14 +142,38 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
     }
     if(!world->hasManaSpots() && std::any_of(registry.types().begin(),registry.types().end(),[](const auto& entry){return entry.second.onMana;}))
         issue("No recognized mana deposits; skirmish players cannot expand their lodestone economy");
+    struct ManaCandidate {const tak::sim::UnitType* type;float x,z;};
+    std::vector<ManaCandidate> manaCandidates;
     for(const auto& [x,z]:world->manaSpots()) {
         std::string blocked;
         for(const auto& [id,type]:registry.types())if(type.onMana &&
-            (restrictions.empty() || restrictions.count(folded(id))) && !world->canPlace(&type,x,z)) {
-            if(!blocked.empty())blocked+=", ";
-            blocked+=type.name.empty()?id:type.name;
+            (restrictions.empty() || restrictions.count(folded(id)))) {
+            if(world->canPlace(&type,x,z))manaCandidates.push_back({&type,x,z});
+            else {if(!blocked.empty())blocked+=", ";blocked+=type.name.empty()?id:type.name;}
         }
         if(!blocked.empty())issue("Mana deposit: engine rejects lodestone footprint for "+blocked,x,z);
+    }
+    // Add occupants only after the terrain/connectivity checks, so diagnostics
+    // distinguish authored terrain from units that may move during play.
+    world->setPlayerCount(8);
+    for(size_t i=0;i<units.size();++i) {
+        const auto& unit=units[i];const auto* type=registry.find(folded(unit.type));
+        if(!type || !inside(unit.x,unit.z))continue;
+        if(!type->canFly && terrainAccepted[i] && !world->canPlace(type,unit.x,unit.z))
+            issue((unit.name.empty()?unit.type:unit.name)+": engine placement blocked by earlier preplaced units",unit.x,unit.z);
+        // Ownership does not affect this observational occupancy check. Keep
+        // the CRT neutral slot valid without inventing an extra match player.
+        world->spawn(type,unit.x,unit.z,{},std::clamp(unit.player,0,7));
+    }
+    for(const auto& candidate:startCandidates)if(!world->canPlace(candidate.type,candidate.x,candidate.z))
+        issue("Start "+std::to_string(candidate.number)+": preplaced units currently block "+candidate.type->name,candidate.x,candidate.z);
+    for(const auto& candidate:manaCandidates) {
+        const bool hasLodestone=std::any_of(world->units().begin(),world->units().end(),[&](const auto& unit) {
+            const float dx=unit.x.toFloat()-candidate.x,dz=unit.z.toFloat()-candidate.z;
+            return unit.type && unit.type->onMana && dx*dx+dz*dz<44*44;
+        });
+        if(!hasLodestone && !world->canPlace(candidate.type,candidate.x,candidate.z))
+            issue("Mana deposit: preplaced units currently block "+candidate.type->name,candidate.x,candidate.z);
     }
     for(const auto& region:scenario.regions) {
         if(region.name.empty() || !regions.insert(folded(region.name)).second)issue("Region name is empty or duplicated: "+region.name,-1,-1,true);

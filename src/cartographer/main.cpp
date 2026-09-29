@@ -1072,8 +1072,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         const auto type=selectedType>=0 && selectedType<int(unitTypes.size())?lowerText(unitTypes[selectedType]):std::string{};
         auto snapshot=mapView.map();
         discardOverlay=quitAfterOverlay=false;
-        overlayJob=std::async(std::launch::async,[&,snapshot=std::move(snapshot),type,kind] {
-            return cart::terrainOverlay(snapshot,unitRegistry,vfs,kind,type);
+        overlayJob=std::async(std::launch::async,[&,snapshot=std::move(snapshot),occupants=units,type,kind] {
+            return cart::terrainOverlay(snapshot,unitRegistry,vfs,kind,type,occupants);
         });
         modal=M_ANALYZING;SDL_StopTextInput();
     };
