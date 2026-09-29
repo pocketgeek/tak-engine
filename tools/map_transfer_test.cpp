@@ -60,7 +60,7 @@ int main(int argc, char** argv) try {
                 authored.players[0][0].conditions[0].opcode=0;
                 for(auto& entry:entries) if(entry.path=="kmap/transfer test.ota") {
                     auto metadata=tnt::Scenario::parse(std::string(entry.data.begin(),entry.data.end()));
-                    metadata.hasScenario=true;const auto text=metadata.write();entry.data={text.begin(),text.end()};
+                    metadata.hasScenario=true;const auto text=metadata.write()+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n";entry.data={text.begin(),text.end()};
                 }
             }
             companion(".crt",crt::write(authored));

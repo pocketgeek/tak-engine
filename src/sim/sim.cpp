@@ -5070,8 +5070,52 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
     return placementCheck(type,x,z,player,nullptr);
 }
 
+std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomic_bool* cancel) {
+    const auto cancelled=[&] {return cancel && cancel->load(std::memory_order_relaxed);};
+    if(cancelled() || terW_<=0 || terH_<=0)return {};
+    std::vector<uint8_t> result(size_t(terW_)*terH_);
+    if(!type)return result;
+    // This private analysis world is stationary throughout the batch. Building
+    // footprints use the existing body index; mobile placement uses centers,
+    // including airborne/embarked units exactly as the scalar predicate does.
+    struct Restore {bool& value;bool old;~Restore(){value=old;}} restore{bodyIndexEnabled_,bodyIndexEnabled_};
+    bodyIndexEnabled_=true;bodyIndexValid_=false;
+    constexpr int bucketSize=128;
+    const int bw=(terW_*16+bucketSize-1)/bucketSize,bh=(terH_*16+bucketSize-1)/bucketSize;
+    std::vector<std::vector<int>> buckets;
+    if(!type->isStructure()) {
+        buckets.resize(size_t(bw)*bh);
+        for(size_t i=0;i<units_.size();++i) {
+            if(cancelled())return {};
+            const auto& u=units_[i];if(!u.alive())continue;
+            const int bx=std::clamp(u.x.floorInt()/bucketSize,0,bw-1);
+            const int bz=std::clamp(u.z.floorInt()/bucketSize,0,bh-1);
+            buckets[size_t(bz)*bw+bx].push_back(int(i));
+        }
+    }
+    const float radius=16.0f*float(std::max(type->footX,type->footZ))/2+12;
+    std::vector<int> candidates;
+    for(int z=0;z<terH_;++z) {
+        if(cancelled())return {};
+        for(int x=0;x<terW_;++x) {
+            const float px=x*16.f+8,pz=z*16.f+8;
+            candidates.clear();
+            if(!buckets.empty()) {
+                const int x0=std::clamp(int((px-radius)/bucketSize),0,bw-1),x1=std::clamp(int((px+radius)/bucketSize),0,bw-1);
+                const int z0=std::clamp(int((pz-radius)/bucketSize),0,bh-1),z1=std::clamp(int((pz+radius)/bucketSize),0,bh-1);
+                for(int bz=z0;bz<=z1;++bz)for(int bx=x0;bx<=x1;++bx) {
+                    const auto& bucket=buckets[size_t(bz)*bw+bx];
+                    candidates.insert(candidates.end(),bucket.begin(),bucket.end());
+                }
+            }
+            result[size_t(z)*terW_+x]=placementCheck(type,px,pz,-1,nullptr,type->isStructure()?nullptr:&candidates);
+        }
+    }
+    return result;
+}
+
 bool World::placementCheck(const UnitType* type, float x, float z, int player,
-                           std::vector<int>* clearFeatures) const {
+                           std::vector<int>* clearFeatures,const std::vector<int>* candidates) const {
     if (!type) return false;
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,player);
     // Lodestones must sit on a mana deposit — but only on maps that have any
@@ -5209,12 +5253,14 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
         }
         return true;
     }
-    for (const auto& u : units_) {
-        if (!u.alive()) continue;
+    const auto overlaps=[&](const Unit& u) {
+        if (!u.alive()) return false;
         float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
         float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
-        if (dx * dx + dz * dz < min * min) return false;
-    }
+        return dx * dx + dz * dz < min * min;
+    };
+    if(candidates) {for(int index:*candidates)if(overlaps(units_[size_t(index)]))return false;}
+    else {for(const auto& u:units_)if(overlaps(u))return false;}
     return true;
 }
 
@@ -7900,6 +7946,32 @@ void World::initializeRetailSite(Unit& site,int builderId) {
     }
 }
 
+bool World::productionPosition(int builderId,const UnitType* t,Fixed& spawnX,Fixed& spawnY,Fixed& spawnZ) {
+    auto* builder=unit(builderId);
+    if(!builder || !builder->type || !t)return false;
+    Unit& u=*builder;
+    spawnX=u.x;spawnZ=u.z;spawnY=Fixed();
+    if (auto it=unitScripts_.find(u.id);u.type->productionScript && it!=unitScripts_.end()) {
+        const auto& file=*u.type->productionScript;
+        std::array<uint32_t,4> args{0xffffffffu,0,0,0};
+        ScriptHost host{*this,u,it->second};
+        if (!it->second.state.query(file,file.scriptIndex("QueryBuildInfo"),args,host)) return false;
+        const auto offset=retailPieceOrigin(u.type->productionModel,it->second.state.pieces,
+                                           std::bit_cast<int32_t>(args[0]),portHeadingToRetail(u.heading));
+        spawnX=u.x+Fixed::raw(offset[0]); spawnZ=u.z+Fixed::raw(offset[2]);
+        const int cx=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
+        const int cz=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
+        spawnY=Fixed::fromInt(heights_.empty() ? 0 : heights_[size_t(cz)*terW_+cx])+Fixed::raw(offset[1]);
+        if (!canPlace(t,spawnX.toFloat(),spawnZ.toFloat())) return false;
+    } else {
+        const float ex=u.x.toFloat(),ez=u.z.toFloat()+float(u.type->footZ)*8+20;
+        float sx=ex,sz=ez;
+        if (!exitSpot(t,ex,ez,sx,sz)) return false;
+        spawnX=Fixed::fromFloat(sx); spawnZ=Fixed::fromFloat(sz);
+    }
+    return true;
+}
+
 void World::tickProduction(Unit& u, float dt) {
     (void)dt;
     if (u.underConstruction || u.incapacitated() || u.embarked() ||
@@ -7919,24 +7991,7 @@ void World::tickProduction(Unit& u, float dt) {
         if (auto it=unitScripts_.find(u.id);u.type->productionScript && it!=unitScripts_.end() && !it->second.ready) return;
         if (atUnitCap(player) || atTypeCap(player,t)) return;
         Fixed spawnX,spawnZ,spawnY;
-        if (auto it=unitScripts_.find(u.id);u.type->productionScript && it!=unitScripts_.end()) {
-            const auto& file=*u.type->productionScript;
-            std::array<uint32_t,4> args{0xffffffffu,0,0,0};
-            ScriptHost host{*this,u,it->second};
-            if (!it->second.state.query(file,file.scriptIndex("QueryBuildInfo"),args,host)) return;
-            const auto offset=retailPieceOrigin(u.type->productionModel,it->second.state.pieces,
-                                               std::bit_cast<int32_t>(args[0]),portHeadingToRetail(u.heading));
-            spawnX=u.x+Fixed::raw(offset[0]); spawnZ=u.z+Fixed::raw(offset[2]);
-            const int cx=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
-            const int cz=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
-            spawnY=Fixed::fromInt(heights_.empty() ? 0 : heights_[size_t(cz)*terW_+cx])+Fixed::raw(offset[1]);
-            if (!canPlace(t,spawnX.toFloat(),spawnZ.toFloat())) return;
-        } else {
-            const float ex=u.x.toFloat(),ez=u.z.toFloat()+float(u.type->footZ)*8+20;
-            float sx=ex,sz=ez;
-            if (!exitSpot(t,ex,ez,sx,sz)) return;
-            spawnX=Fixed::fromFloat(sx); spawnZ=Fixed::fromFloat(sz);
-        }
+        if (!productionPosition(producerId,t,spawnX,spawnY,spawnZ)) return;
         // Preserve the raw script position across the public float spawn API.
         const int siteId=spawn(t,spawnX.toFloat(),spawnZ.toFloat(),std::nullopt,player);
         site=unit(siteId);

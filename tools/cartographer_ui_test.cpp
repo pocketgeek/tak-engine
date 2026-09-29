@@ -74,20 +74,20 @@ static int generationWorkflow(const char* data) {
         switch(stage) {
         case 0: key(SDLK_n,KMOD_CTRL);++stage;break;
         case 1: text("bad/name");randomButton();key(SDLK_a,KMOD_CTRL);text("Generated preview");randomButton();++stage;break;
-        case 2: text("123456");key(SDLK_RETURN);++stage;break;
+        case 2: text("123456");key(SDLK_TAB);text("8");key(SDLK_RETURN);++stage;break;
         case 3:
             check(title.find("Ulasem Arena")!=std::string::npos && !title.ends_with(" *"),"generation changed original before acceptance");
             if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_ESCAPE);++stage;}break;
         case 4: check(title=="Cartographer -- Ulasem Arena","discard preserves original document");key(SDLK_n,KMOD_CTRL);++stage;break;
         case 5: text("Generated preview");randomButton();++stage;break;
-        case 6: text("123456");key(SDLK_RETURN);key(SDLK_ESCAPE);++stage;break;
+        case 6: text("123456");key(SDLK_TAB);text("8");key(SDLK_RETURN);key(SDLK_ESCAPE);++stage;break;
         case 7:
             check(title.find("[Generated preview]")==std::string::npos,"cancelled generation must not present preview");
             if(title.find("[Generating]")==std::string::npos) {
                 check(title=="Cartographer -- Ulasem Arena","cancelled generation preserves original");key(SDLK_n,KMOD_CTRL);++stage;
             }break;
         case 8: text("Generated preview");randomButton();++stage;break;
-        case 9: text("123456");key(SDLK_RETURN);++stage;break;
+        case 9: text("123456");key(SDLK_TAB);text("8");key(SDLK_RETURN);++stage;break;
         case 10: if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}break;
         case 11: check(title=="Cartographer -- Generated preview *","accept adopts unsaved generated map");key(SDLK_s,KMOD_CTRL);++stage;break;
         case 12: check(!title.ends_with(" *"),"generated map saved");originalTerrain=readTerrain();key(SDLK_RETURN);key(SDLK_p);++stage;break;
@@ -132,9 +132,9 @@ static int generationWorkflow(const char* data) {
         tak::hpi::Archive archive(root/"Generated preview.kmp");bool found=false;
         for(const auto& entry:archive.entries())if(entry.path.ends_with(".ota")) {
             const auto bytes=archive.read(entry);const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
-            if(metadata.starts.size()!=2 || metadata.missionDescription!="Authored description")throw std::runtime_error("generated metadata missing");
+            if(metadata.starts.size()!=8 || metadata.missionDescription!="Authored description")throw std::runtime_error("generated metadata missing");
             const auto params=tak::mapgen::decodeMapId(metadata.generatorRecipe);
-            if(params.seed!=123456 || params.players!=2)throw std::runtime_error("generated recipe differs from chosen options");
+            if(params.seed!=123456 || params.players!=8)throw std::runtime_error("generated recipe differs from chosen options");
             found=true;
         }
         if(!found)throw std::runtime_error("generated metadata absent");
@@ -472,6 +472,14 @@ static int thumbnailWorkflow(const char* data) {
                 thumbnails.get(sections.list()[4].path);thumbnails.reset();
                 if(thumbnails.loading() || thumbnails.entries())throw std::runtime_error("thumbnail reset retained work");
                 awaitTexture(path);
+                const std::string portraitPath="anims/buildpic/araarch.jpg";
+                const auto portrait=tak::jpeg::load(assets.read(portraitPath));
+                auto* icon=awaitTexture(portraitPath);SDL_QueryTexture(icon,nullptr,nullptr,&w,&h);
+                if(w!=portrait.width || h!=portrait.height)throw std::runtime_error("unit portrait aspect/resolution changed");
+                dst={0,0,w,h};SDL_RenderCopy(renderer,icon,nullptr,&dst);SDL_RenderPresent(renderer);
+                rgba.resize(size_t(w)*h*4);
+                if(SDL_RenderReadPixels(renderer,&dst,SDL_PIXELFORMAT_RGBA32,rgba.data(),w*4)!=0 || rgba!=portrait.rgba)
+                    throw std::runtime_error("unit portrait colors differ from its retail JPEG");
             } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';result=1;}
         }
         SDL_DestroyRenderer(renderer);SDL_FreeSurface(surface);

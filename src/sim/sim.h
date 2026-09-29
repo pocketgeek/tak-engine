@@ -1340,6 +1340,9 @@ public:
     // Same, for a unit type's footprint (honours its yardmap like blockFootprint).
     void blockFoot(const UnitType& t, float x, float z, bool blocked);
     const std::vector<uint8_t>& obstacles() const { return obst_; }
+    // Evaluate the same current scripted/fallback output site used by production.
+    // Runs QueryBuildInfo, so editor diagnostics must use a private World.
+    bool productionPosition(int builderId,const UnitType* type,Fixed& x,Fixed& y,Fixed& z);
     // Queue production of `typeId` at a builder building.
     void train(int builderId, const UnitType* type, int count = 1);   // queue `count`
     void dequeue(int builderId, const UnitType* type, int count);     // un-queue `count`
@@ -1372,6 +1375,9 @@ public:
     void startHeadbang(int player);
     bool headbangActive(int player) const;
     bool canPlace(const UnitType* type, float x, float z, int player = -1) const;
+    // Observational whole-map query at cell centers. Returns empty on cancellation.
+    // Reuses placementCheck with spatially bounded occupant candidates.
+    std::vector<uint8_t> placementCells(const UnitType* type,const std::atomic_bool* cancel=nullptr);
     const Unit* lodestoneUpgradeSource(const UnitType* type, float x, float z, int player) const;
     // Would the site be placeable if the clearable doodads on it were gone? Fills
     // `out` with their feature ids, nearest-first is the caller's job. Returns false
@@ -1899,7 +1905,7 @@ public:
 
 private:
     bool placementCheck(const UnitType* type, float x, float z, int player,
-                        std::vector<int>* clearFeatures) const;
+                        std::vector<int>* clearFeatures,const std::vector<int>* candidates=nullptr) const;
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot);

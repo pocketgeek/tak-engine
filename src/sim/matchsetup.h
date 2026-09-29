@@ -41,7 +41,7 @@ struct MatchConfig {
     std::vector<MatchSlot> slots;   // index = player; sized to the player count
     // No `gods` flag: retail decides with a 10% roll off Gods.tdf, not an option
     // (see the port of 0x519420 in setupMatch). startSeed drives the draw.
-    bool loadCrt = true;             // authored map placements/rules; campaign OTA setup opts out
+    bool loadCrt = true;             // opt-in Test Map placements/rules; campaign OTA setup opts out
     int scenarioViewPlayer = -1;     // cosmetic message filtering only; never hashed
     float startMana = 2800;
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)

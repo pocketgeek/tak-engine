@@ -32,7 +32,7 @@ int main() try {
     auto files=std::make_shared<hpi::Vfs::Files>();
     for(const char* name:{"soldier","builder","araking","tarnecro"}) {
         const auto text=std::string("[UNITINFO]{\nunitname=")+name+";\nobjectname="+name+
-            ";\nmaxdamage=100;\nfootprintx=1;\nfootprintz=1;\ncanmove=1;\nmaxvelocity=1;\n}";
+            ";\nname=Display "+name+";\nmaxdamage=100;\nfootprintx=1;\nfootprintz=1;\ncanmove=1;\nmaxvelocity=1;\n}";
         (*files)[std::string("units/")+name+".fbi"]={text.begin(),text.end()};
     }
     hpi::Vfs vfs;vfs.setMapFiles(files);sim::TypeRegistry registry;registry.loadDir(vfs,"units");
@@ -83,6 +83,16 @@ int main() try {
         check(clientHash==serverHash,"message filtering changed deterministic rule state");
     }
     {
+        crt::Scenario scene;scene.players.resize(2);
+        scene.players[0].push_back({{{5,{"0","SOLDIER"}}},{{13,{"Player 1","kill"}}}});
+        scene.players[1].push_back({{{9,{"0","SOLDIER"}}},{{13,{"Player 2","loss"}}}});
+        sim::ScenarioScript script(scene,registry,-1,2,64,64);script.start(world);
+        const int target=world.units()[3].id;
+        world.unit(target)->lastHitBy=world.units()[0].id;
+        script.unitDied(world,target);script.step(world,1.f/30);
+        check(script.drainMessages().size()==2,"kill/loss conditions used localized display name instead of unit identifier");
+    }
+    {
         tnt::Map map;map.width=map.height=64;map.blocksX=map.blocksY=32;
         map.heights.assign(4096,40);map.features.assign(4096,0xffff);
         map.tileKeys.assign(1024,0);map.tileCols.assign(1024,0);map.tileRows.assign(1024,0);
@@ -96,6 +106,13 @@ int main() try {
         (*files)["kmap/authored.crt"]=crt::write(scene);
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath="kmap/authored.tnt";
         config.slots={{true,0,0},{true,1,1}};config.scenarioViewPlayer=0;
+        {
+            sim::World ordinary;sim::setupMatch(ordinary,registry,config);
+            check(!ordinary.scenario() && ordinary.units().size()==2 && ordinary.units()[0].type==registry.find("araking"),
+                  "ordinary retail CRT map changed its skirmish setup");
+        }
+        const std::string optIn=ota+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n";
+        (*files)["kmap/authored.ota"]={optIn.begin(),optIn.end()};
         sim::World client,server;
         const auto positions=sim::setupMatch(client,registry,config);
         config.scenarioViewPlayer=-1;sim::setupMatch(server,registry,config);

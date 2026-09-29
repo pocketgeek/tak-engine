@@ -462,12 +462,13 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     const bool generated = tak::mapgen::isGeneratedMapId(cfg.mapPath);
     int windMin = 100, windMax = 2000;
     double mapGravity = 112.0;
-    bool noSeaLevelTrigger = false;
+    bool noSeaLevelTrigger = false, authoredPlaytest = false;
     if (!generated) {
         auto ota = tak::vpath::replaceExtension(cfg.mapPath,".ota");
         if (vfs.has(ota)) {
             const auto bytes = vfs.read(ota);
             const auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), ota);
+            if(const auto* test=root.child("takplaytest"))authoredPlaytest=test->numberOr("authoredscenario",0)!=0;
             if (const auto* gh = root.child("globalheader")) {
                 windMin = int(gh->numberOr("minwindspeed", 100));
                 windMax = int(gh->numberOr("maxwindspeed", 2000));
@@ -562,7 +563,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 
     // Cartographer scenarios use authored placements instead of skirmish monarchs.
     // Read the same map-local CRT on every peer, before any default units spawn.
-    if (cfg.loadCrt && !generated && !cfg.stressTest && !cfg.benchmark) {
+    if (cfg.loadCrt && authoredPlaytest && !generated && !cfg.stressTest && !cfg.benchmark) {
         const auto otaPath = tak::vpath::replaceExtension(cfg.mapPath, ".ota");
         const auto otaBytes = vfs.tryRead(otaPath);
         if (otaBytes && tak::tnt::Scenario::parse(std::string(otaBytes->begin(), otaBytes->end())).hasScenario) {

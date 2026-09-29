@@ -7,7 +7,8 @@
 
 namespace cart {
 // SDL resources stay on the UI thread. Only decoding/composition runs in a
-// worker. reset() must precede replacing the borrowed VFS.
+// worker (terrain sections or JPEG unit portraits). reset() must precede
+// replacing the borrowed VFS.
 class Thumbnails {
 public:
     Thumbnails(SDL_Renderer* renderer,const tak::hpi::Vfs& assets,size_t limit=128);

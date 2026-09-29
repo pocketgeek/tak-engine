@@ -150,7 +150,19 @@ std::shared_ptr<Package> importSnapshot(const hpi::Vfs& base, const std::filesys
     if (mapPath.empty()) throw std::runtime_error("Test map contains no terrain");
     hpi::Vfs view(&base);
     view.setMapFiles(files);
-    return buildUncached(view, mapPath); // snapshot wins over an older cached map at the same path
+    const auto validated=buildUncached(view, mapPath); // current snapshot wins over cached revisions
+    auto enabled=std::make_shared<hpi::Vfs::Files>(*validated->files);
+    auto& ota=(*enabled)[tak::vpath::replaceExtension(mapPath,".ota")];
+    const auto metadata=tdf::parseText(std::string(ota.begin(),ota.end()));
+    const auto* test=metadata.child("takplaytest");
+    if(!test || test->numberOr("authoredscenario",0)==0) {
+        // Explicit production playtest opt-in. Ordinary retail maps may carry CRT
+        // data too; their existing skirmish setup must remain unchanged. Append a
+        // separate section rather than rewriting/dropping unknown retail OTA keys.
+        const std::string marker="\n[TAKPlaytest]\n{\nauthoredscenario=1;\n}\n";
+        ota.insert(ota.end(),marker.begin(),marker.end());
+    }
+    return decode(encode(mapPath,std::move(enabled))->bytes, "");
 }
 
 std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {

@@ -192,8 +192,10 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   Units and features support box selection,
   group movement, copy/paste and deletion; feature moves protect occupied cells.
   **View** can hide features, units, starts and regions; layer choices are remembered.
-  Terrain thumbnails and feature sprites load in the background; the minimap
-  refreshes after terrain edits.
+  Terrain thumbnails, unit portraits and feature sprites load in the background;
+  the minimap refreshes after terrain edits. Check Map reports starts, mana,
+  terrain connectivity, missing resources and initial naval output clearance.
+  Buildability overlays include preplaced units using the engine's placement rules.
   **Test Map (F5)** opens a temporary snapshot in the normal private game lobby,
   leaving the editor and unsaved document open. Seat the players used by your
   scenario, then start. Authored placements and rules run on both client and server.
@@ -413,7 +415,7 @@ it to change.
 
 Use the **same engine build and compatible game data** on every participant.
 Version **0.7.12 uses protocol 195** for directed mana sharing and chat.
-Current checkout builds use **protocol 197** for shared authored-scenario setup
+Current checkout builds use **protocol 198** for shared authored-scenario setup
 and preserved map companions; rebuild/update clients and servers together.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection

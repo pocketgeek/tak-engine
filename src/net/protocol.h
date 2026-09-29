@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 197;      // 197: shared authored CRT match setup
+constexpr uint32_t kNetVersion = 198;      // 198: explicit authored-playtest opt-in preserves ordinary skirmishes
                                            // 195: directed mana sharing and chat recipients
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering

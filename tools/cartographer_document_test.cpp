@@ -171,6 +171,18 @@ int main() {
         fs::create_directory(root/"blocked");
         check(!cart::writeDocumentFiles(root,{{"Review.tnt",{1,2,3}},{"blocked",{4}}},error),"invalid destination must fail");
         check(read(root/"Review.tnt")==saved,"failed export preserves previous file");
+        // Fail after staging all members, while publishing their backups.
+        // Originals must still form a complete document and scratch files vanish.
+        const auto backupFailure=root/"backup-failure";fs::create_directory(backupFailure);
+        const std::vector<tak::hpi::PackFile> previous{{"a.tnt",{1,2,3}},{"a.ota",{4,5,6}}};
+        check(cart::writeDocumentFiles(backupFailure,previous,error),error.c_str());
+        fs::create_directory(backupFailure/"a.ota.bak");
+        std::ofstream(backupFailure/"a.ota.bak"/"keep")<<"unrelated";
+        check(!cart::writeDocumentFiles(backupFailure,{{"a.tnt",{9}},{"a.ota",{8}}},error),"backup publication failure must be reported");
+        for(const auto& member:previous)check(read(backupFailure/member.path)==member.data,"backup failure changed an original document member");
+        check(fs::exists(backupFailure/"a.ota.bak"/"keep"),"backup failure removed unrelated content");
+        for(const auto& entry:fs::directory_iterator(backupFailure))
+            check(!entry.path().filename().string().starts_with(".tak-save-"),"failed save leaked staging files");
         check(!cart::writeDocumentFiles(root,{{"../escape",{1}}},error),"reject traversal");
         check(!cart::writeDocumentFiles(root,{{"duplicate",{1}},{"duplicate",{2}}},error),"reject duplicate members");
         check(!cart::writeDocumentBundle(root/"missing"/"Review.kmp",files,error),"missing folder fails");

@@ -35,6 +35,10 @@ SDL_Texture* Thumbnails::get(const std::string& path) {
     if(!job_.valid())job_=std::async(std::launch::async,[this,path] {
         Result result;result.path=path;
         try {
+            if(path.ends_with(".jpg")) {
+                result.image=tak::jpeg::load(assets_.read(path));
+                return result;
+            }
             auto map=tak::tnt::Map::load(assets_.read(path),path);
             // Section thumbnails are not whole-map renders. Reject corrupt or
             // misplaced oversized prefabs before allocating the raster.

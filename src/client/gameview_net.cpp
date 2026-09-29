@@ -16,7 +16,10 @@
             return uint8_t(std::clamp<int>(tak::mapgen::decodeMapId(gid).players, 2, tak::net::kMaxSlots));
         int n = int(parseStartPositions().size());
         const auto ota=vfs_.tryRead(tak::vpath::replaceExtension(mapPath_, ".ota"));
-        if(ota && tak::tnt::Scenario::parse(std::string(ota->begin(),ota->end())).hasScenario) {
+        const auto metadata=ota?tak::tdf::parseText(std::string(ota->begin(),ota->end())):tak::tdf::Node{};
+        const auto* playtest=metadata.child("takplaytest");
+        if(playtest && playtest->numberOr("authoredscenario",0)!=0 &&
+           tak::tnt::Scenario::parse(std::string(ota->begin(),ota->end())).hasScenario) {
             auto bytes=vfs_.tryRead(tak::vpath::replaceExtension(mapPath_, ".crt"));
             if(const auto cached=vfs_.cachedMap(mapPath_)) {
                 const auto it=cached->second->find(tak::vpath::replaceExtension(cached->first,".crt"));

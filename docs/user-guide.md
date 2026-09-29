@@ -382,11 +382,38 @@ cover every simulation input.
 
 ## Map editor
 
-`cartographer` is the project's clean-room map editor, sharing the engine's VFS,
-TNT loader, and terrain compositor. It opens maps and creates blank or generated
-maps, paints retail section prefabs, edits features/units/start positions, and
-provides scenario properties, resize, unit restrictions, and trigger-rule editing.
-**Ctrl+S** saves loose map files; **Ctrl+B** writes a distributable `.kmp` bundle.
+![Cartographer unit browser, terrain canvas and minimap](img/cartographer.png)
+
+Cartographer shares the engine's map loader, terrain renderer and placement
+rules. Launch it from its application shortcut, or use the command below. It
+reuses the game's remembered data folder and offers a folder picker when needed.
+The File menu provides New, Open/recent maps, Save, Save As and loose export.
+**Ctrl+S** saves a playable `.kmp` bundle; **Ctrl+Shift+S** opens Save As.
+Loose export is an advanced File-menu action, not the normal save format.
+
+Search the terrain, feature and unit browsers; unit rows include build portraits,
+friendly names and internal identifiers. Place, Select, Erase and Pan are separate
+tools. Right-drag pans. Selection supports group movement, copy/paste, duplication,
+deletion and properties. The Regions tool draws and resizes named trigger areas.
+View offers a minimap, Fit Map, Frame Selection, a bookmark, layer visibility,
+UI scaling, and engine-backed movement/buildability/water/slope overlays.
+
+Scenario provides metadata, resize, restrictions, Check Map and trigger editing.
+Check Map reports located warnings, including inaccessible starts/mana, isolated
+terrain and initial naval factory output clearance. Click a located result to
+inspect it. These are authoring diagnostics, not a guarantee that every mission
+outcome or complete ship launch animation works.
+
+Edits support **Ctrl+Z/Ctrl+Y** undo/redo and periodic recovery. Saves retain the
+previous version as `.bak`; save/export runs in the background with progress.
+Escape cancels before publication; a replacement already underway finishes or
+rolls back. Prefer KMP over loose multi-file exports for a single replacement.
+
+**Test Map (F5)** launches a temporary snapshot in the normal private game lobby.
+Seat the scenario's players and start; the editor and unsaved document stay open.
+The snapshot enables authored placements/rules on both client and server without
+changing ordinary retail-map skirmish setup. See [scenario runtime limits](crt-triggers.md)
+for unsupported neutral owners, stat overrides and other current limitations.
 
 Build the `cartographer` target, then launch it with a map name and retail data:
 
@@ -394,6 +421,8 @@ Build the `cartographer` target, then launch it with a map name and retail data:
 ./build/cartographer "ulasem arena" --data /path/to/tak_install --out /path/to/output
 ```
 
-It is included in Linux packages; Windows/macOS game bundles currently carry
-only the client and server. Editor polish and retail parity remain ongoing.
-See [cartographer-port.md](cartographer-port.md) for implementation notes.
+Linux packages and Windows/macOS release bundles include the editor. Recent
+cross-platform packaging changes still need live Windows/macOS verification.
+See [the implementation ledger](cartographer-improvements-progress.md) for
+validation and remaining limitations, and [cartographer-port.md](cartographer-port.md)
+for historical retail research.

@@ -273,7 +273,7 @@ void ScenarioScript::step(World& w, float dt) {
 void ScenarioScript::unitDied(World& w, int id) {
     const Unit* u = w.unit(id);
     if (!u || !u->type) return;
-    std::string ty = lower(u->type->name);
+    std::string ty = u->type->id; // CRT operands identify FBI types, not localized display names
     if (u->player >= 0 && u->player < int(state_.size())) state_[size_t(u->player)].lost[ty]++;
     // Kill credit to the last attacker's owner.
     if (const Unit* k = w.unit(u->lastHitBy))

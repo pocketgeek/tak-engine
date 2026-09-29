@@ -99,6 +99,9 @@ int main() {
         // Synthetic solid-color JPEG; no retail artwork.
         const std::vector<uint8_t> terrainImage={0xff,0xd8,0xff,0xe0,0x0,0x10,0x4a,0x46,0x49,0x46,0x0,0x1,0x1,0x0,0x0,0x1,0x0,0x1,0x0,0x0,0xff,0xdb,0x0,0x43,0x0,0x8,0x6,0x6,0x7,0x6,0x5,0x8,0x7,0x7,0x7,0x9,0x9,0x8,0xa,0xc,0x14,0xd,0xc,0xb,0xb,0xc,0x19,0x12,0x13,0xf,0x14,0x1d,0x1a,0x1f,0x1e,0x1d,0x1a,0x1c,0x1c,0x20,0x24,0x2e,0x27,0x20,0x22,0x2c,0x23,0x1c,0x1c,0x28,0x37,0x29,0x2c,0x30,0x31,0x34,0x34,0x34,0x1f,0x27,0x39,0x3d,0x38,0x32,0x3c,0x2e,0x33,0x34,0x32,0xff,0xdb,0x0,0x43,0x1,0x9,0x9,0x9,0xc,0xb,0xc,0x18,0xd,0xd,0x18,0x32,0x21,0x1c,0x21,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0x32,0xff,0xc0,0x0,0x11,0x8,0x0,0x20,0x0,0x20,0x3,0x1,0x22,0x0,0x2,0x11,0x1,0x3,0x11,0x1,0xff,0xc4,0x0,0x15,0x0,0x1,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x6,0xff,0xc4,0x0,0x14,0x10,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0xff,0xc4,0x0,0x16,0x1,0x1,0x1,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x4,0x5,0xff,0xc4,0x0,0x14,0x11,0x1,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0xff,0xda,0x0,0xc,0x3,0x1,0x0,0x2,0x11,0x3,0x11,0x0,0x3f,0x0,0x94,0x1,0x9a,0x94,0x0,0x0,0x0,0x0,0x1f,0xff,0xd9};
         (*files)["terrain/00000001.jpg"]=terrainImage;
+        // Minimal synthetic model with an empty root and no geometry.
+        std::vector<uint8_t> emptyModel(52);emptyModel[0]=1;
+        (*files)["objects3d/test.3do"]=emptyModel;
         (*files)["units/test.fbi"]={fbi.begin(),fbi.end()};vfs.setMapFiles(files);registry.loadDir(vfs,"units");
         check(registry.find("test")!=nullptr,"synthetic unit loaded");
         {
@@ -193,6 +196,28 @@ int main() {
         for(int z=0;z<32;++z)for(int x=0;x<32;++x)
             check((occupiedOverlay.rgba[(z*32+x)*4+1]==210)==reference.canPlace(registry.find("test"),x*16.f+8,z*16.f+8),"occupied buildability overlay agrees with engine at every cell");
         check(occupiedOverlay.rgba[(5*32+5)*4]==235 && build.rgba[(5*32+5)*4+1]==210,"preplaced unit changes buildability");
+        {
+            // Batch broad phase must retain the scalar predicate, including
+            // edge buckets, dead/airborne occupants and larger footprints.
+            auto flyer=*registry.find("test");flyer.canFly=true;
+            reference.spawn(&flyer,128,128);
+            for(int i=0;i<50;++i) {
+                const int id=reference.spawn(registry.find("test"),float((i*79)%600-40),float((i*131)%600-40));
+                if(i%9==0)reference.unit(id)->hp={};
+            }
+            const auto hash=reference.stateHash();
+            for(int footprint:{1,3,9})for(bool structure:{false,true}) {
+                auto type=*registry.find("test");type.footX=footprint;type.footZ=footprint;
+                if(structure)type.maxVel={};
+                const auto cells=reference.placementCells(&type);
+                for(int z=0;z<32;++z)for(int x=0;x<32;++x)
+                    check(bool(cells[size_t(z)*32+x])==reference.canPlace(&type,x*16.f+8,z*16.f+8),"batched placement differs from scalar engine predicate");
+            }
+            check(reference.stateHash()==hash,"placement analysis changes simulation state");
+            std::atomic_bool cancel=true;
+            check(reference.placementCells(registry.find("test"),&cancel).empty(),"cancelled placement batch produces no partial overlay");
+            check(cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Buildability,"test",occupants,&cancel).rgba.empty(),"cancelled overlay produces no pixels");
+        }
         map.heights[12*32+12]=60;
         tak::tnt::Scenario metadata;metadata.starts={{1,12,12},{2,24,24}};
         tak::crt::Scenario scenario;scenario.regions.push_back({"Area",15,15,5,5});
@@ -200,6 +225,9 @@ int main() {
         auto run=[&] {return cart::validateMap(map,metadata,scenario,units,{},registry,vfs);};
         auto has=[](const auto& issues,const std::string& text) {for(const auto& issue:issues)if(issue.message.find(text)!=std::string::npos)return true;return false;};
         check(run().empty(),"flat map, unit and reversed inclusive region validate");
+        files->erase("objects3d/test.3do");
+        check(has(run(),"unit model is missing"),"missing placed-unit model diagnosed");
+        (*files)["objects3d/test.3do"]=emptyModel;
         metadata.starts[1].number=1;check(has(run(),"duplicate start number"),"duplicate start numbers cannot silently replace a slot");
         metadata.starts[1].number=9;check(has(run(),"must be 1 through 8"),"start number range");metadata.starts[1].number=2;
         map.features[0]=7;check(has(run(),"Missing feature definition"),"invalid feature reference diagnosed");map.features[0]=0xffff;
@@ -262,6 +290,28 @@ int main() {
         disconnected.heights[8*32+24]=255;
         connectivity=cart::validateMap(disconnected,metadata,{}, {},{},diagnostics,vfs);
         check(has(connectivity,"rejects lodestone footprint"),"steep mana deposit fails actual engine placement");
+        {
+            const std::string port="[UNITINFO]{\nunitname=port;\nname=Sea Dock;\nmaxdamage=100;\nfootprintx=2;\nfootprintz=2;\nmaxvelocity=0;\nminwaterdepth=1;\nmaxwaterdepth=255;\nfloater=1;\nbuilder=1;\nworkertime=100;\n}";
+            const std::string boat="[UNITINFO]{\nunitname=boat;\nname=Longship;\nmaxdamage=100;\nfootprintx=2;\nfootprintz=2;\nmaxvelocity=1;\nminwaterdepth=8;\nmaxwaterdepth=255;\nmovementclass=water;\nfloater=1;\nbuildtime=30000;\n}";
+            (*files)["units/port.fbi"]={port.begin(),port.end()};(*files)["units/boat.fbi"]={boat.begin(),boat.end()};
+            (*files)["canbuild/port/boat.tdf"]={};
+            tak::sim::TypeRegistry navy;navy.loadDir(vfs,"units");navy.loadBuildTree(vfs,"canbuild");
+            auto water=map;water.seaLevel=100;water.heights.assign(water.heights.size(),95);
+            water.features.assign(water.features.size(),0xffff);
+            std::vector<cart::PlacedUnit> harbor{{"PORT",0,264,264}};
+            check(has(cart::validateMap(water,{}, {},harbor,{},navy,vfs),"initial naval output site"),"shallow naval factory output not diagnosed");
+            water.heights.assign(water.heights.size(),30);
+            check(!has(cart::validateMap(water,{}, {},harbor,{},navy,vfs),"initial naval output site"),"deep-water output incorrectly rejected");
+            tak::sim::World production;production.setTerrain(water.heights,water.width,water.height,water.seaLevel);
+            production.buildNavClasses(navy);
+            const int id=production.spawn(navy.find("port"),264,264,0,0);
+            tak::sim::Fixed x,y,z;
+            check(production.productionPosition(id,navy.find("boat"),x,y,z),"deep-water output query failed");
+            production.train(id,navy.find("boat"));production.tick(1.f/30);
+            const auto* site=production.unit(production.unit(id)->productionSiteId);
+            check(site && site->x==x && site->z==z && site->flightY==y,"production differs from editor's shared output predicate");
+            check(water.heights[0]==30 && harbor[0].x==264,"naval diagnostics changed the source document");
+        }
         std::cout<<"PASS: editor engine placement and scenario validation\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

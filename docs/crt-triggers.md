@@ -48,13 +48,14 @@ the flag value and suffix in action 25 messages.
 ## Current engine integration and limits
 
 `src/sim/scenario.cpp` implements the CRT runner. Shared match setup attaches it
-to `World` when the map OTA declares `hasscenario=1`; the world ticks it and hashes its rule state.
+to `World` when the map OTA declares `hasscenario=1` and explicitly opts in with
+`[TAKPlaytest] { authoredscenario=1; }`; the world ticks it and hashes its rule state.
 Messages are filtered for the local viewer without changing that state. The
 current runner fires on a condition group's false-to-true transition and supports
 explicit rule disabling. This describes the implementation, not a claim that all
 retail trigger execution semantics have been verified.
 
-Protocol 197 loads authored placements instead of default skirmish monarchs,
+Protocol 198 loads authored placements instead of default skirmish monarchs,
 including ownership, position, heading, health and veterancy. All authored owners
 must have occupied lobby slots. The initial camera position uses their units'
 centroid. Rule/region-only maps retain the normal monarch starts. Campaigns retain their separate OTA/mission-script setup.
@@ -62,7 +63,9 @@ centroid. Rule/region-only maps retain the normal monarch starts. Campaigns reta
 Cartographer's **Test Map (F5)** saves a temporary KMP and launches
 `takclient --data <install> --play-map <snapshot.kmp>`. This documented production
 handoff validates the snapshot through the normal map-package whitelist, caches
-its verified revision, and opens a private local-server lobby. It does not enable
+its verified revision with that opt-in section, and opens a private local-server lobby.
+Ordinary retail maps and normal exports keep their existing skirmish setup even
+when they contain CRT companions; cached Test Map snapshots retain the opt-in. It does not enable
 any standalone/debug simulation. The editing session stays open. Temporary source
 files are removed when the editor observes game exit; closing the editor first
 leaves the running game and its temporary source undisturbed. Verified MapCache

@@ -1,6 +1,7 @@
 #include "cartographer/validation.h"
 #include "cartographer/triggers.h"
 #include "terrain/terrain.h"
+#include "hpi/hpi.h"
 #include <cstdio>
 #include "sim/matchsetup.h"
 #include <algorithm>
@@ -128,7 +129,7 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
             issue("Missing feature definition: "+(feature<map.featureNames.size()?map.featureNames[feature]:std::to_string(feature)),float(i%map.width)*16,float(i/map.width)*16,true);
     }
     std::vector<bool> terrainAccepted;terrainAccepted.reserve(units.size());
-    std::set<std::string> restrictions,names,regions;
+    std::set<std::string> restrictions,names,regions,checkedModels;
     for(const auto& type:useOnly)restrictions.insert(folded(type));
     if(!useOnly.empty())issue("Use Only restrictions are saved, but the current match runtime does not enforce them");
     for(const auto& type:scenario.customTypes)
@@ -147,6 +148,8 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
         if(!restrictions.empty() && !restrictions.count(folded(unit.type)))issue(label+": excluded by Use Only",unit.x,unit.z);
         const auto* type=registry.find(folded(unit.type));
         if(!type) {issue(label+": unknown unit type",unit.x,unit.z,true);continue;}
+        if(checkedModels.insert(type->id).second && !vfs.has("objects3d/"+type->id+".3do"))
+            issue(label+": unit model is missing (objects3d/"+type->id+".3do)",unit.x,unit.z);
         // Preplaced scenarios may deliberately bypass construction constraints.
         // Report these as warnings rather than forbidding an authored placement.
         terrainAccepted.back()=type->canFly || world->canPlace(type,unit.x,unit.z);
@@ -233,6 +236,7 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
     // Add occupants only after the terrain/connectivity checks, so diagnostics
     // distinguish authored terrain from units that may move during play.
     world->setPlayerCount(8);
+    std::vector<int> factories;
     for(size_t i=0;i<units.size();++i) {
         const auto& unit=units[i];const auto* type=registry.find(folded(unit.type));
         if(!type || !inside(unit.x,unit.z))continue;
@@ -240,7 +244,26 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
             issue((unit.name.empty()?unit.type:unit.name)+": engine placement blocked by earlier preplaced units",unit.x,unit.z);
         // Ownership does not affect this observational occupancy check. Keep
         // the CRT neutral slot valid without inventing an extra match player.
-        world->spawn(type,unit.x,unit.z,{},std::clamp(unit.player,0,7));
+        const int id=world->spawn(type,unit.x,unit.z,unit.angle*3.14159265f/180.f,std::clamp(unit.player,0,7));
+        if(type->isStructure() && id)factories.push_back(id);
+    }
+    for(const int id:factories) {
+        const auto* factory=world->unit(id);
+        const auto factoryName=factory->type->name;
+        const auto factoryType=factory->type->id;
+        const float x=factory->x.toFloat(),z=factory->z.toFloat();
+        std::string blocked;
+        for(const auto& output:registry.buildable(factoryType)) {
+            const auto* ship=registry.find(output);
+            if(!ship || ship->domain!=tak::sim::UnitType::Domain::Water || ship->isStructure())continue;
+            tak::sim::Fixed sx,sy,sz;
+            if(!world->productionPosition(id,ship,sx,sy,sz)) {
+                if(!blocked.empty())blocked+=", ";
+                blocked+=ship->name;
+            }
+        }
+        if(!blocked.empty())issue(factoryName+": initial naval output site cannot place "+blocked+
+            ". Check water depth, shoreline and nearby obstacles; this checks the current script pose, not an entire launch animation.",x,z);
     }
     for(const auto& candidate:startCandidates)if(!world->canPlace(candidate.type,candidate.x,candidate.z))
         issue("Start "+std::to_string(candidate.number)+": preplaced units currently block "+candidate.type->name,candidate.x,candidate.z);

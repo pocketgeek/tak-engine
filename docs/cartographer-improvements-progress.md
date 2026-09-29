@@ -1,10 +1,10 @@
-# Cartographer improvements — active goal
+# Cartographer improvements
 
 The scope is all six areas in the [usability review](cartographer-usability-review-2026-09-29.md).
-This is an implementation ledger, not a claim that the complete goal is finished.
+This is an implementation ledger; completed workflows and remaining limitations are listed below.
 Existing pathfinding rules are unchanged. Authored CRT maps now use shared client/server setup; ordinary skirmish and campaign setup retain their existing paths.
-Later checkpoints supersede earlier outstanding items; the final Remaining Work
-list tracks what is still unfinished.
+Later checkpoints supersede earlier outstanding items; the final scope section
+separates implemented workflows from optional extensions and runtime limitations.
 
 ## First implementation checkpoint
 
@@ -835,22 +835,77 @@ undo/redo and recovery UI workflows still pass. A headless save of Ultima Online
 B1 63x63 completed in 0.41 seconds with peak RSS 260,688 KiB; that is a whole
 load/save workflow measurement, not a claim about interactive frame rate.
 
-## Remaining work
+## Naval validation, browser portraits and dense-map checkpoint
 
-1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
-   resize, damaged recovery and backup fallback now have workflow coverage.
-2. Broader Unicode shaping/fallback, additional layout preferences,
-   and verification of cross-platform packaging/launch usability.
-3. Broader browser/selection interaction coverage,
-   model previews where useful and additional view controls.
-4. Naval-output clearance and fuller resource checks, plus profiling occupancy
-   overlays on dense large scenarios; whole-map movement components are covered.
-5. Expanded typed-rule validation and optional trigger diagnostics; temporary
-   snapshots now launch through the normal client/server path. Complete custom
-   mission outcomes, neutral owners and stat overrides remain runtime limitations.
-6. Further large-map profiling, broader document/UI coverage and final
-   documentation cleanup. Save/export now runs in the background. Pending terrain work survives
-   unrelated edits; thumbnails, feature art and minimaps load in the background.
+Protocol 198 restricts authored CRT setup to verified Test Map snapshots carrying
+an explicit OTA opt-in. Ordinary retail maps may contain CRT files too; those
+retain their original skirmish setup. The existing Varro Passage placement test
+caught this distinction. Tagged snapshots still use shared client/server setup.
+Scenario kill/loss conditions now tally internal unit identifiers rather than
+localized display names, with a regression covering both sides of a kill.
 
-No retail GUI launch is needed for the completed work. The separate untracked
-retail-weapon probe is unrelated and is not part of this goal.
+Check Map queries the engine's actual initial factory output position for each
+naval build option and warns when the ship cannot be placed. This shares the
+production query rather than approximating launch direction or water depth.
+It checks the initial script pose, not an entire ship-launch animation. Placed
+units also get a missing-model warning. Unit-browser portraits load asynchronously
+through the same bounded thumbnail cache and preserve their aspect ratio.
+
+Profiling the buildability overlay on Ultima Online B1 (63x63, 2,016 by 2,016
+cells) with 16,000 placed Aramon Archers exposed a full-army scan at every cell.
+The engine now provides an observational batch query: mobile queries use bounded
+center buckets, structure queries reuse the footprint index, and both call the
+existing placement predicate. The measured calculation fell from 27.15 seconds
+to 0.56 seconds on this machine. All 4,064,256 cells matched scalar `canPlace`
+results. These are calculation timings, not interactive FPS measurements.
+Cancellation stops overlay work between rows instead of merely discarding the
+finished result. No movement/pathfinding rules changed.
+
+Validation: 38 selected Release tests and 23 ASAN/LSAN tests passed, covering
+editor workflows, scenario/map transfer, placement/production/conjuring, campaigns,
+naval maps and transports. The additional staged-backup failure audit preserves
+all original document members and unrelated directory contents without leaking
+staging files. Native gcc/clang O0/O2/O3 determinism retained golden
+`dcef618cd2e4d558`; ARM target headers/libraries remain unavailable. Authored map
+transfer still agreed for 300 ticks across host, peer, referee and late spectator
+(`816b529f844de6f8`), and the Release client launched its private local server from
+a verified snapshot. Full Release targets were rebuilt together.
+
+The large-map validation UI workflow completed in 2.67 seconds, peak RSS
+880,572 KiB, including map load, checking, cancellation and result navigation.
+The browser was visually inspected after asynchronous portraits finished loading;
+the user guide now includes that capture and correct save/packaging instructions.
+The generator UI workflow now creates eight starts, saves/reopens the map and
+reproduces its recipe; the expanded workflow passed in Release and ASAN/LSAN.
+
+## Scope and remaining limitations
+
+The six core workflows are implemented: recoverable editing and saving; desktop
+launch/menus/text/UI scaling; searchable browsers and selection/inspectors;
+engine-backed validation/overlays and generator controls; scenario authoring
+and Test Map; and background/cached large-map work with workflow coverage.
+The checkpoints above record validation rather than claiming complete retail
+Cartographer or mission-runtime parity.
+
+- Windows/macOS packaging and Unicode launch paths are implemented, but live
+  platform verification remains unavailable here. Windows source compile checks
+  passed; the configured static Windows FFmpeg prefix is missing for full linking.
+- The embedded font covers Latin, Greek and Cyrillic; it is not a full Unicode
+  shaping/fallback system. UI scale, window size and layer choices are remembered.
+- Unit portraits, footprint outlines and facing indicators are available;
+  animated 3D model previews and terrain-art rotation are not implemented.
+  Terrain stamps preserve authored lighting/relief; feature protection is explicit.
+- Check Map is advisory. Naval checks use the initial output pose, and resource
+  checks do not validate every possible sound/animation referenced by scripts.
+- Scenario runtime limits remain in `crt-triggers.md`: neutral/stat overrides,
+  unique-name/vertical overrides, Use Only enforcement, custom mission outcomes,
+  and full retail trigger timing are separate engine work. Optional trigger
+  execution logging is not present. Unsupported saved data is retained, and
+  validation/start errors describe the supported subset.
+- Loose export rolls back ordinary write failures but is not power-loss-atomic.
+  KMP is the normal single-file save. Cancel cannot interrupt an in-progress
+  compression call or a replacement transaction. Recovery is not a substitute
+  for independent backups.
+
+No retail GUI was launched. The separate untracked retail-weapon probe is
+unrelated and is not part of this work.

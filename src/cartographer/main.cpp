@@ -516,6 +516,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
 
     cart::Thumbnails thumbs(ren,vfs);
+    cart::Thumbnails unitPortraits(ren,vfs,64);
     auto thumbFor=[&](const std::string& path) {return thumbs.get(path);};
 
     int lastStampX=-1,lastStampY=-1;
@@ -1128,12 +1129,14 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     std::string overlayLegend;
     int overlayWidth=0,overlayHeight=0;
     bool discardOverlay=false,quitAfterOverlay=false;
+    std::shared_ptr<std::atomic_bool> overlayCancel;
     auto buildOverlay=[&](cart::OverlayKind kind) {
         const auto type=selectedType>=0 && selectedType<int(unitTypes.size())?lowerText(unitTypes[selectedType]):std::string{};
         auto snapshot=mapView.map();
         discardOverlay=quitAfterOverlay=false;
-        overlayJob=std::async(std::launch::async,[&,snapshot=std::move(snapshot),occupants=units,type,kind] {
-            return cart::terrainOverlay(snapshot,unitRegistry,vfs,kind,type,occupants);
+        overlayCancel=std::make_shared<std::atomic_bool>(false);
+        overlayJob=std::async(std::launch::async,[&,snapshot=std::move(snapshot),occupants=units,type,kind,cancel=overlayCancel] {
+            return cart::terrainOverlay(snapshot,unitRegistry,vfs,kind,type,occupants,cancel.get());
         });
         modal=M_ANALYZING;SDL_StopTextInput();
     };
@@ -1279,7 +1282,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             std::set<std::string> nextUseOnly;
             if(!nextMetadata.useOnlyUnits.empty())for(const auto& type:cart::loadUseOnly(nextVfs,stem+".tdf"))nextUseOnly.insert(type);
             minimapCancel->store(true,std::memory_order_relaxed);if(minimapJob.valid())minimapJob.wait();
-            thumbs.reset();features.quiesce();
+            thumbs.reset();unitPortraits.reset();features.quiesce();
             mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);minimapSource=nullptr;invalidateMinimap();
             scenario=std::move(nextMetadata);scen=std::move(nextScenario);units=std::move(nextUnits);useOnly=std::move(nextUseOnly);
             mapName=chosen;mapPath=path;world=scenario.kingdom.empty()?"aramon":scenario.kingdom;
@@ -1509,6 +1512,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(overlayJob.valid()) {
                 if(e.type==SDL_QUIT) {discardOverlay=true;quitAfterOverlay=true;}
                 if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE)discardOverlay=true;
+                if(discardOverlay)overlayCancel->store(true);
                 continue;
             }
             if(generatorJob.valid()) {
@@ -2457,8 +2461,16 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if(tool==UNITS && i==selectedType)fillRect(ren,0,y,kPaletteW,25,70,66,40);
                 if(tool==UNITS) {
                     const auto* info=unitInfo(i);
-                    cart::drawText(ren,info?info->name:unitTypes[size_t(i)],6,y+3,1,235,230,200);
-                    cart::drawText(ren,unitTypes[size_t(i)]+" - "+unitCategory(i),6,y+14,1,160,175,195);
+                    if(auto* portrait=unitPortraits.get("anims/buildpic/"+lowerText(unitTypes[size_t(i)])+".jpg")) {
+                        int pw=0,ph=0;SDL_QueryTexture(portrait,nullptr,nullptr,&pw,&ph);
+                        if(pw>0 && ph>0) {
+                            const float scale=std::min(32.f/pw,24.f/ph);
+                            SDL_Rect dst{4+(32-int(pw*scale))/2,y+1+(24-int(ph*scale))/2,int(pw*scale),int(ph*scale)};
+                            SDL_RenderCopy(ren,portrait,nullptr,&dst);
+                        }
+                    }
+                    cart::drawText(ren,info?info->name:unitTypes[size_t(i)],42,y+3,1,235,230,200);
+                    cart::drawText(ren,unitTypes[size_t(i)]+" - "+unitCategory(i),42,y+14,1,160,175,195);
                 } else cart::drawText(ren,paletteLabel(i),6,y+7,1,235,210,100);
             }
         } else {
@@ -2745,7 +2757,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 for(size_t line=0;line<lines.size();++line)cart::drawText(ren,label.substr(lines[line].begin,lines[line].end-lines[line].begin),row.x+4,row.y+4+int(line)*12,1,235,error?145:215,error?140:180);
             }
             SDL_RenderSetClipRect(ren,nullptr);
-            cart::drawText(ren,"Checks do not yet cover naval factory exits or all trigger outcomes.",ct.x,ct.y+ct.h-48,1,180,190,205);
+            cart::drawText(ren,"Naval checks use the initial output pose; trigger outcomes need playtesting.",ct.x,ct.y+ct.h-48,1,180,190,205);
             issueRecheck=cart::drawButton(ren,ct.x,ct.y+ct.h-20,90,18,"CHECK MAP",false);
             issueClose=cart::drawButton(ren,ct.x+ct.w-70,ct.y+ct.h-20,70,18,"CLOSE",true);
         } else if(modal==M_ANALYZING || modal==M_CHECKING) {
@@ -2916,7 +2928,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
     minimapCancel->store(true,std::memory_order_relaxed);
     if(interactive) {clearRecovery();persistPreferences();}
-    thumbs.reset();
+    thumbs.reset();unitPortraits.reset();
     for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
     return 0;
 }
