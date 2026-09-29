@@ -97,6 +97,15 @@ was left untouched and is not part of the release.
 ## Packaging
 
 Linux, Windows, macOS and determinism CI passed for source `af7f653` before
-release preparation. The 0.7.13 tag starts fresh packaging workflows; their final
-publication results will be recorded here after they complete. Native interactive
-Windows/macOS testing was not performed on this Linux host.
+release preparation. Tag `v0.7.13` points to `0a3a64b`. All three tag packaging
+workflows passed: [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36632889818),
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36632889648), and
+[macOS ARM64](https://github.com/pocketgeek/tak-engine/actions/runs/36632889538).
+All 14 platform packages and debug archives are attached to
+[the release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.13).
+
+The downloaded macOS ZIP and Ubuntu 24.04 package were inspected for the
+Cartographer launcher, editor executable and font license; all were present.
+All five local build configurations were refreshed after tagging; their client
+and server binaries report `0.7.13 (build v0.7.13)`.
+Native interactive Windows/macOS testing was not performed on this Linux host.
