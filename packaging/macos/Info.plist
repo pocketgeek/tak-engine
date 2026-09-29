@@ -10,6 +10,8 @@
     <string>Total Annihilation: Kingdoms</string>
     <key>CFBundleIdentifier</key>
     <string>us.pgnet.tak-engine</string>
+    <key>CFBundleIconFile</key>
+    <string>takclient.icns</string>
     <key>CFBundleExecutable</key>
     <string>takclient</string>
     <key>CFBundlePackageType</key>

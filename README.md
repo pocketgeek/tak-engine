@@ -102,6 +102,9 @@ For the ZIP, launch **Total Annihilation - Kingdoms.app**, rather than its inter
 Packages label the client **Total Annihilation: Kingdoms**
 (**Total Annihilation - Kingdoms** for Windows shortcuts and the macOS app folder),
 omit server launchers, and start the Windows client without a console window.
+Windows executables/installers and the macOS app bundle include the crown icon.
+The macOS bundle keeps its required `.app` suffix on disk but requests that Finder
+hide it; Finder’s “Show all filename extensions” preference overrides that request.
 The `-debug` downloads are for diagnostics and development.
 
 ## Getting started

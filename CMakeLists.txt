@@ -797,6 +797,12 @@ if(TAK_BUILD_CLIENT)
     if(WIN32)
       # WinMain forwards to our SDL_MAIN_HANDLED main without allocating a console.
       set_target_properties(takclient PROPERTIES WIN32_EXECUTABLE TRUE)
+      enable_language(RC)
+      configure_file(packaging/windows/takclient.rc.in
+                     "${CMAKE_CURRENT_BINARY_DIR}/takclient.rc" @ONLY)
+      target_sources(takclient PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/takclient.rc")
+      set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/takclient.rc" PROPERTIES
+          OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/takclient.ico")
     endif()
 
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
@@ -912,6 +918,8 @@ elseif(WIN32)
   set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
   set(CPACK_PACKAGE_FILE_NAME "tak-engine-${PROJECT_VERSION}-windows-x64-setup")
   set(CPACK_PACKAGE_INSTALL_DIRECTORY "TAK Engine")
+  set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/takclient.ico")
+  set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/takclient.ico")
   set(CPACK_NSIS_DISPLAY_NAME "Total Annihilation: Kingdoms")
   set(CPACK_NSIS_PACKAGE_NAME "Total Annihilation - Kingdoms")
   set(CPACK_NSIS_URL_INFO_ABOUT "https://github.com/pocketgeek/tak-engine")

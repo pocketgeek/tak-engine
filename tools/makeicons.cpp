@@ -1,6 +1,6 @@
 // makeicons -- render the app icons (src/util/appicon) to PNGs.
-//   makeicons <outdir>
-// Writes takclient.png, cartographer.png, takserver.png at 256px into <outdir>.
+//   makeicons <outdir> [size]
+// Writes takclient.png, cartographer.png, takserver.png at 256px (or the requested size) into <outdir>.
 
 #include "util/appicon.h"
 #include "util/png.h"
@@ -17,7 +17,8 @@ int main(int argc, char** argv) {
         {tak::appicon::Kind::Cartographer, "cartographer"},
         {tak::appicon::Kind::Server, "takserver"},
     };
-    const int sz = 256;
+    const int sz = argc > 2 ? std::stoi(argv[2]) : 256;
+    if (sz < 16 || sz > 1024) { std::fprintf(stderr, "size must be 16..1024\n"); return 1; }
     for (auto& a : apps) {
         auto px = tak::appicon::render(a.kind, sz);
         std::string p = dir + "/" + a.name + ".png";
