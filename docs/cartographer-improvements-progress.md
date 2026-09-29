@@ -412,6 +412,22 @@ AddressSanitizer/LeakSanitizer. Feature operations live
 in a separate module; sprite-extent picking and a richer feature inspector are
 still opportunities beyond the current cell-based selection.
 
+## Layer visibility checkpoint
+
+View now provides checked visibility controls for features, units, starts,
+regions and the grid. All five settings persist between editor sessions.
+Hidden feature/unit/start layers skip their canvas rendering and placement
+previews. Direct selection, dragging and editing shortcuts are disabled for a
+hidden layer; selecting its toolbar or palette reveals it again. The status bar
+explains that behavior. These visibility settings do not change saved maps or
+replace the separate terrain-brush object-protection option.
+
+The feature workflow hides a selected group, tries Delete and Cut, reveals it,
+and then verifies the existing move/undo/save/reopen sequence. Preference tests
+round-trip every visibility flag. All nine editor tests pass in Release and
+under AddressSanitizer/LeakSanitizer. The macOS recovery-checkpoint packaging
+retry also passed; the earlier failure was a busy disk-image resource.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated

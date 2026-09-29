@@ -251,22 +251,25 @@ static int featureWorkflow(const char* data) {
         case 1:text((root/"Features.kmp").string());key(SDLK_RETURN);break;
         case 2:key(SDLK_1);click(180,32);click(480,32);break;
         case 3:drag(345,189,425,237);break; // select both features
-        case 4:drag(361,205,393,253);break; // move two columns, three rows
-        case 5:failed|=!dirty;key(SDLK_z,KMOD_CTRL);break;
-        case 6:failed|=dirty;key(SDLK_y,KMOD_CTRL);break;
-        case 7:failed|=!dirty;drag(377,237,457,285);break;
-        case 8:key(SDLK_DELETE);break;
-        case 9:key(SDLK_z,KMOD_CTRL);break;
-        case 10:key(SDLK_s,KMOD_CTRL);break;
-        case 11:failed|=dirty;key(SDLK_RETURN);key(SDLK_o,KMOD_CTRL);break;
-        case 12:text((root/"Features.kmp").string());key(SDLK_RETURN);break;
-        case 13:failed|=dirty;key(SDLK_s,KMOD_CTRL);break;
-        case 14:key(SDLK_RETURN);break;
-        case 15:{SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);break;}
+        case 4:click(250,10);click(250,312);break; // hide selected features
+        case 5:failed|=dirty;key(SDLK_DELETE);key(SDLK_x,KMOD_CTRL);break; // hidden selection cannot be deleted/cut
+        case 6:failed|=dirty;click(180,32);break; // selecting the feature tool reveals it again
+        case 7:drag(361,205,393,253);break; // move two columns, three rows
+        case 8:failed|=!dirty;key(SDLK_z,KMOD_CTRL);break;
+        case 9:failed|=dirty;key(SDLK_y,KMOD_CTRL);break;
+        case 10:failed|=!dirty;drag(377,237,457,285);break;
+        case 11:key(SDLK_DELETE);break;
+        case 12:key(SDLK_z,KMOD_CTRL);break;
+        case 13:key(SDLK_s,KMOD_CTRL);break;
+        case 14:failed|=dirty;key(SDLK_RETURN);key(SDLK_o,KMOD_CTRL);break;
+        case 15:text((root/"Features.kmp").string());key(SDLK_RETURN);break;
+        case 16:failed|=dirty;key(SDLK_s,KMOD_CTRL);break;
+        case 17:key(SDLK_RETURN);break;
+        case 18:{SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);break;}
         }
     });
     try {
-        if(result || failed || lastFrame<15 || lastFrame>16)throw std::runtime_error("feature UI workflow failed at frame "+std::to_string(lastFrame));
+        if(result || failed || lastFrame<18 || lastFrame>19)throw std::runtime_error("feature UI workflow failed at frame "+std::to_string(lastFrame));
         tak::hpi::Archive archive(root/"Features.kmp");bool found=false;
         for(const auto& entry:archive.entries())if(entry.path.ends_with(".tnt")) {
             const auto saved=tak::tnt::Map::load(archive.read(entry),entry.path);
@@ -276,7 +279,7 @@ static int featureWorkflow(const char* data) {
             found=true;
         }
         if(!found)throw std::runtime_error("saved feature terrain missing");
-        fs::remove_all(root);std::cout<<"PASS: feature box selection, group drag, delete, undo/redo, save and reopen\n";return 0;
+        fs::remove_all(root);std::cout<<"PASS: feature box selection, layer hiding, protected hidden selection, group drag, delete, undo/redo, save and reopen\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }
 static int validationWorkflow(const char* data,const char* mapName="Ulasem Arena") {

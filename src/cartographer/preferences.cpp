@@ -21,6 +21,8 @@ EditorPreferences loadEditorPreferences(const std::filesystem::path& folder) {
         if(key=="width" && row>>value && value>=640 && value<=8192)p.width=value;
         if(key=="height" && row>>value && value>=480 && value<=8192)p.height=value;
         if(key=="scale" && row>>value && value>=50 && value<=200)p.scalePercent=value;
+        for(auto [name,setting]:{std::pair{"features",&p.showFeatures}, {"units",&p.showUnits}, {"starts",&p.showStarts}, {"regions",&p.showRegions}, {"grid",&p.showGrid}})
+            if(key==name && row>>value && (value==0 || value==1))*setting=value!=0;
         if(key=="recent") {
             std::string name;if(row>>std::quoted(name) && !name.empty() && name.size()<=4096 && p.recent.size()<12 &&
                 std::find(p.recent.begin(),p.recent.end(),name)==p.recent.end())p.recent.push_back(std::move(name));
@@ -31,6 +33,7 @@ EditorPreferences loadEditorPreferences(const std::filesystem::path& folder) {
 bool saveEditorPreferences(const std::filesystem::path& folder,const EditorPreferences& p,std::string& error) {
     if(folder.empty()) {error="No editor preferences folder";return false;}
     std::ostringstream text;text<<"width "<<p.width<<"\nheight "<<p.height<<"\nscale "<<p.scalePercent<<'\n';
+    text<<"features "<<p.showFeatures<<"\nunits "<<p.showUnits<<"\nstarts "<<p.showStarts<<"\nregions "<<p.showRegions<<"\ngrid "<<p.showGrid<<'\n';
     for(size_t i=0;i<std::min(size_t(12),p.recent.size());++i)text<<"recent "<<std::quoted(p.recent[i])<<'\n';
     const auto bytes=text.str();return writeDocumentFiles(folder,{{"preferences.txt",{bytes.begin(),bytes.end()}}},error);
 }

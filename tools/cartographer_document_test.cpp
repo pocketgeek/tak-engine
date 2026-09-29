@@ -37,13 +37,14 @@ int main() {
         const auto decoded=cart::readRecoveryInfo(info.data);
         check(decoded && decoded->name=="Recovered map" && fs::u8path(decoded->directory)==destination,"recovery destination UTF-8 roundtrip");
         check(!cart::readRecoveryInfo({1,2,3}),"bad recovery metadata rejected");
-        cart::EditorPreferences preferences;preferences.width=1440;preferences.height=900;preferences.scalePercent=125;
+        cart::EditorPreferences preferences;preferences.width=1440;preferences.height=900;preferences.scalePercent=125;preferences.showFeatures=false;preferences.showUnits=false;preferences.showStarts=false;preferences.showRegions=false;preferences.showGrid=true;
         for(int i=0;i<20;++i)preferences.remember("Map "+std::to_string(i));
         preferences.remember("Carte été \"quote\".kmp");preferences.remember("Map 19");
         check(preferences.recent.size()==12 && preferences.recent[0]=="Map 19","recent maps bounded and deduplicated");
         std::string prefsError;check(cart::saveEditorPreferences(root,preferences,prefsError),prefsError.c_str());
         const auto loadedPreferences=cart::loadEditorPreferences(root);
         check(loadedPreferences.width==1440 && loadedPreferences.height==900 && loadedPreferences.scalePercent==125 && loadedPreferences.recent==preferences.recent,"window, scale and Unicode recent paths roundtrip");
+        check(!loadedPreferences.showFeatures && !loadedPreferences.showUnits && !loadedPreferences.showStarts && !loadedPreferences.showRegions && loadedPreferences.showGrid,"layer preferences roundtrip");
         tak::tnt::Map map;map.width=map.height=32;map.blocksX=map.blocksY=16;
         map.heights.resize(1024,60);map.features.resize(1024,0xffff);
         map.tileKeys.resize(256);map.tileCols.resize(256);map.tileRows.resize(256);

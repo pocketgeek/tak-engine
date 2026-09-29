@@ -186,6 +186,7 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   **Enter** opens the selected region's name and coordinates. Editing supports
   undo/redo and periodic recovery copies. Units and features support box selection,
   group movement, copy/paste and deletion; feature moves protect occupied cells.
+  **View** can hide features, units, starts and regions; layer choices are remembered.
   **Scenario → Check Map** reports
   terrain, start, mana and scenario issues in a clickable results list.
   **Scenario → Regenerate from Recipe** restores a generated map's settings;
