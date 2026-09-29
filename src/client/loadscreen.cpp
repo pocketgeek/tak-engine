@@ -244,14 +244,13 @@ void LoadScreen::draw() {
 
     // The retail screen sets every label in Times New Roman; fall back to the built-in
     // block font so a missing font GAF costs legibility, not the whole screen.
-    static Font font;
-    static bool fontTried = false;
-    if (!fontTried) {
-        fontTried = true;
-        try { font = Font(ren_, *vfs_, "fonts/b_times new roman (100).gaf"); } catch (...) {}
-        if (!font.ok())
-            try { font = Font(ren_, *vfs_, "fonts/times new roman (100).gaf"); } catch (...) {}
+    if (!fontTried_) {
+        fontTried_ = true;
+        try { font_ = Font(ren_, *vfs_, "fonts/b_times new roman (100).gaf"); } catch (...) {}
+        if (!font_.ok())
+            try { font_ = Font(ren_, *vfs_, "fonts/times new roman (100).gaf"); } catch (...) {}
     }
+    const Font& font = font_;
     // Font::draw lifts each glyph by its own y-offset, so a naive y clips the text
     // off the top of a gadget sitting at the screen edge. Centre it in the rect using
     // the font's real vertical bounds instead.

@@ -30,6 +30,7 @@ public:
 #ifdef TAK_STREAM_TESTING
     void testDelayOnce(int milliseconds);
     bool testDelayInProgress() const;
+    size_t testRetainedVideoBytes() const;
     bool startTestEndpoint(const StreamConfig&, const std::string& url, const std::string& caFile);
 #endif
     void stop(); // nonblocking; destruction joins after interrupting network I/O

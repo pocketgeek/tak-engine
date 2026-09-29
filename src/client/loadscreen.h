@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "client/guiart.h"
+#include "client/font.h"
 #include "video/bink.h"
 
 namespace tak::hpi { class Vfs; }
@@ -56,6 +57,8 @@ public:
     void draw();
 
 private:
+    Font font_;
+    bool fontTried_ = false;
     // Draw and present immediately, bypassing the render loop's AA target. Used by
     // step(), which runs inside blocking load work that never reaches a present.
     void present();

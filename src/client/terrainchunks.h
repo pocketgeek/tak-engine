@@ -19,6 +19,8 @@ public:
     explicit TerrainChunks(terrain::Compositor& compositor);
     ~TerrainChunks();
     void clear();
+    // Render thread: stop reading the old compositor before its images change.
+    void resetSource();
     void prepare(SDL_Renderer*,const tnt::Map&,float x,float y,float zoom,int w,int h,bool linear);
     bool draw(SDL_Renderer*,float x,float y,float zoom);
     bool covers(int blockX,int blockY) const;
@@ -45,7 +47,7 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<Job> jobs_,done_;
-    bool stop_=false;
+    bool stop_=false,busy_=false;
     uint64_t epoch_=0,frame_=0,revision_=0;
     size_t bytes_=0,uploads_=0;
     std::set<Key> pending_;

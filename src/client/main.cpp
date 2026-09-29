@@ -1953,6 +1953,7 @@ int main(int argc, char** argv) {
     // could no longer upload (map stuck at the low-res underlay).
     gameView.reset();
     mapView.reset();
+    modelView.reset();
     // ...and only THEN the net client. ~GameView writes this player's replay, which
     // reads the client's recorded bundles -- destroying the client first left the
     // destructor reading freed memory on any quit before the result landed.

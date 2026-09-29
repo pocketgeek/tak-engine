@@ -145,7 +145,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     try { deco = Font(ren, vfs, "fonts/decorativesm.gaf"); } catch (...) {}
     try { body = Font(ren, vfs, "fonts/b_times new roman (100).gaf"); } catch (...) {}
     if (!body.ok()) try { body = Font(ren, vfs, "fonts/times new roman (100).gaf"); } catch (...) {}
-    if (!head.ok()) head = body;
+    const Font& heading = head.ok() ? head : body;
     auto freeAll = [&] {
         if (bg) gpuvram::destroy(bg);
         for (int i = 0; i < 3; ++i) {
@@ -234,12 +234,12 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
         // Column headers, then one row per player.
         auto col = [&](Rect base, float y) { Rect r = base; r.y = y; return r; };
         if (stats && !stats->rows.empty()) {
-            text(head, "Player", col(g.name, g.headY), gold);
-            text(head, "Units", col(g.units, g.headY), gold);
-            text(head, "Kills", col(g.kills, g.headY), gold);
-            text(head, "Losses", col(g.losses, g.headY), gold);
-            text(head, "Time", col(g.time, g.headY), gold);
-            text(head, "Score", col(g.score, g.headY), gold);
+            text(heading, "Player", col(g.name, g.headY), gold);
+            text(heading, "Units", col(g.units, g.headY), gold);
+            text(heading, "Kills", col(g.kills, g.headY), gold);
+            text(heading, "Losses", col(g.losses, g.headY), gold);
+            text(heading, "Time", col(g.time, g.headY), gold);
+            text(heading, "Score", col(g.score, g.headY), gold);
 
             int n = std::min<int>(int(stats->rows.size()), g.maxRows);
             for (int i = 0; i < n; ++i) {
@@ -265,7 +265,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             // just name the outcome where the table would have been.
             Rect where = g.name;
             where.y = g.headY;
-            text(head, title, where, gold);
+            text(heading, title, where, gold);
         }
 
         // Title band ("Victory"/"Defeat") in the decorative face the .gui names for it,

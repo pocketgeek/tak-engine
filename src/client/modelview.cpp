@@ -9,6 +9,10 @@
 #include <cstdio>
 #include <filesystem>
 
+void ModelView::TextureDeleter::operator()(SDL_Texture* texture) const {
+    gpuvram::destroy(texture);
+}
+
 ModelView::ModelView(SDL_Renderer* ren, const std::string& path, const std::string& texDir,
                      const std::string& palettePath, const std::string& cobPath,
                      const std::string& anim, uint32_t staticMask)
@@ -110,11 +114,11 @@ void ModelView::loadTextures(const std::string& texDir, const std::string& palet
                 std::string name = seq.name;
                 std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                 if (textures_.count(name)) continue;
-                SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
+                std::unique_ptr<SDL_Texture,TextureDeleter> t(gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                    SDL_TEXTUREACCESS_STATIC,
-                                                   f.width, f.height);
-                SDL_UpdateTexture(t, nullptr, f.rgba.data(), f.width * 4);
-                textures_[name] = t;
+                                                   f.width, f.height));
+                if(t) SDL_UpdateTexture(t.get(), nullptr, f.rgba.data(), f.width * 4);
+                textures_[name] = std::move(t);
             }
         } catch (const std::exception&) { /* skip odd banks */ }
     }
@@ -151,7 +155,7 @@ void ModelView::walk(const tak::tdo::Object& o, const Xform& parent) {
             std::string name = p.texture;
             std::transform(name.begin(), name.end(), name.begin(), ::tolower);
             auto it = textures_.find(name);
-            if (it != textures_.end()) tex = it->second;
+            if (it != textures_.end()) tex = it->second.get();
         }
         // Fan-triangulate; quads get proper corner UVs.
         for (size_t i = 1; i + 1 < p.indices.size(); ++i) {

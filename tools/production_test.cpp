@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstdio>
 #include <vector>
+#include <memory>
 
 using namespace tak::sim;
 
@@ -62,8 +63,8 @@ static UnitType soldierType() {
     return t;
 }
 
-static World* makeWorld(int W, int H) {
-    World* w = new World();
+static std::unique_ptr<World> makeWorld(int W, int H) {
+    auto w = std::make_unique<World>();
     w->setVisPlayer(-1);                        // headless, like the referee
     w->setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, /*seaLevel=*/20);
     w->setPathService(true);                    // the real router, as in a game
@@ -90,7 +91,8 @@ static void run(World& w, float seconds) {
 // passing against the bug it was written to catch.
 static void productionNeedsMana() {
     std::printf("production is paid for:\n");
-    World& w = *makeWorld(128, 128);
+    auto ownedWorld = makeWorld(128, 128);
+    World& w = *ownedWorld;
     UnitType fac = factoryType(), sol = soldierType();
     sol.buildCost = 500;                 // the default is 0, i.e. free
     fac.storage = 10000;                 // headroom, so the cap is not what limits us
@@ -119,7 +121,8 @@ static void productionNeedsMana() {
 }
 
 static void outputExistsDuringConstruction() {
-    World& w=*makeWorld(128,128);
+    auto ownedWorld = makeWorld(128,128);
+    World& w = *ownedWorld;
     UnitType fac=factoryType(),sol=soldierType();
     fac.workerTime=1; sol.buildTime=2; sol.buildCost=60;
     fac.storage=10000;
@@ -132,7 +135,7 @@ static void outputExistsDuringConstruction() {
     const int siteId=w.unit(fid)->productionSiteId;
     check(siteId && w.unit(siteId)->underConstruction && w.unit(siteId)->buildBegun,
           "factory output exists and is unfinished while construction proceeds");
-    if (!siteId) { delete &w; return; }
+    if (!siteId) return;
     const auto hash=w.stateHash();
     w.player(0).displayResources.samples[0][0]+=100;
     check(w.stateHash()==hash,"HUD resource history does not affect lockstep state");
@@ -177,12 +180,12 @@ static void outputExistsDuringConstruction() {
     for (const auto& u:w.units())
         if (u.alive() && u.type==&sol && !u.underConstruction) ++after;
     check(after==complete+1,"an admitted construction site can finish at the unit cap");
-    delete &w;
 }
 
 static void outputDoesNotJam() {
     std::printf("a factory's output does not jam on one spot:\n");
-    World& w = *makeWorld(128, 128);
+    auto ownedWorld = makeWorld(128, 128);
+    World& w = *ownedWorld;
     UnitType fac = factoryType(), sol = soldierType();
     const int fid = w.spawn(&fac, 1000, 1000, 0, 0);
     w.player(0).mana = 1e9f;
@@ -272,7 +275,6 @@ static void outputDoesNotJam() {
         }
     check(overlaps == 0, "and no two of them are standing inside each other",
           std::to_string(overlaps) + " overlapping pairs");
-    delete &w;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +282,8 @@ static void outputDoesNotJam() {
 // ---------------------------------------------------------------------------
 static void rallyIsAdopted() {
     std::printf("a production building's rally orders:\n");
-    World& w = *makeWorld(160, 160);
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
     UnitType fac = factoryType(), sol = soldierType();
     check(fac.producesUnits(), "a builder structure can hold a rally");
     check(!sol.producesUnits(), "an ordinary unit cannot");
@@ -317,14 +320,14 @@ static void rallyIsAdopted() {
     check(n >= 5, "the units were produced", std::to_string(n));
     check(n > 0 && arrived == n, "every one of them followed the rally to its last step",
           std::to_string(arrived) + " of " + std::to_string(n));
-    delete &w;
 }
 
 // ---------------------------------------------------------------------------
 // 3. A rally set BEFORE anything is built still applies, and re-setting replaces.
 // ---------------------------------------------------------------------------
 static void mobileRallyIsAdopted() {
-    World& w = *makeWorld(160, 160);
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
     UnitType builder = factoryType(), sol = soldierType();
     builder.maxVel = sol.maxVel; builder.canMove = true;
     const int id = w.spawn(&builder, 600, 600, 0, 0);
@@ -348,12 +351,12 @@ static void mobileRallyIsAdopted() {
           "producing builder does not follow output rally");
     w.stop(id);
     check(!w.unit(id)->repeatType && w.unit(id)->buildQueue.empty(), "Stop cancels mobile repeat production");
-    delete &w;
 }
 
 static void rallyReplaces() {
     std::printf("re-setting a rally replaces it (unqueued):\n");
-    World& w = *makeWorld(160, 160);
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
     UnitType fac = factoryType(), sol = soldierType();
     const int fid = w.spawn(&fac, 600, 600, 0, 0);
     w.player(0).mana = 1e9f;
@@ -372,12 +375,12 @@ static void rallyReplaces() {
     }
     check(n > 0 && arrived == n, "and the output follows the NEW plan",
           std::to_string(arrived) + " of " + std::to_string(n));
-    delete &w;
 }
 
 static void scriptControlsReadinessAndPosition() {
     std::printf("factory script readiness and exact piece position:\n");
-    World& w=*makeWorld(160,160);
+    auto ownedWorld = makeWorld(160,160);
+    World& w = *ownedWorld;
     UnitType fac=factoryType(),sol=soldierType();
     sol.buildTime=100000;
     auto script=std::make_shared<tak::cob::File>();
@@ -399,11 +402,11 @@ static void scriptControlsReadinessAndPosition() {
     check(site && site->underConstruction,"ready signal creates the output on that update");
     check(site && site->x.v==600*65536-17 && site->z.v==664*65536+37 &&
           site->flightY.v==100*65536+1024,"QueryBuildInfo retains all raw coordinate bits");
-    delete &w;
 }
 
 static void mobileScriptRandomRunsInWorld() {
-    World& w=*makeWorld(64,64);
+    auto ownedWorld = makeWorld(64,64);
+    World& w = *ownedWorld;
     UnitType mobile=soldierType();
     auto script=std::make_shared<tak::cob::File>();
     script->scripts={{"Create",0}};
@@ -420,13 +423,13 @@ static void mobileScriptRandomRunsInWorld() {
           "mobile COB random shares gameplay RNG without a factory script");
     w.unit(id)->hp=Fixed();w.tick(1.0f/30.0f);
     check(draws.size()==1,"dead mobile script stops consuming random state");
-    delete &w;
 }
 
 static void mobileProducerFacesSite() {
     std::printf("mobile conjurer faces its production site:\n");
     for (bool flying : {false,true}) {
-        World& w=*makeWorld(128,128);
+        auto ownedWorld = makeWorld(128,128);
+        World& w = *ownedWorld;
         UnitType conjurer=soldierType(), output=soldierType();
         conjurer.isBuilder=true;conjurer.canFly=flying;conjurer.workerTime=1;
         conjurer.turnInPlaceRate=1000;conjurer.turnRate=400;conjurer.buildDist=100;
@@ -442,7 +445,6 @@ static void mobileProducerFacesSite() {
             check(flying ? std::abs(bamDiff(want,producer->heading))<8192 : bamDiff(want,producer->heading)==0,flying ? "flying conjurer faces queued output" : "ground conjurer faces queued output",
                   "heading error="+std::to_string(bamDiff(want,producer->heading)));
         }
-        delete &w;
     }
 }
 
@@ -483,7 +485,8 @@ static void repairParticles() {
 // Structures must never reach navigation steering at the edge of weapon range.
 static void defensiveBodyStaysFixed() {
     for (bool canMove : {false, true}) for (float distance : {200.f,490.f,700.f}) {
-        World& w=*makeWorld(128,128);
+        auto ownedWorld = makeWorld(128,128);
+        World& w = *ownedWorld;
         UnitType tower=factoryType(),enemy=soldierType();
         tower.isBuilder=false;tower.canMove=canMove;tower.turnRate=500;
         tower.sight=1000;
@@ -504,7 +507,6 @@ static void defensiveBodyStaysFixed() {
         }
         check(fixed,"defensive body stays fixed at every attack distance",
               std::to_string(distance)+(canMove ? " canmove" : " immobile"));
-        delete &w;
     }
 }
 

@@ -7,6 +7,18 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <utility>
+
+Font::~Font() { destroyGlyphs(); }
+Font::Font(Font&& other) noexcept { *this = std::move(other); }
+Font& Font::operator=(Font&& other) noexcept {
+    if (this == &other) return *this;
+    destroyGlyphs();
+    for (size_t i=0;i<256;++i) glyphs_[i]=std::exchange(other.glyphs_[i],{});
+    ok_=std::exchange(other.ok_,false);
+    letterSpacing_=other.letterSpacing_;
+    return *this;
+}
 
 Font::Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPath) {
     std::filesystem::path pcx = gafPath;
@@ -15,6 +27,9 @@ Font::Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPa
                                             pcx.generic_string());
     auto seqs = tak::gaf::load(vfs.read(gafPath), pal, -1, gafPath);
     if (seqs.empty()) return;
+    // A failed allocation partway through construction must release earlier
+    // glyphs too; the destructor of a partially constructed Font is not called.
+    Font loaded;
     auto& frames = seqs[0].frames;
     for (size_t i = 0; i < frames.size() && i < 256; ++i) {
         auto& f = frames[i];
@@ -29,9 +44,10 @@ Font::Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPa
             // magnifies them, so they stair-step as badly as anything.
             g.tex = tak::art::makeTexture(ren, f.rgba, f.width, f.height);
         }
-        glyphs_[i] = g;
+        loaded.glyphs_[i] = g;
     }
-    ok_ = true;
+    loaded.ok_ = true;
+    *this = std::move(loaded);
 }
 
 int Font::width(const std::string& text, float scale) const {

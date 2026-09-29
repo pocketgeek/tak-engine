@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <memory>
 
 using namespace tak::sim;
 
@@ -63,19 +64,18 @@ static UnitType soldierType(float buildTime, float buildCost) {
     return t;
 }
 
-static World* makeWorld() {
-    static std::vector<World*> keep;
-    World* w = new World();
+static std::unique_ptr<World> makeWorld() {
+    auto w = std::make_unique<World>();
     w->setVisPlayer(-1);
     w->setTerrain(std::vector<uint8_t>(128 * 128, 100), 128, 128, /*seaLevel=*/20);
-    keep.push_back(w);
     return w;
 }
 
 // Ticks until a mobile unit is finished, rather than its construction site appearing.
 static int ticksToBuildOne(float workerTime, float buildTime, float buildCost,
                            double mana, int maxTicks) {
-    World& w = *makeWorld();
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
     UnitType fac = factoryType(workerTime);
     UnitType sol = soldierType(buildTime, buildCost);
     const int fid = w.spawn(&fac, 1000, 1000, 0, 0);
@@ -145,7 +145,8 @@ int main() {
     // A COUNTDOWN LASTS ITS STATED SECONDS. selfDestructCountdown is 2, so the unit
     // should still be alive at 1s and gone by 3s.
     {
-        World& w = *makeWorld();
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
         UnitType sol = soldierType(60, 10);
         const int id = w.spawn(&sol, 500, 500, 0, 0);
         w.destroy(id);                       // arms the countdown

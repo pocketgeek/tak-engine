@@ -75,12 +75,13 @@ int main(int argc,char** argv) {
         }
         auto stop=std::chrono::steady_clock::now();stream.stop();
         require(std::chrono::steady_clock::now()-stop<50ms,"stop does not block UI");
-        if(overload) {
+        {
             const auto deadline=std::chrono::steady_clock::now()+5s;
             while(stream.active() && std::chrono::steady_clock::now()<deadline)
                 std::this_thread::sleep_for(1ms);
             require(!stream.active(),"cancel wakes paused encoder and finishes drain");
-            require(stream.status().frames==pausedFrames,"no video submitted after stop interrupted audio");
+            require(stream.testRetainedVideoBytes()==0,"stopped stream releases video buffers");
+            if(overload)require(stream.status().frames==pausedFrames,"no video submitted after stop interrupted audio");
         }
     }
     std::ifstream file(path,std::ios::binary);

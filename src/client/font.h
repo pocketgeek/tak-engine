@@ -14,6 +14,11 @@ class Font {
 public:
     Font() = default;
     Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPath);
+    ~Font();
+    Font(const Font&) = delete;
+    Font& operator=(const Font&) = delete;
+    Font(Font&&) noexcept;
+    Font& operator=(Font&&) noexcept;
 
     bool ok() const { return ok_; }
     void setLetterSpacing(float pixels) { letterSpacing_ = pixels; }
@@ -31,8 +36,8 @@ public:
 
     // Free the glyph textures (gpuvram-accounted). Called at session teardown so
     // the VRAM budget doesn't leak across menu->game->menu loops; the font is
-    // unusable afterwards until reconstructed. (Not a destructor: Font objects
-    // are copy-assigned when the GUI loads, so an owning dtor would double-free.)
+    // unusable afterwards until reconstructed. Also called by the destructor;
+    // explicit cleanup is safe and must precede destroying the SDL renderer.
     void destroyGlyphs();
 
     void draw(SDL_Renderer* ren, const std::string& text, float x, float y,

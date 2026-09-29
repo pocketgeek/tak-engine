@@ -71,6 +71,14 @@ int main(int argc,char** argv) try {
         map.tilesEdited();check(map.chunkStats().images==0,"terrain edits invalidate images");warm();
         check(read()!=before,"edited terrain appears in rebuilt chunks");
         check(map.chunkStats().bytes<=(size_t(256)<<20),"chunk memory budget");
+        // Reload while chunk composition may still be reading the old source.
+        // The section decoder and chunk worker must both relinquish its images.
+        for(int i=0;i<4;++i) {
+            map.invalidateRenderTargets();map.setZoom(.1f);draw();
+            map.reload(vfs,tak::hpi::findMap(vfs,i%2 ? "Ulasem Arena" : "Cairbray Coast Landing"));
+            check(map.chunkStats().bytes==0,"reload frees old chunk images");
+        }
+        warm();
         SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);
     }
     check(gpuvram::bytes()==baseline,"terrain teardown frees textures");

@@ -682,7 +682,15 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(campaign_presentation_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(campaign_presentation_test PRIVATE tak-formats ${_tak_sdl2})
     add_test(NAME campaign_presentation COMMAND campaign_presentation_test)
+    add_executable(screen_lifecycle_test tools/screen_lifecycle_test.cpp
+        src/client/loadscreen.cpp src/client/resultscreen.cpp src/client/campaignscreen.cpp
+        src/client/font.cpp src/client/guiart.cpp src/client/cursors.cpp src/video/bink.cpp)
+    target_compile_definitions(screen_lifecycle_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(screen_lifecycle_test PRIVATE tak-formats tak_ffmpeg ${_tak_sdl2})
     if(TAK_TEST_DATA)
+      add_test(NAME screen_lifecycle COMMAND screen_lifecycle_test "${TAK_TEST_DATA}")
+      set_tests_properties(screen_lifecycle PROPERTIES
+          ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy" TIMEOUT 60)
       add_test(NAME campaign_presentation_roster COMMAND campaign_presentation_test "${TAK_TEST_DATA}")
       add_test(NAME campaign_audio_roster COMMAND campaign_audio_test "${TAK_TEST_DATA}")
       add_test(NAME death_sound_roster COMMAND death_sound_test "${TAK_TEST_DATA}")

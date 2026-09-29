@@ -41,7 +41,8 @@ private:
     tak::tdo::Model model_;
     std::unique_ptr<tak::cob::Vm> vm_;
     std::vector<std::string> pieceNames_;
-    std::map<std::string, SDL_Texture*> textures_;
+    struct TextureDeleter { void operator()(SDL_Texture*) const; };
+    std::map<std::string, std::unique_ptr<SDL_Texture,TextureDeleter>> textures_;
     std::vector<Tri> tris_;
     float yaw_ = 0.7f, pitch_ = 0.4f, zoom_ = 1.0f, fit_ = 1.0f;
     bool spin_ = true, fitted_ = false;

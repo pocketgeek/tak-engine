@@ -43,6 +43,7 @@ MapView::~MapView() {
 void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     invalidateRenderTargets();
     quiesce();
+    chunks_.resetSource();
     comp_.clear();
     for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
     sections_.clear();

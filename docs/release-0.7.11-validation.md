@@ -85,8 +85,12 @@ Candidate `eea2b30` sets version 0.7.11 and passed
 [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36562916545),
 [macOS ARM64](https://github.com/pocketgeek/tak-engine/actions/runs/36562916563), and
 [all seven Linux package builds](https://github.com/pocketgeek/tak-engine/actions/runs/36562916547).
-Tag `v0.7.11` points to `eea2b30`. Tag workflows repeat platform checks and
-attach packages to [the release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.11).
+Tag `v0.7.11` points to `eea2b30`. The tag workflows also passed:
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36564032012),
+[macOS](https://github.com/pocketgeek/tak-engine/actions/runs/36564032193), and
+[Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36564032236).
+All release packages and debug archives are attached to
+[the release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.11).
 
 ## README and screenshots
 

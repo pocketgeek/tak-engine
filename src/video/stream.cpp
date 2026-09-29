@@ -388,7 +388,12 @@ struct Stream::Impl {
         }
         std::fill(c.key.begin(), c.key.end(), '\0'); std::fill(dest.begin(),dest.end(),'\0');
         if (cancel) report("OFF");
-        running = false;
+        {
+            std::lock_guard lock(inputMutex);
+            std::vector<uint8_t>().swap(pixels);
+            fresh = false; sourceW = sourceH = 0;
+            running = false;
+        }
     }
     bool start(const StreamConfig& c, std::string destination, bool local) {
         if (running || !valid(c)) return false;
@@ -418,6 +423,9 @@ bool Stream::startRecording(const StreamConfig& c, const std::string& path) {
 #ifdef TAK_STREAM_TESTING
 void Stream::testDelayOnce(int milliseconds) { p_->testDelay = milliseconds; }
 bool Stream::testDelayInProgress() const { return p_->testDelaying; }
+size_t Stream::testRetainedVideoBytes() const {
+    std::lock_guard lock(p_->inputMutex); return p_->pixels.capacity();
+}
 bool Stream::startTestEndpoint(const StreamConfig& c, const std::string& url, const std::string& caFile) {
     if (active() || !url.starts_with("rtmps://localhost:")) return false;
     p_->testCaFile = caFile;
@@ -434,6 +442,7 @@ bool Stream::video(const uint8_t* rgba, int w, int h, int pitch) {
     if (!active() || !rgba || w <= 0 || h <= 0 || w > 8192 || h > 8192 || pitch < w*4) return false;
     std::unique_lock lock(p_->inputMutex, std::try_to_lock);
     if (!lock.owns_lock()) { ++p_->replaced; return false; }
+    if (!p_->running || p_->cancel) return false;
     if (p_->fresh) ++p_->replaced;
     p_->pixels.resize(size_t(w)*h*4);
     for (int y=0;y<h;++y) std::memcpy(p_->pixels.data()+size_t(y)*w*4, rgba+size_t(y)*pitch, size_t(w)*4);
@@ -443,6 +452,7 @@ bool Stream::video(std::vector<uint8_t>& rgba, int w, int h) {
     if (!active() || w <= 0 || h <= 0 || w > 8192 || h > 8192 || rgba.size() != size_t(w)*h*4) return false;
     std::unique_lock lock(p_->inputMutex, std::try_to_lock);
     if (!lock.owns_lock()) { ++p_->replaced; return false; }
+    if (!p_->running || p_->cancel) return false;
     if (p_->fresh) ++p_->replaced;
     p_->pixels.swap(rgba);
     p_->sourceW=w; p_->sourceH=h; p_->fresh=true; return true;

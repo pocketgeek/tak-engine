@@ -17,6 +17,12 @@ void TerrainChunks::clear() {
     for(auto& [key,e]:cache_)gpuvram::destroy(e.texture);
     cache_.clear();bytes_=0;++revision_;
 }
+void TerrainChunks::resetSource() {
+    clear();
+    std::unique_lock lock(mutex_);
+    cv_.wait(lock,[&]{return !busy_;});
+    mips_.clear();
+}
 const jpeg::Image& TerrainChunks::mip(uint32_t key,int level,bool stockTerrain) {
     if(!level)return compositor_.sectionImage(key,stockTerrain);
     const auto id=std::tuple{key,level,stockTerrain};
@@ -62,9 +68,10 @@ void TerrainChunks::work() {
     for(;;) {
         cv_.wait(lock,[&]{return stop_ || (!jobs_.empty() && done_.size()<8);});
         if(stop_)return;
-        auto job=std::move(jobs_.front());jobs_.pop_front();lock.unlock();
+        auto job=std::move(jobs_.front());jobs_.pop_front();busy_=true;lock.unlock();
         try {compose(job);}catch(...) {job.pixels.clear();}
         lock.lock();if(job.epoch==epoch_)done_.push_back(std::move(job));
+        busy_=false;cv_.notify_all();
     }
 }
 void TerrainChunks::prepare(SDL_Renderer* renderer,const tnt::Map& map,float x,float y,float zoom,int w,int h,bool linear) {

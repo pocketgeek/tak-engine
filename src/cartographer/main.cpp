@@ -144,9 +144,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    struct SdlLifetime { ~SdlLifetime() { SDL_Quit(); } } sdlLifetime;
     SDL_Window* win = SDL_CreateWindow(
         ("Cartographer -- " + mapName).c_str(), SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, 1280 * kUIScale, 800 * kUIScale, SDL_WINDOW_RESIZABLE);
+    std::unique_ptr<SDL_Window,decltype(&SDL_DestroyWindow)> windowOwner(win,SDL_DestroyWindow);
     {   // Application icon: the compass-rose badge (src/util/appicon).
         std::vector<uint8_t> ic = tak::appicon::render(tak::appicon::Kind::Cartographer, 64);
         if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
@@ -157,6 +159,9 @@ int main(int argc, char** argv) {
     }
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
     if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+    // Declared before MapView: its worker and textures must die before SDL's
+    // renderer, including on export/error returns below.
+    std::unique_ptr<SDL_Renderer,decltype(&SDL_DestroyRenderer)> rendererOwner(ren,SDL_DestroyRenderer);
     // Draw everything at kUIScale: the logical canvas stays 1280x800-ish while
     // the window is that many times larger, so the UI is magnified uniformly.
     if (ren) SDL_RenderSetScale(ren, float(kUIScale), float(kUIScale));
@@ -205,7 +210,6 @@ int main(int argc, char** argv) {
         bool ok = put(base, tb.data(), tb.size()) & put(otaP, ot.data(), ot.size());
         std::fprintf(stderr, "new: %dx%d Units (%dx%d cells) world=%s\n",
                      newW, newH, nm.width, nm.height, newWorld.c_str());
-        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return ok ? 0 : 1;
     }
 
@@ -403,7 +407,6 @@ int main(int argc, char** argv) {
                      stampBX, stampBY, hit ? "OK" : "no such section");
         bool ok = hit && saveMap(exportPath.empty() ? (outDir + "/" + mapName + "-edit.tnt")
                                                      : exportPath);
-        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return ok ? 0 : 1;
     }
 
@@ -411,13 +414,11 @@ int main(int argc, char** argv) {
     // / convert path, also how the save is regression-tested).
     if (!exportPath.empty()) {
         bool ok = saveMap(exportPath);
-        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return ok ? 0 : 1;
     }
     // Headless one-shot: --bundle <file.kmp> writes the packed map and exits.
     if (!bundlePath.empty()) {
         bool ok = saveBundle(bundlePath);
-        SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
         return ok ? 0 : 1;
     }
 
@@ -1602,8 +1603,6 @@ int main(int argc, char** argv) {
     }
 
     for (auto& [k, t] : thumbs) if (t) SDL_DestroyTexture(t);
-    SDL_DestroyRenderer(ren);
-    SDL_DestroyWindow(win);
-    SDL_Quit();
+    for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
     return 0;
 }
