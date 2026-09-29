@@ -1,4 +1,5 @@
 #include "cartographer/units.h"
+#include "cartographer/scenarioinfo.h"
 
 #include "hpi/hpi.h"
 #include "tdf/tdf.h"
@@ -12,7 +13,10 @@ namespace cart {
 tak::crt::Scenario loadScenario(const tak::hpi::Vfs& vfs, const std::string& crtPath) {
     std::vector<uint8_t> d;
     try { d = vfs.read(crtPath); } catch (const std::exception&) { return {}; }
-    return tak::crt::parse(d);
+    auto scenario=tak::crt::parse(d);
+    try {const auto info=vfs.read(tak::vpath::replaceExtension(crtPath,".editor"));applyScenarioInfo(scenario,std::string(info.begin(),info.end()));}
+    catch(const std::exception&) {} // Optional editor-only metadata.
+    return scenario;
 }
 
 std::vector<PlacedUnit> toPlaced(const tak::crt::Scenario& s) {

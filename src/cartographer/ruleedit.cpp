@@ -36,7 +36,7 @@ std::vector<std::string> ruleFlags(const std::vector<tak::crt::RuleGroup>& group
     return result;
 }
 std::string ruleDetails(const tak::crt::RuleGroup& group,RuleColumn selected,int row) {
-    std::string text;
+    std::string text=group.editorName;
     auto append=[&](bool action,int i) {
         const auto& rules=action?group.actions:group.conditions;
         if(i<0 || i>=int(rules.size()))return;

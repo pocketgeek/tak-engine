@@ -196,6 +196,9 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.
   **T** opens scenario scripting; its full-text area wraps long operands, supports
   **Page Up/Page Down** scrolling, and offers **Copy Text** for the selected rule.
+  Select a rule group and press **Enter** or **Name** to label it. Names survive
+  undo, copying and reopening; they are stored as editor metadata beside the
+  unchanged retail scenario data.
   Flag fields accept new names or suggest existing flags from that player’s rules;
   use the arrow button or **Alt+Down** to open the suggestions.
   **Scenario → Check Map** reports

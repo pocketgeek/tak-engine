@@ -1,5 +1,6 @@
 #include "cartographer/recovery.h"
 #include "cartographer/document.h"
+#include "cartographer/scenarioinfo.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -121,6 +122,11 @@ RecoverySnapshot readRecoverySnapshot(const fs::path& file) {
                 (*result.files)[key]=std::move(bytes);
             }
             if(result.mapPath.empty())throw std::runtime_error("Recovery contains no map terrain");
+            const auto stem=result.mapPath.substr(0,result.mapPath.size()-4);
+            if(const auto info=result.files->find(stem+".editor");info!=result.files->end()) {
+                auto scenario=tak::crt::parse(result.files->at(stem+".crt"));
+                if(!applyScenarioInfo(scenario,std::string(info->second.begin(),info->second.end())))throw std::runtime_error("Recovery rule names are damaged");
+            }
             result.fromBackup=source!=file;return result;
         } catch(const std::exception& e) {
             if(!errors.empty())errors+="\nPrevious recovery: ";

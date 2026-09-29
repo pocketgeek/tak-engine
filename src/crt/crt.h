@@ -58,6 +58,7 @@ struct Rule {
 struct RuleGroup {
     std::vector<Rule> conditions;
     std::vector<Rule> actions;
+    std::string editorName; // Cartographer sidecar only; never part of retail CRT bytes.
 };
 
 struct Region {

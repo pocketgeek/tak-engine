@@ -1,4 +1,5 @@
 #include "cartographer/recovery.h"
+#include "cartographer/scenarioinfo.h"
 // Cartographer -- a clean-room re-implementation of the retail TA:Kingdoms map
 // editor (see docs/cartographer-port.md). Static-analysis RE of the shipped
 // Cartographer.exe drives the behaviour; this shares the engine's rendering
@@ -662,7 +663,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES };
     static constexpr int kMaxFields = 11;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -710,6 +711,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     SDL_Rect regionList{},regionNew{},regionEdit{},regionDelete{},regionDone{},regionOnMap{};
     int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
     bool editRuleAction=false;
+    tak::crt::RuleGroup* editRuleGroup=nullptr;
     tak::crt::Rule* editRule = nullptr;      // M_RULE: rule whose params are edited
     std::vector<std::string> mMsg;           // M_MESSAGE: wrapped text lines
     SDL_Rect mBox[kMaxFields]{}, mOK{}, mCancel{}, mQuit{};   // render-computed hit rects
@@ -1021,6 +1023,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 u.x+=dx;u.z+=dz;
             }
             unitsEdited=true;dirty=true;historyPending=true;
+        } else if(modal==M_RULENAME && editRuleGroup) {
+            if(mf[0].size()>255 || mf[0].find('\0')!=std::string::npos) {modalError="Use a rule name of at most 255 UTF-8 bytes.";return;}
+            if(editRuleGroup->editorName!=mf[0]) {editRuleGroup->editorName=mf[0];dirty=historyPending=true;}
+            editRuleGroup=nullptr;
         } else if (modal == M_RULE && editRule) {
             auto candidate=*editRule;
             for(int i=0;i<mN;++i)candidate.slot[i]=mf[i];
@@ -1066,6 +1072,13 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         }
         modal = M_RULE;fieldEditor.focus(mf[0]);
         if (mN > 0) SDL_StartTextInput();
+    };
+
+    auto openRuleName=[&](tak::crt::RuleGroup* group) {
+        if(!group)return;
+        editRuleGroup=group;modal=M_RULENAME;modalError.clear();mTitle="RULE NAME";mN=1;mfocus=0;mDropOpen=-1;
+        mf[0]=group->editorName;mLabel[0]="NAME (BLANK USES RULE NUMBER)";mfNumeric[0]=false;mfChoices[0]=nullptr;mfEditableChoice[0]=false;
+        fieldEditor.focus(mf[0]);SDL_StartTextInput();
     };
 
     // --- Use Only restriction list + Check Map (phase 4) ----------------------
@@ -1124,7 +1137,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int pickScroll = 0;
     SDL_Rect rRuleList{}, rCondList{}, rActList{}, rPickList{};   // render-computed
     SDL_Rect rPrevP{}, rNextP{}, rAddRule{}, rDelRule{}, rAddCond{}, rDelCond{},
-             rAddAct{}, rDelAct{}, rScrDone{}, rPickCancel{};
+             rAddAct{}, rDelAct{}, rNameRule{}, rScrDone{}, rPickCancel{};
     cart::RuleColumn ruleColumn=cart::RuleColumn::Group;
     cart::RuleClipboard ruleClipboard;
     SDL_Rect ruleCopy{},rulePaste{},ruleDuplicate{},ruleUp{},ruleDown{},playerCopy{},playerPaste{};
@@ -1183,7 +1196,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     }
                 } else if(lowerText(pathText(disk.extension()))==".tnt") {
                     const auto base=pathText(disk.stem());path="kmap/"+base+".tnt";
-                    for(const char* ext:{".tnt",".ota",".crt",".tdf",".recipe"}) {
+                    for(const char* ext:{".tnt",".ota",".crt",".tdf",".recipe",".editor"}) {
                         const auto input=disk.parent_path()/std::filesystem::u8path(base+ext);std::ifstream stream(input,std::ios::binary);
                         if(stream)(*files)[tak::hpi::MountSet::key("kmap/"+base+ext)]={std::istreambuf_iterator<char>(stream),{}};
                     }
@@ -1327,7 +1340,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         map.seaLevel=state->seaLevel;map.stockTerrain=state->stockTerrain;
         mapView.editMap()=std::move(map);mapView.tilesEdited();minimapSource=nullptr;invalidateMinimap();
         scenario=tak::tnt::Scenario::parse(state->metadata);
-        scen=tak::crt::parse(state->scenario);units=cart::toPlaced(scen);
+        scen=tak::crt::parse(state->scenario);cart::applyScenarioInfo(scen,state->editorMetadata);units=cart::toPlaced(scen);
         regionDrag.cancel();regionSelected=-1;
         useOnly=state->useOnly;mapName=state->name;dirty=history.dirty();edited=true;
         selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
@@ -1685,6 +1698,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     if(key==SDLK_PAGEUP || key==SDLK_PAGEDOWN) {scrDetailScroll=std::clamp(scrDetailScroll+(key==SDLK_PAGEUP?-6:6),0,scrDetailMax);continue;}
                     if(key==SDLK_RETURN) {
                         if(auto* group=curGroup()) {
+                            if(ruleColumn==cart::RuleColumn::Group)openRuleName(group);
                             if(ruleColumn==cart::RuleColumn::Condition && scrCondSel>=0 && scrCondSel<int(group->conditions.size()))openRuleEditor(&group->conditions[scrCondSel],false);
                             if(ruleColumn==cart::RuleColumn::Action && scrActSel>=0 && scrActSel<int(group->actions.size()))openRuleEditor(&group->actions[scrActSel],true);
                         }
@@ -1698,6 +1712,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     if((mod&KMOD_ALT) && (key==SDLK_UP || key==SDLK_DOWN)) {ruleOperation(key==SDLK_UP?3:4);continue;}
                 }
                 if(!pickOpen && e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                    if(cart::pointIn(e.button.x,e.button.y,rNameRule)) {openRuleName(curGroup());continue;}
                     if(cart::pointIn(e.button.x,e.button.y,rCopyRuleText)) {SDL_SetClipboardText(scrDetailText.c_str());continue;}
                     const SDL_Rect buttons[]={ruleCopy,rulePaste,ruleDuplicate,ruleUp,ruleDown,playerCopy,playerPaste};
                     bool handled=false;
@@ -2499,7 +2514,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 if (ry + kRow < listY || ry > listY + listH) continue;
                 bool sel = i == scrGroup;
                 if (sel) { SDL_SetRenderDrawColor(ren, 58, 68, 95, 255); SDL_Rect hr{x0, ry, colW, kRow}; SDL_RenderFillRect(ren, &hr); }
-                std::string lbl = "Rule " + std::to_string(i + 1) + "  " +
+                std::string lbl = (gs[size_t(i)].editorName.empty()?"Rule " + std::to_string(i + 1):gs[size_t(i)].editorName) + "  " +
                     std::to_string(gs[size_t(i)].conditions.size()) + "c/" +
                     std::to_string(gs[size_t(i)].actions.size()) + "a";
                 cart::drawText(ren, lbl, x0 + 3, ry + 2, 1, sel ? 255 : 200, sel ? 235 : 205, sel ? 200 : 215);
@@ -2542,6 +2557,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             int by = ct.y + ct.h - 18;
             rAddRule = cart::drawButton(ren, x0, by, 44, 16, "+RULE", true);
             rDelRule = cart::drawButton(ren, x0 + 48, by, 44, 16, "-RULE", false);
+            rNameRule=cart::drawButton(ren,x0+96,by,44,16,"NAME",false);
             rAddCond = cart::drawButton(ren, x1, by, 44, 16, "+COND", true);
             rDelCond = cart::drawButton(ren, x1 + 48, by, 44, 16, "-COND", false);
             rAddAct = cart::drawButton(ren, x2, by, 40, 16, "+ACT", true);

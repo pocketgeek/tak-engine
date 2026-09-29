@@ -1,4 +1,5 @@
 #include "cartographer/document.h"
+#include "cartographer/scenarioinfo.h"
 
 #include <atomic>
 #include <chrono>
@@ -53,6 +54,7 @@ std::vector<tak::hpi::PackFile> documentFiles(
     metadata.useOnlyUnits=useOnly.empty()?"":name+".tdf";
     return {{name+".tnt",map.save()}, {name+".ota",bytes(metadata.write())},
             {name+".crt",saveScenario(scenario,units)},
+            {name+".editor",bytes(scenarioInfo(scenario))},
             // Always write even an empty restriction file to retire stale exports.
             {name+".tdf",bytes(writeUseOnly({useOnly.begin(),useOnly.end()}))},
             {name+".txt",bytes(metadata.missionDescription.empty()?metadata.missionName:metadata.missionDescription)}};

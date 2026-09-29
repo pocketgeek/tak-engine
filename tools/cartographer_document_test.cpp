@@ -1,4 +1,5 @@
 #include "cartographer/recovery.h"
+#include "cartographer/scenarioinfo.h"
 #include "cartographer/document.h"
 #include "cartographer/history.h"
 #include "cartographer/selection.h"
@@ -91,10 +92,23 @@ int main() {
         tak::crt::Scenario scenario;scenario.players.resize(9);
         tak::crt::RuleGroup group;group.conditions.push_back({});group.actions.push_back({});
         scenario.players[0].push_back(group);
+        const auto unnamedCrt=tak::crt::write(scenario);
+        scenario.players[0][0].editorName="Defend the bridge — été";
+        check(tak::crt::write(scenario)==unnamedCrt,"editor names do not change retail CRT bytes");
+        const auto names=cart::scenarioInfo(scenario);auto named=tak::crt::parse(unnamedCrt);
+        check(cart::applyScenarioInfo(named,names) && named.players[0][0].editorName==scenario.players[0][0].editorName,"Unicode rule names roundtrip in sidecar");
+        check(!cart::applyScenarioInfo(named,"TAK_EDITOR_RULE_NAMES 1\n99 0 \"bad\"\n") && named.players[0][0].editorName==scenario.players[0][0].editorName,"invalid rule metadata is atomic");
+        cart::History namedHistory;namedHistory.reset(cart::historyState(map,meta,scenario,{}, {},"Review"),true);
+        scenario.players[0][0].editorName="Victory";namedHistory.commit(cart::historyState(map,meta,scenario,{}, {},"Review"));
+        check(cart::applyScenarioInfo(named,namedHistory.undo()->editorMetadata) && named.players[0][0].editorName=="Defend the bridge — été","rule name undo restores metadata");
+        check(cart::applyScenarioInfo(named,namedHistory.redo()->editorMetadata) && named.players[0][0].editorName=="Victory","rule name redo restores metadata");
         auto files=cart::documentFiles(map,meta,scenario,{}, {},"Review");
         std::string error;
         check(cart::writeDocumentFiles(root,files,error),error.c_str());
         auto crt=tak::crt::parse(read(root/"Review.crt"));
+        tak::hpi::Vfs namedVfs;auto namedFiles=std::make_shared<tak::hpi::Vfs::Files>();
+        (*namedFiles)["review.crt"]=read(root/"Review.crt");(*namedFiles)["review.editor"]=read(root/"Review.editor");namedVfs.setMapFiles(namedFiles);
+        check(cart::loadScenario(namedVfs,"review.crt").players[0][0].editorName=="Victory","normal scenario loading restores names");
         check(crt.players.size()==9 && crt.players[0].size()==1,"rule-only scenario saved");
         auto ota=read(root/"Review.ota");
         check(tak::tnt::Scenario::parse(std::string(ota.begin(),ota.end())).hasScenario,"scenario metadata follows content");

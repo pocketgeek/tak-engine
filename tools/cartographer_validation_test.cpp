@@ -43,6 +43,10 @@ int main() {
         flags.actions={{2,{"z","1"}},{3,{"5","new_flag"}},{4,{"2",""}}};
         check(cart::ruleFlags({flags})==std::vector<std::string>({"a","new_flag","z"}),"flag choices use typed operands, sort, deduplicate and ignore invalid opcodes/empty values");
         check(cart::ruleFlags({}).empty(),"empty player has no flag suggestions");
+        rules[0].editorName="Keep the bridge";
+        cart::RuleClipboard namedClipboard;int namedGroup=0,namedRow=-1;
+        check(namedClipboard.copy(rules,0,-1,cart::RuleColumn::Group) && namedClipboard.paste(rules,namedGroup,namedRow,cart::RuleColumn::Group) && rules[1].editorName=="Keep the bridge","group copy preserves editor name");
+        rules.erase(rules.begin()+1);
         cart::RuleClipboard clipboard;int group=0,row=0;
         check(clipboard.copy(rules,group,row,cart::RuleColumn::Action),"copy action");
         check(!clipboard.paste(rules,group,row,cart::RuleColumn::Condition),"cannot paste action as condition");

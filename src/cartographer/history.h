@@ -14,6 +14,7 @@ struct HistoryState {
     std::string name;
     int seaLevel=0;
     bool stockTerrain=false;
+    std::string editorMetadata;
     bool operator==(const HistoryState&) const = default;
 };
 HistoryState historyState(const tak::tnt::Map&,const tak::tnt::Scenario&,

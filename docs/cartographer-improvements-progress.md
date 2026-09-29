@@ -660,6 +660,27 @@ passed with these checks enabled in 3.11 seconds, peak RSS 880,900 KiB for the
 whole editor/fixture workflow. This is not an isolated scanner benchmark.
 Other asset categories and naval output clearance still need their own checks.
 
+## Rule names checkpoint
+
+Rule groups now have optional names, edited through the Name button or Enter
+while the group column is selected. Names appear in the rule list and full text;
+blank names retain numbered labels. Copy/duplicate, reordering and whole-player
+copy carry names with their groups.
+
+Names are stored in a versioned `.editor` companion, included in KMPs, loose
+exports and recovery. Retail CRT serialization ignores the in-memory editorName
+field. History explicitly retains the companion metadata so name-only edits
+participate in undo/redo and dirty tracking. Loose TNT opening reads the sidecar,
+and normal scenario loading attaches valid names; missing metadata preserves
+ordinary retail behavior. Recovery rejects damaged naming metadata and can
+fall back to the previous snapshot.
+
+Tests verify Unicode metadata, atomic rejection of malformed indices, unchanged
+CRT bytes, name undo/redo, ordinary loading, copy preservation and a real UI
+name/edit/undo/redo/save/reopen sequence. All fourteen editor tests pass in Release
+and under AddressSanitizer/LeakSanitizer. All Release targets were rebuilt because
+the shared in-memory rule structure changed; gameplay logic is unchanged.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
@@ -670,7 +691,7 @@ Other asset categories and naval output clearance still need their own checks.
    model previews where useful and additional view controls.
 4. Naval-output clearance and fuller resource checks, plus profiling occupancy
    overlays on dense large scenarios; whole-map movement components are covered.
-5. Expanded typed-rule validation, rule names/objective templates,
+5. Expanded typed-rule validation and objective templates,
    temporary-map playtesting through the normal client/server launch path.
 6. Coalescing pending terrain work, asynchronous expensive operations, large-map
    profiling, broader document/UI coverage and final documentation cleanup.

@@ -258,7 +258,7 @@ static int ruleTextWorkflow(const char* data) {
         auto click=[&](int x,int y) {SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);};
         auto pixels=[&]() {SDL_Rect r{int((w/2-376)*sx),int((h/2+133)*sy),int(752*sx),int(78*sy)};std::vector<uint8_t> out(size_t(r.w)*r.h*4);if(SDL_RenderReadPixels(renderer,&r,SDL_PIXELFORMAT_RGBA32,out.data(),r.w*4))failed=true;return out;};
         const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
-        if(frame<=11 || frame>=14)failed|=dirty;
+        if(frame<=11 || (frame>=14 && frame<=16) || frame>=20)failed|=dirty;
         switch(frame) {
         case 0: key(SDLK_o,KMOD_CTRL);break;
         case 1: text((root/"Rules.kmp").string());key(SDLK_RETURN);break;
@@ -279,8 +279,18 @@ static int ruleTextWorkflow(const char* data) {
         case 12: key(SDLK_TAB);key(SDLK_TAB);text("new_flag");key(SDLK_RETURN);break;
         case 13: failed|=!dirty;key(SDLK_ESCAPE);key(SDLK_s,KMOD_CTRL);break;
         case 14: key(SDLK_RETURN);break;
-        case 15: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
-        default: if(frame>19) {failed=true;key(SDLK_ESCAPE);key(SDLK_RETURN);}
+        case 15: key(SDLK_t);key(SDLK_RETURN);break;
+        case 16: text("Bridge defense");key(SDLK_RETURN);break;
+        case 17: key(SDLK_ESCAPE);key(SDLK_z,KMOD_CTRL);break;
+        case 18: failed|=dirty;key(SDLK_y,KMOD_CTRL);break;
+        case 19: failed|=!dirty;key(SDLK_s,KMOD_CTRL);break;
+        case 20: key(SDLK_RETURN);key(SDLK_o,KMOD_CTRL);break;
+        case 21: text((root/"Rules.kmp").string());key(SDLK_RETURN);break;
+        case 22: key(SDLK_t);key(SDLK_RETURN);break;
+        case 23: key(SDLK_a,KMOD_CTRL);key(SDLK_c,KMOD_CTRL);break;
+        case 24: {char* clipboard=SDL_GetClipboardText();failed|=!clipboard || std::string(clipboard)!="Bridge defense";SDL_free(clipboard);key(SDLK_ESCAPE);key(SDLK_ESCAPE);break;}
+        case 25: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        default: if(frame>29) {failed=true;key(SDLK_ESCAPE);key(SDLK_RETURN);}
         }
     });
     {
@@ -292,7 +302,7 @@ static int ruleTextWorkflow(const char* data) {
         failed|=!found;
     }
     fs::remove_all(root);
-    if(result || failed || lastFrame>19) {std::cerr<<"rule text workflow failed\n";return 1;}
+    if(result || failed || lastFrame>29) {std::cerr<<"rule text workflow failed\n";return 1;}
     std::cout<<"PASS: full rule text clipboard, page navigation, flag suggestions and new flag persistence\n";return 0;
 }
 static int regionWorkflow(const char* data) {
