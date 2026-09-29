@@ -112,9 +112,8 @@ Tag `v0.7.12` points to `7d463ee`. Its packaging workflows are
 [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36577795939),
 [macOS ARM64](https://github.com/pocketgeek/tak-engine/actions/runs/36577795845), and
 [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36577795979).
-They attach packages and debug archives to
-[the release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.12)
-as they finish; these tag builds are still running at this documentation update.
+All three tag workflows passed. All 14 platform packages and debug archives are
+attached to [the release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.12).
 
 ## README and screenshots
 

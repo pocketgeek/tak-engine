@@ -28,7 +28,8 @@ transfer and encrypted streaming checks.
 The full remote sweep on tak.pgnet.us and vpn3.pgnet.us passed all 37 scenarios
 and 52 client sessions without unexpected desyncs or incomplete runs. Spectator
 cases validate flow control rather than hash consensus. Native Windows, macOS
-ARM64, and all seven Linux package builds passed before tagging.
+ARM64, and all seven Linux package builds passed before tagging. The tag builds
+also passed; all 14 release packages and debug archives are available.
 
 See [the validation report](https://github.com/pocketgeek/tak-engine/blob/main/docs/release-0.7.12-validation.md)
 for full coverage and limits.
