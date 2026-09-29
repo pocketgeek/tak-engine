@@ -655,6 +655,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int mN = 0;                              // active field count
     int mfocus = 0;
     cart::TextEdit fieldEditor;
+    int descriptionScroll=0;bool descriptionFollowCaret=true;
     std::function<bool(const std::string&)> openDocument;
     std::vector<std::pair<std::string,std::string>> openCatalog,openMatches;
     SDL_Rect openList{};int openScroll=0;std::string openFilterPrevious;bool openFilterDirty=true;
@@ -696,7 +697,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         modal = M_CONFIRM; confirmAction = std::move(action);
     };
     auto openModal = [&](Modal m, int unitIdx = -1) {
-        mfocus = 0; editUnit = unitIdx;
+        mfocus = 0; editUnit = unitIdx;descriptionScroll=0;descriptionFollowCaret=true;
         mDropOpen = -1;
         for (auto& c : mfChoices) c = nullptr;   // default: plain text fields
         if (m == M_SCENARIO) {
@@ -1419,6 +1420,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     }
                     continue;
                 }
+                if(modal==M_SCENARIO && e.type==SDL_MOUSEWHEEL) {descriptionScroll=std::max(0,descriptionScroll-e.wheel.y*3);descriptionFollowCaret=false;continue;}
+                if(e.type==SDL_TEXTINPUT || e.type==SDL_KEYDOWN)descriptionFollowCaret=true;
                 if(modal==M_OPENPATH && e.type==SDL_MOUSEWHEEL) {openScroll=std::clamp(openScroll-e.wheel.y*40,0,std::max(0,int(openMatches.size())*20-openList.h));continue;}
                 if(modal==M_OPENPATH && e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,openList)) {
                     const int row=(e.button.y-openList.y+openScroll)/20;
@@ -1429,7 +1432,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     mDropScroll=std::clamp(mDropScroll-e.wheel.y*3,0,std::max(0,int(mfChoices[mDropOpen]->size())-8));continue;
                 }
                 if (e.type == SDL_TEXTINPUT && mN > 0 && !mfChoices[mfocus]) {
-                    fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1);
+                    fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1,std::max(1,(mBox[mfocus].w-8)/6));
                 } else if (e.type == SDL_KEYDOWN) {
                     SDL_Keycode k = e.key.keysym.sym;
                     if (k == SDLK_TAB) {
@@ -1449,7 +1452,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     else if (k == SDLK_ESCAPE) {
                         if (mDropOpen >= 0) mDropOpen = -1;   // first Esc closes an open list
                         else { modal = M_NONE; SDL_StopTextInput(); }
-                    } else if(mN>0 && !mfChoices[mfocus])fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1);
+                    } else if(mN>0 && !mfChoices[mfocus])fieldEditor.input(e,mf[mfocus],mfNumeric[mfocus],modal==M_SCENARIO && mfocus==1,std::max(1,(mBox[mfocus].w-8)/6));
                 } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                            e.button.button == SDL_BUTTON_LEFT) {
                     int mx = e.button.x, my = e.button.y;
@@ -1470,7 +1473,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     for (int i = 0; i < mN; ++i)
                         if (cart::pointIn(mx, my, mBox[i])) {
                             if (mfChoices[i]) { mDropOpen = i; mfocus = i;mDropScroll=0; }
-                            else {mfocus=i;fieldEditor.focus(mf[i]);}
+                            else {mfocus=i;
+                                if(modal==M_SCENARIO && i==1) {
+                                    fieldEditor.click(mf[i],std::max(1,(mBox[i].w-8)/6),(my-mBox[i].y-4)/12+descriptionScroll,(mx-mBox[i].x-4)/6,SDL_GetModState()&KMOD_SHIFT);
+                                    descriptionFollowCaret=true;
+                                } else fieldEditor.focus(mf[i]);
+                            }
                             break;
                         }
                 }
@@ -2295,8 +2303,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             }
         } else if (modal != M_NONE) {
             // N-field dialog; height fits the field count.
-            int ph = modal==M_OPENPATH?420:70+mN*40;
-            SDL_Rect ct = cart::drawPanel(ren,w,h,modal==M_OPENPATH?560:320,ph,mTitle);
+            int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+mN*40;
+            SDL_Rect ct = cart::drawPanel(ren,w,h,(modal==M_OPENPATH || modal==M_SCENARIO)?560:320,ph,mTitle);
             if(modal==M_OPENPATH) {
                 openList={ct.x,ct.y+40,ct.w,ct.h-70};filterOpenMaps();
                 SDL_RenderSetClipRect(ren,&openList);
@@ -2310,7 +2318,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size()))
                 cart::drawText(ren, units[size_t(editUnit)].type, ct.x, ct.y - 16, 1, 200, 200, 200);
             for (int i = 0; i < mN; ++i) {
-                if (mfChoices[i])
+                if(modal==M_SCENARIO && i==1)
+                    mBox[i]=cart::drawTextArea(ren,ct.x,ct.y+40,ct.w,160,"DESCRIPTION (SHIFT+ENTER: NEW LINE)",mf[i],mfocus==i,fieldEditor,descriptionScroll,descriptionFollowCaret);
+                else if (mfChoices[i])
                     mBox[i] = cart::drawChoice(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
                                                mf[i], mDropOpen == i);
                 else

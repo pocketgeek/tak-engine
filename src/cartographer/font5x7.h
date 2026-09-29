@@ -3,7 +3,7 @@
 // A tiny self-contained 5x7 bitmap font for the editor chrome (status bar, tool
 // labels, start-position numbers). No external assets: each glyph is 7 rows of 5
 // bits (bit 4 = leftmost). Covers the characters the UI needs; unknown chars draw
-// blank. Basic Latin glyph bitmaps are functional utility data, not a typeface.
+// a visible replacement glyph. Basic Latin glyph bitmaps are functional utility data, not a typeface.
 
 #include <SDL.h>
 
@@ -16,6 +16,14 @@ namespace cart {
 inline const uint8_t* glyph5x7(char c) {
     // 7 rows, low 5 bits each. Authored for: space ! % ( ) , - . / 0-9 : A-Z x.
     static const uint8_t SP[7]  = {0,0,0,0,0,0,0};
+    static const uint8_t UNKNOWN[7]={31,17,21,21,21,17,31};
+    static const uint8_t LB[7]={14,8,8,8,8,8,14},RB[7]={14,2,2,2,2,2,14};
+    static const uint8_t PLUS[7]={0,4,4,31,4,4,0},EQUAL[7]={0,0,31,0,31,0,0};
+    static const uint8_t UNDER[7]={0,0,0,0,0,0,31},STAR[7]={0,21,14,31,14,21,0};
+    static const uint8_t QUOTE[7]={10,10,0,0,0,0,0},APOST[7]={4,4,0,0,0,0,0};
+    static const uint8_t QUESTION[7]={14,17,1,2,4,0,4},SEMI[7]={0,4,4,0,4,4,8};
+    static const uint8_t LESS[7]={2,4,8,16,8,4,2},GREATER[7]={8,4,2,1,2,4,8};
+    static const uint8_t HASH[7]={10,10,31,10,31,10,10},BACK[7]={16,16,8,4,2,1,1};
     static const uint8_t BANG[7]= {0x04,0x04,0x04,0x04,0x04,0x00,0x04};
     static const uint8_t PCT[7] = {0x19,0x1A,0x02,0x04,0x08,0x0B,0x13};
     static const uint8_t LP[7]  = {0x02,0x04,0x08,0x08,0x08,0x04,0x02};
@@ -62,6 +70,10 @@ inline const uint8_t* glyph5x7(char c) {
     static const uint8_t Y[7]={0x11,0x11,0x0A,0x04,0x04,0x04,0x04};
     static const uint8_t Z[7]={0x1F,0x01,0x02,0x04,0x08,0x10,0x1F};
     switch (c) {
+        case '[':return LB;case ']':return RB;case '+':return PLUS;case '=':return EQUAL;
+        case '_':return UNDER;case '*':return STAR;case '"':return QUOTE;case 39:return APOST;
+        case '?':return QUESTION;case ';':return SEMI;case '<':return LESS;case '>':return GREATER;
+        case '#':return HASH;case 92:return BACK;
         case ' ': return SP;  case '!': return BANG; case '%': return PCT;
         case '(': return LP;  case ')': return RP;   case ',': return COMMA;
         case '-': return DASH; case '.': return DOT; case '/': return SL;
@@ -82,8 +94,20 @@ inline const uint8_t* glyph5x7(char c) {
         case 'Q':return Q; case 'R':return R; case 'S':return S; case 'T':return T;
         case 'U':return U; case 'V':return V; case 'W':return W; case 'X':return X;
         case 'Y':return Y; case 'Z':return Z;
-        default: return SP;
+        default: return UNKNOWN;
     }
+}
+
+// Decode one code point without treating UTF-8 continuation bytes as glyphs.
+inline uint32_t nextGlyph(const std::string& text,size_t& position) {
+    const auto first=uint8_t(text[position++]);if(first<128)return first;
+    int count=first>=0xc2 && first<=0xdf?1:first>=0xe0 && first<=0xef?2:first>=0xf0 && first<=0xf4?3:0;
+    if(!count || position+count>text.size())return 0xfffd;
+    uint32_t code=first&((1u<<(6-count))-1);
+    for(int i=0;i<count;++i) {const auto byte=uint8_t(text[position+i]);if((byte&0xc0)!=0x80)return 0xfffd;code=(code<<6)|(byte&63);}
+    position+=count;
+    if((count==2 && code<0x800) || (count==3 && code<0x10000) || (code>=0xd800 && code<=0xdfff) || code>0x10ffff)return 0xfffd;
+    return code;
 }
 
 // Draw `text` at (x,y) scaled by `s`, colour (r,g,b). One batched FillRects call.
@@ -91,8 +115,9 @@ inline void drawText(SDL_Renderer* ren, const std::string& text, int x, int y, i
                      Uint8 r, Uint8 g, Uint8 b) {
     std::vector<SDL_Rect> px;
     int cx = x;
-    for (char c : text) {
-        const uint8_t* gp = glyph5x7(c);
+    for(size_t position=0;position<text.size();) {
+        const auto code=nextGlyph(text,position);
+        const uint8_t* gp = glyph5x7(code<128?char(code):char(127));
         for (int row = 0; row < 7; ++row)
             for (int col = 0; col < 5; ++col)
                 if (gp[row] & (1 << (4 - col)))
@@ -104,6 +129,6 @@ inline void drawText(SDL_Renderer* ren, const std::string& text, int x, int y, i
     SDL_RenderFillRects(ren, px.data(), int(px.size()));
 }
 
-inline int textWidth(const std::string& t, int s) { return int(t.size()) * 6 * s; }
+inline int textWidth(const std::string& t,int s) {int count=0;for(size_t p=0;p<t.size();++count)nextGlyph(t,p);return count*6*s;}
 
 } // namespace cart

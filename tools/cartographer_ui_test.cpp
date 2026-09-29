@@ -6,6 +6,7 @@
 #include <filesystem>
 #include "crt/crt.h"
 #include "tnt/mapgen.h"
+#include "cartographer/font5x7.h"
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -169,7 +170,7 @@ int main(int argc,char** argv) {
         };
         switch(frame) {
         case 0: key(SDLK_p);break;
-        case 1: text("Editor integration test");key(SDLK_TAB);text("Saved after undo and redo");key(SDLK_RETURN);break;
+        case 1: text("Editor integration test");key(SDLK_TAB);text("Saved after undo and redo");key(SDLK_RETURN,KMOD_SHIFT);text("Second description line");key(SDLK_RETURN);break;
         case 2: check(dirty,"property editing marks document dirty");key(SDLK_z,KMOD_CTRL);break;
         case 3: check(!dirty,"undo restores saved revision");key(SDLK_y,KMOD_CTRL);break;
         case 4: check(dirty,"redo restores edited revision");key(SDLK_s,KMOD_CTRL);break;
@@ -213,7 +214,7 @@ int main(int argc,char** argv) {
             tak::hpi::Archive archive(root/file);bool found=false;
             for(const auto& entry:archive.entries())if(entry.path.ends_with(".ota")) {
                 const auto bytes=archive.read(entry);const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
-                if(metadata.missionName!="Editor integration test" || metadata.missionDescription!="Saved after undo and redo")throw std::runtime_error("saved metadata differs after UI workflow");
+                if(metadata.missionName!="Editor integration test" || metadata.missionDescription!="Saved after undo and redo\nSecond description line")throw std::runtime_error("saved metadata differs after UI workflow");
                 found=true;
             }
             if(!found)throw std::runtime_error("saved bundle lacks metadata");
@@ -232,6 +233,18 @@ int main(int argc,char** argv) {
         SDL_Event back{};back.type=SDL_KEYDOWN;back.key.keysym.sym=SDLK_BACKSPACE;
         edit.input(back,unicode);if(unicode!="A\xc3\xa9")throw std::runtime_error("UTF-8 deletion");
         edit.input(back,unicode);if(unicode!="A")throw std::runtime_error("UTF-8 deletion twice");
+        std::string multiline="ab\xc3\xa9\nx\nabcdef";edit.focus(multiline,false);
+        auto navigate=[&](SDL_Keycode key,Uint16 mod=0) {SDL_Event e{};e.type=SDL_KEYDOWN;e.key.keysym.sym=key;e.key.keysym.mod=mod;edit.input(e,multiline,false,true,20);};
+        navigate(SDLK_HOME,KMOD_CTRL);navigate(SDLK_RIGHT);navigate(SDLK_RIGHT);
+        navigate(SDLK_DOWN);if(edit.caret!=6)throw std::runtime_error("vertical movement clamps short line");
+        navigate(SDLK_DOWN);if(edit.caret!=9)throw std::runtime_error("vertical movement retains desired column");
+        navigate(SDLK_UP);navigate(SDLK_UP,KMOD_SHIFT);
+        if(edit.caret!=2 || edit.anchor!=6)throw std::runtime_error("multiline shifted navigation preserves selection anchor");
+        navigate(SDLK_END);if(edit.caret!=4)throw std::runtime_error("End targets current line");
+        edit.click(multiline,20,2,3);if(edit.caret!=10)throw std::runtime_error("multiline mouse caret position");
+        const auto wrapped=cart::TextEdit::lines("one two three",5);
+        if(wrapped.size()!=3 || wrapped[0].end!=4 || wrapped[1].begin!=4)throw std::runtime_error("word wrapping");
+        if(cart::textWidth("A\xc3\xa9\xe6\xb0\xb4",1)!=18)throw std::runtime_error("Unicode display width counts code points");
         fs::remove_all(root);std::cout<<"PASS: editor properties, undo/redo, save, reopen, Save As, cancel, failed open, UTF-8 editing\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }

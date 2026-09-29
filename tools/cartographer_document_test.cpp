@@ -41,6 +41,16 @@ int main() {
         auto untouched=painted.features;
         check(!cart::stampSection(painted,prefab,16,16,{false}) && painted.features==untouched,"off-map protected stamp does nothing");
         tak::tnt::Scenario meta;meta.kingdom="zhon";
+        for(const std::string text : {"First line\nSecond line", "\r\n\t", "  Leading and trailing ; ", "https://example.test/{map}", "été 水 ; test", "}\n[Other]\n{\nkey=value;\n}"}) {
+            auto rich=meta;rich.missionDescription=text;rich.missionName=text;
+            const auto encoded=rich.write();const auto decoded=tak::tnt::Scenario::parse(encoded);
+            check(decoded.missionName==text && decoded.missionDescription==text,"OTA free text roundtrip without interpreting syntax");
+            const auto extension=encoded.find("[TAKText]");
+            const auto legacy=tak::tnt::Scenario::parse(encoded.substr(0,extension));
+            check(legacy.kingdom=="zhon" && legacy.missionDescription.find('\n')==std::string::npos,"legacy metadata remains parseable with one-line description");
+        }
+        check(meta.write().find("[TAKText]")==std::string::npos,"ordinary OTA output needs no text extension");
+        check(tak::tnt::Scenario::parse(meta.write()+"[TAKText]\n{\nmissiondescription=zz;\n}\n").missionDescription.empty(),"invalid text extension ignored");
         tak::crt::Scenario scenario;scenario.players.resize(9);
         tak::crt::RuleGroup group;group.conditions.push_back({});group.actions.push_back({});
         scenario.players[0].push_back(group);

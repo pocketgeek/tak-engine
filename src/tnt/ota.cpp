@@ -6,6 +6,46 @@
 
 namespace tak::tnt {
 
+namespace {
+// OTA assignments are single lines, not quoted/escaped strings. Keep a readable
+// legacy value and preserve text that cannot be represented there in an optional
+// engine extension. Do not change how ordinary retail TDF values are parsed.
+std::string legacyText(const std::string& text) {
+    std::string out;
+    for (unsigned char c : text) {
+        if (c < 32 || c == 127 || c == '{' || c == '}') out += ' ';
+        else if (c == '/' && !out.empty() && out.back() == '/') out += " /";
+        else out += char(c);
+    }
+    while (!out.empty() && (out.back() == ' ' || out.back() == ';')) out.pop_back();
+    auto first = out.find_first_not_of(' ');
+    return first == std::string::npos ? std::string{} : out.substr(first);
+}
+std::string hexText(const std::string& text) {
+    constexpr char digits[] = "0123456789abcdef";
+    std::string out;
+    for (unsigned char c : text) { out += digits[c >> 4]; out += digits[c & 15]; }
+    return out;
+}
+void restoreText(const tak::tdf::Node* node, const char* key, std::string& text) {
+    const auto* encoded = node ? node->value(key) : nullptr;
+    if (!encoded || encoded->size() % 2 || encoded->size() > 131072) return;
+    auto digit = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string decoded;
+    for (size_t i = 0; i < encoded->size(); i += 2) {
+        int a = digit((*encoded)[i]), b = digit((*encoded)[i + 1]);
+        if (a < 0 || b < 0) return;
+        decoded += char((a << 4) | b);
+    }
+    text = std::move(decoded);
+}
+} // namespace
+
 Scenario Scenario::parse(const std::string& text) {
     Scenario s;
     tak::tdf::Node root = tak::tdf::parseText(text, "<ota>");
@@ -40,6 +80,14 @@ Scenario Scenario::parse(const std::string& text) {
             }
         }
     }
+    const auto* textFields = root.child("taktext");
+    restoreText(textFields, "copyright", s.copyright);
+    restoreText(textFields, "missionname", s.missionName);
+    restoreText(textFields, "missiondescription", s.missionDescription);
+    restoreText(textFields, "kingdom", s.kingdom);
+    restoreText(textFields, "useonlyunits", s.useOnlyUnits);
+    restoreText(textFields, "type", s.mapType);
+    restoreText(textFields, "aiprofile", s.aiProfile);
     return s;
 }
 
@@ -53,19 +101,19 @@ std::string Scenario::write() const {
     // A [Section] header sits at depth D; its brace + body sit at D+1.
     line(0, "[GlobalHeader]");
     line(1, "{");
-    line(1, "Copyright=" + copyright + ";");
-    line(1, "missionname=" + missionName + ";");
-    line(1, "missiondescription=" + missionDescription + ";");
-    line(1, "kingdom=" + kingdom + ";");
+    line(1, "Copyright=" + legacyText(copyright) + ";");
+    line(1, "missionname=" + legacyText(missionName) + ";");
+    line(1, "missiondescription=" + legacyText(missionDescription) + ";");
+    line(1, "kingdom=" + legacyText(kingdom) + ";");
     line(1, "numplayers=" + std::to_string(starts.size()) + ";");
     line(1, "size=" + std::to_string(sizeW) + " x " + std::to_string(sizeH) + ";");
     line(1, "memory=32 MB;");
-    if (!useOnlyUnits.empty()) line(1, "useonlyunits=" + useOnlyUnits + ";");
+    if (!useOnlyUnits.empty()) line(1, "useonlyunits=" + legacyText(useOnlyUnits) + ";");
     line(1, std::string("hasscenario=") + (hasScenario ? "1" : "0") + ";");
     line(1, "[Map Data]");
     line(2, "{");
-    line(2, "Type=" + mapType + ";");
-    line(2, "aiprofile=" + aiProfile + ";");
+    line(2, "Type=" + legacyText(mapType) + ";");
+    line(2, "aiprofile=" + legacyText(aiProfile) + ";");
     line(2, "[specials]");
     line(3, "{");
     for (size_t i = 0; i < starts.size(); ++i) {
@@ -80,6 +128,18 @@ std::string Scenario::write() const {
     line(3, "}");   // specials
     line(2, "}");   // Map Data
     line(1, "}");   // GlobalHeader
+    std::string extended;
+    auto preserve = [&](const char* key, const std::string& value) {
+        if (legacyText(value) != value) extended += std::string("\t") + key + "=" + hexText(value) + ";\r\n";
+    };
+    preserve("copyright", copyright);
+    preserve("missionname", missionName);
+    preserve("missiondescription", missionDescription);
+    preserve("kingdom", kingdom);
+    preserve("useonlyunits", useOnlyUnits);
+    preserve("type", mapType);
+    preserve("aiprofile", aiProfile);
+    if (!extended.empty()) o += "[TAKText]\r\n{\r\n" + extended + "}\r\n";
     return o;
 }
 

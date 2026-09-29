@@ -50,6 +50,35 @@ inline SDL_Rect drawField(SDL_Renderer* ren, int x, int y, int w,
     return box;
 }
 
+// Word-wrapped multiline field. Offsets stay in UTF-8 bytes; wrapping and clicks
+// use code-point columns so they never split a stored character.
+inline SDL_Rect drawTextArea(SDL_Renderer* ren,int x,int y,int w,int height,
+    const std::string& label,const std::string& text,bool focused,const TextEdit& edit,
+    int& scroll,bool followCaret) {
+    drawText(ren,label,x,y,1,190,195,205);
+    SDL_Rect box{x,y+10,w,height};const int columns=std::max(1,(w-8)/6),visible=std::max(1,(height-8)/12);
+    const auto rows=TextEdit::lines(text,columns);const auto caretRow=TextEdit::lineAt(rows,edit.caret);
+    if(focused && followCaret) {if(int(caretRow)<scroll)scroll=int(caretRow);if(int(caretRow)>=scroll+visible)scroll=int(caretRow)-visible+1;}
+    scroll=std::clamp(scroll,0,std::max(0,int(rows.size())-visible));
+    SDL_SetRenderDrawColor(ren,24,26,34,255);SDL_RenderFillRect(ren,&box);
+    SDL_SetRenderDrawColor(ren,focused?255:90,focused?210:92,focused?90:104,255);SDL_RenderDrawRect(ren,&box);
+    SDL_RenderSetClipRect(ren,&box);
+    for(int i=scroll;i<std::min(int(rows.size()),scroll+visible);++i) {
+        const auto& row=rows[i];const int top=box.y+4+(i-scroll)*12;
+        const auto first=std::max(row.begin,std::min(edit.caret,edit.anchor)),last=std::min(row.end,std::max(edit.caret,edit.anchor));
+        if(focused && first<last) {
+            SDL_SetRenderDrawColor(ren,65,85,130,255);
+            SDL_Rect selection{x+4+textWidth(text.substr(row.begin,first-row.begin),1),top-1,textWidth(text.substr(first,last-first),1),10};SDL_RenderFillRect(ren,&selection);
+        }
+        drawText(ren,text.substr(row.begin,row.end-row.begin),x+4,top,1,230,235,245);
+        if(focused && i==int(caretRow)) {
+            const int cx=x+4+textWidth(text.substr(row.begin,edit.caret-row.begin),1);
+            SDL_SetRenderDrawColor(ren,255,220,120,255);SDL_RenderDrawLine(ren,cx,top-1,cx,top+8);
+        }
+    }
+    SDL_RenderSetClipRect(ren,nullptr);return box;
+}
+
 // A labelled dropdown box: draws the label above and a value box with a "v"
 // marker on the right. `open` highlights it (its list is showing). Returns the
 // box rect so the caller can hit-test the click that opens/closes the list.

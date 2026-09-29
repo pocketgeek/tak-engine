@@ -239,11 +239,28 @@ Six Release tests pass, including preference/path roundtrips and an SDL workflow
 that filters and opens a recent map. Unicode paths are preserved in preferences;
 Unicode glyph rendering and multiline field display are still unfinished.
 
+## Multiline metadata checkpoint
+
+Descriptions now wrap and scroll, with mouse caret placement, line-aware
+Up/Down/Home/End, selection and Shift+Enter for new lines. The bitmap font now
+counts UTF-8 code points instead of bytes and includes previously missing ASCII
+punctuation. Unsupported glyphs show a placeholder; full Unicode font coverage
+remains unfinished.
+
+The save/undo workflow test exposed that raw newlines break OTA assignments.
+OTA output now keeps a readable single-line legacy value and, only when needed,
+adds a `[TAKText]` section containing hexadecimal UTF-8 bytes for exact free-text
+restoration. This is an engine extension, not a claimed retail feature. Readers
+that ignore the extension get the sanitized single-line text. Ordinary metadata
+needs no extension. The TXT sidecar still contains the full description. Shared
+TDF parsing is unchanged. Tests cover newlines, whitespace, URLs, braces, Unicode,
+malformed extensions and the real editor's undo/redo/save/reopen sequence.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect concurrent
    editing/recovery lifecycle edge cases.
-2. Better font/Unicode and multiline fields, additional layout preferences,
+2. Better font/Unicode, additional layout preferences,
    and verification of cross-platform packaging/launch usability.
 3. Browser/selection interaction coverage, feature selection,
    model previews where useful, additional view controls and live minimap refresh.
