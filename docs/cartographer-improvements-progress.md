@@ -448,6 +448,31 @@ full opcode/operand execution parity and flag-reference conveniences remain
 separate outstanding work. All nine editor tests pass in Release and under
 AddressSanitizer/LeakSanitizer; Cartographer is rebuilt.
 
+## Live background minimap checkpoint
+
+Terrain painting now updates the visible minimap without saving. A 250 ms
+quiet period combines quick strokes; a worker reads an immutable snapshot of
+only the tile arrays and uses a separate decode cache. New edits cancel obsolete
+work, and revision checks prevent an old result replacing the current preview.
+Opening a document stops/joins the worker before replacing its borrowed VFS;
+shutdown requests cancellation too. The status bar reports pending work/errors.
+
+The 126×126 preview samples only the blocks used by the saved minimap's existing
+nearest-sample rule. It does not scan every map block or build the larger saved
+overview. Display pixels are kept separate from serialized terrain and history.
+Save still regenerates the stored minimap/overview synchronously; asynchronous
+save/export and thumbnail decoding remain outstanding.
+
+The SDL workflow paints, waits for the real background result, undoes/redoes,
+and checks both original-state recovery and exact RGBA parity with the saved
+minimap. It verifies that a background update cannot mark the document dirty,
+and checks cancellation before work starts. The ten-test editor suite passes
+in Release and under AddressSanitizer/LeakSanitizer (with focused repeats after
+the sampling optimization). The same workflow passed on the 63×63 Ultima
+Online B1 map: 2.81 s end to end, peak RSS 964,612 KiB. This includes source
+loading, reference-image construction, editor startup, three previews and saving;
+it is not an isolated preview benchmark or a before/after memory comparison.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated
@@ -455,7 +480,7 @@ AddressSanitizer/LeakSanitizer; Cartographer is rebuilt.
 2. Better font/Unicode, additional layout preferences,
    and verification of cross-platform packaging/launch usability.
 3. Broader browser/selection interaction coverage,
-   model previews where useful, additional view controls and live minimap refresh.
+   model previews where useful and additional view controls.
 4. Placed-unit occupancy in overlays/validation, exhaustive land/water component
    and naval-output checks, and fuller resource checks.
 5. Expanded typed-rule validation, rule names/objective templates,

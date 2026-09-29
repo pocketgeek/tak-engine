@@ -6,6 +6,7 @@
 #include "tnt/tnt.h"
 
 #include <string>
+#include <stop_token>
 
 namespace tak::hpi { class Vfs; }
 namespace tak::terrain { class Compositor; }
@@ -24,6 +25,11 @@ tak::gaf::Palette loadWorldPalette(const tak::hpi::Vfs& vfs, const std::string& 
 // visually faithful) minimap, not a byte-exact retail reproduction.
 void generateMinimaps(tak::tnt::Map& map, tak::terrain::Compositor& comp,
                       const tak::gaf::Palette& pal);
+
+struct MinimapPreview {int width=126,height=126;std::vector<uint8_t> rgba;};
+// Display-only preview; does not alter document minimap bytes or undo history.
+MinimapPreview minimapPreview(const tak::tnt::Map& map,tak::terrain::Compositor& comp,
+                              const tak::gaf::Palette& palette,std::stop_token stop={});
 
 // Build a fresh flat map of wUnits x hUnits (1 Unit = 32 cells = 512px), tiled
 // with a default ground section for `world`, sea level from that side's

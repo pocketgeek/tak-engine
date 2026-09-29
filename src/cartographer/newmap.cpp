@@ -50,24 +50,28 @@ uint8_t nearestIndex(const tak::gaf::Palette& pal, int r, int g, int b) {
 
 // Average each 32px block to one RGB, giving a blocksX x blocksY colour grid.
 std::vector<uint8_t> blockColourGrid(const tak::tnt::Map& map,
-                                     tak::terrain::Compositor& comp) {
-    std::vector<uint8_t> grid(size_t(map.blocksX) * map.blocksY * 3, 0);
+                                     tak::terrain::Compositor& comp,std::stop_token stop={},int width=0,int height=0) {
+    const int gw=width?width:map.blocksX,gh=height?height:map.blocksY;
+    std::vector<uint8_t> grid(size_t(gw) * gh * 3, 0);
     std::vector<uint8_t> block(32 * 32 * 4);
     std::map<uint64_t,std::array<uint8_t,3>> averages;
-    for (int by = 0; by < map.blocksY; ++by)
-        for (int bx = 0; bx < map.blocksX; ++bx) {
-            const size_t i=size_t(by)*map.blocksX+bx;
+    for (int by = 0; by < gh; ++by) {
+        if(stop.stop_requested())return {};
+        for (int bx = 0; bx < gw; ++bx) {
+            const int sx=bx*map.blocksX/gw,sy=by*map.blocksY/gh;
+            const size_t i=size_t(sy)*map.blocksX+sx;
             const uint64_t key=uint64_t(map.tileKeys[i]) | (uint64_t(map.tileCols[i])<<32) | (uint64_t(map.tileRows[i])<<40);
             auto found=averages.find(key);
             if(found==averages.end()) {
                 std::fill(block.begin(),block.end(),0);
-                comp.renderBlock(map,bx,by,block,32,0,0);
+                comp.renderBlock(map,sx,sy,block,32,0,0);
                 int r=0,g=0,b=0;
                 for(int pixel=0;pixel<1024;++pixel) {r+=block[pixel*4];g+=block[pixel*4+1];b+=block[pixel*4+2];}
                 found=averages.emplace(key,std::array<uint8_t,3>{uint8_t(r/1024),uint8_t(g/1024),uint8_t(b/1024)}).first;
             }
-            std::copy(found->second.begin(),found->second.end(),grid.begin()+i*3);
+            std::copy(found->second.begin(),found->second.end(),grid.begin()+(size_t(by)*gw+bx)*3);
         }
+    }
     return grid;
 }
 
@@ -86,6 +90,18 @@ std::vector<uint8_t> indexedMinimap(const std::vector<uint8_t>& grid, int gw, in
 }
 
 } // namespace
+
+MinimapPreview minimapPreview(const tak::tnt::Map& map,tak::terrain::Compositor& comp,
+                              const tak::gaf::Palette& palette,std::stop_token stop) {
+    MinimapPreview result;
+    if(map.blocksX<=0 || map.blocksY<=0)return result;
+    const auto grid=blockColourGrid(map,comp,stop,result.width,result.height);
+    if(grid.empty())return result;
+    const auto indexed=indexedMinimap(grid,result.width,result.height,result.width,result.height,palette);
+    result.rgba.resize(indexed.size()*4);
+    for(size_t i=0;i<indexed.size();++i)std::copy(palette.rgba[indexed[i]],palette.rgba[indexed[i]]+4,result.rgba.begin()+i*4);
+    return result;
+}
 
 void generateMinimaps(tak::tnt::Map& map, tak::terrain::Compositor& comp,
                       const tak::gaf::Palette& pal) {

@@ -1,6 +1,8 @@
 #include <fstream>
 #include "cartographer/editor.h"
 #include "cartographer/document.h"
+#include "cartographer/newmap.h"
+#include "terrain/terrain.h"
 #include "cartographer/textedit.h"
 #include "hpi/hpi.h"
 #include "tnt/ota.h"
@@ -220,6 +222,56 @@ static int regionWorkflow(const char* data) {
         fs::remove_all(root);std::cout<<"PASS: region canvas drawing, movement, handles, cancellation, undo/redo and reopen\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }
+static int minimapWorkflow(const char* data,const char* mapName="Ulasem Arena") {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-minimap-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,mapName);
+    const auto original=tak::tnt::Map::load(vfs.read(path),path);tak::terrain::Compositor compositor(vfs);
+    std::stop_source cancelled;cancelled.request_stop();
+    const auto otaBytes=vfs.read(path.substr(0,path.size()-4)+".ota");
+    auto world=tak::tnt::Scenario::parse(std::string(otaBytes.begin(),otaBytes.end())).kingdom;
+    std::transform(world.begin(),world.end(),world.begin(),[](unsigned char c){return char(std::tolower(c));});
+    const auto palette=cart::loadWorldPalette(vfs,world);
+    if(!cart::minimapPreview(original,compositor,palette,cancelled.get_token()).rgba.empty())throw std::runtime_error("cancelled minimap produced pixels");
+    const auto originalPreview=cart::minimapPreview(original,compositor,palette).rgba;
+    std::vector<std::string> args={"cartographer",mapName,"--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::EditorHooks hooks;int updates=0;std::vector<uint8_t> pixels,paintedPixels;
+    hooks.minimapUpdated=[&](const auto& rgba) {++updates;pixels=rgba;};
+    int stage=0;bool failed=false;const auto began=std::chrono::steady_clock::now();
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int) {
+        if(std::chrono::steady_clock::now()-began>std::chrono::seconds(30))std::_Exit(3);
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        auto click=[&](int x,int y) {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+            e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        switch(stage) {
+        case 0:key(SDLK_1);++stage;break;
+        case 1:click(500,300);++stage;break;
+        case 2:if(updates==1) {failed|=!dirty;paintedPixels=pixels;key(SDLK_z,KMOD_CTRL);++stage;}break;
+        case 3:if(updates==2) {failed|=dirty || pixels!=originalPreview;key(SDLK_y,KMOD_CTRL);++stage;}break;
+        case 4:if(updates==3) {failed|=!dirty || pixels!=paintedPixels;key(SDLK_s,KMOD_CTRL);++stage;}break;
+        case 5:failed|=dirty;key(SDLK_RETURN);++stage;break;
+        case 6:{SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);++stage;break;}
+        }
+        SDL_Delay(1);
+    },hooks);
+    try {
+        if(result || failed || stage!=7)throw std::runtime_error("live minimap workflow failed");
+        tak::hpi::Archive archive(root/(std::string(mapName)+".kmp"));bool found=false;
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".tnt")) {
+            const auto saved=tak::tnt::Map::load(archive.read(entry),entry.path);
+            std::vector<uint8_t> expected(saved.minimap.size()*4);
+            for(size_t i=0;i<saved.minimap.size();++i)std::copy(palette.rgba[saved.minimap[i]],palette.rgba[saved.minimap[i]]+4,expected.begin()+i*4);
+            if(expected!=paintedPixels)throw std::runtime_error("background preview differs from saved minimap");
+            found=true;
+        }
+        if(!found)throw std::runtime_error("saved minimap missing");
+        fs::remove_all(root);std::cout<<"PASS: live background minimap, undo/redo, unchanged dirty state and saved image parity\n";return 0;
+    } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
+}
 static int featureWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-features-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -383,6 +435,7 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
+    if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);

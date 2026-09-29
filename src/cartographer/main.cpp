@@ -337,6 +337,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // fresh overview reflecting the paint).
     bool edited = false;
     bool minimapRefreshNeeded=true;
+    std::stop_source minimapCancel;
+    uint64_t minimapRevision=0;
+    bool minimapPreviewPending=false;
+    Uint64 minimapDue=0;
+    auto invalidateMinimap=[&] {minimapCancel.request_stop();++minimapRevision;minimapPreviewPending=true;minimapDue=SDL_GetTicks64()+250;};
     // Unsaved-changes flag for the exit prompt. Set by every edit (terrain,
     // features, units, starts, scenario props, use-only, triggers), cleared on a
     // successful save. Broader than `edited` (which only gates minimap regen).
@@ -515,7 +520,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         // Painting changes tile arrays only. Workers use tile snapshots and
         // immutable source sections; no whole-map worker/cache reset is needed.
         if (cart::stampSection(mapView.editMap(), *sec, snapX, snapY,stampLayers)) {
-            mapView.tilesEdited(snapX,snapY,sec->blocksX,sec->blocksY);
+            mapView.tilesEdited(snapX,snapY,sec->blocksX,sec->blocksY);invalidateMinimap();
             edited = true; dirty = true; historyPending=true;
         }
         (void)w; (void)h;
@@ -648,6 +653,35 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         minimapTexture.reset(SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,map.minimapW,map.minimapH));
         if(minimapTexture) {SDL_UpdateTexture(minimapTexture.get(),nullptr,rgba.data(),map.minimapW*4);SDL_SetTextureScaleMode(minimapTexture.get(),SDL_ScaleModeLinear);}
         minimapSource=map.minimap.data();minimapRefreshNeeded=false;
+    };
+
+    std::future<cart::MinimapPreview> minimapJob;
+    uint64_t minimapJobRevision=0;
+    std::string minimapError;
+    auto updateLiveMinimap=[&] {
+        if(minimapJob.valid() && minimapJob.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+            try {
+                auto preview=minimapJob.get();
+                if(minimapJobRevision==minimapRevision && !preview.rgba.empty()) {
+                    minimapTexture.reset(SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,preview.width,preview.height));
+                    if(minimapTexture) {SDL_UpdateTexture(minimapTexture.get(),nullptr,preview.rgba.data(),preview.width*4);SDL_SetTextureScaleMode(minimapTexture.get(),SDL_ScaleModeLinear);}
+                    minimapError.clear();if(hooks.minimapUpdated)hooks.minimapUpdated(preview.rgba);
+                }
+            } catch(const std::exception& error) {minimapError=std::string("Minimap: ")+error.what();}
+        }
+        if(minimapPreviewPending && !minimapJob.valid() && SDL_GetTicks64()>=minimapDue) {
+            // Only immutable tile data is needed; avoid copying millions of
+            // feature/height cells. The worker owns its decode cache; opening
+            // a document joins it before replacing the borrowed asset index.
+            const auto& source=mapView.map();tak::tnt::Map snapshot;
+            snapshot.blocksX=source.blocksX;snapshot.blocksY=source.blocksY;snapshot.stockTerrain=source.stockTerrain;
+            snapshot.tileKeys=source.tileKeys;snapshot.tileCols=source.tileCols;snapshot.tileRows=source.tileRows;
+            minimapJobRevision=minimapRevision;minimapPreviewPending=false;minimapCancel=std::stop_source{};
+            minimapJob=std::async(std::launch::async,[map=std::move(snapshot),&assets=vfs,kingdom=world,stop=minimapCancel.get_token()]() {
+                tak::terrain::Compositor compositor(assets);
+                return cart::minimapPreview(map,compositor,cart::loadWorldPalette(assets,kingdom),stop);
+            });
+        }
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
@@ -824,7 +858,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         for(auto& [key,texture]:featTex)if(texture)SDL_DestroyTexture(texture);
         featTex.clear();paletteKey.clear();
         mapView.quiesce();
-        mapView.editMap() = std::move(fm.map);minimapSource=nullptr;
+        mapView.editMap() = std::move(fm.map);minimapSource=nullptr;invalidateMinimap();
         mapView.tilesEdited();
         mapView.setOffset(0, 0);
         world = wld;
@@ -954,7 +988,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
             cart::resizeMap(mapView.editMap(), mapView.compositor(),
                             cart::loadWorldPalette(vfs, wld), wu, hu);
-            selectedFeatures.clear();
+            selectedFeatures.clear();invalidateMinimap();
             scenario.sizeW = wu; scenario.sizeH = hu;
             mapView.tilesEdited();
             edited = true; dirty = true; historyPending=true;
@@ -1175,7 +1209,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             auto nextUnits=cart::toPlaced(nextScenario);
             std::set<std::string> nextUseOnly;
             if(!nextMetadata.useOnlyUnits.empty())for(const auto& type:cart::loadUseOnly(nextVfs,stem+".tdf"))nextUseOnly.insert(type);
-            mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);minimapSource=nullptr;
+            minimapCancel.request_stop();if(minimapJob.valid())minimapJob.wait();
+            mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);minimapSource=nullptr;invalidateMinimap();
             scenario=std::move(nextMetadata);scen=std::move(nextScenario);units=std::move(nextUnits);useOnly=std::move(nextUseOnly);
             mapName=chosen;mapPath=path;world=scenario.kingdom.empty()?"aramon":scenario.kingdom;
             sections.scan(vfs,world);features.scan(vfs,world);
@@ -1288,7 +1323,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         mapView.quiesce();
         auto map=tak::tnt::Map::load(state->terrain,"undo history");
         map.seaLevel=state->seaLevel;map.stockTerrain=state->stockTerrain;
-        mapView.editMap()=std::move(map);mapView.tilesEdited();minimapSource=nullptr;
+        mapView.editMap()=std::move(map);mapView.tilesEdited();minimapSource=nullptr;invalidateMinimap();
         scenario=tak::tnt::Scenario::parse(state->metadata);
         scen=tak::crt::parse(state->scenario);units=cart::toPlaced(scen);
         regionDrag.cancel();regionSelected=-1;
@@ -2097,7 +2132,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 } catch(const std::exception& error) {recoveryStatus=error.what();}
             }
         }
-        refreshMinimap();
+        refreshMinimap();updateLiveMinimap();
         mapView.ensureChunks(canvasW, canvasH);
 
         SDL_SetRenderDrawColor(ren, 24, 26, 32, 255);
@@ -2372,6 +2407,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             status += "   STARTS: " + std::to_string(scenario.starts.size());
         status += dirty?"   UNSAVED":"   SAVED";
         if (!useOnly.empty()) status += "   USEONLY: " + std::to_string(useOnly.size());
+        if(!minimapError.empty())status+="   "+minimapError;
+        else if(minimapJob.valid() || minimapPreviewPending)status+="   Updating minimap...";
         if(!recoveryStatus.empty()) status+="   "+recoveryStatus;
         if (clearArm) status += "   CLEAR AREA: drag a box (K cancels)";
         if(mxg<kPaletteW && myg>=kPaletteTop && myg<h-kStatusH) {
@@ -2667,6 +2704,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         }
     }
 
+    minimapCancel.request_stop();
     if(interactive) {clearRecovery();persistPreferences();}
     for (auto& [k, t] : thumbs) if (t) SDL_DestroyTexture(t);
     for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
