@@ -1552,9 +1552,15 @@ void Server::gameMsg(Client& c, const Frame& f) {
         case Msg::Chat: {
             Reader rd(f.payload.data(), f.payload.size());
             std::string text = rd.str();
+            const uint8_t recipients = rd.u8();
             if (!rd.ok || text.size() > 512) return;
             Writer w; w.str(c.name); w.str(text);
-            broadcastRoom(*r, Msg::Chat, w);
+            if (!r->running || recipients == 0xff) broadcastRoom(*r, Msg::Chat, w);
+            else for (int slot=0;slot<kMaxSlots;++slot) {
+                if (!(recipients & (1u<<slot))) continue;
+                auto found=clients_.find(uint32_t(r->slotClient[slot]));
+                if (found!=clients_.end()) found->second->conn.send(Msg::Chat,w.b);
+            }
             break;
         }
         case Msg::PlayerCommands: {

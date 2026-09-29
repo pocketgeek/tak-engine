@@ -414,6 +414,50 @@
             return;
         }
 #ifndef NDEBUG
+        if (tak::devFlag("TAK_DIPLOMACY_TEST")) {
+            world_.setPlayerCount(8);world_.setTeam(1,0);localPlayer_=0;
+            resultParticipants_=uint8_t((1u<<0)|(1u<<1)|(1u<<2)|(1u<<7));
+            playerName_[0]="PLAYER";playerName_[1]="ALLY";playerName_[2]="ENEMY";playerName_[7]="DEFEATED";
+            world_.player(7).defeated=true;hotkeys_.load({});
+            const int monarch=spawn("araking",1800,2100,0,0);
+            const int soldier=spawn("arasword",1650,2100,0,0);
+            spawn("arasword",2000,2100,0,1);spawn("tarsword",2200,2100,0,2);
+            world_.unit(soldier)->squad=3;
+            const auto publish=[&] {captureFrame();beginFrame();};
+            const auto check=[](bool yes,const char* why) {if(!yes)throw std::runtime_error(why);};
+            const auto has=[&](DiplomacyAction action,int p) {
+                return std::any_of(giveUnitsHots_.begin(),giveUnitsHots_.end(),[&](const auto& h){return h.action==action && h.player==p;});
+            };
+            const auto click=[&](DiplomacyAction action,int p) {
+                auto found=std::find_if(giveUnitsHots_.begin(),giveUnitsHots_.end(),[&](const auto& h){return h.action==action && h.player==p;});
+                check(found!=giveUnitsHots_.end(),"diplomacy control unavailable");
+                SDL_Event e{};e.type=SDL_MOUSEBUTTONUP;e.button.button=SDL_BUTTON_LEFT;
+                e.button.x=int(found->rect.x+found->rect.w/2);e.button.y=int(found->rect.y+found->rect.h/2);
+                input(e,1000,700);
+            };
+            selection_.clear();publish();
+            SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=SDLK_d;
+            input(key,1000,700);check(giveUnitsMenu_,"D must open diplomacy without a selection");
+            drawGiveUnitsMenu(1000,700);
+            check(!has(DiplomacyAction::Give,1),"empty selection must disable gifts");
+            check(has(DiplomacyAction::Mana,1) && !has(DiplomacyAction::Mana,2) && !has(DiplomacyAction::Mana,0),"only teammates can receive mana");
+            for(int p:{0,1,2,7})check(has(DiplomacyAction::Chat,p),"all participants need chat controls");
+            check(!has(DiplomacyAction::Chat,3),"empty slots must not appear as players");
+            check(chatRecipients_==0xff && framePlayer(0).manaShareMask==0xff,"default sharing/chat preferences");
+            click(DiplomacyAction::Chat,2);check(!(chatRecipients_ & 4),"chat checkbox updates recipients");
+            click(DiplomacyAction::Mana,1);check(!(world_.player(0).manaShareMask & 2),"mana checkbox issues command");
+            selection_={monarch};drawGiveUnitsMenu(1000,700);
+            check(!has(DiplomacyAction::Give,1),"ineligible monarch must disable gifts");
+            selection_={monarch,soldier};drawGiveUnitsMenu(1000,700);
+            check(has(DiplomacyAction::Give,1) && !has(DiplomacyAction::Give,2),"eligible gifts only enabled for allies");
+            click(DiplomacyAction::Give,1);publish();drawGiveUnitsMenu(1000,700);
+            check(giveUnitsMenu_ && !has(DiplomacyAction::Give,1),"gift keeps menu open and disables exhausted selection");
+            check(selection_==std::vector<int>{monarch} && world_.unit(soldier)->player==1 && world_.unit(soldier)->squad==0,"gift filters selection and removes old control group");
+            input(key,1000,700);check(!giveUnitsMenu_,"D closes diplomacy");
+            input(key,1000,700);drawGiveUnitsMenu(1000,700);
+            std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, eligibility, gift and selection cleanup\n");
+            return;
+        }
         if (tak::devFlag("TAK_CURSOR_TEST")) {
             noFog_=true;edgeScrollOn_=false;
             world_.setPlayerCount(8);
@@ -1959,6 +2003,7 @@
             const auto& pl = world_.player(p);
             PlayerR& r = fb.players[size_t(p)];
             r.captureEconomy(pl);
+            r.manaShareMask = pl.manaShareMask;
             r.kills = pl.kills; r.unitCount = pl.unitCount;
             r.built = pl.built; r.losses = pl.losses; r.score = pl.score;
             // sim keeps these in TICKS now; the scoreboard wants seconds.
@@ -3923,13 +3968,9 @@
         // A previously selected enemy must stop exposing its live state on leaving sight.
         std::erase_if(selection_, [this](int id) {
             const auto* u = frameUnitP(id);
-            return !u || !u->alive() || !canPickUnit(*u) ||
-                (pendingGiftSelection_.contains(id) && u->player != localPlayer_);
+            return !u || !u->alive() || !canPickUnit(*u);
         });
-        std::erase_if(pendingGiftSelection_, [this](int id) {
-            const auto* u = frameUnitP(id);
-            return !u || !u->alive() || u->player != localPlayer_;
-        });
+
     }
 
     void GameView::endFrame() {

@@ -552,7 +552,9 @@ void MpClient::setPause(bool want) { Writer w; w.u8(want ? 1 : 0); send(Msg::Set
 
 void MpClient::kick(int slot) { Writer w; w.u8(uint8_t(slot)); send(Msg::Kick, w); }
 
-void MpClient::chat(const std::string& text) { Writer w; w.str(text); send(Msg::Chat, w); }
+void MpClient::chat(const std::string& text, uint8_t recipients) {
+    Writer w; w.str(text); w.u8(recipients); send(Msg::Chat, w);
+}
 
 void MpClient::startGame() { startRequested_ = true; }
 

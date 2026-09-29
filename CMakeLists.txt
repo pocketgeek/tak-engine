@@ -452,6 +452,13 @@ if(TAK_TEST_DATA)
     # The Release client intentionally strips the local game/dev command path.
     # Keep this headless client integration fixture in Debug configurations.
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_test(NAME diplomacy_ui COMMAND takclient game "Ulasem Arena"
+            --data "${TAK_TEST_DATA}" --testbuild --time 0
+            --shot "${CMAKE_CURRENT_BINARY_DIR}/diplomacy-test.png")
+        set_tests_properties(diplomacy_ui PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults"
+            TIMEOUT 60)
         add_test(NAME script_transient COMMAND takclient game "ulasem arena"
             --data "${TAK_TEST_DATA}" --firetest --nofog --time 0.1
             --shot "${CMAKE_CURRENT_BINARY_DIR}/script-transient-test.png")

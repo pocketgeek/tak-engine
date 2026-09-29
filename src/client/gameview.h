@@ -2073,8 +2073,12 @@ private:
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.
     float speedMult() const;
     bool giveUnitsMenu_ = false;
-    std::unordered_set<int> pendingGiftSelection_;
-    std::vector<std::pair<SDL_FRect, int>> giveUnitsHots_;
+    enum class DiplomacyAction { Give, Mana, Chat, Close };
+    struct DiplomacyHot { SDL_FRect rect; int player; DiplomacyAction action; };
+    std::vector<DiplomacyHot> giveUnitsHots_;
+    uint8_t chatRecipients_ = 0xff;
+    std::optional<uint8_t> requestedManaSharing_;
+    std::array<bool,8> eligibleGiftRecipients();
     void drawGiveUnitsMenu(int winW, int winH);
     void giveSelectedUnits(int recipient);
     bool showCounts_ = false;   // F4: player names, kills, losses, and score

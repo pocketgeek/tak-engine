@@ -79,13 +79,26 @@
                 hotkeys_.match(e.key.keysym.sym, e.key.keysym.mod) == tak::Act::GiveUnits))
                 giveUnitsMenu_ = false;
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
-                for (const auto& [r, recipient] : giveUnitsHots_)
-                    if (e.button.x >= r.x && e.button.x < r.x+r.w &&
-                        e.button.y >= r.y && e.button.y < r.y+r.h) {
-                        if (recipient >= 0) giveSelectedUnits(recipient);
-                        giveUnitsMenu_ = false;
-                        break;
+                for (const auto& hot : giveUnitsHots_) {
+                    const auto& r=hot.rect;
+                    if (e.button.x < r.x || e.button.x >= r.x+r.w ||
+                        e.button.y < r.y || e.button.y >= r.y+r.h) continue;
+                    switch (hot.action) {
+                        case DiplomacyAction::Give: giveSelectedUnits(hot.player); break;
+                        case DiplomacyAction::Chat: chatRecipients_ ^= uint8_t(1u<<hot.player); break;
+                        case DiplomacyAction::Mana: {
+                            uint8_t mask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
+                            mask ^= uint8_t(1u<<hot.player);
+                            requestedManaSharing_=mask;
+                            tak::net::Command c;c.kind=tak::net::Cmd::ShareMana;
+                            c.targetId=hot.player;c.queue=bool(mask & (1u<<hot.player));
+                            std::lock_guard<std::mutex> lock(simMutex_);issue(c);
+                            break;
+                        }
+                        case DiplomacyAction::Close: giveUnitsMenu_=false; break;
                     }
+                    break;
+                }
             }
             return;
         }
@@ -100,7 +113,7 @@
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
-                    if (mp_ && !chatDraft_.empty()) mp_->chat(chatDraft_);
+                    if (mp_ && !chatDraft_.empty()) mp_->chat(chatDraft_,chatRecipients_);
                     chatDraft_.clear(); chatTyping_ = false; SDL_StopTextInput();
                 } else if (k == SDLK_ESCAPE) {
                     chatDraft_.clear(); chatTyping_ = false; SDL_StopTextInput();
@@ -519,19 +532,28 @@
     }
 #endif
 
+std::array<bool,8> GameView::eligibleGiftRecipients() {
+    std::array<bool,8> eligible{};
+    std::lock_guard<std::mutex> lock(simMutex_);
+    for (int p=0;p<world_.numPlayers();++p)
+        for (int id:selection_)
+            if (world_.canGiveUnit(id,localPlayer_,p)) {eligible[size_t(p)]=true;break;}
+    return eligible;
+}
+
 void GameView::giveSelectedUnits(int recipient) {
-    // The referee checks eligibility when each command executes, including caps
-    // changed by earlier gifts in this same selection.
-    for (int id : selection_) {
-        const auto* u = frameUnitP(id);
-        if (!u || !u->alive() || u->player != localPlayer_) continue;
+    // Check the same rules as the referee, not just ownership. The referee
+    // checks again at execution, including caps changed by earlier gifts.
+    std::lock_guard<std::mutex> lock(simMutex_);
+    std::erase_if(selection_,[&](int id) {
+        if (!world_.canGiveUnit(id,localPlayer_,recipient)) return false;
         tak::net::Command c;
         c.kind = tak::net::Cmd::GiveUnit;
         c.unitId = id;
         c.targetId = recipient;
         issue(c);
-        pendingGiftSelection_.insert(id);
-    }
+        return true; // no duplicate gifts while waiting for the lockstep reply
+    });
     trackSel_ = false;
     lastRecalledSquad_ = 0;
 }

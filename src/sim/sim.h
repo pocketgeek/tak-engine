@@ -1251,6 +1251,7 @@ struct Player {
     // if diplomacy ever makes it mutable it must be a sequenced command AND
     // enter stateHash (see docs/multiplayer-design.md).
     int   team = 0;
+    uint8_t manaShareMask = 0xff; // outgoing overflow recipients; alliance still required
     bool  defeated = false;   // no living units; set by the sim's win check
     int32_t defeatedAt = -1;  // TICK when `defeated` first went true (-1 = still in)
     // Cosmetic "disco" emote (Shift+D): seconds this player's monarchs keep
@@ -1594,6 +1595,7 @@ public:
     // Per-player unit limit: production and new builds stall a player once it has
     // this many live units (0 = unlimited). Set at match start (from the lobby).
     // The count it tests (Player::unitCount) is deterministic, so all peers agree.
+    void setManaSharing(int fromPlayer, int toPlayer, bool enabled);
     bool canGiveUnit(int unitId, int fromPlayer, int toPlayer) const;
     bool giveUnit(int unitId, int fromPlayer, int toPlayer);
     void setUnitCap(int c) { unitCap_ = c; }

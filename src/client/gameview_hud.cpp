@@ -2140,42 +2140,59 @@ namespace {
 
 void GameView::drawGiveUnitsMenu(int winW, int winH) {
     giveUnitsHots_.clear();
-    std::vector<int> allies;
-    if (localPlayer_ >= 0 && localPlayer_ < frameNumPlayers() && !framePlayer(localPlayer_).defeated)
-        for (int p = 0; p < frameNumPlayers(); ++p)
-            if (p != localPlayer_ && !framePlayer(p).defeated &&
-                framePlayer(p).team == framePlayer(localPlayer_).team) allies.push_back(p);
-    const float scale = std::min({1.0f, float(winW)/680.0f, float(winH)/500.0f});
-    const float width = 620*scale, rowH = 42*scale;
-    const float height = (142 + 46*std::max(size_t(1), allies.size()))*scale;
-    const float x = (winW-width)/2, y = (winH-height)/2;
-    SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 160);
-    SDL_FRect dim{0,0,float(winW),float(winH)};
-    SDL_RenderFillRectF(ren_, &dim);
+    std::vector<int> players;
+    for (int p=0;p<frameNumPlayers();++p)
+        if (!resultParticipants_ || (*resultParticipants_ & (1u<<p))) players.push_back(p);
+    const auto eligible=eligibleGiftRecipients();
+    const auto manaMask=requestedManaSharing_.value_or(framePlayer(localPlayer_).manaShareMask);
+    const float scale=std::min({1.0f,float(winW)/820.0f,float(winH)/550.0f});
+    const float width=780*scale,rowH=38*scale;
+    const float height=(172+44*players.size())*scale;
+    const float x=(winW-width)/2,y=(winH-height)/2;
+    SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren_,0,0,0,160);
+    SDL_FRect dim{0,0,float(winW),float(winH)};SDL_RenderFillRectF(ren_,&dim);
     SDL_FRect panel{x,y,width,height};
-    SDL_SetRenderDrawColor(ren_, 26,28,36,245);
-    SDL_RenderFillRectF(ren_, &panel);
-    SDL_SetRenderDrawColor(ren_,120,130,160,255);
-    SDL_RenderDrawRectF(ren_, &panel);
-    blockText("GIVE SELECTED UNITS", x+24*scale,y+22*scale,2.5f*scale,{235,225,180,255});
-    float by = y+62*scale;
-    if (allies.empty()) blockText("NO ALLIES AVAILABLE", x+24*scale,by,2*scale,{190,190,190,255});
-    auto button = [&](const std::string& label, SDL_FRect r, int recipient) {
-        const bool hover = mouseX_>=r.x && mouseX_<r.x+r.w && mouseY_>=r.y && mouseY_<r.y+r.h;
-        SDL_SetRenderDrawColor(ren_,hover?90:60,hover?110:66,hover?150:86,255);
-        SDL_RenderFillRectF(ren_, &r);
-        blockText(label,r.x+(r.w-blockWidth(label,1.8f*scale))/2,
-                  r.y+(r.h-7*1.8f*scale)/2,1.8f*scale,{235,235,240,255});
-        giveUnitsHots_.push_back({r,recipient});
+    SDL_SetRenderDrawColor(ren_,26,28,36,245);SDL_RenderFillRectF(ren_,&panel);
+    SDL_SetRenderDrawColor(ren_,120,130,160,255);SDL_RenderDrawRectF(ren_,&panel);
+    blockText("DIPLOMACY",x+24*scale,y+22*scale,2.5f*scale,{235,225,180,255});
+    blockText("PLAYER",x+24*scale,y+66*scale,1.6f*scale,{190,190,200,255});
+    blockText("SHARE MANA",x+252*scale,y+66*scale,1.6f*scale,{190,190,200,255});
+    blockText("CHAT",x+394*scale,y+66*scale,1.6f*scale,{190,190,200,255});
+    auto button=[&](const std::string& label,SDL_FRect r,int p,DiplomacyAction action,bool enabled) {
+        const bool hover=enabled && mouseX_>=r.x && mouseX_<r.x+r.w && mouseY_>=r.y && mouseY_<r.y+r.h;
+        SDL_SetRenderDrawColor(ren_,enabled?(hover?90:60):37,enabled?(hover?110:66):39,enabled?(hover?150:86):46,255);
+        SDL_RenderFillRectF(ren_,&r);
+        blockText(label,r.x+(r.w-blockWidth(label,1.7f*scale))/2,
+            r.y+(r.h-7*1.7f*scale)/2,1.7f*scale,enabled?SDL_Color{235,235,240,255}:SDL_Color{105,108,118,255});
+        if(enabled)giveUnitsHots_.push_back({r,p,action});
     };
-    for (int p : allies) {
-        std::string name = playerName_[p];
-        if (name.empty()) name = "PLAYER " + std::to_string(p+1);
-        const float ts = std::min(2.0f*scale,240*scale/std::max(1.0f,blockWidth(name,1)));
+    auto checkbox=[&](float cx,float by,int p,DiplomacyAction action,bool checked,bool enabled) {
+        SDL_FRect r{x+cx*scale,by+8*scale,22*scale,22*scale};
+        SDL_SetRenderDrawColor(ren_,enabled?165:65,enabled?175:68,enabled?190:75,255);
+        SDL_RenderDrawRectF(ren_,&r);
+        if(checked) {
+            SDL_SetRenderDrawColor(ren_,enabled?225:85,enabled?220:88,enabled?160:95,255);
+            for(int i=0;i<2;++i) {
+                SDL_RenderDrawLineF(ren_,r.x+4*scale,r.y+(11+i)*scale,r.x+9*scale,r.y+(16+i)*scale);
+                SDL_RenderDrawLineF(ren_,r.x+9*scale,r.y+(16+i)*scale,r.x+18*scale,r.y+(5+i)*scale);
+            }
+        }
+        if(enabled)giveUnitsHots_.push_back({r,p,action});
+    };
+    float by=y+92*scale;
+    for(int p:players) {
+        std::string name=playerName_[p];
+        if(name.empty())name="PLAYER "+std::to_string(p+1);
+        if(p==localPlayer_)name+=" (YOU)";
+        const float ts=std::min(1.9f*scale,210*scale/std::max(1.0f,blockWidth(name,1)));
         blockText(name,x+24*scale,by+(rowH-7*ts)/2,ts,{235,235,240,255});
-        button("GIVE SELECTED UNITS",{x+290*scale,by,306*scale,rowH},p);
-        by += 46*scale;
+        const bool ally=p!=localPlayer_ && framePlayer(p).team==framePlayer(localPlayer_).team;
+        const bool sharing=ally && !framePlayer(p).defeated && !framePlayer(localPlayer_).defeated;
+        checkbox(294,by,p,DiplomacyAction::Mana,ally && (manaMask & (1u<<p)),sharing);
+        checkbox(402,by,p,DiplomacyAction::Chat,chatRecipients_ & (1u<<p),true);
+        button("GIVE SELECTED UNITS",{x+478*scale,by,278*scale,rowH},p,DiplomacyAction::Give,eligible[size_t(p)]);
+        by+=44*scale;
     }
-    button("CANCEL",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1);
+    button("CLOSE",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1,DiplomacyAction::Close,true);
 }

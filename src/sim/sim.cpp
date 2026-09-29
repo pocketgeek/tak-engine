@@ -4401,6 +4401,15 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     }
 }
 
+void World::setManaSharing(int fromPlayer, int toPlayer, bool enabled) {
+    if (fromPlayer < 0 || fromPlayer >= numPlayers() || toPlayer < 0 ||
+        toPlayer >= numPlayers() || fromPlayer == toPlayer || !allied(fromPlayer,toPlayer) ||
+        players_[size_t(fromPlayer)].defeated || players_[size_t(toPlayer)].defeated) return;
+    auto& mask=players_[size_t(fromPlayer)].manaShareMask;
+    if (enabled) mask |= uint8_t(1u << toPlayer);
+    else mask &= uint8_t(~(1u << toPlayer));
+}
+
 bool World::canGiveUnit(int unitId, int fromPlayer, int toPlayer) const {
     if (fromPlayer < 0 || fromPlayer >= numPlayers() || toPlayer < 0 ||
         toPlayer >= numPlayers() || fromPlayer == toPlayer || !allied(fromPlayer, toPlayer) ||
@@ -8597,41 +8606,49 @@ void World::tick(float dt) {
         int team = players_[size_t(lead)].team;
         if (team < 0 || team >= kMaxPlayers || teamDone[team]) continue;
         teamDone[team] = true;
-        double pool = 0;   // surplus above caps, gathered from the whole team
+        uint8_t teamMask=0;
+        for (int i=0;i<np;++i)
+            if (players_[size_t(i)].team==team) teamMask |= uint8_t(1u<<i);
+        // Pool only donors with the same allowed recipients. With the default
+        // sharing settings this is the original single team pool and arithmetic.
+        std::map<uint8_t,double> pools;
         for (int i = 0; i < np; ++i)
             if (!players_[size_t(i)].retailResources && players_[size_t(i)].team == team && players_[size_t(i)].mana > cap(i)) {
-                pool += players_[size_t(i)].mana - cap(i);
+                const auto recipients=uint8_t(players_[size_t(i)].manaShareMask & teamMask);
+                pools[recipients] += players_[size_t(i)].mana - cap(i);
                 players_[size_t(i)].mana = cap(i);
             }
-        std::array<int, kMaxPlayers> needy{};
-        int count = 0;
-        for (int i = 0; i < np; ++i)
-            if (!players_[size_t(i)].retailResources && !players_[size_t(i)].defeated &&
-                players_[size_t(i)].team == team && players_[size_t(i)].mana < cap(i))
-                needy[size_t(count++)] = i;
-        auto fill = [&](int i) { return players_[size_t(i)].mana / double(cap(i)); };
-        std::sort(needy.begin(), needy.begin()+count, [&](int a, int b) {
-            return fill(a) != fill(b) ? fill(a) < fill(b) : a < b;
-        });
-        // Raise the emptiest stores together toward the next fill percentage.
-        // Equal need shares proportionally to capacity, without slot preference.
-        double capacity = 0, stored = 0, level = 0;
-        int receiving = 0;
-        for (int n = 0; n < count && pool > 0; ++n) {
-            const int i = needy[size_t(n)];
-            capacity += cap(i);
-            stored += players_[size_t(i)].mana;
-            receiving = n+1;
-            const double next = n+1 < count ? fill(needy[size_t(n+1)]) : 1.0;
-            level = std::min(next, (stored+pool)/capacity);
-            if (level < next) break;
+        for (auto [recipients,pool]:pools) {
+            std::array<int, kMaxPlayers> needy{};
+            int count = 0;
+            for (int i = 0; i < np; ++i)
+                if (!players_[size_t(i)].retailResources && !players_[size_t(i)].defeated &&
+                    (recipients & (1u<<i)) && players_[size_t(i)].mana < cap(i))
+                    needy[size_t(count++)] = i;
+            auto fill = [&](int i) { return players_[size_t(i)].mana / double(cap(i)); };
+            std::sort(needy.begin(), needy.begin()+count, [&](int a, int b) {
+                return fill(a) != fill(b) ? fill(a) < fill(b) : a < b;
+            });
+            // Raise the emptiest stores together toward the next fill percentage.
+            // Equal need shares proportionally to capacity, without slot preference.
+            double capacity = 0, stored = 0, level = 0;
+            int receiving = 0;
+            for (int n = 0; n < count && pool > 0; ++n) {
+                const int i = needy[size_t(n)];
+                capacity += cap(i);
+                stored += players_[size_t(i)].mana;
+                receiving = n+1;
+                const double next = n+1 < count ? fill(needy[size_t(n+1)]) : 1.0;
+                level = std::min(next, (stored+pool)/capacity);
+                if (level < next) break;
+            }
+            for (int n = 0; n < receiving; ++n) {
+                const int i = needy[size_t(n)];
+                const double give = std::min(pool, std::max(0.0, level*cap(i)-players_[size_t(i)].mana));
+                if (give > 0) { players_[size_t(i)].creditMana(give); pool -= give; }
+            }
+            // Any pool left (every allowed recipient capped) is wasted, as before.
         }
-        for (int n = 0; n < receiving; ++n) {
-            const int i = needy[size_t(n)];
-            const double give = std::min(pool, std::max(0.0, level*cap(i)-players_[size_t(i)].mana));
-            if (give > 0) { players_[size_t(i)].creditMana(give); pool -= give; }
-        }
-        // Any pool left (every member capped) is wasted, as before.
     }
     // ...and once it has filled, the god manifests. This has to happen HERE, in the
     // shared sim, and used to happen in the client instead (GameView::simStep polled
@@ -10190,6 +10207,7 @@ uint64_t World::stateHash() const {
     }
     for (const auto& t : players_) {
         mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1));
+        if (t.manaShareMask != 0xff) { mix(0x53484152454d414eull); mix(t.manaShareMask); }
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
         mix(t.cacheClock.enabled); mix(t.cacheClock.lastRefresh);
         if (t.retailResources) {

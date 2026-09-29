@@ -21,6 +21,7 @@ static void write(const std::filesystem::path& path, const std::vector<uint8_t>&
 int main(int argc, char** argv) try {
     if (argc >= 5 && std::string(argv[1]) == "--network") {
         const auto port = uint16_t(std::stoi(argv[2]));
+        const bool diplomacy=std::getenv("TAK_DIPLOMACY_NETWORK")!=nullptr;
         if (argc == 5) {
             auto original = hpi::mountRetailRoot(argv[3], hpi::OverridePolicy::None);
             auto package = net::maps::build(original, "Ulasem Arena");
@@ -55,6 +56,8 @@ int main(int argc, char** argv) try {
         check(host.connect("127.0.0.1", port, "maphost"), "host connection");
         check(peer.connect("127.0.0.1", port, "mappeer"), "peer connection");
         bool created = false, joined = false, readied = false, started = false, late = false;
+        bool chatSent=false,sharingSent=false,sharingSeen=false,sharingRestored=false;
+        std::vector<std::pair<std::string,std::string>> hostChat,peerChat,spectatorChat;
         bool hostLoaded = false, peerLoaded = false, spectatorLoaded = false, spectateSent = false;
         uint32_t ht=0, pt=0, st=0;
         std::map<uint32_t,uint64_t> hashes;
@@ -69,7 +72,9 @@ int main(int argc, char** argv) try {
             cfg.mapPath = client.mapPackage() ? client.mapPackage()->mapPath : hpi::findMap(view, room.mapId);
             cfg.startSeed = client.startSeed(); cfg.randomStarts = room.opts.randomStarts;
             cfg.unitCap = room.opts.unitCap;
-            cfg.slots.resize(2); cfg.slots[0] = {true,0,0,1,false,false}; cfg.slots[1] = {true,1,1,1,false,false};
+            cfg.slots.resize(diplomacy ? 3 : 2); cfg.slots[0] = {true,0,0,1,false,false};
+            cfg.slots[1] = {true,1,diplomacy ? 0 : 1,1,false,false};
+            if(diplomacy)cfg.slots[2]={true,2,1,1,true,true};
             sim::setupMatch(world, reg, cfg); client.reportLoaded(hpi::gameplayHash(base));
         };
         auto until = std::chrono::steady_clock::now() + std::chrono::seconds(90);
@@ -77,16 +82,18 @@ int main(int argc, char** argv) try {
             check(host.poll(), host.error().c_str()); check(peer.poll(), peer.error().c_str());
             if (!created && host.state() == net::MpClient::State::Lobby) {
                 net::GameOptions opts; opts.crusades = 1; opts.overridePolicy = 0;
-                host.createGame("map transfer test", "", mapId, opts, 2); created = true;
+                host.createGame("map transfer test", "", mapId, opts, diplomacy ? 3 : 2); created = true;
             }
             if (!joined && host.room().id && peer.state() == net::MpClient::State::Lobby) {
                 peer.joinGame(host.room().id, ""); joined = true;
             }
             if (!readied && peer.room().id) {
                 // START must remain blocked even when human READY arrived first.
-                host.setSlot(0,1,0,0,0,1); peer.setSlot(1,1,1,1,1,1); readied = true;
+                host.setSlot(0,1,0,0,0,1); peer.setSlot(1,1,1,1,diplomacy ? 0 : 1,1);
+                if(diplomacy)host.setSlot(2,2,2,2,1,1,0);
+                readied = true;
             }
-            if (!started && readied && host.room().mapsReady && host.room().slots[1].ready) {
+            if (!started && readied && host.room().mapsReady && host.room().slots[1].ready && (!diplomacy || host.room().slots[2].type==2)) {
                 host.startGame(); started = true;
             }
             if (!hostLoaded && host.starting()) { setup(host,hostData,wh); hostLoaded = true; }
@@ -103,6 +110,24 @@ int main(int argc, char** argv) try {
 
                 }
             }
+            if (diplomacy && hostLoaded && ht>30 && !sharingSent) {
+                net::Command c;c.kind=net::Cmd::ShareMana;c.targetId=1;c.queue=0;
+                c.player=7; // the server must stamp the actual sender, not trust this
+                host.sendCommands({c});sharingSent=true;
+            }
+            if (diplomacy && sharingSent && !(wh.player(0).manaShareMask & 2)) sharingSeen=true;
+            if (diplomacy && sharingSeen && ht>150 && !sharingRestored) {
+                net::Command c;c.kind=net::Cmd::ShareMana;c.targetId=1;c.queue=1;
+                host.sendCommands({c});sharingRestored=true;
+            }
+            if (spectatorLoaded && ht>30 && !chatSent) {
+                host.chat("PRIVATE_PEER",2);host.chat("NOBODY",0);host.chat("EVERYONE");
+                peer.chat("PRIVATE_HOST",1);chatSent=true;
+            }
+            auto collect=[](net::MpClient& client,auto& messages) {
+                auto incoming=client.takeChat();messages.insert(messages.end(),incoming.begin(),incoming.end());
+            };
+            collect(host,hostChat);collect(peer,peerChat);collect(spectator,spectatorChat);
             auto advance = [&](net::MpClient& client, sim::World& world, uint32_t& tick, bool reference) {
                 net::Bundle bundle;
                 while (tick < 300 && (reference || hashes.count(tick)) && client.takeBundle(tick,bundle)) {
@@ -121,6 +146,23 @@ int main(int argc, char** argv) try {
             if (spectatorLoaded && ht>st) advance(spectator,ws,st,false);
             check(!host.desynced() && !peer.desynced(), "server map differs");
             if (ht==300 && pt==300 && st==300) {
+                if(diplomacy) {
+                    check(sharingSeen && sharingRestored && wh.player(0).manaShareMask==0xff &&
+                          wp.player(0).manaShareMask==0xff && ws.player(0).manaShareMask==0xff,
+                          "sharing command did not apply and restore on all peers");
+                    std::cout << "mana sharing: server-stamped sender, disable/enable, referee and spectator lockstep passed\n";
+                }
+                auto has=[](const auto& messages,const char* text) {
+                    return std::any_of(messages.begin(),messages.end(),[&](const auto& item){return item.second==text;});
+                };
+                check(chatSent && has(hostChat,"PRIVATE_HOST") && has(peerChat,"PRIVATE_PEER"),"directed chat missing recipient");
+                check(!has(hostChat,"PRIVATE_PEER") && !has(peerChat,"PRIVATE_HOST") &&
+                      !has(spectatorChat,"PRIVATE_PEER") && !has(spectatorChat,"PRIVATE_HOST"),"private chat escaped recipient mask");
+                for(const auto* messages:{&hostChat,&peerChat,&spectatorChat}) {
+                    check(has(*messages,"EVERYONE"),"default chat did not reach everyone");
+                    check(!has(*messages,"NOBODY"),"empty chat recipient mask delivered a message");
+                }
+                std::cout << "directed chat: recipients, exclusion, empty mask, broadcast and spectator privacy passed\n";
                 if (mapgen::isGeneratedMapId(mapId)) {
                     const auto file="Generated-"+crypto::toHex(crypto::sha256(mapId))+".kmp";
                     check(std::filesystem::exists(std::filesystem::path(argv[3])/"Maps"/file),"host did not save generated map");

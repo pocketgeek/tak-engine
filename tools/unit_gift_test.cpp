@@ -66,5 +66,31 @@ int main() {
     e.player(0).mana=100;e.player(1).mana=200;e.player(2).mana=1300;e.tick(1.0f/30);
     check(e.player(0).mana==200 && e.player(1).mana==400,
           "equal fill ratios share proportionally to storage");
+    // Outgoing preferences are sequenced, hashed, and restricted to allies.
+    net::Command sharing;sharing.kind=net::Cmd::ShareMana;sharing.player=2;
+    sharing.targetId=1;sharing.queue=0;
+    const auto originalHash=e.stateHash();
+    net::Writer sharingWire;sharingWire.cmd(sharing);
+    net::Reader sharingReader(sharingWire.b.data(),sharingWire.b.size());
+    sim::applyCommand(e,reg,sharingReader.cmd());
+    check(sharingReader.ok && !(e.player(2).manaShareMask & 2),"mana toggle command round trip");
+    check(e.stateHash()!=originalHash,"sharing preference participates in lockstep hash");
+    e.unit(2)->type=&bank;
+    e.player(0).mana=800;e.player(1).mana=100;e.player(2).mana=1300;e.tick(1.0f/30);
+    check(e.player(0).mana==1000 && e.player(1).mana==100,"excluded needy ally receives no overflow");
+    sharing.queue=1;sim::applyCommand(e,reg,sharing);
+    e.player(0).mana=800;e.player(1).mana=100;e.player(2).mana=1300;e.tick(1.0f/30);
+    check(e.player(0).mana==800 && e.player(1).mana==400,"re-enabled sharing again feeds the neediest ally");
+    e.setManaSharing(2,0,false);e.setManaSharing(2,1,false);
+    e.player(0).mana=100;e.player(1).mana=100;e.player(2).mana=1300;e.tick(1.0f/30);
+    check(e.player(0).mana==100 && e.player(1).mana==100 && e.player(2).mana==1000,
+          "disabled sharing wastes overflow without exceeding the donor cap");
+    e.player(0).mana=1300;e.player(1).mana=1000;e.player(2).mana=100;e.tick(1.0f/30);
+    check(e.player(2).mana==400,"outgoing sharing toggle does not refuse incoming mana");
+    const auto fromMask=w.player(0).manaShareMask;
+    w.setManaSharing(0,2,false);w.setManaSharing(0,0,false);w.setManaSharing(0,99,false);
+    check(w.player(0).manaShareMask==fromMask,"enemy, self and invalid mana recipients rejected");
+    w.player(1).defeated=true;w.setManaSharing(0,1,false);
+    check(w.player(0).manaShareMask==fromMask,"defeated mana recipient rejected");
     std::printf("unit gift: %d failures\n",failures);return failures?1:0;
 }

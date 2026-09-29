@@ -46,6 +46,8 @@
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
             missionSoundQueue_.clear();
         }
+        chatRecipients_=0xff;requestedManaSharing_.reset();
+        giveUnitsMenu_=false;giveUnitsHots_.clear();
         replaySaved_ = false;   // a fresh game gets a fresh recording
         resultParticipants_.reset();
         if (room.mission.empty()) {

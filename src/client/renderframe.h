@@ -188,6 +188,7 @@ struct UnitR {
 // Per-tick render snapshot of a sim Player (mirrors sim::Player's read field names, like
 // UnitR). Captured each tick so the HUD/scoreboard never reads live world_ players.
 struct PlayerR {
+    uint8_t manaShareMask = 0xff;
     float mana = 0, storage = 0, income = 0, expenditure = 0;
     void captureEconomy(const tak::sim::Player& player) {
         mana=float(player.mana);

@@ -34,6 +34,7 @@ enum class Cmd : uint8_t {
                    // move at their slowest member's speed and their stragglers rejoin.
     ReclaimArea,   // persistent area clear: x/z through x2/z2, chooses each next target in sim
     GiveUnit,      // unitId = owned eligible unit, targetId = allied recipient player
+    ShareMana,     // targetId = allied recipient, queue = enabled; no unit required
 };
 
 struct Command {
