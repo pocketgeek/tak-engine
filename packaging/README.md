@@ -14,8 +14,8 @@ in `takclient.exe` through a compiled resource, and NSIS uses it for the install
 and uninstaller. macOS copies the ICNS into `Contents/Resources` and declares it
 in `Info.plist`.
 
-The macOS workflow retains `.app` on disk and marks its extension hidden in Finder.
-User preferences can force extensions to remain visible. The DMG preserves this
-metadata; the ZIP is created with `ditto` and distributed as an intact archive
-so its extended attributes survive downloads. Native CI validates the ICNS with
-`iconutil` and verifies the bundle signature after setting its display metadata.
+The macOS bundle retains its required `.app` suffix. Finder controls whether
+extensions are displayed. Do not add FinderInfo attributes to the signed bundle:
+strict code-signature verification rejects them. The ZIP is created with `ditto`
+and distributed intact. Native CI validates the ICNS with `iconutil` and verifies
+the bundle signature before packaging.

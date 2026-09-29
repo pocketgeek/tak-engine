@@ -108,8 +108,8 @@ jobs:
           sed "s/@VERSION@/$VERSION/g" packaging/macos/Info.plist > "$APPDIR/Contents/Info.plist"
           plutil -lint "$APPDIR/Contents/Info.plist"
           codesign --force --deep -s - "$APPDIR"
-          # Keep .app on disk for Launch Services, but hide it in Finder.
-          xcrun SetFile -a E "$APPDIR"
+          # FinderInfo attributes invalidate strict bundle signature verification.
+          # Let Finder apply its normal application-extension display preference.
           codesign --verify --deep --strict "$APPDIR"
           ln -s /Applications dist-dmg/Applications
           hdiutil create -volname "Total Annihilation - Kingdoms" -srcfolder dist-dmg -ov -format UDZO \
@@ -124,7 +124,7 @@ jobs:
           ditto --rsrc --extattr "dist-dmg/Total Annihilation - Kingdoms.app" \
             "dist-macos/Total Annihilation - Kingdoms.app"
           cp build/takclient build/takserver dist-macos/
-          # ditto preserves Finder's hidden-extension flag in the zip as well.
+          # Preserve the signed bundle intact in the zip.
           ditto -c -k --sequesterRsrc dist-macos "takclient-$VERSION-macos-arm64.zip"
 
       - name: Upload CI artifact
