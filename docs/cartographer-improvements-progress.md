@@ -605,6 +605,21 @@ It compares retained heights/features against the source and verifies the
 previous destination's exact bytes in the backup. All fourteen editor tests pass
 in Release and under AddressSanitizer/LeakSanitizer; Cartographer is rebuilt.
 
+## Navigation help checkpoint
+
+The first ordinary desktop launch now shows a short guide to opening maps,
+browsing, editing, navigation, undo/save, recovery and Check Map. Its shown state
+is saved in preferences; explicit command-line map opens and restored sessions
+continue directly into their map. Help > Editor controls remains available.
+
+Toolbar tools/modes, browser search/category/faction controls and the minimap
+now show delayed hover explanations with applicable shortcuts. Hints are hidden
+during mouse gestures and modal panels, wrap to the available width and stay
+inside the window. A rendered edge-of-window preview was visually checked.
+Long dialog titles are clipped to their title bar instead of spilling outside
+it. Preference round-trip coverage includes the guide state. All fourteen
+editor tests pass in Release and under AddressSanitizer/LeakSanitizer.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,

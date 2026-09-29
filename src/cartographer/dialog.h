@@ -119,6 +119,20 @@ inline SDL_Rect drawButton(SDL_Renderer* ren, int x, int y, int w, int h,
 
 // A modal panel: dim the screen, draw a titled box centred at (cx,cy). Returns
 // the panel's content origin (top-left inside the border, below the title).
+// Wrap hover help and keep it inside the logical window, including at high DPI.
+inline void drawTooltip(SDL_Renderer* ren,int windowWidth,int windowHeight,int x,int y,const std::string& text) {
+    const int width=std::max(48,std::min(360,windowWidth-12));
+    const auto lines=TextEdit::lines(text,std::max(1,(width-12)/6));
+    const int height=int(lines.size())*12+12;
+    SDL_Rect box{std::clamp(x+12,6,std::max(6,windowWidth-width-6)),
+                 y+22+height<=windowHeight-6?y+22:std::max(6,y-height-8),width,height};
+    SDL_SetRenderDrawColor(ren,20,25,34,245);SDL_RenderFillRect(ren,&box);
+    SDL_SetRenderDrawColor(ren,155,170,190,255);SDL_RenderDrawRect(ren,&box);
+    SDL_RenderSetClipRect(ren,&box);
+    for(size_t i=0;i<lines.size();++i)drawText(ren,text.substr(lines[i].begin,lines[i].end-lines[i].begin),box.x+6,box.y+6+int(i)*12,1,235,240,250);
+    SDL_RenderSetClipRect(ren,nullptr);
+}
+
 inline SDL_Rect drawPanel(SDL_Renderer* ren, int winW, int winH, int pw, int ph,
                           const std::string& title) {
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -133,7 +147,9 @@ inline SDL_Rect drawPanel(SDL_Renderer* ren, int winW, int winH, int pw, int ph,
     SDL_Rect tb{p.x, p.y, p.w, 20};
     SDL_SetRenderDrawColor(ren, 60, 64, 80, 255);
     SDL_RenderFillRect(ren, &tb);
+    SDL_RenderSetClipRect(ren,&tb);
     drawText(ren, title, p.x + 8, p.y + 7, 1, 235, 235, 245);
+    SDL_RenderSetClipRect(ren,nullptr);
     return SDL_Rect{p.x + 14, p.y + 30, p.w - 28, p.h - 40};
 }
 

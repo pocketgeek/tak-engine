@@ -191,6 +191,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   group movement, copy/paste and deletion; feature moves protect occupied cells.
   **View** can hide features, units, starts and regions; layer choices are remembered.
   Terrain thumbnails load in the background, and the minimap refreshes after terrain edits.
+  A first-launch guide introduces editing and saving. Hover over toolbar controls,
+  filters or the minimap for action help and shortcuts.
   The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.
   **T** opens scenario scripting; its full-text area wraps long operands, supports
   **Page Up/Page Down** scrolling, and offers **Copy Text** for the selected rule.

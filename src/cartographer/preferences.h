@@ -6,6 +6,7 @@ namespace cart {
 struct EditorPreferences {
     int width=0,height=0,scalePercent=200;
     bool showFeatures=true,showUnits=true,showStarts=true,showRegions=true,showGrid=false;
+    bool guideSeen=false;
     std::vector<std::string> recent;
     void remember(const std::string& request);
 };

@@ -263,6 +263,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // kmap/<name>.tnt), same resolution the game uses. An empty name (or --new
     // without --save) starts a fresh blank map instead -- mapPath stays empty so
     // there are no sibling scenario files to load.
+    const bool showWelcome=interactive && mapName.empty() && !newW && !preferences.guideSeen;
     std::string mapPath=recoveredMapPath;
     tak::tnt::Scenario scenario;
     std::unique_ptr<MapView> mapViewPtr;
@@ -1220,6 +1221,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
     };
     int menuOpen=-1;
+    std::string hoveredHint;Uint64 hintSince=0;
     struct ViewBookmark {float x,z,zoom;};
     std::optional<ViewBookmark> viewBookmark;
     const std::vector<std::string> menuNames={"FILE","EDIT","VIEW","SCENARIO","HELP"};
@@ -1287,6 +1289,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
             "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
     };
+
+    if(showWelcome) {
+        openMessage("WELCOME TO CARTOGRAPHER",
+            "Start with File > Open (Ctrl+O), or New (Ctrl+N). Pick a tool and search the left browser (Ctrl+F).\n"
+            "Place adds objects; Select moves or edits them. Right-drag pans in any mode; the mouse wheel zooms. Click the minimap to travel.\n"
+            "Ctrl+Z undoes edits. Ctrl+S saves a playable map bundle. Unsaved work gets recovery copies every minute.\n"
+            "Before playing, use Scenario > Check map (C). Hover over toolbar controls for help; Help > Editor controls lists shortcuts.");
+        preferences.guideSeen=true;persistPreferences();
+    }
 
     bool recoveryFilesPresent=!recoveredFrom.empty();
     std::future<std::string> recoveryJob;
@@ -2713,6 +2724,35 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             uoClear = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 100, 18, "UNRESTRICT", false);
             uoDone = cart::drawButton(ren, ct.x + ct.w - 74, ct.y + ct.h - 20, 70, 18, "DONE", true);
         }
+
+        // Delayed hover help stays out of the way during gestures and dialogs.
+        std::string hint;
+        int hx,hy;const auto mouseButtons=SDL_GetMouseState(&hx,&hy);hx=int(hx/kUIScale);hy=int(hy/kUIScale);
+        if(modal==M_NONE && menuOpen<0 && !scriptOpen && !regionsOpen && !useOnlyOpen && !mouseButtons) {
+            if(hy>=25 && hy<41) {
+                if(hx>=96 && hx<384) {
+                    const char* hints[]={
+                        "Terrain: place authored sections. Tab cycles tools. Right-drag pans; mouse wheel zooms around the pointer.",
+                        "Features: place trees, rocks and other map objects. Tab cycles tools. Select mode supports box selection and group editing.",
+                        "Units: place units for the current owner. Enter edits a selected unit. Ctrl+C/V copies/pastes; Delete removes selected units.",
+                        "Starts: place or move player start positions. Check Map (C) reports numbering, overlap and placement issues."};
+                    hint=hints[(hx-96)/72];
+                } else if(hx>=400 && hx<656) {
+                    const char* hints[]={
+                        "Place: click the map to place the selected brush or object. Terrain brushes can protect objects through the Edit menu.",
+                        "Select: click or drag a box to select units/features; drag selected objects to move them. Shift extends selection. Enter opens properties.",
+                        "Erase: remove objects under the pointer. Terrain removal uses Clear Area (K). Changes can be undone with Ctrl+Z.",
+                        "Pan: drag to move the view. Right-drag pans in any mode. Mouse wheel zooms around the pointer."};
+                    hint=hints[(hx-400)/64];
+                } else if(hx>=668 && hx<748)hint="Regions: draw trigger areas in Place mode; select, move or resize them in Select mode. Enter edits the selected region.";
+            } else if(hx<kPaletteW && hy>=kMenuH && hy<kPaletteTop) {
+                if(hy<kMenuH+30)hint="Search this browser by name or identifier (Ctrl+F). Escape returns keyboard focus to the map.";
+                else if(hy<kMenuH+53)hint="Click to cycle browser categories or unit roles. Search and filters work together.";
+                else if(tool==UNITS)hint="Click to cycle faction filters. Internal unit identifiers remain available in the browser details.";
+            } else if(cart::pointIn(hx,hy,miniRect))hint="Minimap: click or drag to navigate. View offers Fit map, Frame selection and a stored view bookmark.";
+        }
+        if(hint!=hoveredHint) {hoveredHint=hint;hintSince=SDL_GetTicks64();}
+        if(!hint.empty() && SDL_GetTicks64()-hintSince>=650)cart::drawTooltip(ren,w,h,hx,hy,hint);
 
         if(frameHook)frameHook(win,ren,frameNumber++);
         SDL_RenderPresent(ren);
