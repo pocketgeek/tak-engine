@@ -1,3 +1,4 @@
+#include "cartographer/recovery.h"
 #include "cartographer/document.h"
 #include "cartographer/history.h"
 #include "cartographer/selection.h"
@@ -18,6 +19,23 @@ int main() {
     auto root=fs::temp_directory_path()/("tak-cartographer-test-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
     try {
+        auto lease=cart::RecoveryFile::create(root);const auto snapshot=lease->path();
+        std::ofstream(snapshot)<<"snapshot";
+        check(!cart::RecoveryFile::claimNewest(root),"live session cannot be recovered");
+        lease.reset();
+        lease=cart::RecoveryFile::claimNewest(root);
+        check(lease && lease->path()==snapshot,"abandoned session can be recovered");
+        check(!cart::RecoveryFile::claimNewest(root),"claimed recovery stays exclusive");
+        std::string recoveryError;check(lease->discard(recoveryError),"discard claimed recovery");lease.reset();
+        check(!fs::exists(snapshot.parent_path()),"empty session directory cleaned");
+        const auto legacy=root/"recovery-old.kmp";std::ofstream(legacy)<<"legacy";
+        lease=cart::RecoveryFile::claimNewest(root);check(lease && lease->path()==legacy,"legacy recovery supported");
+        check(lease->discard(recoveryError),"discard legacy recovery");lease.reset();
+        const auto destination=root/fs::u8path("été maps");
+        const auto info=cart::recoveryInfo("Recovered map",destination);
+        const auto decoded=cart::readRecoveryInfo(info.data);
+        check(decoded && decoded->name=="Recovered map" && fs::u8path(decoded->directory)==destination,"recovery destination UTF-8 roundtrip");
+        check(!cart::readRecoveryInfo({1,2,3}),"bad recovery metadata rejected");
         cart::EditorPreferences preferences;preferences.width=1440;preferences.height=900;preferences.scalePercent=125;
         for(int i=0;i<20;++i)preferences.remember("Map "+std::to_string(i));
         preferences.remember("Carte été \"quote\".kmp");preferences.remember("Map 19");

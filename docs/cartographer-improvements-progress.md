@@ -372,10 +372,32 @@ A captured generator error dialog was visually checked: all eleven fields,
 the wrapped error and both action buttons fit without overlap. The small bitmap
 font remains a separate readability limitation.
 
+## Recovery ownership and destination checkpoint
+
+Each interactive editor now holds an operating-system lock for its recovery
+session. Startup skips snapshots belonging to live editors, and a recovered
+snapshot remains claimed until it is saved or discarded. Process termination
+releases the lock automatically. Old flat recovery files remain supported;
+new snapshots use isolated session directories. Cleanup deletes only the
+session's snapshot, backup and lock, and reports deletion failures.
+
+Recovery archives preserve the map name and absolute UTF-8 save directory.
+Restoring uses that destination unless an explicit `--out` overrides it.
+The save location is editor-only recovery metadata, not part of playable maps.
+
+A real-process test keeps an autosaving editor alive, opens and closes a second
+editor without a recovery prompt, kills the first editor, then restores its
+unsaved edits and saves to the original directory. The test uses an isolated
+installation so a destination regression cannot overwrite installed maps.
+Asset-free coverage also checks exclusive claims, legacy recovery cleanup and
+Unicode destination metadata. All eight editor tests pass in Release and under
+AddressSanitizer/LeakSanitizer. Corrupt/truncated archives and additional
+save/resize failure interactions still need broader coverage.
+
 ## Remaining work
 
-1. Finish overwrite/resize interaction coverage and inspect concurrent
-   editing/recovery lifecycle edge cases.
+1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated
+   recovery archives and additional cleanup failure paths.
 2. Better font/Unicode, additional layout preferences,
    and verification of cross-platform packaging/launch usability.
 3. Browser/selection interaction coverage, feature selection,

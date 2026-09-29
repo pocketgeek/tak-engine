@@ -1,3 +1,4 @@
+#include "cartographer/recovery.h"
 // Cartographer -- a clean-room re-implementation of the retail TA:Kingdoms map
 // editor (see docs/cartographer-port.md). Static-analysis RE of the shipped
 // Cartographer.exe drives the behaviour; this shares the engine's rendering
@@ -226,30 +227,37 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     if(char* pref=SDL_GetPrefPath("TAKengine","Cartographer")) {
         recoveryFolder=std::filesystem::u8path(pref);SDL_free(pref);
     }
-    const auto recoveryFile=recoveryFolder/("recovery-"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".kmp");
-    if(interactive && mapName.empty() && !newW && !recoveryFolder.empty()) {
-        std::error_code ec;std::filesystem::path newest;
-        for(const auto& entry:std::filesystem::directory_iterator(recoveryFolder,ec)) {
-            const auto filename=pathText(entry.path().filename());
-            if(filename.starts_with("recovery-") && entry.path().extension()==".kmp" &&
-               (newest.empty() || entry.last_write_time(ec)>std::filesystem::last_write_time(newest,ec))) newest=entry.path();
-        }
-        if(!newest.empty()) {
+    std::unique_ptr<cart::RecoveryFile> recoverySession,recoveredSession;
+    std::string recoveryStatus;
+    if(interactive && !recoveryFolder.empty()) {
+        try {
+            recoverySession=cart::RecoveryFile::create(recoveryFolder);
+            if(mapName.empty() && !newW)recoveredSession=cart::RecoveryFile::claimNewest(recoveryFolder);
+        } catch(const std::exception& e) {recoveryStatus=std::string("Recovery unavailable: ")+e.what();}
+        if(recoveredSession) {
             const SDL_MessageBoxButtonData buttons[]={{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT,1,"Recover"},{0,2,"Discard recovery"},{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT,0,"Cancel"}};
             SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION,win,"Recover map","An unsaved map recovery is available.",3,buttons,nullptr};
             int choice=0;if(hooks.recoveryChoice)choice=hooks.recoveryChoice();else SDL_ShowMessageBox(&box,&choice);
             if(choice==0)return 0;
-            if(choice==2) {std::filesystem::remove(newest,ec);auto backup=newest;backup+=".bak";std::filesystem::remove(backup,ec);}
+            if(choice==2) {
+                std::string error;
+                if(!recoveredSession->discard(error)) {SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Recovery cleanup failed",error.c_str(),win);return 1;}
+                recoveredSession.reset();
+            }
             if(choice==1) {
                 try {
                     auto files=std::make_shared<tak::hpi::Vfs::Files>();
-                    tak::hpi::Archive archive(newest);
+                    tak::hpi::Archive archive(recoveredSession->path());
+                    std::optional<cart::RecoveryDestination> destination;
                     for(const auto& entry:archive.entries()) if(!entry.isDirectory) {
-                        (*files)[tak::hpi::MountSet::key(entry.path)]=archive.read(entry);
+                        auto bytes=archive.read(entry);
+                        if(entry.path=="recovery-info.txt" || entry.path.ends_with("/recovery-info.txt"))destination=cart::readRecoveryInfo(bytes);
+                        (*files)[tak::hpi::MountSet::key(entry.path)]=std::move(bytes);
                         if(tak::vpath::extension(entry.path)==".tnt") {mapName=tak::vpath::stem(entry.path);recoveredMapPath=tak::hpi::MountSet::key(entry.path);}
                     }
                     if(recoveredMapPath.empty())throw std::runtime_error("Recovery archive contains no map terrain");
-                    vfs.setMapFiles(files);recoveredFrom=newest;
+                    if(destination) {mapName=destination->name;if(!explicitOutput)outDir=destination->directory;}
+                    vfs.setMapFiles(files);recoveredFrom=recoveredSession->path();
                 } catch(const std::exception& e) {SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Recovery failed",e.what(),win);return 1;}
             }
         }
@@ -1234,7 +1242,6 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     bool recoveryFilesPresent=!recoveredFrom.empty();
     std::future<std::string> recoveryJob;
     Uint64 nextRecovery=recoveryClock()+60000;
-    std::string recoveryStatus;
     auto collectRecovery = [&]() {
         if(recoveryJob.valid()) {
             const auto error=recoveryJob.get();
@@ -1243,10 +1250,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
     auto clearRecovery = [&]() {
         if(!recoveryFilesPresent && !recoveryJob.valid())return;
-        collectRecovery();std::error_code ec;
-        for(const auto& path:{recoveryFile,recoveredFrom}) if(!path.empty()) {
-            std::filesystem::remove(path,ec);auto backup=path;backup+=".bak";std::filesystem::remove(backup,ec);
+        collectRecovery();
+        for(auto* session:{recoverySession.get(),recoveredSession.get()}) if(session) {
+            std::string error;
+            if(!session->discard(error)) {recoveryStatus=error;return;}
         }
+        recoveredSession.reset();
         recoveredFrom.clear();recoveryFilesPresent=false;
     };
 
@@ -2012,15 +2021,16 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             commitHistory();
         const std::string title="Cartographer -- "+mapName+(modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
-        if(interactive && !recoveryFolder.empty()) {
+        if(interactive && recoverySession) {
             if(recoveryJob.valid() && recoveryJob.wait_for(std::chrono::seconds(0))==std::future_status::ready)collectRecovery();
             if(!dirty)clearRecovery();
             else if(!recoveryJob.valid() && recoveryClock()>=nextRecovery && !historyPending) {
                 nextRecovery=recoveryClock()+60000;
                 try {
                     auto files=cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,mapName);
+                    files.push_back(cart::recoveryInfo(mapName,std::filesystem::u8path(outDir)));
                     recoveryFilesPresent=true;
-                    recoveryJob=std::async(std::launch::async,[files=std::move(files),path=recoveryFile]() {
+                    recoveryJob=std::async(std::launch::async,[files=std::move(files),path=recoverySession->path()]() {
                         std::string error;cart::writeDocumentBundle(path,files,error);return error;
                     });
                 } catch(const std::exception& error) {recoveryStatus=error.what();}

@@ -1,3 +1,4 @@
+#include <fstream>
 #include "cartographer/editor.h"
 #include "cartographer/document.h"
 #include "cartographer/textedit.h"
@@ -264,19 +265,23 @@ static int validationWorkflow(const char* data,const char* mapName="Ulasem Arena
     if(result || failed || stage!=8) {std::cerr<<"map validation workflow failed\n";return 1;}
     std::cout<<"PASS: background map validation, cancel, located result click and results reopening\n";return 0;
 }
-static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
+static int recoveryWorkflow(const char* data,const char* folder,const std::string& phase) {
     namespace fs=std::filesystem;const fs::path root=folder;
     fs::create_directories(root);
     SDL_setenv("XDG_CONFIG_HOME",folder,1);SDL_setenv("XDG_DATA_HOME",folder,1);
-    std::vector<std::string> args={"cartographer"};if(!restore)args.push_back("Ulasem Arena");
-    args.insert(args.end(),{"--data",data,"--out",folder});
+    const bool restore=phase=="restore",probe=phase=="probe";
+    const auto destination=root/"original-destination";fs::create_directories(destination);
+    std::vector<std::string> args={"cartographer"};if(!restore && !probe)args.push_back("Ulasem Arena");
+    args.insert(args.end(),{"--data",data});
+    if(!restore)args.insert(args.end(),{"--out",destination.string()});
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
-    uint64_t now=0;cart::EditorHooks hooks;hooks.recoveryClock=[&]{return now;};hooks.recoveryChoice=[] {return 1;};
+    uint64_t now=0;cart::EditorHooks hooks;hooks.recoveryClock=[&]{return now;};int prompts=0;hooks.recoveryChoice=[&] {++prompts;return probe?0:1;};
     const auto begun=std::chrono::steady_clock::now();std::string failure;
     const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer*,int frame) {
         if(std::chrono::steady_clock::now()-begun>std::chrono::seconds(20))std::_Exit(3);
         const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
-        if(!restore) {
+        if(probe) {if(frame==0) {SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);}else key(SDLK_RETURN);}
+        else if(!restore) {
             if(frame==0)key(SDLK_p);
             if(frame==1) {text("Recovered unsaved map");key(SDLK_RETURN);}
             if(frame==2)now=61000;
@@ -286,7 +291,10 @@ static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
                 for(const auto& member:archive.entries())if(member.path.ends_with(".ota")) {
                     const auto bytes=archive.read(member);
                     const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
-                    if(metadata.missionName=="Recovered unsaved map")std::_Exit(0); // deliberately bypass editor cleanup
+                    if(metadata.missionName=="Recovered unsaved map") {
+                        if(phase=="write")std::_Exit(0); // deliberately bypass editor cleanup
+                        std::ofstream(root/"writer-ready")<<"ready";
+                    }
                 }
             }
         } else {
@@ -297,8 +305,10 @@ static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
         SDL_Delay(1);
     },hooks);
     if(result || !failure.empty()) {std::cerr<<failure<<'\n';return 1;}
+    if(probe && prompts)return 5;
     if(restore) {
-        tak::hpi::Archive archive(root/"Ulasem Arena.kmp");bool found=false;
+        if(prompts!=1)return 6;
+        tak::hpi::Archive archive(destination/"Ulasem Arena.kmp");bool found=false;
         for(const auto& member:archive.entries())if(member.path.ends_with(".ota")) {
             const auto bytes=archive.read(member);const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
             found=metadata.missionName=="Recovered unsaved map";
@@ -309,7 +319,7 @@ static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
     return 0;
 }
 int main(int argc,char** argv) {
-    if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],std::string(argv[4])=="restore");
+    if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
