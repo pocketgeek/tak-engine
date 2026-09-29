@@ -1,13 +1,14 @@
 # README screenshots
 
 Captured on 2026-09-29 from the **v0.7.12** source, tagged commit `7d463ee`.
-All eight scenes were freshly captured after tagging and visually inspected.
+All nine scenes were freshly captured after tagging and visually inspected.
 Images are actual engine output at 1600 × 1000, encoded as JPEG at quality 90
 with full chroma resolution. No units, effects, or UI were added afterward.
 
 | Image | Scene |
 | --- | --- |
 | `title.jpg` | Title menu showing version 0.7.12 |
+| `army.jpg` | Part of the Aramon army in the 16,000-unit local patrol fixture on Ulasem Arena, one simulated second in, 0.9× zoom; fog disabled; no AI or combat |
 | `gameplay.jpg` | Aramon base in the local development demo on Ulasem Arena, one simulated second in; camera follows the selected barracks at 2× zoom |
 | `naval.jpg` | Development naval demo on Cairbray Coast Landing, eight simulated seconds in; ships on water |
 | `lobby.jpg` | Skirmish creation with Ulasem Arena preview and Allow Speed Change; live local-server connection |
@@ -30,3 +31,7 @@ connected to a temporary local server. Only encoding changed after capture.
 When refreshing the gallery, capture the current build, inspect every image,
 update these scene notes and README captions, and remove unused images. Keep
 retail archives, extracted assets, and temporary capture files out of Git.
+
+The army capture uses `TAK_PATROL_PERF=1 TAK_PATROL_PERF_ZOOM=0.9`,
+`--time 1 --nofog`, and the same renderer/preferences as the other game shots.
+The 16,000 count is for the entire fixture, not the number visible in the image.

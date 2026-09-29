@@ -119,9 +119,9 @@ as they finish; these tag builds are still running at this documentation update.
 ## README and screenshots
 
 The README now describes the released diplomacy, expansion, and memory changes,
-protocol 195, and the need to update clients and server together. All eight
+protocol 195, and the need to update clients and server together. All nine
 images were freshly captured at 1600 × 1000 and visually inspected. The gallery
-includes ships on water and streaming setup without a key. The new diplomacy
+includes a large Aramon army from the 16,000-unit patrol fixture, ships on water and streaming setup without a key. The new diplomacy
 image uses the input-test fixture and labels its sample state. Results also use
 sample statistics. The setup image uses a real GameView connected to a temporary
 local server. See [capture notes](img/README.md) for scene and rendering details.

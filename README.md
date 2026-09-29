@@ -16,6 +16,9 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
 <table>
   <tr>
+    <td colspan="2"><a href="docs/img/army.jpg"><img src="docs/img/army.jpg" alt="Hundreds of Aramon troops, cavalry, and siege units visible together on Ulasem Arena"></a><br><sub>A large Aramon force — 16,000-unit development stress scene, showing part of one army</sub></td>
+  </tr>
+  <tr>
     <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Aramon barracks and troops in the local development demo"></a><br><sub>Aramon base on Ulasem Arena</sub></td>
     <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna ships fighting on the water at Cairbray Coast Landing"></a><br><sub>Naval combat on Cairbray Coast Landing</sub></td>
   </tr>
@@ -29,7 +32,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.12 source build. Base and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.12 source build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
