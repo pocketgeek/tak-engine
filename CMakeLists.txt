@@ -821,7 +821,7 @@ if(TAK_BUILD_CLIENT)
     endif()
 
     add_executable(cartographer_document_test tools/cartographer_document_test.cpp
-      src/cartographer/document.cpp src/cartographer/history.cpp src/cartographer/units.cpp src/cartographer/sections.cpp)
+      src/cartographer/document.cpp src/cartographer/history.cpp src/cartographer/units.cpp src/cartographer/sections.cpp src/cartographer/preferences.cpp)
     target_link_libraries(cartographer_document_test PRIVATE tak-formats)
     add_test(NAME cartographer_document COMMAND cartographer_document_test)
 
@@ -833,7 +833,7 @@ if(TAK_BUILD_CLIENT)
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     get_target_property(_cartographer_sources cartographer SOURCES)

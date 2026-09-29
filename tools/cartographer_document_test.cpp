@@ -2,6 +2,7 @@
 #include "cartographer/history.h"
 #include "cartographer/selection.h"
 #include "cartographer/sections.h"
+#include "cartographer/preferences.h"
 #include <random>
 #include <chrono>
 #include <fstream>
@@ -17,6 +18,13 @@ int main() {
     auto root=fs::temp_directory_path()/("tak-cartographer-test-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directory(root);
     try {
+        cart::EditorPreferences preferences;preferences.width=1440;preferences.height=900;preferences.scalePercent=125;
+        for(int i=0;i<20;++i)preferences.remember("Map "+std::to_string(i));
+        preferences.remember("Carte été \"quote\".kmp");preferences.remember("Map 19");
+        check(preferences.recent.size()==12 && preferences.recent[0]=="Map 19","recent maps bounded and deduplicated");
+        std::string prefsError;check(cart::saveEditorPreferences(root,preferences,prefsError),prefsError.c_str());
+        const auto loadedPreferences=cart::loadEditorPreferences(root);
+        check(loadedPreferences.width==1440 && loadedPreferences.height==900 && loadedPreferences.scalePercent==125 && loadedPreferences.recent==preferences.recent,"window, scale and Unicode recent paths roundtrip");
         tak::tnt::Map map;map.width=map.height=32;map.blocksX=map.blocksY=16;
         map.heights.resize(1024,60);map.features.resize(1024,0xffff);
         map.tileKeys.resize(256);map.tileCols.resize(256);map.tileRows.resize(256);

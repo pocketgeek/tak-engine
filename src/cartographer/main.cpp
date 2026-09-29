@@ -22,6 +22,7 @@
 #include "cartographer/generator.h"
 #include "cartographer/overlay.h"
 #include "cartographer/ruleedit.h"
+#include "cartographer/preferences.h"
 #include <fstream>
 #include <charconv>
 #include "cartographer/features.h"
@@ -173,9 +174,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         return 1;
     }
     struct SdlLifetime { ~SdlLifetime() { SDL_Quit(); } } sdlLifetime;
+    std::filesystem::path preferencesFolder;
+    if(char* path=SDL_GetPrefPath("TAKengine","Cartographer")) {preferencesFolder=std::filesystem::u8path(path);SDL_free(path);}
+    auto preferences=cart::loadEditorPreferences(preferencesFolder);
     SDL_Rect display{0,0,1600,1000};SDL_GetDisplayUsableBounds(0,&display);
-    const int initialWidth=std::min(1600,std::max(800,int(display.w*.9f)));
-    const int initialHeight=std::min(1000,std::max(600,int(display.h*.9f)));
+    const int initialWidth=std::min(preferences.width?preferences.width:1600,std::max(800,int(display.w*.9f)));
+    const int initialHeight=std::min(preferences.height?preferences.height:1000,std::max(600,int(display.h*.9f)));
     SDL_Window* win = SDL_CreateWindow(
         ("Cartographer -- " + mapName).c_str(), SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, initialWidth, initialHeight, SDL_WINDOW_RESIZABLE);
@@ -200,6 +204,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         std::fprintf(stderr, "window/renderer: %s\n", SDL_GetError());
         return 1;
     }
+
+    auto persistPreferences=[&]() {
+        SDL_GetWindowSize(win,&preferences.width,&preferences.height);
+        std::string error;if(!cart::saveEditorPreferences(preferencesFolder,preferences,error))std::fprintf(stderr,"editor preferences: %s\n",error.c_str());
+    };
 
     // Mount the retail install exactly like the engine (loose + *.hpi, retail
     // precedence). The Vfs must outlive the MapView (it borrows it by ref).
@@ -348,7 +357,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto base=path.stem().u8string();
             commitHistory();
             const bool ok=cart::writeDocumentFiles(path.parent_path(),serializeDocument(std::string(base.begin(),base.end())),saveError);
-            if(ok) {history.markSaved();dirty=false;}return ok;
+            if(ok) {history.markSaved();dirty=false;preferences.remember(pathText(std::filesystem::absolute(path)));if(interactive)persistPreferences();}return ok;
         } catch(const std::exception& e) {saveError=e.what();return false;}
     };
     auto saveBundle = [&](const std::string& kmpPath) -> bool {
@@ -357,7 +366,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto base=path.stem().u8string();
             commitHistory();
             const bool ok=cart::writeDocumentBundle(path,serializeDocument(std::string(base.begin(),base.end())),saveError);
-            if(ok) {history.markSaved();dirty=false;}return ok;
+            if(ok) {history.markSaved();dirty=false;preferences.remember(pathText(std::filesystem::absolute(path)));if(interactive)persistPreferences();}return ok;
         } catch(const std::exception& e) {saveError=e.what();return false;}
     };
 
@@ -647,6 +656,14 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int mfocus = 0;
     cart::TextEdit fieldEditor;
     std::function<bool(const std::string&)> openDocument;
+    std::vector<std::pair<std::string,std::string>> openCatalog,openMatches;
+    SDL_Rect openList{};int openScroll=0;std::string openFilterPrevious;bool openFilterDirty=true;
+    auto filterOpenMaps=[&]() {
+        const auto query=lowerText(mf[0]);if(!openFilterDirty && query==openFilterPrevious)return;
+        openFilterDirty=false;openFilterPrevious=query;openMatches.clear();openScroll=0;
+        for(const auto& entry:openCatalog)if(query.empty() || lowerText(entry.first).find(query)!=std::string::npos || lowerText(entry.second).find(query)!=std::string::npos)openMatches.push_back(entry);
+        openScroll=std::clamp(openScroll,0,std::max(0,int(openMatches.size())*20-openList.h));
+    };
     bool regionsOpen=false,showRegions=true;
     int regionSelected=-1,regionScroll=0,editRegion=-1;
     SDL_Rect regionList{},regionNew{},regionEdit{},regionDelete{},regionDone{};
@@ -717,7 +734,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             mLabel[1]="FOLDER";mf[1]=outDir;mfNumeric[1]=false;
         } else if (m == M_OPENPATH) {
             mTitle="OPEN MAP";mN=1;
-            mLabel[0]="MAP NAME OR KMP / TNT FILE PATH";mf[0]="";mfNumeric[0]=false;
+            mLabel[0]="SEARCH MAPS OR ENTER KMP / TNT PATH";mf[0]="";mfNumeric[0]=false;
+            openCatalog.clear();openScroll=0;openFilterDirty=true;
+            for(const auto& recent:preferences.recent)openCatalog.emplace_back("Recent: "+recent,recent);
+            for(const auto& [name,path]:tak::hpi::listMaps(vfs))openCatalog.emplace_back(name,path);
+            filterOpenMaps();
         } else if (m == M_RESIZE) {
             mTitle = "RESIZE MAP"; mN = 2;
             mLabel[0] = "WIDTH (UNITS)";  mf[0] = std::to_string(mapView.map().width / 32);  mfNumeric[0] = true;
@@ -1046,13 +1067,13 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto disk=std::filesystem::u8path(request);
             if(std::filesystem::is_regular_file(disk)) {
                 auto files=std::make_shared<tak::hpi::Vfs::Files>();
-                if(disk.extension()==".kmp") {
+                if(lowerText(pathText(disk.extension()))==".kmp") {
                     tak::hpi::Archive archive(disk);
                     for(const auto& entry:archive.entries()) if(!entry.isDirectory && entry.path.starts_with("kmap/")) {
                         (*files)[tak::hpi::MountSet::key(entry.path)]=archive.read(entry);
                         if(tak::vpath::extension(entry.path)==".tnt")path=tak::hpi::MountSet::key(entry.path);
                     }
-                } else if(disk.extension()==".tnt") {
+                } else if(lowerText(pathText(disk.extension()))==".tnt") {
                     const auto base=pathText(disk.stem());path="kmap/"+base+".tnt";
                     for(const char* ext:{".tnt",".ota",".crt",".tdf"}) {
                         const auto input=disk.parent_path()/std::filesystem::u8path(base+ext);std::ifstream stream(input,std::ios::binary);
@@ -1061,7 +1082,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 }
                 if(path.empty())throw std::runtime_error("Choose a KMP bundle or TNT map");
                 nextVfs.setMapFiles(files);chosen=tak::vpath::stem(path);
-            } else path=tak::hpi::findMap(nextVfs,request);
+            } else if(tak::vpath::extension(request)==".tnt" && nextVfs.has(request)) {path=request;chosen=tak::vpath::stem(request);}
+            else path=tak::hpi::findMap(nextVfs,request);
             if(path.empty())throw std::runtime_error("Map not found. Enter an installed map name or a full KMP / TNT path.");
             (void)tak::tnt::Map::load(nextVfs.read(path),path);
             const auto stem=path.substr(0,path.rfind('.'));
@@ -1083,6 +1105,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
             edited=false;overlayInvalidated=true;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
             editRule=nullptr;editUnit=draggingUnit=draggingStart=-1;scrGroup=-1;
+            if(std::filesystem::is_regular_file(disk)) {outDir=pathText(std::filesystem::absolute(disk).parent_path());mapName=pathText(disk.stem());}
+            preferences.remember(request);persistPreferences();
             modal=M_NONE;SDL_StopTextInput();return true;
         } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
     };
@@ -1093,7 +1117,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     const std::vector<std::vector<std::string>> menuRows={
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
-        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selected units","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay"},
+        {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selected units","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI"},
         {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
@@ -1114,6 +1138,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==1)mapView.setZoom(1);
             if(row==2)showGrid=!showGrid;
             if(row==3)showRegions=!showRegions;
+            if(row==12 || row==13) {preferences.scalePercent=std::clamp(preferences.scalePercent+(row==12?-25:25),50,200);persistPreferences();}
             if(row>=7 && row<=10)buildOverlay(static_cast<cart::OverlayKind>(row-7));
             if(row==11) {overlayTexture.reset();overlayLegend.clear();}
             if(row==4) {
@@ -1196,7 +1221,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     while (running) {
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
-        kUIScale=std::max(.5f,std::min({2.0f,float(w)/900.0f,float(h)/600.0f}));
+        kUIScale=std::max(.5f,std::min({preferences.scalePercent/100.f,float(w)/900.0f,float(h)/600.0f}));
         SDL_RenderSetScale(ren,kUIScale,kUIScale);
         w /= kUIScale; h /= kUIScale;   // physical -> logical (SDL_RenderSetScale)
         int canvasH = h - kMenuH - kStatusH;
@@ -1392,6 +1417,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                         else if (cart::pointIn(mx, my, mQuit)) { running = false; modal = M_NONE; }
                         else if (cart::pointIn(mx, my, mCancel)) modal = M_NONE;
                     }
+                    continue;
+                }
+                if(modal==M_OPENPATH && e.type==SDL_MOUSEWHEEL) {openScroll=std::clamp(openScroll-e.wheel.y*40,0,std::max(0,int(openMatches.size())*20-openList.h));continue;}
+                if(modal==M_OPENPATH && e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,openList)) {
+                    const int row=(e.button.y-openList.y+openScroll)/20;
+                    if(row>=0 && row<int(openMatches.size())) {mf[0]=openMatches[row].second;applyModal();}
                     continue;
                 }
                 if(e.type==SDL_MOUSEWHEEL && mDropOpen>=0 && mfChoices[mDropOpen]) {
@@ -2264,8 +2295,18 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             }
         } else if (modal != M_NONE) {
             // N-field dialog; height fits the field count.
-            int ph = 70 + mN * 40;
-            SDL_Rect ct = cart::drawPanel(ren, w, h, 320, ph, mTitle);
+            int ph = modal==M_OPENPATH?420:70+mN*40;
+            SDL_Rect ct = cart::drawPanel(ren,w,h,modal==M_OPENPATH?560:320,ph,mTitle);
+            if(modal==M_OPENPATH) {
+                openList={ct.x,ct.y+40,ct.w,ct.h-70};filterOpenMaps();
+                SDL_RenderSetClipRect(ren,&openList);
+                for(int i=0;i<int(openMatches.size());++i) {
+                    const int y=openList.y+i*20-openScroll;if(y+20<openList.y || y>openList.y+openList.h)continue;
+                    fillRect(ren,openList.x,y,openList.w,19,25,30,40);
+                    cart::drawText(ren,openMatches[i].first,openList.x+4,y+6,1,215,225,240);
+                }
+                SDL_RenderSetClipRect(ren,nullptr);
+            }
             if (modal == M_UNIT && editUnit >= 0 && editUnit < int(units.size()))
                 cart::drawText(ren, units[size_t(editUnit)].type, ct.x, ct.y - 16, 1, 200, 200, 200);
             for (int i = 0; i < mN; ++i) {
@@ -2345,7 +2386,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         }
     }
 
-    if(interactive)clearRecovery();
+    if(interactive) {clearRecovery();persistPreferences();}
     for (auto& [k, t] : thumbs) if (t) SDL_DestroyTexture(t);
     for (auto& [k, t] : featTex) if (t) SDL_DestroyTexture(t);
     return 0;

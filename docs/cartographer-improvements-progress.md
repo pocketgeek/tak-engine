@@ -223,12 +223,28 @@ under AddressSanitizer/LeakSanitizer. Multi-instance recovery ownership,
 recovery destination metadata and remaining resize/overwrite interactions still
 need scrutiny; this checkpoint does not claim every recovery edge case is done.
 
+## Open browser and preferences checkpoint
+
+Open now combines a searchable installed-map list and the twelve most recent
+maps with the existing direct-path field. Filtering is cached until the query
+changes. Clicking a result opens its exact virtual or native path, preserving
+the unsaved-change confirmation. Native files accept case-insensitive KMP/TNT
+extensions and retain their own folder/name for subsequent saves.
+
+Window dimensions and UI scale are stored in the editor's preference directory;
+recent paths are deduplicated and bounded. Preference writes use staged
+replacement/backups. View > Smaller UI / Larger UI adjusts the stored scale,
+with the effective scale capped to keep dialogs within the available display.
+Six Release tests pass, including preference/path roundtrips and an SDL workflow
+that filters and opens a recent map. Unicode paths are preserved in preferences;
+Unicode glyph rendering and multiline field display are still unfinished.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect concurrent
    editing/recovery lifecycle edge cases.
-2. Searchable Open/recent maps, remembered window/layout/scale, better font and
-   multiline fields, complete cross-platform packaging/launch usability.
+2. Better font/Unicode and multiline fields, additional layout preferences,
+   and verification of cross-platform packaging/launch usability.
 3. Browser/selection interaction coverage, feature selection,
    model previews where useful, additional view controls and live minimap refresh.
 4. Placed-unit occupancy in overlays, richer clickable map validation,

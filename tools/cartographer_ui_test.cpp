@@ -195,7 +195,14 @@ int main(int argc,char** argv) {
         case 21: key(SDLK_d,KMOD_CTRL);break;
         case 22: key(SDLK_ESCAPE);key(SDLK_s,KMOD_CTRL);break;
         case 23: check(!dirty,"duplicated script rules saved");key(SDLK_RETURN);break;
-        case 24: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 24: key(SDLK_o,KMOD_CTRL);break;
+        case 25: text("ulasem");break;
+        case 26: {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);
+            click(int(w/sx/2),int(h/sy/2-130));break;
+        }
+        case 27: check(std::string(SDL_GetWindowTitle(window)).find("Ulasem Arena")!=std::string::npos,"searchable Open chooses recent map");
+            {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
         default: if(frame>30) {failure="editor did not exit";key(SDLK_ESCAPE);key(SDLK_RETURN);}
         }
     });
