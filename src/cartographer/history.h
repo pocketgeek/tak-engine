@@ -32,6 +32,7 @@ public:
     bool canUndo() const {return position_>0;}
     bool canRedo() const {return position_<entries_.size();}
     size_t retainedBytes() const {return bytes_;}
+    uint64_t revision() const {return revision_;}
 private:
     struct Run {size_t offset;std::vector<uint8_t> before,after;};
     struct Patch {

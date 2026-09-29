@@ -1,4 +1,5 @@
 #include "cartographer/editor.h"
+#include "cartographer/document.h"
 #include "cartographer/textedit.h"
 #include "hpi/hpi.h"
 #include "tnt/ota.h"
@@ -154,6 +155,51 @@ static int regionWorkflow(const char* data) {
         fs::remove_all(root);std::cout<<"PASS: region canvas drawing, movement, handles, cancellation, undo/redo and reopen\n";return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
 }
+static int validationWorkflow(const char* data,const char* mapName="Ulasem Arena") {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-validation-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);
+    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,mapName);
+    auto map=tak::tnt::Map::load(vfs.read(path),path);
+    std::cout<<"Validation fixture: "<<mapName<<" ("<<map.width/32<<" x "<<map.height/32<<")\n";
+    map.features[size_t(map.height/2)*map.width+map.width/2]=uint16_t(map.featureNames.size());
+    map.featureNames.push_back("MissingEditorTestFeature");
+    tak::tnt::Scenario metadata;metadata.kingdom="aramon";metadata.starts={{1,10,10},{2,20,20}};
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"Validation.kmp",cart::documentFiles(map,metadata,{}, {},{},"Validation"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    int stage=0;bool failed=false;auto began=std::chrono::steady_clock::now();
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int) {
+        auto click=[&](int x,int y) {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+            e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        const std::string title=SDL_GetWindowTitle(window);failed|=title.ends_with(" *");
+        if(std::chrono::steady_clock::now()-began>std::chrono::seconds(40)) {failed=true;key(SDLK_ESCAPE);SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);return;}
+        switch(stage) {
+        case 0: key(SDLK_o,KMOD_CTRL);++stage;break;
+        case 1: text((root/"Validation.kmp").string());key(SDLK_RETURN);++stage;break;
+        case 2: key(SDLK_c);key(SDLK_ESCAPE);++stage;break;
+        case 3: if(title.find("[Checking map]")==std::string::npos) {
+            failed|=title.find("[Validation results]")!=std::string::npos;key(SDLK_c);++stage;
+        } break;
+        case 4: if(title.find("[Validation results]")!=std::string::npos) {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);
+            click(int(w/sx/2),int(h/sy/2-150));++stage;
+        } break;
+        case 5: failed|=title!="Cartographer -- Validation";click(320,10);click(330,172);++stage;break;
+        case 6: failed|=title.find("[Validation results]")==std::string::npos;key(SDLK_ESCAPE);++stage;break;
+        case 7: {SDL_Event q{};q.type=SDL_QUIT;SDL_PushEvent(&q);++stage;break;}
+        }
+        SDL_Delay(1);
+    });
+    fs::remove_all(root);
+    if(result || failed || stage!=8) {std::cerr<<"map validation workflow failed\n";return 1;}
+    std::cout<<"PASS: background map validation, cancel, located result click and results reopening\n";return 0;
+}
 static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
     namespace fs=std::filesystem;const fs::path root=folder;
     fs::create_directories(root);
@@ -200,6 +246,7 @@ static int recoveryWorkflow(const char* data,const char* folder,bool restore) {
 }
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],std::string(argv[4])=="restore");
+    if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);

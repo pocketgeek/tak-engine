@@ -184,7 +184,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   positions, named regions, and scenario rules, and exports `.kmp` map bundles.
   The **Regions** tool draws, moves and resizes trigger areas on the map;
   **Enter** opens the selected region's name and coordinates. Editing supports
-  undo/redo and periodic recovery copies.
+  undo/redo and periodic recovery copies. **Scenario → Check Map** reports
+  terrain, start, mana and scenario issues in a clickable results list.
 
 Each ordinary skirmish starts with your Monarch. Build your economy and army;
 Zhon's mobile conjurers replace the conventional keep-based production chain.

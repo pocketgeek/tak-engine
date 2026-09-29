@@ -92,12 +92,15 @@ int main() {
         for(int z=0;z<32;++z)for(int x=0;x<32;++x)
             check((build.rgba[(z*32+x)*4+1]==210)==reference.canPlace(registry.find("test"),x*16.f+8,z*16.f+8),"buildability overlay agrees with engine placement at every cell");
         map.heights[12*32+12]=60;
-        tak::tnt::Scenario metadata;metadata.starts.push_back({1,12,12});
+        tak::tnt::Scenario metadata;metadata.starts={{1,12,12},{2,24,24}};
         tak::crt::Scenario scenario;scenario.regions.push_back({"Area",15,15,5,5});
         std::vector<cart::PlacedUnit> units(1);units[0].type="TEST";units[0].x=200;units[0].z=200;units[0].name="First";
         auto run=[&] {return cart::validateMap(map,metadata,scenario,units,{},registry,vfs);};
         auto has=[](const auto& issues,const std::string& text) {for(const auto& issue:issues)if(issue.message.find(text)!=std::string::npos)return true;return false;};
         check(run().empty(),"flat map, unit and reversed inclusive region validate");
+        metadata.starts[1].number=1;check(has(run(),"duplicate start number"),"duplicate start numbers cannot silently replace a slot");
+        metadata.starts[1].number=9;check(has(run(),"must be 1 through 8"),"start number range");metadata.starts[1].number=2;
+        map.features[0]=7;check(has(run(),"Missing feature definition"),"invalid feature reference diagnosed");map.features[0]=0xffff;
         map.seaLevel=100;check(has(run(),"engine placement rejects"),"engine rejects ground unit in deep water");map.seaLevel=0;
         units.push_back(units.front());check(has(run(),"duplicate unique name"),"duplicate names detected");units.pop_back();
         units[0].x=-1;check(has(run(),"outside map"),"out of bounds detected");units[0].x=200;
@@ -126,6 +129,23 @@ int main() {
         check(roundtrip.regions[0].x2==12 && roundtrip.players[0][0].conditions[0].slot[location]=="Renamed","region and rewritten rules survive CRT roundtrip");
         rule.slot[location]="Anywhere";check(cart::removeRegion(scenario,0,error),"unused region can be deleted");
         check(map.heights[0]==60 && units[0].name=="First","validation preserves document");
+        const std::string monarch="[UNITINFO] {\nUnitName=araking;\nName=Test Monarch;\nSide=ARA;\nFootprintX=1;\nFootprintZ=1;\nMaxSlope=20;\nMaxWaterDepth=0;\nCanMove=1;\nMaxVelocity=1;\n}";
+        const std::string stone="[UNITINFO] {\nUnitName=teststone;\nName=Test Lodestone;\nSide=ARA;\nFootprintX=2;\nFootprintZ=2;\nYardMap=SSSS;\nMaxSlope=20;\nMaxWaterDepth=0;\nMaxVelocity=0;\n}";
+        const std::string deposit="[TestMana] {\ncategory=mana;\nanimating=1;\nblocking=0;\nfootprintx=1;\nfootprintz=1;\n}";
+        (*files)["units/araking.fbi"]={monarch.begin(),monarch.end()};(*files)["units/teststone.fbi"]={stone.begin(),stone.end()};
+        (*files)["features/aramon/testmana.tdf"]={deposit.begin(),deposit.end()};vfs.setMapFiles(files);
+        tak::sim::TypeRegistry diagnostics;diagnostics.loadDir(vfs,"units");
+        check(diagnostics.find("teststone")->onMana,"fixture is a lodestone");
+        check(has(cart::validateMap(map,metadata,{}, {},{},diagnostics,vfs),"No recognized mana deposits"),"missing mana economy diagnosed");
+        auto disconnected=map;disconnected.featureNames={"TestMana"};disconnected.features[8*32+24]=0;
+        for(int z=0;z<32;++z)disconnected.heights[z*32+16]=255;
+        metadata.starts={{1,4,8},{2,27,8}};
+        auto connectivity=cart::validateMap(disconnected,metadata,{}, {},{},diagnostics,vfs);
+        check(has(connectivity,"no ground approach route to another start") && has(connectivity,"no ground approach route to a mana deposit"),"engine connectivity diagnoses isolated starts and mana");
+        check(!has(connectivity,"rejects lodestone footprint"),"flat mana deposit accepts lodestone footprint");
+        disconnected.heights[8*32+24]=255;
+        connectivity=cart::validateMap(disconnected,metadata,{}, {},{},diagnostics,vfs);
+        check(has(connectivity,"rejects lodestone footprint"),"steep mana deposit fails actual engine placement");
         std::cout<<"PASS: editor engine placement and scenario validation\n";
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

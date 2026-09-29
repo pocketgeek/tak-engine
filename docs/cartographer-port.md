@@ -1,10 +1,15 @@
 # Cartographer port
 
-A clean-room 1:1 re-implementation of **Cartographer**, the retail TA:Kingdoms
+A clean-room re-implementation of **Cartographer**, the retail TA:Kingdoms
 map editor (`Cartographer.exe`, Cavedog, May 1999). Behaviour and file formats
 are reverse-engineered from the retail binary by **static analysis only** — same
 rules as the engine (`docs/retail-engine.md`): never copy its code or ship the
 binary/its assets; reimplement observed behaviour.
+
+This document records the retail research and original port milestones. The
+editor's newer workflow, validation and authoring improvements are tracked in
+[the current implementation ledger](cartographer-improvements-progress.md);
+the historical milestone lists below are not a current feature checklist.
 
 ## What it is (from the PE)
 

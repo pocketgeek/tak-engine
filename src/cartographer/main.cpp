@@ -630,7 +630,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES };
     static constexpr int kMaxFields = 9;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -995,9 +995,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         modal=M_ANALYZING;SDL_StopTextInput();
     };
     std::vector<cart::MapIssue> mapIssues;
+    std::future<std::vector<cart::MapIssue>> checkJob;
+    bool discardCheck=false,quitAfterCheck=false;
+    uint64_t mapIssueRevision=0,checkRevision=0;
+    int issueScroll=0,issueContentHeight=0;
+    SDL_Rect issueList{},issueRecheck{},issueClose{};
+    std::vector<SDL_Rect> issueRows;
     size_t issueIndex=0;
     auto showMapIssue=[&]() {
-        if(mapIssues.empty()) {openMessage("CHECK MAP","No issues found by terrain, start, unit and scenario checks. Reachability and naval production checks are not yet included.");return;}
+        if(mapIssues.empty()) {modal=M_ISSUES;return;}
         const auto& issue=mapIssues[issueIndex];
         if(issue.x>=0 && issue.z>=0) {
             int w,h;SDL_GetRendererOutputSize(ren,&w,&h);
@@ -1007,8 +1013,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             std::string(issue.severity==cart::MapIssue::Severity::Error?"ERROR: ":"WARNING: ")+issue.message+". Scenario > Next issue moves to the next result. Recheck after edits.");
     };
     auto checkMap = [&]() {
-        try {mapIssues=cart::validateMap(mapView.map(),scenario,scen,units,useOnly,unitRegistry,vfs);issueIndex=0;showMapIssue();}
-        catch(const std::exception& error) {openMessage("CHECK FAILED",error.what());}
+        commitHistory();checkRevision=history.revision();discardCheck=quitAfterCheck=false;
+        checkJob=std::async(std::launch::async,[&,map=mapView.map(),metadata=scenario,scenario=scen,placed=units,restrictions=useOnly] {
+            return cart::validateMap(map,metadata,scenario,placed,restrictions,unitRegistry,vfs);
+        });
+        modal=M_CHECKING;SDL_StopTextInput();
     };
 
     // --- Scenario Scripting (per-player trigger rules) overlay (phase 5) ------
@@ -1124,7 +1133,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects"},
         {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selected units","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI"},
-        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions"},
+        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
         if(menu==0) {
@@ -1171,6 +1180,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==3)checkMap();
             if(row==4)openScripting();
             if(row==6) {regionsOpen=true;regionSelected=scen.regions.empty()?-1:0;}
+            if(row==7) {modal=M_ISSUES;issueScroll=0;}
             if(row==5) {if(!mapIssues.empty())issueIndex=(issueIndex+1)%mapIssues.size();showMapIssue();}
         } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
             "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move the selected units. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
@@ -1270,7 +1280,19 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(quitAfterOverlay) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         }
         SDL_Event e;
+        if(checkJob.valid() && checkJob.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+            try {
+                auto result=checkJob.get();modal=M_NONE;
+                if(!discardCheck) {mapIssues=std::move(result);mapIssueRevision=checkRevision;issueIndex=0;issueScroll=0;modal=M_ISSUES;}
+            } catch(const std::exception& error) {openMessage("CHECK FAILED",error.what());}
+            if(quitAfterCheck) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
+        }
         while (SDL_PollEvent(&e)) {
+            if(checkJob.valid()) {
+                if(e.type==SDL_QUIT) {discardCheck=true;quitAfterCheck=true;}
+                if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE)discardCheck=true;
+                continue;
+            }
             if(overlayJob.valid()) {
                 if(e.type==SDL_QUIT) {discardOverlay=true;quitAfterOverlay=true;}
                 if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE)discardOverlay=true;
@@ -1426,6 +1448,22 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             }
             // A modal dialog swallows all input while up.
             if (modal != M_NONE) {
+                if(modal==M_ISSUES) {
+                    if(e.type==SDL_KEYDOWN && (e.key.keysym.sym==SDLK_ESCAPE || e.key.keysym.sym==SDLK_RETURN))modal=M_NONE;
+                    else if(e.type==SDL_MOUSEWHEEL)issueScroll=std::clamp(issueScroll-e.wheel.y*36,0,std::max(0,issueContentHeight-issueList.h));
+                    else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                        if(cart::pointIn(e.button.x,e.button.y,issueClose))modal=M_NONE;
+                        else if(cart::pointIn(e.button.x,e.button.y,issueRecheck))checkMap();
+                        else if(cart::pointIn(e.button.x,e.button.y,issueList))for(size_t i=0;i<issueRows.size();++i)if(cart::pointIn(e.button.x,e.button.y,issueRows[i])) {
+                            issueIndex=i;const auto& issue=mapIssues[i];
+                            if(issue.x>=0 && issue.z>=0) {
+                                mapView.setOffset(issue.x-canvasW/(2*mapView.zoom()),issue.z-canvasH/(2*mapView.zoom()));modal=M_NONE;
+                            }
+                            break;
+                        }
+                    }
+                    continue;
+                }
                 // Save-before-exit prompt: SAVE / DON'T SAVE / CANCEL.
                 if (modal == M_QUITSAVE) {
                     auto saveThenQuit = [&]() {
@@ -1919,7 +1957,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
             commitHistory();
-        const std::string title="Cartographer -- "+mapName+(modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_ANALYZING?" [Analyzing]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
+        const std::string title="Cartographer -- "+mapName+(modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
         if(interactive && !recoveryFolder.empty()) {
             if(recoveryJob.valid() && recoveryJob.wait_for(std::chrono::seconds(0))==std::future_status::ready)collectRecovery();
@@ -2342,9 +2380,29 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             cart::drawText(ren,"Your current map changes only when accepted.",ct.x,ct.y+370,1,195,210,225);
             mOK=cart::drawButton(ren,ct.x+ct.w-150,ct.y+ct.h-20,70,18,"ACCEPT",true);
             mCancel=cart::drawButton(ren,ct.x+ct.w-74,ct.y+ct.h-20,70,18,"DISCARD",false);
-        } else if(modal==M_ANALYZING) {
+        } else if(modal==M_ISSUES) {
+            const auto ct=cart::drawPanel(ren,w,h,680,430,"MAP VALIDATION - CLICK A LOCATED ISSUE TO INSPECT IT");
+            cart::drawText(ren,mapIssueRevision==0?"Run Check Map to analyze this document.":mapIssueRevision!=history.revision()?"Map changed: these results may be out of date.":std::to_string(mapIssues.size())+" issues. Connectivity warnings may be intentional.",ct.x,ct.y,1,235,220,160);
+            issueList={ct.x,ct.y+25,ct.w,ct.h-85};issueRows.clear();issueContentHeight=0;
+            SDL_RenderSetClipRect(ren,&issueList);
+            if(mapIssues.empty() && mapIssueRevision)cart::drawText(ren,"No issues found by the implemented checks.",ct.x+4,issueList.y+5,1,200,230,205);
+            for(size_t i=0;i<mapIssues.size();++i) {
+                const auto& issue=mapIssues[i];const bool error=issue.severity==cart::MapIssue::Severity::Error;
+                const auto label=std::string(error?"ERROR: ":"WARNING: ")+issue.message;
+                const auto lines=cart::TextEdit::lines(label,std::max(1,(ct.w-8)/6));
+                SDL_Rect row{ct.x,issueList.y+issueContentHeight-issueScroll,ct.w,int(lines.size())*12+8};
+                issueRows.push_back(row);issueContentHeight+=row.h;
+                if(row.y+row.h<issueList.y || row.y>issueList.y+issueList.h)continue;
+                fillRect(ren,row.x,row.y,row.w,row.h,i==issueIndex?55:30,i==issueIndex?65:34,i==issueIndex?80:42);
+                for(size_t line=0;line<lines.size();++line)cart::drawText(ren,label.substr(lines[line].begin,lines[line].end-lines[line].begin),row.x+4,row.y+4+int(line)*12,1,235,error?145:215,error?140:180);
+            }
+            SDL_RenderSetClipRect(ren,nullptr);
+            cart::drawText(ren,"Checks do not yet cover naval factory exits or all trigger outcomes.",ct.x,ct.y+ct.h-48,1,180,190,205);
+            issueRecheck=cart::drawButton(ren,ct.x,ct.y+ct.h-20,90,18,"CHECK MAP",false);
+            issueClose=cart::drawButton(ren,ct.x+ct.w-70,ct.y+ct.h-20,70,18,"CLOSE",true);
+        } else if(modal==M_ANALYZING || modal==M_CHECKING) {
             const auto ct=cart::drawPanel(ren,w,h,400,105,"ANALYZING TERRAIN");
-            cart::drawText(ren,discardOverlay?"Discarding result when analysis finishes...":"Applying engine terrain and footprint rules...",ct.x,ct.y,1,225,230,240);
+            cart::drawText(ren,(modal==M_CHECKING?discardCheck:discardOverlay)?"Discarding result when analysis finishes...":"Applying engine terrain and footprint rules...",ct.x,ct.y,1,225,230,240);
             cart::drawText(ren,"Esc cancels. Map editing resumes when ready.",ct.x,ct.y+25,1,190,205,220);
         } else if(modal==M_GENERATING) {
             const auto ct=cart::drawPanel(ren,w,h,400,105,"GENERATING MAP");

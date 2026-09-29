@@ -3,6 +3,8 @@
 The scope is all six areas in the [usability review](cartographer-usability-review-2026-09-29.md).
 This is an implementation ledger, not a claim that the complete goal is finished.
 Simulation and pathfinding rules are unchanged.
+Later checkpoints supersede earlier outstanding items; the final Remaining Work
+list tracks what is still unfinished.
 
 ## First implementation checkpoint
 
@@ -294,6 +296,34 @@ The seven Release editor tests pass, including a new SDL workflow that draws,
 moves, resizes, cancels, undoes/redoes, renames and saves/reopens a region. Engine
 CRT coordinates and trigger behavior are unchanged.
 
+## Background validation and results checkpoint
+
+Check Map runs against an immutable snapshot on a worker while the UI keeps
+rendering. Escape discards its result when the current analysis finishes; quit
+waits for that worker before normal shutdown. Results are a scrollable, wrapped
+list: clicking a located issue centers the map and returns to the canvas. Scenario
+> Validation Results reopens the list; it warns when the document revision has
+changed since the check. Recheck is available in the panel.
+
+Checks now diagnose duplicate/out-of-range/gapped start numbering, too few/many
+starts, missing feature definitions, absent mana deposits, monarch approach
+connectivity between starts/to mana, and rejected lodestone footprints. Route
+queries call the engine's existing `World::pathExists`, including its nearby
+endpoint resolution; these are approach checks, not claims that the exact
+destination cell is occupiable. Island/transport scenarios receive warnings,
+not prohibitions. Engine placement tests each allowed lodestone type at deposits.
+Terrain and registered features are included; placed-unit occupancy, exhaustive
+component analysis and naval output checks are still pending.
+
+Eight Release editor tests pass, including a new UI workflow for asynchronous
+validation, cancellation, clicking a located issue and reopening results.
+Synthetic terrain tests exercise disconnected starts/mana and an unbuildable
+deposit against the shared engine queries. All eight editor tests also pass
+under AddressSanitizer/LeakSanitizer. The same validation UI workflow passes on
+an Ultima Online B1 (63×63) snapshot. One Release run took 2.36 seconds end to end
+with 823 MiB peak RSS, including fixture preparation, opening, two analyses and
+shutdown; this is a workflow measurement, not the isolated validation cost.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect concurrent
@@ -302,8 +332,8 @@ CRT coordinates and trigger behavior are unchanged.
    and verification of cross-platform packaging/launch usability.
 3. Browser/selection interaction coverage, feature selection,
    model previews where useful, additional view controls and live minimap refresh.
-4. Placed-unit occupancy in overlays, richer clickable map validation,
-   reachable starts/mana/naval-output checks, full reproducible generator controls.
+4. Placed-unit occupancy in overlays/validation, exhaustive land/water component
+   and naval-output checks, fuller resource checks and reproducible generator controls.
 5. Expanded typed-rule validation, rule names/objective templates,
    temporary-map playtesting through the normal client/server launch path.
 6. Coalescing pending terrain work, asynchronous expensive operations, large-map
