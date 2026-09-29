@@ -184,7 +184,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   positions, named regions, and scenario rules, and exports `.kmp` map bundles.
   The **Regions** tool draws, moves and resizes trigger areas on the map;
   **Enter** opens the selected region's name and coordinates. Editing supports
-  undo/redo and periodic recovery copies. Units and features support box selection,
+  undo/redo and periodic recovery copies; recovery tries the previous snapshot
+  if the newest copy is damaged. Units and features support box selection,
   group movement, copy/paste and deletion; feature moves protect occupied cells.
   **View** can hide features, units, starts and regions; layer choices are remembered.
   Terrain thumbnails load in the background, and the minimap refreshes after terrain edits.

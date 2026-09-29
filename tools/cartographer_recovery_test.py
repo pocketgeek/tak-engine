@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise real autosave, abrupt process exit and startup recovery."""
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -37,6 +38,9 @@ with tempfile.TemporaryDirectory(prefix='tak-editor-recovery-') as folder:
     finally:
         writer.kill()
         writer.wait(timeout=5)
+    snapshot = next(root.rglob('recovery-*.kmp'))
+    shutil.copy2(snapshot, str(snapshot) + '.bak')
+    snapshot.write_bytes(b'HAPI')  # Simulate a damaged latest generation.
     subprocess.run(command('restore'), env=env, check=True, timeout=30)
     assert (root / 'original-destination' / 'Ulasem Arena.kmp').is_file()
-print('PASS: live-session exclusion, killed editor recovery, original save destination, cleanup')
+print('PASS: live-session exclusion, killed editor recovery with corrupt-primary fallback, original save destination, cleanup')

@@ -249,18 +249,11 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             }
             if(choice==1) {
                 try {
-                    auto files=std::make_shared<tak::hpi::Vfs::Files>();
-                    tak::hpi::Archive archive(recoveredSession->path());
-                    std::optional<cart::RecoveryDestination> destination;
-                    for(const auto& entry:archive.entries()) if(!entry.isDirectory) {
-                        auto bytes=archive.read(entry);
-                        if(entry.path=="recovery-info.txt" || entry.path.ends_with("/recovery-info.txt"))destination=cart::readRecoveryInfo(bytes);
-                        (*files)[tak::hpi::MountSet::key(entry.path)]=std::move(bytes);
-                        if(tak::vpath::extension(entry.path)==".tnt") {mapName=tak::vpath::stem(entry.path);recoveredMapPath=tak::hpi::MountSet::key(entry.path);}
-                    }
-                    if(recoveredMapPath.empty())throw std::runtime_error("Recovery archive contains no map terrain");
-                    if(destination) {mapName=destination->name;if(!explicitOutput)outDir=destination->directory;}
-                    vfs.setMapFiles(files);recoveredFrom=recoveredSession->path();
+                    auto snapshot=cart::readRecoverySnapshot(recoveredSession->path());
+                    recoveredMapPath=snapshot.mapPath;mapName=tak::vpath::stem(snapshot.mapPath);
+                    if(snapshot.destination) {mapName=snapshot.destination->name;if(!explicitOutput)outDir=snapshot.destination->directory;}
+                    if(snapshot.fromBackup)recoveryStatus="Recovered previous snapshot; newest recovery was unreadable";
+                    vfs.setMapFiles(std::move(snapshot.files));recoveredFrom=recoveredSession->path();
                 } catch(const std::exception& e) {SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Recovery failed",e.what(),win);return 1;}
             }
         }

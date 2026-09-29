@@ -101,6 +101,34 @@ int main() {
         check(!meta.hasScenario,"saving does not mutate document metadata");
         check(cart::writeDocumentBundle(root/"Review.kmp",files,error),error.c_str());
         const auto original=read(root/"Review.kmp");
+        {
+            auto recovery=cart::RecoveryFile::create(root);const auto file=recovery->path();
+            check(cart::writeDocumentBundle(file,files,error),error.c_str());
+            const auto recovered=cart::readRecoverySnapshot(file);
+            check(!recovered.fromBackup && recovered.mapPath.ends_with("review.tnt"),"valid recovery is preferred");
+            fs::copy_file(file,fs::path(file.string()+".bak"));
+            std::ofstream(file,std::ios::binary|std::ios::trunc)<<"HAPI";
+            check(cart::readRecoverySnapshot(file).fromBackup,"truncated archive falls back to previous snapshot");
+            check(read(file)==std::vector<uint8_t>({'H','A','P','I'}),"fallback preserves damaged primary for diagnosis");
+            fs::remove(file);recovery.reset();
+            recovery=cart::RecoveryFile::claimNewest(root);
+            check(recovery && recovery->path()==file && cart::readRecoverySnapshot(file).fromBackup,"backup-only abandoned session is recoverable");
+            check(recovery->discard(error),error.c_str());
+            auto broken=files;
+            for(auto& member:broken)if(member.path.ends_with(".crt"))member.data={1,2,3};
+            check(cart::writeDocumentBundle(file,broken,error),error.c_str());
+            bool rejected=false;try {cart::readRecoverySnapshot(file);}catch(const std::exception&) {rejected=true;}
+            check(rejected && fs::exists(file),"damaged scenario rejected without deleting snapshot");
+            broken=files;
+            for(auto& member:broken)if(member.path.ends_with(".tnt"))member.data={1,2,3};
+            check(cart::writeDocumentBundle(file,broken,error),error.c_str());
+            rejected=false;try {cart::readRecoverySnapshot(file);}catch(const std::exception&) {rejected=true;}
+            check(rejected && fs::exists(file.string()+".bak"),"damaged terrain and scenario generations remain available for diagnosis");
+            check(recovery->discard(error),error.c_str());
+            const auto backup=fs::path(file.string()+".bak");fs::create_directory(backup);std::ofstream(backup/"unrelated")<<"keep";
+            check(!recovery->discard(error) && !error.empty() && fs::exists(backup/"unrelated"),"cleanup failure preserves unrelated contents and reports error");
+            fs::remove_all(backup);
+        }
         tak::hpi::Archive openArchive(root/"Review.kmp"); // editor may retain a mapped archive while saving over it
         const auto oldEntry=*std::find_if(openArchive.entries().begin(),openArchive.entries().end(),[](const auto& entry){return !entry.isDirectory;});const auto oldBytes=openArchive.read(oldEntry);
         scenario.players[0].clear();

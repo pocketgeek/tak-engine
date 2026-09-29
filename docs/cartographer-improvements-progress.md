@@ -571,10 +571,29 @@ rule. Unit coverage checks flag operand positions, duplicates and malformed
 opcodes. All thirteen editor tests pass in Release and under
 AddressSanitizer/LeakSanitizer.
 
+## Damaged recovery checkpoint
+
+Recovery now validates terrain and canonical CRT data before installing files in
+the editor VFS. A malformed CRT previously became an empty scenario through the
+shared permissive parser; recovery checks the canonical writer round trip so
+this cannot silently erase rules. Shared gameplay parsing is unchanged.
+
+If the current snapshot is unreadable, recovery attempts its previous `.bak`
+generation and displays that fallback in the status bar. Scanning also finds
+abandoned sessions where only the backup survives. Loading changes neither file;
+if both attempts fail, the error leaves the available copies for diagnosis.
+Successful recovery/save and explicit discard still clean up owned generations.
+
+Tests cover truncated archives, damaged CRT/terrain, backup-only sessions and
+cleanup failures caused by unrelated directory contents. The real subprocess
+workflow kills an autosaving editor, corrupts its primary while retaining a valid
+backup, then restores and saves the original map name/destination. All thirteen
+editor tests pass in Release and under AddressSanitizer/LeakSanitizer.
+
 ## Remaining work
 
-1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated
-   recovery archives and additional cleanup failure paths.
+1. Finish overwrite/resize interaction coverage and broader filesystem failure
+   coverage; damaged recovery and backup fallback are now covered.
 2. Broader Unicode shaping/fallback, additional layout preferences,
    and verification of cross-platform packaging/launch usability.
 3. Broader browser/selection interaction coverage,

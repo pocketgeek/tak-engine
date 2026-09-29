@@ -77,15 +77,19 @@ std::unique_ptr<RecoveryFile> RecoveryFile::claimNewest(const fs::path& folder) 
         const auto& entry=*it;
         if(entry.is_symlink(ec) || !utf8(entry.path().filename()).starts_with("recovery-"))continue;
         const bool grouped=entry.is_directory(ec);
-        const auto file=grouped?entry.path()/"recovery-map.kmp":entry.path();
-        if(file.extension()!=".kmp" || !fs::is_regular_file(file,ec) || fs::is_symlink(file,ec))continue;
-        const auto time=fs::last_write_time(file,ec);if(!ec)candidates.push_back({time,{file,grouped}});
+        auto file=grouped?entry.path()/"recovery-map.kmp":entry.path();
+        if(!grouped && file.extension()==".bak")file.replace_extension();
+        if(file.extension()!=".kmp")continue;
+        const auto available=fs::is_regular_file(file,ec)?file:backupPath(file);
+        ec.clear();
+        if(!fs::is_regular_file(available,ec) || fs::is_symlink(available,ec))continue;
+        const auto time=fs::last_write_time(available,ec);if(!ec)candidates.push_back({time,{file,grouped}});
     }
     std::sort(candidates.begin(),candidates.end(),[](const auto& a,const auto& b){return a.first>b.first;});
     for(const auto& [time,candidate]:candidates) {
         auto lease=std::unique_ptr<RecoveryFile>(new RecoveryFile(candidate.first,candidate.second));
         if(!lease->acquire(!candidate.second))continue; // old flat recovery files have no lease file
-        if(fs::is_regular_file(lease->path(),ec))return lease;
+        if(fs::is_regular_file(lease->path(),ec) || fs::is_regular_file(backupPath(lease->path()),ec))return lease;
     }
     return {};
 }
@@ -96,6 +100,34 @@ bool RecoveryFile::discard(std::string& error) {
         if(ec) {error="Could not remove recovery file: "+ec.message();return false;}
     }
     return true;
+}
+RecoverySnapshot readRecoverySnapshot(const fs::path& file) {
+    std::string errors;
+    for(const auto& source:{file,backupPath(file)}) {
+        try {
+            RecoverySnapshot result;result.files=std::make_shared<tak::hpi::Vfs::Files>();
+            tak::hpi::Archive archive(source);
+            for(const auto& entry:archive.entries())if(!entry.isDirectory) {
+                auto bytes=archive.read(entry);const auto key=tak::hpi::MountSet::key(entry.path);
+                if(key.ends_with(".tnt")) {
+                    if(!result.mapPath.empty())throw std::runtime_error("Recovery contains multiple maps");
+                    tak::tnt::Map::load(bytes,key);result.mapPath=key;
+                }
+                // Recovery is written by our canonical serializer. The legacy
+                // parser returns an empty default on malformed input, so check
+                // the round trip instead of mistaking that default for success.
+                if(key.ends_with(".crt") && tak::crt::write(tak::crt::parse(bytes))!=bytes)throw std::runtime_error("Recovery scenario is damaged");
+                if(key=="recovery-info.txt" || key.ends_with("/recovery-info.txt"))result.destination=readRecoveryInfo(bytes);
+                (*result.files)[key]=std::move(bytes);
+            }
+            if(result.mapPath.empty())throw std::runtime_error("Recovery contains no map terrain");
+            result.fromBackup=source!=file;return result;
+        } catch(const std::exception& e) {
+            if(!errors.empty())errors+="\nPrevious recovery: ";
+            errors+=e.what();
+        }
+    }
+    throw std::runtime_error("Cannot read recovery; both files have been preserved.\n"+errors);
 }
 tak::hpi::PackFile recoveryInfo(const std::string& name,const fs::path& directory) {
     std::ostringstream out;
