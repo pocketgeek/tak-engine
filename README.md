@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.11-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.12-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -29,7 +29,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.11 source build. Base and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.12 source build. Base and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -41,7 +41,11 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## Since 0.7.11 (current source)
+## New in 0.7.12
+
+<a href="docs/img/diplomacy.jpg"><img src="docs/img/diplomacy.jpg" width="70%" alt="Diplomacy with outgoing mana and chat recipient checkboxes; gift buttons disabled for an ineligible selection"></a>
+
+*Diplomacy test scene after gifting: no eligible units remain selected.*
 
 - **Diplomacy on D:** all players, eligible-unit gifting, outgoing mana-sharing
   checkboxes for teammates, and checkboxes choosing who receives your chat.
@@ -50,9 +54,11 @@ the GOG edition, supplies the game data.
 - **Memory/resource fixes:** loading fonts, model/editor teardown, stopped-stream
   buffers, and a terrain reload worker race. See [the memory audit](docs/memory-audit-2026-09-29.md).
 
-These changes require **protocol 195** and are not in the published 0.7.11 packages.
+These changes ship in **0.7.12** and require **protocol 195**. Update clients and
+servers together. See the [release notes](docs/release-0.7.12-notes.md) and
+[full validation report](docs/release-0.7.12-validation.md).
 
-## New in 0.7.11
+### Previously in 0.7.11
 
 - **Defensive Passive AI:** continues growing its army and defenses near home
   as mana allows, without sending attacks.
@@ -111,7 +117,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.11** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.12** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -365,11 +371,9 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-The current source uses **protocol 195** for directed mana sharing and chat.
-The **0.7.11 release uses protocol 194**, which adds allied unit gifting and prioritizes mana overflow sharing by lowest
-storage fill percentage, alongside verified automatic
-map transfer and the balanced random-map generator. Restart/update both client and server
-together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
+Version **0.7.12 uses protocol 195** for directed mana sharing and chat.
+Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
+server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and
 0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
 clients and recordings are rejected.

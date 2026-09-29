@@ -59,7 +59,7 @@ proportionally to capacity.
 
 ## Protocol and validation (2026-09-29)
 
-Current source uses protocol **195**. Both clients and server must be rebuilt;
+Version 0.7.12 uses protocol **195**. Both clients and server must be rebuilt;
 0.7.11 release binaries use protocol 194 and cannot join these matches.
 
 The dialogue input regression opens/closes D, checks a sparse player roster,

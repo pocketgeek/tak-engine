@@ -1,7 +1,7 @@
 # Memory and resource audit — 2026-09-29
 
-This audit follows the 0.7.11 release. Its fixes are on `main` **after** the
-`v0.7.11` tag; the already published release packages do not contain them.
+This audit follows the 0.7.11 release. Its fixes ship in **0.7.12**;
+the earlier 0.7.11 packages do not contain them.
 No simulation rules, protocol, pathfinding, or shipped dependencies changed.
 
 ## Findings and fixes
