@@ -57,10 +57,12 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
       - name: Retail scripts, paths, rendering and map generation
         run: |
+          ./build/cartographer_document_test
+          ./build/cartographer_validation_test
           ./build/retail_script_test
           ./build/pathsearch_test
           ./build/retail_visual_test
@@ -75,6 +77,9 @@ jobs:
           # NO Homebrew/@rpath/local dylib (SDL2/jpeg/zlib/ffmpeg must be baked in).
           if otool -L build/takclient | tail -n +2 | grep -qE '@rpath|@loader_path|/opt/homebrew|/usr/local'; then
             echo "::error::takclient links a non-system dylib -- not fully static"; exit 1
+          fi
+          if otool -L build/cartographer | tail -n +2 | grep -qE '@rpath|@loader_path|/opt/homebrew|/usr/local'; then
+            echo "::error::cartographer links a non-system dylib"; exit 1
           fi
           echo "OK: only system libs/frameworks linked -- as static as macOS allows"
 
@@ -111,6 +116,14 @@ jobs:
           # FinderInfo attributes invalidate strict bundle signature verification.
           # Let Finder apply its normal application-extension display preference.
           codesign --verify --deep --strict "$APPDIR"
+          EDITOR_APP="dist-dmg/TAK Cartographer.app"
+          mkdir -p "$EDITOR_APP/Contents/MacOS" "$EDITOR_APP/Contents/Resources"
+          cp build/cartographer "$EDITOR_APP/Contents/MacOS/"
+          cp res/icons/cartographer.icns "$EDITOR_APP/Contents/Resources/"
+          sed "s/@VERSION@/$VERSION/g" packaging/macos/Cartographer-Info.plist > "$EDITOR_APP/Contents/Info.plist"
+          plutil -lint "$EDITOR_APP/Contents/Info.plist"
+          codesign --force --deep -s - "$EDITOR_APP"
+          codesign --verify --deep --strict "$EDITOR_APP"
           ln -s /Applications dist-dmg/Applications
           hdiutil create -volname "Total Annihilation - Kingdoms" -srcfolder dist-dmg -ov -format UDZO \
             "tak-engine-$VERSION-macos-arm64.dmg"
@@ -123,7 +136,8 @@ jobs:
           mkdir -p dist-macos
           ditto --rsrc --extattr "dist-dmg/Total Annihilation - Kingdoms.app" \
             "dist-macos/Total Annihilation - Kingdoms.app"
-          cp build/takclient build/takserver dist-macos/
+          ditto --rsrc --extattr "dist-dmg/TAK Cartographer.app" "dist-macos/TAK Cartographer.app"
+          cp build/takclient build/takserver build/cartographer dist-macos/
           # Preserve the signed bundle intact in the zip.
           ditto -c -k --sequesterRsrc dist-macos "takclient-$VERSION-macos-arm64.zip"
 
@@ -146,13 +160,13 @@ jobs:
         run: |
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build-debug --target takclient takserver
+          cmake --build build-debug --target takclient takserver cartographer
 
       - name: Bundle + zip (debug)
         run: |
           mkdir -p dist-macos-debug
           cp STREAMING-LICENSES.txt dist-macos-debug/
-          cp build-debug/takclient build-debug/takserver dist-macos-debug/
+          cp build-debug/takclient build-debug/takserver build-debug/cartographer dist-macos-debug/
           (cd dist-macos-debug && zip -r ../takclient-macos-arm64-debug.zip .)
 
       - name: Upload CI artifact (debug)

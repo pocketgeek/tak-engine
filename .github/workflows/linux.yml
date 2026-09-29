@@ -128,7 +128,12 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target takclient takserver cartographer stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
+          cmake --build build --target takclient takserver cartographer cartographer_document_test cartographer_validation_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
+
+      - name: Cartographer document and validation checks
+        run: |
+          ./build/cartographer_document_test
+          ./build/cartographer_validation_test
 
       - name: Streaming encode test
         run: |
@@ -148,8 +153,8 @@ jobs:
       # fully static binary could not resolve a host or open a window.
       - name: Verify fully static (only libc/libm linked)
         run: |
-          ldd build/takclient build/takserver || true
-          leaked=$(ldd build/takclient build/takserver \
+          ldd build/takclient build/takserver build/cartographer || true
+          leaked=$(ldd build/takclient build/takserver build/cartographer \
             | awk '/=>/{print $1}' | sort -u \
             | grep -vE '^(libc|libm|libdl|libpthread|librt)\.so|^linux-vdso|^/lib64/ld-' || true)
           if [ -n "$leaked" ]; then
@@ -191,10 +196,10 @@ jobs:
         run: |
           export CC=gcc-12 CXX=g++-12
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build-debug --target takclient takserver
+          cmake --build build-debug --target takclient takserver cartographer
           mkdir -p dist-linux-debug
           cp STREAMING-LICENSES.txt dist-linux-debug/
-          cp build-debug/takclient build-debug/takserver dist-linux-debug/
+          cp build-debug/takclient build-debug/takserver build-debug/cartographer dist-linux-debug/
           tar -C dist-linux-debug -czf dist/tak-engine-linux-x64-debug.tar.gz .
 
       - name: Upload CI artifact

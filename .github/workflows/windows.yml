@@ -66,10 +66,12 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target takclient takserver detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
       - name: Retail scripts, paths, rendering and map generation
         run: |
+          ./build/cartographer_document_test.exe
+          ./build/cartographer_validation_test.exe
           ./build/retail_script_test.exe
           ./build/pathsearch_test.exe
           ./build/retail_visual_test.exe
@@ -84,6 +86,10 @@ jobs:
           if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml'; then
             echo "::error::takclient.exe still imports a non-static media DLL -- not fully static"; exit 1
           fi
+          editor_imports=$(objdump -p build/cartographer.exe | awk '/DLL Name:/{print tolower($3)}')
+          if echo "$editor_imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil'; then
+            echo "::error::cartographer imports a non-static media DLL"; exit 1
+          fi
           echo "OK: no SDL2/jpeg/zlib/ffmpeg DLL imports -- fully static"
 
       - name: Windows startup regressions
@@ -95,6 +101,8 @@ jobs:
           SDL_VIDEODRIVER=dummy ./build/distant_models_test.exe
           subsystem=$(objdump -p build/takclient.exe | grep '^Subsystem')
           [[ "$subsystem" == *"(Windows GUI)"* ]]
+          editor_subsystem=$(objdump -p build/cartographer.exe | grep '^Subsystem')
+          [[ "$editor_subsystem" == *"(Windows GUI)"* ]]
 
       - name: Streaming encode test
         run: |
@@ -109,11 +117,11 @@ jobs:
       - name: Bundle (exes + required DLLs) + zip
         run: |
           mkdir -p dist-win
-          cp build/takclient.exe build/takserver.exe dist-win/
+          cp build/takclient.exe build/takserver.exe build/cartographer.exe dist-win/
           cp STREAMING-LICENSES.txt dist-win/
           # Safety net: copy any non-system DLL still imported (should be none now that
           # SDL2/jpeg/zlib are static; graceful if a target ends up dynamic anyway).
-          ldd build/takclient.exe build/takserver.exe \
+          ldd build/takclient.exe build/takserver.exe build/cartographer.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win/; done
           (cd dist-win && zip -r "../takclient-$VERSION-windows-x64.zip" .)
@@ -143,14 +151,14 @@ jobs:
       - name: Configure + build (debug)
         run: |
           cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build-debug --target takclient takserver
+          cmake --build build-debug --target takclient takserver cartographer
 
       - name: Bundle (exes + required DLLs) + zip (debug)
         run: |
           mkdir -p dist-win-debug
-          cp build-debug/takclient.exe build-debug/takserver.exe dist-win-debug/
+          cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe dist-win-debug/
           cp STREAMING-LICENSES.txt dist-win-debug/
-          ldd build-debug/takclient.exe build-debug/takserver.exe \
+          ldd build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win-debug/; done
           (cd dist-win-debug && zip -r ../takclient-windows-x64-debug.zip .)

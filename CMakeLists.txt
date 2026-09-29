@@ -846,7 +846,12 @@ if(TAK_BUILD_CLIENT)
       set_tests_properties(cartographer_ui cartographer_generation_ui PROPERTIES TIMEOUT 90 ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     if(WIN32)
-      target_link_options(cartographer PRIVATE -mconsole)
+      set_target_properties(cartographer PROPERTIES WIN32_EXECUTABLE TRUE)
+      configure_file(packaging/windows/cartographer.rc.in
+                     "${CMAKE_CURRENT_BINARY_DIR}/cartographer.rc" @ONLY)
+      target_sources(cartographer PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/cartographer.rc")
+      set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/cartographer.rc" PROPERTIES
+          OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/icons/cartographer.ico")
     endif()
   else()
     message(WARNING "SDL2 not found — skipping takclient. Install SDL2-devel.")
@@ -961,6 +966,10 @@ elseif(WIN32)
   set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")        # shortcuts point at the install root
   # Windows shortcut filenames cannot contain a colon.
   set(CPACK_PACKAGE_EXECUTABLES "takclient" "Total Annihilation - Kingdoms")
+  if(TARGET cartographer)
+    install(TARGETS cartographer RUNTIME DESTINATION .)
+    list(APPEND CPACK_PACKAGE_EXECUTABLES "cartographer" "TAK Cartographer")
+  endif()
   set(CPACK_NSIS_MUI_FINISHPAGE_RUN "takclient.exe")
 
   include(CPack)

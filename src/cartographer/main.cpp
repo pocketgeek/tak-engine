@@ -8,6 +8,7 @@
 // live in selection.h. This file wires the desktop UI and editor rendering.
 // See docs/cartographer-improvements-progress.md for completed and pending work.
 
+#include "net/netcompat.h"
 #include <SDL.h>
 
 #include "cartographer/dialog.h"
@@ -2221,4 +2222,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
 #ifndef TAK_CARTOGRAPHER_TEST
 int main(int argc,char** argv) {return cart::runEditor(argc,argv);}
+#ifdef _WIN32
+int WINAPI WinMain(HINSTANCE,HINSTANCE,LPSTR,int) {return main(__argc,__argv);}
+#endif
 #endif

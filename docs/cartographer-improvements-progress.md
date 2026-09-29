@@ -138,6 +138,23 @@ a controlled general performance claim. Varied-terrain profiling remains.
 
 All four Cartographer tests pass in Release and AddressSanitizer/LeakSanitizer.
 
+## Cross-platform packaging checkpoint
+
+Windows/macOS release and debug bundle recipes now build and ship Cartographer.
+The Windows executable uses the GUI subsystem and the existing compass icon;
+NSIS installs it with a Cartographer shortcut. macOS includes a separate signed
+Cartographer app in the DMG/zip, with its own bundle ID and compass icon. The
+Arch package now includes the editor, icon and desktop entry; Linux debug
+archives include the editor too. Platform workflows run the asset-free editor
+checks and include the editor in static-library import verification.
+
+Linux editor tests pass. YAML and plist parsing, icon container checks, Windows
+resource compilation and MinGW source syntax checking passed locally. Full
+Windows linking could not run because the pre-existing cross-build points to a
+missing `/tmp/tak-ffmpeg-win`; macOS linking/signing cannot be verified here.
+CI package build/launch evidence remains required before calling packaging
+fully verified. No additional runtime library dependency was introduced.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent
