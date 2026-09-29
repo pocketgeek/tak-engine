@@ -78,8 +78,11 @@ std::vector<MapIssue> validateRuleOperands(bool action,const tak::crt::Rule& rul
         if(raw.find('\0')!=std::string::npos)issue(field+"embedded NUL would truncate the saved value");
         if(params[s]==PKind::Location && !value.empty() && value!="anywhere" &&
            std::none_of(scenario.regions.begin(),scenario.regions.end(),[&](const auto& region){return folded(region.name)==value;}))issue(field+"unknown region: "+raw);
-        if(params[s]==PKind::UnitType && !registry.find(value))
-            issue(field+"unknown unit type: "+raw,value!="any unit");
+        if(params[s]==PKind::UnitType && !registry.find(value)) {
+            const bool wildcard=value=="any unit";
+            const bool supported=wildcard && !action && rule.opcode>=13 && rule.opcode<=16;
+            if(!supported)issue(field+(wildcard?"Any Unit is not supported by this rule in the current engine":"unknown unit type: "+raw),!wildcard);
+        }
         if(params[s]==PKind::Flag && raw.empty())issue(field+"flag name is empty");
         if(params[s]==PKind::Player) {
             bool valid=value=="all players";

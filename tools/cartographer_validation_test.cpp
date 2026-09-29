@@ -101,6 +101,26 @@ int main() {
         (*files)["terrain/00000001.jpg"]=terrainImage;
         (*files)["units/test.fbi"]={fbi.begin(),fbi.end()};vfs.setMapFiles(files);registry.loadDir(vfs,"units");
         check(registry.find("test")!=nullptr,"synthetic unit loaded");
+        {
+            tak::crt::Scenario authored;authored.regions.push_back({"Bridge",1,1,3,3});
+            const auto templates=cart::ruleTemplates(2,"TEST","Bridge");
+            check(templates.size()==6,"objective catalog covers common tasks");
+            for(const auto& item:templates) {
+                check(!item.group.editorName.empty(),"objective has an editable rule name");
+                for(const auto& condition:item.group.conditions)
+                    check(cart::validateRuleOperands(false,condition,authored,registry).empty(),"template condition uses valid authored operands");
+                for(const auto& action:item.group.actions)
+                    check(cart::validateRuleOperands(true,action,authored,registry).empty(),"template action uses valid authored operands");
+                check(item.group.actions.back().opcode==14,"templates explicitly disable after firing");
+            }
+            const auto matches=cart::matchingRuleTemplates(templates,"ReInFoRcE");
+            check(matches.size()==1 && templates[matches[0]].group.actions[0].slot[0]=="TEST" &&
+                  templates[matches[0]].group.actions[0].slot[1]=="Bridge","template search and contextual unit/region");
+            check(cart::matchingRuleTemplates(templates,"nothing matches this").empty(),"template empty search results");
+            check(cart::ruleTemplates(0,"","").size()==5,"no invalid unit-spawn template when the catalog is empty");
+            check(templates[0].group.actions[0].slot[0]=="Player 3","opening briefing targets selected player");
+            check(cart::matchingRuleTemplates(cart::ruleTemplates(8,"TEST","Bridge"),"Opening").empty(),"neutral slot must not generate an invalid Player 9 recipient");
+        }
         auto operandHas=[&](bool action,const tak::crt::Rule& r,const std::string& message) {
             const auto issues=cart::validateRuleOperands(action,r,{},registry);
             return std::any_of(issues.begin(),issues.end(),[&](const auto& issue){return issue.message.find(message)!=std::string::npos;});

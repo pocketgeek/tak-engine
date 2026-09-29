@@ -1139,7 +1139,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int scrDetailScroll=0,scrDetailMax=0;
     std::string scrDetailText;
     SDL_Rect rRuleDetail{},rCopyRuleText{};
-    bool pickOpen = false, pickAction = false;   // opcode picker (add cond/act)
+    bool pickOpen = false, pickAction = false, pickTemplate=false;
+    std::vector<cart::RuleTemplate> templateCatalog;
+    std::string templateQuery;
+    cart::TextEdit templateEditor;
+    int templateSelection=0;
+    SDL_Rect rTemplates{},rTemplateSearch{};
     int pickScroll = 0;
     SDL_Rect rRuleList{}, rCondList{}, rActList{}, rPickList{};   // render-computed
     SDL_Rect rPrevP{}, rNextP{}, rAddRule{}, rDelRule{}, rAddCond{}, rDelCond{},
@@ -1185,6 +1190,26 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         scrGroup = scen.players[0].empty() ? -1 : 0;
         scrCondSel = scrActSel = -1;
         scrRuleScroll = scrCondScroll = scrActScroll = 0;
+    };
+
+    auto openTemplates=[&]() {
+        std::string type=unitTypes.empty()?"":unitTypes.front();
+        for(int i:selectedUnits.indices)if(i>=0 && i<int(units.size())) {type=units[i].type;break;}
+        std::string location=scen.regions.empty()?"Anywhere":scen.regions.front().name;
+        if(regionSelected>=0 && regionSelected<int(scen.regions.size()))location=scen.regions[regionSelected].name;
+        templateCatalog=cart::ruleTemplates(scrPlayer,type,location);
+        templateQuery.clear();templateEditor.focus(templateQuery);templateSelection=0;
+        pickOpen=pickTemplate=true;pickScroll=0;SDL_StartTextInput();
+    };
+    auto insertTemplate=[&]() {
+        const auto matches=cart::matchingRuleTemplates(templateCatalog,templateQuery);
+        if(templateSelection<0 || templateSelection>=int(matches.size()))return;
+        cart::RuleClipboard item;item.groups={templateCatalog[matches[templateSelection]].group};
+        int row=-1;
+        if(!item.paste(scrGroups(),scrGroup,row,cart::RuleColumn::Group))return;
+        ruleColumn=cart::RuleColumn::Group;scrCondSel=scrActSel=-1;
+        scrRuleScroll=std::max(0,(scrGroup+1)*12-rRuleList.h);
+        scrDetailScroll=0;dirty=historyPending=true;pickOpen=pickTemplate=false;SDL_StopTextInput();
     };
 
     openDocument = [&](const std::string& request) {
@@ -1699,6 +1724,24 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             // The Scripting (trigger) overlay swallows input while up.
             if (scriptOpen) {
                 constexpr int kRow = 12;
+                if(pickOpen && pickTemplate) {
+                    const auto matches=cart::matchingRuleTemplates(templateCatalog,templateQuery);
+                    if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) {pickOpen=pickTemplate=false;SDL_StopTextInput();}
+                    else if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_RETURN)insertTemplate();
+                    else if(e.type==SDL_KEYDOWN && (e.key.keysym.sym==SDLK_UP || e.key.keysym.sym==SDLK_DOWN))
+                        templateSelection=std::clamp(templateSelection+(e.key.keysym.sym==SDLK_UP?-1:1),0,std::max(0,int(matches.size())-1));
+                    else if(e.type==SDL_TEXTINPUT || e.type==SDL_KEYDOWN) {
+                        if(templateEditor.input(e,templateQuery))templateSelection=0;
+                    } else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                        const int mx=e.button.x,my=e.button.y;
+                        if(cart::pointIn(mx,my,rPickCancel)) {pickOpen=pickTemplate=false;SDL_StopTextInput();}
+                        else if(cart::pointIn(mx,my,rTemplateSearch))templateEditor.focus(templateQuery);
+                        else if(cart::pointIn(mx,my,rPickList)) {
+                            templateSelection=(my-rPickList.y)/42;insertTemplate();
+                        }
+                    }
+                    continue;
+                }
                 if(!pickOpen && e.type==SDL_KEYDOWN) {
                     const auto key=e.key.keysym.sym;const auto mod=e.key.keysym.mod;
                     if(key==SDLK_PAGEUP || key==SDLK_PAGEDOWN) {scrDetailScroll=std::clamp(scrDetailScroll+(key==SDLK_PAGEUP?-6:6),0,scrDetailMax);continue;}
@@ -1718,6 +1761,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     if((mod&KMOD_ALT) && (key==SDLK_UP || key==SDLK_DOWN)) {ruleOperation(key==SDLK_UP?3:4);continue;}
                 }
                 if(!pickOpen && e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                    if(cart::pointIn(e.button.x,e.button.y,rTemplates)) {openTemplates();continue;}
                     if(cart::pointIn(e.button.x,e.button.y,rNameRule)) {openRuleName(curGroup());continue;}
                     if(cart::pointIn(e.button.x,e.button.y,rCopyRuleText)) {SDL_SetClipboardText(scrDetailText.c_str());continue;}
                     const SDL_Rect buttons[]={ruleCopy,rulePaste,ruleDuplicate,ruleUp,ruleDown,playerCopy,playerPaste};
@@ -1786,10 +1830,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                         scrCondSel = scrActSel = -1;
                     } else if (cart::pointIn(mx, my, rAddCond)) {
                         if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; historyPending=true; }
-                        pickOpen = true; pickAction = false; pickScroll = 0;
+                        pickOpen = true; pickTemplate=false; pickAction = false; pickScroll = 0;
                     } else if (cart::pointIn(mx, my, rAddAct)) {
                         if (!g) { gs.push_back({}); scrGroup = int(gs.size()) - 1; dirty = true; historyPending=true; }
-                        pickOpen = true; pickAction = true; pickScroll = 0;
+                        pickOpen = true; pickTemplate=false; pickAction = true; pickScroll = 0;
                     } else if (cart::pointIn(mx, my, rDelCond) && g && scrCondSel >= 0 &&
                                scrCondSel < int(g->conditions.size())) {
                         g->conditions.erase(g->conditions.begin() + scrCondSel); scrCondSel = -1; dirty = true; historyPending=true;
@@ -2491,6 +2535,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             cart::drawText(ren, "PLAYER " + std::to_string(scrPlayer), ct.x + 24, ct.y + 3, 1, 220, 224, 235);
             rNextP = cart::drawButton(ren, ct.x + 104, ct.y, 18, 14, ">", false);
             cart::drawText(ren, std::to_string(gs.size()) + " RULES", ct.x + 132, ct.y + 3, 1, 175, 185, 200);
+            rTemplates=cart::drawButton(ren,ct.x+244,ct.y,104,14,"TEMPLATES",false);
             rScrDone = cart::drawButton(ren, ct.x + ct.w - 60, ct.y, 56, 14, "DONE", true);
 
             int colW = (ct.w - 20) / 3;
@@ -2572,7 +2617,24 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                            ct.x, by - 12, 1, 150, 154, 168);
 
             // Nested opcode picker (choose a condition/action type to add).
-            if (pickOpen) {
+            if(pickOpen && pickTemplate) {
+                const auto pc=cart::drawPanel(ren,w,h,580,420,"OBJECTIVE TEMPLATES");
+                rTemplateSearch=cart::drawField(ren,pc.x,pc.y,pc.w,"SEARCH (UP/DOWN THEN ENTER, OR CLICK A TEMPLATE)",templateQuery,true,&templateEditor);
+                rPickList={pc.x,pc.y+36,pc.w,252};
+                const auto matches=cart::matchingRuleTemplates(templateCatalog,templateQuery);
+                SDL_RenderSetClipRect(ren,&rPickList);
+                for(int i=0;i<int(matches.size());++i) {
+                    const auto& item=templateCatalog[matches[i]];const int y=pc.y+36+i*42;
+                    if(i==templateSelection) {SDL_SetRenderDrawColor(ren,50,65,90,255);SDL_Rect row{pc.x,y,pc.w,40};SDL_RenderFillRect(ren,&row);}
+                    cart::drawText(ren,item.name,pc.x+4,y+5,1,235,225,180);
+                    cart::drawText(ren,item.description,pc.x+4,y+20,1,200,215,235);
+                }
+                if(matches.empty())cart::drawText(ren,"No matching templates.",pc.x+4,pc.y+42,1,215,220,235);
+                SDL_RenderSetClipRect(ren,nullptr);
+                cart::drawText(ren,"Inserted rules are editable. Check their unit, area and time.",pc.x,pc.y+300,1,190,205,220);
+                cart::drawText(ren,"Area: selected/first region, or Anywhere when none exist.",pc.x,pc.y+314,1,190,205,220);
+                rPickCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
+            } else if (pickOpen) {
                 const auto& defs = pickAction ? cart::actionDefs() : cart::conditionDefs();
                 SDL_Rect pc = cart::drawPanel(ren, w, h, 480, 400, pickAction ? "ADD ACTION" : "ADD CONDITION");
                 rPickList = {pc.x, pc.y, pc.w, pc.h - 28};

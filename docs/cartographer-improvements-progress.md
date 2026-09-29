@@ -715,6 +715,29 @@ The separately requested diplomacy adjustment hides gift and mana controls for
 non-allies while preserving chat. The Release client and optimized debug client/
 server were rebuilt; the diplomacy UI workflow and screenshot inspection passed.
 
+## Objective templates checkpoint
+
+The scripting window now offers a searchable Templates picker with opening
+messages, timed victory, reaching a region, elimination, losing all forces and
+timed reinforcements. Templates insert ordinary named rule groups after the
+selection. Authors can edit every operand afterward. Reinforcements use the
+selected unit type (or first catalog type); area rules use the selected/first
+region or Anywhere. A footer makes those defaults explicit. Each template
+includes Disable Rule so it runs once. The neutral slot does not offer a
+briefing addressed to nonexistent Player 9.
+
+Search accepts text editing and matches names/descriptions without case;
+Up/Down and Enter or a row click select a result. Empty searches and cancellation
+do not modify the map. Insertions participate in normal history, clipboard and
+save serialization. Validation now accepts Any Unit for the control-count rules
+the runner supports, and explains unsupported wildcard uses elsewhere.
+
+All fifteen editor tests pass in Release and ASAN/LSAN. The new UI workflow
+covers empty results, cancellation, search, insertion, undo/redo and named
+save/reopen; template operands also pass the existing validator. The picker
+screenshot was inspected for clipping and readable descriptions. Test Map and
+full CRT runtime integration remain unfinished.
+
 ## Remaining work
 
 1. Broader filesystem failure coverage and final save/recovery audit; overwrite,
@@ -725,8 +748,8 @@ server were rebuilt; the diplomacy UI workflow and screenshot inspection passed.
    model previews where useful and additional view controls.
 4. Naval-output clearance and fuller resource checks, plus profiling occupancy
    overlays on dense large scenarios; whole-map movement components are covered.
-5. Expanded typed-rule validation and objective templates,
-   temporary-map playtesting through the normal client/server launch path.
+5. Expanded typed-rule validation and temporary-map playtesting through the
+   normal client/server launch path; common objective templates are implemented.
 6. Coalescing pending terrain work, asynchronous expensive operations, large-map
    profiling, broader document/UI coverage and final documentation cleanup.
 

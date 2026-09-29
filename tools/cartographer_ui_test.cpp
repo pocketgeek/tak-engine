@@ -237,6 +237,65 @@ static int resizeSaveWorkflow(const char* data) {
     if(result || !failure.empty() || lastFrame>27) {std::cerr<<failure<<'\n';return 1;}
     std::cout<<"PASS: resize validation, crop confirmation, undo/redo and overwrite cancellation/backup\n";return 0;
 }
+static int templateWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-templates-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    tak::crt::Scenario scenario;scenario.players.resize(9);scenario.regions.push_back({"Bridge",10,10,20,20});
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"Templates.kmp",cart::documentFiles(map,metadata,scenario,{}, {},"Templates"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    bool failed=false;int lastFrame=0;
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int pw,ph;SDL_GetRendererOutputSize(renderer,&pw,&ph);
+        const int w=int(pw/sx),h=int(ph/sy);
+        auto click=[&](int x,int y) {SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);};
+        const bool dirty=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        if(frame<=11 || frame==13 || frame>=15)failed|=dirty;
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text((root/"Templates.kmp").string());key(SDLK_RETURN);break;
+        case 2:key(SDLK_t);break;
+        case 3:click(w/2-80,h/2-225);break;
+        case 4:text("nothing matches this");key(SDLK_RETURN);break;
+        case 5:key(SDLK_ESCAPE);break;
+        case 6:click(w/2-80,h/2-225);break;
+        case 7:text("reinforce");break;
+        case 8:
+            if(const char* capture=SDL_getenv("TAK_EDITOR_TEST_CAPTURE")) {std::vector<uint8_t> rgba(size_t(pw)*ph*4);if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(capture,pw,ph,rgba);}
+            key(SDLK_ESCAPE);break;
+        case 9:click(w/2-80,h/2-225);break;
+        case 10:text("ReAcH");break;
+        case 11:key(SDLK_RETURN);break;
+        case 12:failed|=!dirty;key(SDLK_ESCAPE);key(SDLK_z,KMOD_CTRL);break;
+        case 13:key(SDLK_y,KMOD_CTRL);break;
+        case 14:failed|=!dirty;key(SDLK_s,KMOD_CTRL);break;
+        case 15:key(SDLK_RETURN);key(SDLK_o,KMOD_CTRL);break;
+        case 16:text((root/"Templates.kmp").string());key(SDLK_RETURN);break;
+        case 17:key(SDLK_t);break;
+        case 18:key(SDLK_RETURN);break;
+        case 19:key(SDLK_a,KMOD_CTRL);key(SDLK_c,KMOD_CTRL);break;
+        case 20:{char* clipboard=SDL_GetClipboardText();failed|=!clipboard || std::string(clipboard)!="Reach a region";SDL_free(clipboard);key(SDLK_ESCAPE);key(SDLK_ESCAPE);SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        default:if(frame>24) {failed=true;key(SDLK_ESCAPE);key(SDLK_RETURN);}
+        }
+    });
+    tak::hpi::Archive archive(root/"Templates.kmp");bool found=false;
+    for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {
+        const auto saved=tak::crt::parse(archive.read(entry));
+        if(!saved.players.empty() && saved.players[0].size()==1) {
+            const auto& group=saved.players[0][0];
+            found=group.conditions.size()==1 && group.conditions[0].opcode==15 &&
+                group.conditions[0].slot[0]=="0" && group.conditions[0].slot[1]=="Any Unit" &&
+                group.conditions[0].slot[2]=="Bridge" && group.actions.size()==2 && group.actions[0].opcode==5 && group.actions[1].opcode==14;
+        }
+    }
+    fs::remove_all(root);
+    if(result || failed || !found || lastFrame>24) {std::cerr<<"template workflow failed\n";return 1;}
+    std::cout<<"PASS: template search, empty result, cancel, insert, undo/redo and named save/reopen\n";return 0;
+}
 static int ruleTextWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-rules-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -637,6 +696,7 @@ int main(int argc,char** argv) {
     if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="resize-save")return resizeSaveWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="templates")return templateWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);

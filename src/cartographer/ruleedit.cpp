@@ -1,6 +1,7 @@
 #include "cartographer/ruleedit.h"
 #include "cartographer/triggers.h"
 #include <algorithm>
+#include <cctype>
 namespace cart {
 bool RuleClipboard::copy(const std::vector<tak::crt::RuleGroup>& source,int group,int row,RuleColumn selected,bool wholePlayer) {
     if(wholePlayer) {column=RuleColumn::Group;groups=source;rule.reset();return !groups.empty();}
@@ -20,6 +21,41 @@ bool RuleClipboard::paste(std::vector<tak::crt::RuleGroup>& target,int& group,in
     auto& list=selected==RuleColumn::Action?target[group].actions:target[group].conditions;
     const int at=row>=0 && row<int(list.size())?row+1:int(list.size());
     list.insert(list.begin()+at,*rule);row=at;return true;
+}
+std::vector<RuleTemplate> ruleTemplates(int player,const std::string& unitType,const std::string& location) {
+    std::vector<RuleTemplate> result;
+    auto add=[&](std::string name,std::string description,tak::crt::Rule condition,tak::crt::Rule action) {
+        tak::crt::RuleGroup group;
+        group.editorName=name;group.conditions.push_back(std::move(condition));
+        group.actions.push_back(std::move(action));group.actions.push_back({14,{}}); // Run once.
+        result.push_back({std::move(name),std::move(description),std::move(group)});
+    };
+    const auto where=location.empty()?"Anywhere":location;
+    if(player>=0 && player<8)
+        add("Opening message","Show a briefing to this player at the start.",
+            {0,{}},{13,{"Player "+std::to_string(player+1),"Complete your objective."}});
+    add("Timed victory","Win after five minutes. Edit the condition to change the time.",
+        {1,{"300"}},{5,{}});
+    add("Reach a region","Win when one of your units enters the chosen area.",
+        {15,{"0","Any Unit",where}},{5,{}});
+    add("Eliminate all opponents","Win when no opponents remain in the game.",
+        {21,{"1"}},{5,{}});
+    add("Lose all forces","Lose when you have no living units anywhere on the map.",
+        {16,{"1","Any Unit","Anywhere"}},{6,{}});
+    if(!unitType.empty())
+        add("Timed reinforcements","Create one unit after a minute. Edit the unit, area and time.",
+            {1,{"60"}},{7,{unitType,where}});
+    return result;
+}
+std::vector<int> matchingRuleTemplates(const std::vector<RuleTemplate>& templates,const std::string& query) {
+    auto lower=[](std::string value) {
+        for(char& c:value)c=char(std::tolower(static_cast<unsigned char>(c)));
+        return value;
+    };
+    const auto term=lower(query);std::vector<int> result;
+    for(int i=0;i<int(templates.size());++i)
+        if(lower(templates[i].name+" "+templates[i].description).find(term)!=std::string::npos)result.push_back(i);
+    return result;
 }
 std::vector<std::string> ruleFlags(const std::vector<tak::crt::RuleGroup>& groups) {
     std::vector<std::string> result;

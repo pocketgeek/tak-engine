@@ -199,6 +199,9 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   Select a rule group and press **Enter** or **Name** to label it. Names survive
   undo, copying and reopening; they are stored as editor metadata beside the
   unchanged retail scenario data.
+  **Templates** in the scripting window searches common objectives and inserts
+  editable rules for briefings, timed victory, reaching an area, elimination,
+  losing all forces, or reinforcements. Check the inserted unit, region and time.
   Flag fields accept new names or suggest existing flags from that player’s rules;
   use the arrow button or **Alt+Down** to open the suggestions.
   **Scenario → Check Map** reports
