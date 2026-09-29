@@ -428,6 +428,26 @@ round-trip every visibility flag. All nine editor tests pass in Release and
 under AddressSanitizer/LeakSanitizer. The macOS recovery-checkpoint packaging
 retry also passed; the earlier failure was a busy disk-image resource.
 
+## Typed operand validation checkpoint
+
+Check Map and the rule editor now share operand validation. Errors identify
+player, rule group, condition/action and operand. Checks cover unknown types
+and regions, empty flag names, malformed/overflowing integers, invalid display
+player selectors, embedded NULs and CRT operand byte limits. Game-time values
+that overflow the existing tick conversion are rejected. Out-of-range random
+probabilities remain warnings because an always/never condition can be intentional.
+The historical `Any Unit` placeholder is warned about rather than silently
+rewritten; it is not a registered type in the current scenario interpreter.
+
+The rule form validates a candidate before changing the document and keeps
+fields available for correction. Signed flag/resource values and explicit plus
+signs remain supported. Tests include partial numbers, double signs, integer
+and tick overflow, player/type references and values that would truncate on
+save. This adds editor diagnostics without modifying simulation semantics;
+full opcode/operand execution parity and flag-reference conveniences remain
+separate outstanding work. All nine editor tests pass in Release and under
+AddressSanitizer/LeakSanitizer; Cartographer is rebuilt.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated

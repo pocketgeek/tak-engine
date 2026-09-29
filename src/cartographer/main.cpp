@@ -697,6 +697,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int regionSelected=-1,regionScroll=0,editRegion=-1;
     SDL_Rect regionList{},regionNew{},regionEdit{},regionDelete{},regionDone{},regionOnMap{};
     int editUnit = -1;                       // UNITS: index being edited (M_UNIT)
+    bool editRuleAction=false;
     tak::crt::Rule* editRule = nullptr;      // M_RULE: rule whose params are edited
     std::vector<std::string> mMsg;           // M_MESSAGE: wrapped text lines
     SDL_Rect mBox[kMaxFields]{}, mOK{}, mCancel{}, mQuit{};   // render-computed hit rects
@@ -999,9 +1000,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             }
             unitsEdited=true;dirty=true;historyPending=true;
         } else if (modal == M_RULE && editRule) {
-            for(int i=0;i<mN;++i)if(mf[i].size()>63) {modalError="Each CRT operand must fit in 63 bytes. The rule was not changed.";return;}
-            for (int i = 0; i < mN; ++i) editRule->slot[i] = mf[i];
-            for (int i = mN; i < 5; ++i) editRule->slot[i].clear();
+            auto candidate=*editRule;
+            for(int i=0;i<mN;++i)candidate.slot[i]=mf[i];
+            for(int i=mN;i<5;++i)candidate.slot[i].clear();
+            for(const auto& problem:cart::validateRuleOperands(editRuleAction,candidate,scen,unitRegistry))
+                if(problem.severity==cart::MapIssue::Severity::Error) {modalError=problem.message;return;}
+            *editRule=std::move(candidate);
             editRule = nullptr; dirty = true; historyPending=true;
         } else if (modal == M_CONFIRM) {
             if (confirmAction) confirmAction();
@@ -1017,7 +1021,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         const auto& defs = isAction ? cart::actionDefs() : cart::conditionDefs();
         int op = std::clamp(r->opcode, 0, int(defs.size()) - 1);
         const auto& params = defs[size_t(op)].params;
-        editRule = r; mfocus = 0; mDropOpen = -1;
+        editRule = r;editRuleAction=isAction; mfocus = 0; mDropOpen = -1;
         mN = std::min(int(params.size()), kMaxFields);
         mTitle = (isAction ? "ACTION: " : "CONDITION: ") + cart::formatRule(isAction, *r);
         for (int i = 0; i < mN; ++i) {

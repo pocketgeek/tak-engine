@@ -3,6 +3,8 @@
 #include "sim/matchsetup.h"
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <limits>
 #include <cmath>
 #include <memory>
 
@@ -12,6 +14,41 @@ std::string folded(std::string value) {
     std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return char(std::tolower(c));});
     return value;
 }
+}
+std::vector<MapIssue> validateRuleOperands(bool action,const tak::crt::Rule& rule,
+    const tak::crt::Scenario& scenario,const tak::sim::TypeRegistry& registry) {
+    std::vector<MapIssue> issues;
+    auto issue=[&](std::string text,bool error=true) {issues.push_back({error?MapIssue::Severity::Error:MapIssue::Severity::Warning,std::move(text)});};
+    const auto& definitions=action?actionDefs():conditionDefs();
+    if(rule.opcode<0 || size_t(rule.opcode)>=definitions.size()) {issue("unknown opcode");return issues;}
+    const auto& params=definitions[rule.opcode].params;
+    for(size_t s=0;s<params.size();++s) {
+        const auto& raw=rule.slot[s];const auto value=folded(raw);
+        const std::string field="operand "+std::to_string(s+1)+" ("+paramLabel(params[s])+"): ";
+        if(raw.size()>63)issue(field+"operand exceeds the CRT 63-byte limit");
+        if(raw.find('\0')!=std::string::npos)issue(field+"embedded NUL would truncate the saved value");
+        if(params[s]==PKind::Location && !value.empty() && value!="anywhere" &&
+           std::none_of(scenario.regions.begin(),scenario.regions.end(),[&](const auto& region){return folded(region.name)==value;}))issue(field+"unknown region: "+raw);
+        if(params[s]==PKind::UnitType && !registry.find(value))
+            issue(field+"unknown unit type: "+raw,value!="any unit");
+        if(params[s]==PKind::Flag && raw.empty())issue(field+"flag name is empty");
+        if(params[s]==PKind::Player) {
+            bool valid=value=="all players";
+            for(int p=1;p<=8;++p)valid|=value=="player "+std::to_string(p) || value==std::to_string(p);
+            if(!valid)issue(field+"choose All Players or Player 1 through Player 8");
+        }
+        if(params[s]==PKind::Value) {
+            const auto first=raw.find_first_not_of(" \t\r\n"),last=raw.find_last_not_of(" \t\r\n");
+            std::string number=first==std::string::npos?"":raw.substr(first,last-first+1);
+            if(number.size()>1 && number[0]=='+' && number[1]>='0' && number[1]<='9')number.erase(0,1);
+            int parsed=0;const auto result=std::from_chars(number.data(),number.data()+number.size(),parsed);
+            if(number.empty() || result.ec!=std::errc{} || result.ptr!=number.data()+number.size())issue(field+"must be a whole number in the signed 32-bit range");
+            else if(!action && rule.opcode==23 && (parsed<0 || parsed>100))issue(field+"probability outside 0 through 100 is always false or always true",false);
+            else if(!action && (rule.opcode==1 || rule.opcode==2) &&
+                    (parsed>std::numeric_limits<int>::max()/30 || parsed<std::numeric_limits<int>::min()/30))issue(field+"game time exceeds the engine tick range");
+        }
+    }
+    return issues;
 }
 std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
     const tak::tnt::Scenario& metadata,const tak::crt::Scenario& scenario,
@@ -116,15 +153,10 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
         const auto& group=scenario.players[p][g];
         for(bool action:{false,true}) {
             const auto& rules=action?group.actions:group.conditions;
-            const auto& definitions=action?actionDefs():conditionDefs();
-            for(const auto& rule:rules) {
-                const auto label="Player "+std::to_string(p)+", rule "+std::to_string(g+1)+": ";
-                if(rule.opcode<0 || size_t(rule.opcode)>=definitions.size()) {issue(label+"unknown opcode",-1,-1,true);continue;}
-                const auto& params=definitions[rule.opcode].params;
-                for(size_t s=0;s<params.size();++s) {
-                    const auto value=folded(rule.slot[s]);
-                    if(rule.slot[s].size()>63)issue(label+"operand exceeds the CRT 63-byte limit",-1,-1,true);
-                    if(params[s]==PKind::Location && !value.empty() && value!="anywhere" && !regions.count(value))issue(label+"unknown region: "+rule.slot[s],-1,-1,true);
+            for(size_t r=0;r<rules.size();++r) {
+                const auto label="Player "+std::to_string(p)+", rule "+std::to_string(g+1)+", "+(action?"action ":"condition ")+std::to_string(r+1)+": ";
+                for(auto problem:validateRuleOperands(action,rules[r],scenario,registry)) {
+                    problem.message=label+problem.message;issues.push_back(std::move(problem));
                 }
             }
         }

@@ -83,6 +83,24 @@ int main() {
         const std::string fbi="[UNITINFO] { \nUnitName=TEST;\nName=Test Unit;\nFootprintX=1;\nFootprintZ=1;\nMaxSlope=20;\nMaxWaterDepth=0;\nCanMove=1;\nMaxVelocity=1;\n }";
         (*files)["units/test.fbi"]={fbi.begin(),fbi.end()};vfs.setMapFiles(files);registry.loadDir(vfs,"units");
         check(registry.find("test")!=nullptr,"synthetic unit loaded");
+        auto operandHas=[&](bool action,const tak::crt::Rule& r,const std::string& message) {
+            const auto issues=cart::validateRuleOperands(action,r,{},registry);
+            return std::any_of(issues.begin(),issues.end(),[&](const auto& issue){return issue.message.find(message)!=std::string::npos;});
+        };
+        check(operandHas(false,{1,{"12seconds"}},"whole number"),"partially parsed numeric operand rejected");
+        check(operandHas(false,{1,{"999999999999999999"}},"whole number"),"numeric overflow rejected");
+        check(operandHas(false,{1,{"2147483647"}},"tick range"),"game time conversion overflow diagnosed");
+        check(!operandHas(true,{2,{"score"," -12 "}},"whole number"),"signed flag values remain allowed");
+        check(!operandHas(true,{2,{"score","+12"}},"whole number"),"explicit positive values remain allowed");
+        check(operandHas(true,{2,{"score","+-12"}},"whole number"),"double sign rejected");
+        check(operandHas(false,{23,{"101"}},"probability"),"out-of-range probability warned");
+        check(operandHas(true,{7,{"missing","Anywhere"}},"unknown unit type"),"rule type references validated");
+        check(!operandHas(true,{7,{"TEST","Anywhere"}},"unknown unit type"),"rule type matching ignores case");
+        check(operandHas(true,{13,{"Player 99","Message"}},"Player 1 through"),"invalid display player rejected");
+        check(!operandHas(true,{13,{"All Players","Message"}},"Player 1 through"),"broadcast display remains valid");
+        check(operandHas(true,{2,{"","1"}},"flag name is empty"),"empty flag diagnosed");
+        tak::crt::Rule truncated{13,{"Player 1",std::string("a\0b",3)}};
+        check(operandHas(true,truncated,"embedded NUL"),"embedded NUL cannot silently truncate CRT operand");
         tak::tnt::Map map;map.width=map.height=32;map.heights.resize(1024,60);map.features.resize(1024,0xffff);
         auto movement=cart::terrainOverlay(map,registry,vfs,cart::OverlayKind::Movement,"test");
         check(movement.width==32 && movement.rgba[(12*32+12)*4+1]==210,"flat ground movement overlay is passable");
