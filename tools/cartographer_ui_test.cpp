@@ -8,6 +8,7 @@
 #include "crt/crt.h"
 #include "tnt/mapgen.h"
 #include "cartographer/font5x7.h"
+#include "util/png.h"
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -47,7 +48,7 @@ static int generationWorkflow(const char* data) {
         std::string error;
         if(!cart::writeDocumentFiles(root,{{"Generated preview.kmp",tak::hpi::pack(files)}},error))throw std::runtime_error(error);
     };
-    int stage=0;std::string failure;const auto begun=std::chrono::steady_clock::now();
+    int stage=0;bool correctedSize=false;std::string failure;const auto begun=std::chrono::steady_clock::now();
     const auto result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int) {
         const std::string title=SDL_GetWindowTitle(window);
         auto check=[&](bool ok,const char* why){if(!ok && failure.empty())failure=why;};
@@ -66,7 +67,7 @@ static int generationWorkflow(const char* data) {
         auto recipeMenu=[&] {click(320,10);click(330,192);};
         switch(stage) {
         case 0: key(SDLK_n,KMOD_CTRL);++stage;break;
-        case 1: text("Generated preview");randomButton();++stage;break;
+        case 1: text("bad/name");randomButton();key(SDLK_a,KMOD_CTRL);text("Generated preview");randomButton();++stage;break;
         case 2: text("123456");key(SDLK_RETURN);++stage;break;
         case 3:
             check(title.find("Ulasem Arena")!=std::string::npos && !title.ends_with(" *"),"generation changed original before acceptance");
@@ -98,8 +99,17 @@ static int generationWorkflow(const char* data) {
             float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);
             click(int(w/sx/2-166),int(h/sy/2+212));++stage;
         }break;
-        case 24: text("789012");for(int i=0;i<8;++i)key(SDLK_TAB);text("16");key(SDLK_TAB);text("12");key(SDLK_RETURN);++stage;break;
-        case 25: if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}break;
+        case 24: text("789012");for(int i=0;i<8;++i)key(SDLK_TAB);text("16");key(SDLK_TAB);text("0");key(SDLK_RETURN);++stage;break;
+        case 25:
+            if(!correctedSize) {
+                if(const char* path=SDL_getenv("TAK_EDITOR_TEST_CAPTURE")) {
+                    int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);std::vector<uint8_t> pixels(size_t(w)*h*4);
+                    if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,pixels.data(),w*4)==0)tak::png::write(path,w,h,pixels);
+                }
+                check(title=="Cartographer -- Generated preview","invalid generator dimensions leave the map untouched");
+                key(SDLK_a,KMOD_CTRL);text("12");key(SDLK_RETURN);correctedSize=true;
+            } else if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}
+            break;
         case 26: check(title.ends_with(" *"),"regeneration is an unsaved edit");key(SDLK_z,KMOD_CTRL);++stage;break;
         case 27: check(!title.ends_with(" *"),"undo regeneration restores saved revision");key(SDLK_y,KMOD_CTRL);++stage;break;
         case 28: check(title.ends_with(" *"),"redo regeneration restores new seed");key(SDLK_s,KMOD_CTRL);++stage;break;
@@ -338,7 +348,7 @@ int main(int argc,char** argv) {
         case 13: check(std::string(SDL_GetWindowTitle(window)).find("Copied map")!=std::string::npos,"failed open preserves current document");key(SDLK_RETURN);break;
         case 14: click(320,10);click(330,152);break; // Scenario > Regions
         case 15: key(SDLK_n,KMOD_CTRL);break;
-        case 16: text("UI test region");key(SDLK_TAB);text("10");key(SDLK_TAB);text("11");key(SDLK_TAB);text("20");key(SDLK_TAB);text("21");key(SDLK_RETURN);break;
+        case 16: text("UI test region");key(SDLK_TAB);text("10");key(SDLK_TAB);text("11");key(SDLK_TAB);text("20");key(SDLK_TAB);text("99999");key(SDLK_RETURN);key(SDLK_a,KMOD_CTRL);text("21");key(SDLK_RETURN);break;
         case 17: check(dirty,"region creation marks document dirty");key(SDLK_ESCAPE);key(SDLK_s,KMOD_CTRL);break;
         case 18: check(!dirty,"region save succeeds");key(SDLK_RETURN);break;
         case 19: key(SDLK_t);break;
@@ -356,8 +366,15 @@ int main(int argc,char** argv) {
             click(int(w/sx/2),int(h/sy/2-130));break;
         }
         case 27: check(std::string(SDL_GetWindowTitle(window)).find("Ulasem Arena")!=std::string::npos,"searchable Open chooses recent map");
+            key(SDLK_TAB);key(SDLK_TAB);click(500,300);key(SDLK_RETURN);break;
+        case 28: text("9");key(SDLK_RETURN);key(SDLK_a,KMOD_CTRL);text("8");
+            for(int i=0;i<6;++i)key(SDLK_TAB);
+            text("UI neutral unit");key(SDLK_RETURN);break;
+        case 29: check(dirty,"corrected unit properties apply");key(SDLK_s,KMOD_CTRL);break;
+        case 30: check(!dirty,"unit properties saved");key(SDLK_RETURN);break;
+        case 31:
             {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
-        default: if(frame>30) {failure="editor did not exit";key(SDLK_ESCAPE);key(SDLK_RETURN);}
+        default: if(frame>34) {failure="editor did not exit";key(SDLK_ESCAPE);key(SDLK_RETURN);}
         }
     });
     try {
@@ -371,6 +388,13 @@ int main(int argc,char** argv) {
                 found=true;
             }
             if(!found)throw std::runtime_error("saved bundle lacks metadata");
+            if(std::string(file)=="Ulasem Arena.kmp") {
+                bool neutral=false;
+                for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt"))
+                    for(const auto& unit:cart::toPlaced(tak::crt::parse(archive.read(entry))))
+                        if(unit.name=="UI neutral unit" && unit.player==8)neutral=true;
+                if(!neutral)throw std::runtime_error("corrected owner and retained unit fields not saved");
+            }
             if(std::string(file)=="Copied map.kmp") {
                 bool regionFound=false;
                 for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {

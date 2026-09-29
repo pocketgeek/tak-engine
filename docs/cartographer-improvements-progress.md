@@ -349,6 +349,29 @@ region/validation checkpoint passed on Windows, macOS and Linux.
 The focused Release editor/map-transfer/generator/campaign suite passes (14 tests),
 as do all eight editor tests under AddressSanitizer/LeakSanitizer.
 
+## Correctable form errors checkpoint
+
+Generator settings, region bounds/names, resize, Save As names, unit properties
+and rule operands now show validation errors inside their forms. Values and
+focus remain available for correction instead of closing the dialog. New-map
+names are checked before either flat or random generation. Generator settings
+are committed only after all fields, including dimensions, validate.
+
+Changed unit numeric fields require complete whole numbers in their allowed
+ranges; malformed/overflowing numbers no longer silently become zero or clamp
+to another value. Bulk edits validate before changing any selected unit, and
+unchanged authored fields retain their original values. Angle wrapping remains
+available for positive/negative whole degrees.
+
+SDL workflow coverage corrects invalid map names, generator dimensions, region
+bounds and unit ownership without reopening the dialogs, then checks the saved
+results. Filesystem/read failures still use separate messages; this checkpoint
+does not claim every dialog failure path has been redesigned.
+All eight editor tests pass in Release and under AddressSanitizer/LeakSanitizer.
+A captured generator error dialog was visually checked: all eleven fields,
+the wrapped error and both action buttons fit without overlap. The small bitmap
+font remains a separate readability limitation.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect concurrent

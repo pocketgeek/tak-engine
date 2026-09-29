@@ -25,6 +25,7 @@
 #include "cartographer/preferences.h"
 #include <fstream>
 #include <charconv>
+#include <limits>
 #include "cartographer/features.h"
 #include "cartographer/font5x7.h"
 #include "cartographer/newmap.h"
@@ -657,7 +658,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     const std::vector<std::string> generatorLayouts={tak::mapgen::layoutName(0),tak::mapgen::layoutName(1),tak::mapgen::layoutName(2)};
     const std::vector<std::string> legacyGeneratorLayouts={tak::mapgen::layoutName(0)};
     const char* mLabel[kMaxFields] = {};
-    std::string mTitle;
+    std::string mTitle,modalError;
     int mN = 0;                              // active field count
     int mfocus = 0;
     cart::TextEdit fieldEditor;
@@ -705,7 +706,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         modal = M_CONFIRM; confirmAction = std::move(action);
     };
     auto openModal = [&](Modal m, int unitIdx = -1) {
-        mfocus = 0; editUnit = unitIdx;descriptionScroll=0;descriptionFollowCaret=true;
+        mfocus = 0; editUnit = unitIdx;descriptionScroll=0;descriptionFollowCaret=true;modalError.clear();
         mDropOpen = -1;
         for (auto& c : mfChoices) c = nullptr;   // default: plain text fields
         if (m == M_SCENARIO) {
@@ -830,6 +831,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     auto applyNewMap = [&](bool random) {
         const auto* fields=random?generatorDraft.data():mf;
         std::string nm=fields[0].empty()?"Untitled":fields[0],wld=fields[3];
+        if(!cart::validDocumentName(nm)) {modalError="Choose a map name without path separators or reserved filename characters.";return;}
         int wu=std::clamp(std::atoi(fields[1].c_str()),1,64),hu=std::clamp(std::atoi(fields[2].c_str()),1,64);
         std::transform(wld.begin(),wld.end(),wld.begin(),[](unsigned char c){return char(std::tolower(c));});
         if(random) {
@@ -869,28 +871,30 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         openModal(M_GENERATOR);
     };
     auto applyModal = [&]() {
-        const auto applying=modal;
+        const auto applying=modal;modalError.clear();
         if(modal==M_GENERATOR) {
             cart::GeneratorFields fields;for(int i=0;i<8;++i)fields[i]=mf[i];std::string error;
-            if(!cart::parseGeneratorFields(fields,generatorParams,error)) {openMessage("GENERATOR SETTINGS",error);return;}
+            auto nextParams=generatorParams;
+            if(!cart::parseGeneratorFields(fields,nextParams,error)) {modalError=error;return;}
             for(int i=8;i<10;++i) {
                 int units=0;const auto parsed=std::from_chars(mf[i].data(),mf[i].data()+mf[i].size(),units);
-                if(parsed.ec!=std::errc{} || parsed.ptr!=mf[i].data()+mf[i].size() || units<1 || units>64) {openMessage("GENERATOR SETTINGS","Width and height must be whole numbers from 1 to 64. The preview shows the generator's adjusted size.");return;}
+                if(parsed.ec!=std::errc{} || parsed.ptr!=mf[i].data()+mf[i].size() || units<1 || units>64) {modalError="Width and height must be whole numbers from 1 to 64. The preview shows the generator's adjusted size.";return;}
             }
+            generatorParams=nextParams;
             generatorDraft[1]=mf[8];generatorDraft[2]=mf[9];generatorDraft[3]=mf[10];
             applyNewMap(true);return;
         } else if(modal==M_REGION) {
             int cells[4];
             for(int i=0;i<4;++i) {
                 const auto& field=mf[i+1];const auto parsed=std::from_chars(field.data(),field.data()+field.size(),cells[i]);
-                if(parsed.ec!=std::errc{} || parsed.ptr!=field.data()+field.size()) {openMessage("INVALID REGION","Corners must be whole cell numbers.");return;}
+                if(parsed.ec!=std::errc{} || parsed.ptr!=field.data()+field.size()) {modalError="Corners must be whole cell numbers.";return;}
             }
             std::string error;
-            if(!cart::setRegion(scen,editRegion,{mf[0],cells[0],cells[1],cells[2],cells[3]},mapView.map().width,mapView.map().height,error)) {openMessage("INVALID REGION",error);return;}
+            if(!cart::setRegion(scen,editRegion,{mf[0],cells[0],cells[1],cells[2],cells[3]},mapView.map().width,mapView.map().height,error)) {modalError=error;return;}
             regionSelected=editRegion<0?int(scen.regions.size())-1:editRegion;
             dirty=true;historyPending=true;
         } else if(modal==M_SAVEAS) {
-            if(!cart::validDocumentName(mf[0])) {openMessage("INVALID NAME","Choose a map name without path separators or reserved filename characters.");return;}
+            if(!cart::validDocumentName(mf[0])) {modalError="Choose a map name without path separators or reserved filename characters.";return;}
             const auto nextName=mf[0],nextDir=mf[1];
             const auto path=pathText(std::filesystem::u8path(nextDir)/std::filesystem::u8path(nextName+".kmp"));
             auto performSave=[&,path,nextName,nextDir] {
@@ -915,16 +919,16 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto heightResult=std::from_chars(mf[1].data(),mf[1].data()+mf[1].size(),hu);
             if(widthResult.ec!=std::errc{} || widthResult.ptr!=mf[0].data()+mf[0].size() ||
                heightResult.ec!=std::errc{} || heightResult.ptr!=mf[1].data()+mf[1].size() || wu<1 || wu>64 || hu<1 || hu>64) {
-                openMessage("RESIZE MAP","Width and height must be whole numbers from 1 to 64.");return;
+                modalError="Width and height must be whole numbers from 1 to 64.";return;
             }
             for(const auto& start:scenario.starts) if(start.xpos>=wu*32 || start.zpos>=hu*32) {
-                openMessage("RESIZE MAP","Move or remove start positions outside the new map first.");return;
+                modalError="Move or remove start positions outside the new map first.";return;
             }
             for(const auto& unit:units) if(unit.x>=wu*512 || unit.z>=hu*512) {
-                openMessage("RESIZE MAP","Move or remove units outside the new map first.");return;
+                modalError="Move or remove units outside the new map first.";return;
             }
             for(const auto& region:scen.regions) if(std::max(region.x1,region.x2)>=wu*32 || std::max(region.z1,region.z2)>=hu*32) {
-                openMessage("RESIZE MAP","Resize or remove regions outside the new map first.");return;
+                modalError="Resize or remove regions outside the new map first.";return;
             }
             mapView.quiesce();minimapSource=nullptr;
             std::string wld = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
@@ -940,31 +944,42 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto& origin=units[size_t(editUnit)];
             auto targets=selectedUnits.indices;
             if(!targets.count(editUnit))targets={editUnit};
-            const float dx=mf[7]==mfOriginal[7]?0:std::atoi(mf[7].c_str())*16.0f+8-origin.x;
-            const float dz=mf[8]==mfOriginal[8]?0:std::atoi(mf[8].c_str())*16.0f+8-origin.z;
+            std::array<int,9> values{};
+            const std::array<int,9> minimum={0,0,0,0,0,std::numeric_limits<int>::min(),0,0,0};
+            const std::array<int,9> maximum={8,100,1000,1000,9,std::numeric_limits<int>::max(),0,mapView.map().width-1,mapView.map().height-1};
+            for(int i=0;i<9;++i)if(i!=6 && mf[i]!=mfOriginal[i]) {
+                const auto parsed=std::from_chars(mf[i].data(),mf[i].data()+mf[i].size(),values[i]);
+                if(parsed.ec!=std::errc{} || parsed.ptr!=mf[i].data()+mf[i].size() || values[i]<minimum[i] || values[i]>maximum[i]) {
+                    modalError=i==5?"ANGLE: enter whole degrees, for example 90 or -90.":
+                        std::string(mLabel[i])+": enter a whole number from "+std::to_string(minimum[i])+" to "+std::to_string(maximum[i])+".";
+                    mfocus=i;fieldEditor.focus(mf[i]);return;
+                }
+            }
+            const float dx=mf[7]==mfOriginal[7]?0:values[7]*16.0f+8-origin.x;
+            const float dz=mf[8]==mfOriginal[8]?0:values[8]*16.0f+8-origin.z;
             if(targets.size()==1 && mf[6]!=origin.name) {
-                if(mf[6].size()>255) {openMessage("UNIT NAME","Use a name shorter than 256 bytes.");return;}
+                if(mf[6].size()>255) {modalError="Use a name shorter than 256 bytes.";return;}
                 for(int i=0;i<int(units.size());++i)if(i!=editUnit && !mf[6].empty() && lowerText(units[i].name)==lowerText(mf[6])) {
-                    openMessage("UNIT NAME","That unique name is already used by another unit.");return;
+                    modalError="That unique name is already used by another unit.";return;
                 }
             }
             for(int i:targets)if(i>=0 && i<int(units.size()) && (units[i].x+dx<0 || units[i].z+dz<0 || units[i].x+dx>=mapView.map().width*16 || units[i].z+dz>=mapView.map().height*16)) {
-                openMessage("UNIT POSITION","The selection would extend outside the map.");return;
+                modalError="The selection would extend outside the map.";return;
             }
             for(int i:targets)if(i>=0 && i<int(units.size())) {
                 auto& u=units[size_t(i)];
-                if(mf[0]!=mfOriginal[0])u.player=std::clamp(std::atoi(mf[0].c_str()),0,8);
-                if(mf[1]!=mfOriginal[1])u.health=std::clamp(std::atoi(mf[1].c_str()),0,100);
-                if(mf[2]!=mfOriginal[2])u.armor=std::clamp(std::atoi(mf[2].c_str()),0,1000);
-                if(mf[3]!=mfOriginal[3])u.weapon=std::clamp(std::atoi(mf[3].c_str()),0,1000);
-                if(mf[4]!=mfOriginal[4])u.veteran=std::clamp(std::atoi(mf[4].c_str()),0,9);
-                if(mf[5]!=mfOriginal[5]) {int angle=std::atoi(mf[5].c_str())%360;u.angle=float(angle<0?angle+360:angle);}
+                if(mf[0]!=mfOriginal[0])u.player=values[0];
+                if(mf[1]!=mfOriginal[1])u.health=values[1];
+                if(mf[2]!=mfOriginal[2])u.armor=values[2];
+                if(mf[3]!=mfOriginal[3])u.weapon=values[3];
+                if(mf[4]!=mfOriginal[4])u.veteran=values[4];
+                if(mf[5]!=mfOriginal[5]) {int angle=values[5]%360;u.angle=float(angle<0?angle+360:angle);}
                 if(targets.size()==1)u.name=mf[6];
                 u.x+=dx;u.z+=dz;
             }
             unitsEdited=true;dirty=true;historyPending=true;
         } else if (modal == M_RULE && editRule) {
-            for(int i=0;i<mN;++i)if(mf[i].size()>63) {openMessage("RULE OPERAND TOO LONG","Each CRT operand must fit in 63 bytes. The rule was not changed.");return;}
+            for(int i=0;i<mN;++i)if(mf[i].size()>63) {modalError="Each CRT operand must fit in 63 bytes. The rule was not changed.";return;}
             for (int i = 0; i < mN; ++i) editRule->slot[i] = mf[i];
             for (int i = mN; i < 5; ++i) editRule->slot[i].clear();
             editRule = nullptr; dirty = true; historyPending=true;
@@ -978,6 +993,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // Open the param editor for a condition/action rule (fields = its opcode's
     // parameters, in slot order).
     auto openRuleEditor = [&](tak::crt::Rule* r, bool isAction) {
+        modalError.clear();
         const auto& defs = isAction ? cart::actionDefs() : cart::conditionDefs();
         int op = std::clamp(r->opcode, 0, int(defs.size()) - 1);
         const auto& params = defs[size_t(op)].params;
@@ -1569,6 +1585,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     }
                     if (cart::pointIn(mx, my, mOK)) { applyModal(); continue; }
                     if (modal == M_NEW && cart::pointIn(mx, my, mRandom)) {
+                        if(!mf[0].empty() && !cart::validDocumentName(mf[0])) {modalError="Choose a map name without path separators or reserved filename characters.";continue;}
+                        modalError.clear();
                         for(int i=0;i<4;++i)generatorDraft[i]=mf[i];
                         openModal(M_GENERATOR); continue;
                     }
@@ -2470,9 +2488,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         } else if (modal != M_NONE) {
             // N-field dialog; height fits the field count.
             int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+mN*40;
-            SDL_Rect ct = cart::drawPanel(ren,w,h,(modal==M_OPENPATH || modal==M_SCENARIO)?560:320,ph,mTitle);
+            const int panelWidth=(modal==M_OPENPATH || modal==M_SCENARIO)?560:320;
+            const auto errorLines=cart::TextEdit::lines(modalError,(panelWidth-36)/6);
+            const int errorHeight=modalError.empty()?0:int(errorLines.size())*12+8;
+            ph+=errorHeight;
+            SDL_Rect ct = cart::drawPanel(ren,w,h,panelWidth,ph,mTitle);
+            if(errorHeight)for(size_t i=0;i<errorLines.size();++i)
+                cart::drawText(ren,modalError.substr(errorLines[i].begin,errorLines[i].end-errorLines[i].begin),ct.x,ct.y+ct.h-24-errorHeight+int(i)*12,1,255,150,135);
             if(modal==M_OPENPATH) {
-                openList={ct.x,ct.y+40,ct.w,ct.h-70};filterOpenMaps();
+                openList={ct.x,ct.y+40,ct.w,ct.h-70-errorHeight};filterOpenMaps();
                 SDL_RenderSetClipRect(ren,&openList);
                 for(int i=0;i<int(openMatches.size());++i) {
                     const int y=openList.y+i*20-openScroll;if(y+20<openList.y || y>openList.y+openList.h)continue;
