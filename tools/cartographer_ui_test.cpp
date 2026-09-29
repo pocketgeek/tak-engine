@@ -1,6 +1,7 @@
 #include <fstream>
 #include "cartographer/editor.h"
 #include "cartographer/document.h"
+#include "cartographer/ruleedit.h"
 #include "cartographer/newmap.h"
 #include "cartographer/thumbnails.h"
 #include "cartographer/sections.h"
@@ -172,6 +173,48 @@ static int overlayWorkflow(const char* data) {
     fs::remove_all(root);
     if(result || failed || stage!=3) {std::cerr<<"overlay menu workflow failed\n";return 1;}
     std::cout<<"PASS: background water overlay, unchanged document and hide control\n";return 0;
+}
+static int ruleTextWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-rules-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    tak::crt::Scenario scenario;scenario.players.resize(9);scenario.players[0].resize(1);
+    auto& group=scenario.players[0][0];group.conditions.push_back({1,{"12345"}});
+    for(int i=0;i<12;++i)group.actions.push_back({25,{"Player1","Message "+std::to_string(i)+" "+std::string(45,'x'),"progress",std::string(63,'y')}});
+    const auto expected=cart::ruleDetails(group,cart::RuleColumn::Group,0);
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"Rules.kmp",cart::documentFiles(map,metadata,scenario,{}, {},"Rules"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    bool failed=false;int lastFrame=0;std::vector<uint8_t> before;
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int pw,ph;SDL_GetRendererOutputSize(renderer,&pw,&ph);
+        const int w=int(pw/sx),h=int(ph/sy);
+        auto click=[&](int x,int y) {SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);};
+        auto pixels=[&]() {SDL_Rect r{int((w/2-376)*sx),int((h/2+133)*sy),int(752*sx),int(78*sy)};std::vector<uint8_t> out(size_t(r.w)*r.h*4);if(SDL_RenderReadPixels(renderer,&r,SDL_PIXELFORMAT_RGBA32,out.data(),r.w*4))failed=true;return out;};
+        failed|=std::string(SDL_GetWindowTitle(window)).ends_with(" *");
+        switch(frame) {
+        case 0: key(SDLK_o,KMOD_CTRL);break;
+        case 1: text((root/"Rules.kmp").string());key(SDLK_RETURN);break;
+        case 2: key(SDLK_t);break;
+        case 3: click(w/2-350,h/2-166);break; // Select the rule group.
+        case 4: before=pixels();click(w/2+338,h/2+124);break;
+        case 5: {char* clipboard=SDL_GetClipboardText();failed|=!clipboard || expected!=clipboard;SDL_free(clipboard);key(SDLK_PAGEDOWN);break;}
+        case 6: failed|=before==pixels();key(SDLK_PAGEUP);break;
+        case 7: {
+            failed|=before!=pixels();
+            if(const char* capture=SDL_getenv("TAK_EDITOR_TEST_CAPTURE")) {std::vector<uint8_t> rgba(size_t(pw)*ph*4);if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(capture,pw,ph,rgba);}
+            key(SDLK_ESCAPE);break;
+        }
+        case 8: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        default: if(frame>12) {failed=true;key(SDLK_ESCAPE);key(SDLK_RETURN);}
+        }
+    });
+    fs::remove_all(root);
+    if(result || failed || lastFrame>12) {std::cerr<<"rule text workflow failed\n";return 1;}
+    std::cout<<"PASS: full rule text clipboard, page navigation and unchanged document\n";return 0;
 }
 static int regionWorkflow(const char* data) {
     namespace fs=std::filesystem;
@@ -504,6 +547,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="thumbnails")return thumbnailWorkflow(argv[1]);
     if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);

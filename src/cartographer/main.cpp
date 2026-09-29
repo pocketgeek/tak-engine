@@ -1110,6 +1110,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     int scrGroup = -1;                     // selected rule-group in this player
     int scrCondSel = -1, scrActSel = -1;   // selected condition / action row
     int scrRuleScroll = 0, scrCondScroll = 0, scrActScroll = 0;
+    int scrDetailScroll=0,scrDetailMax=0;
+    std::string scrDetailText;
+    SDL_Rect rRuleDetail{},rCopyRuleText{};
     bool pickOpen = false, pickAction = false;   // opcode picker (add cond/act)
     int pickScroll = 0;
     SDL_Rect rRuleList{}, rCondList{}, rActList{}, rPickList{};   // render-computed
@@ -1660,6 +1663,14 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 constexpr int kRow = 12;
                 if(!pickOpen && e.type==SDL_KEYDOWN) {
                     const auto key=e.key.keysym.sym;const auto mod=e.key.keysym.mod;
+                    if(key==SDLK_PAGEUP || key==SDLK_PAGEDOWN) {scrDetailScroll=std::clamp(scrDetailScroll+(key==SDLK_PAGEUP?-6:6),0,scrDetailMax);continue;}
+                    if(key==SDLK_RETURN) {
+                        if(auto* group=curGroup()) {
+                            if(ruleColumn==cart::RuleColumn::Condition && scrCondSel>=0 && scrCondSel<int(group->conditions.size()))openRuleEditor(&group->conditions[scrCondSel],false);
+                            if(ruleColumn==cart::RuleColumn::Action && scrActSel>=0 && scrActSel<int(group->actions.size()))openRuleEditor(&group->actions[scrActSel],true);
+                        }
+                        continue;
+                    }
                     if(mod&(KMOD_CTRL|KMOD_GUI)) {
                         if(key==SDLK_c) {ruleOperation(0);continue;}
                         if(key==SDLK_v) {ruleOperation(1);continue;}
@@ -1668,6 +1679,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     if((mod&KMOD_ALT) && (key==SDLK_UP || key==SDLK_DOWN)) {ruleOperation(key==SDLK_UP?3:4);continue;}
                 }
                 if(!pickOpen && e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+                    if(cart::pointIn(e.button.x,e.button.y,rCopyRuleText)) {SDL_SetClipboardText(scrDetailText.c_str());continue;}
                     const SDL_Rect buttons[]={ruleCopy,rulePaste,ruleDuplicate,ruleUp,ruleDown,playerCopy,playerPaste};
                     bool handled=false;
                     for(int i=0;i<7;++i)if(cart::pointIn(e.button.x,e.button.y,buttons[i])) {ruleOperation(i);handled=true;break;}
@@ -1705,7 +1717,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     scriptOpen = false;
                 } else if (e.type == SDL_MOUSEWHEEL) {
                     int mx, my; SDL_GetMouseState(&mx, &my); mx /= kUIScale; my /= kUIScale;
-                    if (cart::pointIn(mx, my, rRuleList)) {
+                    if(cart::pointIn(mx,my,rRuleDetail))scrDetailScroll=std::clamp(scrDetailScroll-e.wheel.y*3,0,scrDetailMax);
+                    else if (cart::pointIn(mx, my, rRuleList)) {
                         int maxS = std::max(0, int(gs.size()) * kRow - rRuleList.h);
                         scrRuleScroll = std::clamp(scrRuleScroll - e.wheel.y * 36, 0, maxS);
                     } else if (g && cart::pointIn(mx, my, rCondList)) {
@@ -2452,7 +2465,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             cart::drawText(ren, ruleColumn==cart::RuleColumn::Group?"RULES *":"RULES", x0, ct.y + 46, 1, 150, 200, 150);
             cart::drawText(ren, ruleColumn==cart::RuleColumn::Condition?"CONDITIONS *":"CONDITIONS", x1, ct.y + 46, 1, 150, 200, 150);
             cart::drawText(ren, ruleColumn==cart::RuleColumn::Action?"ACTIONS *":"ACTIONS", x2, ct.y + 46, 1, 150, 200, 150);
-            int listY = ct.y + 58, listH = ct.h - 58 - 24;
+            int listY = ct.y + 58, listH = ct.h - 58 - 138;
             rRuleList = {x0, listY, colW, listH};
             rCondList = {x1, listY, colW, listH};
             rActList = {x2, listY, colW, listH};
@@ -2490,6 +2503,22 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             };
             drawRules(rCondList, scrCondScroll, g ? &g->conditions : nullptr, false, scrCondSel);
             drawRules(rActList, scrActScroll, g ? &g->actions : nullptr, true, scrActSel);
+            const auto detail=g?cart::ruleDetails(*g,ruleColumn,ruleColumn==cart::RuleColumn::Action?scrActSel:scrCondSel):std::string("Select a rule to read its conditions and actions.");
+            if(detail!=scrDetailText) {scrDetailText=detail;scrDetailScroll=0;}
+            const int detailY=listY+listH+8;
+            cart::drawText(ren,"FULL TEXT (PgUp/PgDn or mouse wheel)",ct.x,detailY,1,180,205,225);
+            rCopyRuleText=cart::drawButton(ren,ct.x+ct.w-76,detailY-3,76,14,"COPY TEXT",false);
+            rRuleDetail={ct.x,detailY+13,ct.w,78};
+            SDL_SetRenderDrawColor(ren,18,21,29,255);SDL_RenderFillRect(ren,&rRuleDetail);
+            const auto rows=cart::TextEdit::lines(scrDetailText,std::max(1,(rRuleDetail.w-12)/6));
+            const int visible=(rRuleDetail.h-8)/12;
+            scrDetailMax=std::max(0,int(rows.size())-visible);scrDetailScroll=std::clamp(scrDetailScroll,0,scrDetailMax);
+            SDL_RenderSetClipRect(ren,&rRuleDetail);
+            for(int row=scrDetailScroll;row<std::min(int(rows.size()),scrDetailScroll+visible);++row) {
+                const auto& line=rows[row];
+                cart::drawText(ren,scrDetailText.substr(line.begin,line.end-line.begin),rRuleDetail.x+4,rRuleDetail.y+4+(row-scrDetailScroll)*12,1,230,235,245);
+            }
+            SDL_RenderSetClipRect(ren,nullptr);
             // Column action buttons.
             int by = ct.y + ct.h - 18;
             rAddRule = cart::drawButton(ren, x0, by, 44, 16, "+RULE", true);

@@ -538,6 +538,22 @@ and verifies unchanged fixed-width metrics. All twelve editor tests pass in
 Release and under AddressSanitizer/LeakSanitizer. Broader complex-script shaping,
 bidi and CJK fallback remain incomplete; unsupported glyphs show a replacement.
 
+## Full rule text checkpoint
+
+The scripting panel now includes a wrapped, scrollable full-text area for the
+selected group, condition or action. Page Up/Page Down and the mouse wheel page
+through long rules; Copy Text copies the complete text without changing the
+structural rule clipboard. Enter opens the selected condition/action editor.
+The group view includes every condition and action rather than truncating
+operands to fit the three summary columns.
+
+Formatter tests cover long operands, selected actions and stale selections.
+A real editor workflow opens a twelve-action scenario, checks the system
+clipboard against the complete text, verifies paging and returning to the
+original rendered text, and confirms the document remains unmodified. Its
+screenshot was visually checked for layout and clipping. All thirteen editor
+tests pass in Release and under AddressSanitizer/LeakSanitizer.
+
 ## Remaining work
 
 1. Finish overwrite/resize interaction coverage and inspect corrupt/truncated

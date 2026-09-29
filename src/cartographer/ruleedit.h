@@ -12,5 +12,6 @@ struct RuleClipboard {
     // are rejected, rather than silently turning an action into a condition.
     bool paste(std::vector<tak::crt::RuleGroup>& target,int& group,int& row,RuleColumn selected) const;
 };
+std::string ruleDetails(const tak::crt::RuleGroup& group,RuleColumn selected,int row);
 bool moveRule(std::vector<tak::crt::RuleGroup>& groups,int& group,int& row,RuleColumn selected,int direction);
 }

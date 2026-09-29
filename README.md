@@ -189,6 +189,8 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   **View** can hide features, units, starts and regions; layer choices are remembered.
   Terrain thumbnails load in the background, and the minimap refreshes after terrain edits.
   The embedded editor font supports mixed case, accented Latin, Greek and Cyrillic.
+  **T** opens scenario scripting; its full-text area wraps long operands, supports
+  **Page Up/Page Down** scrolling, and offers **Copy Text** for the selected rule.
   **Scenario → Check Map** reports
   terrain, start, mana and scenario issues in a clickable results list.
   **Scenario → Regenerate from Recipe** restores a generated map's settings;

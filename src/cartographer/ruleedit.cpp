@@ -1,4 +1,5 @@
 #include "cartographer/ruleedit.h"
+#include "cartographer/triggers.h"
 #include <algorithm>
 namespace cart {
 bool RuleClipboard::copy(const std::vector<tak::crt::RuleGroup>& source,int group,int row,RuleColumn selected,bool wholePlayer) {
@@ -19,6 +20,21 @@ bool RuleClipboard::paste(std::vector<tak::crt::RuleGroup>& target,int& group,in
     auto& list=selected==RuleColumn::Action?target[group].actions:target[group].conditions;
     const int at=row>=0 && row<int(list.size())?row+1:int(list.size());
     list.insert(list.begin()+at,*rule);row=at;return true;
+}
+std::string ruleDetails(const tak::crt::RuleGroup& group,RuleColumn selected,int row) {
+    std::string text;
+    auto append=[&](bool action,int i) {
+        const auto& rules=action?group.actions:group.conditions;
+        if(i<0 || i>=int(rules.size()))return;
+        if(!text.empty())text+="\n";
+        text+=(action?"Action ":"Condition ")+std::to_string(i+1)+": "+formatRule(action,rules[i]);
+    };
+    if(selected==RuleColumn::Group) {
+        for(int i=0;i<int(group.conditions.size());++i)append(false,i);
+        for(int i=0;i<int(group.actions.size());++i)append(true,i);
+        if(text.empty())text="This rule has no conditions or actions.";
+    } else append(selected==RuleColumn::Action,row);
+    return text;
 }
 bool moveRule(std::vector<tak::crt::RuleGroup>& groups,int& group,int& row,RuleColumn selected,int direction) {
     if(direction!=-1 && direction!=1)return false;

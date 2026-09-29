@@ -32,6 +32,12 @@ int main() {
         std::vector<tak::crt::RuleGroup> rules(2);
         rules[0].conditions.push_back({0,{}});rules[0].actions.push_back({18,{"100"}});rules[0].actions.push_back({14,{}});
         rules[1].conditions.push_back({1,{"60"}});rules[1].actions.push_back({5,{}});
+        tak::crt::RuleGroup detailed;detailed.conditions.push_back({1,{"12345"}});
+        detailed.actions.push_back({25,{"Player 3",std::string(63,'x'),"progress",std::string(63,'y')}});
+        const auto detail=cart::ruleDetails(detailed,cart::RuleColumn::Group,-1);
+        check(detail.find("Condition 1: Gametime greater than 12345")!=std::string::npos && detail.find(std::string(63,'x'))!=std::string::npos && detail.find(std::string(63,'y'))!=std::string::npos,"full rule details preserve every long operand");
+        check(cart::ruleDetails(detailed,cart::RuleColumn::Action,0).find("Condition")==std::string::npos,"selected-action detail does not include other columns");
+        check(cart::ruleDetails(detailed,cart::RuleColumn::Action,5).empty(),"stale rule detail selection is safe");
         cart::RuleClipboard clipboard;int group=0,row=0;
         check(clipboard.copy(rules,group,row,cart::RuleColumn::Action),"copy action");
         check(!clipboard.paste(rules,group,row,cart::RuleColumn::Condition),"cannot paste action as condition");
