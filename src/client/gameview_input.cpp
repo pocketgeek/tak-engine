@@ -89,6 +89,7 @@
             }
             return;
         }
+        if (inputUnitInfo(e, winW, winH)) return;
         // In-game chat capture. While composing, keyboard goes to the draft;
         // mouse events still fall through so the camera stays usable.
         if (chatTyping_) {
@@ -113,16 +114,6 @@
         }
         // Enter opens the chat composer (net games only -- there's no one to
         // talk to offline or in a recording).
-        // The Unit Info dialog swallows clicks inside its plate (so OK -- and a stray
-        // click on the dialog -- doesn't also order the selection across the map).
-        if (unitInfoType_ && e.type == SDL_MOUSEBUTTONDOWN) {
-            float mx = float(e.button.x), my = float(e.button.y);
-            const SDL_FRect& ok = unitInfoOkRect_;
-            if (mx >= ok.x && mx <= ok.x + ok.w && my >= ok.y && my <= ok.y + ok.h) {
-                unitInfoType_ = nullptr;
-                return;
-            }
-        }
         if (mp_ && e.type == SDL_KEYDOWN &&
             (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)) {
             chatTyping_ = true; chatDraft_.clear(); SDL_StartTextInput();

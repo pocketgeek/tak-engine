@@ -2869,9 +2869,11 @@ private:
     const tak::sim::UnitType* unitInfoSubject() const;
     void toggleUnitInfo();
     void drawUnitInfo(int winW, int winH);
+    bool inputUnitInfo(const SDL_Event& e, int winW, int winH);
     const tak::sim::UnitType* unitInfoType_ = nullptr;   // null = dialog closed
     SDL_Texture* unitInfoBg_ = nullptr;
-    SDL_Texture* unitInfoOk_ = nullptr;
+    SDL_Texture* unitInfoOk_[2] = {};
+    Font unitInfoLabelFont_, unitInfoValueFont_;
     SDL_Texture* unitInfoIcon_ = nullptr;
     std::string unitInfoIconFor_;      // which type unitInfoIcon_ was baked for
     SDL_FRect unitInfoOkRect_{0, 0, 0, 0};

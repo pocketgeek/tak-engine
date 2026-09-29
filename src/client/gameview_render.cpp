@@ -2238,7 +2238,10 @@
         modelIcons_.clear();
         for (auto& [n, t] : weaponIcons_) if (t) gpuvram::destroy(t);
         weaponIcons_.clear();
-        kill(unitInfoBg_); kill(unitInfoOk_); kill(unitInfoIcon_);
+        kill(unitInfoBg_);
+        for (auto& tex : unitInfoOk_) kill(tex);
+        unitInfoLabelFont_.destroyGlyphs(); unitInfoValueFont_.destroyGlyphs();
+        kill(unitInfoIcon_);
         unitInfoIconFor_.clear();
         for (auto& [n, s] : shadowTex_) if (s.tex) gpuvram::destroy(s.tex);
         shadowTex_.clear();

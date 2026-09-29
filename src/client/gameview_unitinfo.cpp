@@ -89,6 +89,26 @@ void GameView::toggleUnitInfo() {
     unitInfoType_ = unitInfoSubject();   // stays closed if nothing is selected/hovered
 }
 
+bool GameView::inputUnitInfo(const SDL_Event& e, int winW, int winH) {
+    if (!unitInfoType_) return false;
+    if (e.type == SDL_MOUSEMOTION) {
+        mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
+    }
+    bool close = false;
+    if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        const auto& g = geom(vfs_);
+        close = tak::GuiLayout(winW, winH).hit(g.ok.x, g.ok.y, g.ok.w, g.ok.h,
+                                             float(e.button.x), float(e.button.y));
+    } else if (e.type == SDL_KEYDOWN) {
+        close = e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER ||
+                e.key.keysym.sym == SDLK_ESCAPE ||
+                hotkeys_.match(e.key.keysym.sym, e.key.keysym.mod) == tak::Act::UnitInfo;
+    }
+    if (close) { sounds_.play("ok.wav"); unitInfoType_ = nullptr; }
+    // A modal dialog owns input while the simulation continues behind it.
+    return true;
+}
+
 void GameView::drawUnitInfo(int winW, int winH) {
     if (!unitInfoType_) return;
     const tak::sim::UnitType* t = unitInfoType_;
@@ -107,15 +127,31 @@ void GameView::drawUnitInfo(int winW, int winH) {
         SDL_RenderDrawRectF(ren_, &dlg);
     }
 
-    const SDL_Color gold{236, 214, 160, 255};
-    auto text = [&](const std::string& s, const Rect& r, bool rightAlign) {
-        if (s.empty() || !statFont_.ok()) return;
-        float sc = lay.scale * (r.h / 20.0f);
+    if (!unitInfoLabelFont_.ok()) {
+        try { unitInfoLabelFont_ = Font(ren_, vfs_, "fonts/lombardic (cd).gaf"); }
+        catch (...) {}
+        unitInfoLabelFont_.setLetterSpacing(0);
+    }
+    if (!unitInfoValueFont_.ok()) {
+        try { unitInfoValueFont_ = Font(ren_, vfs_, "fonts/b_times new roman (100).gaf"); }
+        catch (...) {}
+        unitInfoValueFont_.setLetterSpacing(0);
+    }
+    const SDL_Color gold{255, 255, 255, 255};
+    auto text = [&](const std::string& s, const Rect& r, bool rightAlign, bool label = false) {
+        const Font& font = label ? unitInfoLabelFont_ : unitInfoValueFont_;
+        if (s.empty() || !font.ok()) return;
+        float sc = lay.scale;
         float top = 0, th = 0;
-        statFont_.vbounds(s, sc, top, th);
-        float tw = float(statFont_.width(s, sc));
+        font.vbounds(s, sc, top, th);
+        // Keep the native glyph proportions; only shrink text that cannot fit.
+        sc *= std::min({1.0f, r.w * lay.scale / std::max(1.0f, float(font.width(s, sc))),
+                       r.h * lay.scale / std::max(1.0f, th)});
+        font.vbounds(s, sc, top, th);
+        float tw = float(font.width(s, sc));
         float x = lay.px(r.x) + (rightAlign ? (r.w * lay.scale - tw) : 0);
-        statFont_.draw(ren_, s, x, lay.py(r.y) + (r.h * lay.scale - th) / 2 - top, sc, gold);
+        font.draw(ren_, s, x, lay.py(r.y) + (r.h * lay.scale - th) / 2 - top, sc,
+                  label ? gold : SDL_Color{48, 30, 12, 255});
     };
 
     // The portrait comes from anims/buildbuttons.gaf, whose sequences are named by the
@@ -133,13 +169,10 @@ void GameView::drawUnitInfo(int winW, int winH) {
         SDL_RenderCopyF(ren_, unitInfoIcon_, nullptr, &r);
     }
 
-    // Retail prints only the three mobility stats -- no name, no HP, no cost. The unit
-    // name isn't on the plate either, but without it the dialog is unreadable when it's
-    // opened from a build icon, so it goes where retail put the "Unit Info" title.
-    text(t->name.empty() ? t->id : t->name, g.title, false);
-    text("Max Velocity", g.lblVel, true);
-    text("Acceleration", g.lblAcc, true);
-    text("Turn Rate", g.lblTurn, true);
+    text("Unit Info", g.title, false, true);
+    text("Max Velocity", g.lblVel, true, true);
+    text("Acceleration", g.lblAcc, true, true);
+    text("Turn Rate", g.lblTurn, true, true);
 
     // The retail formulas, quirks included: a world unit is 0.4 "metres", velocity and
     // acceleration are 16.16 fixed point scaled by the tick rate (acceleration by the
@@ -163,9 +196,12 @@ void GameView::drawUnitInfo(int winW, int winH) {
     // The OK button: retail art if it's there, a plain plate otherwise.
     SDL_FRect ok = lay.rect(g.ok.x, g.ok.y, g.ok.w, g.ok.h);
     unitInfoOkRect_ = ok;
-    if (!unitInfoOk_) unitInfoOk_ = tak::gafTexture(ren_, vfs_, g.bgGaf, "OkButtons", 0);
-    if (unitInfoOk_) {
-        SDL_RenderCopyF(ren_, unitInfoOk_, nullptr, &ok);
+    for (int i = 0; i < 2; ++i)
+        if (!unitInfoOk_[i]) unitInfoOk_[i] = tak::gafTexture(ren_, vfs_, g.bgGaf, "OkButtons", i);
+    bool hover = lay.hit(g.ok.x, g.ok.y, g.ok.w, g.ok.h, mouseX_, mouseY_);
+    SDL_Texture* button = unitInfoOk_[hover && unitInfoOk_[1] ? 1 : 0];
+    if (button) {
+        SDL_RenderCopyF(ren_, button, nullptr, &ok);
     } else {
         SDL_SetRenderDrawColor(ren_, 52, 48, 32, 235);
         SDL_RenderFillRectF(ren_, &ok);
