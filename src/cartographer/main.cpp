@@ -16,6 +16,7 @@
 #include "cartographer/history.h"
 #include "cartographer/textedit.h"
 #include "cartographer/selection.h"
+#include "cartographer/validation.h"
 #include <fstream>
 #include <charconv>
 #include "cartographer/features.h"
@@ -858,26 +859,21 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     bool useOnlyOpen = false;
     int useOnlyScroll = 0;
     SDL_Rect uoList{}, uoDone{}, uoClear{};   // render-computed hit rects
-    // Check Map: retail warns only about placed units whose type is restricted.
+    std::vector<cart::MapIssue> mapIssues;
+    size_t issueIndex=0;
+    auto showMapIssue=[&]() {
+        if(mapIssues.empty()) {openMessage("CHECK MAP","No issues found by terrain, start, unit and scenario checks. Reachability and naval production checks are not yet included.");return;}
+        const auto& issue=mapIssues[issueIndex];
+        if(issue.x>=0 && issue.z>=0) {
+            int w,h;SDL_GetRendererOutputSize(ren,&w,&h);
+            mapView.setOffset(issue.x-(w/kUIScale-kPaletteW)/(2*mapView.zoom()),issue.z-(h/kUIScale-kMenuH-kStatusH)/(2*mapView.zoom()));
+        }
+        openMessage("MAP ISSUE "+std::to_string(issueIndex+1)+" / "+std::to_string(mapIssues.size()),
+            std::string(issue.severity==cart::MapIssue::Severity::Error?"ERROR: ":"WARNING: ")+issue.message+". Scenario > Next issue moves to the next result. Recheck after edits.");
+    };
     auto checkMap = [&]() {
-        if (useOnly.empty()) {
-            openMessage("CHECK MAP", "No unit-type restriction is set (Use Only is "
-                        "empty), so every placed unit will appear in the game.");
-            return;
-        }
-        std::vector<std::string> bad;
-        std::set<std::string> seen;
-        for (const auto& u : units)
-            if (!useOnly.count(u.type) && seen.insert(u.type).second) bad.push_back(u.type);
-        if (bad.empty()) {
-            openMessage("CHECK MAP", "Map OK: every placed unit's type is in the "
-                        "Use Only list.");
-            return;
-        }
-        std::string list;
-        for (size_t i = 0; i < bad.size(); ++i) { if (i) list += ", "; list += bad[i]; }
-        openMessage("CHECK MAP", std::to_string(bad.size()) + " placed unit type(s) "
-                    "have been restricted and will not show up in the game: " + list);
+        try {mapIssues=cart::validateMap(mapView.map(),scenario,scen,units,useOnly,unitRegistry,vfs);issueIndex=0;showMapIssue();}
+        catch(const std::exception& error) {openMessage("CHECK FAILED",error.what());}
     };
 
     // --- Scenario Scripting (per-player trigger rules) overlay (phase 5) ------
@@ -959,7 +955,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)"},
         {"Fit map","100% terrain zoom","Toggle grid (G)"},
-        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)"},
+        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue"},
         {"Editor controls","About"}};
     auto menuAction = [&](int menu,int row) {
         if(menu==0) {
@@ -983,6 +979,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(row==2)useOnlyOpen=true;
             if(row==3)checkMap();
             if(row==4)openScripting();
+            if(row==5) {if(!mapIssues.empty())issueIndex=(issueIndex+1)%mapIssues.size();showMapIssue();}
         } else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
             "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move the selected units. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute.");
     };

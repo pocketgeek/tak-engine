@@ -61,6 +61,24 @@ property-preservation checks. Captured and inspected Ulasem Arena with the new
 browser and minimap. This checkpoint has not yet had Windows/macOS interactive
 verification or full browser mouse-interaction coverage.
 
+## Initial engine validation checkpoint
+
+Check Map now uses a private engine World with the real movement classes,
+feature obstacles and placement checks. It diagnoses unknown/restricted unit
+types, out-of-bounds units, invalid owners, duplicate unique names, unsuitable
+monarch starts, duplicate starts, invalid region bounds/names, unknown opcodes,
+unresolved region references and operands too long for CRT serialization.
+Scenario > Next issue centers the canvas on each located result. Authored unit
+placements rejected by normal construction rules are warnings, not save blockers.
+Inclusive and reversed region bounds and empty whole-map references follow the
+scenario runtime's actual semantics.
+
+This is not yet complete map analysis: unit-to-unit overlaps, reachable mana,
+naval output clearance, terrain overlays and asynchronous analysis remain.
+Validation currently uses the editor's standard balance registry. Results are a
+snapshot; rerun after edits. Three Release tests pass, including synthetic map
+validation against actual engine placement, and document/UI workflows.
+
 ## Remaining work
 
 1. Finish recovery/overwrite/resize interaction coverage and inspect concurrent

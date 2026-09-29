@@ -825,10 +825,15 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(cartographer_document_test PRIVATE tak-formats)
     add_test(NAME cartographer_document COMMAND cartographer_document_test)
 
+    add_executable(cartographer_validation_test tools/cartographer_validation_test.cpp
+      src/cartographer/validation.cpp src/cartographer/triggers.cpp)
+    target_link_libraries(cartographer_validation_test PRIVATE tak-formats)
+    add_test(NAME cartographer_validation COMMAND cartographer_validation_test)
+
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/sections.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED)
     get_target_property(_cartographer_sources cartographer SOURCES)
