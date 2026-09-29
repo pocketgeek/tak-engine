@@ -1,4 +1,6 @@
 #include "cartographer/newmap.h"
+#include <array>
+#include <map>
 
 #include "cartographer/sections.h"
 #include "hpi/hpi.h"
@@ -51,18 +53,20 @@ std::vector<uint8_t> blockColourGrid(const tak::tnt::Map& map,
                                      tak::terrain::Compositor& comp) {
     std::vector<uint8_t> grid(size_t(map.blocksX) * map.blocksY * 3, 0);
     std::vector<uint8_t> block(32 * 32 * 4);
+    std::map<uint64_t,std::array<uint8_t,3>> averages;
     for (int by = 0; by < map.blocksY; ++by)
         for (int bx = 0; bx < map.blocksX; ++bx) {
-            std::fill(block.begin(), block.end(), 0);
-            comp.renderBlock(map, bx, by, block, 32, 0, 0);
-            long r = 0, g = 0, b = 0;
-            for (int i = 0; i < 32 * 32; ++i) {
-                r += block[i * 4]; g += block[i * 4 + 1]; b += block[i * 4 + 2];
+            const size_t i=size_t(by)*map.blocksX+bx;
+            const uint64_t key=uint64_t(map.tileKeys[i]) | (uint64_t(map.tileCols[i])<<32) | (uint64_t(map.tileRows[i])<<40);
+            auto found=averages.find(key);
+            if(found==averages.end()) {
+                std::fill(block.begin(),block.end(),0);
+                comp.renderBlock(map,bx,by,block,32,0,0);
+                int r=0,g=0,b=0;
+                for(int pixel=0;pixel<1024;++pixel) {r+=block[pixel*4];g+=block[pixel*4+1];b+=block[pixel*4+2];}
+                found=averages.emplace(key,std::array<uint8_t,3>{uint8_t(r/1024),uint8_t(g/1024),uint8_t(b/1024)}).first;
             }
-            size_t gi = (size_t(by) * map.blocksX + bx) * 3;
-            grid[gi] = uint8_t(r / (32 * 32));
-            grid[gi + 1] = uint8_t(g / (32 * 32));
-            grid[gi + 2] = uint8_t(b / (32 * 32));
+            std::copy(found->second.begin(),found->second.end(),grid.begin()+i*3);
         }
     return grid;
 }

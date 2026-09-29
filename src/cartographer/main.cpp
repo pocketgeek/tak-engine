@@ -610,7 +610,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     };
 
     // --- Modal dialogs (New, Scenario Properties, Resize, Unit/Rule props, Msg) -
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED };
     static constexpr int kMaxFields = 9;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -750,6 +750,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // failure it pops a message and leaves the current map untouched; on success it
     // closes the dialog. Shared by the CREATE and RANDOM buttons.
     std::future<FreshMap> generatorJob;
+    std::optional<FreshMap> generatedPreview;
+    std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> generatedTexture(nullptr,SDL_DestroyTexture);
     std::string generatingName,generatingWorld;
     bool cancelGeneration=false,quitAfterGeneration=false;
     auto adoptFreshMap=[&](FreshMap fm,const std::string& nm,const std::string& wld) {
@@ -789,10 +791,12 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             params=tak::mapgen::sanitize(params);
             generatingName=nm;generatingWorld=wld;cancelGeneration=quitAfterGeneration=false;
             // The busy modal prevents VFS replacement until this read-only job ends.
-            generatorJob=std::async(std::launch::async,[&,params] {
+            generatorJob=std::async(std::launch::async,[&,params,wld] {
                 const auto recipe=tak::mapgen::encodeMapId(params);
                 auto result=tak::mapgen::generate(params,vfs);FreshMap map;
                 map.map=std::move(result.map);map.recipe=recipe;
+                tak::terrain::Compositor compositor(vfs);
+                cart::generateMinimaps(map.map,compositor,cart::loadWorldPalette(vfs,wld));
                 int number=1;for(auto [x,z]:result.starts)map.starts.push_back({number++,x,z});
                 return map;
             });
@@ -1131,7 +1135,16 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 auto result=generatorJob.get();
                 if(cancelGeneration)modal=M_NONE;
                 else if(!result.map.width)openMessage("GENERATION FAILED","The generator returned no terrain.");
-                else adoptFreshMap(std::move(result),generatingName,generatingWorld);
+                else {
+                    const auto palette=cart::loadWorldPalette(vfs,generatingWorld);
+                    std::vector<uint8_t> rgba(result.map.minimap.size()*4);
+                    for(size_t i=0;i<result.map.minimap.size();++i)std::copy(palette.rgba[result.map.minimap[i]],palette.rgba[result.map.minimap[i]]+4,rgba.begin()+i*4);
+                    generatedTexture.reset(SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,result.map.minimapW,result.map.minimapH));
+                    if(!generatedTexture)throw std::runtime_error(SDL_GetError());
+                    SDL_UpdateTexture(generatedTexture.get(),nullptr,rgba.data(),result.map.minimapW*4);
+                    SDL_SetTextureScaleMode(generatedTexture.get(),SDL_ScaleModeLinear);
+                    generatedPreview=std::move(result);modal=M_GENERATED;
+                }
             } catch(const std::exception& error) {openMessage("GENERATION FAILED",error.what());}
             if(quitAfterGeneration) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         }
@@ -1152,6 +1165,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             } else if (e.type == SDL_MOUSEMOTION) {
                 e.motion.x /= kUIScale; e.motion.y /= kUIScale;
                 e.motion.xrel /= kUIScale; e.motion.yrel /= kUIScale;
+            }
+            if(modal==M_GENERATED && generatedPreview) {
+                const bool accept=(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_RETURN) ||
+                    (e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,mOK));
+                const bool cancel=e.type==SDL_QUIT || (e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) ||
+                    (e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT && cart::pointIn(e.button.x,e.button.y,mCancel));
+                if(accept) {adoptFreshMap(std::move(*generatedPreview),generatingName,generatingWorld);generatedPreview.reset();generatedTexture.reset();}
+                if(cancel) {generatedPreview.reset();generatedTexture.reset();modal=M_NONE;}
+                if(e.type!=SDL_QUIT)continue;
             }
             if (e.type == SDL_QUIT) {
                 if (dirty) {
@@ -1688,7 +1710,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
             commitHistory();
-        const std::string title="Cartographer -- "+mapName+(dirty?" *":"");
+        const std::string title="Cartographer -- "+mapName+(modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
         if(interactive && !recoveryFolder.empty()) {
             if(recoveryJob.valid() && recoveryJob.wait_for(std::chrono::seconds(0))==std::future_status::ready)collectRecovery();
@@ -2067,7 +2089,22 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         }
 
         // Save-before-exit prompt: SAVE / DON'T SAVE / CANCEL.
-        if(modal==M_GENERATING) {
+        if(modal==M_GENERATED && generatedPreview) {
+            const auto ct=cart::drawPanel(ren,w,h,460,465,"GENERATED MAP PREVIEW");
+            const auto& map=generatedPreview->map;
+            const float scale=330.f/std::max(map.width,map.height);
+            SDL_FRect area{float(ct.x)+(ct.w-map.width*scale)/2, float(ct.y)+28,map.width*scale,map.height*scale};
+            SDL_RenderCopyF(ren,generatedTexture.get(),nullptr,&area);
+            for(const auto& start:generatedPreview->starts) {
+                const float x=area.x+start.xpos*scale,y=area.y+start.zpos*scale;
+                SDL_SetRenderDrawColor(ren,255,220,80,255);SDL_FRect dot{x-3,y-3,6,6};SDL_RenderFillRectF(ren,&dot);
+                cart::drawText(ren,std::to_string(start.number),int(x)+5,int(y)-3,1,255,240,120);
+            }
+            cart::drawText(ren,std::to_string(map.width/32)+" x "+std::to_string(map.height/32)+"  "+std::to_string(generatedPreview->starts.size())+" PLAYERS",ct.x,ct.y,1,230,235,245);
+            cart::drawText(ren,"Your current map changes only when accepted.",ct.x,ct.y+370,1,195,210,225);
+            mOK=cart::drawButton(ren,ct.x+ct.w-150,ct.y+ct.h-20,70,18,"ACCEPT",true);
+            mCancel=cart::drawButton(ren,ct.x+ct.w-74,ct.y+ct.h-20,70,18,"DISCARD",false);
+        } else if(modal==M_GENERATING) {
             const auto ct=cart::drawPanel(ren,w,h,400,105,"GENERATING MAP");
             const std::string dots((SDL_GetTicks64()/400)%4,'.');
             cart::drawText(ren,cancelGeneration?"Discarding result when generation finishes...":"Building terrain"+dots,ct.x,ct.y,1,225,230,240);

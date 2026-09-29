@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include "crt/crt.h"
+#include "tnt/mapgen.h"
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -18,7 +19,66 @@ static void text(const std::string& value) {
         SDL_Event e{};e.type=SDL_TEXTINPUT;const auto part=value.substr(i,20);SDL_strlcpy(e.text.text,part.c_str(),sizeof(e.text.text));SDL_PushEvent(&e);
     }
 }
+static int generationWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-generation-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);
+    SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    int stage=0;std::string failure;const auto begun=std::chrono::steady_clock::now();
+    const auto result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int) {
+        const std::string title=SDL_GetWindowTitle(window);
+        auto check=[&](bool ok,const char* why){if(!ok && failure.empty())failure=why;};
+        const auto elapsed=std::chrono::steady_clock::now()-begun;
+        if(elapsed>std::chrono::seconds(50)) {failure="generation workflow timed out";key(SDLK_ESCAPE);SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);return;}
+        auto randomButton=[&] {
+            float sx,sy;SDL_RenderGetScale(renderer,&sx,&sy);int w,h;SDL_GetRendererOutputSize(renderer,&w,&h);
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;
+            e.button.x=int((w/sx/2-36)*sx);e.button.y=int((h/sy/2+93)*sy);SDL_PushEvent(&e);
+            e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        switch(stage) {
+        case 0: key(SDLK_n,KMOD_CTRL);++stage;break;
+        case 1: text("Generated preview");randomButton();++stage;break;
+        case 2: text("123456");key(SDLK_RETURN);++stage;break;
+        case 3:
+            check(title.find("Ulasem Arena")!=std::string::npos && !title.ends_with(" *"),"generation changed original before acceptance");
+            if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_ESCAPE);++stage;}break;
+        case 4: check(title=="Cartographer -- Ulasem Arena","discard preserves original document");key(SDLK_n,KMOD_CTRL);++stage;break;
+        case 5: text("Generated preview");randomButton();++stage;break;
+        case 6: text("123456");key(SDLK_RETURN);key(SDLK_ESCAPE);++stage;break;
+        case 7:
+            check(title.find("[Generated preview]")==std::string::npos,"cancelled generation must not present preview");
+            if(title.find("[Generating]")==std::string::npos) {
+                check(title=="Cartographer -- Ulasem Arena","cancelled generation preserves original");key(SDLK_n,KMOD_CTRL);++stage;
+            }break;
+        case 8: text("Generated preview");randomButton();++stage;break;
+        case 9: text("123456");key(SDLK_RETURN);++stage;break;
+        case 10: if(title.find("[Generated preview]")!=std::string::npos) {key(SDLK_RETURN);++stage;}break;
+        case 11: check(title=="Cartographer -- Generated preview *","accept adopts unsaved generated map");key(SDLK_s,KMOD_CTRL);++stage;break;
+        case 12: check(!title.ends_with(" *"),"generated map saved");key(SDLK_RETURN);++stage;break;
+        case 13: {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);++stage;break;}
+        }
+        SDL_Delay(1);
+    });
+    try {
+        if(result || !failure.empty())throw std::runtime_error(failure.empty()?"editor failed":failure);
+        if(stage!=14)throw std::runtime_error("generation workflow exited early");
+        tak::hpi::Archive archive(root/"Generated preview.kmp");bool found=false;
+        for(const auto& entry:archive.entries())if(entry.path.ends_with(".ota")) {
+            const auto bytes=archive.read(entry);const auto metadata=tak::tnt::Scenario::parse(std::string(bytes.begin(),bytes.end()));
+            if(metadata.starts.size()!=2 || !metadata.missionDescription.starts_with("Generator recipe: "))throw std::runtime_error("generated metadata missing");
+            const auto params=tak::mapgen::decodeMapId(metadata.missionDescription.substr(18));
+            if(params.seed!=123456 || params.players!=2)throw std::runtime_error("generated recipe differs from chosen options");
+            found=true;
+        }
+        if(!found)throw std::runtime_error("generated metadata absent");
+        fs::remove_all(root);std::cout<<"PASS: background generation, preview/discard, accept and saved recipe\n";return 0;
+    } catch(const std::exception& e) {std::cerr<<e.what()<<"; files: "<<root<<'\n';return 1;}
+}
 int main(int argc,char** argv) {
+    if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);
     if(argc!=2)return 2;
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

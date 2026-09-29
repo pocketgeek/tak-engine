@@ -116,9 +116,27 @@ before replacing the document.
 
 All three Release editor tests pass. Parameter roundtrips and reproduced engine
 terrain/start output use synthetic base assets (the generator intentionally
-ignores map-resource overrides). Busy-modal cancellation, successful generation
-through SDL input, and preview/accept interaction still need dedicated coverage;
-a preview before adoption is not implemented yet.
+ignores map-resource overrides). The follow-up below adds preview and interaction coverage.
+
+## Generator preview and minimap checkpoint
+
+Generated results remain separate from the document until accepted. The preview
+shows the actual terrain overview and numbered starts, with Accept/Discard.
+Escape during background generation discards the finished result without
+replacing the original. A visible window-title status distinguishes generation
+and preview. The SDL workflow test verifies busy cancellation, preview discard,
+acceptance, dirty/saved state and the persisted seed/player recipe.
+
+Minimap composition now averages each distinct terrain block once per pass and
+reuses that color for repeated blocks. This preserves the original integer
+averaging and palette mapping. A 63x63 Zhon flat-map export was byte-identical to
+the pre-change optimized-debug binary's output (TNT SHA-256
+`630a89fb7bc1dba7a4fe0b0d6244c2b6e014f2943acf4868d2b05a2bcd3981b9`).
+A single local end-to-end sample was 0.32s current Release versus 0.53s older
+optimized Debug; different build configurations and one sample mean this is not
+a controlled general performance claim. Varied-terrain profiling remains.
+
+All four Cartographer tests pass in Release and AddressSanitizer/LeakSanitizer.
 
 ## Remaining work
 
