@@ -683,6 +683,10 @@ Historical mode should follow recovered original rules where known.
 
 # Milestone 7 — Territory rules
 
+Completed 2026-09-30. See [policy separation, evidence boundaries and validation](research/darien-crusades/campaign-territory-rules.md).
+Historical capture arithmetic remains unknown; automatic historical ownership
+changes remain blocked. Fixture transitions are explicitly nonhistorical.
+
 ## Objective
 
 Implement the historical territory-update rules only after sufficient evidence

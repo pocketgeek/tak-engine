@@ -61,7 +61,9 @@ Victory/resignation also require the campaign revision and both allegiance
 revisions to remain unchanged since issuance. Switching away and back still
 invalidates eligibility. A stale battle may record a no-credit abort, preserving
 the audit without inventing campaign changes. All outcomes leave campaign state
-and its revision untouched in M6; territory application belongs to M7.
+and its revision untouched under the default historical policy.
+[Milestone 7](campaign-territory-rules.md) adds audited policy decisions and
+separate, explicitly enabled synthetic fixture state updates.
 
 ## Replay and transaction behavior
 
@@ -77,7 +79,7 @@ replay, but cannot contain only one member of the replay identity/digest pair.
 Campaign replays are saved under `crusades-replays` beside the campaign database,
 or in the server's configured `--replaydir` directory.
 
-Schema version 4 adds an immutable `verified_match_results` table. The result,
+M6 introduced schema version 4 with an immutable `verified_match_results` table. The result,
 its metadata and terminal lifecycle event commit in one SQLite transaction.
 Replay identities are unique across recorded results. A second report, including
 one with a different final hash, cannot replace the first. The legacy untyped
@@ -95,9 +97,11 @@ leaves an old Started battle auditable but not reattached automatically; M6 does
 not add crash recovery of a running referee. Old M5 terminal records migrate
 without fabricated verified results.
 
-Versions 1, 2 and 3 migrate transactionally to version 4, preserving definitions,
+M6 migrated versions 1, 2 and 3 transactionally to version 4, preserving definitions,
 state/history, opaque legacy results, existing allegiances and issued battles.
-Failed migration leaves the previous schema and data intact.
+Failed migration leaves the previous schema and data intact. M7 subsequently
+adds policy/decision tables in current schema version 5; versions 1–4 upgrade
+atomically and old results are not retroactively scored.
 
 ## Validation
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "server/crusades/campaign.h"
+#include "server/crusades/rules.h"
 #include <memory>
 #include <stdexcept>
 
@@ -25,6 +26,7 @@ struct StoredCampaign {
     CampaignDefinition definition;
     CampaignState state;
     int64_t revision;
+    RulesPolicy rules;
 };
 
 struct CampaignEvent {
@@ -62,6 +64,7 @@ struct IssuedBattle {
     int64_t createdUnix, expiresUnix, changedUnix;
     BattleStatus status;
     std::string launchToken;
+    std::string policyId;
     std::optional<std::string> roomToken;
 };
 
@@ -86,11 +89,18 @@ struct VerifiedMatchResult {
     std::vector<ParticipantMatchResult> participantResults;
 };
 
+struct StoredRulesDecision {
+    RulesDecision decision;
+    int64_t beforeRevision, afterRevision;
+};
+
 struct StoreOptions {
     // Diagnostic/test hook after all mutation writes and before COMMIT,
     // including an existing database's schema migration (not fresh creation).
     // Throwing rolls back. Must not reenter this store.
     std::function<void()> beforeCommit;
+    // Explicit trusted test opt-in; the shipped server never enables this.
+    bool allowFixtureRules = false;
 };
 
 // Independent campaign database, never the account credential file. SQLite's
@@ -109,7 +119,7 @@ public:
     CampaignStore& operator=(const CampaignStore&) = delete;
 
     void create(const CampaignDefinition& definition, const CampaignState& initialState,
-                const std::string& reason);
+                const std::string& reason, const RulesPolicy& rules = {});
     StoredCampaign load(const std::string& campaignId) const;
     bool hasCampaign(const std::string& campaignId) const;
     int64_t commit(const std::string& campaignId, int64_t expectedRevision,
@@ -157,10 +167,13 @@ public:
     // result-upload API. Store checks structure/bindings, not replay execution.
     // Victory/resignation require fresh revisions and a durable replay identity
     // plus SHA256. All other outcomes are audited without winner/credit.
-    // Atomically stores the result and terminal status, never territory points.
+    // Atomically records the result, policy decision, optional supported rules
+    // state/history change, and terminal status. Historical rules never mutate.
+    // No retroactive decisions are manufactured for pre-M7 verified results.
     void recordVerifiedResult(const std::string& battleId, const std::string& roomToken,
         BattleContext context, VerifiedMatchResult result, int64_t now);
     std::optional<VerifiedMatchResult> verifiedResult(const std::string& battleId) const;
+    std::optional<StoredRulesDecision> rulesDecision(const std::string& battleId) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

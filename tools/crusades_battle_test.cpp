@@ -156,7 +156,7 @@ void migration(const fs::path& root){
             check(enrolled && enrolled->alliance==c::Alliance::Terror && enrolled->revision==1 && enrolled->joinedUnix==1 && enrolled->changedUnix==2,"v2 participant and revision preserved");
             check(migrated.allegianceHistory("synthetic","alice").size()==2,"v2 allegiance audit preserved");}
         else check(!migrated.allegiance("synthetic","alice"),"v1 migration invents no allegiance");
-        {Raw raw(path);check(raw.count("PRAGMA user_version")==4,"current schema version4 installed");}
+        {Raw raw(path);check(raw.count("PRAGMA user_version")==5,"current schema version5 installed");}
     }
 }
 } // namespace

@@ -16,6 +16,7 @@ No historical campaign service has been implemented.
 - [Milestone 4 authenticated campaign allegiance](campaign-allegiance.md)
 - [Milestone 5 authoritative battle issuance](campaign-battles.md)
 - [Milestone 6 authoritative match results](campaign-results.md)
+- [Milestone 7 territory rules and evidence boundaries](campaign-territory-rules.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)

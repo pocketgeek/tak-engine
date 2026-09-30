@@ -154,6 +154,13 @@ def run_case(binary, data, scenario):
                 assert db.execute('SELECT count(*) FROM verified_match_results').fetchone()[0] == 1
                 assert db.execute('SELECT revision FROM campaigns').fetchone()[0] == 0
                 assert db.execute('SELECT count(*) FROM campaign_events').fetchone()[0] == 1
+                assert db.execute('SELECT policy_id FROM campaign_rules').fetchone()[0] == 'historical-darien-v1'
+                assert db.execute('SELECT policy_id FROM issued_battle_rules WHERE battle_id=?',
+                                  (identity,)).fetchone()[0] == 'historical-darien-v1'
+                decision = db.execute('SELECT policy_id,before_revision,after_revision,disposition,evidence '
+                                      'FROM rule_decisions WHERE battle_id=?', (identity,)).fetchone()
+                assert decision == ('historical-darien-v1', 0, 0, 0 if outcome in (0, 1) else 2, 0), decision
+                assert db.execute('SELECT count(*) FROM rule_decisions').fetchone()[0] == 1
                 status = db.execute('SELECT e.status FROM issued_battles b JOIN battle_status_events e '
                                     'ON e.battle_id=b.id AND e.revision=b.revision WHERE b.id=?', (identity,)).fetchone()[0]
                 assert status == (3 if outcome in (0, 1) else 2)

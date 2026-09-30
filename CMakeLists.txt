@@ -953,14 +953,16 @@ endif()
 
 # --- Multiplayer server (headless; no SDL) ------------------------------------
 
-# Strategic campaign definitions and state deliberately have no tactical
-# simulation dependency. Persistence has a separate library; service integration
-# follows in later milestones.
-add_library(tak-crusades STATIC src/server/crusades/campaign.cpp)
+# Strategic campaign definitions, state and territory rules deliberately have
+# no tactical simulation dependency. Persistence has a separate library.
+add_library(tak-crusades STATIC src/server/crusades/campaign.cpp src/server/crusades/rules.cpp)
 target_include_directories(tak-crusades PUBLIC src)
 add_executable(crusades_campaign_test tools/crusades_campaign_test.cpp)
 target_link_libraries(crusades_campaign_test PRIVATE tak-crusades)
 add_test(NAME crusades_campaign COMMAND crusades_campaign_test)
+add_executable(crusades_rules_test tools/crusades_rules_test.cpp)
+target_link_libraries(crusades_rules_test PRIVATE tak-crusades)
+add_test(NAME crusades_rules COMMAND crusades_rules_test)
 
 include(cmake/SQLite.cmake)
 add_library(tak-crusades-store STATIC src/server/crusades/store.cpp)
@@ -978,6 +980,9 @@ add_test(NAME crusades_battle COMMAND crusades_battle_test)
 add_executable(crusades_result_test tools/crusades_result_test.cpp)
 target_link_libraries(crusades_result_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_result COMMAND crusades_result_test)
+add_executable(crusades_rules_store_test tools/crusades_rules_store_test.cpp)
+target_link_libraries(crusades_rules_store_test PRIVATE tak-crusades-store tak-sqlite)
+add_test(NAME crusades_rules_store COMMAND crusades_rules_store_test)
 add_library(tak-crusades-allegiance STATIC src/server/crusades/allegiance.cpp)
 target_link_libraries(tak-crusades-allegiance PUBLIC tak-crusades-store PRIVATE tak-formats)
 

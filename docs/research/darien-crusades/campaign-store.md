@@ -65,7 +65,9 @@ schema version 1 as introduced by Milestone 3. [Milestone 4](campaign-allegiance
 adds authenticated allegiance through an atomic version-1-to-2 migration;
 [Milestone 5](campaign-battles.md#api-schema-and-transactions) adds battle
 issuance in version 3. [Milestone 6](campaign-results.md) adds authoritative
-results in current schema version 4, migrating versions 1–3 atomically. The
+results in schema version 4. [Milestone 7](campaign-territory-rules.md) adds
+explicit policy bindings and rules decisions in current schema version 5,
+migrating versions 1–4 atomically. The
 three tables below describe the original persistence layer. An empty unclaimed
 database may be initialized; unrelated or
 unsupported-version databases are rejected. There is no migration from a

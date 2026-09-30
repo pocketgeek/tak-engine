@@ -10,7 +10,7 @@
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 4;
+constexpr int kSchemaVersion = 5;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -54,6 +54,20 @@ const std::vector<std::string>& resultSchemaStatements() {
         "CREATE TABLE verified_match_results(battle_id TEXT PRIMARY KEY REFERENCES issued_battles(id),replay_id TEXT UNIQUE,replay_digest TEXT,outcome INTEGER NOT NULL CHECK(outcome BETWEEN 0 AND 9),winner_account TEXT,payload BLOB NOT NULL,recorded_unix INTEGER NOT NULL CHECK(recorded_unix>=0))",
         "CREATE TRIGGER verified_results_no_update BEFORE UPDATE ON verified_match_results BEGIN SELECT RAISE(ABORT,'immutable verified result'); END",
         "CREATE TRIGGER verified_results_no_delete BEFORE DELETE ON verified_match_results BEGIN SELECT RAISE(ABORT,'immutable verified result'); END",
+    };
+    return statements;
+}
+const std::vector<std::string>& rulesSchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE TABLE campaign_rules(campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),policy_id TEXT NOT NULL)",
+        "CREATE TABLE issued_battle_rules(battle_id TEXT PRIMARY KEY REFERENCES issued_battles(id),policy_id TEXT NOT NULL)",
+        "CREATE TABLE rule_decisions(battle_id TEXT PRIMARY KEY REFERENCES verified_match_results(battle_id),policy_id TEXT NOT NULL,before_revision INTEGER NOT NULL CHECK(before_revision>=0),after_revision INTEGER NOT NULL CHECK(after_revision>=before_revision),disposition INTEGER NOT NULL CHECK(disposition BETWEEN 0 AND 4),evidence INTEGER NOT NULL CHECK(evidence BETWEEN 0 AND 3),reason TEXT NOT NULL,snapshot BLOB NOT NULL)",
+        "CREATE TRIGGER campaign_rules_no_update BEFORE UPDATE ON campaign_rules BEGIN SELECT RAISE(ABORT,'immutable campaign rules'); END",
+        "CREATE TRIGGER campaign_rules_no_delete BEFORE DELETE ON campaign_rules BEGIN SELECT RAISE(ABORT,'immutable campaign rules'); END",
+        "CREATE TRIGGER issued_battle_rules_no_update BEFORE UPDATE ON issued_battle_rules BEGIN SELECT RAISE(ABORT,'immutable battle rules'); END",
+        "CREATE TRIGGER issued_battle_rules_no_delete BEFORE DELETE ON issued_battle_rules BEGIN SELECT RAISE(ABORT,'immutable battle rules'); END",
+        "CREATE TRIGGER rule_decisions_no_update BEFORE UPDATE ON rule_decisions BEGIN SELECT RAISE(ABORT,'immutable rules decision'); END",
+        "CREATE TRIGGER rule_decisions_no_delete BEFORE DELETE ON rule_decisions BEGIN SELECT RAISE(ABORT,'immutable rules decision'); END",
     };
     return statements;
 }
@@ -117,6 +131,12 @@ int64_t scalar(sqlite3* db, const char* sql) {
     Statement query(db, sql);
     if (!query.row()) throw std::runtime_error("missing database metadata");
     return query.number(0);
+}
+RulesPolicy permittedPolicy(const std::string& id, const StoreOptions& options) {
+    auto policy = parsePolicyIdentifier(id);
+    if (policy.mode == RulesMode::Modern || (policy.mode == RulesMode::Fixture && !options.allowFixtureRules))
+        throw std::runtime_error("campaign rules policy is not enabled");
+    return policy;
 }
 void requireText(const std::string& text, const char* name) {
     if (text.empty() || text.size() > kMaxPayload || text.find('\0') != std::string::npos)
@@ -270,6 +290,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             if (version >= 2) expected.insert(expected.end(), allegianceSchemaStatements().begin(), allegianceSchemaStatements().end());
             if (version >= 3) expected.insert(expected.end(), battleSchemaStatements().begin(), battleSchemaStatements().end());
             if (version >= 4) expected.insert(expected.end(), resultSchemaStatements().begin(), resultSchemaStatements().end());
+            if (version >= 5) expected.insert(expected.end(), rulesSchemaStatements().begin(), rulesSchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
@@ -302,16 +323,26 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
         for (const auto& sql : allegianceSchemaStatements()) exec(db, sql.c_str());
     if (version < 3)
         for (const auto& sql : battleSchemaStatements()) exec(db, sql.c_str());
-    if (version < 4) {
+    if (version < 4)
         for (const auto& sql : resultSchemaStatements()) exec(db, sql.c_str());
-        exec(db, "PRAGMA user_version=4");
+    if (version < 5) {
+        for (const auto& sql : rulesSchemaStatements()) exec(db, sql.c_str());
+        // Existing campaigns and pending battles remain historical. Old verified
+        // results are NOT replayed through rules or given invented audit decisions.
+        exec(db,"INSERT INTO campaign_rules SELECT id,'historical-darien-v1' FROM campaigns");
+        exec(db,"INSERT INTO issued_battle_rules SELECT id,'historical-darien-v1' FROM issued_battles");
+        exec(db,"PRAGMA user_version=5");
         if (version != 0 && impl_->options.beforeCommit) impl_->options.beforeCommit();
     }
+    Statement policies(db, "SELECT policy_id FROM campaign_rules");
+    while (policies.row()) (void)permittedPolicy(policies.bytes(0), impl_->options);
     transaction.finish();
 }
 CampaignStore::~CampaignStore() = default;
 
-void CampaignStore::create(const CampaignDefinition& definition, const CampaignState& initialState, const std::string& reason) {
+void CampaignStore::create(const CampaignDefinition& definition, const CampaignState& initialState, const std::string& reason, const RulesPolicy& rules) {
+    const auto policyId = policyIdentifier(rules);
+    (void)permittedPolicy(policyId, impl_->options);
     requireText(reason, "campaign event reason");
     validateState(definition, initialState);
     const auto text = definitionText(definition);
@@ -320,19 +351,21 @@ void CampaignStore::create(const CampaignDefinition& definition, const CampaignS
     Transaction transaction(impl_->db);
     Statement insert(impl_->db, "INSERT INTO campaigns(id,definition,revision) VALUES(?,?,0)");
     insert.text(1, definition.id()); insert.text(2, text); insert.done();
+    Statement policy(impl_->db, "INSERT INTO campaign_rules VALUES(?,?)");
+    policy.text(1, definition.id()); policy.text(2, policyId); policy.done();
     impl_->event(definition.id(), 0, initialState, reason, {});
     impl_->finish(transaction);
 }
 
 StoredCampaign CampaignStore::load(const std::string& campaignId) const {
-    Statement query(impl_->db, "SELECT c.definition,c.revision,e.snapshot FROM campaigns c JOIN campaign_events e ON e.campaign_id=c.id AND e.revision=c.revision WHERE c.id=?");
+    Statement query(impl_->db, "SELECT c.definition,c.revision,e.snapshot,p.policy_id FROM campaigns c JOIN campaign_events e ON e.campaign_id=c.id AND e.revision=c.revision JOIN campaign_rules p ON p.campaign_id=c.id WHERE c.id=?");
     query.text(1, campaignId);
     if (!query.row()) throw std::runtime_error("unknown or incomplete campaign");
     auto definition = loadDefinitionText(query.bytes(0));
     const int64_t revision = query.number(1);
     auto state = decode(query.bytes(2), definition);
     if (definition.id() != campaignId || revision < 0) throw std::runtime_error("invalid stored campaign identity/revision");
-    return {std::move(definition), std::move(state), revision};
+    return {std::move(definition), std::move(state), revision, permittedPolicy(query.bytes(3), impl_->options)};
 }
 
 bool CampaignStore::hasCampaign(const std::string& campaignId) const {
@@ -514,7 +547,9 @@ void validateContext(const IssuedBattle& battle, BattleContext context) {
         throw std::runtime_error("battle context mismatch");
 }
 void validateBattleFresh(sqlite3* db, const CampaignStore& store, const IssuedBattle& battle) {
-    if (store.load(battle.campaignId).revision != battle.campaignRevision) throw StaleBattleError("stale battle campaign revision");
+    const auto campaign = store.load(battle.campaignId);
+    if (policyIdentifier(campaign.rules) != battle.policyId) throw std::runtime_error("battle policy mismatch");
+    if (campaign.revision != battle.campaignRevision) throw StaleBattleError("stale battle campaign revision");
     for (size_t i = 0; i < 2; ++i) {
         const auto current = readAllegiance(db, battle.campaignId, battle.context.participants[i]);
         if (!current || current->revision != battle.participantRevisions[i] || current->alliance != battle.participantAlliances[i])
@@ -548,6 +583,7 @@ IssuedBattle CampaignStore::issueBattle(const std::string& campaignId, int64_t e
     const auto& map = stateMap ? stateMap : definition->mapIdentifier;
     if (!map || *map != context.mapIdentifier) throw std::runtime_error("wrong battle map");
     IssuedBattle result{};
+    result.policyId = policyIdentifier(campaign.rules);
     result.id = "issued:" + randomToken(); result.launchToken = randomToken();
     result.campaignId = campaignId; result.campaignRevision = campaign.revision; result.territory = territory;
     result.context = std::move(context); result.createdUnix = result.changedUnix = now; result.expiresUnix = expires; result.status = BattleStatus::Issued;
@@ -560,12 +596,14 @@ IssuedBattle CampaignStore::issueBattle(const std::string& campaignId, int64_t e
     Statement insert(impl_->db, "INSERT INTO issued_battles(id,campaign_id,campaign_revision,territory,context,created_unix,expires_unix,launch_token,revision) VALUES(?,?,?,?,?,?,?,?,0)");
     insert.text(1, result.id); insert.text(2, campaignId); insert.integer(3, expectedRevision); insert.integer(4, territory);
     insert.blob(5, encodeBattle(result)); insert.integer(6, now); insert.integer(7, expires); insert.text(8, result.launchToken); insert.done();
+    Statement policy(impl_->db, "INSERT INTO issued_battle_rules VALUES(?,?)");
+    policy.text(1, result.id); policy.text(2, result.policyId); policy.done();
     Statement event(impl_->db, "INSERT INTO battle_status_events VALUES(?,0,0,?)"); event.text(1, result.id); event.integer(2, now); event.done();
     impl_->finish(transaction); return result;
 }
 
 IssuedBattle CampaignStore::battle(const std::string& id) const {
-    Statement query(impl_->db, "SELECT b.campaign_id,b.campaign_revision,b.territory,b.context,b.created_unix,b.expires_unix,b.launch_token,e.status,e.changed_unix,r.room_token FROM issued_battles b JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision LEFT JOIN battle_rooms r ON r.battle_id=b.id WHERE b.id=?");
+    Statement query(impl_->db, "SELECT b.campaign_id,b.campaign_revision,b.territory,b.context,b.created_unix,b.expires_unix,b.launch_token,e.status,e.changed_unix,r.room_token,p.policy_id FROM issued_battles b JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision LEFT JOIN battle_rooms r ON r.battle_id=b.id JOIN issued_battle_rules p ON p.battle_id=b.id WHERE b.id=?");
     query.text(1, id);
     if (!query.row()) throw std::runtime_error("unknown or incomplete issued battle");
     IssuedBattle result{}; result.id = id; result.campaignId = query.bytes(0); result.campaignRevision = query.number(1);
@@ -573,6 +611,7 @@ IssuedBattle CampaignStore::battle(const std::string& id) const {
     if (territory <= 0 || territory > std::numeric_limits<TerritoryId>::max() || status < 0 || status > 4) throw std::runtime_error("invalid issued battle");
     result.territory = static_cast<TerritoryId>(territory); decodeBattle(query.bytes(3), result);
     result.createdUnix = query.number(4); result.expiresUnix = query.number(5); result.launchToken = query.bytes(6);
+    result.policyId = query.bytes(10); (void)permittedPolicy(result.policyId, impl_->options);
     result.status = static_cast<BattleStatus>(status); result.changedUnix = query.number(8);
     if (sqlite3_column_type(query.value, 9) != SQLITE_NULL) result.roomToken = query.bytes(9);
     if (result.campaignRevision < 0 || result.createdUnix < 0 || result.expiresUnix <= result.createdUnix || result.changedUnix < result.createdUnix ||
@@ -715,12 +754,36 @@ void CampaignStore::recordVerifiedResult(const std::string& id, const std::strin
     validateContext(current, std::move(context));
     validateResult(result, current);
     if (eligibleOutcome(result.outcome)) validateBattleFresh(impl_->db, *this, current);
+    const auto campaign = load(current.campaignId);
+    if (policyIdentifier(campaign.rules) != current.policyId) throw std::runtime_error("battle policy mismatch");
+    RuleBattle input{current.territory, {}};
+    if (eligibleOutcome(result.outcome)) {
+        const auto winner = std::find(current.context.participants.begin(), current.context.participants.end(), result.winners.front());
+        const auto index = static_cast<size_t>(winner - current.context.participants.begin());
+        input.winningSide = current.participantAlliances.at(index) == Alliance::Honor ? TerritoryOwner::Honor : TerritoryOwner::Terror;
+    }
+    const auto decision = evaluateRules(campaign.definition, campaign.state, campaign.rules, input);
+    const bool changed = encode(decision.nextState) != encode(campaign.state);
+    if (decision.policyId != current.policyId || decision.changed != changed ||
+        (changed && (!eligibleOutcome(result.outcome) || campaign.rules.mode != RulesMode::Fixture)))
+        throw std::runtime_error("invalid rules decision");
+    if (changed && campaign.revision == std::numeric_limits<int64_t>::max()) throw std::runtime_error("campaign revision overflow");
+    const int64_t after = campaign.revision + (changed ? 1 : 0);
     Statement insert(impl_->db, "INSERT INTO verified_match_results(battle_id,replay_id,replay_digest,outcome,winner_account,payload,recorded_unix) VALUES(?,?,?,?,?,?,?)");
     insert.text(1, id);
     if (!result.replayId.empty()) { insert.text(2, result.replayId); insert.text(3, result.replayDigest); }
     insert.integer(4, static_cast<int>(result.outcome));
     if (!result.winners.empty()) insert.text(5, result.winners.front());
     insert.blob(6, encodeResult(result)); insert.integer(7, now); insert.done();
+    Statement audit(impl_->db, "INSERT INTO rule_decisions VALUES(?,?,?,?,?,?,?,?)");
+    audit.text(1,id); audit.text(2,decision.policyId); audit.integer(3,campaign.revision); audit.integer(4,after);
+    audit.integer(5,static_cast<int>(decision.disposition)); audit.integer(6,static_cast<int>(decision.evidence));
+    audit.text(7,decision.reason); audit.blob(8,encode(decision.nextState)); audit.done();
+    if (changed) {
+        impl_->event(current.campaignId, after, decision.nextState, "RulesApplied: " + decision.policyId, BattleResult{id,{}});
+        Statement update(impl_->db,"UPDATE campaigns SET revision=? WHERE id=?");
+        update.integer(1,after); update.text(2,current.campaignId); update.done();
+    }
     transitionBattle(impl_->db, id, eligibleOutcome(result.outcome) ? BattleStatus::Completed : BattleStatus::Cancelled, now);
     impl_->finish(transaction);
 }
@@ -738,6 +801,48 @@ std::optional<VerifiedMatchResult> CampaignStore::verifiedResult(const std::stri
             query.number(3) != static_cast<int>(result->outcome) || query.bytes(4) != (result->winners.empty() ? "" : result->winners.front()) ||
             query.number(5) != current.changedUnix)
             throw std::runtime_error("verified result metadata/lifecycle mismatch");
+    }
+    transaction.finish(); return result;
+}
+
+std::optional<StoredRulesDecision> CampaignStore::rulesDecision(const std::string& id) const {
+    Transaction transaction(impl_->db, false);
+    const auto current = battle(id);
+    const auto campaign = load(current.campaignId);
+    Statement query(impl_->db,"SELECT policy_id,before_revision,after_revision,disposition,evidence,reason,snapshot FROM rule_decisions WHERE battle_id=?");
+    query.text(1,id);
+    std::optional<StoredRulesDecision> result;
+    if (query.row()) {
+        const auto before=query.number(1), after=query.number(2), disposition=query.number(3), evidence=query.number(4);
+        if (query.bytes(0)!=current.policyId || before<0 || after<before || after-before>1 || disposition<0 || disposition>4 || evidence<0 || evidence>3)
+            throw std::runtime_error("invalid stored rules decision");
+        result=StoredRulesDecision{RulesDecision{query.bytes(0),static_cast<RulesEvidence>(evidence),static_cast<RulesDisposition>(disposition),query.bytes(5),decode(query.bytes(6),campaign.definition),after!=before},before,after};
+        if (current.policyId != policyIdentifier(campaign.rules) || after > campaign.revision)
+            throw std::runtime_error("rules decision campaign binding mismatch");
+        Statement states(impl_->db,"SELECT snapshot,battle_id FROM campaign_events WHERE campaign_id=? AND revision=?");
+        states.text(1,current.campaignId); states.integer(2,after);
+        if (!states.row() || states.bytes(0)!=query.bytes(6) || (after!=before && states.bytes(1)!=id))
+            throw std::runtime_error("rules decision state history mismatch");
+        Statement prior(impl_->db,"SELECT snapshot FROM campaign_events WHERE campaign_id=? AND revision=?");
+        prior.text(1,current.campaignId); prior.integer(2,before);
+        if (!prior.row()) throw std::runtime_error("rules decision missing prior state");
+        Statement verified(impl_->db,"SELECT payload FROM verified_match_results WHERE battle_id=?"); verified.text(1,id);
+        if (!verified.row()) throw std::runtime_error("rules decision missing verified result");
+        const auto match=decodeResult(verified.bytes(0),current);
+        if (current.status != (eligibleOutcome(match.outcome) ? BattleStatus::Completed : BattleStatus::Cancelled))
+            throw std::runtime_error("rules decision lifecycle mismatch");
+        if (eligibleOutcome(match.outcome) && before!=current.campaignRevision)
+            throw std::runtime_error("rules decision issued revision mismatch");
+        requireText(result->decision.reason,"rules decision reason");
+        RuleBattle input{current.territory,{}};
+        if (eligibleOutcome(match.outcome)) {
+            const auto winner=std::find(current.context.participants.begin(),current.context.participants.end(),match.winners.front());
+            input.winningSide=current.participantAlliances.at(static_cast<size_t>(winner-current.context.participants.begin()))==Alliance::Honor ? TerritoryOwner::Honor : TerritoryOwner::Terror;
+        }
+        const auto expected=evaluateRules(campaign.definition,decode(prior.bytes(0),campaign.definition),campaign.rules,input);
+        if (expected.changed!=(after!=before) || expected.disposition!=result->decision.disposition ||
+            expected.evidence!=result->decision.evidence || encode(expected.nextState)!=query.bytes(6))
+            throw std::runtime_error("stored rules decision does not match policy");
     }
     transaction.finish(); return result;
 }
