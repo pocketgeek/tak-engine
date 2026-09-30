@@ -950,12 +950,21 @@ endif()
 # --- Multiplayer server (headless; no SDL) ------------------------------------
 
 # Strategic campaign definitions and state deliberately have no tactical
-# simulation dependency. Persistence and service integration follow separately.
+# simulation dependency. Persistence has a separate library; service integration
+# follows in later milestones.
 add_library(tak-crusades STATIC src/server/crusades/campaign.cpp)
 target_include_directories(tak-crusades PUBLIC src)
 add_executable(crusades_campaign_test tools/crusades_campaign_test.cpp)
 target_link_libraries(crusades_campaign_test PRIVATE tak-crusades)
 add_test(NAME crusades_campaign COMMAND crusades_campaign_test)
+
+include(cmake/SQLite.cmake)
+add_library(tak-crusades-store STATIC src/server/crusades/store.cpp)
+target_link_libraries(tak-crusades-store PUBLIC tak-crusades PRIVATE tak-sqlite)
+add_executable(crusades_store_test tools/crusades_store_test.cpp)
+target_link_libraries(crusades_store_test PRIVATE tak-crusades-store tak-sqlite)
+add_test(NAME crusades_store COMMAND crusades_store_test)
+set_tests_properties(crusades_store PROPERTIES TIMEOUT 90)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.

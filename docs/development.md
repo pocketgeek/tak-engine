@@ -7,7 +7,7 @@ It is separate from the multiplayer protocol version in `src/net/protocol.h`.
 
 ## Building
 
-Use CMake ≥ 3.24, a C++20 compiler (GCC/Clang or MinGW-w64), Ninja, Git,
+Use CMake ≥ 3.24, C and C++20 compilers (GCC/Clang or MinGW-w64), Ninja, Git,
 Make, and pkg-config. x86 FFmpeg builds also need NASM for SIMD support.
 Linux streaming dependencies need Python 3, patch, and Perl standard modules (`perl-core` on Fedora). Linux and macOS builds require the vendored static
 zlib, libjpeg-turbo, SDL2, and Bink/streaming FFmpeg libraries. Installing a system
@@ -33,6 +33,15 @@ under `third_party/`. Their `PREFIX` environment variable sets the destination;
 pass matching `-DTAK_FFMPEG_PREFIX=...` and `-DTAK_STATIC_DEPS_PREFIX=...`
 CMake options when using custom locations. Missing required libraries fail
 configuration rather than silently switching to shared libraries.
+
+The Crusades persistence library builds SQLite 3.53.4 statically from its
+[official amalgamation](https://www.sqlite.org/download.html). CMake downloads
+the pinned, SHA-256-verified archive on first configure; subsequent builds reuse
+the extracted source under the build directory. For offline configuration,
+set `-DFETCHCONTENT_SOURCE_DIR_TAK_SQLITE=/path/to/sqlite-amalgamation-3530400`
+to an extracted copy containing `sqlite3.c` and `sqlite3.h`. It adds no runtime
+SQLite DLL/shared-library dependency. Campaign storage is not yet connected to
+a playable Crusades game mode.
 
 For developer launch modes, diagnostics, and headless harnesses, use a Debug
 build. An optimized Debug build keeps those features while improving performance:

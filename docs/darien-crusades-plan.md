@@ -449,6 +449,11 @@ This leaves room for:
 
 # Milestone 3 — Persistent campaign store
 
+Completed 2026-09-30. Implementation and acceptance evidence:
+[campaign store](research/darien-crusades/campaign-store.md).
+This storage library is separate from player authentication and live game-room
+integration in subsequent milestones.
+
 ## Objective
 
 Persist campaign state safely and transactionally.
