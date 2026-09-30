@@ -48,3 +48,21 @@ It checks actual build menus and scripts and uses no rally point.
 
 Protocol **202** covers both simulation changes. Released 0.7.15 uses protocol
 201; update the client and server together when testing this checkout.
+
+## Validation
+
+Release 125/125, optimized Debug 130/130 and Clang ASAN/LSAN 126/126 pass
+(381 total). The initial new production fixture incorrectly paired some Zhon
+builders and units; the corrected fixture checks the actual build menus and was
+rerun in all three builds. All other full-suite checks had already passed.
+Sanitizer tests use dummy SDL video/audio and explicit SDL DBus shutdown, with
+no leak suppressions.
+
+All 40 production-exit hashes agree across the three builds when given the same
+retail data directory. The configured CTest suites use different data roots;
+comparing their raw hashes initially found four standard-balance Keep differences,
+which disappear with identical input data.
+
+The local host/referee/late-observer scenario passed 330 matching ticks with
+hash `6d9f4eb1ff38520c`. GCC/Clang O0/O2/O3 deterministic-math checks agree on
+`dcef618cd2e4d558`; ARM cross-build legs lacked target headers and were skipped.
