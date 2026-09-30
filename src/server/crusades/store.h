@@ -68,6 +68,13 @@ struct IssuedBattle {
     std::optional<std::string> roomToken;
 };
 
+struct StoredPlayerStatus {
+    int64_t campaignRevision;
+    std::optional<Allegiance> allegiance;
+    std::vector<IssuedBattle> battles;
+    bool truncated = false;
+};
+
 enum class ResultOutcome {
     Victory = 0, Resignation = 1, Disconnect = 2, Timeout = 3,
     ServerAbort = 4, Draw = 5, RefereeFailure = 6, Desync = 7,
@@ -92,6 +99,11 @@ struct VerifiedMatchResult {
 struct StoredRulesDecision {
     RulesDecision decision;
     int64_t beforeRevision, afterRevision;
+};
+
+struct IdPage {
+    std::vector<std::string> ids;
+    bool truncated = false;
 };
 
 struct StoreOptions {
@@ -121,6 +133,12 @@ public:
     void create(const CampaignDefinition& definition, const CampaignState& initialState,
                 const std::string& reason, const RulesPolicy& rules = {});
     StoredCampaign load(const std::string& campaignId) const;
+    // Bounded keyset catalog and indexed own battle history, newest first.
+    StoredPlayerStatus playerStatus(const std::string& campaignId, const std::string& accountId) const;
+    int64_t campaignRevision(const std::string& campaignId) const;
+    IdPage campaignIds(const std::string& afterId = "", size_t limit = 64) const;
+    IdPage ownBattleIds(const std::string& campaignId, const std::string& accountId,
+                       size_t limit = 32) const;
     bool hasCampaign(const std::string& campaignId) const;
     int64_t commit(const std::string& campaignId, int64_t expectedRevision,
                    const CampaignState& nextState, const std::string& reason,

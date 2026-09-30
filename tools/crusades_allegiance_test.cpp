@@ -158,7 +158,7 @@ void migration(const fs::path& path,const fs::path& rollbackPath) {
      check(!store.allegiance("legacy","alice"),"migration does not invent participants");
      store.setAllegiance("legacy","alice",c::Alliance::Honor,-1,15);}
     {c::CampaignStore reopened(path);legacyPreserved(reopened);check(reopened.allegiance("legacy","alice")->alliance==c::Alliance::Honor,"new allegiance survives migrated restart");}
-    Raw db(path);check(db.scalar("PRAGMA user_version")==5,"schema migration publishes current version5");
+    Raw db(path);check(db.scalar("PRAGMA user_version")==6,"schema migration publishes current version6");
     check(db.scalar("SELECT count(*) FROM pragma_table_info('campaign_participants')")==3 &&
           db.scalar("SELECT count(*) FROM pragma_table_info('campaign_participants') WHERE name NOT IN ('campaign_id','account_id','revision')")==0,
           "participant schema contains only campaign/account references and revision");

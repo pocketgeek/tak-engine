@@ -13,6 +13,7 @@
 // server is a pure relay and clients cross-check hashes among themselves (M3).
 
 #include "net/mappackage.h"
+#include "net/crusades.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
 #include "net/netcompat.h"
@@ -50,6 +51,7 @@
 #include "net/crypto.h"
 #include "server/accounts.h"
 #include "server/crusades/allegiance.h"
+#include "server/crusades/network.h"
 #include "tdf/tdf.h"
 #include "net/conn.h"
 #include "net/protocol.h"
@@ -135,6 +137,13 @@ struct Client {
     uint64_t lastPingMs = 0;
     bool loaded = false;
     uint32_t mapReadyRoom = 0, mapOfferedRoom = 0;
+    // Strategic subscription and query budget are connection-local metadata.
+    // They never feed room command queues, referee state or tick/replay logs.
+    bool campaignProtocol = false;
+    std::string campaignSubscription;
+    uint64_t campaignRevision = tak::net::crusades::kUnknownRevision;
+    uint64_t campaignReadWindow = 0;
+    unsigned campaignReads = 0;
     tak::net::maps::Receiver mapReceive;
     tak::net::maps::Sender mapSend;
 
@@ -382,6 +391,11 @@ private:
     std::string campaignSession_;
     std::filesystem::path campaignReplayDir_;
     int64_t campaignSweepTime_ = -1;
+    void campaignRead(Client& c, const Frame& f);
+    std::optional<uint32_t> campaignRoomId(const std::string& battleId) const;
+    void notifyCampaignBattle(const std::string& battleId);
+    void refreshCampaignSnapshot(Client& c, bool force = false);
+    void notifyCampaignPlayer(Client& c, const std::string& campaignId);
     void issueCampaignBattle(Client& c, const Frame& f);
     tak::srv::crusades::BattleContext campaignContext(const Room& r, bool requirePresent) const;
     void cancelCampaignBattle(Room& r);
@@ -1050,10 +1064,11 @@ void Server::finalizeCampaign(Room& r,bool abandoning) {
             crusades_->recordVerifiedResult(r.campaignBattleId,r.campaignRoomToken,context,result,campaignNow());
         }
         r.campaignResultRecorded=true;
+        notifyCampaignBattle(r.campaignBattleId);
         std::fprintf(stderr,"campaign battle %s recorded outcome %d at tick %llu\n",r.campaignBattleId.c_str(),int(result.outcome),
             static_cast<unsigned long long>(result.finalTick));
     } catch(const std::exception& e) {
-        try {if(crusades_->verifiedResult(r.campaignBattleId)) {r.campaignResultRecorded=true;return;}}catch(const std::exception&) {}
+        try {if(crusades_->verifiedResult(r.campaignBattleId)) {r.campaignResultRecorded=true;notifyCampaignBattle(r.campaignBattleId);return;}}catch(const std::exception&) {}
         std::fprintf(stderr,"campaign result persistence: %s\n",e.what());
         r.campaignResultDue=nowMs()+1000; // Keep the frozen room; never discard an unrecorded outcome.
     }
@@ -1065,6 +1080,7 @@ void Server::cancelCampaignBattle(Room& r) {
         const auto status=crusades_->battle(r.campaignBattleId).status;
         if(status==tak::srv::crusades::BattleStatus::Issued || status==tak::srv::crusades::BattleStatus::Started)
             crusades_->cancelBattle(r.campaignBattleId,campaignNow());
+        notifyCampaignBattle(r.campaignBattleId);
     }
     catch(const std::exception& e) {std::fprintf(stderr,"campaign cancellation: %s\n",e.what());}
 }
@@ -1078,6 +1094,92 @@ void Server::closeCampaignLobby(uint32_t roomId,const char* reason) {
         peer->conn.send(Msg::CrusadesBattleResult,battleReply(4,r.campaignId,r.campaignBattleId,0,"",0,reason));
     }
     rooms_.erase(it);
+}
+
+std::optional<uint32_t> Server::campaignRoomId(const std::string& battleId) const {
+    for(const auto& [id,room]:rooms_)
+        if(room.campaignBattleId==battleId && !room.campaignResultRecorded)return id;
+    return {};
+}
+
+void Server::campaignRead(Client& c,const Frame& f) {
+    namespace wire=tak::net::crusades;
+    // Limit synchronous database work and snapshot amplification per peer.
+    // The connection already bounds incoming frames and queued outgoing bytes.
+    const auto now=nowMs();
+    if(now-c.campaignReadWindow>=1000) {c.campaignReadWindow=now;c.campaignReads=0;}
+    if(c.campaignReads>=32) {
+        if(c.campaignReads==32) {
+            uint32_t requestId=0;
+            if(f.payload.size()>=6)for(unsigned i=0;i<4;++i)requestId|=uint32_t(f.payload[2+i])<<(8*i);
+            c.conn.send(Msg::CrusadesError,wire::encode(wire::Response{
+                wire::Error{requestId,wire::ErrorCode::Unavailable,"",{},"campaign query rate exceeded; retry later"}}));
+            ++c.campaignReads;
+        }
+        return;
+    }
+    ++c.campaignReads;
+    const bool authenticated=requireAuth_ && !c.account.empty() &&
+        (c.state==Client::Lobby || c.state==Client::InGame);
+    const auto account=authenticated?tak::auth::foldUsername(c.account):std::string{};
+    const auto reply=tak::srv::crusades::handleCampaignRead(crusades_.get(),account,f.kind,f.payload,
+        [this](const std::string& id){return campaignRoomId(id);});
+    c.conn.send(reply.kind,reply.payload);
+    if(authenticated) c.campaignProtocol=true;
+    if(reply.kind==Msg::CrusadesCampaignSnapshot) {
+        const auto snapshot=wire::decodeSnapshot(reply.payload.b);
+        c.campaignSubscription=snapshot.campaignId;c.campaignRevision=snapshot.revision;
+    }
+}
+
+void Server::refreshCampaignSnapshot(Client& c,bool force) {
+    namespace wire=tak::net::crusades;
+    if(!crusades_ || !c.campaignProtocol || c.campaignSubscription.empty() || c.account.empty() ||
+        c.conn.txPending()>wire::kMaxPayload)return;
+    try {
+        if(!force && uint64_t(crusades_->campaignRevision(c.campaignSubscription))==c.campaignRevision)return;
+        const auto reply=tak::srv::crusades::campaignReadResponse(crusades_.get(),tak::auth::foldUsername(c.account),
+            wire::Request{wire::SnapshotRequest{0,c.campaignSubscription,c.campaignRevision}});
+        const auto snapshot=wire::decodeSnapshot(reply.payload.b);
+        c.conn.send(reply.kind,reply.payload);c.campaignRevision=snapshot.revision;
+    } catch(const std::exception& e) {
+        std::fprintf(stderr,"campaign snapshot refresh: %s\n",e.what());
+        // End a broken subscription; an explicit request can correct it. Never
+        // spin each second on a campaign too large for the bounded wire format.
+        c.campaignSubscription.clear();c.campaignRevision=wire::kUnknownRevision;
+        c.conn.send(Msg::CrusadesError,wire::encode(wire::Response{
+            wire::Error{0,wire::ErrorCode::Unavailable,"",{},"campaign subscription unavailable; request a new snapshot"}}));
+    }
+}
+
+void Server::notifyCampaignPlayer(Client& c,const std::string& campaignId) {
+    if(!crusades_ || !c.campaignProtocol || c.account.empty() ||
+        c.conn.txPending()>tak::net::crusades::kMaxPayload)return;
+    try {
+        const auto reply=tak::srv::crusades::campaignReadResponse(crusades_.get(),tak::auth::foldUsername(c.account),
+            tak::net::crusades::Request{tak::net::crusades::PlayerStatusRequest{0,campaignId}});
+        c.conn.send(reply.kind,reply.payload);
+    } catch(const std::exception& e) {std::fprintf(stderr,"campaign player status: %s\n",e.what());}
+}
+
+void Server::notifyCampaignBattle(const std::string& battleId) {
+    if(!crusades_)return;
+    try {
+        const auto battle=crusades_->battle(battleId);
+        for(auto& [id,peer]:clients_) {
+            (void)id;
+            if(!peer->campaignProtocol || peer->account.empty() ||
+                peer->conn.txPending()>tak::net::crusades::kMaxPayload)continue;
+            const auto account=tak::auth::foldUsername(peer->account);
+            if(std::find(battle.context.participants.begin(),battle.context.participants.end(),account)==battle.context.participants.end())continue;
+            const auto reply=tak::srv::crusades::campaignReadResponse(crusades_.get(),account,
+                tak::net::crusades::Request{tak::net::crusades::BattleStatusRequest{0,battleId}},
+                [this](const std::string& key){return campaignRoomId(key);});
+            peer->conn.send(reply.kind,reply.payload);
+            notifyCampaignPlayer(*peer,battle.campaignId);
+            refreshCampaignSnapshot(*peer);
+        }
+    } catch(const std::exception& e) {std::fprintf(stderr,"campaign battle notification: %s\n",e.what());}
 }
 
 void Server::issueCampaignBattle(Client& c,const Frame& f) {
@@ -1141,6 +1243,7 @@ void Server::issueCampaignBattle(Client& c,const Frame& f) {
         const auto& stored=rooms_.at(roomId);
         const auto reply=battleReply(0,campaign,issued,roomId,*map,stored.campaignExpires);
         c.conn.send(Msg::CrusadesBattleResult,reply);invited->conn.send(Msg::CrusadesBattleResult,reply);
+        notifyCampaignBattle(issued);
         Writer joined;joined.u8(1);joined.u8(0);joined.str("");c.conn.send(Msg::JoinResult,joined);
         broadcastLobby(rooms_.at(roomId));
     } catch(const std::exception& e) {
@@ -1785,6 +1888,7 @@ void Server::tryStart(Client& c) {
             crusades_->startBattle(r->campaignBattleId,r->campaignLaunchToken,r->campaignRoomToken,
                 campaignContext(*r,true),campaignNow());
             r->campaignLaunchToken.clear(); // Single-use launch credential never sent to clients.
+            notifyCampaignBattle(r->campaignBattleId);
         } catch(const std::exception&) {
             r->running=false;r->ref.reset();r->ai.clear();
             closeCampaignLobby(r->id,"campaign battle no longer eligible to start");return;
@@ -2304,8 +2408,14 @@ void Server::onFrame(Client& c, const Frame& f) {
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
     if(auto* room=roomOf(c); room && !room->campaignBattleId.empty() && room->running &&
-        (f.kind==Msg::CrusadesBattleResult || f.kind==Msg::GameStarting || f.kind==Msg::TickBundle || f.kind==Msg::MissionOutcome)) {
+        (f.kind==Msg::CrusadesBattleResult || f.kind==Msg::GameStarting || f.kind==Msg::TickBundle || f.kind==Msg::MissionOutcome ||
+         f.kind==Msg::CrusadesCampaignList || f.kind==Msg::CrusadesCampaignSnapshot || f.kind==Msg::CrusadesPlayerStatus ||
+         f.kind==Msg::CrusadesBattleStatus || f.kind==Msg::CrusadesError)) {
         room->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;
+    }
+    if(f.kind==Msg::CrusadesListCampaigns || f.kind==Msg::CrusadesGetSnapshot ||
+        f.kind==Msg::CrusadesGetPlayerStatus || f.kind==Msg::CrusadesGetBattleStatus) {
+        campaignRead(c,f);return;
     }
     if (f.kind == Msg::CrusadesIssueBattle) { issueCampaignBattle(c,f); return; }
     if (f.kind == Msg::CrusadesGetAllegiance || f.kind == Msg::CrusadesSetAllegiance) {
@@ -2316,8 +2426,15 @@ void Server::onFrame(Client& c, const Frame& f) {
         const std::string account = authenticated ? tak::auth::foldUsername(c.account) : "";
         const auto unixTime = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
-        c.conn.send(Msg::CrusadesAllegianceResult,tak::srv::crusades::handleAllegiance(
-            crusades_.get(),account,f.kind,f.payload,unixTime));
+        const auto reply=tak::srv::crusades::handleAllegiance(crusades_.get(),account,f.kind,f.payload,unixTime);
+        c.conn.send(Msg::CrusadesAllegianceResult,reply);
+        if(f.kind==Msg::CrusadesSetAllegiance && reply.b.size()>1 && reply.b[1]==0) {
+            Reader request(f.payload.data(),f.payload.size());const auto campaign=request.str();
+            for(auto& [id,peer]:clients_) {
+                (void)id;if(!peer->account.empty() && tak::auth::foldUsername(peer->account)==account)
+                    notifyCampaignPlayer(*peer,campaign);
+            }
+        }
         return;
     }
     if (c.state == Client::InGame && (f.kind == Msg::MapOffer || f.kind == Msg::MapRequest ||
@@ -2438,6 +2555,7 @@ int Server::run() {
             for(const auto& [rid,room]:rooms_)if(!room.campaignBattleId.empty() && !room.running && campaignSweepTime_>=room.campaignExpires)
                 expired.push_back(rid);
             for(auto rid:expired)closeCampaignLobby(rid,"campaign battle expired");
+            for(auto& [id,peer]:clients_) {(void)id;refreshCampaignSnapshot(*peer);}
         }
         // Grace / pause-budget expiry: a held slot that isn't reclaimed in time,
         // or a pause that outlasts its budget, forfeits the player. The forfeit is

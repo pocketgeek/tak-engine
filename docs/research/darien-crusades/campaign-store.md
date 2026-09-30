@@ -66,8 +66,12 @@ adds authenticated allegiance through an atomic version-1-to-2 migration;
 [Milestone 5](campaign-battles.md#api-schema-and-transactions) adds battle
 issuance in version 3. [Milestone 6](campaign-results.md) adds authoritative
 results in schema version 4. [Milestone 7](campaign-territory-rules.md) adds
-explicit policy bindings and rules decisions in current schema version 5,
-migrating versions 1–4 atomically. The
+explicit policy bindings and rules decisions in schema version 5. Version 6
+adds an immutable `battle_participants` projection and an index on campaign,
+account and creation order for bounded player-status queries. Migration from
+versions 1–5 decodes and validates existing battle rosters before populating
+the projection, in the same transaction as the schema version update. Failed
+migrations leave the prior schema and records intact. No results are reapplied. The
 three tables below describe the original persistence layer. An empty unclaimed
 database may be initialized; unrelated or
 unsupported-version databases are rejected. There is no migration from a

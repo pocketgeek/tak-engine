@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 207;      // 207: server-sequenced campaign forfeits
+constexpr uint32_t kNetVersion = 208;      // 208: versioned Crusades snapshots and battle lifecycle
+                                           // 207: server-sequenced campaign forfeits
                                            // 206: server-issued Crusades battle rooms
                                            // 205: authenticated Crusades allegiance query/change
                                            // 204: retail damage-category selection and integer damage tables
@@ -287,6 +288,20 @@ enum class Msg : uint8_t {
                         // (0 OK,1 malformed,2 unauthenticated,3 disabled,4 rejected),
                         // str campaign,str battle ID,u32 room,str map,u64 expiresUnix,str reason.
                         // Designated opponent accepts via ordinary JoinGame; exact payloads.
+
+    // Independent strategic messages, never commands or replay tick bundles.
+    // All payloads start with u16 campaign protocol version, u32 request ID.
+    // See net/crusades.h for bounded, exact versioned structures. ID zero is
+    // reserved for unsolicited server lifecycle/snapshot notifications.
+    CrusadesListCampaigns,    // C->S: paginated catalog request
+    CrusadesGetSnapshot,      // C->S: campaign + last known revision
+    CrusadesCampaignList,     // S->C: authoritative catalog page
+    CrusadesCampaignSnapshot, // S->C: complete definition + state + revision
+    CrusadesGetPlayerStatus,  // C->S: own authenticated campaign participation
+    CrusadesPlayerStatus,     // S->C: own allegiance + recent battle references
+    CrusadesGetBattleStatus,  // C->S: battle ID (participants only)
+    CrusadesBattleStatus,     // S->C: issued/started/terminal + verified result
+    CrusadesError,            // S->C: typed sanitized campaign error
 
 
 };

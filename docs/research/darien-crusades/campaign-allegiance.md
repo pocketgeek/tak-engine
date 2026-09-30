@@ -90,8 +90,9 @@ campaign/event/result schema and adding the tables below.
 adds battle issuance through migration to version 3.
 [Milestone 6](campaign-results.md) subsequently adds authoritative results in
 schema version 4. [Milestone 7](campaign-territory-rules.md) adds policy and
-decision records in current schema version 5; opening versions 1–4 upgrades
-atomically.
+decision records in schema version 5. [Milestone 8](campaign-network.md) adds an
+indexed battle-participant projection in current schema version 6; opening
+versions 1–5 upgrades atomically.
 
 | Table | Fields |
 |---|---|
@@ -102,7 +103,7 @@ Triggers prevent allegiance-event updates/deletions and participant identity
 rewrites. Opening a supported version-1 database validates its exact old schema,
 then, in the M4 implementation, created the new tables/triggers and published
 version 2 in one transaction. Current opening includes the later tables and
-publishes version 5 in the same atomic migration.
+publishes version 6 in the same atomic migration.
 It creates no inferred participants and does not rewrite old definitions,
 snapshots, history, binary result payloads or duplicate-result identities.
 Interrupted migration rolls back the schema additions and version together.

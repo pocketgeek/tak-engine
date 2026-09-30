@@ -129,4 +129,5 @@ verify a historical campaign policy, its immutable battle binding and exactly
 one atomic rules decision. Historical territory state and revision remain
 unchanged. Final Windows server syntax checking passed; Windows and macOS
 runtime behavior was not tested locally. No tactical simulation or protocol
-change was needed; protocol remains 207.
+change was needed for M7; its protocol was 207. [M8](campaign-network.md)
+subsequently introduces campaign networking in protocol 208 and schema 6.

@@ -729,6 +729,11 @@ For every implemented historical rule:
 
 # Milestone 8 — Crusades network protocol
 
+Completed 2026-09-30. See [the campaign wire, client contract and acceptance
+evidence](research/darien-crusades/campaign-network.md). Full snapshots replace
+deltas; lifecycle notifications reflect persisted server records. The strategic
+map UI remains Milestone 9.
+
 ## Objective
 
 Extend TAK-Engine networking with campaign-specific messages after the server

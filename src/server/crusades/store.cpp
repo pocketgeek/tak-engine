@@ -10,7 +10,7 @@
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 5;
+constexpr int kSchemaVersion = 6;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -71,6 +71,16 @@ const std::vector<std::string>& rulesSchemaStatements() {
     };
     return statements;
 }
+const std::vector<std::string>& readIndexSchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE TABLE battle_participants(battle_id TEXT NOT NULL REFERENCES issued_battles(id),campaign_id TEXT NOT NULL REFERENCES campaigns(id),account_id TEXT NOT NULL,created_unix INTEGER NOT NULL,PRIMARY KEY(battle_id,account_id))",
+        "CREATE INDEX battle_participants_account ON battle_participants(campaign_id,account_id,created_unix DESC,battle_id DESC)",
+        "CREATE TRIGGER battle_participants_no_update BEFORE UPDATE ON battle_participants BEGIN SELECT RAISE(ABORT,'immutable battle participant'); END",
+        "CREATE TRIGGER battle_participants_no_delete BEFORE DELETE ON battle_participants BEGIN SELECT RAISE(ABORT,'immutable battle participant'); END",
+    };
+    return statements;
+}
+void decodeBattle(const std::string&, IssuedBattle&);
 void validateAccountId(const std::string& accountId) {
     const auto alnum = [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); };
     if (accountId.size() < 3 || accountId.size() > 20 || !alnum(accountId.front()))
@@ -291,6 +301,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             if (version >= 3) expected.insert(expected.end(), battleSchemaStatements().begin(), battleSchemaStatements().end());
             if (version >= 4) expected.insert(expected.end(), resultSchemaStatements().begin(), resultSchemaStatements().end());
             if (version >= 5) expected.insert(expected.end(), rulesSchemaStatements().begin(), rulesSchemaStatements().end());
+            if (version >= 6) expected.insert(expected.end(), readIndexSchemaStatements().begin(), readIndexSchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
@@ -332,6 +343,18 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
         exec(db,"INSERT INTO campaign_rules SELECT id,'historical-darien-v1' FROM campaigns");
         exec(db,"INSERT INTO issued_battle_rules SELECT id,'historical-darien-v1' FROM issued_battles");
         exec(db,"PRAGMA user_version=5");
+    }
+    if (version < 6) {
+        for (const auto& sql : readIndexSchemaStatements()) exec(db,sql.c_str());
+        Statement existing(db,"SELECT id,campaign_id,context,created_unix FROM issued_battles");
+        while (existing.row()) {
+            IssuedBattle decoded{}; decodeBattle(existing.bytes(2),decoded);
+            for (const auto& account : decoded.context.participants) {
+                Statement row(db,"INSERT INTO battle_participants VALUES(?,?,?,?)");
+                row.text(1,existing.bytes(0)); row.text(2,existing.bytes(1)); row.text(3,account); row.integer(4,existing.number(3)); row.done();
+            }
+        }
+        exec(db,"PRAGMA user_version=6");
         if (version != 0 && impl_->options.beforeCommit) impl_->options.beforeCommit();
     }
     Statement policies(db, "SELECT policy_id FROM campaign_rules");
@@ -366,6 +389,30 @@ StoredCampaign CampaignStore::load(const std::string& campaignId) const {
     auto state = decode(query.bytes(2), definition);
     if (definition.id() != campaignId || revision < 0) throw std::runtime_error("invalid stored campaign identity/revision");
     return {std::move(definition), std::move(state), revision, permittedPolicy(query.bytes(3), impl_->options)};
+}
+
+int64_t CampaignStore::campaignRevision(const std::string& campaignId) const {
+    Statement query(impl_->db,"SELECT revision FROM campaigns WHERE id=?"); query.text(1,campaignId);
+    if (!query.row() || query.number(0)<0) throw std::runtime_error("unknown or invalid campaign revision");
+    return query.number(0);
+}
+IdPage CampaignStore::campaignIds(const std::string& afterId, size_t limit) const {
+    if (limit==0 || limit>64 || afterId.size()>128 || afterId.find('\0')!=std::string::npos)
+        throw std::runtime_error("invalid campaign page");
+    Statement query(impl_->db,"SELECT id FROM campaigns WHERE id>? ORDER BY id LIMIT ?");
+    query.text(1,afterId); query.integer(2,static_cast<int64_t>(limit+1));
+    IdPage page;
+    while (query.row()) { if (page.ids.size()==limit) {page.truncated=true;break;} page.ids.push_back(query.bytes(0)); }
+    return page;
+}
+IdPage CampaignStore::ownBattleIds(const std::string& campaignId, const std::string& accountId, size_t limit) const {
+    validateAccountId(accountId);
+    if (limit==0 || limit>32 || !hasCampaign(campaignId)) throw std::runtime_error("invalid battle page");
+    Statement query(impl_->db,"SELECT battle_id FROM battle_participants WHERE campaign_id=? AND account_id=? ORDER BY created_unix DESC,battle_id DESC LIMIT ?");
+    query.text(1,campaignId); query.text(2,accountId); query.integer(3,static_cast<int64_t>(limit+1));
+    IdPage page;
+    while (query.row()) { if (page.ids.size()==limit) {page.truncated=true;break;} page.ids.push_back(query.bytes(0)); }
+    return page;
 }
 
 bool CampaignStore::hasCampaign(const std::string& campaignId) const {
@@ -439,6 +486,23 @@ std::optional<Allegiance> readAllegiance(sqlite3* db, const std::string& campaig
     return Allegiance{accountId, static_cast<Alliance>(side), joined, changed, revision};
 }
 } // namespace
+
+StoredPlayerStatus CampaignStore::playerStatus(const std::string& campaignId, const std::string& accountId) const {
+    validateAccountId(accountId);
+    Transaction transaction(impl_->db,false);
+    StoredPlayerStatus out{};
+    out.campaignRevision=campaignRevision(campaignId);
+    out.allegiance=readAllegiance(impl_->db,campaignId,accountId);
+    const auto page=ownBattleIds(campaignId,accountId);
+    out.truncated=page.truncated;
+    for (const auto& id:page.ids) {
+        auto current=battle(id);
+        if (current.campaignId!=campaignId || std::find(current.context.participants.begin(),current.context.participants.end(),accountId)==current.context.participants.end())
+            throw std::runtime_error("invalid battle participant projection");
+        out.battles.push_back(std::move(current));
+    }
+    transaction.finish(); return out;
+}
 
 std::optional<Allegiance> CampaignStore::allegiance(const std::string& campaignId,
                                                   const std::string& accountId) const {
@@ -596,6 +660,10 @@ IssuedBattle CampaignStore::issueBattle(const std::string& campaignId, int64_t e
     Statement insert(impl_->db, "INSERT INTO issued_battles(id,campaign_id,campaign_revision,territory,context,created_unix,expires_unix,launch_token,revision) VALUES(?,?,?,?,?,?,?,?,0)");
     insert.text(1, result.id); insert.text(2, campaignId); insert.integer(3, expectedRevision); insert.integer(4, territory);
     insert.blob(5, encodeBattle(result)); insert.integer(6, now); insert.integer(7, expires); insert.text(8, result.launchToken); insert.done();
+    for (const auto& account : result.context.participants) {
+        Statement row(impl_->db,"INSERT INTO battle_participants VALUES(?,?,?,?)");
+        row.text(1,result.id); row.text(2,campaignId); row.text(3,account); row.integer(4,now); row.done();
+    }
     Statement policy(impl_->db, "INSERT INTO issued_battle_rules VALUES(?,?)");
     policy.text(1, result.id); policy.text(2, result.policyId); policy.done();
     Statement event(impl_->db, "INSERT INTO battle_status_events VALUES(?,0,0,?)"); event.text(1, result.id); event.integer(2, now); event.done();

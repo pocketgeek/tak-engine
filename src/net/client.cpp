@@ -20,6 +20,13 @@ constexpr uint64_t kSpectatorTimeoutMs = 120000;   // matches the server's spect
 }  // namespace
 
 bool MpClient::connect(const std::string& host, uint16_t port, const std::string& name) {
+    if (derive_.joinable()) derive_.join();
+    clearCampaignCache();
+    crypto::wipe(keys_.clientKey.data(), keys_.clientKey.size());
+    crypto::wipe(keys_.serverKey.data(), keys_.serverKey.size());
+    auth_ = Auth::None; account_.clear(); pend_ = PendingAuth{};
+    deriveDone_.store(false, std::memory_order_relaxed);
+    conn_ = Conn{}; err_.clear();
     name_ = name;
     if (!conn_.connect(host, port)) { err_ = conn_.error(); state_ = State::Done; return false; }
     state_ = State::Connecting;
@@ -46,6 +53,7 @@ void MpClient::setLogin(const std::string& user, const std::string& password) {
 void MpClient::disconnect(const std::string& reason) {
     if (conn_.ok()) { Writer w; w.str(reason); send(Msg::Bye, w); conn_.flushWrite(); }
     conn_.closeNow();
+    clearCampaignCache();
     state_ = State::Done;
 }
 
@@ -81,6 +89,7 @@ bool MpClient::poll() {
                        "mismatch (this client speaks v" + std::to_string(kNetVersion) + ")";
         }
         state_ = State::Done;
+        clearCampaignCache();
         return false;
     }
     mapSend_.pump(conn_);
@@ -89,6 +98,12 @@ bool MpClient::poll() {
     }
     pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
     uint64_t now = nowMs();
+    for (auto it=campaignPending_.begin(); it!=campaignPending_.end();) {
+        if (now-it->second.sentMs >= 15000) {
+            campaignError_=crusades::Error{it->first,crusades::ErrorCode::Unavailable,{}, {},"Campaign request timed out"};
+            it=campaignPending_.erase(it);
+        } else ++it;
+    }
     // Release any jitter-held bundles whose delay has elapsed.
     if (!jitterHeld_.empty()) {
         for (auto it = jitterHeld_.begin(); it != jitterHeld_.end();) {
@@ -112,7 +127,183 @@ bool MpClient::poll() {
     if (now - lastRecvMs_ > timeoutMs) { if (err_.empty()) err_ = "server timeout"; state_ = State::Done; }
     if (!conn_.flushWrite()) { if (err_.empty()) err_ = conn_.error(); state_ = State::Done; }
     if (!conn_.ok() && err_.empty()) { err_ = conn_.error(); state_ = State::Done; }
+    if (state_ == State::Done) clearCampaignCache();
     return state_ != State::Done;
+}
+
+bool MpClient::campaignAuthenticated() const {
+    return (auth_ == Auth::Ok || auth_ == Auth::Created) && !account_.empty() &&
+        state_ != State::Offline && state_ != State::Done && state_ != State::Connecting;
+}
+void MpClient::clearCampaignCache() {
+    campaignReplica_.clear(); campaignList_.reset(); campaignPlayer_.reset(); campaignBattles_.clear();
+    campaignError_.reset(); campaignInvitation_.reset(); campaignPending_.clear();
+    campaignRequestId_ = 0; campaignRefreshAttempt_.clear();
+}
+uint32_t MpClient::sendCampaignRequest(Msg kind, crusades::Request request, const std::string& target) {
+    if (!campaignAuthenticated() || campaignPending_.size() >= 128 || campaignRequestId_ == UINT32_MAX) return 0;
+    const auto id = ++campaignRequestId_;
+    std::visit([&](auto& value) { value.requestId = id; }, request);
+    try {
+        auto bytes = crusades::encode(request);
+        campaignPending_.emplace(id, CampaignPending{kind, target, nowMs()});
+        conn_.send(kind, bytes);
+        return id;
+    } catch (const crusades::DecodeError& e) {
+        campaignError_ = crusades::Error{id, e.code, {}, {}, e.what()}; return 0;
+    }
+}
+uint32_t MpClient::listCampaigns(const std::string& after, uint16_t limit) {
+    return sendCampaignRequest(Msg::CrusadesListCampaigns, crusades::ListRequest{0, after, limit}, {});
+}
+uint32_t MpClient::getCampaignSnapshot(const std::string& campaign, uint64_t expected) {
+    return sendCampaignRequest(Msg::CrusadesGetSnapshot, crusades::SnapshotRequest{0, campaign, expected}, campaign);
+}
+uint32_t MpClient::getPlayerCampaignStatus(const std::string& campaign) {
+    return sendCampaignRequest(Msg::CrusadesGetPlayerStatus, crusades::PlayerStatusRequest{0, campaign}, campaign);
+}
+uint32_t MpClient::getCampaignBattleStatus(const std::string& battle) {
+    return sendCampaignRequest(Msg::CrusadesGetBattleStatus, crusades::BattleStatusRequest{0, battle}, battle);
+}
+void MpClient::subscribeCampaign(const std::string& campaign) {
+    if (campaign.empty()) { campaignSubscription_.clear(); campaignPlayer_.reset(); campaignRefreshAttempt_.clear(); return; }
+    // Validate before retaining a reconnect subscription, even while offline.
+    (void)crusades::encode(crusades::Request{crusades::SnapshotRequest{1, campaign, crusades::kUnknownRevision}});
+    campaignSubscription_ = campaign; campaignRefreshAttempt_.clear(); campaignPlayer_.reset();
+    if (campaignAuthenticated()) { getCampaignSnapshot(campaign); getPlayerCampaignStatus(campaign); }
+}
+void MpClient::refreshCampaignOnce(const std::string& campaign) {
+    if (campaign.empty() || campaign != campaignSubscription_ || campaignRefreshAttempt_ == campaign) return;
+    for (const auto& [id, pending] : campaignPending_) {
+        (void)id;
+        if (pending.kind == Msg::CrusadesGetSnapshot && pending.target == campaign) return;
+    }
+    campaignRefreshAttempt_ = campaign;
+    getCampaignSnapshot(campaign);
+}
+void MpClient::getCampaignAllegiance(const std::string& campaign) {
+    if (!campaignAuthenticated()) return;
+    (void)crusades::encode(crusades::Request{crusades::PlayerStatusRequest{1,campaign}});
+    Writer w; w.str(campaign); send(Msg::CrusadesGetAllegiance,w);
+}
+void MpClient::setCampaignAllegiance(const std::string& campaign, uint64_t revision, crusades::Alliance side) {
+    if (!campaignAuthenticated()) return;
+    (void)crusades::encode(crusades::Request{crusades::PlayerStatusRequest{1,campaign}});
+    if (side != crusades::Alliance::Honor && side != crusades::Alliance::Terror) return;
+    Writer w; w.str(campaign); w.u64(revision); w.u8(uint8_t(side)); send(Msg::CrusadesSetAllegiance,w);
+}
+void MpClient::issueCampaignBattle(const std::string& campaign, uint32_t territory, const std::string& opponent) {
+    if (!campaignAuthenticated() || !territory || !auth::validUsername(opponent)) return;
+    (void)crusades::encode(crusades::Request{crusades::PlayerStatusRequest{1,campaign}});
+    Writer w; w.str(campaign); w.u32(territory); w.str(auth::foldUsername(opponent)); send(Msg::CrusadesIssueBattle,w);
+}
+void MpClient::campaignFrame(const Frame& f) {
+    if (!campaignAuthenticated()) return;
+    namespace cw = crusades;
+    try {
+        if (f.kind == Msg::CrusadesBattleResult) {
+            Reader r(f.payload.data(),f.payload.size()); const auto status=r.u8();
+            CampaignInvitation value; value.campaignId=r.str(); value.battleId=r.str(); value.roomId=r.u32();
+            value.map=r.str(); value.expiresUnix=r.u64(); const auto reason=r.str();
+            if (!r.ok || r.p!=r.end || status>4 || value.campaignId.size()>cw::kMaxIdentifier || value.battleId.size()>cw::kMaxIdentifier || value.map.size()>cw::kMaxMapIdentifier || reason.size()>cw::kMaxReason)
+                throw cw::DecodeError(cw::ErrorCode::Malformed,"malformed campaign invitation");
+            if (status) {
+                cw::Error error{0,cw::ErrorCode::Unavailable,value.campaignId,{},reason};
+                (void)cw::encode(cw::Response{error});campaignError_=std::move(error);return;
+            }
+            cw::BattleStatus validated;validated.campaignId=value.campaignId;validated.battleId=value.battleId;
+            validated.territory=1;validated.mapIdentifier=value.map;validated.expiresUnix=value.expiresUnix;validated.roomId=value.roomId;
+            (void)cw::encode(cw::Response{validated});
+            // The new strict query encoder validates the supplied identifier.
+            if (!value.roomId || !getCampaignBattleStatus(value.battleId))
+                throw cw::DecodeError(cw::ErrorCode::Malformed,"invalid campaign invitation identity");
+            campaignInvitation_=std::move(value); return;
+        }
+        if (f.kind == Msg::CrusadesAllegianceResult) {
+            Reader r(f.payload.data(),f.payload.size()); const auto operation=r.u8(),status=r.u8();const auto campaign=r.str();
+            const auto side=r.u8(); const auto revision=r.u64(),joined=r.u64(),changed=r.u64();const auto reason=r.str();
+            if (!r.ok || r.p!=r.end || operation>1 || status>4 || side>2 || campaign.size()>128 || reason.size()>512 || changed<joined ||
+                (side==0 && (revision!=UINT64_MAX || joined || changed)) ||
+                (side!=0 && revision>uint64_t(INT64_MAX)) || joined>uint64_t(INT64_MAX) || changed>uint64_t(INT64_MAX))
+                throw cw::DecodeError(cw::ErrorCode::Malformed,"malformed allegiance response");
+            cw::Error validated{0,cw::ErrorCode::Unavailable,campaign,{},reason.empty()?"Allegiance response":reason};
+            (void)cw::encode(cw::Response{validated});
+            if (status) campaignError_=std::move(validated);
+            else getPlayerCampaignStatus(campaign);
+            return;
+        }
+        auto kind=cw::ResponseKind::Error; auto expected=Msg::CrusadesError;
+        if (f.kind==Msg::CrusadesCampaignList) {kind=cw::ResponseKind::List;expected=Msg::CrusadesListCampaigns;}
+        if (f.kind==Msg::CrusadesCampaignSnapshot) {kind=cw::ResponseKind::Snapshot;expected=Msg::CrusadesGetSnapshot;}
+        if (f.kind==Msg::CrusadesPlayerStatus) {kind=cw::ResponseKind::PlayerStatus;expected=Msg::CrusadesGetPlayerStatus;}
+        if (f.kind==Msg::CrusadesBattleStatus) {kind=cw::ResponseKind::BattleStatus;expected=Msg::CrusadesGetBattleStatus;}
+        auto response=cw::decodeResponse(kind,f.payload);
+        const auto id=std::visit([](const auto& v){return v.requestId;},response);
+        auto pending=campaignPending_.find(id);
+        std::string target;
+        if (id) {
+            if (pending==campaignPending_.end()) return;
+            target=pending->second.target;
+            if (kind!=cw::ResponseKind::Error && pending->second.kind!=expected)
+                throw cw::DecodeError(cw::ErrorCode::Malformed,"campaign response kind does not match request");
+        }
+        if (auto* value=std::get_if<cw::Snapshot>(&response)) {
+            if (id && value->campaignId!=target) throw cw::DecodeError(cw::ErrorCode::Malformed,"campaign response target mismatch");
+            if (!id && value->campaignId!=campaignSubscription_) return;
+            if(id)campaignPending_.erase(id);
+            const auto applied=campaignReplica_.apply(*value);
+            if(applied==cw::ApplyResult::Stale || applied==cw::ApplyResult::Conflict) {
+                campaignError_=cw::Error{id,cw::ErrorCode::StaleRevision,value->campaignId,value->revision,"Rejected stale or conflicting campaign snapshot"};
+                if(applied==cw::ApplyResult::Stale)refreshCampaignOnce(value->campaignId);
+            } else campaignRefreshAttempt_.clear();
+        } else if (auto* value=std::get_if<cw::CampaignList>(&response)) {
+            if(!id)return;
+            campaignList_=std::move(*value); campaignPending_.erase(id);
+        } else if (auto* value=std::get_if<cw::PlayerStatus>(&response)) {
+            if (id && value->campaignId!=target) throw cw::DecodeError(cw::ErrorCode::Malformed,"campaign response target mismatch");
+            if (!id && value->campaignId!=campaignSubscription_) return;
+            if(id)campaignPending_.erase(id);
+            if(!campaignSubscription_.empty() && value->campaignId!=campaignSubscription_)return;
+            if(campaignPlayer_ && campaignPlayer_->campaignId==value->campaignId &&
+                (campaignPlayer_->campaignRevision>value->campaignRevision ||
+                 (campaignPlayer_->allegiance && (!value->allegiance ||
+                  campaignPlayer_->allegiance->revision>value->allegiance->revision ||
+                  (campaignPlayer_->allegiance->revision==value->allegiance->revision &&
+                   (campaignPlayer_->allegiance->alliance!=value->allegiance->alliance ||
+                    campaignPlayer_->allegiance->joinedUnix!=value->allegiance->joinedUnix ||
+                    campaignPlayer_->allegiance->changedUnix!=value->allegiance->changedUnix)))))) {
+                campaignError_=cw::Error{id,cw::ErrorCode::StaleRevision,value->campaignId,value->campaignRevision,"Rejected stale player campaign status"};
+                return;
+            }
+            campaignPlayer_=std::move(*value);
+        } else if (auto* value=std::get_if<cw::BattleStatus>(&response)) {
+            if(id && value->battleId!=target)throw cw::DecodeError(cw::ErrorCode::Malformed,"battle response target mismatch");
+            if(id)campaignPending_.erase(id);
+            const auto old=campaignBattles_.find(value->battleId);
+            if(old!=campaignBattles_.end()) {
+                const auto& before=old->second;
+                const bool identityChanged=before.campaignId!=value->campaignId || before.campaignRevision!=value->campaignRevision ||
+                    before.territory!=value->territory || before.mapIdentifier!=value->mapIdentifier || before.expiresUnix!=value->expiresUnix;
+                auto a=before,b=*value;a.requestId=b.requestId=0;
+                if(identityChanged || uint8_t(before.status)>uint8_t(value->status) ||
+                    (before.status>=cw::BattlePhase::Cancelled && cw::encode(cw::Response{a})!=cw::encode(cw::Response{b}))) {
+                    campaignError_=cw::Error{id,cw::ErrorCode::StaleRevision,value->campaignId,{},"Rejected regressing or conflicting battle status"};return;
+                }
+            }
+            if(old==campaignBattles_.end() && campaignBattles_.size()>=64)campaignBattles_.erase(campaignBattles_.begin());
+            campaignBattles_[value->battleId]=std::move(*value);
+        } else if (auto* value=std::get_if<cw::Error>(&response)) {
+            if(id)campaignPending_.erase(id);
+            campaignError_=*value;
+            if(value->code==cw::ErrorCode::StaleRevision)refreshCampaignOnce(value->campaignId);
+        }
+    } catch (const std::exception&) {
+        if(f.kind!=Msg::CrusadesBattleResult && f.kind!=Msg::CrusadesAllegianceResult && f.payload.size()>=6) {
+            Reader header(f.payload.data(),f.payload.size());(void)header.u8();(void)header.u8();campaignPending_.erase(header.u32());
+        }
+        // No partial publication, disconnection or automatic malformed-response loop.
+        campaignError_=cw::Error{0,cw::ErrorCode::Malformed,{}, {},"Malformed campaign response"};
+    }
 }
 
 // ---- account login ---------------------------------------------------------
@@ -311,6 +502,10 @@ static void readSlots(Reader& r, RoomView& v) {
 void MpClient::onFrame(const Frame& f) {
     lastRecvMs_ = nowMs();
     Reader r(f.payload.data(), f.payload.size());
+    if (f.kind == Msg::CrusadesCampaignList || f.kind == Msg::CrusadesCampaignSnapshot ||
+        f.kind == Msg::CrusadesPlayerStatus || f.kind == Msg::CrusadesBattleStatus ||
+        f.kind == Msg::CrusadesError || f.kind == Msg::CrusadesBattleResult ||
+        f.kind == Msg::CrusadesAllegianceResult) { campaignFrame(f); return; }
     switch (f.kind) {
         case Msg::Welcome:
             myId_ = r.u32();
@@ -330,6 +525,13 @@ void MpClient::onFrame(const Frame& f) {
             // shown as its owner spelled it, not as they happened to type it.
             if (auth_ != Auth::None && !name_.empty()) account_ = name_;
             state_ = State::Lobby;
+            if (campaignAuthenticated()) {
+                listCampaigns();
+                if (!campaignSubscription_.empty()) {
+                    getCampaignSnapshot(campaignSubscription_);
+                    getPlayerCampaignStatus(campaignSubscription_);
+                }
+            }
             break;
         case Msg::AuthRequired: sendAuthBegin(); break;
         case Msg::AuthChallenge: onAuthChallenge(r); break;

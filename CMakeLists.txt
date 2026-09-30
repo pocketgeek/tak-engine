@@ -96,6 +96,7 @@ add_library(tak-formats
   src/crt/crt.cpp
   src/gui/gui.cpp
   src/net/protocol.cpp
+  src/net/crusades.cpp
   src/net/conn.cpp
   src/net/client.cpp
   src/net/mappackage.cpp
@@ -985,11 +986,23 @@ target_link_libraries(crusades_rules_store_test PRIVATE tak-crusades-store tak-s
 add_test(NAME crusades_rules_store COMMAND crusades_rules_store_test)
 add_library(tak-crusades-allegiance STATIC src/server/crusades/allegiance.cpp)
 target_link_libraries(tak-crusades-allegiance PUBLIC tak-crusades-store PRIVATE tak-formats)
+add_library(tak-crusades-network STATIC src/server/crusades/network.cpp)
+target_link_libraries(tak-crusades-network PUBLIC tak-crusades-store PRIVATE tak-formats)
+add_executable(crusades_protocol_test tools/crusades_protocol_test.cpp)
+target_link_libraries(crusades_protocol_test PRIVATE tak-formats)
+add_test(NAME crusades_protocol COMMAND crusades_protocol_test)
+add_executable(crusades_network_service_test tools/crusades_network_service_test.cpp)
+target_link_libraries(crusades_network_service_test PRIVATE tak-crusades-network tak-formats tak-sqlite)
+add_test(NAME crusades_network_service COMMAND crusades_network_service_test)
+add_executable(crusades_client_network_test tools/crusades_client_network_test.cpp)
+target_link_libraries(crusades_client_network_test PRIVATE tak-formats)
+add_test(NAME crusades_client_network COMMAND crusades_client_network_test)
+set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
 add_executable(takserver src/server/server.cpp src/server/accounts.cpp src/ai/ai.cpp)
-target_link_libraries(takserver PRIVATE tak-formats tak-crusades-allegiance)
+target_link_libraries(takserver PRIVATE tak-formats tak-crusades-allegiance tak-crusades-network)
 if(APPLE)
   target_link_libraries(takserver PRIVATE "-framework CoreFoundation")
 endif()
@@ -1008,6 +1021,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_result_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(crusades_result_network PROPERTIES TIMEOUT 120)
+    add_test(NAME crusades_protocol_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/crusades_protocol_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(crusades_protocol_network PROPERTIES TIMEOUT 120)
   endif()
 endif()
 

@@ -141,7 +141,7 @@ void olderDatabase(const fs::path& path,int version){
     while(sqlite3_step(q)==SQLITE_ROW){std::string type=reinterpret_cast<const char*>(sqlite3_column_text(q,0));std::string name=reinterpret_cast<const char*>(sqlite3_column_text(q,1));
         if(!retained.count(name))remove.emplace_back(type,name);}
     sqlite3_finalize(q);
-    for(const auto& [type,name]:remove)raw.sql("DROP "+type+" \""+name+"\"");
+    for(const auto& [type,name]:remove)raw.sql("DROP "+type+" IF EXISTS \""+name+"\"");
     raw.sql("PRAGMA user_version="+std::to_string(version));
 }
 void migration(const fs::path& root){
@@ -156,7 +156,7 @@ void migration(const fs::path& root){
             check(enrolled && enrolled->alliance==c::Alliance::Terror && enrolled->revision==1 && enrolled->joinedUnix==1 && enrolled->changedUnix==2,"v2 participant and revision preserved");
             check(migrated.allegianceHistory("synthetic","alice").size()==2,"v2 allegiance audit preserved");}
         else check(!migrated.allegiance("synthetic","alice"),"v1 migration invents no allegiance");
-        {Raw raw(path);check(raw.count("PRAGMA user_version")==5,"current schema version5 installed");}
+        {Raw raw(path);check(raw.count("PRAGMA user_version")==6,"current schema version6 installed");}
     }
 }
 } // namespace

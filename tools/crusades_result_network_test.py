@@ -120,6 +120,9 @@ def run_case(binary, data, scenario):
                     alice.send('LeaveGame')
                 elif scenario == 'forged-win':
                     alice.send('MissionOutcome', bytes([1]))
+                elif scenario == 'forged-snapshot':
+                    # Strategic state can never be supplied by a tactical peer.
+                    alice.send('CrusadesCampaignSnapshot', struct.pack('<HI', 1, 0))
                 elif scenario == 'resignation':
                     alice.send('LeaveGame')
                 elif scenario == 'abandonment':
@@ -139,7 +142,7 @@ def run_case(binary, data, scenario):
                 assert outcome not in (0, 1) and winner is None, recorded
                 if scenario == 'invalid-client':
                     assert outcome == 8, recorded
-                if scenario == 'forged-win':
+                if scenario in ('forged-win', 'forged-snapshot'):
                     assert outcome == 8, recorded
                 if scenario == 'replay-failure':
                     assert outcome == 4 and replay_id is None and replay_digest is None, recorded
@@ -172,5 +175,5 @@ if __name__ == '__main__':
     parser.add_argument('--server', type=Path, required=True)
     parser.add_argument('--data', type=Path, required=True)
     args = parser.parse_args()
-    for case in ('victory', 'resignation', 'desync', 'invalid-client', 'abandonment', 'forged-win', 'replay-failure'):
+    for case in ('victory', 'resignation', 'desync', 'invalid-client', 'abandonment', 'forged-win', 'forged-snapshot', 'replay-failure'):
         run_case(args.server.resolve(), args.data.resolve(), case)
