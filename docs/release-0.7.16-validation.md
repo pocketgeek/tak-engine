@@ -67,3 +67,27 @@ and multiplayer bandwidth with explicit protocol-calculation assumptions.
 
 Tag `v0.7.16` points to `433046e`. Tag workflows build Linux, Windows and macOS
 packages. Duplicate branch package runs for the same commit were canceled.
+
+## Published packages
+
+All tag workflows passed:
+[Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36710898722),
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36710898718), and
+[macOS ARM64](https://github.com/pocketgeek/tak-engine/actions/runs/36710898675).
+All **14** packages/debug archives are attached to the
+[release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.16).
+
+The first macOS attempt compiled and signed both applications, but immediate DMG
+verification reported `Resource temporarily unavailable`. Rerunning the same tag
+passed disk-image verification, tests and uploads; no source or tag change was needed.
+
+Downloaded Windows/macOS ZIPs and the Ubuntu 24.04 package matched GitHub's SHA-256
+digests. ZIP integrity, client/server/Cartographer executables, license files,
+macOS bundle versions/icons, Linux package version and desktop launchers passed
+inspection. Extracted Ubuntu client/server executables run and report 0.7.16.
+Their optional source-build identifier is `unknown`; package provenance is supplied
+by the successful tag workflow rather than that runtime field.
+
+All targets were rebuilt locally in Release, optimized Debug, unoptimized GCC
+Debug, Clang Debug and ASAN configurations with version 0.7.16. The final follow-up
+commits change documentation/screenshots only. All 46 local README link targets exist.
