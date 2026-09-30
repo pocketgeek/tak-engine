@@ -679,11 +679,12 @@ int main(int argc, char** argv) {
         tak::ResultStats st;
         st.matchSec = 17 * 60 + 42;
         if (const char* sd = tak::devEnv("TAK_SHOT_RESULT_SIDE")) st.faction = std::atoi(sd);
-        const char* names[4] = {"Curtis", "Bruce", "Ludwin", "Pat"};
-        for (int i = 0; i < 4; ++i) {
+        const char* names[5] = {"Curtis", "Bruce", "Ludwin", "Pat", "Alex"};
+        for (int i = 0; i < 5; ++i) {
             tak::ResultRow r;
             r.name = names[i];
             r.colorSlot = i;
+            r.side = std::array<const char*, 5>{"ara", "tar", "ver", "zon", "cre"}[i];
             r.built = 120 - i * 23;
             r.kills = 48 - i * 11;
             r.losses = 31 + i * 9;

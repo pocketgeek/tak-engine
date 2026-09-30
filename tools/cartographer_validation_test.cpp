@@ -83,6 +83,7 @@ int main() {
         {
             std::ofstream file(root/"features"/"aramon"/"fixture.tdf");
             for(int i=1;i<=3;++i)file<<"[AraMana0"<<i<<"] {\nfootprintx=2;\nfootprintz=2;\nblocking=0;\n}\n";
+            for(int i=1;i<=9;++i)file<<"[AraHenge0"<<i<<"] {\nfootprintx=3;\nfootprintz=3;\nblocking=1;\n}\n";
         }
         vfs.addLayer(tak::hpi::MountSet(root));
         params.layout=tak::mapgen::Mainland;params.waterDensity=params.reliefDensity=0;

@@ -23,7 +23,7 @@ enum class ResultChoice { Menu, Retry, Next };
 // One row of the statistics table. Filled from the sim's per-player counters.
 struct ResultRow {
     std::string name;
-    int colorSlot = 0;    // team-colour palette slot, for the row's logo swatch
+    int colorSlot = 0;    // team-colour frame for the row's faction emblem
     int32_t score = 0;    // accumulated authored victim experiencepoints
     int built = 0;        // units put into the field
     int kills = 0;        // enemy units destroyed
@@ -31,6 +31,7 @@ struct ResultRow {
     int timeSec = 0;      // seconds survived (match length for a survivor)
     bool defeated = false;
     bool isLocal = false;
+    std::string side; // Faction emblem; colorSlot selects its player-color frame.
 };
 
 // Everything the screen needs beyond the win/lose flag.

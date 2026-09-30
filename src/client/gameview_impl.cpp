@@ -331,6 +331,7 @@
             row.name = !playerName_[p & 7].empty() ? playerName_[p & 7]
                                                    : "PLAYER " + std::to_string(p + 1);
             row.colorSlot = colorSlot_[p & 7];
+            row.side = pr.side;
             row.built = pr.built;
             row.score = pr.score;
             row.kills = pr.kills;
@@ -2006,6 +2007,15 @@
             const auto& pl = world_.player(p);
             PlayerR& r = fb.players[size_t(p)];
             r.captureEconomy(pl);
+            if (pl.godType) r.side = pl.godType->side;
+            else {
+                r.side = pf.players[size_t(p)].side;
+                if (r.side.empty()) for (const auto& unit : world_.units())
+                    if (unit.player == p && unit.type && !unit.type->side.empty()) {
+                        r.side = unit.type->side;
+                        break;
+                    }
+            }
             r.manaShareMask = pl.manaShareMask;
             r.kills = pl.kills; r.unitCount = pl.unitCount;
             r.built = pl.built; r.losses = pl.losses; r.score = pl.score;

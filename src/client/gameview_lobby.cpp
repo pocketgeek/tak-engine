@@ -288,7 +288,7 @@ std::string mapDisplayName(const std::string& id) {
     }
 
     void GameView::applyGenParams() {
-        genParams_.formatVer = 3;
+        genParams_.formatVer = tak::mapgen::Params{}.formatVer;
         genParams_ = tak::mapgen::sanitize(genParams_);
         // The menu offers square maps; accommodate the layout's minimum size.
         genParams_.widthCells = genParams_.heightCells =
@@ -497,7 +497,7 @@ std::string mapDisplayName(const std::string& id) {
       } else {
         // ---- random-map params panel (replaces the list) --------------------------
         static const char* kTypeName[tak::mapgen::kMapTypes] = {"ARAMON", "TAROS", "VERUNA", "ZHON", "CREON"};
-        static const int kSizes[] = {8, 12, 16, 20, 24};   // section-units (x32 cells) per side
+        static const int kSizes[] = {8, 12, 16, 20, 24, 32, 40, 48, 56, 64};   // section-units (x32 cells) per side
         // One rhythm for the whole panel: every control is kRowH tall and every gap
         // is kGap. The rows used to step by 30, 30, 36 and then 44, so the buttons
         // sat tighter than the sliders and the run of sliders drifted out of line
@@ -649,8 +649,8 @@ std::string mapDisplayName(const std::string& id) {
             else if (s.type == 2) {
                 blockText(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f,
                           {210, 200, 150, 255});
-                // AI difficulty (host cycles PASSIVE -> EASY -> NORMAL -> HARD -> ABSURD).
-                static const char* diffName[5] = {"PASSIVE", "EASY", "NORMAL", "HARD", "ABSURD"};
+                // AI difficulty (host cycles DEFENSIVE -> EASY -> NORMAL -> HARD -> ABSURD).
+                static const char* diffName[5] = {"DEFENSIVE", "EASY", "NORMAL", "HARD", "ABSURD"};
                 static const SDL_Color diffCol[5] = {
                     {150, 180, 210, 255},   // passive  (calm blue)
                     {150, 200, 150, 255},   // easy     (green)

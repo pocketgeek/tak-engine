@@ -1,10 +1,22 @@
 #include "client/guiart.h"
+#include <cctype>
 
 #include "client/gpuvram.h"
 #include "client/artscale.h"
 #include "hpi/hpi.h"
 
 namespace tak {
+
+std::string factionLogoSequence(std::string side) {
+    std::transform(side.begin(), side.end(), side.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    if (side == "aramon" || side == "ara") return "AraTeam";
+    if (side == "taros" || side == "tar") return "TarTeam";
+    if (side == "veruna" || side == "ver") return "VerTeam";
+    if (side == "zhon" || side == "zon") return "ZonTeam";
+    if (side == "creon" || side == "cre") return "CreTeam";
+    return {};
+}
+
 
 gaf::Palette guiPalette(const hpi::Vfs& vfs, const std::string& gafName) {
     std::string pp = "anims/" + gafName + ".pcx";

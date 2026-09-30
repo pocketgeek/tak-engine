@@ -47,6 +47,15 @@ int main(int argc,char** argv) {
                   "Passive AI orders defensive rather than hold-fire stances");
         }
     }
+    {
+        sim::World w;terrain(w);w.player(0).income=100;
+        for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        ai::Controller controller(0,empty,profile,1,ai::Difficulty::Easy,{{3400,800}});
+        check(attacks(think(controller,w,3*60*30))==0,"Easy leaves four minutes before its first attack");
+        check(attacks(think(controller,w,4*60*30))==8,"Easy attacks with at most eight units");
+        check(attacks(think(controller,w,5*60*30))==0,"Easy waits between attack waves");
+        check(attacks(think(controller,w,6*60*30))==8,"Easy resumes attacking after two minutes");
+    }
     for (float income : {20.f,200.f}) {
         sim::World w;terrain(w);w.player(0).income=income;
         for (int i=0;i<25;++i) w.spawn(&soldier,400+float(i)*32,800,0,0);

@@ -41,14 +41,15 @@ void syntheticMaps() {
             }
     }
     tak::hpi::Vfs vfs;vfs.addLayer(tak::hpi::MountSet(root));
-    for(int players=2;players<=8;++players) {
+    for(int version : {3,4}) for(int players=2;players<=8;++players) {
         tak::mapgen::Params p;p.players=players;p.seed=0xfedcba9876543210ULL;
+        p.formatVer=version; // Keep the previous recipe golden stable.
         p.waterDensity=p.reliefDensity=0;p.treeDensity=p.rockDensity=p.manaDensity=255;
         const auto r=tak::mapgen::generate(p,vfs);
         const auto repeated=tak::mapgen::generate(tak::mapgen::decodeMapId(tak::mapgen::encodeMapId(p)),vfs);
         check(hash(r)==hash(repeated),"synthetic map not deterministic");
         check(r.waterPercent==0&&r.reliefPatches==0,"dry flat synthetic map changed terrain");
-        if(players==8) {
+        if(players==8 && version==3) {
             check(hash(r)==0x9258a896baaf4285ULL,"cross-platform generator golden changed");
             std::printf("synthetic generator golden: %016llx\n",(unsigned long long)hash(r));
         }
@@ -107,6 +108,18 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
         check(f<m.featureNames.size(),"invalid feature index");
         if(tak::hpi::MountSet::key(m.featureNames[f]).find("mana")!=std::string::npos)++mana;
     }
+    if (p.formatVer>=4) for (int z=0;z<m.height;++z) for (int x=0;x<m.width;++x) {
+        const auto f=m.features[size_t(z)*m.width+x];
+        if (f>=m.featureNames.size() || tak::hpi::MountSet::key(m.featureNames[f]).find("mana")==std::string::npos) continue;
+        bool ruins=false;
+        for (int dz=-24;dz<=24 && !ruins;++dz) for (int dx=-24;dx<=24;++dx) {
+            const int nx=x+dx,nz=z+dz;
+            if(nx<0||nz<0||nx>=m.width||nz>=m.height)continue;
+            const auto r=m.features[size_t(nz)*m.width+nx];
+            if(r<m.featureNames.size() && tak::hpi::MountSet::key(m.featureNames[r]).find("henge")!=std::string::npos) { ruins=true; break; }
+        }
+        check(ruins,"mana spot has no surrounding ruins");
+    }
     check(mana>=p.players*3&&mana%p.players==0,"unequal resource rounds");
     check(p.layout!=tak::mapgen::Islands||r.harbors.size()==p.players,"missing island harbors");
 }
@@ -114,18 +127,18 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
 int main(int argc,char** argv) {
     try {
         using namespace tak::mapgen;
-        for(int version:{1,2,3})for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
+        for(int version:{1,2,3,4})for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
             Params p;p.formatVer=version;p.layout=layout;p.players=players;p.seed=0xfedcba9876543210ULL;
             p.widthCells=768;p.heightCells=640;
             const auto id=encodeMapId(p);const auto d=decodeMapId(id);const auto expected=sanitize(p);
             check(d.seed==p.seed&&d.players==p.players&&d.widthCells==expected.widthCells&&d.heightCells==expected.heightCells,"seed codec mismatch");
             if(version>=2)check(d.treeDensity==p.treeDensity&&d.rockDensity==p.rockDensity,"density codec mismatch");
-            if(version==3)check(d.layout==p.layout,"layout codec mismatch");
+            if(version>=3)check(d.layout==p.layout,"layout codec mismatch");
         }
         // A high-bit seed, invalid input and legacy identifiers must not wrap
         // dimensions or allow a new layout to reinterpret an old seed.
         Params invalid;invalid.widthCells=0;invalid.heightCells=65535;invalid.players=255;invalid.layout=255;
-        auto sane=sanitize(invalid);check(sane.players==8&&sane.widthCells>=384&&sane.heightCells==768,"sanitize bounds");
+        auto sane=sanitize(invalid);check(sane.players==8&&sane.widthCells>=384&&sane.heightCells==2048,"sanitize bounds");
         syntheticMaps();
         if(argc<2){std::puts("mapgen codec/bounds passed (retail sweep takes a data path)");return 0;}
         const auto vfs=tak::hpi::mountRetailRoot(argv[1]);
@@ -158,6 +171,18 @@ int main(int argc,char** argv) {
                 }
             }
             std::puts("generated-map naval production passed");return 0;
+        }
+        if (argc>2 && std::string(argv[2])=="--large") {
+            for(int world=0;world<5;++world) for(int layout=0;layout<3;++layout) {
+                Params p;p.widthCells=p.heightCells=2048;p.players=8;p.mapType=world;p.layout=layout;
+                const auto begin=std::chrono::steady_clock::now();
+                const auto r=generate(p,vfs); verify(p,r);
+                check(hash(r)==hash(generate(decodeMapId(encodeMapId(p)),vfs)),"large map recipe changed");
+                std::printf("large map world=%d layout=%d hash=%016llx %.2fs\n",world,layout,
+                    (unsigned long long)hash(r),std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count());
+                std::fflush(stdout);
+            }
+            return 0;
         }
         const bool sweep=argc>2&&std::string(argv[2])=="--sweep";
         const int seeds=sweep?5:1;int count=0,failures=0,patches=0;

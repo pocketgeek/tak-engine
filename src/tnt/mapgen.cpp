@@ -33,9 +33,9 @@ std::vector<std::string> assetPaths(const hpi::Vfs& vfs) {
 
 Params sanitize(Params p) {
     if (p.mapType >= kMapTypes) p.mapType = Aramon;
-    // Even cells, multiples of 32 (a 512px section unit), 128..768 cells/side.
-    auto fix = [](uint16_t v) -> uint16_t {
-        int u = std::clamp(int(v) / 32, 4, 24);   // 4..24 section-units
+    // Section multiples: new recipes support 64x64; legacy seeds keep their cap.
+    auto fix = [p](uint16_t v) -> uint16_t {
+        int u = std::clamp(int(v) / 32, 4, p.formatVer >= 4 ? 64 : 24);
         return uint16_t(u * 32);
     };
     p.widthCells = fix(p.widthCells);
@@ -472,8 +472,8 @@ Params decodeMapId(const std::string& id) {
     auto u16 = [&](size_t o) -> uint16_t { return uint16_t(u8(o) | (u8(o + 1) << 8)); };
     if (raw.size() >= 19) {
         p.formatVer = u16(0);
-        if (p.formatVer > 3 || (p.formatVer == 3 && raw.size() != 22)) return Params{};
-        if (p.formatVer == 3) p.layout = u8(21);
+        if (p.formatVer > 4 || (p.formatVer >= 3 && raw.size() != 22)) return Params{};
+        if (p.formatVer >= 3) p.layout = u8(21);
         uint64_t s = 0; for (int i = 0; i < 8; ++i) s |= uint64_t(u8(2 + i)) << (8 * i);
         p.seed = s;
         p.mapType = u8(10);

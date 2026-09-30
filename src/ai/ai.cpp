@@ -45,7 +45,7 @@ DiffParams paramsFor(Difficulty d) {
         case Difficulty::Passive: return {30, 5, 3, 100, false, false, 0};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable. No raiding.
-        case Difficulty::Easy:   return {60, 4, 1, 70,  false, true,  0};
+        case Difficulty::Easy:   return {90, 4, 1, 50,  false, true,  0};
         // Fast, army-heavy, and aggressive: reacts often, musters a large army before
         // the big push, harasses with raids meanwhile, and pushes bigger unit limits.
         case Difficulty::Hard:   return {20, 6, 8, 150, true,  true,  4};
@@ -161,6 +161,11 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
             n.desiredFactories = std::min(n.desiredFactories + 1, 32);
         if (diff_ == Difficulty::Passive)
             n.desiredDefenses = std::clamp(2 + int(n.income / 40) + n.army / 12, 2, 48);
+    }
+    if (diff_ == Difficulty::Easy) {
+        n.desiredFactories = std::min(n.desiredFactories, 2);
+        n.desiredArmy = std::clamp(8 + int(n.income * 0.5f), 8, 36);
+        n.desiredDefenses = std::min(n.desiredDefenses, 2);
     }
     return n;
 }
@@ -582,6 +587,8 @@ std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
 
 void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
                            const CommandSink& sink) {
+    if (diff_ == Difficulty::Easy &&
+        (simTick < 4*60*30 || (scouted_ && simTick-lastRaidTick_ < 2*60*30))) return;
     if (!dp_.attack) return;   // Passive: never marches out; units defend in place.
     struct Fighter { int id; float x,z; };
     std::vector<Fighter> idle;
@@ -609,6 +616,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     float income = me.income;   // scale the force with actual income
     int bigPush = std::clamp(dp_.waveSize + int(income * 0.25f), dp_.waveSize, 60);
 
+    if (diff_ == Difficulty::Easy) bigPush = std::min(bigPush, 8);
     if (int(idle.size()) >= bigPush) {
         // Commit the army -- but cap commands per think so a huge force (a near-cap
         // game, or a stress test with thousands of units) doesn't emit one giant tick
@@ -616,7 +624,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
         // the next few thinks; all march to the same goal, so they still share a flow
         // field. kMaxWaveCmds keeps even several coincident AIs well under the cap.
         constexpr int kMaxWaveCmds = 256;
-        int n = std::min(int(idle.size()), kMaxWaveCmds);
+        int n = std::min(int(idle.size()), diff_ == Difficulty::Easy ? 8 : kMaxWaveCmds);
         for (int i = 0; i < n; ++i)
             emit(sink, tak::net::Cmd::AttackMove, idle[size_t(i)].id, "", idle[size_t(i)].x, idle[size_t(i)].z);
         lastRaidTick_ = simTick;      // let the freshly-built stragglers regroup, don't raid next

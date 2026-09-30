@@ -54,7 +54,8 @@ the GOG edition, supplies the game data.
 
 Version **0.7.15 uses protocol 201**. Update clients and servers together;
 0.7.14 uses protocol 200 and cannot join the same match.
-The current checkout uses **protocol 202** for corrected conversion targeting:
+The current checkout uses **protocol 203**, including larger generated maps and gentler Easy AI.
+It also includes corrected conversion targeting:
 Harpies and other converters stop attacking newly allied targets. Produced units
 also receive exit destinations that account for crowded-goal stopping distance,
 so they clear the production spot before parking.
@@ -103,7 +104,7 @@ See the [0.7.12 validation report](docs/release-0.7.12-validation.md).
 
 ### Previously in 0.7.11
 
-- **Defensive Passive AI:** continues growing its army and defenses near home
+- **Defensive AI:** continues growing its army and defenses near home
   as mana allows, without sending attacks.
 - **Persistent Hard and Absurd AI:** keep expanding income and production and
   building troops beyond the former AI policy ceilings. Actual player and
@@ -282,14 +283,15 @@ enemy units outside current sight remain untargetable.
 
 | AI | What to expect |
 | --- | --- |
-| Passive | Keeps growing its army and defenses at home as mana allows; sends no attacks |
-| Easy | Builds slowly and gathers an army before attacking |
+| Defensive | Keeps growing its army and defenses at home as mana allows; sends no attacks |
+| Easy | Builds slowly; first attack after four minutes, then waves of at most eight units at least two minutes apart |
 | Normal | Sends probing raids while saving a larger attacking force |
 | Hard | Keeps expanding income and production, spending on raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
 
 Choose **Generate Random Map** under the map preview to configure a Mainland,
-Lakes, or Islands map. The available sizes depend on the layout and player count.
+Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.
+The available sizes depend on the layout and player count.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.

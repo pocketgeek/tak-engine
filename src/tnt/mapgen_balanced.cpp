@@ -266,14 +266,12 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         return true;
     };
     uint64_t featureRng=p.seed^0xbe72431851ULL;
-    const auto deposit=[&](int x,int z,int tier) {
-        if(!putFeature(x,z,palette.sacred[tier],true))
-            throw std::runtime_error("Random map is missing its world's sacred stone definitions");
-        deposits.emplace_back(x,z);
+    const auto decorateDeposit=[&](int x,int z) {
         // Decorative rings stay outside the reserved build footprint. The actual
         // TDF footprints, not nominal 3x3 guesses, decide whether an arc fits.
         const auto& spec=kRing[p.mapType];
         int count=0;
+        bool occupiedSlots[8]={};
         for(int slot=0;slot<8&&count<3;++slot) {
             for(int j=0;j<spec.n;++j) {
                 const auto& arc=spec.p[j];if(arc.slot!=spec.order[slot])continue;
@@ -283,10 +281,39 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                 bool clear=flat(ax,az,f->x,f->z);
                 for(int dz=0;clear&&dz<f->z;++dz)for(int dx=0;dx<f->x;++dx)
                     if(reserved[size_t(az+dz)*w+ax+dx]&1){clear=false;break;}
-                if(clear) {putFeature(ax,az,arc.name);++count;}
+                if(clear) {putFeature(ax,az,arc.name);++count;occupiedSlots[arc.slot]=true;}
                 break;
             }
         }
+        if (p.formatVer >= 4 && count < 3) {
+            // Authored offsets often collide with the lodestone yard or a reserved
+            // approach. Move the appropriate arc outward instead of leaving bare
+            // mana. Keep its orientation and use the real footprint throughout.
+            for (int radius=1; radius<=16 && count<3; ++radius) {
+                for (int slot=0; slot<8 && count<3; ++slot) {
+                    for (int j=0; j<spec.n && count<3; ++j) {
+                        const auto& arc=spec.p[j];
+                        if (arc.slot!=spec.order[slot] || occupiedSlots[arc.slot]) continue;
+                        const auto* f=sizeOf(arc.name); if (!f) continue;
+                        const int ax=x+arc.dx+(arc.dx<0?-radius:arc.dx>0?radius:0);
+                        const int az=z+arc.dz+(arc.dz<0?-radius:arc.dz>0?radius:0);
+                        if (ax<x+4 && ax+f->x>x-3 && az<z+4 && az+f->z>z-3) continue;
+                        bool clear=flat(ax,az,f->x,f->z);
+                        for (int dz=0; clear && dz<f->z; ++dz)
+                            for (int dx=0; dx<f->x; ++dx)
+                                if (reserved[size_t(az+dz)*w+ax+dx]&1) { clear=false; break; }
+                        if (clear) { putFeature(ax,az,arc.name); ++count; occupiedSlots[arc.slot]=true; break; }
+                    }
+                }
+            }
+            if (count==0) throw std::runtime_error("Random map mana site has no space for ruins");
+        }
+    };
+    const auto deposit=[&](int x,int z,int tier) {
+        if(!putFeature(x,z,palette.sacred[tier],true))
+            throw std::runtime_error("Random map is missing its world's sacred stone definitions");
+        deposits.emplace_back(x,z);
+        decorateDeposit(x,z);
         mark(x,z,7,1);
     };
     for(const auto s:r.starts)for(int tier=0;tier<3;++tier) {
@@ -336,6 +363,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             sites.push_back(best);
         }
         if(sites.size()!=r.starts.size())break;
+        // Reserve every route in this round before its ruins are placed.
         for(size_t player=0;player<sites.size();++player) {
             const auto site=sites[player];
             // Follow the existing footprint-valid distance field back home, and
@@ -349,7 +377,15 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                     if(nx>=0&&nz>=0&&nx<w&&nz<h&&d[size_t(nz)*w+nx]==here-1){at={nx,nz};break;}
                 }
             }
-            deposit(site.first,site.second,1);
+            if (p.formatVer<4) deposit(site.first,site.second,1);
+        }
+        if (p.formatVer>=4) {
+            for (const auto site : sites) deposit(site.first,site.second,1);
+            // New ruins are real obstacles. Plan the next round against the
+            // updated terrain, rather than routing through an earlier ruin.
+            ground.markClearanceDirty();
+            for (size_t player=0;player<r.starts.size();++player)
+                homeDistances[player]=distances(ground,r.starts[player],6);
         }
     }
     // A separate noise field makes forest stands and rocky regions, with clear

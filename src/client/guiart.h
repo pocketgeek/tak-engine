@@ -15,6 +15,8 @@ namespace tak::hpi { class Vfs; }
 
 namespace tak {
 
+std::string factionLogoSequence(std::string side);
+
 // Palette for `anims/<gaf>.gaf`: its sibling .pcx if present, else the shared GUI
 // palette. Returns an empty palette if neither loads (art then simply doesn't draw).
 gaf::Palette guiPalette(const hpi::Vfs& vfs, const std::string& gafName);

@@ -140,6 +140,9 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
         okTex[i] = gafTexture(ren, vfs, g.btnGaf, "OKButton", i);
         cancelTex[i] = gafTexture(ren, vfs, g.btnGaf, "CancelButton", i);
     }
+    std::vector<SDL_Texture*> logos;
+    if (stats) for (const auto& row : stats->rows)
+        logos.push_back(gafTexture(ren, vfs, "colorlogos2", factionLogoSequence(row.side), row.colorSlot));
     Font head, body, deco;
     try { head = Font(ren, vfs, "fonts/lombardic (cd).gaf"); } catch (...) {}
     try { deco = Font(ren, vfs, "fonts/decorativesm.gaf"); } catch (...) {}
@@ -148,6 +151,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     const Font& heading = head.ok() ? head : body;
     auto freeAll = [&] {
         if (bg) gpuvram::destroy(bg);
+        for (auto* logo : logos) if (logo) gpuvram::destroy(logo);
         for (int i = 0; i < 3; ++i) {
             if (okTex[i]) gpuvram::destroy(okTex[i]);
             if (cancelTex[i]) gpuvram::destroy(cancelTex[i]);
@@ -246,11 +250,15 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 const ResultRow& row = stats->rows[size_t(i)];
                 float y = g.name.y + g.pitch * float(i);
                 SDL_FRect sw = lay.rect(g.logo.x, g.logo.y + g.pitch * float(i), g.logo.w, g.logo.h);
-                SDL_Color c = slotColor(row.colorSlot);
-                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 255);
-                SDL_RenderFillRectF(ren, &sw);
-                SDL_SetRenderDrawColor(ren, 20, 18, 14, 255);
-                SDL_RenderDrawRectF(ren, &sw);
+                if (logos[size_t(i)]) {
+                    const float size = std::min(sw.w, sw.h);
+                    SDL_FRect emblem{sw.x + (sw.w-size)*0.5f, sw.y + (sw.h-size)*0.5f, size, size};
+                    SDL_RenderCopyF(ren, logos[size_t(i)], nullptr, &emblem);
+                } else {
+                    SDL_Color c = slotColor(row.colorSlot);
+                    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 255);
+                    SDL_RenderFillRectF(ren, &sw);
+                }
                 // The local player's row is the one you came here to read.
                 SDL_Color rc = row.isLocal ? gold : dim;
                 text(body, row.name, col(g.name, y), rc);

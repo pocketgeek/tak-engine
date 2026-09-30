@@ -46,7 +46,12 @@ int main(int argc,char** argv) try {
             vfs.setMapFiles(files);
             SDL_Event event{};event.type=SDL_KEYDOWN;event.key.keysym.sym=SDLK_ESCAPE;
             SDL_PushEvent(&event);
-            tak::ResultScreen::run(renderer,vfs,true,"",false);
+            tak::ResultStats stats;
+            for (const char* side : {"ara", "tar", "ver", "zon", "cre"}) {
+                tak::ResultRow row; row.side=side; row.colorSlot=int(stats.rows.size());
+                stats.rows.push_back(row);
+            }
+            tak::ResultScreen::run(renderer,vfs,true,"",false,nullptr,nullptr,&stats);
             vfs.setMapFiles({});
             check(gpuvram::bytes()==bytes && gpuvram::count()==count,"results screen leaks textures");
         }

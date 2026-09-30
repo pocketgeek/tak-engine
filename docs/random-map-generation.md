@@ -1,10 +1,10 @@
 # Random map generation
 
-New recipes use generator version 3. The map ID still carries the seed and
+New recipes use generator version 4. The map ID still carries the seed and
 parameters in `~gen1~` followed by hexadecimal bytes; the first two payload bytes
-are the generator version. Versions 1 and 2 keep the old generation algorithm.
+are the generator version. Versions 1–3 keep their original generation algorithms and size limits.
 Protocol 193 introduced version-3 generation and verified map-transfer support;
-0.7.10 uses protocol 194 and retains both. Existing simulation/pathfinding rules are unchanged.
+The current checkout uses protocol 203 for version-4 recipes. Existing pathfinding rules are unchanged.
 
 ## Layout and placement
 
@@ -15,7 +15,7 @@ Protocol 193 introduced version-3 generation and verified map-transfer support;
   naval construction and ship departure. Travel between islands needs boats or
   aircraft. Water allocation is automatic.
 
-The menu offers square sizes 8, 12, 16, 20, and 24. It skips sizes that cannot
+The menu offers square sizes 8, 12, 16, 20, 24, 32, 40, 48, 56, and 64. It skips sizes that cannot
 support the selected layout/player count:
 
 | Layout | 2–4 players | 5–8 players |
@@ -54,6 +54,10 @@ ground. Available pieces and free space limit hill variety, particularly on
 small islands with large reserved home areas. This does not attempt to assemble
 every retail cliff, plateau, town, or mountain kit.
 
+Each mana spot has ruins from its terrain theme. When the usual ring position
+conflicts with construction space or an approach, arcs move outward to a clear
+position using their actual footprints. Lodestone yards and routes stay clear.
+
 Trees and rocks use separate low-frequency density fields to form clusters.
 Placement reserves the real TDF footprint from its northwest anchor. Home
 construction space and routes remain clear. Retail prefab features and the road
@@ -87,6 +91,7 @@ Run the focused tests with:
 ./build/mapgen_test /path/to/tak_data
 ./build/mapgen_test /path/to/tak_data --sweep
 ./build/mapgen_test /path/to/tak_data --naval
+./build/mapgen_test /path/to/tak_data --large
 ```
 
 The asset-free test has a fixed generated-map hash and deliberately non-square
@@ -94,6 +99,8 @@ feature footprints. The data sweep covers 4,725 combinations: five worlds, three
 layouts, every player count from two through eight, five seeds, three input
 sizes, and zero/medium/maximum densities. It checks generator invariants and
 periodically regenerates encoded recipes to compare their complete output.
+The large-map check covers all five worlds and three layouts at 64×64 with eight
+players, checking connectivity, mana-site ruins, and recipe reproducibility.
 The naval test uses the real simulation and produces two of each of the six Sea
 Fort ship types in every world and both balance modes (60 production cases).
 CTest includes the asset-free test; a configured `TAK_TEST_DATA` additionally
@@ -122,3 +129,19 @@ it. Saved maps appear in the map picker in subsequent games.
 
 Custom maps use [verified automatic transfer](map-transfer.md). Received maps also
 remain selectable, with a short fingerprint in the name to distinguish versions.
+
+### Version 4 validation (2026-09-30)
+
+- All 4,725 terrain/layout/player/seed/size/density cases passed, including a
+  surrounding-ruin check for every mana deposit and footprint-aware route checks.
+- All 15 combinations of five worlds and three layouts passed at 64×64 with
+  eight players; regenerating their recipes produced identical maps.
+- GCC Release and Clang ASAN produced identical hashes for all 105 roster maps.
+- The version-3 synthetic golden remains `9258a896baaf4285`; old recipes retain
+  their original generator and dimension limits.
+- Thirteen focused tests passed in each of Release, optimized Debug, and ASAN,
+  including generated naval production, map transfer, Cartographer generation,
+  AI behavior, and results-screen texture cleanup.
+- A live 64×64 generated-map network test reached 300 matching ticks on host,
+  peer, referee, and late spectator (`b471a5694f12d9e5`). Host, peer, and server
+  each saved the generated map for later selection.

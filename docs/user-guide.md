@@ -80,8 +80,8 @@ Skirmish lobbies let you choose a map, faction, colour, teams, and one of five
 
 | Difficulty | Behaviour |
 | --- | --- |
-| **Passive** | keeps building an army and defenses near home as mana allows, up to the game cap; never sends attacks |
-| **Easy** | builds up slowly and gathers an army before attacking; no raids |
+| **Defensive** | keeps building an army and defenses near home as mana allows, up to the game cap; never sends attacks |
+| **Easy** | builds slowly; attacks after four minutes in groups of at most eight, with at least two minutes between waves; no raids |
 | **Normal** | harasses with small **raiding parties** while massing a main army sized to its mana income |
 | **Hard** | continues expanding income and production; spends on raids while saving a heavy force |
 | **Absurd** | Hard, with **double mana income** from recurring and reclaim sources |
@@ -97,7 +97,7 @@ between heavy waves so they do not consume the entire reserve.
 Built and conjured units receive their type's default standing orders:
 **Offensive** engages and pursues within its standing-order limits,
 **Defensive** fires without pursuing, and **Passive** does not auto-engage.
-Explicit player attack orders still work. Passive AI units begin Defensive.
+Explicit player attack orders still work. Defensive AI units begin in the Defensive stance.
 Games start partly zoomed in and centered on the local player's Monarch.
 
 

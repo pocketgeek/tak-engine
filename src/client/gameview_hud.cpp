@@ -1,3 +1,4 @@
+#include "client/guiart.h"
 #include "client/gameview.h"
 #include "client/artscale.h"
 #include "client/cursorrange.h"
@@ -1831,12 +1832,8 @@ namespace {
             // Keep the emblem after defeat, when no living unit supplies a side.
             if (!side.empty()) scoreboardSides_[t & 7] = side;
             else side = scoreboardSides_[t & 7];
-            std::transform(side.begin(), side.end(), side.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-            std::string seq = side == "aramon" || side == "ara" ? "AraTeam" :
-                              side == "taros" || side == "tar" ? "TarTeam" :
-                              side == "veruna" || side == "ver" ? "VerTeam" :
-                              side == "zhon" || side == "zon" ? "ZonTeam" :
-                              side == "creon" || side == "cre" ? "CreTeam" : "";
+            if (!player.side.empty()) side = player.side;
+            const std::string seq = tak::factionLogoSequence(side);
             const std::string key = seq + std::to_string(colorSlot_[t & 7]);
             auto [it, inserted] = scoreboardLogos_.try_emplace(key, nullptr);
             if (inserted && !seq.empty())
