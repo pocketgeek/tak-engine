@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 205;      // 205: authenticated Crusades allegiance query/change
+constexpr uint32_t kNetVersion = 206;      // 206: server-issued Crusades battle rooms
+                                           // 205: authenticated Crusades allegiance query/change
                                            // 204: retail damage-category selection and integer damage tables
                                            // 203: generated-map v4 recipes and gentler Easy AI
                                            // 195: directed mana sharing and chat recipients
@@ -279,6 +280,13 @@ enum class Msg : uint8_t {
                           // (UINT64_MAX absent), u64 joinedUnix, u64 changedUnix,
                           // str explanation. Absent timestamps=0. Exact payloads;
                           // no trailing extensions or client-supplied identity.
+    CrusadesIssueBattle, // C->S: str campaign(1..128),u32 territory,str opponent(3..20).
+                        // Account caller, map, rules, and launch token are NEVER client supplied.
+    CrusadesBattleResult, // S->C (issuer response/opponent invitation): u8 status
+                        // (0 OK,1 malformed,2 unauthenticated,3 disabled,4 rejected),
+                        // str campaign,str battle ID,u32 room,str map,u64 expiresUnix,str reason.
+                        // Designated opponent accepts via ordinary JoinGame; exact payloads.
+
 
 };
 

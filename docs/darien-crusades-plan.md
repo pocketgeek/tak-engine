@@ -522,8 +522,8 @@ CampaignEnded
 
 Completed 2026-09-30. Implementation and acceptance evidence:
 [authenticated allegiance](research/darien-crusades/campaign-allegiance.md).
-This establishes server-side participation; campaign UI and battle issuance
-remain later milestones.
+This establishes server-side participation. Battle issuance is covered by
+Milestone 5; a player-facing campaign UI remains later work.
 
 ## Objective
 
@@ -565,6 +565,11 @@ Examples requiring evidence before adoption:
 ---
 
 # Milestone 5 — Battle issuance
+
+Completed 2026-09-30. Design, security boundaries
+and acceptance evidence: [campaign battles](research/darien-crusades/campaign-battles.md).
+The initial modern server duel issues and binds battles but does not apply
+campaign credit. Authoritative result processing remains Milestone 6 below.
 
 ## Objective
 

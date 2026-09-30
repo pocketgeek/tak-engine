@@ -62,7 +62,9 @@ proof of historical server behavior.
 
 The database identifies itself with application ID `0x54414b43` (`TAKC`) and
 schema version 1 as introduced by Milestone 3. [Milestone 4](campaign-allegiance.md#schema-version-2-and-migration)
-adds authenticated allegiance through an atomic version-1-to-2 migration. The
+adds authenticated allegiance through an atomic version-1-to-2 migration;
+[Milestone 5](campaign-battles.md#api-schema-and-transactions) adds battle
+issuance in version 3. The
 three tables below describe the original persistence layer. An empty unclaimed
 database may be initialized; unrelated or
 unsupported-version databases are rejected. There is no migration from a

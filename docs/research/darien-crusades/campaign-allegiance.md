@@ -84,7 +84,10 @@ participant and audit together.
 
 ## Schema version 2 and migration
 
-Version 2 retains the complete version-1 campaign/event/result schema and adds:
+Milestone 4 introduced version 2, retaining the complete version-1
+campaign/event/result schema and adding the tables below.
+[Milestone 5](campaign-battles.md#api-schema-and-transactions) subsequently
+adds battle issuance through migration to version 3.
 
 | Table | Fields |
 |---|---|

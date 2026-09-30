@@ -13,6 +13,7 @@ No historical campaign service has been implemented.
 - [Milestone 2 clean-room campaign model](campaign-model.md)
 - [Milestone 3 transactional campaign store](campaign-store.md)
 - [Milestone 4 authenticated campaign allegiance](campaign-allegiance.md)
+- [Milestone 5 authoritative battle issuance](campaign-battles.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)

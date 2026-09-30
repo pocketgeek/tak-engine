@@ -14,6 +14,7 @@
 
 #include "net/mappackage.h"
 #include "tnt/mapgen.h"
+#include "tnt/ota.h"
 #include "net/netcompat.h"
 #include "util/winargv.h"
 #ifdef __APPLE__
@@ -172,6 +173,10 @@ struct Room {
     std::shared_ptr<tak::net::maps::Package> mapPackage;
     std::unique_ptr<tak::hpi::Vfs> mapVfs;
 
+    // Persistent Crusades identity is server-owned, never part of CreateGame.
+    std::string campaignBattleId, campaignLaunchToken, campaignRoomToken, campaignId;
+    std::string campaignAccounts[2];
+    int64_t campaignExpires = 0;
     std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
     uint32_t hostId = 0;
@@ -314,6 +319,7 @@ public:
                         const std::filesystem::path& definition) {
         if (!requireAuth_) throw std::runtime_error("Crusades requires account authentication");
         crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(database);
+        campaignSession_ = tak::crypto::toHex(tak::crypto::randomVec(32));
         if (!definition.empty()) {
             const auto campaign = tak::srv::crusades::loadDefinition(definition);
             if (campaign.id().size() > 128)
@@ -360,6 +366,12 @@ private:
     bool loopbackOnly_ = false;
     tak::srv::AccountStore accounts_;
     std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
+    std::string campaignSession_;
+    int64_t campaignSweepTime_ = -1;
+    void issueCampaignBattle(Client& c, const Frame& f);
+    tak::srv::crusades::BattleContext campaignContext(const Room& r, bool requirePresent) const;
+    void cancelCampaignBattle(Room& r);
+    void closeCampaignLobby(uint32_t roomId, const char* reason);
     tak::srv::LoginThrottle throttle_;
     // A mounted data set at one override tier: the VFS, its base + Crusades
     // registries, and the gameplay-data fingerprint peers are held to.
@@ -825,6 +837,141 @@ void Server::authMsg(Client& c, const Frame& f) {
     c.conn.fail("no login");
 }
 
+namespace {
+int64_t campaignNow() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+Writer battleReply(uint8_t status, const std::string& campaign = "", const std::string& battle = "",
+                   uint32_t room = 0, const std::string& map = "", int64_t expires = 0, const std::string& reason = "") {
+    Writer w;w.u8(status);w.str(campaign);w.str(battle);w.u32(room);w.str(map);w.u64(uint64_t(expires));w.str(reason);return w;
+}
+}
+
+tak::srv::crusades::BattleContext Server::campaignContext(const Room& r, bool requirePresent) const {
+    if (r.campaignBattleId.empty() && requirePresent) throw std::runtime_error("not a campaign room");
+    if (!r.mapPackage || r.cap != 2 || !r.mission.empty() || !r.spectators.empty())
+        throw std::runtime_error("invalid campaign room");
+    tak::srv::crusades::BattleContext context;
+    context.mapIdentifier = r.mapId;context.mapDigest = r.mapPackage->digest;
+    context.crusadesBalance = r.opts.crusades == 1;
+    Writer rules;
+    rules.str("modern-crusades-duel-v1");rules.u32(r.seed);
+    const auto& o=r.opts;
+    rules.u8(o.crusades);rules.u8(o.forfeitSelfDestruct);rules.u8(o.overridePolicy);
+    rules.u8(o.speed);rules.u8(o.speedUnlock);rules.u32(o.unitCap);rules.u8(o.monarchExpendable);
+    rules.u8(o.stressTest);rules.u8(o.fogExplored);rules.u8(o.benchmark);rules.u8(o.randomStarts);rules.u8(o.doubleSight);
+    for (int i=0;i<kMaxSlots;++i) {
+        const auto& slot=r.slots[i];
+        rules.u8(slot.type);rules.u8(slot.faction);rules.u8(slot.color);rules.u8(slot.team);rules.u8(slot.aiLevel);
+        if(i>=2) {if(slot.type!=3 || r.slotClient[i]>=0)throw std::runtime_error("extra campaign participant");continue;}
+        if(slot.type!=1)throw std::runtime_error("campaign requires two human participants");
+        std::string account=r.campaignAccounts[i];
+        if(r.slotClient[i]>=0) {
+            const auto peer=clients_.find(uint32_t(r.slotClient[i]));
+            if(peer==clients_.end() || peer->second->account.empty() || peer->second->roomId!=r.id || peer->second->slot!=i)
+                throw std::runtime_error("campaign participant connection missing");
+            account=tak::auth::foldUsername(peer->second->account);
+            if(account!=r.campaignAccounts[i])throw std::runtime_error("campaign participant changed");
+        } else if(requirePresent)throw std::runtime_error("campaign participant not joined");
+        context.participants.push_back(account);
+    }
+    context.rulesDigest=tak::crypto::toHex(tak::crypto::sha256(rules.b.data(),rules.b.size()));
+    return context;
+}
+
+void Server::cancelCampaignBattle(Room& r) {
+    if(r.campaignBattleId.empty() || !crusades_)return;
+    try {
+        const auto status=crusades_->battle(r.campaignBattleId).status;
+        if(status==tak::srv::crusades::BattleStatus::Issued || status==tak::srv::crusades::BattleStatus::Started)
+            crusades_->cancelBattle(r.campaignBattleId,campaignNow());
+    }
+    catch(const std::exception& e) {std::fprintf(stderr,"campaign cancellation: %s\n",e.what());}
+}
+
+void Server::closeCampaignLobby(uint32_t roomId,const char* reason) {
+    auto it=rooms_.find(roomId);if(it==rooms_.end())return;
+    auto& r=it->second;cancelCampaignBattle(r);
+    for(auto& [id,peer]:clients_) {
+        (void)id;if(peer->roomId!=roomId)continue;
+        dropPendingCommands(*peer,r);peer->state=Client::Lobby;peer->roomId=0;peer->slot=-1;peer->loaded=false;
+        peer->conn.send(Msg::CrusadesBattleResult,battleReply(4,r.campaignId,r.campaignBattleId,0,"",0,reason));
+    }
+    rooms_.erase(it);
+}
+
+void Server::issueCampaignBattle(Client& c,const Frame& f) {
+    if(!requireAuth_ || c.account.empty() || (c.state!=Client::Lobby && c.state!=Client::InGame)) {
+        c.conn.send(Msg::CrusadesBattleResult,battleReply(2,"","",0,"",0,"account authentication required"));return;
+    }
+    if(!crusades_) {c.conn.send(Msg::CrusadesBattleResult,battleReply(3,"","",0,"",0,"campaign service disabled"));return;}
+    if(f.payload.size()<11 || f.payload.size()>156) {c.conn.send(Msg::CrusadesBattleResult,battleReply(1));return;}
+    Reader rd(f.payload.data(),f.payload.size());const auto campaign=rd.str();const auto territory=rd.u32();const auto opponentName=rd.str();
+    if(!rd.ok || rd.p!=rd.end || campaign.empty() || campaign.size()>128 || campaign.find('\0')!=std::string::npos ||
+        !territory || !tak::auth::validUsername(opponentName)) {c.conn.send(Msg::CrusadesBattleResult,battleReply(1));return;}
+    std::string issued;
+    uint32_t roomId=0;
+    try {
+        if(c.state!=Client::Lobby || c.roomId || !haveCb_)throw std::runtime_error("campaign match unavailable");
+        const auto caller=tak::auth::foldUsername(c.account),opponent=tak::auth::foldUsername(opponentName);
+        if(caller==opponent)throw std::runtime_error("opponent must be another account");
+        Client* invited=nullptr;
+        for(auto& [id,peer]:clients_) {
+            (void)id;
+            if(peer->state==Client::Lobby && !peer->roomId && !peer->account.empty() && tak::auth::foldUsername(peer->account)==opponent) {
+                if(invited)throw std::runtime_error("opponent has multiple available connections");
+                invited=peer.get();
+            }
+        }
+        if(!invited)throw std::runtime_error("opponent is not available in the lobby");
+        const auto saved=crusades_->load(campaign);
+        const auto* parcel=saved.definition.find(territory);
+        if(!parcel)throw std::runtime_error("unknown campaign territory");
+        const auto& live=saved.state.territories.at(territory);
+        const auto map=live.assignedMap ? live.assignedMap : parcel->mapIdentifier;
+        if(!map || map->size()>4096 || tak::mapgen::isGeneratedMapId(*map))throw std::runtime_error("territory has no installed battle map");
+        auto package=tak::net::maps::build(retail_.vfs,*map);
+        if(tak::net::maps::authoredScenario(*package))throw std::runtime_error("campaign duels require a skirmish map");
+        auto ota=package->mapPath;ota.replace(ota.size()-4,4,".ota");
+        const auto scenarioFile=package->files->find(ota);
+        if(scenarioFile==package->files->end())throw std::runtime_error("battle map has no scenario metadata");
+        const auto& metadata=scenarioFile->second;
+        if(tak::tnt::Scenario::parse(std::string(metadata.begin(),metadata.end())).starts.size()<2)
+            throw std::runtime_error("battle map needs two player starts");
+        auto a=crusades_->allegiance(campaign,caller),b=crusades_->allegiance(campaign,opponent);
+        if(!a || !b || a->alliance==b->alliance)throw std::runtime_error("opponents must have opposite campaign allegiances");
+        Room room;room.id=nextRoomId_++;roomId=room.id;room.hostId=c.id;room.name="Crusades battle";
+        room.mapId=*map;room.mapPackage=std::move(package);room.mapVfs=std::make_unique<tak::hpi::Vfs>(&retail_.vfs);
+        room.mapVfs->setMapFiles(room.mapPackage->files);room.cap=2;room.createdMs=nowMs();
+        room.seed=fixedSeed_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.overridePolicy=0;
+        room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;
+        room.campaignId=campaign;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
+        room.campaignRoomToken=campaignSession_+":"+std::to_string(room.id);
+        room.campaignExpires=campaignNow()+600;
+        for(int i=0;i<kMaxSlots;++i) {room.slots[i].type=i<2?1:3;room.slots[i].color=uint8_t(i);room.slots[i].team=uint8_t(i);}
+        // Minimal modern match policy; not a historical faction eligibility rule.
+        room.slots[0].faction=a->alliance==tak::srv::crusades::Alliance::Honor?0:1;
+        room.slots[1].faction=b->alliance==tak::srv::crusades::Alliance::Honor?0:1;
+        room.slots[0].name=c.name;room.slots[1].name=invited->name;
+        const auto battle=crusades_->issueBattle(campaign,saved.revision,territory,campaignContext(room,false),campaignNow(),room.campaignExpires);
+        issued=battle.id;room.campaignBattleId=battle.id;room.campaignLaunchToken=battle.launchToken;
+        room.slotClient[0]=int(c.id);
+        rooms_.emplace(room.id,std::move(room));
+        c.cmdQueue.clear();c.state=Client::InGame;c.roomId=roomId;c.slot=0;c.loaded=false;
+        const auto& stored=rooms_.at(roomId);
+        const auto reply=battleReply(0,campaign,issued,roomId,*map,stored.campaignExpires);
+        c.conn.send(Msg::CrusadesBattleResult,reply);invited->conn.send(Msg::CrusadesBattleResult,reply);
+        Writer joined;joined.u8(1);joined.u8(0);joined.str("");c.conn.send(Msg::JoinResult,joined);
+        broadcastLobby(rooms_.at(roomId));
+    } catch(const std::exception& e) {
+        if(roomId && rooms_.count(roomId))closeCampaignLobby(roomId,"campaign issuance failed");
+        else if(!issued.empty()) {try{crusades_->cancelBattle(issued,campaignNow());}catch(const std::exception&) {}}
+        std::fprintf(stderr,"campaign issuance: %s\n",e.what());
+        c.conn.send(Msg::CrusadesBattleResult,battleReply(4,campaign,"",0,"",0,"campaign battle issuance rejected"));
+    }
+}
+
 void Server::sendGameList(Client& c) {
     Writer w;
     uint64_t t = nowMs();
@@ -1007,7 +1154,16 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (room.running) { reject("game already started"); break; }
             if (!room.password.empty() && room.password != pass) { reject("wrong password"); break; }
             int freeSlot = -1;
-            for (int i = 0; i < kMaxSlots; ++i)
+            if(!room.campaignBattleId.empty()) {
+                if(!requireAuth_ || c.account.empty() || c.state!=Client::Lobby || c.roomId ||
+                    tak::auth::foldUsername(c.account)!=room.campaignAccounts[1] || room.slotClient[1]>=0 ||
+                    campaignNow()>=room.campaignExpires) {reject("not an eligible campaign participant");break;}
+                try {
+                    if(crusades_->battle(room.campaignBattleId).status!=tak::srv::crusades::BattleStatus::Issued)
+                        throw std::runtime_error("campaign battle unavailable");
+                } catch(const std::exception&) {reject("campaign battle unavailable");break;}
+                freeSlot=1;
+            } else for (int i = 0; i < kMaxSlots; ++i)
                 if (room.slots[i].type == 0) { freeSlot = i; break; }
             if (freeSlot < 0) { reject("game is full"); break; }
             room.slots[freeSlot].type = 1;
@@ -1035,6 +1191,13 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             for (int i = 0; i < kMaxSlots; ++i)
                 if (room.slotDropped[i] && token != 0 && room.slotToken[i] == token) { slot = i; break; }
             if (slot < 0) { reject("invalid or expired resume token"); break; }
+            if(!room.campaignBattleId.empty()) {
+                if(slot>=2 || !requireAuth_ || c.account.empty() || tak::auth::foldUsername(c.account)!=room.campaignAccounts[slot]) {
+                    reject("resume account does not match campaign participant");break;
+                }
+                try { (void)crusades_->authorizeBattleReport(room.campaignBattleId,room.campaignRoomToken,campaignContext(room,false),campaignNow()); }
+                catch(const std::exception&) {reject("campaign battle is no longer eligible");break;}
+            }
             // Re-seat the client and rotate the token (single use).
             room.slotClient[slot] = int(c.id);
             room.slotDropped[slot] = false;
@@ -1084,6 +1247,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             };
             if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
             Room& room = it->second;
+            if(!room.campaignBattleId.empty()) {reject("campaign battles do not allow spectators");break;}
             if (!room.password.empty() && room.password != pass) { reject("wrong password"); break; }
             // Seat nothing: a spectator has no slot, sends no commands or hashes,
             // and holds nothing on disconnect. It just receives the stream.
@@ -1152,6 +1316,10 @@ void Server::dropPendingCommands(Client& c, Room& r) {
 void Server::leaveRoom(Client& c, const char* reason) {
     Room* r = roomOf(c);
     if (!r) return;
+    if(!r->campaignBattleId.empty()) {
+        if(!r->running) {closeCampaignLobby(r->id,"campaign participant left");return;}
+        cancelCampaignBattle(*r); // M5 abort marker, not a scored result.
+    }
     dropPendingCommands(c, *r);
     // A spectator just detaches from the stream -- no slot, nothing to forfeit.
     {
@@ -1208,6 +1376,7 @@ void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> pack
 }
 void Server::mapMsg(Client& c, const Frame& f) {
     Room* room = roomOf(c); if (!room) return;
+    if(!room->campaignBattleId.empty() && (f.kind==Msg::MapOffer || f.kind==Msg::MapChunk))return;
     try {
         Reader rd(f.payload.data(), f.payload.size());
         if (f.kind == Msg::MapOffer) {
@@ -1259,6 +1428,11 @@ void Server::mapMsg(Client& c, const Frame& f) {
 void Server::tryStart(Client& c) {
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
+    if(!r->campaignBattleId.empty()) {
+        try { (void)campaignContext(*r,true); }
+        catch(const std::exception&) {return;}
+        if(campaignNow()>=r->campaignExpires) {closeCampaignLobby(r->id,"campaign battle expired");return;}
+    }
     if (!mapsReady(*r)) {
         Writer w; w.u32(r->id); w.str("waiting for every player and the server to verify the map");
         c.conn.send(Msg::MapError, w); return;
@@ -1422,6 +1596,16 @@ void Server::tryStart(Client& c) {
                 }
         }
     }
+    if(!r->campaignBattleId.empty()) {
+        try {
+            crusades_->startBattle(r->campaignBattleId,r->campaignLaunchToken,r->campaignRoomToken,
+                campaignContext(*r,true),campaignNow());
+            r->campaignLaunchToken.clear(); // Single-use launch credential never sent to clients.
+        } catch(const std::exception&) {
+            r->running=false;r->ref.reset();r->ai.clear();
+            closeCampaignLobby(r->id,"campaign battle no longer eligible to start");return;
+        }
+    }
     // GameStarting: final slot table + options + seed + a per-slot resume token
     // (used to rejoin the held slot after a disconnect).
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -1462,6 +1646,12 @@ void Server::gameMsg(Client& c, const Frame& f) {
             uint8_t type = rd.u8(), faction = rd.u8(), color = rd.u8(), team = rd.u8(), ready = rd.u8();
             uint8_t aiLevel = rd.u8();
             if (!rd.ok || slot < 0 || slot >= kMaxSlots || r->running) return;
+            if(!r->campaignBattleId.empty()) {
+                const auto& current=r->slots[slot];
+                if(rd.p!=rd.end || slot!=c.slot || type!=current.type || faction!=current.faction || color!=current.color ||
+                    team!=current.team || aiLevel!=current.aiLevel || ready>1)return;
+                r->slots[slot].ready=ready;broadcastLobby(*r);break;
+            }
             bool isHost = (r->hostId == c.id);
             // A player edits only their own slot; the host may edit any.
             if (!isHost && slot != c.slot) return;
@@ -1485,6 +1675,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::Kick: {
+            if(!r->campaignBattleId.empty())return;
             if (r->hostId != c.id || r->running) return;
             Reader rd(f.payload.data(), f.payload.size());
             int slot = int(rd.u8());
@@ -1519,6 +1710,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::SetGameOptions: {
+            if(!r->campaignBattleId.empty())return;
             if (r->hostId != c.id) return;   // host only
             Reader rd(f.payload.data(), f.payload.size());
             GameOptions o; o.crusades = rd.u8(); o.forfeitSelfDestruct = rd.u8();
@@ -1899,6 +2091,7 @@ void Server::onFrame(Client& c, const Frame& f) {
     if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
+    if (f.kind == Msg::CrusadesIssueBattle) { issueCampaignBattle(c,f); return; }
     if (f.kind == Msg::CrusadesGetAllegiance || f.kind == Msg::CrusadesSetAllegiance) {
         // Only successful SCRAM proof/registration populates account. Hello's
         // display name, a pending AuthBegin, and --no-auth never grant access.
@@ -2013,6 +2206,16 @@ int Server::run() {
             if (!c.conn.ok()) { dead.push_back(id); continue; }
             if (pfds[i].revents & POLLOUT) c.conn.flushWrite();
         }
+        if(crusades_ && campaignSweepTime_!=campaignNow()) {
+            campaignSweepTime_=campaignNow();
+            try {crusades_->expireBattles(campaignSweepTime_);}catch(const std::exception& e) {
+                std::fprintf(stderr,"campaign expiration: %s\n",e.what());
+            }
+            std::vector<uint32_t> expired;
+            for(const auto& [rid,room]:rooms_)if(!room.campaignBattleId.empty() && !room.running && campaignSweepTime_>=room.campaignExpires)
+                expired.push_back(rid);
+            for(auto rid:expired)closeCampaignLobby(rid,"campaign battle expired");
+        }
         // Grace / pause-budget expiry: a held slot that isn't reclaimed in time,
         // or a pause that outlasts its budget, forfeits the player. The forfeit is
         // a SEQUENCED event so every sim (and the replay) disposes their units on
@@ -2048,6 +2251,7 @@ int Server::run() {
         }
         for (auto& [rid, why] : doneRooms) {
             Room& r = rooms_.at(rid);
+            cancelCampaignBattle(r); // Results/credit are deliberately deferred to M6.
             writeReplay(r);
             // Detach any lingering spectators before the room vanishes: reset their
             // server-side state to Lobby (their client already shows the game's end

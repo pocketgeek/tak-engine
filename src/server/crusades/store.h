@@ -35,6 +35,27 @@ struct Allegiance {
     int64_t revision;
 };
 
+struct BattleContext {
+    std::string mapIdentifier;
+    std::string mapDigest;
+    std::string rulesDigest;
+    std::vector<std::string> participants;
+    bool crusadesBalance = true;
+};
+enum class BattleStatus { Issued = 0, Started = 1, Cancelled = 2, Completed = 3, Expired = 4 };
+struct IssuedBattle {
+    std::string id, campaignId;
+    int64_t campaignRevision;
+    TerritoryId territory;
+    BattleContext context;
+    std::vector<Alliance> participantAlliances;
+    std::vector<int64_t> participantRevisions;
+    int64_t createdUnix, expiresUnix, changedUnix;
+    BattleStatus status;
+    std::string launchToken;
+    std::optional<std::string> roomToken;
+};
+
 struct StoreOptions {
     // Diagnostic/test hook after all mutation writes and before COMMIT,
     // including an existing database's schema migration (not fresh creation).
@@ -81,6 +102,26 @@ public:
                             Alliance alliance, int64_t expectedRevision, int64_t unixTime);
     std::vector<Allegiance> allegianceHistory(const std::string& campaignId,
                                               const std::string& accountId) const;
+
+    // Trusted server calls only. Modern policy: two authenticated, enrolled
+    // opponents; CB mandatory. Digests and room tokens are server generated.
+    // Roster is canonicalized by account ID. Start/report require unchanged
+    // campaign and allegiance revisions. Switching away and back invalidates
+    // outstanding credit; this is a modern safety policy, not retail rules.
+    // expires is a launch deadline only; Started battles remain live until
+    // cancellation/completion. Room tokens are globally single-use in this DB.
+    IssuedBattle issueBattle(const std::string& campaignId, int64_t expectedRevision,
+        TerritoryId territory, BattleContext context, int64_t now, int64_t expires);
+    IssuedBattle battle(const std::string& battleId) const;
+    void startBattle(const std::string& battleId, const std::string& launchToken,
+        const std::string& roomToken, BattleContext context, int64_t now);
+    IssuedBattle authorizeBattleReport(const std::string& battleId, const std::string& roomToken,
+        BattleContext context, int64_t now) const;
+    // Terminal lifecycle marker only; no result/campaign-point processing (M6).
+    void completeBattle(const std::string& battleId, const std::string& roomToken,
+        BattleContext context, int64_t now);
+    void cancelBattle(const std::string& battleId, int64_t now);
+    void expireBattles(int64_t now);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -69,6 +69,12 @@ endif()
 find_package(ZLIB REQUIRED)
 find_package(JPEG REQUIRED)
 
+add_library(tak-crypto STATIC src/net/crypto.cpp)
+target_include_directories(tak-crypto PUBLIC src)
+if(WIN32)
+  target_link_libraries(tak-crypto PUBLIC bcrypt)
+endif()
+
 add_library(tak-formats
   src/hpi/hpi.cpp
   src/gaf/gaf.cpp
@@ -93,7 +99,6 @@ add_library(tak-formats
   src/net/conn.cpp
   src/net/client.cpp
   src/net/mappackage.cpp
-  src/net/crypto.cpp
   src/net/auth.cpp
   src/util/png.cpp
   src/util/appicon.cpp
@@ -101,7 +106,7 @@ add_library(tak-formats
   src/terrain/terrain.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
-target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG)
+target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG tak-crypto)
 
 # Inject the project version (src/version.h) into every target that links
 # tak-formats -- one source of truth, set by project(... VERSION ...) above.
@@ -137,8 +142,7 @@ target_compile_definitions(tak-formats PUBLIC TAK_HAVE_BUILD_ID_H=1)
 # Windows sockets: src/net (in tak-formats) uses Winsock2 -- link ws2_32 so it
 # propagates to takclient and takserver. No-op on POSIX.
 if(WIN32)
-  # bcrypt: BCryptGenRandom, the OS CSPRNG behind crypto::randomBytes.
-  target_link_libraries(tak-formats PUBLIC ws2_32 bcrypt shell32)
+  target_link_libraries(tak-formats PUBLIC ws2_32 shell32)
   # Fold the GCC/C++ runtime into each .exe so a Windows box needs no MinGW DLLs.
   # -static also pulls winpthread. SDL2/jpeg/zlib are always static too, so
   # nothing is shipped alongside -- windows.yml gates on the .exe importing no
@@ -960,7 +964,7 @@ add_test(NAME crusades_campaign COMMAND crusades_campaign_test)
 
 include(cmake/SQLite.cmake)
 add_library(tak-crusades-store STATIC src/server/crusades/store.cpp)
-target_link_libraries(tak-crusades-store PUBLIC tak-crusades PRIVATE tak-sqlite)
+target_link_libraries(tak-crusades-store PUBLIC tak-crusades PRIVATE tak-sqlite tak-crypto)
 add_executable(crusades_store_test tools/crusades_store_test.cpp)
 target_link_libraries(crusades_store_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_store COMMAND crusades_store_test)
@@ -968,6 +972,9 @@ set_tests_properties(crusades_store PROPERTIES TIMEOUT 90)
 add_executable(crusades_allegiance_test tools/crusades_allegiance_test.cpp)
 target_link_libraries(crusades_allegiance_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_allegiance COMMAND crusades_allegiance_test)
+add_executable(crusades_battle_test tools/crusades_battle_test.cpp)
+target_link_libraries(crusades_battle_test PRIVATE tak-crusades-store tak-sqlite)
+add_test(NAME crusades_battle COMMAND crusades_battle_test)
 add_library(tak-crusades-allegiance STATIC src/server/crusades/allegiance.cpp)
 target_link_libraries(tak-crusades-allegiance PUBLIC tak-crusades-store PRIVATE tak-formats)
 
@@ -985,6 +992,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_auth_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(crusades_auth_network PROPERTIES TIMEOUT 120)
+    add_test(NAME crusades_battle_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/crusades_battle_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(crusades_battle_network PROPERTIES TIMEOUT 120)
   endif()
 endif()
 

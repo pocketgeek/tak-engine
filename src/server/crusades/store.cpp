@@ -4,12 +4,13 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include "net/crypto.h"
 #include <stdexcept>
 
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 2;
+constexpr int kSchemaVersion = 3;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -32,6 +33,19 @@ const std::vector<std::string>& allegianceSchemaStatements() {
         "CREATE TRIGGER allegiance_events_no_update BEFORE UPDATE ON allegiance_events BEGIN SELECT RAISE(ABORT,'immutable allegiance event'); END",
         "CREATE TRIGGER allegiance_events_no_delete BEFORE DELETE ON allegiance_events BEGIN SELECT RAISE(ABORT,'immutable allegiance event'); END",
         "CREATE TRIGGER campaign_participant_identity_no_update BEFORE UPDATE OF campaign_id,account_id ON campaign_participants BEGIN SELECT RAISE(ABORT,'immutable participant identity'); END",
+    };
+    return statements;
+}
+const std::vector<std::string>& battleSchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE TABLE issued_battles(id TEXT PRIMARY KEY,campaign_id TEXT NOT NULL REFERENCES campaigns(id),campaign_revision INTEGER NOT NULL,territory INTEGER NOT NULL,context BLOB NOT NULL,created_unix INTEGER NOT NULL,expires_unix INTEGER NOT NULL,launch_token TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL CHECK(revision>=0))",
+        "CREATE TABLE battle_status_events(battle_id TEXT NOT NULL REFERENCES issued_battles(id),revision INTEGER NOT NULL CHECK(revision>=0),status INTEGER NOT NULL CHECK(status BETWEEN 0 AND 4),changed_unix INTEGER NOT NULL,PRIMARY KEY(battle_id,revision))",
+        "CREATE TABLE battle_rooms(room_token TEXT PRIMARY KEY,battle_id TEXT NOT NULL UNIQUE REFERENCES issued_battles(id))",
+        "CREATE TRIGGER issued_battle_identity_no_update BEFORE UPDATE OF id,campaign_id,campaign_revision,territory,context,created_unix,expires_unix,launch_token ON issued_battles BEGIN SELECT RAISE(ABORT,'immutable issued battle'); END",
+        "CREATE TRIGGER battle_status_no_update BEFORE UPDATE ON battle_status_events BEGIN SELECT RAISE(ABORT,'immutable battle status'); END",
+        "CREATE TRIGGER battle_status_no_delete BEFORE DELETE ON battle_status_events BEGIN SELECT RAISE(ABORT,'immutable battle status'); END",
+        "CREATE TRIGGER battle_rooms_no_update BEFORE UPDATE ON battle_rooms BEGIN SELECT RAISE(ABORT,'immutable battle room'); END",
+        "CREATE TRIGGER battle_rooms_no_delete BEFORE DELETE ON battle_rooms BEGIN SELECT RAISE(ABORT,'immutable battle room'); END",
     };
     return statements;
 }
@@ -238,7 +252,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
         const auto app = scalar(db, "PRAGMA application_id");
         const auto version = scalar(db, "PRAGMA user_version");
         const bool empty = scalar(db, "SELECT count(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'") == 0;
-        if (!(app == kApplicationId && (version == 1 || version == kSchemaVersion) && !empty) && !(app == 0 && version == 0 && empty))
+        if (!(app == kApplicationId && (version >= 1 && version <= kSchemaVersion) && !empty) && !(app == 0 && version == 0 && empty))
             throw std::runtime_error("not a supported TAK campaign database");
         if (!empty) {
             std::vector<std::string> actual;
@@ -246,6 +260,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             while (schema.row()) actual.push_back(schema.bytes(0));
             auto expected = schemaStatements();
             if (version >= 2) expected.insert(expected.end(), allegianceSchemaStatements().begin(), allegianceSchemaStatements().end());
+            if (version >= 3) expected.insert(expected.end(), battleSchemaStatements().begin(), battleSchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
@@ -274,12 +289,12 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
         for (const auto& sql : schemaStatements()) exec(db, sql.c_str());
         exec(db, "PRAGMA application_id=1413565251");
     }
-    if (version < 2) {
+    if (version < 2)
         for (const auto& sql : allegianceSchemaStatements()) exec(db, sql.c_str());
-        exec(db, "PRAGMA user_version=2");
-        // Migration fault injection occurs after all schema writes; interruption
-        // or exceptions roll back the version and tables together.
-        if (version == 1 && impl_->options.beforeCommit) impl_->options.beforeCommit();
+    if (version < 3) {
+        for (const auto& sql : battleSchemaStatements()) exec(db, sql.c_str());
+        exec(db, "PRAGMA user_version=3");
+        if (version != 0 && impl_->options.beforeCommit) impl_->options.beforeCommit();
     }
     transaction.finish();
 }
@@ -318,6 +333,7 @@ bool CampaignStore::hasCampaign(const std::string& campaignId) const {
 int64_t CampaignStore::commit(const std::string& campaignId, int64_t expectedRevision,
         const CampaignState& nextState, const std::string& reason, const std::optional<BattleResult>& battle) {
     requireText(reason, "campaign event reason");
+    if (battle && battle->battleId.rfind("issued:", 0) == 0) throw std::runtime_error("issued battles require authorized result processing");
     if (battle) { requireText(battle->battleId, "battle ID"); if (battle->payload.size() > kMaxPayload) throw std::runtime_error("oversized battle result"); }
     Transaction transaction(impl_->db);
     const auto current = load(campaignId);
@@ -439,6 +455,158 @@ std::vector<Allegiance> CampaignStore::allegianceHistory(const std::string& camp
         throw std::runtime_error("allegiance history/current revision mismatch");
     transaction.finish();
     return result;
+}
+
+namespace {
+void battleString(const std::string& text) {
+    requireText(text, "battle binding");
+    if (text.size() > 256) throw std::runtime_error("oversized battle binding");
+}
+void normalizeContext(BattleContext& context) {
+    battleString(context.mapIdentifier); battleString(context.mapDigest); battleString(context.rulesDigest);
+    if (!context.crusadesBalance || context.participants.size() != 2) throw std::runtime_error("unsupported battle rules/roster");
+    for (const auto& account : context.participants) validateAccountId(account);
+    std::sort(context.participants.begin(), context.participants.end());
+    if (context.participants[0] == context.participants[1]) throw std::runtime_error("duplicate battle participant");
+}
+std::string randomToken() {
+    return crypto::toHex(crypto::randomVec(32));
+}
+
+std::string encodeBattle(const IssuedBattle& battle) {
+    std::string data = "TAKCB1";
+    putString(data, battle.context.mapIdentifier); putString(data, battle.context.mapDigest); putString(data, battle.context.rulesDigest);
+    for (size_t i = 0; i < 2; ++i) {
+        putString(data, battle.context.participants[i]); put(data, static_cast<unsigned>(battle.participantAlliances[i]), 1);
+        put(data, static_cast<uint64_t>(battle.participantRevisions[i]), 8);
+    }
+    return data;
+}
+void decodeBattle(const std::string& data, IssuedBattle& battle) {
+    if (data.substr(0, 6) != "TAKCB1") throw std::runtime_error("invalid battle context version");
+    Reader reader{data, 6};
+    battle.context.mapIdentifier = reader.string(); battle.context.mapDigest = reader.string(); battle.context.rulesDigest = reader.string();
+    for (unsigned i = 0; i < 2; ++i) {
+        battle.context.participants.push_back(reader.string());
+        const auto side = reader.get(1), revision = reader.get(8);
+        if ((side != 1 && side != 2) || revision > uint64_t(std::numeric_limits<int64_t>::max())) throw std::runtime_error("invalid battle participant snapshot");
+        battle.participantAlliances.push_back(static_cast<Alliance>(side)); battle.participantRevisions.push_back(static_cast<int64_t>(revision));
+    }
+    if (reader.offset != data.size() || battle.context.participants[0] >= battle.context.participants[1] ||
+        battle.participantAlliances[0] == battle.participantAlliances[1]) throw std::runtime_error("invalid battle roster");
+    normalizeContext(battle.context);
+}
+void validateContext(const IssuedBattle& battle, BattleContext context) {
+    normalizeContext(context);
+    if (context.mapIdentifier != battle.context.mapIdentifier || context.mapDigest != battle.context.mapDigest ||
+        context.rulesDigest != battle.context.rulesDigest || context.participants != battle.context.participants)
+        throw std::runtime_error("battle context mismatch");
+}
+void validateBattleFresh(sqlite3* db, const CampaignStore& store, const IssuedBattle& battle) {
+    if (store.load(battle.campaignId).revision != battle.campaignRevision) throw std::runtime_error("stale battle campaign revision");
+    for (size_t i = 0; i < 2; ++i) {
+        const auto current = readAllegiance(db, battle.campaignId, battle.context.participants[i]);
+        if (!current || current->revision != battle.participantRevisions[i] || current->alliance != battle.participantAlliances[i])
+            throw std::runtime_error("stale battle allegiance");
+    }
+}
+void transitionBattle(sqlite3* db, const std::string& id, BattleStatus status, int64_t now) {
+    Statement event(db, "INSERT INTO battle_status_events(battle_id,revision,status,changed_unix) SELECT id,revision+1,?,? FROM issued_battles WHERE id=?");
+    event.integer(1, static_cast<int>(status)); event.integer(2, now); event.text(3, id); event.done();
+    Statement update(db, "UPDATE issued_battles SET revision=revision+1 WHERE id=?"); update.text(1, id); update.done();
+}
+void validateReport(sqlite3* db, const CampaignStore& store, const IssuedBattle& battle,
+                    const std::string& room, BattleContext context, int64_t now) {
+    battleString(room);
+    if (battle.status != BattleStatus::Started || !battle.roomToken || *battle.roomToken != room || now < battle.changedUnix)
+        throw std::runtime_error("battle is not reportable from this room");
+    validateContext(battle, std::move(context)); validateBattleFresh(db, store, battle);
+}
+} // namespace
+
+IssuedBattle CampaignStore::issueBattle(const std::string& campaignId, int64_t expectedRevision,
+        TerritoryId territory, BattleContext context, int64_t now, int64_t expires) {
+    normalizeContext(context);
+    if (now < 0 || expires <= now) throw std::runtime_error("invalid battle launch deadline");
+    Transaction transaction(impl_->db);
+    const auto campaign = load(campaignId);
+    if (campaign.revision != expectedRevision) throw std::runtime_error("battle campaign revision conflict");
+    const auto* definition = campaign.definition.find(territory);
+    if (!definition) throw std::runtime_error("unknown battle territory");
+    const auto& stateMap = campaign.state.territories.at(territory).assignedMap;
+    const auto& map = stateMap ? stateMap : definition->mapIdentifier;
+    if (!map || *map != context.mapIdentifier) throw std::runtime_error("wrong battle map");
+    IssuedBattle result{};
+    result.id = "issued:" + randomToken(); result.launchToken = randomToken();
+    result.campaignId = campaignId; result.campaignRevision = campaign.revision; result.territory = territory;
+    result.context = std::move(context); result.createdUnix = result.changedUnix = now; result.expiresUnix = expires; result.status = BattleStatus::Issued;
+    for (const auto& account : result.context.participants) {
+        const auto allegiance = readAllegiance(impl_->db, campaignId, account);
+        if (!allegiance) throw std::runtime_error("unenrolled battle participant");
+        result.participantAlliances.push_back(allegiance->alliance); result.participantRevisions.push_back(allegiance->revision);
+    }
+    if (result.participantAlliances[0] == result.participantAlliances[1]) throw std::runtime_error("battle requires opposing alliances");
+    Statement insert(impl_->db, "INSERT INTO issued_battles(id,campaign_id,campaign_revision,territory,context,created_unix,expires_unix,launch_token,revision) VALUES(?,?,?,?,?,?,?,?,0)");
+    insert.text(1, result.id); insert.text(2, campaignId); insert.integer(3, expectedRevision); insert.integer(4, territory);
+    insert.blob(5, encodeBattle(result)); insert.integer(6, now); insert.integer(7, expires); insert.text(8, result.launchToken); insert.done();
+    Statement event(impl_->db, "INSERT INTO battle_status_events VALUES(?,0,0,?)"); event.text(1, result.id); event.integer(2, now); event.done();
+    impl_->finish(transaction); return result;
+}
+
+IssuedBattle CampaignStore::battle(const std::string& id) const {
+    Statement query(impl_->db, "SELECT b.campaign_id,b.campaign_revision,b.territory,b.context,b.created_unix,b.expires_unix,b.launch_token,e.status,e.changed_unix,r.room_token FROM issued_battles b JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision LEFT JOIN battle_rooms r ON r.battle_id=b.id WHERE b.id=?");
+    query.text(1, id);
+    if (!query.row()) throw std::runtime_error("unknown or incomplete issued battle");
+    IssuedBattle result{}; result.id = id; result.campaignId = query.bytes(0); result.campaignRevision = query.number(1);
+    const auto territory = query.number(2), status = query.number(7);
+    if (territory <= 0 || territory > std::numeric_limits<TerritoryId>::max() || status < 0 || status > 4) throw std::runtime_error("invalid issued battle");
+    result.territory = static_cast<TerritoryId>(territory); decodeBattle(query.bytes(3), result);
+    result.createdUnix = query.number(4); result.expiresUnix = query.number(5); result.launchToken = query.bytes(6);
+    result.status = static_cast<BattleStatus>(status); result.changedUnix = query.number(8);
+    if (sqlite3_column_type(query.value, 9) != SQLITE_NULL) result.roomToken = query.bytes(9);
+    if (result.campaignRevision < 0 || result.createdUnix < 0 || result.expiresUnix <= result.createdUnix || result.changedUnix < result.createdUnix ||
+        ((result.status == BattleStatus::Started || result.status == BattleStatus::Completed) && !result.roomToken)) throw std::runtime_error("invalid issued battle state");
+    return result;
+}
+
+void CampaignStore::startBattle(const std::string& id, const std::string& launchToken,
+        const std::string& roomToken, BattleContext context, int64_t now) {
+    battleString(roomToken);
+    Transaction transaction(impl_->db);
+    const auto current = battle(id);
+    if (current.status != BattleStatus::Issued || current.launchToken != launchToken || now < current.createdUnix || now >= current.expiresUnix)
+        throw std::runtime_error("battle cannot be started");
+    validateContext(current, std::move(context)); validateBattleFresh(impl_->db, *this, current);
+    Statement room(impl_->db, "INSERT INTO battle_rooms(room_token,battle_id) VALUES(?,?)"); room.text(1, roomToken); room.text(2, id); room.done();
+    transitionBattle(impl_->db, id, BattleStatus::Started, now); impl_->finish(transaction);
+}
+IssuedBattle CampaignStore::authorizeBattleReport(const std::string& id, const std::string& roomToken,
+        BattleContext context, int64_t now) const {
+    Transaction transaction(impl_->db, false);
+    auto current = battle(id); validateReport(impl_->db, *this, current, roomToken, std::move(context), now);
+    transaction.finish(); return current;
+}
+void CampaignStore::completeBattle(const std::string& id, const std::string& roomToken, BattleContext context, int64_t now) {
+    Transaction transaction(impl_->db);
+    const auto current = battle(id); validateReport(impl_->db, *this, current, roomToken, std::move(context), now);
+    transitionBattle(impl_->db, id, BattleStatus::Completed, now); impl_->finish(transaction);
+}
+void CampaignStore::cancelBattle(const std::string& id, int64_t now) {
+    Transaction transaction(impl_->db); const auto current = battle(id);
+    if ((current.status != BattleStatus::Issued && current.status != BattleStatus::Started) || now < current.changedUnix)
+        throw std::runtime_error("battle cannot be cancelled");
+    transitionBattle(impl_->db, id, BattleStatus::Cancelled, now); impl_->finish(transaction);
+}
+void CampaignStore::expireBattles(int64_t now) {
+    if (now < 0) throw std::runtime_error("invalid battle expiry time");
+    Transaction transaction(impl_->db);
+    std::vector<std::string> ids;
+    {
+        Statement query(impl_->db, "SELECT b.id FROM issued_battles b JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision WHERE e.status=0 AND b.expires_unix<=? ORDER BY b.id");
+        query.integer(1, now); while (query.row()) ids.push_back(query.bytes(0));
+    }
+    for (const auto& id : ids) transitionBattle(impl_->db, id, BattleStatus::Expired, now);
+    impl_->finish(transaction);
 }
 
 } // namespace tak::srv::crusades

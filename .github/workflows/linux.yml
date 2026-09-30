@@ -128,13 +128,14 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test takclient takserver cartographer cartographer_document_test cartographer_validation_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
+          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test takclient takserver cartographer cartographer_document_test cartographer_validation_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
 
       - name: Crusades model and durable store
         run: |
           ./build/crusades_campaign_test
           ./build/crusades_store_test
           ./build/crusades_allegiance_test
+          ./build/crusades_battle_test
 
       - name: Cartographer document and validation checks
         run: |
