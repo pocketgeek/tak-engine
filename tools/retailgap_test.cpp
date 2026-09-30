@@ -1978,7 +1978,7 @@ int main(int argc, char** argv) {
                 check(w.unit(id)->selfDestructT > 0.0f, (std::string(c.label) + ": countdown armed").c_str());
                 tick(w, 8.0f);   // 5s countdown + slack
                 const sim::Unit* u = w.unit(id);
-                check(u && !u->alive(), (std::string(c.label) + " (" + c.t->id + ") is DEAD").c_str(),
+                check(!u || !u->alive(), (std::string(c.label) + " (" + c.t->id + ") is DEAD").c_str(),
                       u ? ("hp=" + std::to_string(u->hp.toFloat())) : "gone");
             }
             // A self-destruct next to a friendly healer must still kill. alive()
@@ -2014,7 +2014,7 @@ int main(int argc, char** argv) {
                     w.destroy(vid);
                     tick(w, 8.0f);
                     const sim::Unit* v = w.unit(vid);
-                    if (!v || v->alive()) {
+                    if (v && v->alive()) {
                         ++survived;
                         if (worst.empty())
                             worst = "phase " + std::to_string(phase) +

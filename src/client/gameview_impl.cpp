@@ -415,6 +415,17 @@
         }
 #ifndef NDEBUG
         if (tak::devFlag("TAK_DIPLOMACY_TEST")) {
+            int retiredFixtureId=0;
+            if(tak::devFlag("TAK_RETIREMENT_TEST")) {
+                tak::sim::UnitType dummy;dummy.id="retired-ui";dummy.maxHp=100;dummy.footX=dummy.footZ=1;
+                for(int i=0;i<240;++i) {
+                    retiredFixtureId=world_.spawn(&dummy,1800,2100,0,0);
+                    world_.scenarioDestroy(retiredFixtureId);
+                }
+                for(int i=0;i<60;++i)world_.tick(1.f/30);
+                for(const auto& u:world_.units())
+                    if(u.type==&dummy)throw std::runtime_error("UI fixture retained final corpses");
+            }
             world_.setPlayerCount(8);world_.setTeam(1,0);localPlayer_=0;
             resultParticipants_=uint8_t((1u<<0)|(1u<<1)|(1u<<2)|(1u<<7));
             playerName_[0]="PLAYER";playerName_[1]="ALLY";playerName_[2]="ENEMY";playerName_[7]="DEFEATED";
@@ -436,6 +447,9 @@
                 input(e,1000,700);
             };
             selection_.clear();publish();
+            if(tak::devFlag("TAK_RETIREMENT_TEST") &&
+               (front().units.size()!=world_.units().size() || !frameUnitP(monarch) || frameUnitP(retiredFixtureId)))
+                throw std::runtime_error("compacted render snapshot lost high-ID units");
             SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=SDLK_d;
             input(key,1000,700);check(giveUnitsMenu_,"D must open diplomacy without a selection");
             drawGiveUnitsMenu(1000,700);
@@ -1874,31 +1888,19 @@
             std::lock_guard<std::mutex> lk(frameMutex_);
             for (w = 0; w < 3; ++w) if (w != published_ && w != reading_) break;
         }
-        // On the graveyard: world_.units() is append-only and nothing ever clears
-        // Unit::type, so this scan copies every unit EVER SPAWNED, not just the living
-        // ones, forever. That is real and it is unbounded -- but measured, it does not
-        // matter. A/B over 150s at 3803 spawned / 3216 living (15% graveyard), skipping
-        // every unit past its visual life (dead and deadFor >= max(corpseUntil, 4)):
-        //
-        //     with the graveyard   capture = 0.253 ms/tick
-        //     skipping it          capture = 0.252 ms/tick
-        //
-        // ~1.7ns per skipped record, because a dead unit's orders/buildQueue/cargo
-        // vectors are EMPTY -- corpses are the cheapest records here, not the dearest.
-        // Projected, 20k accumulated dead costs ~34us/tick, 0.1% of the 30Hz budget.
-        // Memory is the more real cost: sizeof(UnitR) is 232 bytes across 3 buffers,
-        // ~700 bytes per unit ever spawned (2.6 MB here, ~35 MB at 50k spawns).
-        // Not optimised deliberately: the skip would change what frameUnitP() reports
-        // for a dead unit, which is a real semantic risk, bought for nothing.
+        // Compact snapshots follow current records, not every lifetime unit ID.
+        // The previous published buffer supplies same-ID interpolation poses.
         Frame& fb = frameBuf_[w];                // write buffer
         const Frame& pf = frameBuf_[published_]; // previously-published frame (last tick's poses)
         fb.gen = ++captureCounter_;     // records written this pass get gen==fb.gen (=> live this tick)
         fb.live.clear();
-        size_t need = world_.units().size() + 1;
-        if (fb.units.size() < need) fb.units.resize(need);
+        fb.units.resize(world_.units().size());
+        size_t slot=0;
         for (const auto& u : world_.units()) {
-            if (u.id < 0 || size_t(u.id) >= fb.units.size()) continue;
-            UnitR& s = fb.units[size_t(u.id)];
+            UnitR& s=fb.units[slot];
+            if(s.id!=u.id)s=UnitR{};
+            if(fb.unitSlots.size()<=size_t(u.id))fb.unitSlots.resize(size_t(u.id)+1,-1);
+            fb.unitSlots[size_t(u.id)]=int32_t(slot++);
             if (!u.type) { s.seeded = false; s.type = nullptr; continue; }
             // Render-read fields, captured for ALL units (alive + dead-recent: the death
             // animation and the deadFor>=4 cull both need a live value).
@@ -1974,10 +1976,8 @@
             // Pose: prev comes from the previously-published frame's curr for this SAME unit
             // (id live last tick + matching type). Interpolate alive units between ticks;
             // a dead unit holds its death pose. A big jump (teleport / id reuse) seeds fresh.
-            const UnitR* prev = (size_t(u.id) < pf.units.size() &&
-                                 pf.units[size_t(u.id)].gen == pf.gen &&
-                                 pf.units[size_t(u.id)].type == u.type)
-                                    ? &pf.units[size_t(u.id)] : nullptr;
+            const UnitR* prev=pf.unit(u.id);
+            if(prev && prev->type!=u.type)prev=nullptr;
             s.headingWord=u.heading.v;
             s.captureOccupancy(u,world_.mapSea(),prev ? prev->animationOccupancy : 0);
             s.captureMoveRate(u,prev ? std::bit_cast<int16_t>(uint16_t(u.heading.v-prev->headingWord)) : 0);
@@ -2079,15 +2079,12 @@
 
     const UnitR& GameView::frameUnit(int id) const {
         static const UnitR kEmpty{};
-        const Frame& f = front();
-        return (id >= 0 && size_t(id) < f.units.size()) ? f.units[size_t(id)] : kEmpty;
+        const auto* u=front().unit(id);
+        return u ? *u : kEmpty;
     }
 
     const UnitR* GameView::frameUnitP(int id) const {
-        const Frame& f = front();
-        if (id < 0 || size_t(id) >= f.units.size()) return nullptr;
-        const UnitR& r = f.units[size_t(id)];
-        return (r.gen == f.gen && r.type) ? &r : nullptr;
+        return front().unit(id);
     }
 
     const PlayerR& GameView::framePlayer(int p) const {

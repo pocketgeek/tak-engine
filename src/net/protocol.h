@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 200;      // 200: retail scenario actions, selectors, resource overrides and placement origins
+constexpr uint32_t kNetVersion = 201;      // 201: deterministic final-retirement compaction and delayed kill attribution
                                            // 195: directed mana sharing and chat recipients
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering

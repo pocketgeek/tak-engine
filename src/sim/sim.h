@@ -1558,7 +1558,7 @@ public:
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
         paths_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
-        units_.clear();
+        units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         projectiles_.clear();flames_.clear();
         hits_.clear();
         pendingSounds_.clear();soundReq_={};
@@ -2295,6 +2295,13 @@ private:
     // only (fog is not in stateHash), so plain float math is fine.
     bool sightClear(int ux, int uz, float eyeH, int tx, int tz) const;
     std::vector<Unit> units_;
+    // IDs remain monotonic; storage slots may move after final corpse retirement.
+    std::vector<int32_t> unitSlotById_;
+    // Only delayed kill attribution survives final retirement, not full unit/VM state.
+    std::unordered_map<int,int> retiredOwners_;
+    uint64_t retiredHash_=0;
+    int creditedOwner(int id) const;
+    void compactRetiredUnits();
     std::unique_ptr<MissionScript> mission_;   // optional campaign mission runner
     std::unique_ptr<ScenarioScript> scenario_; // optional .crt trigger runner
     std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots

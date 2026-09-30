@@ -16,7 +16,8 @@
     }
 
     int GameView::geomSlot(int id) const {
-        return (id >= 0 && size_t(id) < geomIndex_.size()) ? geomIndex_[size_t(id)] : -1;
+        const int slot=front().slot(id);
+        return slot>=0 && size_t(slot)<geomIndex_.size() ? geomIndex_[size_t(slot)] : -1;
     }
 
 namespace {

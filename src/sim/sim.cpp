@@ -855,6 +855,8 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
     u.homeX = Fixed::fromFloat(x);
     u.homeZ = Fixed::fromFloat(z);
     units_.push_back(u);
+    if(unitSlotById_.size()<=size_t(u.id))unitSlotById_.resize(size_t(u.id)+1,-1);
+    unitSlotById_[size_t(u.id)]=int32_t(units_.size()-1);
     ++spawnGeneration_;
     bodyIndexValid_=false;
     if (type && type->script()) {
@@ -872,17 +874,63 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
 }
 
 Unit* World::unit(int id) {
-    // Ordinary matches append sequential IDs, allowing an O(1) lookup. This is called per unit
-    // every tick in combat (unit(targetId)); the old linear scan made a big battle
-    // O(n^2) and stalled the sim to single-digit fps. The scan stays as a fallback
-    // for restored retail slots, whose IDs are selected from free player pools.
-    if (id >= 1 && size_t(id) <= units_.size()) {
-        Unit& u = units_[size_t(id) - 1];
-        if (u.id == id) return &u;
+    if(id<=0)return nullptr;
+    if(size_t(id)<unitSlotById_.size()) {
+        const int32_t slot=unitSlotById_[size_t(id)];
+        if(slot>=0 && size_t(slot)<units_.size() && units_[size_t(slot)].id==id)
+            return &units_[size_t(slot)];
+        if(slot<0 && retiredOwners_.contains(id))return nullptr;
     }
-    for (auto& u : units_)
-        if (u.id == id) return &u;
+    // Restored retail fixtures can reorder or author IDs directly. Repair only
+    // that lookup; normal spawn/compaction paths maintain the table eagerly.
+    for(size_t i=0;i<units_.size();++i)if(units_[i].id==id) {
+        if(unitSlotById_.size()<=size_t(id))unitSlotById_.resize(size_t(id)+1,-1);
+        unitSlotById_[size_t(id)]=int32_t(i);return &units_[i];
+    }
     return nullptr;
+}
+
+int World::creditedOwner(int id) const {
+    if(const auto* u=unit(id);u && u->type)return u->player;
+    const auto it=retiredOwners_.find(id);
+    return it==retiredOwners_.end() ? -1 : it->second;
+}
+
+void World::compactRetiredUnits() {
+    // Keep native restored-pool allocation fixtures on their existing lifecycle.
+    // Ordinary matches compact once a second, after scripts consume death events.
+    if(retailAllocation_ || tickCounter_%30)return;
+    // In-flight attacks still consume the original source's veteran/aura stats
+    // and location. Keep those few records until every delayed effect finishes.
+    std::unordered_set<int> referenced;
+    for(const auto& p:projectiles_) {referenced.insert(p.fromId);referenced.insert(p.targetId);}
+    for(const auto& f:flames_)referenced.insert(f.fromId);
+    for(const auto& e:pendingEffects_)referenced.insert(e.fromId);
+    for(const auto& storm:storms_)referenced.insert(storm.fromId);
+    for(const auto& blast:deathBlasts_)referenced.insert(blast.fromId);
+    size_t write=0;
+    for(size_t read=0;read<units_.size();++read) {
+        auto& u=units_[read];
+        if(!u.alive() && u.deadFor>=kRetiredTicks+30 && u.corpseUntil==0 &&
+           !corpseFootprints_.contains(u.id) && !unitScripts_.contains(u.id) && !referenced.contains(u.id)) {
+            const int owner=u.type ? u.player : -1;
+            retiredOwners_.emplace(u.id,owner);
+            // Immutable attribution history is folded once, not rescanned every hash.
+            if(!retiredHash_)retiredHash_=1469598103934665603ULL;
+            retiredHash_^=uint32_t(u.id);retiredHash_*=1099511628211ULL;
+            retiredHash_^=uint32_t(owner);retiredHash_*=1099511628211ULL;
+            if(size_t(u.id)<unitSlotById_.size())unitSlotById_[size_t(u.id)]=-1;
+            continue;
+        }
+        if(write!=read)units_[write]=std::move(u);
+        const int id=units_[write].id;
+        if(unitSlotById_.size()<=size_t(id))unitSlotById_.resize(size_t(id)+1,-1);
+        unitSlotById_[size_t(id)]=int32_t(write++);
+    }
+    if(write==units_.size())return;
+    units_.resize(write);
+    corpseIdx_.clear();bodyIndexValid_=false;
+    rebuildGrid();rebuildOccupancy();
 }
 
 Fixed World::surfaceHeight(const Unit& u,uint32_t clock,uint16_t* pitch,uint16_t* roll) const {
@@ -4520,8 +4568,9 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
         auto& score=players_[size_t(u.lastHitPlayer)].score;
         score=std::bit_cast<int32_t>(uint32_t(score)+uint32_t(u.type->experiencePoints));
     }
+    const int killOwner=creditedOwner(u.lastHitBy);
+    if(validUnitOwner(killOwner) && !allied(killOwner,owner))++players_[size_t(killOwner)].kills;
     if (auto* killer=unit(u.lastHitBy);killer && killer->type) {
-        if (!allied(killer->player,owner) && validUnitOwner(killer->player)) ++players_[size_t(killer->player)].kills;
         if (killer->alive() && killer->type->canMove && !killer->type->noVeteran) {
             ++killer->xp;killer->veteran=std::min(10,killer->xp);
         }
@@ -9232,9 +9281,9 @@ void World::tick(float dt) {
                 // Credit the killer's player with an enemy kill (F4 overlay). Counts
                 // even if the killer is a structure or has since died -- what
                 // matters is who landed the fatal blow, not that it still lives.
-                if (k && k->type && !allied(k->player, u.player) &&
-                    k->player >= 0 && k->player < int(players_.size()))
-                    players_[size_t(k->player)].kills++;
+                const int killOwner=creditedOwner(u.lastHitBy);
+                if(validUnitOwner(killOwner) && !allied(killOwner,u.player))
+                    players_[size_t(killOwner)].kills++;
                 if (k && k->alive() && k->type && k->type->canMove &&
                     !k->type->noVeteran) {
                     // One veteran level per kill, capped at 10 (retail counts
@@ -9926,6 +9975,7 @@ void World::tick(float dt) {
     for (auto& u:units_)
         u.animationTurnBam=std::bit_cast<int16_t>(
             uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam));
+    compactRetiredUnits();
 }
 
 #ifndef NDEBUG
@@ -10162,6 +10212,7 @@ uint64_t World::stateHash() const {
         mix(plane.preparation.recent); mix(plane.preparation.stale); mix(plane.preparation.requestSlot);
     }
     checkpoint("grades");
+    if(!retiredOwners_.empty()) {mix(0x52455449524544ull);mix(retiredHash_);mix(uint32_t(nextId_));}
     for (const auto& u : units_) {
         mix(uint64_t(u.id));
         mix(uint64_t(u.player));

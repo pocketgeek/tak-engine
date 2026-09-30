@@ -315,6 +315,9 @@ add_test(NAME scenario_outcome COMMAND scenario_outcome_test)
 add_executable(scenario_stats_test tools/scenario_stats_test.cpp)
 target_link_libraries(scenario_stats_test PRIVATE tak-formats)
 add_test(NAME scenario_stats COMMAND scenario_stats_test)
+add_executable(unit_retirement_test tools/unit_retirement_test.cpp)
+target_link_libraries(unit_retirement_test PRIVATE tak-formats)
+add_test(NAME unit_retirement COMMAND unit_retirement_test)
 add_executable(scenario_resources_test tools/scenario_resources_test.cpp)
 target_link_libraries(scenario_resources_test PRIVATE tak-formats)
 add_test(NAME scenario_resources COMMAND scenario_resources_test)
@@ -481,6 +484,13 @@ if(TAK_TEST_DATA)
             --shot "${CMAKE_CURRENT_BINARY_DIR}/diplomacy-test.png")
         set_tests_properties(diplomacy_ui PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1"
+            PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults"
+            TIMEOUT 60)
+        add_test(NAME retirement_ui COMMAND takclient game "Ulasem Arena"
+            --data "${TAK_TEST_DATA}" --testbuild --time 0
+            --shot "${CMAKE_CURRENT_BINARY_DIR}/retirement-ui.png")
+        set_tests_properties(retirement_ui PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1;TAK_RETIREMENT_TEST=1"
             PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults"
             TIMEOUT 60)
         add_test(NAME script_transient COMMAND takclient game "ulasem arena"

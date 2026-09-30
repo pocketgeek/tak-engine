@@ -211,13 +211,14 @@
         // finished geometry, one texture-batched draw call per unit. Without this
         // the whole frame is single-threaded and pegs one core at large unit counts.
         visUnits_.clear();
-        geomIndex_.assign(front().units.size(), -1);   // id -> slot; -1 = not in view
-                                                        // (front().units is id-indexed, sized to cover every live id)
-        for (const auto& it : items)
-            if (it.u && it.u->id >= 0 && size_t(it.u->id) < geomIndex_.size()) {
-                geomIndex_[size_t(it.u->id)] = int(visUnits_.size());
+        geomIndex_.assign(front().units.size(), -1); // compact frame slot -> visible geometry
+        for (const auto& it : items) if(it.u) {
+            const int slot=front().slot(it.u->id);
+            if(slot>=0) {
+                geomIndex_[size_t(slot)]=int(visUnits_.size());
                 visUnits_.push_back(it.u);
             }
+        }
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
         // Fraction through the current sim-tick interval, for motion interpolation this
         // frame (clamped: a late tick just holds at the newest pose until it arrives).

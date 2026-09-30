@@ -65,6 +65,9 @@ the GOG edition, supplies the game data.
   background saving, map checks, regions/rules, F6 model inspection and F5 Test Map.
 
 Version **0.7.14 uses protocol 200**. Update clients and servers together.
+The current checkout uses **protocol 201**, with expired-unit cleanup and compact
+render snapshots to reduce long-match overhead; it cannot join released 0.7.14
+matches. See the [long-match performance checks](docs/unit-retirement-performance-2026-09-29.md).
 See the [release notes](docs/release-0.7.14-notes.md),
 [validation report](docs/release-0.7.14-validation.md), and
 [Cartographer guide](docs/user-guide.md#map-editor). Full retail mission-runtime
@@ -446,7 +449,8 @@ Version **0.7.13 uses protocol 198** for shared authored-scenario setup
 and preserved map companions. Version **0.7.14 uses protocol 200** for
 construction restrictions, authored stats, independent scenario outcomes and
 retail trigger/placement behavior.
-Rebuild/update clients and servers together; 198, 199 and 200 cannot share a match.
+The current checkout uses **protocol 201** for deterministic expired-unit cleanup.
+Rebuild/update clients and servers together; different protocol versions cannot share a match.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and

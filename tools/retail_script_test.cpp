@@ -1178,7 +1178,7 @@ int main(int argc,char** argv) {
                     "stopping corpse reclaim preserves its unfinished target");
             } else {
                 for(int tick=0;tick<8;++tick)repairWorld.tick(1.f/30);
-                require(repairWorld.unit(corpse)->corpseUntil==0,
+                require(!repairWorld.unit(corpse) || repairWorld.unit(corpse)->corpseUntil==0,
                     "completed corpse reclaim retires its target");
             }
             require(!repairWorld.unit(worker)->workScriptWorking &&

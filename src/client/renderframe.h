@@ -222,7 +222,19 @@ struct PlayerR {
 // Triple-buffered (see frameBuf_): the render reads front(), the writer fills a spare and
 // publishes it. `live` points into THIS Frame's `units`, so it swaps consistently.
 struct Frame {
-    std::vector<UnitR> units;            // indexed by unit id
+    std::vector<UnitR> units;            // compact current records, never indexed by lifetime ID
+    // Small ID-to-slot table may retain history; full snapshots only retain current units.
+    std::vector<int32_t> unitSlots;
+    int slot(int id) const {
+        if(id<0 || size_t(id)>=unitSlots.size())return -1;
+        const int32_t index=unitSlots[size_t(id)];
+        if(index<0 || size_t(index)>=units.size())return -1;
+        const auto& u=units[size_t(index)];
+        return u.id==id && u.gen==gen && u.type ? index : -1;
+    }
+    const UnitR* unit(int id) const {
+        const int index=slot(id);return index<0 ? nullptr : &units[size_t(index)];
+    }
     std::vector<const UnitR*> live;      // compact list of units live this tick (points into units)
     std::array<PlayerR, 8> players{};
     int numPlayers = 0;

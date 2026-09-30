@@ -121,7 +121,8 @@ int main(int argc,char** argv) try {
     int minAlive=int(world.units().size());
     double hashMs=0,aiMs=0,worldMs=0;uint64_t firedTicks=0,hitEvents=0;
     std::vector<std::pair<int32_t,int32_t>> previousPositions;
-    for (const auto& u:world.units()) previousPositions.emplace_back(u.x.v,u.z.v);
+    std::vector<int> previousIds;
+    for (const auto& u:world.units()) {previousPositions.emplace_back(u.x.v,u.z.v);previousIds.push_back(u.id);}
     const auto start=std::chrono::steady_clock::now();
     for (int tick=0;tick<ticks;++tick) {
         const auto tickStart=std::chrono::steady_clock::now();
@@ -135,20 +136,25 @@ int main(int argc,char** argv) try {
         durations.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-tickStart).count());
         if (tick%30==29) {
             int living=0,moving=0,firing=0,stationary=0,nearGoal=0;
-            previousPositions.resize(world.units().size());
+            std::vector<std::pair<int32_t,int32_t>> positions;
+            std::vector<int> ids;
+            positions.reserve(world.units().size());ids.reserve(world.units().size());
+            size_t previous=0;
             for (size_t i=0;i<world.units().size();++i) {
                 const auto& u=world.units()[i];
                 living+=u.alive();moving+=u.alive() && u.speed.v>0;
                 firing+=u.firedWeapons!=0;
                 const std::pair<int32_t,int32_t> position{u.x.v,u.z.v};
-                stationary+=u.alive() && previousPositions[i]==position;
-                previousPositions[i]=position;
+                while(previous<previousIds.size() && previousIds[previous]<u.id)++previous;
+                stationary+=u.alive() && previous<previousIds.size() && previousIds[previous]==u.id && previousPositions[previous]==position;
+                positions.push_back(position);ids.push_back(u.id);
                 if (u.alive() && !crowdGoals.empty()) {
                     const auto [gx,gz]=crowdGoals[size_t(u.player)];
                     const float dx=u.x.toFloat()-gx,dz=u.z.toFloat()-gz;
                     nearGoal+=dx*dx+dz*dz<=512.f*512.f;
                 }
             }
+            previousPositions.swap(positions);previousIds.swap(ids);
             minAlive=std::min(minAlive,living);firedTicks+=firing;
             const auto hashStart=std::chrono::steady_clock::now();
             const auto hash=world.stateHash();

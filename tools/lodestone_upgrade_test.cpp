@@ -106,10 +106,10 @@ int main(int argc,char** argv) {
                 for (int tick=0;tick<120;++tick) canceled.tick(1.0f/30.0f);
                 canceled.cancelBuilds(worker);canceled.stop(worker);
                 if (destroy) canceled.unit(upgrade)->hp=sim::Fixed();
-                for (int tick=0;tick<expected && canceled.unit(upgrade)->alive();++tick)
+                for (int tick=0;tick<expected && canceled.unit(upgrade) && canceled.unit(upgrade)->alive();++tick)
                     canceled.tick(1.0f/30.0f);
-                check(!canceled.unit(upgrade)->alive(),"stopped/destroyed upgrade retires normally");
-                check(!canceled.unit(original)->alive(),"consumed base does not resume production");
+                check(!canceled.unit(upgrade) || !canceled.unit(upgrade)->alive(),"stopped/destroyed upgrade retires normally");
+                check(!canceled.unit(original) || !canceled.unit(original)->alive(),"consumed base does not resume production");
                 check(canceled.canPlace(base,512,512,0),"cancellation/destruction releases the mana spot");
             }
         }
