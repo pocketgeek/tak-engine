@@ -4,6 +4,7 @@ Status: the plan's **first actionable task** is complete. The full historical
 archaeology milestone remains open; there is no campaign implementation here.
 
 - [Milestone 1 acceptance audit](milestone-one-status.md)
+- [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)
 - [Installer inventory and extraction](installer-inventory.md)

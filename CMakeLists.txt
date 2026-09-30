@@ -210,6 +210,9 @@ endif()
 add_executable(hpitool tools/hpitool.cpp)
 target_link_libraries(hpitool PRIVATE tak-formats)
 
+add_executable(crusades_balance_audit tools/crusades_balance_audit.cpp)
+target_link_libraries(crusades_balance_audit PRIVATE tak-formats)
+
 add_executable(detmath_test tools/detmath_test.cpp)
 target_link_libraries(detmath_test PRIVATE tak-formats)
 
