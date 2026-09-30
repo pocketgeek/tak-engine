@@ -55,3 +55,15 @@ completed 9,006 ticks with 8,425 living units and no stall/error.
 No retail game window was launched. Native Windows/macOS interactive sessions and
 the original nine-hour Windows spectator slowdown were not rerun. Cross-platform
 CI checks and packaged-artifact checks are reported separately below.
+
+## Screenshots and documentation
+
+All eleven images were freshly captured and inspected from the 0.7.16 build.
+They include ships on water, the 16,000-unit army fixture, updated results emblems,
+menus, and both Cartographer views. Sample statistics and development scenes are
+identified in [capture notes](img/README.md); no game imagery was fabricated.
+The README now describes this release, protocol 203, generated sizes, AI behavior,
+and multiplayer bandwidth with explicit protocol-calculation assumptions.
+
+Tag `v0.7.16` points to `433046e`. Tag workflows build Linux, Windows and macOS
+packages. Duplicate branch package runs for the same commit were canceled.

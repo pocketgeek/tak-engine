@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.15-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.16-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -28,11 +28,11 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/streaming.jpg"><img src="docs/img/streaming.jpg" alt="YouTube streaming panel with Max 3840 and 60 FPS selected"></a><br><sub>Built-in YouTube streaming</sub></td>
-    <td width="50%"><a href="docs/img/results.jpg"><img src="docs/img/results.jpg" alt="Post-game statistics with aligned player columns"></a><br><sub>Post-game statistics (sample data)</sub></td>
+    <td width="50%"><a href="docs/img/results.jpg"><img src="docs/img/results.jpg" alt="Post-game statistics with faction emblems and player colors"></a><br><sub>Post-game statistics (sample data)</sub></td>
   </tr>
 </table>
 
-<sub>Captured from the 0.7.12 source build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.16 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -44,24 +44,35 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.15
+## New in 0.7.16
 
-- **Long-match performance:** fully expired unit records are removed from the
-  simulation, and render snapshots use compact storage. Old casualties no longer
-  keep adding full records to simulation and rendering work.
-- **Preserved lifecycle:** active corpses, scripts and in-flight attacks remain
-  available; unit IDs and delayed kill attribution stay intact.
+- **Larger generated maps:** sizes up to 64×64, with terrain-themed ruins around
+  every new mana spot. Lodestone construction space and approach routes stay clear;
+  saved version-1–3 recipes retain their original layouts.
+- **Gentler Easy AI:** slower production decisions, smaller army targets, and
+  attacks of at most eight units, beginning after four game minutes and spaced
+  at least two minutes apart. Passive is now named **Defensive** and still
+  builds and defends without sending attacks.
+- **Conversion targeting:** Harpies, Mind Mages, and Ayla stop attacking targets
+  that become allies, including when a conversion projectile arrives late.
+- **Clear production exits:** completed units move far enough from their
+  production spot to let the next unit start, including mobile infinite queues
+  and factories without a rally point.
+- **Matching results emblems:** the results screen uses the same faction icons
+  and player colors as the F4 scoreboard, including after a player is defeated.
 
-Version **0.7.15 uses protocol 201**. Update clients and servers together;
-0.7.14 uses protocol 200 and cannot join the same match.
-The current checkout uses **protocol 203**, including larger generated maps and gentler Easy AI.
-It also includes corrected conversion targeting:
-Harpies and other converters stop attacking newly allied targets. Produced units
-also receive exit destinations that account for crowded-goal stopping distance,
-so they clear the production spot before parking.
-See the [release notes](docs/release-0.7.15-notes.md),
-[validation report](docs/release-0.7.15-validation.md), and
-[performance measurements](docs/unit-retirement-performance-2026-09-29.md).
+Version **0.7.16 uses protocol 203**. Update clients and servers together;
+0.7.15 uses protocol 201 and cannot join the same match.
+See the [release notes](docs/release-0.7.16-notes.md),
+[validation report](docs/release-0.7.16-validation.md), and
+[random-map guide](docs/random-map-generation.md).
+
+### Previously in 0.7.15
+
+Fully expired unit records are removed from the simulation, and render snapshots
+use compact storage. Active corpses, scripts and in-flight attacks remain
+available; unit IDs and delayed kill attribution stay intact.
+See the [performance measurements](docs/unit-retirement-performance-2026-09-29.md).
 The original nine-hour Windows slowdown still needs a long-session retest.
 
 ### Previously in 0.7.14
@@ -161,7 +172,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.15** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.16** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -447,6 +458,24 @@ Multiplayer automatically verifies and transfers missing or differing maps befor
 Downloaded maps remain available in the map picker; generated maps are saved on every
 participant and the server when the match starts. See [map sharing and storage](docs/map-transfer.md).
 
+**Multiplayer bandwidth:** AIs run on the server. The network sends orders and
+lockstep ticks; each client simulates movement and combat locally. Traffic depends
+mainly on command volume, rather than continuously sending every unit's position.
+At 1× speed, each human player or spectator receives about **0.5 KB/s** of tick
+framing, plus **35 bytes per ordinary unit command** from all participants and AIs
+combined (43 bytes for an area-reclaim command). For example, 100 ordinary commands
+per second is about **4 KB/s / 32 kbps**, and an order to 2,000 units creates roughly
+a **70 KB burst**. These are protocol calculations, not measured typical usage;
+TCP/IP overhead, acknowledgments, checksums, chat, and retransmissions add traffic.
+
+At 4× speed, the same simulated activity generally produces about four times the
+traffic per real second. Server upload scales with the number of connected humans
+and spectators, because each receives a copy; AIs do not require separate network
+connections. Missing-map downloads and late-spectator/reconnect catch-up are larger
+transfers. During ordinary gameplay, low latency and low packet loss matter more
+than raw bandwidth. These figures exclude YouTube streaming, which uses the
+separate bitrate selected in streaming settings.
+
 Allies share vision automatically. Excess mana is distributed to allied players
 with the lowest storage fill percentage first, among teammates you allow in
 **D — Diplomacy**. Mana sharing starts enabled for teammates; chat starts enabled
@@ -456,7 +485,8 @@ without eligible selected units. Giving units keeps the dialog open and updates
 the buttons. Ineligible units remain yours; transfers
 respect the recipient's unit limits, remove transferred units from your control
 groups, and change them to the recipient's colors. Campaigns do not offer gifting.
-See [unit gifting](docs/unit-gifting.md) for eligibility details.
+See [unit gifting](docs/unit-gifting.md) for eligibility details and the
+[diplomacy screen](docs/img/diplomacy.jpg).
 
 Choose the per-player unit limit on the game-creation screen: the button cycles
 through 250, 500, 1,000, and 2,000. The lobby displays this value without allowing
@@ -468,6 +498,8 @@ and preserved map companions. Version **0.7.14 uses protocol 200** for
 construction restrictions, authored stats, independent scenario outcomes and
 retail trigger/placement behavior.
 Version **0.7.15 uses protocol 201** for deterministic expired-unit cleanup.
+Version **0.7.16 uses protocol 203** for conversion/production fixes, gentler Easy AI,
+and version-4 generated maps up to 64×64.
 Rebuild/update clients and servers together; different protocol versions cannot share a match.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
