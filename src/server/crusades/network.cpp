@@ -19,7 +19,7 @@ bool canonicalAccount(const std::string& account) {
     return account.size()>=3&&account.size()<=20&&alnum(account.front())&&
         std::all_of(account.begin(),account.end(),[&](char c){return alnum(c)||c=='_'||c=='.'||c=='-';});
 }
-wire::Snapshot snapshot(CampaignStore& store,const wire::SnapshotRequest& request) {
+wire::Snapshot snapshot(CampaignStore& store,const wire::SnapshotRequest& request,const ActivityResolver& activity) {
     const auto campaign=store.load(request.campaignId);
     wire::Snapshot out;out.requestId=request.requestId;out.campaignId=campaign.definition.id();
     out.displayName=campaign.definition.displayName();out.revision=static_cast<uint64_t>(campaign.revision);
@@ -33,6 +33,7 @@ wire::Snapshot snapshot(CampaignStore& store,const wire::SnapshotRequest& reques
         const auto& m=state.recon;
         t.recon={m.fatigueVictoryPoints,m.honor.requiredVictoryPoints,m.honor.supportVictoryPoints,m.honor.battleVictoryPoints,
             m.terror.requiredVictoryPoints,m.terror.supportVictoryPoints,m.terror.battleVictoryPoints};
+        if(activity)t.activity=activity(out.campaignId,id);
         out.territories.push_back(std::move(t));
     }
     return out; // Always complete, including equal/ahead/stale client revisions.
@@ -54,7 +55,7 @@ ReadResponse campaignReadError(uint32_t id,wire::ErrorCode code) {
     }
     return pack(wire::Error{id,code,"",{},reason});
 }
-ReadResponse campaignReadResponse(CampaignStore* store,const std::string& account,const wire::Request& request,const RoomResolver& rooms) {
+ReadResponse campaignReadResponse(CampaignStore* store,const std::string& account,const wire::Request& request,const RoomResolver& rooms,const ActivityResolver& activity) {
     const auto id=std::visit([](const auto& r){return r.requestId;},request);
     if(!canonicalAccount(account))return campaignReadError(id,wire::ErrorCode::AuthenticationRequired);
     if(!store)return campaignReadError(id,wire::ErrorCode::Disabled);
@@ -67,7 +68,7 @@ ReadResponse campaignReadResponse(CampaignStore* store,const std::string& accoun
         }
         if(const auto* r=std::get_if<wire::SnapshotRequest>(&request)) {
             if(!store->hasCampaign(r->campaignId))return campaignReadError(id,wire::ErrorCode::NotFound);
-            return pack(snapshot(*store,*r));
+            return pack(snapshot(*store,*r,activity));
         }
         if(const auto* r=std::get_if<wire::PlayerStatusRequest>(&request)) {
             if(!store->hasCampaign(r->campaignId))return campaignReadError(id,wire::ErrorCode::NotFound);
@@ -95,7 +96,7 @@ ReadResponse campaignReadResponse(CampaignStore* store,const std::string& accoun
     }catch(const wire::DecodeError& e){return campaignReadError(id,e.code==wire::ErrorCode::TooLarge?e.code:wire::ErrorCode::Unavailable);}
     catch(const std::exception&){return campaignReadError(id,wire::ErrorCode::Unavailable);}
 }
-ReadResponse handleCampaignRead(CampaignStore* store,const std::string& account,net::Msg operation,const std::vector<uint8_t>& payload,const RoomResolver& rooms) {
+ReadResponse handleCampaignRead(CampaignStore* store,const std::string& account,net::Msg operation,const std::vector<uint8_t>& payload,const RoomResolver& rooms,const ActivityResolver& activity) {
     uint32_t id=0;if(payload.size()>=6)for(unsigned i=0;i<4;++i)id|=uint32_t(payload[2+i])<<(8*i);
     if(!canonicalAccount(account))return campaignReadError(id,wire::ErrorCode::AuthenticationRequired);
     if(!store)return campaignReadError(id,wire::ErrorCode::Disabled);
@@ -107,7 +108,7 @@ ReadResponse handleCampaignRead(CampaignStore* store,const std::string& account,
     case net::Msg::CrusadesGetBattleStatus:kind=wire::RequestKind::BattleStatus;break;
     default:return campaignReadError(id,wire::ErrorCode::Malformed);
     }
-    try{return campaignReadResponse(store,account,wire::decodeRequest(kind,payload),rooms);}
+    try{return campaignReadResponse(store,account,wire::decodeRequest(kind,payload),rooms,activity);}
     catch(const wire::DecodeError& e){return campaignReadError(id,e.code);}
     catch(const std::exception&){return campaignReadError(id,wire::ErrorCode::Malformed);}
 }

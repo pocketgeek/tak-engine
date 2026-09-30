@@ -126,6 +126,7 @@ void normalize(Snapshot& snapshot) {
         stringValid(territory.displayName, kMaxDisplayName);
         for (const auto* value : {&territory.nativeFaction, &territory.terrain}) if (*value) stringValid(**value, kMaxDisplayName);
         for (const auto* value : {&territory.mapIdentifier, &territory.assignedMap}) if (*value) stringValid(**value, kMaxMapIdentifier);
+        if (territory.activity) require(territory.activity->offered <= 1000000 && territory.activity->active <= 1000000, "invalid battle activity counts");
         if (territory.owner) require(static_cast<unsigned>(*territory.owner) >= 1 && static_cast<unsigned>(*territory.owner) <= 3, "invalid territory owner");
         for (const auto* field : {&territory.recon.fatigueVictoryPoints, &territory.recon.honorRequiredVictoryPoints, &territory.recon.honorSupportVictoryPoints,
             &territory.recon.honorBattleVictoryPoints, &territory.recon.terrorRequiredVictoryPoints, &territory.recon.terrorSupportVictoryPoints, &territory.recon.terrorBattleVictoryPoints})
@@ -167,6 +168,8 @@ void write(Writer& writer, Snapshot snapshot) {
         if (t.neighbors) { writer.number(t.neighbors->size(), 2); for (auto id : *t.neighbors) writer.number(id, 4); }
         writer.number(t.owner ? static_cast<unsigned>(*t.owner) : 0, 1);
         writer.optionalText(t.assignedMap, kMaxMapIdentifier); metrics(writer, t.recon);
+        writer.number(t.activity ? 1 : 0,1);
+        if (t.activity) {writer.number(t.activity->offered,4);writer.number(t.activity->active,4);}
     }
 }
 void write(Writer& writer, const PlayerStatus& status) {
@@ -273,7 +276,9 @@ Response decodeResponse(ResponseKind kind, const Bytes& payload) {
             t.nativeFaction = reader.optionalText(kMaxDisplayName); t.terrain = reader.optionalText(kMaxDisplayName); t.mapIdentifier = reader.optionalText(kMaxMapIdentifier);
             if (reader.flag()) { t.neighbors.emplace(); const auto n = reader.count(2, kMaxNeighbors); for (size_t j = 0; j < n; ++j) t.neighbors->push_back(uint32_t(reader.number(4))); }
             const auto owner = reader.number(1); if (owner) t.owner = static_cast<Owner>(owner);
-            t.assignedMap = reader.optionalText(kMaxMapIdentifier); t.recon = metrics(reader); m.territories.push_back(std::move(t));
+            t.assignedMap = reader.optionalText(kMaxMapIdentifier); t.recon = metrics(reader);
+            if (reader.flag()) t.activity=BattleActivity{uint32_t(reader.number(4)),uint32_t(reader.number(4))};
+            m.territories.push_back(std::move(t));
         }
         normalize(m); result = std::move(m); break;
     }
@@ -315,7 +320,14 @@ ApplyResult Replica::apply(Snapshot snapshot) {
     if (snapshot.revision < found->second.revision) return ApplyResult::Stale;
     if (snapshot.revision == found->second.revision) {
         auto before = found->second; before.requestId = 0; snapshot.requestId = 0;
-        return encode(Response{before}) == encode(Response{snapshot}) ? ApplyResult::Unchanged : ApplyResult::Conflict;
+        if (encode(Response{before}) == encode(Response{snapshot})) return ApplyResult::Unchanged;
+        auto withoutActivity= snapshot;
+        for (auto& territory:before.territories) territory.activity.reset();
+        for (auto& territory:withoutActivity.territories) territory.activity.reset();
+        if (encode(Response{before}) != encode(Response{withoutActivity})) return ApplyResult::Conflict;
+        // Runtime counts are outside the persisted campaign revision. Transport
+        // preserves response order; accept only this ephemeral field changing.
+        found->second=std::move(snapshot); return ApplyResult::Updated;
     }
     found->second = std::move(snapshot); return ApplyResult::Updated;
 }

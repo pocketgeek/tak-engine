@@ -13,7 +13,7 @@
 // credential, retail wire format or original campaign assets are involved.
 namespace tak::net::crusades {
 using Bytes = std::vector<uint8_t>;
-constexpr uint16_t kVersion = 1;
+constexpr uint16_t kVersion = 2;
 constexpr uint64_t kUnknownRevision = UINT64_MAX;
 constexpr size_t kMaxPayload = 240 * 1024;
 constexpr size_t kMaxCampaigns = 64;
@@ -49,6 +49,7 @@ struct ReconMetrics {
     std::optional<double> honorRequiredVictoryPoints, honorSupportVictoryPoints, honorBattleVictoryPoints;
     std::optional<double> terrorRequiredVictoryPoints, terrorSupportVictoryPoints, terrorBattleVictoryPoints;
 };
+struct BattleActivity { uint32_t offered = 0, active = 0; };
 struct Territory {
     uint32_t id = 0;
     std::string displayName;
@@ -57,6 +58,8 @@ struct Territory {
     std::optional<Owner> owner;
     std::optional<std::string> assignedMap;
     ReconMetrics recon;
+    // Modern live server room counts, not historical traffic or stored rules.
+    std::optional<BattleActivity> activity;
 };
 struct Snapshot {
     uint32_t requestId = 0;

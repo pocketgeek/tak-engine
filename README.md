@@ -339,6 +339,28 @@ retail does award points for destroying another player's units even if allied.
 Some campaign scripts explicitly control the score instead. See the
 [retail scoring evidence](docs/campaign-presentation-2026-09-26.md#result-score).
 
+### Darien Crusades strategic campaigns
+
+Sign in to a multiplayer server, then choose **Darien Crusades** in the game
+browser. Select a campaign and browse its territories, server ownership, battle
+activity and details. Join Honor or Terror, enter an enrolled opponent's account,
+and request a battle on a territory with an assigned map. Eligible invitations
+open the existing battle lobby; its factions and rules are chosen by the server.
+Within the running app, **Sign in again** restores the campaign and territory
+when you reconnect to the same server with the same account.
+
+This is a modern two-player campaign service. Historical territory capture and
+campaign-victory formulas remain incomplete, so a tactical win does not invent
+an ownership change. The strategic map reads original artwork from your own
+installation when all territory IDs and names match the server. Otherwise it
+shows a labeled schematic with a searchable territory list.
+
+Servers must explicitly enable the campaign service and supply a campaign
+definition. The `crusades_import` tool can create an unowned, unmapped definition
+from your installed `Darien.def`; battle-map assignments require server authoring.
+See the [strategic interface and setup guide](docs/research/darien-crusades/campaign-ui.md)
+and [server battle setup](docs/research/darien-crusades/campaign-battles.md).
+
 ## Controls
 
 These are the engine's default bindings. Command, selection, view, and emote

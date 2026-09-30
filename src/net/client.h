@@ -97,6 +97,7 @@ public:
     uint32_t getPlayerCampaignStatus(const std::string& campaign);
     uint32_t getCampaignBattleStatus(const std::string& battle);
     void subscribeCampaign(const std::string& campaign);
+    bool campaignRoom() const { return campaignRoomBindings_.count(room_.id) != 0; }
     const std::string& subscribedCampaign() const { return campaignSubscription_; }
     const crusades::Replica& campaignReplica() const { return campaignReplica_; }
     const std::optional<crusades::CampaignList>& campaignList() const { return campaignList_; }
@@ -229,6 +230,7 @@ private:
     std::optional<crusades::CampaignList> campaignList_;
     std::optional<crusades::PlayerStatus> campaignPlayer_;
     std::map<std::string, crusades::BattleStatus> campaignBattles_;
+    std::map<uint32_t, std::string> campaignRoomBindings_;
     std::optional<crusades::Error> campaignError_;
     std::optional<CampaignInvitation> campaignInvitation_;
     void onFrame(const Frame& f);

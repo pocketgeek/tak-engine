@@ -1,4 +1,5 @@
 #pragma once
+#include "client/crusadesscreen.h"
 #include "client/retailmodellighting.h"
 
 // GameView -- the in-world game client: rendering, input, the retail HUD, fog,
@@ -453,6 +454,9 @@ public:
     // the Create screen (the browser is empty by design) and mark it single-player
     // (labels change, no password / no game browser).
     void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
+    void openCrusades(uint32_t territory = 0);
+    uint32_t crusadesSelectedTerritory() const;
+    bool reconnectRequested() const { return reconnectRequested_; }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
     void requestMenu() { menuRequested_ = true; }
@@ -2122,7 +2126,9 @@ private:
     float replayAccum_ = 0;
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     // interactive lobby UI state
-    enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
+    enum class LobbyScreen { Browser, Create, Crusades } lobbyScreen_ = LobbyScreen::Browser;
+    std::unique_ptr<tak::CrusadesScreen> crusadesScreen_;
+    bool reconnectRequested_ = false;
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
     bool quitRequested_ = false;   // set by the in-game QUIT button -> main() exits the app
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)

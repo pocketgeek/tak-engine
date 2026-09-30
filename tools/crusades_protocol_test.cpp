@@ -34,7 +34,7 @@ void roundTrips() {
         c::SnapshotRequest{3,"test",uint64_t(INT64_MAX)}, c::PlayerStatusRequest{4,"test"}, c::BattleStatusRequest{5,"issued:123"}};
     for (const auto& request : requests) {
         const auto bytes = c::encode(request);
-        check(bytes[0] == 1 && bytes[1] == 0, "explicit little-endian version");
+        check(bytes[0] == c::kVersion && bytes[1] == 0, "explicit little-endian version");
         check(c::encode(c::decodeRequest(c::kindOf(request), bytes)) == bytes, "request roundtrip");
     }
     c::CampaignList list; list.requestId = 5; list.entries = {{"a","First",0,"historical-darien-v1"},{"b","Second",uint64_t(INT64_MAX),"fixture-capture-3-v1"}}; list.nextCursor = "b";
@@ -64,7 +64,7 @@ void roundTrips() {
 }
 void malformed() {
     auto bytes = c::encode(c::Request{c::ListRequest{1,"",1}});
-    bytes[0] = 2;
+    bytes[0] = c::kVersion + 1;
     try { (void)c::decodeRequest(c::RequestKind::List,bytes); throw std::runtime_error("accepted unknown version"); }
     catch (const c::DecodeError& e) { check(e.code == c::ErrorCode::UnsupportedVersion, "unknown version classified"); }
     rejects([]{ (void)c::encode(c::Request{c::ListRequest{0,"",1}}); }, "zero request correlation");
@@ -117,11 +117,11 @@ void snapshotValidation() {
     const auto canonicalWire = c::encode(c::Response{wireSource});
     auto malformedWire = canonicalWire;
     // The final optional metric is present and stores eight little-endian bytes.
-    malformedWire[malformedWire.size()-2] = 0xf8; malformedWire.back() = 0x7f;
+    malformedWire[malformedWire.size()-3] = 0xf8; malformedWire[malformedWire.size()-2] = 0x7f;
     rejects([&]{ (void)c::decodeSnapshot(malformedWire); }, "NaN in received metric bytes");
     malformedWire = canonicalWire;
     // Owner precedes assigned-map flag, seven metric flags and one double.
-    malformedWire[malformedWire.size()-17] = 255;
+    malformedWire[malformedWire.size()-18] = 255;
     rejects([&]{ (void)c::decodeSnapshot(malformedWire); }, "invalid received owner byte");
     malformedWire = c::encode(c::Response{snapshot()});
     const c::Bytes second{2,0,0,0,6,0,'S','e','c','o','n','d'};
@@ -168,6 +168,23 @@ void snapshotValidation() {
     rejects([&]{ (void)c::encode(c::Response{bad}); }, "oversized total snapshot payload");
     rejects([]{ (void)c::decodeSnapshot(c::Bytes(c::kMaxPayload+1,0)); }, "oversized raw payload");
 }
+void activity() {
+    auto s=snapshot(); s.territories[0].activity=c::BattleActivity{0,0};
+    auto decoded=c::decodeSnapshot(c::encode(c::Response{s}));
+    check(decoded.territories[0].activity && decoded.territories[0].activity->active==0 && !decoded.territories[1].activity,"zero versus unknown activity lost");
+    c::Replica replica;(void)replica.apply(s);
+    s.territories[0].activity=c::BattleActivity{3,4};
+    check(replica.apply(s)==c::ApplyResult::Updated && replica.find("test")->territories[0].activity->offered==3,"same revision live activity rejected");
+    check(replica.apply(s)==c::ApplyResult::Unchanged,"identical activity not unchanged");
+    auto conflict=s;conflict.territories[0].owner=c::Owner::Terror;
+    check(replica.apply(conflict)==c::ApplyResult::Conflict,"activity bypassed ownership conflict");
+    --s.revision;s.territories[0].activity=c::BattleActivity{9,9};
+    check(replica.apply(s)==c::ApplyResult::Stale && replica.find("test")->territories[0].activity->offered==3,"old revision rolled activity backward");
+    s=snapshot();s.territories[0].activity=c::BattleActivity{1000001,0};
+    rejects([&]{(void)c::encode(c::Response{s});},"unbounded offered activity accepted");
+    s.territories[0].activity=c::BattleActivity{0,1000001};
+    rejects([&]{(void)c::encode(c::Response{s});},"unbounded active activity accepted");
+}
 void replica() {
     c::Replica replica; auto s = snapshot(); const auto original = c::encode(c::Response{s});
     check(replica.apply(original) == c::ApplyResult::Inserted, "initial snapshot installed");
@@ -195,6 +212,6 @@ void replica() {
 }
 } // namespace
 int main() {
-    try { roundTrips(); malformed(); snapshotValidation(); replica(); std::cout << "PASS: " << checks << " Crusades protocol/replica checks\n"; }
+    try { roundTrips(); malformed(); snapshotValidation(); activity(); replica(); std::cout << "PASS: " << checks << " Crusades protocol/replica checks\n"; }
     catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

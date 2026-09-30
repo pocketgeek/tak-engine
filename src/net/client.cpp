@@ -136,7 +136,7 @@ bool MpClient::campaignAuthenticated() const {
         state_ != State::Offline && state_ != State::Done && state_ != State::Connecting;
 }
 void MpClient::clearCampaignCache() {
-    campaignReplica_.clear(); campaignList_.reset(); campaignPlayer_.reset(); campaignBattles_.clear();
+    campaignReplica_.clear(); campaignList_.reset(); campaignPlayer_.reset(); campaignBattles_.clear(); campaignRoomBindings_.clear();
     campaignError_.reset(); campaignInvitation_.reset(); campaignPending_.clear();
     campaignRequestId_ = 0; campaignRefreshAttempt_.clear();
 }
@@ -291,6 +291,11 @@ void MpClient::campaignFrame(const Frame& f) {
                 }
             }
             if(old==campaignBattles_.end() && campaignBattles_.size()>=64)campaignBattles_.erase(campaignBattles_.begin());
+            if (value->roomId) {
+                if (campaignRoomBindings_.size() >= 64 && !campaignRoomBindings_.count(value->roomId))
+                    campaignRoomBindings_.erase(campaignRoomBindings_.begin());
+                campaignRoomBindings_[value->roomId] = value->battleId;
+            }
             campaignBattles_[value->battleId]=std::move(*value);
         } else if (auto* value=std::get_if<cw::Error>(&response)) {
             if(id)campaignPending_.erase(id);

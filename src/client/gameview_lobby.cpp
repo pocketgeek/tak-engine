@@ -31,6 +31,18 @@ std::string mapDisplayName(const std::string& id) {
 }
 }  // namespace
 
+    void GameView::openCrusades(uint32_t territory) {
+        if (!mp_ || singlePlayer_) return;
+        if (!crusadesScreen_) crusadesScreen_ = std::make_unique<tak::CrusadesScreen>(ren_, vfs_, *mp_);
+        crusadesScreen_->selectTerritory(territory);
+        lobbyScreen_ = LobbyScreen::Crusades;
+        lbField_ = 0; SDL_StopTextInput();
+    }
+
+    uint32_t GameView::crusadesSelectedTerritory() const {
+        return crusadesScreen_ ? crusadesScreen_->selectedTerritory() : 0;
+    }
+
     void GameView::drawLobby(int winW, int winH) {
         lobbyHots_.clear();
         // Map-picker geometry is only live while the create screen is shown; clear it
@@ -42,6 +54,12 @@ std::string mapDisplayName(const std::string& id) {
         // The ground + centred panel frame are painted by the caller (the viewport is
         // already offset to this panel); RenderClear would ignore the viewport.
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        if (mp_ && lobbyScreen_ == LobbyScreen::Crusades && crusadesScreen_ &&
+            mp_->state() != tak::net::MpClient::State::InRoom) {
+            crusadesScreen_->update();
+            crusadesScreen_->draw(winW, winH);
+            return;
+        }
         float cx = winW / 2.0f;
         const char* title = singlePlayer_ ? "SINGLE PLAYER VS AI" : "TA:KINGDOMS  MULTIPLAYER";
         blockText(title, cx - blockWidth(title, 2.6f) / 2, 24, 2.6f, {210, 200, 150, 255});
@@ -89,6 +107,9 @@ std::string mapDisplayName(const std::string& id) {
         lbBtn(x + w - 200, y - 6, 95, 26, "REFRESH", true, [this] { mp_->listGames(); });
         lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", true,
               [this] { lobbyScreen_ = LobbyScreen::Create; });
+        if (!singlePlayer_) lbBtn(x + 110, y - 6, 220, 26, "DARIEN CRUSADES",
+            mp_->auth() == tak::net::MpClient::Auth::Ok || mp_->auth() == tak::net::MpClient::Auth::Created,
+            [this] { openCrusades(); });
         y += 34;
         // column header
         blockText("NAME", x + 8, y, 1.6f, {130, 135, 150, 255});
@@ -648,6 +669,7 @@ std::string mapDisplayName(const std::string& id) {
 
     void GameView::drawRoom(int winW, int winH) {
         const auto& room = mp_->room();
+        const bool campaign = mp_->campaignRoom();
         float x = 40, y = 78;
         blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
         blockText(std::string("MAP  ") + mapDisplayName(room.mapId), x + winW - 320, y + 4, 1.8f, {180, 185, 195, 255});
@@ -684,7 +706,7 @@ std::string mapDisplayName(const std::string& id) {
                            : s.type == 2 ? SDL_Color{230, 220, 150, 255}
                                          : SDL_Color{130, 135, 150, 255};
             blockText(typeName[s.type % 4], x + 34, y + 8, 1.6f, tcol);
-            if (host && s.type != 1) {
+            if (host && !campaign && s.type != 1) {
                 // Host cycles an empty slot OPEN -> AI -> CLOSED. AI opponents are
                 // seated (and run) on the server; this is how you set up multi-AI
                 // games (including single-player vs several AIs).
@@ -709,13 +731,13 @@ std::string mapDisplayName(const std::string& id) {
                     {230, 120, 220, 255}};  // absurd   (magenta)
                 uint8_t lvl = s.aiLevel % 5;
                 blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
-                if (host) { SDL_FRect db{x + 176, y + 6, 92, 18};
+                if (host && !campaign) { SDL_FRect db{x + 176, y + 6, 92, 18};
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
                                      uint8_t((s2.aiLevel + direction + 5) % 5)); }}); }
             }
             // faction / color / team edit: your own row, or (host) any AI row.
-            bool canEdit = mine || (host && s.type == 2);
+            bool canEdit = !campaign && (mine || (host && s.type == 2));
             blockText(factionName(s.faction), x + 260, y + 8, 1.6f, {200, 205, 215, 255});
             if (canEdit) { SDL_FRect fb{x + 260, y + 6, 90, 18};
                 lobbyHots_.push_back({fb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
@@ -745,7 +767,7 @@ std::string mapDisplayName(const std::string& id) {
                 blockText(s.ready ? "READY" : "NOT READY", x + 440, y + 8, 1.6f, rc);
             }
             // host kick button for other humans
-            if (host && s.type == 1 && !mine) {
+            if (host && !campaign && s.type == 1 && !mine) {
                 lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", true, [this, i] { mp_->kick(i); });
             }
             y += 30;   // slot row pitch: 8 rows must leave room for the option toggles below
@@ -777,8 +799,10 @@ std::string mapDisplayName(const std::string& id) {
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
+            const bool campaign = mp_->campaignRoom();
             mp_->leaveGame();
-            lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
+            if (campaign) openCrusades(crusadesSelectedTerritory());
+            else lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
             mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
         if (!room.mapsReady) blockText(mp_->mapStatus().empty() ? "WAITING FOR MAP VERIFICATION" : mp_->mapStatus(),
             bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
@@ -840,6 +864,19 @@ std::string mapDisplayName(const std::string& id) {
 
     void GameView::lobbyInput(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
+        if (lobbyScreen_ == LobbyScreen::Crusades && crusadesScreen_ && mp_ &&
+            mp_->state() != tak::net::MpClient::State::InRoom) {
+            if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
+            if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) { mouseX_ = float(e.button.x); mouseY_ = float(e.button.y); }
+            float mx, my; lobbyMouse(mx, my);
+            const auto action = crusadesScreen_->input(e, int(mx), int(my));
+            if (action == tak::CrusadesScreen::Action::Back) {
+                lobbyScreen_ = LobbyScreen::Browser; mp_->subscribeCampaign(""); SDL_StopTextInput();
+            } else if (action == tak::CrusadesScreen::Action::Reconnect) {
+                reconnectRequested_ = true; menuRequested_ = true; SDL_StopTextInput();
+            }
+            return;
+        }
         if (e.type == SDL_MOUSEMOTION) {
             mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
             if (mapDrag_) setMapScrollFromThumb();   // dragging the map scrollbar

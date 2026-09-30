@@ -113,7 +113,7 @@ clearing and fresh subscriptions, and anonymous rejection. It also checks long m
 terminal hashes and subscription-switch races. The new client and codec paths also pass ASan/UBSan with leak detection.
 Supporting existing framework libraries in that focused run were not instrumented.
 The final `client.cpp` and loopback test both pass strict MinGW compilation
-(`-Wall -Wextra -Werror`); this is not a Windows runtime test. Full
+(`-Wall -Wextra -Werror`); this is not a Windows runtime test.
 The shared codec passes 711 checks, including every truncated response prefix,
 invalid UTF-8, flags/enums, received NaN values, duplicate territory IDs,
 adjacency errors, bounded payloads and atomic replica updates. The authenticated
@@ -141,3 +141,12 @@ the local ARM cross-build legs lack the required target headers and were skipped
 | Stale updates rejected or corrected | Replica atomicity/conflict tests, live stale/ahead reads and persisted subscription refresh |
 | Protocol changes versioned | Network version 208, payload version 1, malformed/version tests |
 | Campaign traffic cannot alter tactical commands | Client bundle/replay byte preservation, real referee replay verification and forged-snapshot no-credit test |
+
+## M9 activity extension
+
+Network version 209 and campaign payload version 2 append optional offered/active
+battle counts to each territory. These are current server-room observations,
+independent of the stored ownership revision and historical battle-point metrics.
+Unknown activity remains distinct from zero. Ordered activity-only snapshots may
+refresh the client at the same campaign revision; conflicting persistent fields
+still fail validation. Full legacy clients must update to the matching protocol.

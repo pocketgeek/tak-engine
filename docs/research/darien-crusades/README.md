@@ -4,13 +4,14 @@ This directory records the Milestone 1 archaeology, native-reader verification
 and source-scoped balance audit, plus the Milestone 2 campaign model and
 Milestone 3 transactional store, Milestone 4 authenticated allegiance,
 Milestone 5 battle issuance, Milestone 6 authoritative results, Milestone 7
-evidence-bound territory rules and Milestone 8 campaign networking. See the
+evidence-bound territory rules, Milestone 8 campaign networking and
+Milestone 9 strategic presentation. See the
 [Milestone 1 acceptance audit](milestone-one-status.md) and
 [Milestone 2 model](campaign-model.md), [Milestone 3 store](campaign-store.md)
-and [Milestone 8 network contract](campaign-network.md)
-for completion status and validation.
-The modern server framework is implemented. The strategic map UI remains later
-work, and automatic historical captures remain blocked by missing retail rules.
+and [Milestone 8 network contract](campaign-network.md), plus
+[Milestone 9 interface](campaign-ui.md), for completion status and validation.
+The modern server framework and strategic map UI are implemented. Automatic
+historical captures remain blocked by missing retail rules.
 
 - [Milestone 1 acceptance audit](milestone-one-status.md)
 - [Milestone 2 clean-room campaign model](campaign-model.md)
@@ -20,6 +21,8 @@ work, and automatic historical captures remain blocked by missing retail rules.
 - [Milestone 6 authoritative match results](campaign-results.md)
 - [Milestone 7 territory rules and evidence boundaries](campaign-territory-rules.md)
 - [Milestone 8 campaign network snapshots](campaign-network.md)
+- [Milestone 9 strategic interface](campaign-ui.md)
+- [Strategic interface evidence](campaign-ui-evidence.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)

@@ -772,6 +772,12 @@ version so clients can detect stale state.
 
 # Milestone 9 — Strategic map UI
 
+Completed 2026-09-30. See [the strategic interface and acceptance evidence](research/darien-crusades/campaign-ui.md)
+and [the recovered presentation evidence](research/darien-crusades/campaign-ui-evidence.md).
+Original map art is read from the user installation and paired only with a matching
+server territory set. Modern duel invitations and server activity are explicit;
+missing historical captures remain unknown.
+
 ## Objective
 
 Recreate the Darien Crusades campaign interface as faithfully as evidence allows.

@@ -53,6 +53,27 @@ int main(int argc,char** argv) {
             require(tile(false)=="map"&&tile(true)=="stock","generated terrain ignores map reskins");
             scoped.addLayer(tak::hpi::MountSet(root/"override"));
             require(tile(false)=="user"&&tile(true)=="user","explicit user terrain override retained");
+            // Only the five case-insensitive loose Crusades art files are mounted.
+            const auto artRoot = root / "crusades-root";
+            fs::create_directories(artRoot / "bOnEyArDs" / "mEtAgAmE");
+            const auto beforeArt = tak::hpi::gameplayHash(tak::hpi::mountRetailRoot(artRoot));
+            for (const char* file : {"DaRiEn.DeF", "BORDERS.PNG", "HonorMap.png", "terrorMap.PNG", "ContestedMap.png",
+                                     "weapons.tdf", "evil.tnt", "PreInit.jje"}) {
+                std::ofstream f(artRoot / "bOnEyArDs" / "mEtAgAmE" / file); f << "synthetic";
+            }
+            {
+                auto artVfs = tak::hpi::mountRetailRoot(artRoot, tak::hpi::OverridePolicy::None);
+                for (const char* file : {"Darien.def", "Borders.png", "HonorMap.png", "TerrorMap.png", "ContestedMap.png"}) {
+                    const auto path = std::string("Boneyards/Metagame/") + file;
+                    require(artVfs.has(path, true), "campaign cosmetic case-insensitive mount");
+                    require(artVfs.read(path, true).size() == 9, "campaign cosmetic read");
+                }
+                require(artVfs.list("Boneyards/Metagame", true).size() == 5, "exact cosmetic allowlist");
+                require(!artVfs.has("Boneyards/Metagame/weapons.tdf"), "adjacent TDF hidden");
+                require(!artVfs.has("Boneyards/Metagame/evil.tnt"), "adjacent map hidden");
+                require(!artVfs.has("Boneyards/Metagame/PreInit.jje"), "adjacent script hidden");
+                require(tak::hpi::gameplayHash(artVfs) == beforeArt, "cosmetic mount preserves gameplay hash");
+            }
             if(argc>1) {
                 auto real=tak::hpi::mountRetailRoot(fs::u8path(argv[1]));
                 auto all=tak::hpi::listMaps(real);

@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 208;      // 208: versioned Crusades snapshots and battle lifecycle
+constexpr uint32_t kNetVersion = 209;      // 209: campaign live territory activity
+                                           // 208: versioned Crusades snapshots and battle lifecycle
                                            // 207: server-sequenced campaign forfeits
                                            // 206: server-issued Crusades battle rooms
                                            // 205: authenticated Crusades allegiance query/change

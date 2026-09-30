@@ -142,6 +142,7 @@ struct Client {
     bool campaignProtocol = false;
     std::string campaignSubscription;
     uint64_t campaignRevision = tak::net::crusades::kUnknownRevision;
+    uint64_t campaignActivityVersion = 0;
     uint64_t campaignReadWindow = 0;
     unsigned campaignReads = 0;
     tak::net::maps::Receiver mapReceive;
@@ -192,6 +193,8 @@ struct Room {
     std::string campaignBattleId, campaignLaunchToken, campaignRoomToken, campaignId;
     std::string campaignAccounts[2];
     int64_t campaignExpires = 0;
+    uint32_t campaignTerritory = 0;
+    bool campaignCancelled = false;
     std::optional<tak::srv::crusades::VerifiedMatchResult> campaignResult;
     std::optional<tak::srv::crusades::ResultOutcome> campaignFault;
     uint64_t campaignResultDue = 0;
@@ -391,6 +394,8 @@ private:
     std::string campaignSession_;
     std::filesystem::path campaignReplayDir_;
     int64_t campaignSweepTime_ = -1;
+    uint64_t campaignActivityVersion_ = 1;
+    std::optional<tak::net::crusades::BattleActivity> campaignActivity(const std::string& campaign, uint32_t territory) const;
     void campaignRead(Client& c, const Frame& f);
     std::optional<uint32_t> campaignRoomId(const std::string& battleId) const;
     void notifyCampaignBattle(const std::string& battleId);
@@ -1037,6 +1042,7 @@ void Server::finalizeCampaign(Room& r,bool abandoning) {
             else r.replayChecks.emplace_back(tick,result.finalStateHash);
         }
         r.campaignResult=std::move(result);
+        ++campaignActivityVersion_; // Frozen matches cease being active before durable completion.
         // Freeze the referee and replay at this terminal snapshot, while allowing
         // two seconds for already-in-flight client hashes to invalidate integrity.
         r.campaignResultDue=nowMs()+((*reason==Outcome::Victory || *reason==Outcome::Resignation)?2000:0);
@@ -1076,6 +1082,8 @@ void Server::finalizeCampaign(Room& r,bool abandoning) {
 
 void Server::cancelCampaignBattle(Room& r) {
     if(r.campaignBattleId.empty() || !crusades_)return;
+    r.campaignCancelled=true; // Never expose a closing room, even during its notification.
+    ++campaignActivityVersion_;
     try {
         const auto status=crusades_->battle(r.campaignBattleId).status;
         if(status==tak::srv::crusades::BattleStatus::Issued || status==tak::srv::crusades::BattleStatus::Started)
@@ -1098,8 +1106,21 @@ void Server::closeCampaignLobby(uint32_t roomId,const char* reason) {
 
 std::optional<uint32_t> Server::campaignRoomId(const std::string& battleId) const {
     for(const auto& [id,room]:rooms_)
-        if(room.campaignBattleId==battleId && !room.campaignResultRecorded)return id;
+        if(room.campaignBattleId==battleId && !room.campaignCancelled && !room.campaignResultRecorded &&
+            !room.campaignResult && !room.campaignFault && (room.running || campaignNow()<room.campaignExpires))return id;
     return {};
+}
+
+std::optional<tak::net::crusades::BattleActivity> Server::campaignActivity(const std::string& campaign,uint32_t territory) const {
+    tak::net::crusades::BattleActivity activity;
+    for(const auto& [id,room]:rooms_) {
+        (void)id;
+        if(room.campaignId!=campaign || room.campaignTerritory!=territory || room.campaignBattleId.empty() ||
+            room.campaignCancelled || room.campaignResultRecorded || room.campaignResult || room.campaignFault)continue;
+        if(room.running)++activity.active;
+        else if(campaignNow()<room.campaignExpires)++activity.offered;
+    }
+    return activity;
 }
 
 void Server::campaignRead(Client& c,const Frame& f) {
@@ -1123,12 +1144,14 @@ void Server::campaignRead(Client& c,const Frame& f) {
         (c.state==Client::Lobby || c.state==Client::InGame);
     const auto account=authenticated?tak::auth::foldUsername(c.account):std::string{};
     const auto reply=tak::srv::crusades::handleCampaignRead(crusades_.get(),account,f.kind,f.payload,
-        [this](const std::string& id){return campaignRoomId(id);});
+        [this](const std::string& id){return campaignRoomId(id);},
+        [this](const std::string& campaign,uint32_t territory){return campaignActivity(campaign,territory);});
     c.conn.send(reply.kind,reply.payload);
     if(authenticated) c.campaignProtocol=true;
     if(reply.kind==Msg::CrusadesCampaignSnapshot) {
         const auto snapshot=wire::decodeSnapshot(reply.payload.b);
         c.campaignSubscription=snapshot.campaignId;c.campaignRevision=snapshot.revision;
+        c.campaignActivityVersion=campaignActivityVersion_;
     }
 }
 
@@ -1137,11 +1160,14 @@ void Server::refreshCampaignSnapshot(Client& c,bool force) {
     if(!crusades_ || !c.campaignProtocol || c.campaignSubscription.empty() || c.account.empty() ||
         c.conn.txPending()>wire::kMaxPayload)return;
     try {
-        if(!force && uint64_t(crusades_->campaignRevision(c.campaignSubscription))==c.campaignRevision)return;
+        if(!force && c.campaignActivityVersion==campaignActivityVersion_ &&
+            uint64_t(crusades_->campaignRevision(c.campaignSubscription))==c.campaignRevision)return;
         const auto reply=tak::srv::crusades::campaignReadResponse(crusades_.get(),tak::auth::foldUsername(c.account),
-            wire::Request{wire::SnapshotRequest{0,c.campaignSubscription,c.campaignRevision}});
+            wire::Request{wire::SnapshotRequest{0,c.campaignSubscription,c.campaignRevision}}, {},
+            [this](const std::string& campaign,uint32_t territory){return campaignActivity(campaign,territory);});
         const auto snapshot=wire::decodeSnapshot(reply.payload.b);
         c.conn.send(reply.kind,reply.payload);c.campaignRevision=snapshot.revision;
+        c.campaignActivityVersion=campaignActivityVersion_;
     } catch(const std::exception& e) {
         std::fprintf(stderr,"campaign snapshot refresh: %s\n",e.what());
         // End a broken subscription; an explicit request can correct it. Never
@@ -1164,6 +1190,7 @@ void Server::notifyCampaignPlayer(Client& c,const std::string& campaignId) {
 
 void Server::notifyCampaignBattle(const std::string& battleId) {
     if(!crusades_)return;
+    ++campaignActivityVersion_;
     try {
         const auto battle=crusades_->battle(battleId);
         for(auto& [id,peer]:clients_) {
@@ -1227,7 +1254,7 @@ void Server::issueCampaignBattle(Client& c,const Frame& f) {
         room.mapVfs->setMapFiles(room.mapPackage->files);room.cap=2;room.createdMs=nowMs();
         room.seed=fixedSeed_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.overridePolicy=0;
         room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;
-        room.campaignId=campaign;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
+        room.campaignId=campaign;room.campaignTerritory=territory;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
         room.campaignRoomToken=campaignSession_+":"+std::to_string(room.id);
         room.campaignExpires=campaignNow()+600;
         for(int i=0;i<kMaxSlots;++i) {room.slots[i].type=i<2?1:3;room.slots[i].color=uint8_t(i);room.slots[i].team=uint8_t(i);}
@@ -1259,10 +1286,10 @@ void Server::sendGameList(Client& c) {
     uint64_t t = nowMs();
     // Private (single-player) games are not advertised in the browser.
     uint32_t n = 0;
-    for (auto& [id, r] : rooms_) if (!r.priv) ++n;
+    for (auto& [id, r] : rooms_) if (!r.priv && r.campaignBattleId.empty()) ++n;
     w.u32(n);
     for (auto& [id, r] : rooms_) {
-        if (r.priv) continue;
+        if (r.priv || !r.campaignBattleId.empty()) continue;
         w.u32(r.id);
         w.str(r.name);
         w.str(r.mapId);

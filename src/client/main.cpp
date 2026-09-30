@@ -717,6 +717,9 @@ int main(int argc, char** argv) {
     tak::PresentationPacer streamPacer;
     std::string menuConnectError;   // failed MP connect -> shown when the menu reopens
     std::string menuReplayError;    // refused replay -> shown on the picker when it reopens
+    // Restore strategic navigation only for the same server/account; never keep a password.
+    std::string crusadesReturnServer, crusadesReturnAccount, crusadesReturnCampaign;
+    uint32_t crusadesReturnTerritory = 0;
     for (;;) {
     if (tak::termRequested()) { quitApp = true; break; }   // SIGTERM/SIGINT between sessions
     if (fromMenu || !pendingCampaign.empty()) { serverHost = launchServerHost;
@@ -1143,6 +1146,18 @@ int main(int argc, char** argv) {
             });
             if (mp) {
                 gameView->setMpClient(mp.get());
+                const std::string strategicServer = serverHost + ":" + std::to_string(serverPort);
+                if (strategicServer == crusadesReturnServer && mp->account() == crusadesReturnAccount &&
+                    !crusadesReturnCampaign.empty()) {
+                    mp->subscribeCampaign(crusadesReturnCampaign);
+                    gameView->openCrusades(crusadesReturnTerritory);
+                }
+#ifndef NDEBUG
+                if (const char* campaign = tak::devEnv("TAK_SHOT_CRUSADES")) {
+                    if (*campaign) mp->subscribeCampaign(campaign);
+                    gameView->openCrusades();
+                }
+#endif
                 gameView->setLocalServerPid(localServerPid());
                 gameView->setMpMapId(args[0]);
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
@@ -1928,6 +1943,14 @@ int main(int argc, char** argv) {
         }
     }
     if (gameView) gameView->setAudioTap(nullptr,nullptr);
+    if (mp && gameView && !mp->account().empty() && !menuInteractive && !benchmarkLaunch && campaignStem.empty()) {
+        crusadesReturnServer = serverHost + ":" + std::to_string(serverPort);
+        crusadesReturnAccount = mp->account();
+        crusadesReturnCampaign = mp->subscribedCampaign();
+        crusadesReturnTerritory = gameView->crusadesSelectedTerritory();
+        if (gameView->reconnectRequested())
+            menuConnectError = "Sign in again to restore your Crusades campaign";
+    }
     // Campaign mission ended (and resolved -- not a mid-mission quit): advance
     // persisted progress on a win, then show the result screen and act on the choice.
     if (!campaignStem.empty() && !campaignId.empty() && gameView && !quitApp &&

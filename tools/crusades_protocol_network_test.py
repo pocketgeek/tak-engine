@@ -14,7 +14,7 @@ import crusades_result_network_test as results
 ABSENT = 2**64 - 1
 
 
-def request(peer, kind, identity, extra=b'', version=1):
+def request(peer, kind, identity, extra=b'', version=2):
     peer.send(kind, struct.pack('<HI', version, identity) + extra)
 
 
@@ -22,7 +22,7 @@ def response(peer, kind, identity):
     # Unsolicited lifecycle updates may precede an explicit query response.
     while True:
         r = peer.receive(kind)
-        assert r.num('<H') == 1
+        assert r.num('<H') == 2
         actual = r.num('<I')
         if actual == identity:
             return r
@@ -44,7 +44,7 @@ def optional_string(r):
     return r.field() if flag else None
 
 
-def snapshot(peer, identity, revision):
+def snapshot(peer, identity, revision, activity=(0, 0)):
     r = response(peer, 'CrusadesCampaignSnapshot', identity)
     assert r.field() == b'synthetic'
     assert r.field() == b'Synthetic network test'
@@ -61,6 +61,8 @@ def snapshot(peer, identity, revision):
         assert r.num('<B') == 0  # Unknown owner is not contested.
         assert optional_string(r) is None
         assert all(r.num('<B') == 0 for _ in range(7))
+        assert r.num('<B') == 1  # Authoritative runtime activity, including zeros.
+        assert (r.num('<I'), r.num('<I')) == (activity if territory == 1 else (0, 0))
     assert r.pos == len(r.data)
 
 
@@ -148,7 +150,7 @@ def run(binary, data):
                                       (5, auth.field('synthetic') + struct.pack('<Q', ABSENT - 1))]:
                 request(alice, 'CrusadesGetSnapshot', identity, payload)
                 error(alice, identity, 1)
-            request(alice, 'CrusadesGetSnapshot', 6, auth.field('synthetic') + struct.pack('<Q', ABSENT), version=2)
+            request(alice, 'CrusadesGetSnapshot', 6, auth.field('synthetic') + struct.pack('<Q', ABSENT), version=3)
             error(alice, 6, 2)
             request(alice, 'CrusadesGetSnapshot', 7, auth.field('unknown') + struct.pack('<Q', ABSENT))
             error(alice, 7, 5)
@@ -174,6 +176,10 @@ def run(binary, data):
             error(other, 13, 5)
             request(other, 'CrusadesGetBattleStatus', 14, auth.field('unknown'))
             error(other, 14, 5)
+            get_snapshot(other, 30)
+            snapshot(other, 30, 1, (1, 0))
+            other.send('ListGames')
+            assert other.receive('GameList').num('<I') == 0  # Private campaign invitation, not public skirmish.
             alice.receive('JoinResult')
             initial = battle.lobby(alice.receive('LobbyState'))
             battle.join(bob, room, True)
@@ -192,6 +198,8 @@ def run(binary, data):
                 peer.send('Loaded', struct.pack('<Q', fingerprint))
             for peer in (alice, bob):
                 assert peer.receive('TickBundle').num('<I') == 0
+            get_snapshot(other, 31)
+            snapshot(other, 31, 1, (0, 1))
             request(alice, 'CrusadesGetBattleStatus', 15, auth.field(identity))
             status(alice, 15, identity, 1, room)
             bob.send('LeaveGame')
@@ -199,6 +207,8 @@ def run(binary, data):
             assert saved[0] == 1 and saved[1] == 'alice'
             for peer in (alice, bob):
                 status(peer, 0, identity, 3, 0, 1)
+            get_snapshot(other, 32)
+            snapshot(other, 32, 1, (0, 0))
             results.verify_replay(root, identity, saved[3], fingerprint)
         # Real process restart: fresh snapshots, same account, durable results,
         # no stale runtime room association or leaked single-use launch token.

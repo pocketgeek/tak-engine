@@ -494,14 +494,29 @@ MountSet::MountSet(const std::filesystem::path& dir, MountConfig cfg)
     }
 }
 
+void MountSet::addLooseFile(const std::string& path, const std::filesystem::path& file) {
+    looseFiles_.emplace(key(path), file);
+}
+
 bool MountSet::has(const std::string& path) const {
     if (cfg_.keep && !cfg_.keep(path)) return false;
+    if (looseFiles_.count(key(path))) return true;
     if (cfg_.includeLoose && looseFile(dir_,path).has_value()) return true;
     return map_.count(key(path)) != 0;
 }
 
 std::vector<uint8_t> MountSet::read(const std::string& path) const {
     if (cfg_.keep && !cfg_.keep(path)) throw std::runtime_error("filtered: " + path);
+    if (auto it = looseFiles_.find(key(path)); it != looseFiles_.end()) {
+        // Explicit aliases are only used for small campaign presentation assets.
+        const auto size = std::filesystem::file_size(it->second);
+        if (size > 16u * 1024u * 1024u) throw std::runtime_error("cosmetic file exceeds 16 MiB");
+        std::ifstream in(it->second, std::ios::binary);
+        std::vector<uint8_t> data(static_cast<size_t>(size));
+        if (!in || !in.read(reinterpret_cast<char*>(data.data()), std::streamsize(size)))
+            throw std::runtime_error("cannot read cosmetic file");
+        return data;
+    }
     // 1. A loose file on disk overrides archives (the engine fopen()s first).
     if (cfg_.includeLoose) {
         auto loose = looseFile(dir_,path);
@@ -547,6 +562,8 @@ std::vector<std::string> MountSet::list(const std::string& prefix) const {
                 out[key(rel)] = rel;
             }
     }
+    for (const auto& [k, file] : looseFiles_)
+        if (under(k) && (!cfg_.keep || cfg_.keep(k))) out[k] = k;
     std::vector<std::string> paths;
     paths.reserve(out.size());
     for (const auto& [k, p] : out) paths.push_back(p);
@@ -555,6 +572,8 @@ std::vector<std::string> MountSet::list(const std::string& prefix) const {
 }
 
 std::string MountSet::sourceOf(const std::string& path) const {
+    if (auto it = looseFiles_.find(key(path)); it != looseFiles_.end())
+        return utf8(it->second) + " (cosmetic loose)";
     if (cfg_.includeLoose) {
         if (auto loose = looseFile(dir_,path)) return utf8(*loose) + " (loose)";
     }
@@ -951,6 +970,26 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
     // newest-entry-date rule. maps.hpi and terrain.hpi ride in here too.
     vfs.addLayer(MountSet(root, MountConfig{.includeLoose = false, .archiveExts = {".hpi"},
                                             .keep = {}, .archiveNames = kRootHpiNames}));
+    // Darien presentation shipped as loose Boneyards files, outside HPIs.
+    // Resolve just this exact five-file allowlist, case-insensitively. Do not
+    // expose arbitrary loose scripts, maps or gameplay data from that folder.
+    if (fs::path boneyards = findSub("Boneyards"); !boneyards.empty()) {
+        std::error_code ec;
+        MountSet art(root, MountConfig{false, {}, {}, {}});
+        for (const auto& dir : fs::directory_iterator(boneyards, ec)) {
+            if (ec) break;
+            if (!dir.is_directory(ec) || MountSet::key(utf8(dir.path().filename())) != "metagame") continue;
+            for (const auto& file : fs::directory_iterator(dir.path(), ec)) {
+                if (ec) break;
+                if (!file.is_regular_file(ec)) continue;
+                const auto name = MountSet::key(utf8(file.path().filename()));
+                if (name == "darien.def" || name == "borders.png" || name == "honormap.png" ||
+                    name == "terrormap.png" || name == "contestedmap.png")
+                    art.addLooseFile("boneyards/metagame/" + name, file.path());
+            }
+        }
+        vfs.addLayer(std::move(art));
+    }
     // Single-map .kmp archives (each an HPI -> kmap/<name>.*) plus any loose maps.
     // A handful of community .kmp bundle MODDED gameplay data (their own canbuild/
     // units/gamedata); retail reads a .kmp only for its map, so we expose just the
