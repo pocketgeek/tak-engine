@@ -1112,7 +1112,7 @@ private:
         // directional projectile meshes (including araarrow) point along +Z.
         if (name == "verbal1" || name == "verbal1_vet") facing += 3.14159265f;
         tris_.clear();
-        SDL_Texture* atlas = atlasFor(colorSlot_[player & 7]);
+        SDL_Texture* atlas = atlasFor(playerColorSlot(player));
         // Projectile roots contain the shot itself, unlike unit roots whose
         // ground-reference plates are suppressed by collect().
         const Xform base=native ? modelBodyTransform(native->angles[2],native->angles[0]) : Xform{};
@@ -1651,7 +1651,7 @@ private:
                         // frame as the atlas, or the remapped player logo colour.
                         const size_t ci = animatedTex_.count(name)
                             ? modelTextureAnimations_.at(name).frame
-                            : (it->second.size() == 1 ? 0 : size_t(colorSlot_[player & 7]));
+                            : (it->second.size() == 1 ? 0 : size_t(playerColorSlot(player)));
                         tex = ci < it->second.size() ? it->second[ci] : nullptr;
                     }
                 }
@@ -1671,7 +1671,7 @@ private:
                 }
                 if (masks) {
                     const size_t frame=animated ? modelTextureAnimations_.at(name).frame
-                                                : size_t(colorSlot_[player & 7]) % masks->size();
+                                                : size_t(playerColorSlot(player)) % masks->size();
                     if(frame < masks->size()) {
                         shadowMask=(*masks)[frame].texture;shadowUV=(*masks)[frame].uv;
                     }
@@ -1861,8 +1861,8 @@ private:
                     if(lit!=paletteTextureSheets_.end()) {
                         const size_t frame=animatedTex_.count(name)
                             ? modelTextureAnimations_.at(name).frame
-                            : (size_t(colorSlot_[player&7])<lit->second.size()
-                                ? size_t(colorSlot_[player&7]) : 0);
+                            : (size_t(playerColorSlot(player))<lit->second.size()
+                                ? size_t(playerColorSlot(player)) : 0);
                         if(frame<lit->second.size() && lit->second[frame].texture) {
                             int level=15;
                             if(prepared ? prepared->shaded : !ps || ps->shaded) {
@@ -2215,6 +2215,7 @@ private:
     bool sampledColors_ = false;
     // RGB a player's units render in (its slot's player colour). The argument is
     // the sim ownership index (Unit::player) -- one player per slot in skirmish.
+    int playerColorSlot(int player) const { return player == 8 ? 9 : (player >= 0 && player < 8 ? colorSlot_[player] : 0); }
     SDL_Color playerColor(int player) const;
 
     // Height-aware 2.5D: the world-pixel lift for a point, from the terrain height
@@ -3156,7 +3157,9 @@ private:
 
     void drawRoom(int winW, int winH);
 
-    static bool startValid(const tak::net::RoomView& room) {
+    std::weak_ptr<const tak::net::maps::Package> authoredLobbyPackage_;
+    bool authoredLobby_ = false;
+    static bool startValid(const tak::net::RoomView& room, bool authoredScenario = false) {
         int used = 0; bool color[10] = {};
         for (int i = 0; i < tak::net::kMaxSlots; ++i) {
             const auto& s = room.slots[i];
@@ -3165,7 +3168,7 @@ private:
             if (s.type == 1 && !s.ready) return false;
             if (s.color < 10) { if (color[s.color]) return false; color[s.color] = true; }
         }
-        return used >= 2;
+        return used >= (authoredScenario ? 1 : 2);
     }
     const tak::net::RoomView& mpRoom() const { return mp_->room(); }
 

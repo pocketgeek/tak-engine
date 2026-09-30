@@ -152,6 +152,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
 void applyEvent(World& world, const tak::net::Event& e) {
     int p = e.player;
     if (p < 0 || p >= world.numPlayers()) return;
+    if (world.hasScenarioOutcomes() && (e.kind == tak::net::Event::Kind::Forfeit ||
+                                       e.kind == tak::net::Event::Kind::Leave))
+        world.forceDefeat(p);
     for (auto& u : world.units())
         if (u.alive() && u.player == p) world.stop(u.id);
 }
@@ -454,6 +457,7 @@ void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs&
 
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
                                                 const MatchConfig& cfg) {
+    std::unique_ptr<ScenarioScript> pendingScenario;
     hpi::Vfs generatedData(cfg.vfs, true);
     const hpi::Vfs& vfs = tak::mapgen::isGeneratedMapId(cfg.mapPath) ? generatedData : *cfg.vfs;
     world.setGameSeed(cfg.startSeed);
@@ -463,6 +467,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     int windMin = 100, windMax = 2000;
     double mapGravity = 112.0;
     bool noSeaLevelTrigger = false, authoredPlaytest = false;
+    world.setBuildRestrictions({},false);
     if (!generated) {
         auto ota = tak::vpath::replaceExtension(cfg.mapPath,".ota");
         if (vfs.has(ota)) {
@@ -474,6 +479,27 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 windMax = int(gh->numberOr("maxwindspeed", 2000));
                 mapGravity = gh->numberOr("gravity", 112.0);
                 noSeaLevelTrigger = gh->numberOr("nosealeveltrigger", 0) != 0;
+                const auto restriction = gh->valueOr("useonlyunits", "");
+                if (authoredPlaytest && cfg.loadCrt && !cfg.stressTest && !cfg.benchmark && !restriction.empty()) {
+                    // Map companion names are virtual archive paths, never native paths.
+                    // Authored packages carry their restriction file beside the OTA.
+                    if (tak::vpath::filename(restriction) != restriction ||
+                        restriction == "." || restriction == "..")
+                        throw std::runtime_error("Authored Use Only file must be a map companion: " + restriction);
+                    const auto slash = ota.find_last_of('/');
+                    const auto path = (slash == std::string::npos ? std::string{} : ota.substr(0,slash+1)) + restriction;
+                    if (hpi::MountSet::key(path) != hpi::MountSet::key(tak::vpath::replaceExtension(ota,".tdf")))
+                        throw std::runtime_error("Authored Use Only file must match the map name: " + restriction);
+                    if (!vfs.has(path)) throw std::runtime_error("Missing authored Use Only file: " + path);
+                    const auto data = vfs.read(path);
+                    const auto whitelist = tdf::parseText(std::string(data.begin(),data.end()),path);
+                    std::vector<std::string> allowed;
+                    for (const auto& name : whitelist.childOrder) {
+                        if (!reg.find(name)) throw std::runtime_error("Unknown authored Use Only unit: " + name);
+                        allowed.push_back(name);
+                    }
+                    world.setBuildRestrictions(std::move(allowed));
+                }
             }
         }
     }
@@ -572,17 +598,21 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             auto scenario = tak::crt::parse(vfs.read(crtPath));
             if (scenario.version != 1) throw std::runtime_error("Scenario CRT file is damaged");
             auto requirePlayer = [&](int player) {
+                if (player == 8) { world.enableScenarioNeutralPlayer(); return; }
                 if (player < 0 || player >= kMaxPlayers)
-                    throw std::runtime_error("The scenario's ninth/neutral player is not supported yet");
+                    throw std::runtime_error("Scenario owner is outside the supported player range");
                 if (player >= int(cfg.slots.size()) || !cfg.slots[size_t(player)].used)
                     throw std::runtime_error("Seat player " + std::to_string(player + 1) + " in the lobby to play this scenario");
             };
-            // Do not silently discard authored stats the simulation cannot represent.
-            for (const auto& type : scenario.customTypes)
-                if (type.stat[0] != 100 || type.stat[1] != 100 || type.stat[2] != 100 || type.stat[3] != 0)
-                    throw std::runtime_error("Scenario custom unit-type stats are not supported yet: " + type.name);
-            for (size_t p = 0; p < scenario.players.size(); ++p)
-                if (!scenario.players[p].empty()) requirePlayer(int(p));
+            for (const auto& type : scenario.customTypes) {
+                auto name = type.name;
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (!reg.find(name)) throw std::runtime_error("Scenario custom unit type is missing: " + type.name);
+                world.setScenarioTypeStats(name, std::clamp(type.stat[1],0,1000),
+                    std::clamp(type.stat[2],0,1000), std::clamp(type.stat[3],0,10));
+            }
+            for (size_t p = 1; p < scenario.players.size(); ++p)
+                if (!scenario.players[p].empty()) requirePlayer(int(p)-1);
             for (const auto& placed : scenario.units) {
                 requirePlayer(placed.player);
                 auto name = placed.objectName;
@@ -590,8 +620,6 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 if (!reg.find(name)) throw std::runtime_error("Scenario unit type is missing: " + placed.objectName);
                 if (placed.x < 0 || placed.z < 0 || placed.x >= map.width || placed.z >= map.height)
                     throw std::runtime_error("Scenario unit is outside the map: " + placed.objectName);
-                if (placed.armor != 100 || placed.weapon != 100)
-                    throw std::runtime_error("Scenario per-unit armor/weapon overrides are not supported yet: " + placed.objectName);
             }
             std::vector<std::pair<float,float>> centers(cfg.slots.size(), {0,0});
             std::vector<int> counts(cfg.slots.size(), 0);
@@ -602,13 +630,22 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 const float x = float(placed.x) * 16 + 8, z = float(placed.z) * 16 + 8;
                 const int id = world.spawn(type, x, z, float(placed.angle) * 3.14159265f / 180.0f, placed.player);
                 if (auto* unit = world.unit(id)) {
-                    unit->hp = Fixed::fromFloat(type->maxHp * float(std::clamp(placed.health, 0, 100)) / 100.0f);
-                    unit->veteran = std::clamp(placed.veteran, 0, 9);
+                    // Native 4cd32d..4cd3e2: placement veteran replaces the type default;
+                    // placement armor/weapon multiply the type defaults. Health is current
+                    // HP percentage, truncated and clamped to [0, type maximum], not max HP.
+                    const float health = float(double(std::clamp(placed.health,0,100)) * double(0.01f) * double(unit->hp.floorInt()));
+                    unit->hp = Fixed::fromInt(std::clamp(int(health),0,std::max(0,type->maxHp)));
+                    unit->scenarioArmor = float(double(unit->scenarioArmor) * double(std::clamp(placed.armor,0,1000)) * double(0.01f));
+                    unit->scenarioWeapon = float(double(unit->scenarioWeapon) * double(std::clamp(placed.weapon,0,1000)) * double(0.01f));
+                    unit->veteran = type->noVeteran ? 0 : std::clamp(placed.veteran, 0, 9);
+                    unit->xp = unit->veteran;
                     if (type->isStructure()) world.blockFoot(*type, x, z, true);
                 } else throw std::runtime_error("Could not place scenario unit: " + placed.objectName);
-                centers[size_t(placed.player)].first += x;
-                centers[size_t(placed.player)].second += z;
-                ++counts[size_t(placed.player)];
+                if (!world.isNeutralPlayer(placed.player)) {
+                    centers[size_t(placed.player)].first += x;
+                    centers[size_t(placed.player)].second += z;
+                    ++counts[size_t(placed.player)];
+                }
             }
             std::vector<std::pair<float,float>> assigned;
             const auto starts = parseStartPositions(vfs, cfg.mapPath);
@@ -617,11 +654,18 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 if (counts[p]) assigned.push_back({centers[p].first / counts[p], centers[p].second / counts[p]});
                 else assigned.push_back(p < starts.size() ? starts[p] : std::pair<float,float>{float(map.width)*8, float(map.height)*8});
             }
-            world.setScenario(std::make_unique<ScenarioScript>(scenario, reg, cfg.scenarioViewPlayer,
-                                                              world.numPlayers(), map.width, map.height));
+            uint32_t participants = 0;
+            for (size_t p=0; p<cfg.slots.size(); ++p) if (cfg.slots[p].used) participants |= uint32_t(1)<<p;
+            auto runner = std::make_unique<ScenarioScript>(scenario, reg, cfg.scenarioViewPlayer,
+                                                           world.numPlayers(), map.width, map.height, participants);
+            runner->setTraceSink(cfg.scenarioTrace);
+            pendingScenario = std::move(runner);
             // Rules/regions without placements extend an ordinary skirmish;
             // keep its authored start positions and default monarchs.
-            if (!scenario.units.empty()) return assigned;
+            if (!scenario.units.empty()) {
+                world.setScenario(std::move(pendingScenario));
+                return assigned;
+            }
         }
     }
 
@@ -1009,6 +1053,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         if (!u.type || !u.type->isStructure()) continue;
         world.blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), true);
     }
+    // Initialization rules must see the default units too.
+    if (pendingScenario) world.setScenario(std::move(pendingScenario));
     return assigned;
 }
 

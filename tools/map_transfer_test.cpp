@@ -7,6 +7,7 @@
 #include "sim/scenario.h"
 #include "crt/crt.h"
 #include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -21,7 +22,118 @@ static void write(const std::filesystem::path& path, const std::vector<uint8_t>&
     std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary); out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
+static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) {
+    auto original=hpi::mountRetailRoot(hostRoot,hpi::OverridePolicy::None);
+    const auto stock=net::maps::build(original,"Ulasem Arena");
+    const auto starts=sim::parseStartPositions(original,stock->mapPath);
+    check(!starts.empty(),"solo fixture needs a start");
+    crt::Scenario scenario;scenario.players.resize(9);
+    crt::Unit monarch;monarch.objectName="araking";monarch.player=0;
+    monarch.x=int(starts[0].first/16);monarch.z=int(starts[0].second/16);
+    monarch.health=75;monarch.armor=150;monarch.weapon=175;monarch.veteran=3;
+    scenario.units.push_back(monarch);
+    auto neutral=monarch;neutral.player=8;neutral.x+=10;neutral.uniqueName="Neutral monarch";
+    scenario.units.push_back(neutral);
+    scenario.customTypes.push_back({"araking",{100,200,200,2}});
+    scenario.players[1].push_back({{{0,{}}},{{13,{"Player 1","Solo authored network"}},{14,{}}}});
+    scenario.players[1].push_back({{{1,{"8"}}},{{5,{}},{14,{}}}});
+    std::vector<hpi::PackFile> entries;
+    const auto stem=stock->mapPath.substr(0,stock->mapPath.size()-4);
+    for(const auto& [name,data]:*stock->files) {
+        const auto path=name.starts_with(stem+".")?"kmap/solo authored"+name.substr(stem.size()):name;
+        if(path=="kmap/solo authored.crt" || path=="kmap/solo authored.tdf")continue;
+        if(path=="kmap/solo authored.ota") {
+            auto metadata=tnt::Scenario::parse(std::string(data.begin(),data.end()));
+            metadata.hasScenario=true;metadata.useOnlyUnits="solo authored.tdf";
+            const auto text=metadata.write()+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n";
+            entries.push_back({path,{text.begin(),text.end()}});
+        } else entries.push_back({path,data});
+    }
+    entries.push_back({"kmap/solo authored.crt",crt::write(scenario)});
+    const std::string restriction="[ARAARCH]{}\n";
+    entries.push_back({"kmap/solo authored.tdf",{restriction.begin(),restriction.end()}});
+    write(std::filesystem::path(hostRoot)/"Maps"/"solo-authored.kmp",hpi::pack(entries));
+    auto hostData=hpi::mountRetailRoot(hostRoot,hpi::OverridePolicy::None);
+    auto peerData=hpi::mountRetailRoot(peerRoot,hpi::OverridePolicy::None);
+    net::MpClient host,observer;host.setMapRoot(hostRoot);observer.setMapRoot(peerRoot);
+    host.setDataHash(hpi::gameplayHash(hostData));observer.setDataHash(hpi::gameplayHash(peerData));
+    check(host.connect("127.0.0.1",port,"solo-author"),"solo host connect");
+    sim::TypeRegistry registry;sim::setupRegistry(registry,hostData,true);
+    sim::World wh,wo;
+    bool created=false,ready=false,started=false,loaded=false,connected=false,spectating=false,observerLoaded=false,sent=false;
+    uint32_t ht=0,ot=0;std::map<uint32_t,uint64_t> hashes;
+    auto setup=[&](net::MpClient& client,hpi::Vfs& base,sim::World& world) {
+        check(client.mapPackage() && net::maps::authoredScenario(*client.mapPackage()),"verified authored package missing");
+        hpi::Vfs view(&base);view.setMapFiles(client.mapPackage()->files);
+        sim::MatchConfig cfg;cfg.vfs=&view;cfg.mapPath=client.mapPackage()->mapPath;
+        cfg.startSeed=client.startSeed();cfg.randomStarts=client.startRoom().opts.randomStarts;
+        cfg.unitCap=client.startRoom().opts.unitCap;cfg.slots={{true,0,0,1,false,false}};
+        sim::setupMatch(world,registry,cfg);
+        check(world.numPlayers()==1 && world.units().size()==2,"solo/neutral owners became extra lobby players");
+        check(world.unit(1)->scenarioArmor>2.99f && world.unit(1)->scenarioArmor<3.01f &&
+              world.unit(1)->scenarioWeapon>3.49f && world.unit(1)->scenarioWeapon<3.51f,
+              "authored stat multipliers lost on network participant");
+        check(!world.buildAllowed(registry.find("tarnecro")) && world.buildAllowed(registry.find("araarch")),"transferred Use Only not installed");
+        client.reportLoaded(hpi::gameplayHash(base));
+    };
+    const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(90);
+    while(std::chrono::steady_clock::now()<until) {
+        check(host.poll(),host.error().c_str());
+        if(!created && host.state()==net::MpClient::State::Lobby) {
+            net::GameOptions opts;opts.crusades=1;opts.overridePolicy=0;
+            host.createGame("solo authored test","","Solo Authored",opts,2);created=true;
+        }
+        if(!ready && host.room().id) {host.setSlot(0,1,0,0,0,1);ready=true;}
+        if(!started && ready && host.room().mapsReady && host.room().slots[0].ready) {
+            check(host.room().slots[1].type!=1 && host.room().slots[1].type!=2,"solo fixture accidentally seated opponent");
+            host.startGame();started=true;
+        }
+        if(!loaded && host.starting()) {setup(host,hostData,wh);loaded=true;}
+        if(loaded && ht>30 && !connected) {check(observer.connect("127.0.0.1",port,"solo-observer"),"solo observer connect");connected=true;}
+        if(connected) {
+            check(observer.poll(),observer.error().c_str());
+            if(!spectating && observer.state()==net::MpClient::State::Lobby) {observer.spectate(host.room().id,"");spectating=true;}
+            if(!observerLoaded && (observer.starting() || observer.isRejoin())) {setup(observer,peerData,wo);observerLoaded=true;}
+        }
+        if(loaded && ht>30 && !sent) {
+            net::Command command;command.player=7;command.unitId=1;command.kind=net::Cmd::Train;
+            std::strcpy(command.type,"tarnecro");
+            auto repeat=command;repeat.kind=net::Cmd::RepeatTrain;
+            auto build=command;build.kind=net::Cmd::Build;build.x=400;build.z=400;
+            host.sendCommands({command,repeat,build});sent=true;
+        }
+        auto advance=[&](net::MpClient& client,sim::World& world,uint32_t& tick,bool reference) {
+            net::Bundle bundle;
+            while((reference || hashes.count(tick)) && client.takeBundle(tick,bundle)) {
+                for(const auto& c:bundle.cmds)sim::applyCommand(world,registry,c);
+                for(const auto& e:bundle.events)sim::applyEvent(world,e);
+                world.tick(1.f/30.f);
+                const auto hash=world.stateHash();
+                if(reference)hashes[tick]=hash;else check(hashes.at(tick)==hash,"solo observer replay diverged");
+                if(!client.isSpectator() && tick%net::kHashPeriod==0)client.sendHash(tick,hash);
+                ++tick;
+            }
+        };
+        if(loaded)advance(host,wh,ht,true);
+        if(observerLoaded)advance(observer,wo,ot,false);
+        check(!host.desynced() && !observer.desynced(),"solo referee hash mismatch");
+        // CRT results are per-player deterministic world state, not the campaign's
+        // broadcast MissionOutcome message. Continue beyond the result so the
+        // referee receives/checks post-result periodic hashes as well.
+        if(observerLoaded && ht>=330 && wh.scenarioOutcome(0)==1 && wo.scenarioOutcome(0)==1 && ot==ht) {
+            check(ht>240 && sent,"solo result occurred before authored victory condition");
+            check(wh.scenarioOutcome(0)==1 && wo.scenarioOutcome(0)==1,"server result differs from scenario");
+            check(wh.unit(1)->buildQueue.empty() && wh.units().size()==2,"network construction bypassed Use Only");
+            std::cout<<"PASS: solo authored start, neutral/stat/Use Only transfer, host/referee/late observer parity, victory verified after "<<ht<<" ticks hash "<<std::hex<<wh.stateHash()<<'\n';
+            return 0;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    throw std::runtime_error("solo authored network timed out: "+host.mapStatus()+"; "+host.error());
+}
+
 int main(int argc, char** argv) try {
+    if(argc==5 && std::string(argv[1])=="--solo-network")return soloNetwork(uint16_t(std::stoi(argv[2])),argv[3],argv[4]);
     if (argc >= 5 && std::string(argv[1]) == "--network") {
         const auto port = uint16_t(std::stoi(argv[2]));
         const bool diplomacy=std::getenv("TAK_DIPLOMACY_NETWORK")!=nullptr;
@@ -48,7 +160,7 @@ int main(int argc, char** argv) try {
                 entries.push_back({path,data});
             };
             crt::Scenario authored;authored.players.resize(2);
-            authored.players[0].push_back({{{20,{}}},{{13,{"All Players","Transferred scenario"}}}});
+            authored.players[1].push_back({{{20,{}}},{{13,{"All Players","Transferred scenario"}}}});
             if(std::getenv("TAK_MAP_TEST_SCENARIO")) {
                 auto starts=sim::parseStartPositions(original,package->mapPath);
                 check(starts.size()>=2,"scenario transfer fixture needs two start positions");
@@ -57,7 +169,7 @@ int main(int argc, char** argv) try {
                     unit.x=int(starts[size_t(p)].first/16);unit.z=int(starts[size_t(p)].second/16);
                     authored.units.push_back(unit);
                 }
-                authored.players[0][0].conditions[0].opcode=0;
+                authored.players[1][0].conditions[0].opcode=0;
                 for(auto& entry:entries) if(entry.path=="kmap/transfer test.ota") {
                     auto metadata=tnt::Scenario::parse(std::string(entry.data.begin(),entry.data.end()));
                     metadata.hasScenario=true;const auto text=metadata.write()+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n";entry.data={text.begin(),text.end()};
@@ -65,7 +177,7 @@ int main(int argc, char** argv) try {
             }
             companion(".crt",crt::write(authored));
             companion(".tdf",{});
-            const std::string names="TAK_EDITOR_RULE_NAMES 1\n0 0 \"Transfer rule\"\n";
+            const std::string names="TAK_EDITOR_RULE_NAMES 1\n1 0 \"Transfer rule\"\n";
             companion(".editor",{names.begin(),names.end()});
             write(std::filesystem::path(argv[3])/"Maps"/"transfer-test.kmp",hpi::pack(entries));
             if (std::getenv("TAK_MAP_TEST_MISMATCH")) {
@@ -105,9 +217,9 @@ int main(int argc, char** argv) try {
             if(diplomacy)cfg.slots[2]={true,2,1,1,true,true};
             if(argc==5) {
                 const auto authored=crt::parse(view.read("kmap/transfer test.crt"));
-                check(authored.players.size()==2 && authored.players[0].size()==1 &&
-                      authored.players[0][0].actions.size()==1 &&
-                      authored.players[0][0].actions[0].slot[1]=="Transferred scenario",
+                check(authored.players.size()==2 && authored.players[1].size()==1 &&
+                      authored.players[1][0].actions.size()==1 &&
+                      authored.players[1][0].actions[0].slot[1]=="Transferred scenario",
                       "scenario companion missing on a network participant");
                 check(view.has("kmap/transfer test.editor") && view.has("kmap/transfer test.tdf") &&
                       view.read("kmap/transfer test.tdf").empty(),"editor metadata or empty restriction lost over network");
@@ -240,6 +352,32 @@ int main(int argc, char** argv) try {
     hpi::Vfs source; source.setMapFiles(files);
     auto p = net::maps::build(source,"test");
     check(p->digest == net::maps::build(source,"TEST")->digest, "unstable map fingerprint");
+    check(!net::maps::authoredScenario(*p),"ordinary CRT map became a solo scenario");
+    {
+        auto authoredFiles=std::make_shared<hpi::Vfs::Files>(*p->files);
+        auto authored=*p;authored.files=authoredFiles;
+        auto metadata=tnt::Scenario::parse(ota);metadata.hasScenario=true;
+        auto setMetadata=[&](const std::string& text) {
+            (*authoredFiles)["kmap/test.ota"]={text.begin(),text.end()};
+        };
+        setMetadata(metadata.write());
+        check(!net::maps::authoredScenario(authored),"hasScenario alone enabled solo skirmish");
+        setMetadata(metadata.write()+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n");
+        check(net::maps::authoredScenario(authored),"explicit valid authored scenario cannot start solo");
+        hpi::Vfs view;view.setMapFiles(authoredFiles);
+        check(net::maps::authoredScenario(view,"kmap/test.tnt"),"local and packaged scenario detection differ");
+        const auto crt=authoredFiles->at("kmap/test.crt");
+        authoredFiles->erase("kmap/test.crt");
+        check(!net::maps::authoredScenario(authored),"missing CRT enabled solo exception");
+        (*authoredFiles)["kmap/test.crt"]={1,2,3};
+        check(!net::maps::authoredScenario(authored),"damaged CRT enabled solo exception");
+        (*authoredFiles)["kmap/test.crt"]=crt;
+        metadata.hasScenario=false;
+        setMetadata(metadata.write()+"\n[TAKPlaytest]{\nauthoredscenario=1;\n}\n");
+        check(!net::maps::authoredScenario(authored),"disabled scenario enabled solo exception");
+        setMetadata(metadata.write()+"\n[TAKPlaytest]{\nauthoredscenario=0;\n}\n");
+        check(!net::maps::authoredScenario(authored),"disabled opt-in marker enabled solo exception");
+    }
     for (const auto* extension : {".ota", ".crt", ".tdf", ".txt", ".editor", ".recipe"}) {
         const auto path = std::string("kmap/test") + extension;
         check(p->files->at(path) == files->at(path), "map companion lost or modified");

@@ -354,14 +354,10 @@ Debug builds also support direct playback:
 
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
-compatible engine behavior and game data. Released 0.7.1 uses protocol **179**;
-current development builds use **184** for stationary building combat, following
-183 for corrected campaign conditions and
-the area-clearing and naval fixes.
-These builds cannot mix in a match. Version 0.7.0 uses **177**.
-All multiplayer clients and servers must run the same compatible build.
-Different-protocol peers and replays, including those from 0.6.9 (protocol 176),
-are rejected.
+compatible engine behavior and game data. Released **0.7.13 uses protocol 198**;
+the current checkout uses **199** for authored construction restrictions, neutral
+ownership, stats and scenario outcomes. Use matching builds for all clients and
+the server. Different-protocol peers and replays are rejected.
 
 ## Overrides
 
@@ -422,9 +418,30 @@ rolls back. Prefer KMP over loose multi-file exports for a single replacement.
 
 **Test Map (F5)** launches a temporary snapshot in the normal private game lobby.
 Seat the scenario's players and start; the editor and unsaved document stay open.
+Verified authored scenarios can start with a single participant in the current
+checkout. Ordinary skirmishes still require at least two.
 The snapshot enables authored placements/rules on both client and server without
-changing ordinary retail-map skirmish setup. See [scenario runtime limits](crt-triggers.md)
-for unsupported neutral owners, stat overrides and other current limitations.
+changing ordinary retail-map skirmish setup. The following runtime additions are
+in the current checkout (protocol 199), after released 0.7.13 (protocol 198):
+
+- **Use Only** limits what players and AIs can construct. Existing placements and
+  units created by scenario actions are retained even if their types are excluded.
+- Neutral placements use their own owner, do not appear as a lobby/score participant,
+  and do not automatically fight nearby players. Players can explicitly attack or
+  capture an eligible neutral unit.
+- Placed **Health %** sets starting HP, without changing maximum HP. Type and
+  placement **Armor % / Weapon %** multiply; type defaults apply to later spawns too.
+  Placed veterancy replaces the type default; units marked `noveteran` stay unranked.
+  Retail does not apply the custom-type Health field, so Check Map warns about it.
+- Rule ownership is **All Players**, followed by **Player 1–8**. All Players rules
+  execute separately for each seated player. Rules run at startup and once per game
+  second while their conditions remain true; use Disable Rule for a one-time event.
+- **Victory/Defeat** actions determine results for their selected players. A victory
+  does not automatically defeat opponents. Defeat removes the defeated player's
+  units immediately. Normal skirmish elimination is disabled in an authored
+  scenario, so add terminal rules if it should end.
+
+See [scenario runtime details and limits](crt-triggers.md) before distributing a map.
 
 Enable **Scenario → Log Test Map triggers** before F5 for local execution
 diagnostics. The launch message gives the persistent log path, under Cartographer's

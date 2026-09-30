@@ -8,8 +8,8 @@
 // spawns, and win/lose stay in lockstep. Display actions push cosmetic
 // messages (NOT hashed) that the client drains for the viewing player.
 //
-// A rule group fires on the rising edge of ALL its conditions holding, unless
-// disabled by a "Disable rule" action or its player is defeated.
+// Rules evaluate at initialization and once per game second, repeating while
+// all conditions hold unless disabled or their runtime player is defeated.
 
 #include "crt/crt.h"
 
@@ -32,7 +32,8 @@ public:
     // maxPlayer: number of world slots (out-of-range groups are never reassigned).
     // mapWCells/mapHCells: map size in 16px cells (for "Anywhere"/whole-map).
     ScenarioScript(const tak::crt::Scenario& scen, const TypeRegistry& reg,
-                   int viewPlayer, int maxPlayer, int mapWCells, int mapHCells);
+                   int viewPlayer, int maxPlayer, int mapWCells, int mapHCells,
+                   uint32_t participants = 0xff);
 
     bool active() const { return !players_.empty(); }
 
@@ -49,6 +50,12 @@ public:
     std::vector<Msg> drainMessages();
 
     bool showClock() const { return showClock_; }   // "Display gameclock" latched
+    bool participates(int player) const {
+        return player >= 0 && player < maxPlayer_ && player < 8 && (participants_ & (1u << player));
+    }
+    int outcome(int player) const {
+        return participates(player) ? outcomes_[size_t(player)] : 0;
+    }
     // Optional local diagnostics, never hashed or enabled by network map data.
     // action == -1 announces a firing group; other records precede its actions.
     using TraceSink=std::function<void(int32_t tick,int player,int group,int action,const crt::Rule*)>;
@@ -66,7 +73,8 @@ private:
     };
 
     // ---- evaluation ----
-    bool evalCond(World& w, int player, const tak::crt::Rule& c);
+    void evaluate(World& w, bool initial);
+    bool evalCond(World& w, int player, const tak::crt::Rule& c, bool initial);
     void runAction(World& w, int player, int group, const tak::crt::Rule& a);
     int countControl(World& w, int player, const std::string& typeName, const std::string& loc) const;
 
@@ -76,16 +84,16 @@ private:
     bool inRegion(World& w, float x, float z, const std::string& loc) const;
     void regionCenter(const std::string& loc, float& x, float& z) const;
     int parsePlayer(const std::string& s) const;   // "Player N"->N-1, "All..."->-1
-    void forceDefeatTeam(World& w, int player, bool allies);   // defeat player's team
-    void forceDefeatOthers(World& w, int player);              // defeat everyone else
+    void applyOutcome(World& w, int player, int result, int recipients);
 
     const TypeRegistry& reg_;
     int view_;
     int maxPlayer_;
+    uint32_t participants_ = 0;
+    std::vector<int8_t> outcomes_; // first terminal result per participant; hashed
     int mapW_ = 0, mapH_ = 0;   // cells
     std::vector<std::vector<tak::crt::RuleGroup>> players_;   // rules, clamped to maxPlayer_
     std::vector<std::vector<uint8_t>> disabled_;              // per player/group
-    std::vector<std::vector<uint8_t>> fired_;                 // per player/group: edge latch
     std::vector<PState> state_;
     std::vector<tak::crt::Region> regions_;
     std::vector<Msg> pending_;

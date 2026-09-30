@@ -1235,9 +1235,12 @@ void Server::tryStart(Client& c) {
         c.conn.send(Msg::MapError, w); return;
     }
     // Validate: >=2 used slots, every human ready, unique colors among used slots.
-    // A campaign mission is exempt from the 2-player minimum: its opponents are the
-    // mission script's units, not lobby slots, so one seated human is enough.
-    if (r->mission.empty() && r->usedSlots() < 2) return;
+    // Authored playtests may be solo objectives. The exception requires the verified
+    // package's explicit scenario marker and valid CRT, not a host-supplied claim.
+    // Campaign missions retain their separate minimum-player exemption.
+    const bool authored=!r->opts.stressTest && !r->opts.benchmark && r->mapPackage &&
+        tak::net::maps::authoredScenario(*r->mapPackage);
+    if (r->mission.empty() && r->usedSlots() < (authored ? 1 : 2)) return;
     bool usedColor[10] = {};
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r->slots[i];

@@ -75,6 +75,13 @@ See the [release notes](docs/release-0.7.13-notes.md),
 scenario data, but full retail mission-runtime parity is not claimed; current
 limits are documented in the guide and [trigger reference](docs/crt-triggers.md).
 
+**Current checkout (after 0.7.13):** protocol **199** adds authored Use Only
+construction restrictions, neutral placements, armor/weapon and veteran defaults,
+and per-player scenario victory/defeat. It also corrects All Players rule ownership
+and once-per-game-second trigger evaluation. These changes are not in the 0.7.13
+packages; rebuild clients and servers together. See the
+[scenario reference](docs/crt-triggers.md).
+
 ### Previously in 0.7.12
 
 - **Diplomacy on D:** allied unit gifting, outgoing mana-sharing checkboxes for
@@ -224,11 +231,15 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   **F6** opens a rotatable 3D preview of a selected unit or browser entry.
   **Test Map (F5)** opens a temporary snapshot in the normal private game lobby,
   leaving the editor and unsaved document open. Seat the players used by your
-  scenario, then start. Authored placements and rules run on both client and server.
+  scenario, then start. Verified authored scenarios can start with one player in
+  the current checkout; ordinary skirmishes still require two participants.
+  Authored placements and rules run on both client and server.
   **Scenario → Log Test Map triggers** optionally records firing groups and
   attempted actions in a bounded local log; the launch message shows its path.
-  Neutral-player and custom armor/weapon overrides are currently rejected with an
-  explanation; [scenario limits](docs/crt-triggers.md) describe the remaining gaps.
+  In the current checkout, **Use Only** limits player/AI construction, neutral
+  placements keep a separate owner, and custom armor/weapon percentages affect
+  combat. Victory/Defeat rules determine authored scenario outcomes; no such rule
+  means the scenario can remain a sandbox. See [scenario details and limits](docs/crt-triggers.md).
   Close the test game to return to editing. Verified snapshots remain in the map
   cache, like other downloaded maps; the temporary source is removed after exit.
   A first-launch guide introduces editing and saving. Hover over toolbar controls,
@@ -443,7 +454,9 @@ it to change.
 
 Use the **same engine build and compatible game data** on every participant.
 Version **0.7.13 uses protocol 198** for shared authored-scenario setup
-and preserved map companions; rebuild/update clients and servers together.
+and preserved map companions. The current checkout uses **protocol 199** for
+construction restrictions, authored stats and independent scenario outcomes.
+Rebuild/update clients and servers together; 198 and 199 cannot share a match.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and

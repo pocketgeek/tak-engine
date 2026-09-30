@@ -121,8 +121,9 @@ int main() {
                   templates[matches[0]].group.actions[0].slot[1]=="Bridge","template search and contextual unit/region");
             check(cart::matchingRuleTemplates(templates,"nothing matches this").empty(),"template empty search results");
             check(cart::ruleTemplates(0,"","").size()==5,"no invalid unit-spawn template when the catalog is empty");
-            check(templates[0].group.actions[0].slot[0]=="Player 3","opening briefing targets selected player");
-            check(cart::matchingRuleTemplates(cart::ruleTemplates(8,"TEST","Bridge"),"Opening").empty(),"neutral slot must not generate an invalid Player 9 recipient");
+            check(templates[0].group.actions[0].slot[0]=="Player 2","opening briefing targets selected player");
+            check(cart::ruleTemplates(8,"TEST","Bridge")[0].group.actions[0].slot[0]=="Player 8","last rule bank targets Player 8");
+            check(cart::ruleTemplates(0,"TEST","Bridge")[0].group.actions[0].slot[0]=="All Players","broadcast rule bank targets All Players");
         }
         auto operandHas=[&](bool action,const tak::crt::Rule& r,const std::string& message) {
             const auto issues=cart::validateRuleOperands(action,r,{},registry);

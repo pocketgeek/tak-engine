@@ -781,6 +781,7 @@ struct Unit {
     // floating point (the affordability check at 0x46e85f subtracts one with `fsubl`).
     double mana = 0;       // personal mana pool (casters), capped at type->maxMana
     int   xp = 0;          // accumulated experience from kills
+    float scenarioArmor = 1.0f, scenarioWeapon = 1.0f; // permanent authored multipliers, separate from auras
     int   veteran = 0;     // veteran level (0..10); scales attack/armor/reload
     float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
     float armBuff = 1;     // live armour multiplier from auras (decays to 1)
@@ -1487,7 +1488,19 @@ public:
     }
     Player& player(int i) { return players_[size_t(i)]; }
     const Player& player(int i) const { return players_[size_t(i)]; }
-    int numPlayers() const { return int(players_.size()); }
+    int numPlayers() const { return scenarioParticipantCount_ >= 0 ? scenarioParticipantCount_ : int(players_.size()); }
+    bool isNeutralPlayer(int p) const { return scenarioParticipantCount_ >= 0 && p == 8; }
+    bool validUnitOwner(int p) const { return (p >= 0 && p < numPlayers()) || isNeutralPlayer(p); }
+    void enableScenarioNeutralPlayer() {
+        if (scenarioParticipantCount_ >= 0) return;
+        scenarioParticipantCount_ = int(players_.size());
+        players_.resize(9);
+        for (int p = scenarioParticipantCount_; p < 9; ++p) players_[size_t(p)].team = -1;
+    }
+    // Retail CRT type defaults apply to every subsequent spawn; health is not consumed.
+    void setScenarioTypeStats(std::string type, int armor, int weapon, int veteran) {
+        scenarioTypeStats_[std::move(type)] = {armor, weapon, veteran};
+    }
     // Retail mission SET40 replaces player0 score and disables all automatic scoring.
     void setScriptScore(int32_t value) { players_[0].score=value; scoreAutomaticDisabled_=true; }
     bool scoreAutomaticDisabled() const { return scoreAutomaticDisabled_; }
@@ -1527,6 +1540,7 @@ public:
     // replayed spawns get the SAME unit ids as the original run. setTerrain and
     // setPlayerCount (called by setupMatch afterwards) rebuild nav/vis/players.
     void resetForReplay() {
+        clearScenarioState();
         scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
         paths_.clear();
@@ -1569,6 +1583,9 @@ public:
     // Call BEFORE spawning any units -- shrinking it after would leave units with
     // an out-of-range owner index (dereferenced unchecked in the economy loop).
     void setPlayerCount(int n) {
+        clearScenarioState();
+        scenarioParticipantCount_ = -1;
+        scenarioTypeStats_.clear();
         players_.assign(size_t(std::clamp(n, 1, kMaxPlayers)), Player{});
         for (int i = 0; i < numPlayers(); ++i) players_[size_t(i)].team = i;
     }
@@ -1604,6 +1621,10 @@ public:
     void setManaSharing(int fromPlayer, int toPlayer, bool enabled);
     bool canGiveUnit(int unitId, int fromPlayer, int toPlayer) const;
     bool giveUnit(int unitId, int fromPlayer, int toPlayer);
+    // Authored scenario construction whitelist. Script-created and preplaced units
+    // are not construction requests and deliberately bypass this restriction.
+    void setBuildRestrictions(std::vector<std::string> types, bool enabled = true);
+    bool buildAllowed(const UnitType* type) const;
     void setUnitCap(int c) { unitCap_ = c; }
     void setHumanPlayers(uint32_t mask) { humanMask_ = mask; }
     int unitCap() const { return unitCap_; }
@@ -1644,6 +1665,10 @@ public:
     // Player::defeated as a side effect. Idempotent; call once per tick.
     int updateOutcome();
     int winningTeam() const { return winningTeam_; }
+    bool hasScenarioOutcomes() const;
+    // Explicit CRT result for one participant; -1 asks for a completed spectator
+    // result (all participants finished, victory if any won). Not a campaign.
+    int scenarioOutcome(int player) const;
 
     // Which player the fog-of-war grid tracks (default 0 = local player).
     void setVisPlayer(int t) { visPlayer_ = t; }
@@ -1720,6 +1745,7 @@ public:
     // Scenario (.crt) trigger runner: an optional in-sim per-player rule engine
     // (src/sim/scenario.h). Ticked inside tick() and folded into stateHash().
     void setScenario(std::unique_ptr<ScenarioScript> s);
+    void clearScenarioState();
     ScenarioScript* scenario() { return scenario_.get(); }
     // Force a player to count as defeated regardless of its unit count (a
     // scenario Victory/Defeat action); respected by updateOutcome, hashed.
@@ -2317,6 +2343,7 @@ private:
     void forgetCorpseAt(int cx,int cz);
     bool placeCorpse(Unit& unit,int type);
     void retireCorpse(Unit& unit);
+    void removeScenarioUnits(int player);
     void removeMapFeature(int cx,int cz);
     bool placeMapFeature(const Feature& f);
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
@@ -2361,6 +2388,8 @@ private:
     std::vector<Storm> storms_;
     int stormSeq_ = 0;        // id source, so the viewer can track a storm's life
     bool scoreAutomaticDisabled_=false;
+    int scenarioParticipantCount_ = -1; // ninth owner is scenery, never a lobby participant
+    std::map<std::string, std::array<int,3>> scenarioTypeStats_;
     std::vector<Player> players_ = []{
         std::vector<Player> v(4);
         for (int i = 0; i < 4; ++i) v[size_t(i)].team = i;
@@ -2372,6 +2401,8 @@ private:
     bool serialThreads_ = false;
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
+    bool buildRestrictionsEnabled_ = false;
+    std::vector<std::string> buildRestrictions_; // lowercase, sorted, unique
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
     int64_t godAppearTick_ = INT64_MAX;
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition

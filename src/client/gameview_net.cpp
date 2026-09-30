@@ -15,22 +15,20 @@
         if (tak::mapgen::isGeneratedMapId(gid))
             return uint8_t(std::clamp<int>(tak::mapgen::decodeMapId(gid).players, 2, tak::net::kMaxSlots));
         int n = int(parseStartPositions().size());
-        const auto ota=vfs_.tryRead(tak::vpath::replaceExtension(mapPath_, ".ota"));
-        const auto metadata=ota?tak::tdf::parseText(std::string(ota->begin(),ota->end())):tak::tdf::Node{};
-        const auto* playtest=metadata.child("takplaytest");
-        if(playtest && playtest->numberOr("authoredscenario",0)!=0 &&
-           tak::tnt::Scenario::parse(std::string(ota->begin(),ota->end())).hasScenario) {
-            auto bytes=vfs_.tryRead(tak::vpath::replaceExtension(mapPath_, ".crt"));
-            if(const auto cached=vfs_.cachedMap(mapPath_)) {
-                const auto it=cached->second->find(tak::vpath::replaceExtension(cached->first,".crt"));
-                if(it!=cached->second->end())bytes=it->second;
-            }
-            if(bytes) {
-                const auto scenario=tak::crt::parse(*bytes);
-                for(const auto& unit:scenario.units) if(unit.player>=0 && unit.player<tak::net::kMaxSlots)n=std::max(n,unit.player+1);
-                for(size_t p=0;p<scenario.players.size() && p<tak::net::kMaxSlots;++p)
-                    if(!scenario.players[p].empty())n=std::max(n,int(p)+1);
-            }
+        // Capacity is available seats, not a minimum player count. The verified
+        // lobby can start a solo authored scenario without filling these seats.
+        auto path=mapPath_;
+        tak::hpi::Vfs scenarioData(&vfs_);
+        if(const auto cached=vfs_.cachedMap(path)) {
+            path=cached->first;scenarioData.setMapFiles(cached->second);
+        }
+        if(tak::net::maps::authoredScenario(scenarioData,path)) {
+            const auto scenario=tak::crt::parse(scenarioData.read(tak::vpath::replaceExtension(path,".crt")));
+            for(const auto& unit:scenario.units)
+                if(unit.player>=0 && unit.player<tak::net::kMaxSlots)n=std::max(n,unit.player+1);
+            // Bank zero is All Players; banks 1..8 belong to owners 0..7.
+            for(size_t p=1;p<scenario.players.size() && p<=tak::net::kMaxSlots;++p)
+                if(!scenario.players[p].empty())n=std::max(n,int(p));
         }
         return uint8_t(std::clamp(n < 2 ? 2 : n, 2, tak::net::kMaxSlots));
     }
@@ -182,6 +180,7 @@
         cfg.vfs = &vfs_;
         cfg.mapPath = mapPath_;
         cfg.scenarioViewPlayer = localPlayer_;
+        cfg.scenarioTrace = scenarioTrace_;
         cfg.unitCap = room.opts.unitCap;
         cfg.monarchExpendable = room.opts.monarchExpendable != 0;
         cfg.doubleSight = room.opts.doubleSight != 0;
@@ -206,7 +205,6 @@
                                                    : ("Player " + std::to_string(i + 1));
         }
         auto spots = tak::sim::setupMatch(world_, registry_, cfg);
-        if(auto* script=world_.scenario())script->setTraceSink(scenarioTrace_);
         // Rebuild the rendered feature sprites (features_) from the map we actually
         // loaded -- they were built once in the ctor from the launch map, so on a
         // different chosen map the trees/houses you SEE would be the launch map's,

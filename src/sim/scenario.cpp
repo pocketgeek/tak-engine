@@ -21,20 +21,27 @@ float cellToWorld(float cell) { return cell * 16.0f + 8.0f; }
 }  // namespace
 
 ScenarioScript::ScenarioScript(const tak::crt::Scenario& scen, const TypeRegistry& reg,
-                               int viewPlayer, int maxPlayer, int mapWCells, int mapHCells)
+                               int viewPlayer, int maxPlayer, int mapWCells, int mapHCells,
+                               uint32_t participants)
     : reg_(reg), view_(viewPlayer), maxPlayer_(std::max(1, maxPlayer)),
+      participants_(participants & ((1u << std::min(8, maxPlayer_)) - 1)),
+      outcomes_(size_t(maxPlayer_), 0),
       mapW_(mapWCells), mapH_(mapHCells), regions_(scen.regions) {
     // Never transfer an absent player's rules to another owner. Production match
     // setup rejects unseated authored players before constructing the runner.
     players_.assign(size_t(maxPlayer_), {});
-    for (size_t p = 0; p < scen.players.size() && p < players_.size(); ++p)
-        players_[p] = scen.players[p];
+    // CRT bank zero is All Players; banks 1..8 belong to owners 0..7.
+    // Native loader 4ccb20 copies global rules first into each seated player's
+    // own rule list, so disabling a global rule affects only that player.
+    for (size_t p = 0; p < players_.size(); ++p) if (participates(int(p))) {
+        if (!scen.players.empty()) players_[p] = scen.players[0];
+        if (p + 1 < scen.players.size())
+            players_[p].insert(players_[p].end(), scen.players[p+1].begin(), scen.players[p+1].end());
+    }
     disabled_.resize(players_.size());
-    fired_.resize(players_.size());
     state_.resize(players_.size());
     for (size_t p = 0; p < players_.size(); ++p) {
         disabled_[p].assign(players_[p].size(), 0);
-        fired_[p].assign(players_[p].size(), 0);
     }
 }
 
@@ -91,23 +98,28 @@ int ScenarioScript::countControl(World& w, int player, const std::string& typeNa
     return n;
 }
 
-void ScenarioScript::forceDefeatOthers(World& w, int player) {
-    for (int q = 0; q < w.numPlayers(); ++q)
-        if (q != player && !w.allied(player, q)) w.forceDefeat(q);
-}
-void ScenarioScript::forceDefeatTeam(World& w, int player, bool allies) {
-    for (int q = 0; q < w.numPlayers(); ++q)
-        if (q == player || (allies && w.allied(player, q))) w.forceDefeat(q);
+void ScenarioScript::applyOutcome(World& w, int player, int result, int recipients) {
+    // Retail 4cad50 routes self/allies/opponents separately; 4f6b90/4f6be0
+    // latch the first result. A victory never fabricates another player's defeat.
+    for (int q = 0; q < maxPlayer_; ++q) {
+        const bool selected = recipients == 0 ? q == player :
+            recipients == 1 ? w.allied(player, q) : !w.allied(player, q);
+        if (participates(q) && selected) {
+            if (!outcomes_[size_t(q)]) outcomes_[size_t(q)] = int8_t(result);
+            // Native defeat marks gameplay state even after a displayed win.
+            if (result < 0) w.forceDefeat(q);
+        }
+    }
 }
 
 // -------- conditions (opcode space per the RE table) --------
-bool ScenarioScript::evalCond(World& w, int player, const tak::crt::Rule& c) {
+bool ScenarioScript::evalCond(World& w, int player, const tak::crt::Rule& c, bool initial) {
     const auto& s = c.slot;
     PState& ps = state_[size_t(player)];
     switch (c.opcode) {
-        case 0:  return clock_ == 0;                         // Start of game
-        case 1:  return clock_ > toInt(s[0]) * 30;            // Gametime > v
-        case 2:  return clock_ < toInt(s[0]) * 30;            // Gametime < v
+        case 0:  return initial;                         // Start of game
+        case 1:  return int64_t(clock_) > int64_t(toInt(s[0])) * 30;            // Gametime > v
+        case 2:  return int64_t(clock_) < int64_t(toInt(s[0])) * 30;            // Gametime < v
         case 3: { auto it = ps.timers.find(toInt(s[0]));   // Timer > v (unset => false)
                   return it != ps.timers.end() && it->second.value > float(toInt(s[1])); }
         case 4: { auto it = ps.timers.find(toInt(s[0]));   // Timer < v (unset => false)
@@ -150,7 +162,7 @@ bool ScenarioScript::evalCond(World& w, int player, const tak::crt::Rule& c) {
         case 21: case 22: {                                    // opponents left </> N
             int opp = 0;
             for (int q = 0; q < w.numPlayers(); ++q)
-                if (q != player && !w.allied(player, q) && !w.player(q).defeated) ++opp;
+                if (participates(q) && q != player && !w.allied(player, q) && !w.player(q).defeated) ++opp;
             return c.opcode == 21 ? opp < toInt(s[0]) : opp > toInt(s[0]);
         }
         case 23: {                                             // Random: N percent true
@@ -174,8 +186,8 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
         case 2: ps.flags[s[0]] = toInt(s[1]); break;                           // set flag f=v
         case 3: ps.flags[s[1]] += toInt(s[0]); break;                          // add v to flag f
         case 4: ps.flags[s[1]] -= toInt(s[0]); break;                          // sub v from flag f
-        case 5: forceDefeatOthers(w, player); break;                           // Victory for me
-        case 6: w.forceDefeat(player); break;                                  // Defeat for me
+        case 5: applyOutcome(w, player, 1, 0); break;                         // Victory for me
+        case 6: applyOutcome(w, player, -1, 0); break;                        // Defeat for me
         case 7: {                                                              // Create X at L
             if (const UnitType* t = findType(s[0])) {
                 float x, z; regionCenter(s[1], x, z);
@@ -224,17 +236,21 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
         case 18: w.player(player).mana += float(toInt(s[0])); break;           // add v
         case 19: w.player(player).mana = std::max(0.0, w.player(player).mana - double(toInt(s[0]))); break;
         case 20: break;                                                        // resources normal (no-op)
-        case 21: forceDefeatOthers(w, player); break;                          // Victory me + teammates
-        case 22: forceDefeatTeam(w, player, true); break;                      // Defeat me + teammates
-        case 23: forceDefeatTeam(w, player, true); break;                      // Victory for opponents
-        case 24: forceDefeatOthers(w, player); break;                          // Defeat for opponents
+        case 21: applyOutcome(w, player, 1, 1); break;                        // Victory me + teammates
+        case 22: applyOutcome(w, player, -1, 1); break;                       // Defeat me + teammates
+        case 23: applyOutcome(w, player, 1, 2); break;                        // Victory for opponents
+        case 24: applyOutcome(w, player, -1, 2); break;                       // Defeat for opponents
         case 25: pending_.push_back({clock_, parsePlayer(s[0]),
                                     s[1] + std::to_string(ps.flags[s[2]]) + s[3]}); break; // Display P text flag text
         default: break;
     }
 }
 
-void ScenarioScript::start(World&) { started_ = true; }
+void ScenarioScript::start(World& w) {
+    if (started_) return;
+    started_ = true;
+    evaluate(w, true);
+}
 
 void ScenarioScript::trace(int player,int group,int action,const crt::Rule* rule) noexcept {
     if(!trace_)return;
@@ -242,42 +258,38 @@ void ScenarioScript::trace(int player,int group,int action,const crt::Rule* rule
     catch(...) {trace_={};} // A failed diagnostic sink cannot interrupt lockstep.
 }
 
-void ScenarioScript::step(World& w, float dt) {
-    // Advance per-player timers first (so a "Timer < 1" fires after the tick the
-    // countdown was set, not the same tick).
+void ScenarioScript::step(World& w, float) {
+    if (!started_) start(w);
+    ++clock_;
+    ++ticks_;
+    if (clock_ % 30 == 0) evaluate(w, false);
+}
+
+void ScenarioScript::evaluate(World& w, bool initial) {
+    // Native 4ccf90: initial evaluation, then integer game-second boundaries.
+    // Timers advance by one before rules; countdowns may become negative.
     for (auto& ps : state_)
         for (auto& [id, t] : ps.timers) {
             (void)id;
-            t.value += t.countUp ? dt : -dt;
-            if (!t.countUp && t.value < 0) t.value = 0;
+            t.value += t.countUp ? 1.0f : -1.0f;
         }
-
     for (int p = 0; p < int(players_.size()); ++p) {
-        if (p < w.numPlayers() && w.player(p).defeated) continue;   // skip dead players
+        if (!participates(p) || w.player(p).defeated) continue;
         for (int g = 0; g < int(players_[size_t(p)].size()); ++g) {
             if (disabled_[size_t(p)][size_t(g)]) continue;
             const auto& grp = players_[size_t(p)][size_t(g)];
-            // A rule fires its actions once on the rising edge of "all conditions
-            // true" (the retail model: e.g. "set countdown timer 0 to 180" runs
-            // once, then the timer counts down; authors gate repeats with flags).
-            bool all = !grp.conditions.empty();
+            bool all = true;
             for (const auto& c : grp.conditions)
-                if (!evalCond(w, p, c)) { all = false; break; }
-            uint8_t& fired = fired_[size_t(p)][size_t(g)];
-            if (all && !fired) {
+                if (!evalCond(w, p, c, initial)) { all = false; break; }
+            if (all) {
                 trace(p,g,-1,nullptr);
                 for(size_t i=0;i<grp.actions.size();++i) {
                     const auto& a=grp.actions[i];trace(p,g,int(i),&a);
                     runAction(w,p,g,a);
                 }
-                fired = 1;
-            } else if (!all) {
-                fired = 0;
             }
         }
     }
-    ++clock_;
-    ++ticks_;
 }
 
 void ScenarioScript::unitDied(World& w, int id) {
@@ -304,6 +316,8 @@ void ScenarioScript::foldHash(uint64_t& h) const {
     auto mix = [&](uint64_t v) { h ^= v; h *= 1099511628211ULL; };
     mix(uint64_t(ticks_));
     mix(rng_);
+    mix(participants_);
+    for (auto outcome : outcomes_) mix(uint8_t(outcome));
     for (size_t p = 0; p < state_.size(); ++p) {
         const PState& ps = state_[p];
         for (const auto& [k, v] : ps.flags) {
@@ -317,7 +331,6 @@ void ScenarioScript::foldHash(uint64_t& h) const {
         for (const auto& [k, v] : ps.killed) { mix(0x11); for (char c : k) mix(uint8_t(c)); mix(uint64_t(int64_t(v))); }
         for (const auto& [k, v] : ps.lost)   { mix(0x22); for (char c : k) mix(uint8_t(c)); mix(uint64_t(int64_t(v))); }
         for (uint8_t d : disabled_[p]) mix(d);
-        for (uint8_t f : fired_[p]) mix(uint64_t(f) << 1);
     }
 }
 

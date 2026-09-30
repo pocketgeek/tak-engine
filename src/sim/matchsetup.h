@@ -11,6 +11,7 @@
 
 #include "net/protocol.h"   // Command, Cmd, Event
 #include "sim/sim.h"
+#include "sim/scenario.h"
 #include "tnt/tnt.h"        // tnt::Map (registerMapFeatures)
 
 namespace tak::sim {
@@ -42,6 +43,7 @@ struct MatchConfig {
     // No `gods` flag: retail decides with a 10% roll off Gods.tdf, not an option
     // (see the port of 0x519420 in setupMatch). startSeed drives the draw.
     bool loadCrt = true;             // opt-in Test Map placements/rules; campaign OTA setup opts out
+    ScenarioScript::TraceSink scenarioTrace; // local diagnostics only, installed before initial rules
     int scenarioViewPlayer = -1;     // cosmetic message filtering only; never hashed
     float startMana = 2800;
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)

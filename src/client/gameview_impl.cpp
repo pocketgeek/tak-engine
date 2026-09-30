@@ -1745,6 +1745,8 @@
             // conditions decide the result (last-team-standing doesn't apply -- the
             // objective may be an escort, a timer, a kill-target, etc.).
             outcome_ = world_.missionOutcome();
+        } else if (outcome_ == 0 && world_.hasScenarioOutcomes()) {
+            outcome_ = world_.scenarioOutcome(spectating_ ? -1 : localPlayer_);
         } else if (outcome_ == 0) {
             int teamsSeen = 0;
             for (int t = 0; t < world_.numPlayers(); ++t) {
@@ -3646,7 +3648,7 @@
     }
 
     SDL_Color GameView::playerColor(int player) const {
-        int s = (player >= 0 && player < 8) ? colorSlot_[player] : 0;
+        int s = playerColorSlot(player);
         return playerColors_[(s >= 0 && s < 10) ? s : 0];
     }
 

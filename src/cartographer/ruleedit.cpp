@@ -31,9 +31,9 @@ std::vector<RuleTemplate> ruleTemplates(int player,const std::string& unitType,c
         result.push_back({std::move(name),std::move(description),std::move(group)});
     };
     const auto where=location.empty()?"Anywhere":location;
-    if(player>=0 && player<8)
-        add("Opening message","Show a briefing to this player at the start.",
-            {0,{}},{13,{"Player "+std::to_string(player+1),"Complete your objective."}});
+    if(player>=0 && player<=8)
+        add("Opening message",player==0?"Show a briefing to all players at the start.":"Show a briefing to this player at the start.",
+            {0,{}},{13,{player==0?"All Players":"Player "+std::to_string(player),"Complete your objective."}});
     add("Timed victory","Win after five minutes. Edit the condition to change the time.",
         {1,{"300"}},{5,{}});
     add("Reach a region","Win when one of your units enters the chosen area.",

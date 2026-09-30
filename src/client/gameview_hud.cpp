@@ -1546,10 +1546,10 @@ namespace {
 
     std::vector<std::string> GameView::conjureMenu(const std::string& builderType) const {
         const auto& all = registry_.buildable(builderType);
-        if (missionAllowed_.empty()) return all;
         std::vector<std::string> out;
         for (const auto& id : all)
-            if (std::find(missionAllowed_.begin(), missionAllowed_.end(), id) != missionAllowed_.end())
+            if (world_.buildAllowed(registry_.find(id)) &&
+                (missionAllowed_.empty() || std::find(missionAllowed_.begin(), missionAllowed_.end(), id) != missionAllowed_.end()))
                 out.push_back(id);
         return out;
     }

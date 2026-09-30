@@ -714,7 +714,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // Choice lists are read-only unless explicitly editable (flag suggestions).
     const std::vector<std::string>* mfChoices[kMaxFields] = {};
     bool mfEditableChoice[kMaxFields] = {};
-    int scrPlayer = 0;                     // 0..8
+    int scrPlayer = 0;                     // 0=All Players, 1..8=Player 1..8
     int mDropScroll=0;
     std::vector<std::string> ruleChoices[kMaxFields];
     int mDropOpen = -1;                       // which field's dropdown list is open (-1 none)
@@ -2698,9 +2698,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             tak::crt::RuleGroup* g = curGroup();
             // Header row: player nav, rule count, Done.
             rPrevP = cart::drawButton(ren, ct.x, ct.y, 18, 14, "<", false);
-            cart::drawText(ren, "PLAYER " + std::to_string(scrPlayer), ct.x + 24, ct.y + 3, 1, 220, 224, 235);
-            rNextP = cart::drawButton(ren, ct.x + 104, ct.y, 18, 14, ">", false);
-            cart::drawText(ren, std::to_string(gs.size()) + " RULES", ct.x + 132, ct.y + 3, 1, 175, 185, 200);
+            cart::drawText(ren, scrPlayer==0 ? "ALL PLAYERS" : "PLAYER " + std::to_string(scrPlayer), ct.x + 24, ct.y + 3, 1, 220, 224, 235);
+            rNextP = cart::drawButton(ren, ct.x + 128, ct.y, 18, 14, ">", false);
+            cart::drawText(ren, std::to_string(gs.size()) + " RULES", ct.x + 156, ct.y + 3, 1, 175, 185, 200);
             rTemplates=cart::drawButton(ren,ct.x+244,ct.y,104,14,"TEMPLATES",false);
             rScrDone = cart::drawButton(ren, ct.x + ct.w - 60, ct.y, 56, 14, "DONE", true);
 

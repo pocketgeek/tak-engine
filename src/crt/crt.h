@@ -66,8 +66,8 @@ struct Region {
     int32_t x1 = 0, z1 = 0, x2 = 0, z2 = 0;   // 16px cells (@0x100)
 };
 
-// A parsed .crt in full. `players` holds one entry per player (9 in shipped
-// files), each a list of that player's rule groups.
+// A parsed .crt in full. `players` holds All Players at index 0, followed by
+// Player 1 through 8; each entry contains that rule bank's groups.
 struct Scenario {
     float version = 1.0f;
     std::vector<CustomType> customTypes;

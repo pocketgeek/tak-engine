@@ -716,8 +716,13 @@ std::string mapDisplayName(const std::string& id) {
                 mp_->setSlot(mpRoom().mySlot, 1, s.faction, s.color, s.team, iAmReady ? 0 : 1, s.aiLevel); });
             bx = x + 142;
         }
-        // start (host): enabled when >=2 used slots and all humans ready and colors unique
-        bool canStart = host && startValid(room) && room.mapsReady;
+        // Verified authored scenarios may start solo; ordinary skirmishes need two.
+        if (authoredLobbyPackage_.lock()!=mp_->mapPackage()) {
+            authoredLobbyPackage_=mp_->mapPackage();
+            authoredLobby_=mp_->mapPackage() && tak::net::maps::authoredScenario(*mp_->mapPackage());
+        }
+        const bool authored=!room.opts.stressTest && !room.opts.benchmark && mp_->mapPackage() && authoredLobby_;
+        bool canStart = host && startValid(room,authored) && room.mapsReady;
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {

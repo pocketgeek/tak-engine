@@ -789,7 +789,7 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
     }
     // Clamp to a valid player slot: every players_[u.player] index downstream is
     // unchecked, so an out-of-range owner would read/write past the vector.
-    if (player < 0 || player >= int(players_.size())) {
+    if (!validUnitOwner(player)) {
         std::fprintf(stderr, "sim: spawn player %d out of range [0,%d) -> clamped to 0\n",
                      player, int(players_.size()));
         player = 0;
@@ -817,6 +817,12 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         u.moveState=0;u.fireState=2;u.stance=1;u.standingOrder=1;
     }
     u.type = type;
+    if (type) if (auto it = scenarioTypeStats_.find(type->id); it != scenarioTypeStats_.end()) {
+        u.scenarioArmor = float(it->second[0]) * 0.01f;
+        u.scenarioWeapon = float(it->second[1]) * 0.01f;
+        u.veteran = type->noVeteran ? 0 : std::clamp(it->second[2], 0, 10);
+        u.xp = u.veteran;
+    }
     if (retailAllocation_ && players_[size_t(player)].buildCache) {
         const auto& entries=players_[size_t(player)].buildCache->entries;
         auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==type;});
@@ -3518,7 +3524,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // attacker's attack stat by vetMul); the victim's boosts armour (below).
     const Unit* attacker = fromId ? unit(fromId) : nullptr;
     // Attack multiplier = veterancy × live aura buff (AdjustAttack).
-    float atkMul = attacker ? attacker->vetMul() * attacker->atkBuff : 1.0f;
+    float atkMul = attacker ? attacker->vetMul() * attacker->atkBuff * attacker->scenarioWeapon : 1.0f;
     // Damage + status one victim, honouring veterancy, auras and immunities.
     auto hurt = [&](Unit& e, float scale) {
         if (e.stonedFor > 0) return;   // petrified units are impervious
@@ -3553,7 +3559,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         // 0x52a330 then consumes one CRT draw per recipient and applies its
         // asymmetric ±15% integer spread before the HP update. Keep this stream
         // separate from gameRng_: pathfinding shares the latter's exact sequence.
-        float armour = std::max(e.vetMul() * e.armBuff, 0.01f);
+        float armour = std::max(e.vetMul() * e.armBuff * e.scenarioArmor, 0.01f);
         float scaledDamage = w.damageVs(e.type) * atkMul / armour * scale;
         damageCrtUsed_ = true;
         const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba));
@@ -4093,7 +4099,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
     // stride widens with the crowd (acqStride_, set at tick start) so massive battles
     // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
     bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
-    if (acquiring && u.type->weapon.damage > 0 && acqTurn) {
+    if (acquiring && !isNeutralPlayer(u.player) && u.type->weapon.damage > 0 && acqTurn) {
         // The +90 is approach margin: room to notice something and walk to it. A
         // unit whose move order forbids leaving has no use for it -- it should
         // acquire only what it can already shoot, or it would lock onto something
@@ -4132,7 +4138,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
             if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
         forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
-            if (!e.alive() || e.embarked() || allied(e.player, u.player) || !e.type) return;
+            if (!e.alive() || e.embarked() || isNeutralPlayer(e.player) || allied(e.player, u.player) || !e.type) return;
             if (e.underConstruction) return;   // don't auto-react to a site still conjuring
             float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
             float d = dx * dx + dz * dz;
@@ -5273,8 +5279,23 @@ bool World::clearableForPlacement(const UnitType* type, float x, float z,
     return false;
 }
 
+void World::setBuildRestrictions(std::vector<std::string> types, bool enabled) {
+    for (auto& type : types)
+        for (char& c : type) if (c >= 'A' && c <= 'Z') c += 'a'-'A';
+    std::sort(types.begin(),types.end());
+    types.erase(std::unique(types.begin(),types.end()),types.end());
+    buildRestrictionsEnabled_ = enabled;
+    buildRestrictions_ = enabled ? std::move(types) : std::vector<std::string>{};
+}
+
+bool World::buildAllowed(const UnitType* type) const {
+    return type && (!buildRestrictionsEnabled_ ||
+        std::binary_search(buildRestrictions_.begin(),buildRestrictions_.end(),type->id));
+}
+
 int World::startBuild(int builderId, const UnitType* type, float x, float z,
                       Approach approach) {
+    if (!buildAllowed(type)) return 0;
     Unit* b = unit(builderId);
     // A mobile builder only: a building may carry canMove=1 in its FBI but can never
     // place structures, and a site still under construction is not yet a builder.
@@ -5339,6 +5360,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
 }
 
 void World::queueBuild(int builderId, const UnitType* type, float x, float z, bool queue) {
+    if (!buildAllowed(type)) return;
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
         b->underConstruction || !type) return;
@@ -6484,6 +6506,7 @@ static void retireProductionItem(Unit& builder,size_t index) {
 }
 
 void World::train(int builderId, const UnitType* type, int count) {
+    if (!buildAllowed(type)) return;
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !type) return;
     for (int i = 0, n = std::max(1, count); i < n; ++i) b->buildQueue.push_back(type);
@@ -6756,6 +6779,7 @@ int World::queuedCount(int builderId, const UnitType* type) const {
 }
 
 void World::setRepeat(int builderId, const UnitType* type) {
+    if (!buildAllowed(type)) return;
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !type) return;
     if (b->repeatType == type) {
@@ -7980,6 +8004,7 @@ void World::tickProduction(Unit& u, float dt) {
     if(!u.orders.empty() && u.orders.front().load &&
        !u.orders.front().transportProductionAhead)return;
     const UnitType* t = u.buildQueue.front();
+    if (!buildAllowed(t)) return;
     const int producerId=u.id, player=u.player;
     const int32_t total=std::max(1,int32_t(t->buildTime/std::max(u.type->workerTime,0.01f)*kTick+0.5f));
     Unit* site=u.productionSiteId ? unit(u.productionSiteId) : nullptr;
@@ -9742,6 +9767,7 @@ void World::tick(float dt) {
     if (scenario_) {
         for (int id : justDied_) scenario_->unitDied(*this, id);
         scenario_->step(*this, dt);
+        updateOutcome(); // Rules can change results and unit counts this tick.
     }
     // Unit COBs ran before the movers above, so GET 33 on the next tick reads
     // this tick's actual wrapped heading delta, not the mover's unclamped request.
@@ -9811,6 +9837,10 @@ void World::hashTrace() const {
         }
         hUnitMisc = fnv(fnv(hUnitMisc, u.id), uint64_t(u.alive() ? 1 : 0));
         hUnitMisc = fnv(hUnitMisc, uint64_t(u.veteran));
+        if (u.scenarioArmor != 1.0f || u.scenarioWeapon != 1.0f) {
+            hUnitMisc = fnv(hUnitMisc, std::bit_cast<uint32_t>(u.scenarioArmor));
+            hUnitMisc = fnv(hUnitMisc, std::bit_cast<uint32_t>(u.scenarioWeapon));
+        }
         hUnitMisc = fnv(hUnitMisc, uint32_t(u.baseSpeed.v));
         if (u.animationTurnBam) hUnitMisc = fnv(hUnitMisc,uint16_t(u.animationTurnBam));
         hUnitMisc=fnv(hUnitMisc,uint32_t(u.scriptAimTarget));
@@ -9934,6 +9964,22 @@ uint64_t World::stateHash() const {
         std::memcpy(&b, &f, 4);
         mix(b);
     };
+    if (buildRestrictionsEnabled_) {
+        mix(0x5553454f4e4c59ull);
+        mix(buildRestrictions_.size());
+        for (const auto& type : buildRestrictions_) {
+            mix(type.size());
+            for (unsigned char c : type) mix(c);
+        }
+    }
+    if (scenarioParticipantCount_ >= 0) { mix(0x4e45555452414cull); mix(scenarioParticipantCount_); }
+    if (!scenarioTypeStats_.empty()) {
+        mix(0x4352545459504553ull); mix(scenarioTypeStats_.size());
+        for (const auto& [name, stats] : scenarioTypeStats_) {
+            mix(name.size()); for (unsigned char c : name) mix(c);
+            for (int value : stats) mix(uint32_t(value));
+        }
+    }
     if (doubleSight_) mix(0x44424c5349474854ull);
     mix(nextMovementController_);
     mix(navigationExplored_.size());
@@ -10112,6 +10158,11 @@ uint64_t World::stateHash() const {
         mix(u.sightFootprint.sightHeight);mix(u.sightFootprint.active);
         mix(u.groundGradeTick);
         mix(uint64_t(u.veteran));
+        if (u.scenarioArmor != 1.0f || u.scenarioWeapon != 1.0f) {
+            mix(0x4352545354415453ull);
+            mix(std::bit_cast<uint32_t>(u.scenarioArmor));
+            mix(std::bit_cast<uint32_t>(u.scenarioWeapon));
+        }
         // All three reload timers, not just the primary: they now decide WHICH
         // weapon the auto-selector fires, so a drift in any of them would change
         // behaviour.
@@ -10415,14 +10466,70 @@ void World::setMission(std::unique_ptr<MissionScript> m) {
 }
 int World::missionOutcome() const { return mission_ ? mission_->outcome() : 0; }
 
+void World::clearScenarioState() {
+    scenario_.reset();
+    forcedDefeat_.clear();
+    hadMonarch_.clear();
+    winningTeam_ = -1;
+}
 void World::setScenario(std::unique_ptr<ScenarioScript> s) {
     scenario_ = std::move(s);
     if (scenario_) scenario_->start(*this);
 }
 void World::forceDefeat(int player) {
-    if (player < 0) return;
+    if (player < 0 || player >= numPlayers()) return;
     if (int(forcedDefeat_.size()) <= player) forcedDefeat_.resize(size_t(player) + 1, 0);
     forcedDefeat_[size_t(player)] = 1;
+    if (scenario_ && player < numPlayers()) {
+        auto& p = players_[size_t(player)];
+        if (!p.defeated) p.defeatedAt = int32_t(tickCounter_);
+        p.defeated = true;
+        removeScenarioUnits(player);
+    }
+}
+
+void World::removeScenarioUnits(int player) {
+    // Retail CRT defeat (4f6be0 -> 5131b0) sends death type 10, then retires
+    // every remaining live owner. Zero severity skips Killed/Dying, corpse and
+    // death weapons; this is immediate removal, not timed self destruction.
+    for (auto& u : units_) {
+        if (!u.alive() || !u.type || u.player != player) continue;
+        stop(u.id);
+        u.hp = Fixed();
+        u.lastHitBy = 0; u.lastHitPlayer = -1;
+        u.deathType = 10; u.severity = 0; u.corpseStatue = -1;
+        beginUnitDeath(u);
+        if (u.type->isStructure())
+            blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
+        retireCorpse(u);
+        u.speed = Fixed(); u.selfDestructT = -1;
+        updateBodyIndex(u);
+        for (auto& plane : searchGrades_)
+            refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
+                footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
+        ++players_[size_t(player)].losses;
+        // Feed rule counters directly: initial evaluation and end-of-tick rules
+        // can both reach here outside the ordinary justDied_ collection window.
+        if (scenario_) scenario_->unitDied(*this,u.id);
+    }
+    players_[size_t(player)].unitCount = 0;
+}
+
+bool World::hasScenarioOutcomes() const { return bool(scenario_); }
+int World::scenarioOutcome(int player) const {
+    if (!scenario_) return 0;
+    if (player >= 0) {
+        if (!scenario_->participates(player)) return 0;
+        if (int result = scenario_->outcome(player)) return result;
+        return player < int(forcedDefeat_.size()) && forcedDefeat_[size_t(player)] ? -1 : 0;
+    }
+    bool any = false, won = false;
+    for (int p = 0; p < numPlayers(); ++p) if (scenario_->participates(p)) {
+        const int result = scenarioOutcome(p);
+        if (!result) return 0;
+        any = true; won |= result > 0;
+    }
+    return any ? (won ? 1 : -1) : 0;
 }
 
 int World::updateOutcome() {
@@ -10434,12 +10541,12 @@ int World::updateOutcome() {
     std::vector<int> monarchByPlayer(players_.size(), 0);
     for (const auto& u : units_)
         if (u.alive() && u.type &&
-            u.player >= 0 && u.player < int(players_.size())) {
+            u.player >= 0 && u.player < numPlayers()) {
             ++aliveByPlayer[size_t(u.player)];
             if (u.type->commander) ++monarchByPlayer[size_t(u.player)];
         }
     if (hadMonarch_.size() != players_.size()) hadMonarch_.assign(players_.size(), 0);
-    for (int p = 0; p < int(players_.size()); ++p) {
+    for (int p = 0; p < numPlayers(); ++p) {
         if (monarchByPlayer[size_t(p)] > 0) hadMonarch_[size_t(p)] = 1;
         // No living units OR -- when the Monarch is NOT expendable -- a player who
         // once fielded a Monarch has now lost it. Both are deterministic and computed
@@ -10448,10 +10555,26 @@ int World::updateOutcome() {
                            monarchByPlayer[size_t(p)] == 0;
         bool forced = p < int(forcedDefeat_.size()) && forcedDefeat_[size_t(p)];
         bool wasDefeated = players_[size_t(p)].defeated;
-        players_[size_t(p)].defeated = (aliveByPlayer[size_t(p)] == 0) || monarchDead || forced;
+        // Retail CRT scenario virtual+0x20 bypasses stock outcome checks.
+        // Empty armies can be awaiting reinforcements or custom objectives.
+        players_[size_t(p)].defeated = scenario_
+            ? (!scenario_->participates(p) || scenarioOutcome(p) < 0 || forced)
+            : ((aliveByPlayer[size_t(p)] == 0) || monarchDead || forced);
         // Stamp the moment of elimination once, for the end-of-game "Time" column.
         if (!wasDefeated && players_[size_t(p)].defeated) players_[size_t(p)].defeatedAt = int32_t(tickCounter_);
         players_[size_t(p)].unitCount = aliveByPlayer[size_t(p)];   // re-sync the cap count
+    }
+
+    if (scenario_) {
+        winningTeam_ = -1;
+        if (scenarioOutcome(-1) > 0) {
+            for (int p = 0; p < numPlayers(); ++p) if (scenarioOutcome(p) > 0) {
+                const int team = players_[size_t(p)].team;
+                if (winningTeam_ >= 0 && winningTeam_ != team) { winningTeam_ = -1; break; }
+                winningTeam_ = team;
+            }
+        }
+        return winningTeam_;
     }
 
     // Count DISTINCT teams that still have a living unit (robust to any team id,
@@ -10461,7 +10584,7 @@ int World::updateOutcome() {
     // elimination (units still alive but the Monarch is dead) removes them from the
     // running just like being wiped out.
     int survivingTeam = -1, survivingCount = 0;
-    for (int p = 0; p < int(players_.size()); ++p) {
+    for (int p = 0; p < numPlayers(); ++p) {
         if (players_[size_t(p)].defeated) continue;
         int tm = players_[size_t(p)].team;
         bool firstOfTeam = true;

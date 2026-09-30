@@ -938,11 +938,12 @@ Cartographer or mission-runtime parity.
   intentionally unavailable, and feature protection is explicit.
 - Check Map is advisory. Naval checks use the initial output pose, and resource
   checks do not validate every possible sound/animation referenced by scripts.
-- Scenario runtime limits remain in `crt-triggers.md`: neutral/stat overrides,
-  unique-name/vertical overrides, Use Only enforcement, custom mission outcomes,
-  and full retail trigger timing are separate engine work. Optional trigger
-  execution logging is available for Test Map. Unsupported saved data is retained,
-  and validation/start errors describe the supported subset.
+- After 0.7.13, protocol 199 adds neutral/stat overrides, Use Only enforcement,
+  custom outcomes and the verified retail rule cadence. Remaining runtime limits
+  in `crt-triggers.md` include unique-name/vertical overrides and unverified
+  wildcard/action combinations. Optional trigger execution logging is available
+  for Test Map. Unsupported saved data is retained, and validation/start errors
+  describe the supported subset.
 - Loose export rolls back ordinary write failures but is not power-loss-atomic.
   KMP is the normal single-file save. Cancel cannot interrupt an in-progress
   compression call or a replacement transaction. Recovery is not a substitute

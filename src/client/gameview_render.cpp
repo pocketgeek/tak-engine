@@ -229,7 +229,7 @@
         const double _atl0 = double(SDL_GetPerformanceCounter());
         uint32_t atlasSeen = 0;   // build each in-view colour slot's atlas ONCE, not per unit
         for (const auto* u : visUnits_) {
-            int slot = colorSlot_[u->player & 7];
+            int slot = playerColorSlot(u->player);
             uint32_t bit = (slot >= 0 && slot < 32) ? (1u << slot) : 0u;
             if (!bit || !(atlasSeen & bit)) { atlasFor(slot); atlasSeen |= bit; }
         }
@@ -2396,7 +2396,7 @@
         if (at != anims_.end() && !u.replacementModel && !u.corpsePhase) anim = &at->second;
 
         float zm = mapView_.zoom();
-        int slot = colorSlot_[u.player & 7];
+        int slot = playerColorSlot(u.player);
         // Interpolated pose so the unit glides between 30Hz sim ticks (lift computed at the
         // interpolated spot so it stays seated on the terrain as it moves).
         float ix, iz, ih; interpPose(u, ix, iz, ih);
@@ -2671,7 +2671,7 @@
                     }
                     if (masks) {
                         const size_t frame=animated ? modelTextureAnimations_.at(name).frame
-                            : size_t(colorSlot_[u.player&7])%masks->size();
+                            : size_t(playerColorSlot(u.player))%masks->size();
                         if (frame<masks->size()) {mask=(*masks)[frame].texture;maskUV=(*masks)[frame].uv;}
                     }
                     vertices.resize(primitive.indices.size());
@@ -4071,7 +4071,7 @@
             Anim snapshot;snapshot.pieceNames=&debris.names;snapshot.capturedPose=debris.poses;
             tris_.clear();
             constexpr float radians=6.28318530717959f/65536.f;
-            collect(tris_,atlasFor(colorSlot_[debris.player&7]),debris.model,
+            collect(tris_,atlasFor(playerColorSlot(debris.player)),debris.model,
                 modelBodyTransform(debris.motion.rotation[0],debris.motion.rotation[2]),
                 &snapshot,-float(debris.motion.rotation[1])*radians,debris.player,false,false);
             std::stable_sort(tris_.begin(),tris_.end(),

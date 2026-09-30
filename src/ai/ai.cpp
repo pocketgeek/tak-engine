@@ -223,7 +223,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     };
     std::unordered_map<const tak::sim::UnitType*,int> terrainWeights;
     auto usable = [&](const tak::sim::UnitType* ut) -> int {
-        if (!ut || (world.unitCap() > 0 && needs.population >= world.unitCap())) return 0;
+        if (!world.buildAllowed(ut) || (world.unitCap() > 0 && needs.population >= world.unitCap())) return 0;
         auto count = needs.counts.find(ut);
         const int have = count == needs.counts.end() ? 0 : count->second;
         if (ut->totalAllowed > 0 && have >= ut->totalAllowed) return 0;
@@ -522,7 +522,7 @@ bool Controller::nearestVisibleEnemy(const tak::sim::World& world, float cx, flo
     // The key is identical to the old visible-only sort, including x/z ties.
     std::vector<std::pair<float, std::pair<float, float>>> candidates;
     for (auto& e : world.units()) {
-        if (!e.alive() || e.embarked() || world.allied(e.player, player_) || !e.type)
+        if (!e.alive() || e.embarked() || world.isNeutralPlayer(e.player) || world.allied(e.player, player_) || !e.type)
             continue;
         float dx = e.x.toFloat() - cx, dz = e.z.toFloat() - cz;
         candidates.push_back({dx * dx + dz * dz, {e.x.toFloat(), e.z.toFloat()}});

@@ -2,6 +2,8 @@
 #include "tnt/tnt.h"
 #include "tnt/mapgen.h"
 #include "tdf/tdf.h"
+#include "tnt/ota.h"
+#include "crt/crt.h"
 #include "util/virtualpath.h"
 #include <algorithm>
 #include <fstream>
@@ -163,6 +165,26 @@ std::shared_ptr<Package> importSnapshot(const hpi::Vfs& base, const std::filesys
         ota.insert(ota.end(),marker.begin(),marker.end());
     }
     return decode(encode(mapPath,std::move(enabled))->bytes, "");
+}
+
+bool authoredScenario(const hpi::Vfs& vfs, const std::string& mapPath) {
+    try {
+        const auto ota=vfs.tryRead(vpath::replaceExtension(mapPath,".ota"));
+        if (!ota) return false;
+        const std::string text(ota->begin(),ota->end());
+        const auto root=tdf::parseText(text);
+        const auto* marker=root.child("takplaytest");
+        if (!marker || marker->numberOr("authoredscenario",0)==0 ||
+            !tnt::Scenario::parse(text).hasScenario) return false;
+        const auto crt=vfs.tryRead(vpath::replaceExtension(mapPath,".crt"));
+        return crt && tak::crt::parse(*crt).version==1;
+    } catch (const std::exception&) { return false; }
+}
+
+bool authoredScenario(const Package& package) {
+    if (!package.files) return false;
+    hpi::Vfs view;view.setMapFiles(package.files);
+    return authoredScenario(view,package.mapPath);
 }
 
 std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {

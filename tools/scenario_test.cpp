@@ -48,15 +48,15 @@ int main() try {
     world.spawn(soldier,168,184,0,1); // Another owner's unit does not count.
     int dead=world.spawn(soldier,184,184,0,0);world.unit(dead)->hp=sim::Fixed();world.unit(dead)->deadFor=0;
     auto fires=[&](int opcode,std::string first,std::string second,std::string third="") {
-        crt::Scenario scenario;scenario.players.resize(2);
+        crt::Scenario scenario;scenario.players.resize(9);
         scenario.regions.push_back({"Hill",10,10,12,12});
         crt::RuleGroup group;group.conditions.push_back({opcode,{first,second,third}});
-        group.actions.push_back({13,{"Player 1","fired"}});scenario.players[0].push_back(group);
+        group.actions.push_back({13,{"Player 1","fired"}});scenario.players[1].push_back(group);
         // Exercise the actual serialized operand order used by Cartographer.
         scenario=crt::parse(crt::write(scenario));
         sim::ScenarioScript script(scenario,registry,0,2,64,64);script.start(world);script.step(world,1.f/30);
         auto messages=script.drainMessages();
-        script.step(world,1.f/30);check(script.drainMessages().empty(),"unchanged condition fired twice");
+        script.step(world,1.f/30);check(script.drainMessages().empty(),"condition repeated before the next game second");
         return !messages.empty();
     };
     check(fires(15,"0","soldier","Hill"),"control greater-than uses count then type");
@@ -70,12 +70,12 @@ int main() try {
     check(fires(13,"Any Unit","Hill"),"control-most supports Any Unit");
     check(!fires(14,"Any Unit","Hill"),"control-least supports Any Unit");
     {
-        crt::Scenario scenario;scenario.players.resize(2);
+        crt::Scenario scenario;scenario.players.resize(9);
         crt::RuleGroup group;group.conditions.push_back({0,{}});
         group.actions.push_back({2,{"progress","42"}});
         group.actions.push_back({25,{"Player 1","Collected ","progress"," items"}});
         group.actions.push_back({25,{"Player 2","Remaining ","unset"," items"}});
-        scenario.players[0].push_back(group);scenario=crt::parse(crt::write(scenario));
+        scenario.players[1].push_back(group);scenario=crt::parse(crt::write(scenario));
         sim::ScenarioScript human(scenario,registry,0,2,64,64),server(scenario,registry,-1,2,64,64);
         std::vector<int> actions;
         human.setTraceSink([&](int32_t tick,int player,int group,int action,const crt::Rule* rule) {
@@ -94,7 +94,7 @@ int main() try {
         int calls=0;failed.setTraceSink([&](auto...){++calls;throw std::runtime_error("diagnostic failure");});
         failed.start(world);failed.step(world,1.f/30);uint64_t failedHash=0;failed.foldHash(failedHash);
         check(calls==1 && failedHash==serverHash,"failed trace sink changed execution or was not disabled");
-        human.step(world,1.f/30);check(actions.size()==4,"trace repeated a group without a rising edge");
+        human.step(world,1.f/30);check(actions.size()==4,"initial-only rule repeated");
         const auto root=std::filesystem::temp_directory_path()/("tak-trigger-log-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         const auto path=tak::scenarioTracePath(root,root/"test-source"/"snapshot.kmp");
         {
@@ -109,13 +109,13 @@ int main() try {
         stream.close();std::filesystem::remove_all(root);
     }
     {
-        crt::Scenario scene;scene.players.resize(2);
-        scene.players[0].push_back({{{5,{"0","SOLDIER"}}},{{13,{"Player 1","kill"}}}});
-        scene.players[1].push_back({{{9,{"0","SOLDIER"}}},{{13,{"Player 2","loss"}}}});
+        crt::Scenario scene;scene.players.resize(9);
+        scene.players[1].push_back({{{5,{"0","SOLDIER"}}},{{13,{"Player 1","kill"}}}});
+        scene.players[2].push_back({{{9,{"0","SOLDIER"}}},{{13,{"Player 2","loss"}}}});
         sim::ScenarioScript script(scene,registry,-1,2,64,64);script.start(world);
         const int target=world.units()[3].id;
         world.unit(target)->lastHitBy=world.units()[0].id;
-        script.unitDied(world,target);script.step(world,1.f/30);
+        script.unitDied(world,target);for(int tick=0;tick<30;++tick)script.step(world,1.f/30);
         check(script.drainMessages().size()==2,"kill/loss conditions used localized display name instead of unit identifier");
     }
     {
@@ -128,7 +128,7 @@ int main() try {
         crt::Scenario scene;scene.players.resize(9);
         scene.units.push_back({"SOLDIER","first",10,12,200,0,75,100,100,180,3});
         scene.units.push_back({"builder","second",30,32,200,1});
-        scene.players[0].push_back({{{0,{}}},{{13,{"Player 1","Authored world"}},{2,{"begun","1"}}}});
+        scene.players[1].push_back({{{0,{}}},{{13,{"Player 1","Authored world"}},{2,{"begun","1"}}}});
         (*files)["kmap/authored.crt"]=crt::write(scene);
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath="kmap/authored.tnt";
         config.slots={{true,0,0},{true,1,1}};config.scenarioViewPlayer=0;
@@ -161,12 +161,30 @@ int main() try {
             try {sim::setupMatch(w,registry,config);}catch(const std::exception&) {rejected=true;}
             check(rejected,message);check(w.units().empty(),"failed scenario left partial placements");
         };
-        auto invalid=scene;invalid.units[1].player=8;refuses(invalid,"neutral placement silently reassigned");
-        invalid=scene;invalid.players[8].push_back(scene.players[0][0]);refuses(invalid,"neutral rules silently reassigned");
-        invalid=scene;invalid.units[0].weapon=150;refuses(invalid,"unsupported weapon override silently ignored");
-        invalid=scene;invalid.units[0].objectName="missing";refuses(invalid,"unknown placed unit silently dropped");
+        {
+            auto authored=scene; authored.units[1].player=8;
+            authored.units[0].armor=50; authored.units[0].weapon=150;
+            authored.customTypes.push_back({"soldier",{200,200,50,7}});
+            (*files)["kmap/authored.crt"]=crt::write(authored);
+            sim::World w,peer;sim::setupMatch(w,registry,config);sim::setupMatch(peer,registry,config);
+            check(w.numPlayers()==2 && w.isNeutralPlayer(8) && w.units()[1].player==8,
+                  "neutral owner became a participant or was reassigned");
+            check(w.player(8).unitCount==1 && !w.allied(0,8),"neutral ownership has wrong counters or alliance");
+            const auto& u=w.units()[0];
+            check(u.hp.toFloat()==75 && u.type->maxHp==100 && u.veteran==3,
+                  "placement health/veteran failed to replace type defaults");
+            check(u.scenarioArmor==1.f && u.scenarioWeapon==.75f,"type and placement combat percentages did not multiply");
+            for(int tick=0;tick<60;++tick) {w.tick(1.f/30);peer.tick(1.f/30);check(w.stateHash()==peer.stateHash(),"neutral/stat world diverged");}
+            int id=w.spawn(soldier,400,400,0,0);
+            check(w.unit(id)->scenarioArmor==2.f && w.unit(id)->scenarioWeapon==.5f && w.unit(id)->veteran==7,
+                  "later spawn lost scenario type defaults");
+            w.setPlayerCount(2);id=w.spawn(soldier,420,420,0,0);
+            check(!w.isNeutralPlayer(8) && w.unit(id)->scenarioArmor==1.f && w.unit(id)->veteran==0,
+                  "new match retained scenario defaults");
+        }
+        auto invalid=scene;invalid.units[0].objectName="missing";refuses(invalid,"unknown placed unit silently dropped");
         invalid=scene;invalid.units[0].x=64;refuses(invalid,"off-map placement accepted");
-        invalid=scene;invalid.customTypes.push_back({"soldier",{200,100,100,0}});refuses(invalid,"custom health override silently ignored");
+        invalid=scene;invalid.customTypes.push_back({"missing",{200,100,100,0}});refuses(invalid,"missing custom type accepted");
         config.slots.resize(1);refuses(scene,"unseated player's placements silently reassigned");
     }
     std::cout<<"PASS: CRT control operands, wildcard counts, region/owner filters and flag messages\n";
