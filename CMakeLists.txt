@@ -965,11 +965,28 @@ add_executable(crusades_store_test tools/crusades_store_test.cpp)
 target_link_libraries(crusades_store_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_store COMMAND crusades_store_test)
 set_tests_properties(crusades_store PROPERTIES TIMEOUT 90)
+add_executable(crusades_allegiance_test tools/crusades_allegiance_test.cpp)
+target_link_libraries(crusades_allegiance_test PRIVATE tak-crusades-store tak-sqlite)
+add_test(NAME crusades_allegiance COMMAND crusades_allegiance_test)
+add_library(tak-crusades-allegiance STATIC src/server/crusades/allegiance.cpp)
+target_link_libraries(tak-crusades-allegiance PUBLIC tak-crusades-store PRIVATE tak-formats)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
 add_executable(takserver src/server/server.cpp src/server/accounts.cpp src/ai/ai.cpp)
-target_link_libraries(takserver PRIVATE tak-formats)
+target_link_libraries(takserver PRIVATE tak-formats tak-crusades-allegiance)
+if(APPLE)
+  target_link_libraries(takserver PRIVATE "-framework CoreFoundation")
+endif()
+if(TAK_TEST_DATA)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME crusades_auth_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/crusades_auth_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(crusades_auth_network PROPERTIES TIMEOUT 120)
+  endif()
+endif()
 
 add_executable(modeltool tools/modeltool.cpp)
 target_link_libraries(modeltool PRIVATE tak-formats)

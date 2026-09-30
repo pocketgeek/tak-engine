@@ -7,7 +7,9 @@ The model in `src/server/crusades/` defines a campaign independently of its live
 state. It is distinct from `src/campaign/`, which handles the existing
 single-player mission campaigns. This library adds no player-facing Darien mode,
 network messages, persistence, lobby flow, or campaign data to the RTS simulation
-or `World::stateHash()`.
+or `World::stateHash()`. Later layers add [transactional persistence](campaign-store.md)
+and [authenticated allegiance requests](campaign-allegiance.md), while keeping
+this model separate from tactical simulation.
 
 ## Evidence and design boundaries
 

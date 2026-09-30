@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 204;      // 204: retail damage-category selection and integer damage tables
+constexpr uint32_t kNetVersion = 205;      // 205: authenticated Crusades allegiance query/change
+                                           // 204: retail damage-category selection and integer damage tables
                                            // 203: generated-map v4 recipes and gentler Easy AI
                                            // 195: directed mana sharing and chat recipients
                                            // 191: infinite mobile builders accept move/patrol rally orders
@@ -267,6 +268,17 @@ enum class Msg : uint8_t {
     MapChunk,          // both: room, offset, <=64 KiB raw bytes
     MapReady,          // C->S: room, verified SHA-256
     MapError,          // both: room, explanation
+    // Opt-in persistent Crusades service. Requests have NO account/player ID;
+    // server binds them to its authenticated connection, never a display name.
+    CrusadesGetAllegiance, // C->S: str campaign (1..128 bytes)
+    CrusadesSetAllegiance, // C->S: str campaign, u64 expected allegiance revision
+                          // (UINT64_MAX = not yet joined), u8 alliance (1 Honor, 2 Terror)
+    CrusadesAllegianceResult, // S->C: u8 operation (0 get,1 set), u8 status
+                          // (0 OK,1 malformed,2 unauthenticated,3 disabled,4 rejected),
+                          // str campaign, u8 alliance (0 absent), u64 revision
+                          // (UINT64_MAX absent), u64 joinedUnix, u64 changedUnix,
+                          // str explanation. Absent timestamps=0. Exact payloads;
+                          // no trailing extensions or client-supplied identity.
 
 };
 

@@ -9,7 +9,7 @@
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 1;
+constexpr int kSchemaVersion = 2;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -24,6 +24,24 @@ const std::vector<std::string>& schemaStatements() {
         "CREATE TRIGGER campaign_definition_no_update BEFORE UPDATE OF id,definition ON campaigns BEGIN SELECT RAISE(ABORT,'immutable campaign definition'); END",
     };
     return statements;
+}
+const std::vector<std::string>& allegianceSchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE TABLE campaign_participants(campaign_id TEXT NOT NULL REFERENCES campaigns(id),account_id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>=0),PRIMARY KEY(campaign_id,account_id))",
+        "CREATE TABLE allegiance_events(campaign_id TEXT NOT NULL,account_id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>=0),alliance INTEGER NOT NULL CHECK(alliance IN (1,2)),joined_unix INTEGER NOT NULL CHECK(joined_unix>=0),changed_unix INTEGER NOT NULL CHECK(changed_unix>=joined_unix),PRIMARY KEY(campaign_id,account_id,revision),FOREIGN KEY(campaign_id,account_id) REFERENCES campaign_participants(campaign_id,account_id))",
+        "CREATE TRIGGER allegiance_events_no_update BEFORE UPDATE ON allegiance_events BEGIN SELECT RAISE(ABORT,'immutable allegiance event'); END",
+        "CREATE TRIGGER allegiance_events_no_delete BEFORE DELETE ON allegiance_events BEGIN SELECT RAISE(ABORT,'immutable allegiance event'); END",
+        "CREATE TRIGGER campaign_participant_identity_no_update BEFORE UPDATE OF campaign_id,account_id ON campaign_participants BEGIN SELECT RAISE(ABORT,'immutable participant identity'); END",
+    };
+    return statements;
+}
+void validateAccountId(const std::string& accountId) {
+    const auto alnum = [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); };
+    if (accountId.size() < 3 || accountId.size() > 20 || !alnum(accountId.front()))
+        throw std::runtime_error("invalid canonical account ID");
+    for (const char c : accountId)
+        if (!alnum(c) && c != '_' && c != '-' && c != '.')
+            throw std::runtime_error("invalid canonical account ID");
 }
 [[noreturn]] void fail(sqlite3* db, const std::string& what) {
     throw std::runtime_error(what + ": " + sqlite3_errmsg(db));
@@ -220,18 +238,19 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
         const auto app = scalar(db, "PRAGMA application_id");
         const auto version = scalar(db, "PRAGMA user_version");
         const bool empty = scalar(db, "SELECT count(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'") == 0;
-        if (!(app == kApplicationId && version == kSchemaVersion && !empty) && !(app == 0 && version == 0 && empty))
+        if (!(app == kApplicationId && (version == 1 || version == kSchemaVersion) && !empty) && !(app == 0 && version == 0 && empty))
             throw std::runtime_error("not a supported TAK campaign database");
         if (!empty) {
             std::vector<std::string> actual;
             Statement schema(db, "SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'");
             while (schema.row()) actual.push_back(schema.bytes(0));
             auto expected = schemaStatements();
+            if (version >= 2) expected.insert(expected.end(), allegianceSchemaStatements().begin(), allegianceSchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
         }
-        return empty;
+        return empty ? int64_t(0) : version;
     };
     {
         Transaction read(db, false);
@@ -250,9 +269,17 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
     }
     Transaction transaction(db);
     // Another opener may have initialized the file while this connection waited.
-    if (checkIdentity()) {
+    const auto version = checkIdentity();
+    if (version == 0) {
         for (const auto& sql : schemaStatements()) exec(db, sql.c_str());
-        exec(db, "PRAGMA application_id=1413565251;PRAGMA user_version=1;");
+        exec(db, "PRAGMA application_id=1413565251");
+    }
+    if (version < 2) {
+        for (const auto& sql : allegianceSchemaStatements()) exec(db, sql.c_str());
+        exec(db, "PRAGMA user_version=2");
+        // Migration fault injection occurs after all schema writes; interruption
+        // or exceptions roll back the version and tables together.
+        if (version == 1 && impl_->options.beforeCommit) impl_->options.beforeCommit();
     }
     transaction.finish();
 }
@@ -280,6 +307,12 @@ StoredCampaign CampaignStore::load(const std::string& campaignId) const {
     auto state = decode(query.bytes(2), definition);
     if (definition.id() != campaignId || revision < 0) throw std::runtime_error("invalid stored campaign identity/revision");
     return {std::move(definition), std::move(state), revision};
+}
+
+bool CampaignStore::hasCampaign(const std::string& campaignId) const {
+    Statement query(impl_->db, "SELECT 1 FROM campaigns WHERE id=?");
+    query.text(1, campaignId);
+    return query.row();
 }
 
 int64_t CampaignStore::commit(const std::string& campaignId, int64_t expectedRevision,
@@ -328,6 +361,82 @@ std::optional<std::string> CampaignStore::battleResult(const std::string& campai
     query.text(1, campaignId); query.text(2, battleId);
     std::optional<std::string> result;
     if (query.row()) result = query.bytes(0);
+    transaction.finish();
+    return result;
+}
+
+namespace {
+std::optional<Allegiance> readAllegiance(sqlite3* db, const std::string& campaignId,
+                                       const std::string& accountId) {
+    Statement query(db, "SELECT p.revision,e.alliance,e.joined_unix,e.changed_unix FROM campaign_participants p LEFT JOIN allegiance_events e ON e.campaign_id=p.campaign_id AND e.account_id=p.account_id AND e.revision=p.revision WHERE p.campaign_id=? AND p.account_id=?");
+    query.text(1, campaignId); query.text(2, accountId);
+    if (!query.row()) return {};
+    if (sqlite3_column_type(query.value, 1) == SQLITE_NULL)
+        throw std::runtime_error("missing current allegiance event");
+    const auto revision = query.number(0), side = query.number(1), joined = query.number(2), changed = query.number(3);
+    if (revision < 0 || (side != 1 && side != 2) || joined < 0 || changed < joined)
+        throw std::runtime_error("invalid stored allegiance");
+    return Allegiance{accountId, static_cast<Alliance>(side), joined, changed, revision};
+}
+} // namespace
+
+std::optional<Allegiance> CampaignStore::allegiance(const std::string& campaignId,
+                                                  const std::string& accountId) const {
+    validateAccountId(accountId);
+    Transaction transaction(impl_->db, false);
+    (void)load(campaignId);
+    auto result = readAllegiance(impl_->db, campaignId, accountId);
+    transaction.finish();
+    return result;
+}
+
+Allegiance CampaignStore::setAllegiance(const std::string& campaignId, const std::string& accountId,
+                                       Alliance alliance, int64_t expectedRevision, int64_t unixTime) {
+    validateAccountId(accountId);
+    if (alliance != Alliance::Honor && alliance != Alliance::Terror)
+        throw std::runtime_error("invalid allegiance");
+    if (expectedRevision < -1 || unixTime < 0) throw std::runtime_error("invalid allegiance revision/time");
+    Transaction transaction(impl_->db);
+    (void)load(campaignId);
+    const auto previous = readAllegiance(impl_->db, campaignId, accountId);
+    if ((previous ? previous->revision : -1) != expectedRevision)
+        throw std::runtime_error("allegiance revision conflict");
+    if (previous && previous->alliance == alliance) throw std::runtime_error("allegiance unchanged");
+    if (previous && unixTime < previous->changedUnix) throw std::runtime_error("allegiance timestamp moved backwards");
+    if (expectedRevision == std::numeric_limits<int64_t>::max()) throw std::runtime_error("allegiance revision exhausted");
+    Allegiance result{accountId, alliance, previous ? previous->joinedUnix : unixTime, unixTime, expectedRevision + 1};
+    if (!previous) {
+        Statement insert(impl_->db, "INSERT INTO campaign_participants(campaign_id,account_id,revision) VALUES(?,?,0)");
+        insert.text(1, campaignId); insert.text(2, accountId); insert.done();
+    }
+    Statement event(impl_->db, "INSERT INTO allegiance_events(campaign_id,account_id,revision,alliance,joined_unix,changed_unix) VALUES(?,?,?,?,?,?)");
+    event.text(1, campaignId); event.text(2, accountId); event.integer(3, result.revision);
+    event.integer(4, static_cast<int>(alliance)); event.integer(5, result.joinedUnix); event.integer(6, result.changedUnix); event.done();
+    Statement update(impl_->db, "UPDATE campaign_participants SET revision=? WHERE campaign_id=? AND account_id=?");
+    update.integer(1, result.revision); update.text(2, campaignId); update.text(3, accountId); update.done();
+    impl_->finish(transaction);
+    return result;
+}
+
+std::vector<Allegiance> CampaignStore::allegianceHistory(const std::string& campaignId,
+                                                       const std::string& accountId) const {
+    validateAccountId(accountId);
+    Transaction transaction(impl_->db, false);
+    (void)load(campaignId);
+    const auto current = readAllegiance(impl_->db, campaignId, accountId);
+    Statement query(impl_->db, "SELECT revision,alliance,joined_unix,changed_unix FROM allegiance_events WHERE campaign_id=? AND account_id=? ORDER BY revision");
+    query.text(1, campaignId); query.text(2, accountId);
+    std::vector<Allegiance> result;
+    while (query.row()) {
+        const auto revision = query.number(0), side = query.number(1), joined = query.number(2), changed = query.number(3);
+        if (revision != static_cast<int64_t>(result.size()) || (side != 1 && side != 2) || joined < 0 || changed < joined ||
+            (!result.empty() && (joined != result.front().joinedUnix || changed < result.back().changedUnix ||
+                                side == static_cast<int>(result.back().alliance))))
+            throw std::runtime_error("invalid allegiance history");
+        result.push_back({accountId, static_cast<Alliance>(side), joined, changed, revision});
+    }
+    if ((current && (result.empty() || result.back().revision != current->revision)) || (!current && !result.empty()))
+        throw std::runtime_error("allegiance history/current revision mismatch");
     transaction.finish();
     return result;
 }

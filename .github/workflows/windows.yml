@@ -66,12 +66,13 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target crusades_campaign_test crusades_store_test takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
       - name: Crusades model and durable store
         run: |
           ./build/crusades_campaign_test.exe
           ./build/crusades_store_test.exe
+          ./build/crusades_allegiance_test.exe
 
       - name: Retail scripts, paths, rendering and map generation
         run: |

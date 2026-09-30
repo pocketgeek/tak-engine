@@ -42,6 +42,8 @@ set `-DFETCHCONTENT_SOURCE_DIR_TAK_SQLITE=/path/to/sqlite-amalgamation-3530400`
 to an extracted copy containing `sqlite3.c` and `sqlite3.h`. It adds no runtime
 SQLite DLL/shared-library dependency. Campaign storage is not yet connected to
 a playable Crusades game mode.
+The opt-in authenticated allegiance service and its server flags are documented
+in [Milestone 4](research/darien-crusades/campaign-allegiance.md).
 
 For developer launch modes, diagnostics, and headless harnesses, use a Debug
 build. An optimized Debug build keeps those features while improving performance:

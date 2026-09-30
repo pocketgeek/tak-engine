@@ -2,15 +2,17 @@
 
 This directory records the Milestone 1 archaeology, native-reader verification
 and source-scoped balance audit, plus the Milestone 2 campaign model and
-Milestone 3 transactional store. See the
+Milestone 3 transactional store and Milestone 4 authenticated allegiance. See the
 [Milestone 1 acceptance audit](milestone-one-status.md) and
-[Milestone 2 model](campaign-model.md) and [Milestone 3 store](campaign-store.md)
+[Milestone 2 model](campaign-model.md), [Milestone 3 store](campaign-store.md)
+and [Milestone 4 allegiance](campaign-allegiance.md)
 for completion status and validation.
 No historical campaign service has been implemented.
 
 - [Milestone 1 acceptance audit](milestone-one-status.md)
 - [Milestone 2 clean-room campaign model](campaign-model.md)
 - [Milestone 3 transactional campaign store](campaign-store.md)
+- [Milestone 4 authenticated campaign allegiance](campaign-allegiance.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)

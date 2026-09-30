@@ -16,6 +16,9 @@
 #include "tnt/mapgen.h"
 #include "net/netcompat.h"
 #include "util/winargv.h"
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -43,6 +46,7 @@
 #include "net/auth.h"
 #include "net/crypto.h"
 #include "server/accounts.h"
+#include "server/crusades/allegiance.h"
 #include "tdf/tdf.h"
 #include "net/conn.h"
 #include "net/protocol.h"
@@ -306,6 +310,30 @@ public:
         return accounts_.load(path, &err);
     }
     size_t accountCount() const { return accounts_.size(); }
+    void enableCrusades(const std::filesystem::path& database,
+                        const std::filesystem::path& definition) {
+        if (!requireAuth_) throw std::runtime_error("Crusades requires account authentication");
+        crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(database);
+        if (!definition.empty()) {
+            const auto campaign = tak::srv::crusades::loadDefinition(definition);
+            if (campaign.id().size() > 128)
+                throw std::runtime_error("network campaign ID exceeds 128 bytes");
+            if (!crusades_->hasCampaign(campaign.id())) {
+                crusades_->create(campaign,tak::srv::crusades::makeInitialState(campaign),"CampaignStarted");
+            } else {
+                const auto existing = crusades_->load(campaign.id());
+                bool same = campaign.displayName() == existing.definition.displayName() &&
+                    campaign.territories().size() == existing.definition.territories().size();
+                for (const auto& [id,t] : campaign.territories()) {
+                    const auto* old = existing.definition.find(id);
+                    same = same && old && t.id == old->id && t.displayName == old->displayName &&
+                        t.nativeFaction == old->nativeFaction && t.terrain == old->terrain &&
+                        t.mapIdentifier == old->mapIdentifier && t.neighbors == old->neighbors;
+                }
+                if (!same) throw std::runtime_error("authored campaign differs from persisted definition");
+            }
+        }
+    }
     // `dataRoot` is never empty -- main() refuses to start without --data.
     Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
         // The referee reads the retail install directly, per the ROOM's override
@@ -331,6 +359,7 @@ private:
     bool requireAuth_ = true;
     bool loopbackOnly_ = false;
     tak::srv::AccountStore accounts_;
+    std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
     tak::srv::LoginThrottle throttle_;
     // A mounted data set at one override tier: the VFS, its base + Crusades
     // registries, and the gameplay-data fingerprint peers are held to.
@@ -1870,6 +1899,18 @@ void Server::onFrame(Client& c, const Frame& f) {
     if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
+    if (f.kind == Msg::CrusadesGetAllegiance || f.kind == Msg::CrusadesSetAllegiance) {
+        // Only successful SCRAM proof/registration populates account. Hello's
+        // display name, a pending AuthBegin, and --no-auth never grant access.
+        const bool authenticated = requireAuth_ &&
+            (c.state == Client::Lobby || c.state == Client::InGame) && !c.account.empty();
+        const std::string account = authenticated ? tak::auth::foldUsername(c.account) : "";
+        const auto unixTime = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        c.conn.send(Msg::CrusadesAllegianceResult,tak::srv::crusades::handleAllegiance(
+            crusades_.get(),account,f.kind,f.payload,unixTime));
+        return;
+    }
     if (c.state == Client::InGame && (f.kind == Msg::MapOffer || f.kind == Msg::MapRequest ||
         f.kind == Msg::MapChunk || f.kind == Msg::MapReady || f.kind == Msg::MapError)) {
         mapMsg(c, f); return;
@@ -2111,6 +2152,7 @@ static int serverMain(int argc, char** argv) {
     uint16_t port = 7677;
     std::string dataRoot, replayDir;
     std::string accountsPath = "takserver-accounts.conf";
+    std::string crusadesDb, crusadesDefinition;
     uint32_t fixedSeed = 0;
     bool noAuth = false, loopbackOnly = false;
     for (int i = 1; i < argc; ++i) {
@@ -2118,6 +2160,8 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
         else if (!std::strcmp(argv[i], "--replaydir") && i + 1 < argc) replayDir = argv[++i];
         else if (!std::strcmp(argv[i], "--accounts") && i + 1 < argc) accountsPath = argv[++i];
+        else if (!std::strcmp(argv[i], "--crusades-db") && i + 1 < argc) crusadesDb = argv[++i];
+        else if (!std::strcmp(argv[i], "--crusades-definition") && i + 1 < argc) crusadesDefinition = argv[++i];
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
             fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;
@@ -2130,6 +2174,7 @@ static int serverMain(int argc, char** argv) {
             std::printf("usage: takserver --data <retail-install-dir> [--port N]\n"
                         "                 [--replaydir <dir>] [--accounts <file>]\n"
                         "                 [--no-auth] [--local]\n"
+                        "                 [--crusades-db <file>] [--crusades-definition <file>]\n"
                         "  --data is REQUIRED: it is what the referee sim and the\n"
                         "  server-hosted AI players read. There is no relay-only mode.\n"
                         "  --replaydir writes a .takrep replay file per finished game.\n"
@@ -2140,6 +2185,11 @@ static int serverMain(int argc, char** argv) {
                         "  Players sign in with a name and password; an unused name is\n"
                         "  registered on the spot. No password is stored or transmitted --\n"
                         "  see src/net/auth.h.\n"
+                        "  --crusades-db enables persistent authenticated campaign allegiance.\n"
+                        "  It must be separate from the account file; --no-auth is incompatible.\n"
+                        "  --crusades-definition imports a new campaign or verifies the saved definition.\n"
+                        "  Allegiance switching currently uses an immediate, free modern policy,\n"
+                        "  not historical rank penalties or house restrictions.\n"
                         "  --no-auth serves anyone who connects, with no account at all. Only\n"
                         "  for a private or LAN server; pair it with --local.\n"
                         "  --local binds loopback only, so nothing off this machine connects.\n");
@@ -2160,6 +2210,65 @@ static int serverMain(int argc, char** argv) {
             "  Run with --help for the full usage.\n");
         return 1;
     }
+    if ((!crusadesDb.empty() && noAuth) || (!crusadesDefinition.empty() && crusadesDb.empty())) {
+        std::fprintf(stderr,"takserver: Crusades requires --crusades-db and authenticated accounts; --no-auth is incompatible.\n");
+        return 1;
+    }
+    if (!crusadesDb.empty()) {
+        try {
+            namespace fs = std::filesystem;
+            const auto database = fs::u8path(crusadesDb), accounts = fs::u8path(accountsPath);
+            // Check both the database and SQLite's reserved companion files.
+            // SQLite may resolve a database symlink before naming its journal,
+            // so guard companions of the supplied and resolved paths alike.
+            const auto canonical = [](const fs::path& path) {
+                return fs::weakly_canonical(fs::absolute(path));
+            };
+            const auto accountCanonical = canonical(accounts);
+            const auto aliasesAccount = [&](const fs::path& path) {
+                std::error_code ec;
+                if (fs::equivalent(path,accounts,ec)) return true; // Existing hard links.
+                const auto resolved = canonical(path);
+#ifdef _WIN32
+                // path::operator== is case-sensitive even on Windows. Neither
+                // file must already exist for these names to be aliases.
+                const auto& a = resolved.native();
+                const auto& b = accountCanonical.native();
+                return CompareStringOrdinal(a.data(),static_cast<int>(a.size()),
+                    b.data(),static_cast<int>(b.size()),TRUE) == CSTR_EQUAL;
+#elif defined(__APPLE__)
+                // Most Mac volumes ignore case and canonical Unicode spelling.
+                // Conservatively reserve these aliases on case-sensitive APFS
+                // too; this comparison must also work before either file exists.
+                const auto& a = resolved.native();
+                const auto& b = accountCanonical.native();
+                struct CfString {
+                    CFStringRef value;
+                    ~CfString() { if (value) CFRelease(value); }
+                };
+                const CfString left{CFStringCreateWithBytes(kCFAllocatorDefault,
+                    reinterpret_cast<const UInt8*>(a.data()),static_cast<CFIndex>(a.size()),kCFStringEncodingUTF8,false)};
+                const CfString right{CFStringCreateWithBytes(kCFAllocatorDefault,
+                    reinterpret_cast<const UInt8*>(b.data()),static_cast<CFIndex>(b.size()),kCFStringEncodingUTF8,false)};
+                if (!left.value || !right.value)
+                    throw std::runtime_error("cannot compare campaign and account paths");
+                return CFStringCompare(left.value,right.value,
+                    kCFCompareCaseInsensitive | kCFCompareNonliteral) == kCFCompareEqualTo;
+#else
+                return resolved == accountCanonical;
+#endif
+            };
+            for (const auto& base : {database,canonical(database)}) {
+                for (const char* suffix : {"","-journal","-wal","-shm"}) {
+                    auto reserved = base; reserved += suffix;
+                    if (aliasesAccount(reserved))
+                        throw std::runtime_error("campaign database and its SQLite companion files must be separate from account credentials");
+                }
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,"takserver: %s\n",e.what());return 1;
+        }
+    }
     Server s(port, dataRoot);
     if (!replayDir.empty()) s.setReplayDir(replayDir);
     if (fixedSeed) s.setFixedSeed(fixedSeed);
@@ -2173,6 +2282,13 @@ static int serverMain(int argc, char** argv) {
             // accounts while actually having none of them.
             std::fprintf(stderr, "takserver: %s\n", err.c_str());
             return 1;
+        }
+    }
+    if (!crusadesDb.empty()) {
+        try {
+            s.enableCrusades(std::filesystem::u8path(crusadesDb),std::filesystem::u8path(crusadesDefinition));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,"takserver: cannot start Crusades: %s\n",e.what());return 1;
         }
     }
     return s.run();

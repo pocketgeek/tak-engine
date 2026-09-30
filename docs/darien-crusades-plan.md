@@ -520,6 +520,11 @@ CampaignEnded
 
 # Milestone 4 — Authenticated Crusades allegiance
 
+Completed 2026-09-30. Implementation and acceptance evidence:
+[authenticated allegiance](research/darien-crusades/campaign-allegiance.md).
+This establishes server-side participation; campaign UI and battle issuance
+remain later milestones.
+
 ## Objective
 
 Associate an authenticated TAK-Engine player with campaign participation.
