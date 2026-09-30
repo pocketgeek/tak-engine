@@ -115,7 +115,8 @@ does not claim to serialize every field or every rule of the engine.
 The original-CD and GOG effective reports are byte-identical. `fixed16` values
 are the raw signed 16.16 storage (divide by 65,536); floating values use enough
 digits to identify the stored float. Booleans are 0/1. An absent category-table
-entry means **use that weapon's default damage**, not zero damage. Native
+entry means **use that weapon's default damage**, not zero damage. `<empty>`
+denotes a present empty string, distinct from `<absent>`. Native
 weapon slot numbers remain stable when an inactive slot disappears.
 
 Enum values follow the public engine types: weapon kind 0 normal, 1 guided,

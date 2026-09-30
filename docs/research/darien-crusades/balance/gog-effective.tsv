@@ -22,19 +22,19 @@ explodeAs/dmgType	crefire	3	1
 explodeAs/dmgType	zonamoe	1	3
 explodeAs/edge	crefire	0.100000001	1
 explodeAs/edge	zonamoe	1	0.25
-explodeAs/explosionClass	crefire	fireball explosion	
-explodeAs/explosionClass	zonamoe		large explosion
+explodeAs/explosionClass	crefire	fireball explosion	<empty>
+explodeAs/explosionClass	zonamoe	<empty>	large explosion
 explodeAs/projVel	crefire	300	0
 explodeAs/projVel	zonamoe	0	1000
 explodeAs/subSteps	zonamoe	1	3
 explodeAs/switchReloadTicks	crefire	0	30
 explodeAs/switchReloadTicks	zonamoe	30	0
-explodeAs/waterExplosionClass	zonamoe		large water explosion
+explodeAs/waterExplosionClass	zonamoe	<empty>	large water explosion
 menu/ordered	aracastl	arabroad,arabow,arapal,arasmith,aracan,araspy,arasiege,arabuild,arapries	arabroad,arabow,arapal,arasmith,aracan,araspy,aragren,arasiege,arabuild,arapries
 menu/ordered	arafly	arawall,aratre,aralode,araat,arawar,arassh,arakeep,aracastl	arawall,aratre,aralode,araat,arawar,arassh,arakeep,aracastl,arasiege
 menu/ordered	araking	arawall,arangate,aralode,araat,aratrans,arakeep,aragod	arawall,arangate,aralode,araat,aratrans,arakeep
 menu/ordered	arapries	aragren,aramana,aradrag,arafly	aramana,aradrag,arafly,aragod
-menu/ordered	aratrans		arafast,arasword,araarch
+menu/ordered	aratrans	<empty>	arafast,arasword,araarch
 menu/ordered	tarnecro	tarwall,tarlode,tarngate,tarcage,tarcastl,tardung,tarhell,targod	tarwall,tarlode,tarngate,tarcage,tarcastl,tardung,tarhell
 menu/ordered	tarpries	tarmana,tarang,tardrag	tarmana,tarang,tardrag,targod
 menu/ordered	vercastl	verbers,vercen,vermusk,vercrus,verknigh,verball,verliege,verlihr	verbers,vermusk,vercrus,verknigh,verball,verliege,vercen,verbal,verlihr
@@ -253,7 +253,7 @@ unit/cantBeFrozen	aranull	1	0
 unit/cantBeFrozen	arapal	1	0
 unit/cantBeStoned	araat	0	1
 unit/cantBeStoned	vermort	0	1
-unit/corpse	tarzom	tarzom_dead	
+unit/corpse	tarzom	tarzom_dead	<empty>
 unit/cruiseAlt	arafly	0	200
 unit/cruiseAlt	tarang	50	100
 unit/cruiseAlt	zonflies	150	50
@@ -263,13 +263,13 @@ unit/damageCategory	araknigh	human	tier1
 unit/damageCategory	arasmith	monster	stalwart
 unit/damageCategory	arasword	human	tier1
 unit/damageCategory	creauto	human	undead
-unit/damageCategory	crebarn		airship
+unit/damageCategory	crebarn	<empty>	airship
 unit/damageCategory	crebomb	fort	mechanical
 unit/damageCategory	crefire	siege	mechanical
 unit/damageCategory	cregatl	fort	mechanical
 unit/damageCategory	crepris	fort	mechanical
 unit/damageCategory	cretort	human	mechanical
-unit/damageCategory	monghoul		undead
+unit/damageCategory	monghoul	<empty>	undead
 unit/damageCategory	tarblack	human	tier1
 unit/damageCategory	tartroop	human	tier1
 unit/damageCategory	verarch	human	tier1
@@ -281,7 +281,7 @@ unit/damageCategory	zonbasil	monster	stalwart
 unit/damageCategory	zongiant	monster	stalwart
 unit/damageCategory	zongob	monster	tier1
 unit/damageCategory	zonhand	monster	stalwart
-unit/damageCategory	zonharp		monster
+unit/damageCategory	zonharp	<empty>	monster
 unit/damageCategory	zonlord	monster	stalwart
 unit/damageCategory	zonsham	monster	stalwart
 unit/damageCategory	zonter	monster	tier1
@@ -358,7 +358,7 @@ unit/footX	zonamoe	3	4
 unit/footZ	tarcan	3	2
 unit/footZ	verbal	3	4
 unit/footZ	zonamoe	3	4
-unit/frozenFeat	arapal		arapal_frozen
+unit/frozenFeat	arapal	<empty>	arapal_frozen
 unit/frozenFeat	lifdeer	lifdeer_frozen	lifdeer2_frozen
 unit/halfCellTicks	arabroad	6	4
 unit/halfCellTicks	aragod	5	4
@@ -633,7 +633,7 @@ unit/sight	vergod	2500	292
 unit/sight	verngate	210	300
 unit/sight	zongiant	230	250
 unit/sight	zongod	2000	290
-unit/stoneFeat	tarbeak		tarbeak_stone
+unit/stoneFeat	tarbeak	<empty>	tarbeak_stone
 unit/storage	arafly	150	200
 unit/storage	aratrans	0	100
 unit/transportCap	arasiege	0	4
@@ -961,8 +961,8 @@ weapon1/emitTime	tarpries	45	15
 weapon1/emitTime	tarsh	25	10
 weapon1/emitTime	zonglyph	0	5
 weapon1/emitTime	zonsham	34	5
-weapon1/explosionClass	arabow		teeny explosion
-weapon1/explosionClass	vercen		teeny explosion
+weapon1/explosionClass	arabow	<empty>	teeny explosion
+weapon1/explosionClass	vercen	<empty>	teeny explosion
 weapon1/explosionClass	verfltwr	medium dust puff	small explosion
 weapon1/explosionClass	zongryp	small dust puff	teeny explosion
 weapon1/fireStarter	vercen	0	1
@@ -1234,7 +1234,7 @@ weapon2/edge	arawar	<absent>	1
 weapon2/edge	targod	0.800000012	1
 weapon2/emitTime	arawar	<absent>	0
 weapon2/explosionClass	arapries	iceballexp	blue_shockring
-weapon2/explosionClass	arawar	<absent>	
+weapon2/explosionClass	arawar	<absent>	<empty>
 weapon2/fireStarter	arawar	<absent>	0
 weapon2/flameKind	arawar	<absent>	-1
 weapon2/fx	arawar	<absent>	0
@@ -1315,10 +1315,10 @@ weapon2/variationTicks	arawar	<absent>	0
 weapon2/variationTicks	vergod	45	60
 weapon2/variationTime	arawar	<absent>	0
 weapon2/variationTime	vergod	1.5	2
-weapon2/waterExplosionClass	arapries	medium water explosion	
+weapon2/waterExplosionClass	arapries	medium water explosion	<empty>
 weapon2/waterExplosionClass	arawar	<absent>	small water explosion
 weapon2/weaponArt	arapries	iceballspin	fireballa
-weapon2/weaponArt	arawar	<absent>	
+weapon2/weaponArt	arawar	<absent>	<empty>
 weapon3/aimTol	aragren	1024	512
 weapon3/aoe	aragren	65	140
 weapon3/aoe	arapries	0	200
@@ -1402,5 +1402,5 @@ weapon3/subSteps	zonhunt	1	3
 weapon3/switchReloadTicks	aragren	93	87
 weapon3/switchReloadTicks	arapries	150	120
 weapon3/switchReloadTicks	tarang	300	150
-weapon3/waterExplosionClass	arapries		medium water explosion
+weapon3/waterExplosionClass	arapries	<empty>	medium water explosion
 weapon3/weaponArt	arapries	fireballa	iceballspin

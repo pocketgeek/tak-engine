@@ -26,6 +26,7 @@ template<class T> static std::string value(T v) {
     return s.str();
 }
 static std::string escape(const std::string& s) {
+    if(s.empty())return "<empty>";
     std::string out;for(char c:s) {
         if(c=='\\')out+="\\\\";else if(c=='\t')out+="\\t";
         else if(c=='\r')out+="\\r";else if(c=='\n')out+="\\n";else out+=c;
