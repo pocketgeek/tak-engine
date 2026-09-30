@@ -74,9 +74,11 @@ to a boolean and passes it to `0x5174c0`, which stores the balance selection at
 `CrusadesBalance` (`0x49978d`). The selected data path includes `UnitsCB` (string
 at `0x618870`) and the corresponding FBI glob (`0x618850`).
 
-This supports mandatory Crusades tuning in campaign battles. It does not replace
-the still-outstanding per-unit balance comparison or establish every effect of
-all nonzero mode values.
+This supports mandatory Crusades tuning in campaign battles. The separate
+[balance audit](../../crusades-balance-reference.md) now compares source fields,
+ordered build menus and effective loaded unit/weapon behavior, with native
+reader corrections. This mode-selector trace alone does not establish every
+effect of all nonzero mode values.
 
 ## Score report: EXE to Rover
 
@@ -103,8 +105,10 @@ At `0x501042`, the client passes an area handle, a game identifier, a per-player
 identifier, the property object and a final-report flag to wrapper `0x5ab719`.
 That wrapper calls interface slot `0x78` and returns a boolean. The call site
 then releases the temporary property object. The final flag is set by comparison
-with local event value 7 (`0x500f6e`); the meaning of every event value and the
-full gating logic remain untraced.
+with local event value 7 (`0x500f6e`). The
+[campaign lifecycle trace](campaign-flow.md#periodic-versus-final-score-reporting)
+now distinguishes periodic event 99, final event 7, and teardown event 8,
+including the gates that prevent unconditional final submission.
 
 The interface is provably Rover: `0x5ab08e` loads Rover and resolves
 `_GetInterface@4`, storing its result at `0x65dec4`. ROVER's DLL initialization
@@ -125,9 +129,10 @@ That builder prepares these named properties:
 
 The wrapper merges the supplied score properties into the constructed object
 (`0x10004160`–`0x1000416f`) and passes it to `0x1000df32`. These are recovered
-message-object fields, **not yet a verified wire packet**. Serialization,
-transport framing, acknowledgement/retry handling and server validation remain
-UNKNOWN. No original service was contacted.
+message-object fields. The [transport trace](report-transport.md) establishes
+serialization, obfuscation, and socket submission, but not a captured wire
+exchange with the original service. Acknowledgement/retry semantics and server
+validation remain UNKNOWN. No original service was contacted.
 
 ## Separate optional reporting interface
 
@@ -140,8 +145,11 @@ and does not prove that Boneyards reporting depended on it.
 ## Remaining boundary work
 
 The [transport follow-up](report-transport.md) traces `0x1000df32` through
-queueing, serialization and socket submission. Next, identify acknowledgements and
-finalization, and determine the relationship between reporting events and
-surrender/disconnect outcomes. The client boundary alone cannot establish how
+queueing, serialization and socket submission. The
+[campaign lifecycle trace](campaign-flow.md) connects the territory UI to
+battle-area selection and the host/join requests to the `launch_game` callback.
+It also distinguishes periodic, final, and teardown reporting events.
+Remaining outcome questions concern acknowledgements and the server treatment
+of surrender/disconnect, rather than the meaning of the local final marker. The client boundary alone cannot establish how
 the historical server deduplicated reports, weighted ranks, or credited orphan
 battles. Territory graph and fatigue arithmetic remain separate open questions.

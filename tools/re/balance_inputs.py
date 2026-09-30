@@ -137,7 +137,7 @@ def set_balance_inputs(process, capture, save_path, retail_root, crusades,
             process.uc.mem_write(kind+0x192,record[4:12])
             process.uc.mem_write(kind+0x23c,bytes((record[12],record[14])))
             road=int(float(fields.get('roadmultiplier',1.2))*65536)
-            water=int(float(fields.get('watermultiplier',fields.get('watermultipliser',1)))*65536)
+            water=int(float(fields.get('watermultiplier',1))*65536)
             process.uc.mem_write(kind+0x172,struct.pack('<i',road))
             process.uc.mem_write(kind+0x16e,struct.pack('<i',water))
             if motion:

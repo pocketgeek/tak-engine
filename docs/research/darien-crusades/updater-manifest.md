@@ -31,9 +31,11 @@ conditions and update precedence still need separate analysis.
 
 The metagame bundle lists Darien.def and both JJE tables. Searches of both
 manifests found no MetaMask, Borders or HonorMap resource names. These images
-exist in the current mixed local installation, but this pass has not established
-how an original installation obtained them. Do not invent border geometry from
-unverified local art.
+are now independently verified in the fingerprinted GOG distribution and match
+the current local installation. The original CD cabinet also lacks these loose
+images; the historical Boneyards delivery route remains unresolved. See
+[distribution provenance](distribution-provenance.md). Authentic artwork and
+its native hit-test use still do not establish authoritative territory adjacency.
 
 To inspect a user-supplied file offline, Python's standard `zipfile.ZipFile` can
 list members and read `Kingdoms.mmm` without extracting paths or executing

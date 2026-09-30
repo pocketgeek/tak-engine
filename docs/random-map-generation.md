@@ -4,7 +4,8 @@ New recipes use generator version 4. The map ID still carries the seed and
 parameters in `~gen1~` followed by hexadecimal bytes; the first two payload bytes
 are the generator version. Versions 1–3 keep their original generation algorithms and size limits.
 Protocol 193 introduced version-3 generation and verified map-transfer support;
-The current checkout uses protocol 203 for version-4 recipes. Existing pathfinding rules are unchanged.
+Protocol 203 introduced version-4 recipes. The current checkout uses protocol 204
+for retail damage-table corrections; map recipes and pathfinding rules are unchanged.
 
 ## Layout and placement
 

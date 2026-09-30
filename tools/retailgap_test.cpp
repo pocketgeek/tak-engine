@@ -2238,21 +2238,22 @@ int main(int argc, char** argv) {
         // below covers the shipped data.
         sim::UnitType tgt{};
         tgt.categories = {"factory", "aramon"};
+        tgt.damageCategory = "factory";
         sim::Weapon w{};
         w.damage = 360;
         check(w.damageVs(&tgt) == 360.0f, "no override -> base damage");
-        w.dmgVs["factory"] = 0.5f;
+        w.dmgVs["factory"] = 180;
         check(w.damageVs(&tgt) == 180.0f,
               "a 0.5 override HALVES the base, it is not 0.5 damage",
               std::to_string(w.damageVs(&tgt)));
-        w.dmgVs["factory"] = 2.0f;
+        w.dmgVs["factory"] = 720;
         check(w.damageVs(&tgt) == 720.0f, "a 2.0 override doubles it",
               std::to_string(w.damageVs(&tgt)));
         w.dmgVs["factory"] = 0.0f;
         check(w.damageVs(&tgt) == 0.0f, "a 0 override still means immune",
               std::to_string(w.damageVs(&tgt)));
         w.dmgVs.clear();
-        w.dmgVs["naval"] = 0.25f;      // a category this target does not carry
+        w.dmgVs["naval"] = 90;      // a category this target does not carry
         check(w.damageVs(&tgt) == 360.0f, "an override for another category is ignored");
     }
     {

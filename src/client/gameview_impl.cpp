@@ -2601,7 +2601,7 @@
             }
             // Native 4d4520 passes wind bearing minus unit bearing in the
             // retail heading convention, without normalizing that difference.
-            if (a.hasWind && a.windStamp != windGen_) {
+            if (u.type->receivesWind && a.hasWind && a.windStamp != windGen_) {
                 a.windStamp = windGen_;
                 const auto bodyHeading=tak::sim::portHeadingToRetail(
                     tak::sim::bamFromRadians(u.heading));

@@ -127,7 +127,7 @@ def native_detached_passenger_occupancy_probe(p, carrier, owner,
         put(kind + offset, '<H', int(float(passenger_fields.get(key, default))) & 65535)
     put(kind + 0x172, '<i', int(float(passenger_fields.get('roadmultiplier', 1.2)) * 65536))
     put(kind + 0x16e, '<i', int(float(passenger_fields.get(
-        'watermultiplier', passenger_fields.get('watermultipliser', 1))) * 65536))
+        'watermultiplier', 1)) * 65536))
     put(kind + 0x249, '<B', 6)
 
     put(passenger + 2, '<H', passenger_id)
@@ -1872,8 +1872,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             p.uc.mem_write(blocker_type + offset,
                            struct.pack('<H', int(float(unit_fields.get(key, default))) & 65535))
         blocker_road = int(float(unit_fields.get('roadmultiplier', 1.2)) * 65536)
-        blocker_water = int(float(unit_fields.get('watermultiplier',
-            unit_fields.get('watermultipliser', 1))) * 65536)
+        blocker_water = int(float(unit_fields.get('watermultiplier', 1)) * 65536)
         blocker_maximum = int(float(unit_fields.get('maxvelocity', 0)) * 65536)
         best_speed = max(blocker_road, blocker_water, 65536) * blocker_maximum >> 16
         half_cell_ticks = 255 if best_speed <= 0 else max(1, min(255, (8 * 65536) // best_speed))
@@ -2333,7 +2332,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             p1_braking = int(float(p1_fields.get('brakerate', '0.5')) * 65536)
             p1_road = int(float(p1_fields.get('roadmultiplier', '1.2')) * 65536)
             p1_water = int(float(p1_fields.get(
-                'watermultiplier', p1_fields.get('watermultipliser', '1'))) * 65536)
+                'watermultiplier', '1')) * 65536)
             p1_turn = int(float(p1_fields.get('turnrate', '500')))
             for offset, value in ((0x162, p1_max_velocity),
                                   (0x166, p1_braking),

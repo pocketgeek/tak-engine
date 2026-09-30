@@ -44,15 +44,17 @@ patches are byte-identical, as are their 1,263 decoded members.
 | Observed format | Existing tooling | This pass |
 |---|---|---|
 | HPI/KMP containers | `hpitool` | Every member in both patch inventories read and hashed |
-| TNT terrain | `tnttool` | Candidate; representative added map checked |
-| OTA/FBI/TDF | `tdftool` | 181 added OTA and one TDF passed |
+| TNT terrain | `tnttool` | All 181 added TNT files parsed |
+| OTA/FBI/TDF/TSF | `tdftool`, `tnttool` | All added OTA, one TDF and two TSF parsed; three OTA byte round trips differ |
 | Boneyards GUI | `tdftool` candidate rejected | All 20 added numeric-text GUI files failed; separate format needed |
-| GAF sprite banks | `gaftool` (requires palette) | Candidate; no new image exports committed |
-| COB / 3DO | `cobtool` / `modeltool` | Candidate mapping; no execution needed for inventory |
-| BIK movies | `biktool` | Candidate; no movie playback required |
-| Darien `.def`, `.jje`, `.tsf`, `.mmz` | No confirmed dedicated parser | Preserve hashes; semantics need research |
-| HTML/PNG/PCX/text | General inspection / existing asset loaders | No proprietary content committed |
+| GAF sprite banks | `gaftool` (requires palette) | All 31 added GAF files loaded with frame decoding |
+| COB / 3DO | `cobtool` / `modeltool` | None added in the standard/Crusades package difference |
+| BIK movie chunks | `biktool` | Five chunks assemble one 1,110-frame movie; all joined frames decoded |
+| Darien `.def`, `.jje`, `.mmz` | Research parser / reader trace / ZIP inspection | Definition parsed; companion integer/byte tables traced; MMZ updater manifest inspected |
+| HTML/PNG/PCX/text | Text inspection / Pillow | All 60 added PNG/PCX decoded; no proprietary content committed |
 
 `Darien.def` is not assumed to be ordinary TDF merely because of its extension.
-Its parcel declarations use a different tagged representation. Counts in the
-evidence matrix come from direct token inspection, not a complete parser.
+Its parcel declarations use a different tagged representation. The strict
+[territory parser](territory-format.md) validates its complete observed schema.
+The later [added-asset sweep](asset-parse-sweep.md) supersedes the initial parser
+coverage and explains the numeric GUI limitation and movie assembly.

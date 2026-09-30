@@ -1,4 +1,4 @@
-# Initial binary trace notes
+# Binary trace index and initial observations
 
 All addresses below are virtual addresses in **EXE-3**, the official patch's
 `KINGDOMS.icd`, image base `0x400000`, SHA-256
@@ -9,7 +9,7 @@ are reproduced. No installer or game was launched for this pass.
 
 | Location | Observed operation | Scope / confidence |
 |---|---|---|
-| `0x459886` | Supplies callback `0x459a00` and Darien.def to loader `0x5ab7af` | RECONSTRUCTED loader call; full callback semantics pending |
+| `0x459886` | Supplies callback `0x459a00` and Darien.def to loader `0x5ab7af` | RECONSTRUCTED loader call; territory callbacks and fill now traced in the linked territory investigation |
 | `0x46b200` | Loads Darien.def with callback `0x46b300`; conditionally opens PreInit.jje | RECONSTRUCTED; object flag at offset `0xc5` gates the table read |
 | `0x46b6b7`–`0x46b6e8` | Callback reads chatareaid and fire-anchor coordinates | RECONSTRUCTED using referenced field strings and output locals |
 | `0x46b785`–`0x46b875` | Sets initial values in a tree keyed by chatareaid | RECONSTRUCTED; hardcoded ID lists occur here, not copied into this repository |
@@ -18,18 +18,31 @@ are reproduced. No installer or game was launched for this pass.
 | `0x46234b` onward | Crest primary/secondary/shadow sprite setup, followed by wdhit file open at `0x46239e` | RECONSTRUCTED call context, not proven table semantics |
 | `0x4623bc`–`0x4623c6` | Decimal scan into integer storage; format reference `0x60b574` | RECONSTRUCTED scanner; supports interpreting JJE as integer data |
 
-Useful next trace targets (string presence only; rules UNKNOWN): territory
-support/toughness, momentum, influence, conquest count, battle map scripts,
-allowed races, and result handling. Labels such as `darien_id`, `req_honor`,
-`req_terror`, `map_races_allowed`, `map_script`, `victory_pnts` and `conq_cnt`
-identify places to investigate; their presence is not an implementation spec.
+The initial string survey identified territory support/toughness, momentum,
+influence, conquest count, battle-map scripts, allowed races and result handling
+as trace targets. Subsequent work supersedes that string-only status:
+
+- [Territory parameters and geometry](territory-parameters.md) traces the native
+  callback/fill, recon fields, timers and limits of map-assignment evidence.
+- [Campaign flow](campaign-flow.md) follows territory selection through host/join,
+  launch settings, session staging and result-event gating.
+- [Battle contract](battle-contract.md) and [report transport](report-transport.md)
+  trace report properties, queueing, serialization, socket submission and incoming
+  notifications, while retaining the missing server-acceptance boundary.
+- [Native balance field review](balance-field-review.md) documents the independently
+  probed category-damage reader and authored spelling errors.
+
+Names such as `darien_id`, `req_honor`, `req_terror`, `map_races_allowed`,
+`map_script`, `victory_pnts` and `conq_cnt` remain references to locate evidence,
+not substitutes for traced server formulas.
 
 The official `bymaia.dll` (SHA-256
 `a4741b677c22b33e29c0226c09a604f9037f3d8252c0eb472c4b31cf72390427`)
 exports update-package operations. `Rover.dll` (SHA-256
 `ffedddf9b615e7a60303231c98541ab0147d55fd8d2e1de510272dff0481ffd6`)
-exports an interface getter and DLL entry point; its authority and protocol
-semantics are not established by that alone.
+exports an interface getter and DLL entry point. The later transport trace
+establishes client-side request/report behavior; exports alone do not establish
+historical server authority or policy.
 
 Reproduce with `objdump -d -Mintel --start-address=ADDRESS
 --stop-address=ADDRESS /path/to/the/fingerprinted/KINGDOMS.icd`. Keep any
@@ -53,5 +66,6 @@ The momentum trace independently supports the FAQ's history-based concept, but
 the FAQ alone supplies the twenty-battle window. The Borders.png path supports
 an image-rendering role; it does not prove the absence of a separate geometry or
 adjacency calculation elsewhere. The subsequent [battle-contract trace](battle-contract.md) follows score
-properties into Rover's score_report builder. Wire serialization and result
-acknowledgement remain untraced.
+properties into Rover's score_report builder. The [transport investigation](report-transport.md)
+now follows serialization and socket submission. Incoming report notifications
+are traced, but are not proven acknowledgements of accepted campaign credit.

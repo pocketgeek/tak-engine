@@ -201,17 +201,17 @@ struct Weapon {
     int32_t shakeMag = 0;       // shakemagnitude (readInt): camera-shake intensity
     float shakeDur = 0;         // shakeduration: seconds the shake lasts
     bool  fireStarter = false;  // firestarter: leaves ground fire at the impact
-    // Per-target-category damage overrides (DAMAGE keys other than `default`),
+    // Precomputed integer damage (default * multiplier, truncated at load),
     // keyed by lowercased category token (e.g. "monarch", "dragon", "fort").
-    std::map<std::string, float> dmgVs;
+    std::map<std::string, int32_t> dmgVs;
     // The same overrides with the category token INTERNED to an int, in the string
-    // map's order so precedence is identical. damageVs() is the hottest lookup in the
+    // map's order. damageVs() is the hottest lookup in the
     // sim -- measured 29k-245k of them a tick -- and walking a string-keyed red-black
     // tree per candidate is a poor way to answer it. Built once, at load, and never
     // mutated afterwards: the server ticks several rooms in parallel over ONE shared
     // TypeRegistry, so a lazily-filled cache here would be a data race, and a race in
     // hashed state is a desync rather than merely a bug.
-    std::vector<std::pair<int, float>> dmgVsIds;
+    std::vector<std::pair<int, int32_t>> dmgVsIds;
     WeaponFx fx = WeaponFx::Arrow;
     // Damage this weapon deals to a unit of type `t` (category override, else base).
     float damageVs(const UnitType* t) const;
@@ -293,16 +293,16 @@ struct UnitType {
     float storage = 0;      // mana cap contribution (mogriumstorage)
     int footX = 1, footZ = 1;
     std::string yardMap;      // footX*footZ chars; 'o' blocks, '.'/'c' passable
-    // Lowercased target-category tokens (from FBI category/damagecategory/tedclass),
-    // matched against a weapon's per-category damage overrides.
+    // Lowercased general category tokens (FBI category/damagecategory/tedclass).
+    // Weapon overrides use the separate single damageCategory below.
     std::vector<std::string> categories;
-    // Native cursor target lookup uses the single FBI damagecategory token
-    // (UnitDef+0x9e); the broader categories list remains useful to the sim's
-    // existing damage model but is not a substitute for this selector field.
+    // Native combat and cursor lookup use only FBI damagecategory (UnitDef+0x9e).
     std::string damageCategory;
-    std::vector<int> catIds;    // `categories`, interned; same order (see Weapon::dmgVsIds)
+    int damageCategoryId = -1; // only DamageCategory participates in weapon overrides
+    std::vector<int> catIds;    // broader category list, interned in the shared token table
     int32_t sight = 180;      // px (FBI sightdistance, readInt)
     bool canFly = false;
+    bool receivesWind = false; // wind OR windgenerator: retail WindChange callback gate
     // bankscale / pitchscale also scale surface support-plane angles. Surface
     // pitch participates in the mover's ramp speed limit.
     // 16.16 in retail: bankscale/pitchscale go through the fixed-point reader.

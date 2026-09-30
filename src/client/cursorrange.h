@@ -28,12 +28,9 @@ inline bool unitHasAirstrikeCursor(const sim::UnitType& type,int localWeaponSlot
     return nativeSlot>=0 && nativeSlot<3 && type.weaponAirstrikeCursor[size_t(nativeSlot)];
 }
 
-// The retail cursor selector resolves damage against UnitDef+0x9e, populated
-// only from FBI `damagecategory`. Simulation damage uses the wider category
-// list, so do not use Weapon::damageVs here.
+// Cursor eligibility uses the same native DamageCategory lookup as combat.
 inline float cursorDamageVs(const sim::Weapon& weapon, const sim::UnitType& target) {
-    const auto it = weapon.dmgVs.find(target.damageCategory);
-    return it == weapon.dmgVs.end() ? weapon.damage : weapon.damage * it->second;
+    return weapon.damageVs(&target);
 }
 
 // Retail's minrange and ordinary range checks square each 16.16 x/z delta, take

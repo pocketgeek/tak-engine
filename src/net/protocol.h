@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 203;      // 203: generated-map v4 recipes and gentler Easy AI
+constexpr uint32_t kNetVersion = 204;      // 204: retail damage-category selection and integer damage tables
+                                           // 203: generated-map v4 recipes and gentler Easy AI
                                            // 195: directed mana sharing and chat recipients
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering

@@ -37,8 +37,10 @@ The header literally says width 1083 and height 1672. Fire anchors range up to
 x=1649 and y=1073. The local mixed installation's strategic PNGs are 1672 pixels
 wide by 1083 high. Thus blindly treating header width/height as ordinary image
 axes would reject valid anchors. The report retains the original labels; the
-binary's coordinate interpretation still needs a dedicated trace. Those local
-PNGs have not been established as identical to an original patch installation.
+later [native geometry trace](territory-parameters.md) follows seed-based image
+fill and hit-test lookup without treating these labels as an adjacency schema.
+The strategic PNGs now match the independently fingerprinted GOG distribution;
+their original patch/CD delivery route remains unresolved.
 
 ## Companion files: CONFIRMED bytes, RECONSTRUCTED reader behavior
 

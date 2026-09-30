@@ -1,4 +1,4 @@
-# Campaign rules recovered from shipped help
+# Campaign rules recovered from shipped help and recon templates
 
 The patch payloads contain three relevant Cavedog help pages: HELP-144,
 HELP-146 and HELP-147 in [sources.md](sources.md). This is primary documentation
@@ -31,9 +31,36 @@ loop. The twenty-entry policy comes from the FAQ, not this display routine.
 See [binary notes](binary-notes.md).
 
 README-3 additionally documents captures without a battle when fatigue and
-side support pass toughness. That is compatible with time erosion, but it does
-not supply enough information to collapse all of these factors into one exact
-historical equation. The plan's sample formulas remain illustrative only.
+side support pass toughness. The shipped recon template gives a more specific
+explanation: a side with momentum captures when its combined fatigue, support
+and battle victory points exceed its required victory points. This is a
+**CONFIRMED presentation rule**, not a recovered server comparison instruction.
+The distinction matters for equality, absent momentum, simultaneous qualifying
+sides and the patch's battle-free capture case.
+
+The templates also identify the actual parameter names and their intended units:
+
+| Presentation meaning | Honor field | Terror field | Confidence / limit |
+|---|---|---|---|
+| Required victory points (territory resistance) | `htoughness` | `ttoughness` | CONFIRMED template binding; no per-territory values recovered |
+| Fatigue victory points | `fatigue` | `fatigue` | CONFIRMED shared displayed field; generation rate and reset policy UNKNOWN |
+| Support victory points | `hinfluence` | `tinfluence` | CONFIRMED side-specific template binding; neighbor formula UNKNOWN |
+| Victory points earned in battles | `hvictory_pnts` | `tvictory_pnts` | CONFIRMED template binding; rank weights and accumulation rules UNKNOWN |
+
+This is stronger than inferring meanings from executable strings. Both original
+patch payloads include the same `TAK_reconhistory.htm`; EXE-3 explicitly loads
+that template. Its placeholders default to zero when unfilled. Those defaults
+are **not** historical campaign starting values. The client forwards received
+properties to the recon template generically, so the absence of literal
+`fatigue` or `htoughness` names from EXE-3 does not mean those fields were unused.
+See [territory parameters and geometry](territory-parameters.md) for fingerprints,
+line numbers, callback addresses and the remaining authority limits.
+
+The unsuffixed `influence` field needs separate treatment: one recon path writes
+an ownership label under that name. It must not be substituted for the numeric
+`hinfluence`/`tinfluence` support fields. No fatigue-growth, support-weight or
+resistance-generation formula has been recovered; the plan's sample formulas
+remain illustrative only.
 
 ## Battle results and eligibility
 
@@ -83,7 +110,10 @@ history and deferred results. These are requirements suggested by primary
 sources, **not new implemented behavior**. No numeric fatigue, momentum,
 influence or rank formula is justified yet.
 
-The remaining historical work is narrower now: recover authoritative territory
-parameters/edges and result messages; establish later-version differences;
-complete the exact Crusades Balance audit. No server implementation is claimed
-complete by this document.
+The surviving client establishes parameter names, displayed units and a capture
+explanation, but does not supply authoritative parameter values or their
+calculation. The audited geometry path produces territory rendering and hit
+testing, not the server's neighbor graph. Missing server tables/formulas remain
+UNKNOWN, with the search scope and remaining evidence needed recorded in
+[territory parameters and geometry](territory-parameters.md). No server
+implementation is claimed complete by this document.

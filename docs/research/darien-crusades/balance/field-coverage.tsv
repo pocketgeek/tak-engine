@@ -1,0 +1,178 @@
+field	classification	gog_rows	official30_rows	iron_plague_cd_rows	coverage	evidence
+<definition>	gameplay-checked	24	24	24	complete ordered build menu and canonical roster; base fallback and whole-menu replacement	tools/crusades_registry_test.cpp
+explodeas#1/areaofeffect	gameplay-checked	3	2	3	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+explodeas#1/damage#1/airship	gameplay-checked	1	1	1	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+explodeas#1/damage#1/default	gameplay-checked	4	2	4	default uint16 damage	tools/crusades_registry_test.cpp
+explodeas#1/damage#1/monarch	gameplay-checked	2	1	2	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+explodeas#1/damagetype	gameplay-checked	2	1	2	normal/fire/explosion/paralyzer enumeration	tools/crusades_registry_test.cpp
+explodeas#1/edgeeffectiveness	gameplay-checked	2	1	2	edgeeffectiveness/edgeeffectivness fallback1	tools/crusades_registry_test.cpp
+explodeas#1/explosionclass	presentation-checked	2	1	2	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+explodeas#1/name	presentation-consumer-checked	4	2	4	name load and downstream status/fx consumers	src/sim/sim.cpp; tools/crusades_registry_test.cpp authored name/status and changed-name visual fallback
+explodeas#1/type	gameplay-checked	2	1	2	family enum and melee/ballistic/beam dispatch	tools/crusades_registry_test.cpp
+explodeas#1/waterexplosionclass	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+explodeas#1/weaponvelocity	gameplay-checked	2	1	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+menu#1/priority	gameplay-checked	25	25	25	complete ordered menus sorted by source priority then unit ID	tools/crusades_registry_test.cpp
+unitinfo#1/acceleration	gameplay-checked	4	4	4	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/adjustjoy#1/adjustment	gameplay-checked	1	1	1	joy aura presence and source amount/radius/enemy/edge contract	tools/crusades_registry_test.cpp
+unitinfo#1/adjustjoy#1/affectsenemy	gameplay-checked	1	1	1	joy aura presence and source amount/radius/enemy/edge contract	tools/crusades_registry_test.cpp
+unitinfo#1/adjustjoy#1/edgeeffectiveness	gameplay-checked	1	1	1	joy aura presence and source amount/radius/enemy/edge contract	tools/crusades_registry_test.cpp
+unitinfo#1/adjustjoy#1/radius	gameplay-checked	1	1	1	joy aura presence and source amount/radius/enemy/edge contract	tools/crusades_registry_test.cpp
+unitinfo#1/bloodcolor1	presentation-checked	3	3	3	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+unitinfo#1/bloodcolor2	presentation-checked	3	3	3	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+unitinfo#1/bloodcolor3	presentation-checked	3	3	3	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+unitinfo#1/bodytype	gameplay-checked	1	1	1	lowercased body type, default default	tools/crusades_registry_test.cpp
+unitinfo#1/brakerate	gameplay-checked	4	4	4	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/buildcost	gameplay-checked	71	56	71	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/builddistance	gameplay-checked	4	2	4	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/buildtime	gameplay-checked	70	53	70	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/cantbecaptured	gameplay-checked	31	31	31	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/cantbefrozen	gameplay-checked	2	2	2	commander immunity or authored flag	tools/crusades_registry_test.cpp
+unitinfo#1/cantbestoned	gameplay-checked	2	2	2	commander immunity or authored flag	tools/crusades_registry_test.cpp
+unitinfo#1/cantransport	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/corpse	gameplay-checked	1	1	1	lowercased corpse reference	tools/crusades_registry_test.cpp
+unitinfo#1/cruisalt	authored-key-ignored	1	1	1	no effective gameplay delta; native reader/key-scope evidence establishes ignored spelling or scope	balance-field-review.md; EXE-3 CruiseAlt reader 4c0237; exact-key lookup 543110; no cruisalt key
+unitinfo#1/cruisealt	gameplay-checked	3	3	3	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/damagecategory	gameplay-checked	33	26	33	lowercased category plus interned ID; effective damage against every roster target	tools/crusades_registry_test.cpp
+unitinfo#1/damagetype	authored-key-ignored	1	1	1	no effective gameplay delta; native reader/key-scope evidence establishes ignored spelling or scope	balance-field-review.md; UnitInfo uses DamageCategory at 4bfbd4; DamageType belongs to weapon reader 531bad
+unitinfo#1/experiencepoints	gameplay-checked	64	50	64	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/firestandorder	authored-key-ignored	1	1	1	no effective gameplay delta; native reader/key-scope evidence establishes ignored spelling or scope	balance-field-review.md; EXE-3 plural FireStandOrders reader 4c0634; exact-key lookup 543110
+unitinfo#1/floater	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/frozen	gameplay-checked	2	2	2	lowercased frozen feature reference	tools/crusades_registry_test.cpp
+unitinfo#1/healtime	gameplay-checked	64	49	64	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/hoverattackaltitude	gameplay-checked	1	1	1	authored altitude with cruise-altitude fallback	tools/crusades_registry_test.cpp
+unitinfo#1/manarechargerate	gameplay-checked	7	6	7	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/maneuverleashlength	gameplay-checked	6	6	6	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/maxdamage	gameplay-checked	64	51	64	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/maxmana	gameplay-checked	2	2	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/maxvelocity	gameplay-checked	22	14	22	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/mogriumincome	gameplay-checked	8	7	8	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/mogriumstorage	gameplay-checked	2	2	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/movementclass	gameplay-checked	11	11	11	resolved movement class: water depth/slope, slope minimum and footprints	tools/crusades_registry_test.cpp
+unitinfo#1/name	presentation-only	1	1	1	unit display name; no gameplay consumer identified	src/sim/sim.cpp; tools/crusades_registry_test.cpp authored name/status and changed-name visual fallback
+unitinfo#1/noshadow	presentation-checked	1	0	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+unitinfo#1/onoffable	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/radardistance	gameplay-checked	13	9	13	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/roadmultiplier	gameplay-checked	4	4	4	retail Fixed conversion, fallback0x13333	tools/crusades_registry_test.cpp
+unitinfo#1/sightdistance	gameplay-checked	15	11	15	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/stone	gameplay-checked	1	1	1	lowercased stone feature reference	tools/crusades_registry_test.cpp
+unitinfo#1/transportcapacity	gameplay-checked	5	5	5	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/transportdistance	gameplay-checked	3	3	3	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/transportsize	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/transportsizecapacity	gameplay-checked	5	5	5	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/turninplacerate	gameplay-checked	3	3	3	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/turnrate	gameplay-checked	4	3	4	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/waterline	gameplay-checked	2	2	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+unitinfo#1/watermultiplier	gameplay-checked	5	5	5	retail Fixed conversion, default1; misspelling ignored	tools/crusades_registry_test.cpp
+unitinfo#1/watermultipliser	authored-key-ignored	2	2	2	misspelling ignored; omission of correct watermultiplier separately changes effective default to1 (see effective TSV)	balance-field-review.md; EXE-3 WaterMultiplier reader 4bfc62; exact-key lookup 543110; no misspelling alias
+unitinfo#1/wind	gameplay-checked	2	1	2	wind or windgenerator callback gate	tools/crusades_registry_test.cpp
+unitinfo#1/workertime	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/aimtolerance	gameplay-checked	16	12	16	aimtolerance/aimtolerence fallback1024	tools/crusades_registry_test.cpp
+weapon1#1/areaofeffect	gameplay-checked	8	6	8	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/builduptime	gameplay-checked	1	1	1	float source and30Hz buildup ticks	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/airship	gameplay-checked	3	3	3	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/default	gameplay-checked	51	40	51	default uint16 damage	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/dragon	gameplay-checked	5	5	5	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/factory	gameplay-checked	34	31	34	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/fort	gameplay-checked	35	32	35	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/god	gameplay-checked	4	4	4	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/human	gameplay-checked	2	2	2	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/lodestone	gameplay-checked	3	3	3	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/mechanical	gameplay-checked	38	32	38	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/monarch	gameplay-checked	6	5	6	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/monster	gameplay-checked	2	2	2	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/naval	gameplay-checked	21	20	21	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/siege	gameplay-checked	4	4	4	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/stalwart	gameplay-checked	22	19	22	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/tier1	gameplay-checked	16	15	16	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damage#1/undead	gameplay-checked	2	2	2	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon1#1/damagetype	gameplay-checked	1	1	1	normal/fire/explosion/paralyzer enumeration	tools/crusades_registry_test.cpp
+weapon1#1/decaytime	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/duration	gameplay-checked	1	1	1	float source and30Hz duration ticks	tools/crusades_registry_test.cpp
+weapon1#1/edgeeffectiveness	gameplay-checked	5	5	5	edgeeffectiveness/edgeeffectivness fallback1	tools/crusades_registry_test.cpp
+weapon1#1/emittime	gameplay-checked	7	4	7	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/explosionclass	presentation-checked	4	4	4	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon1#1/firestarter	gameplay-checked	2	2	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/maxvariation	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/minrange	gameplay-checked	9	5	9	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/model	presentation-checked	3	3	3	lowercase and strip .3do suffix	tools/crusades_registry_test.cpp
+weapon1#1/name	presentation-consumer-checked	6	6	6	name load and downstream status/fx consumers	src/sim/sim.cpp; tools/crusades_registry_test.cpp authored name/status and changed-name visual fallback
+weapon1#1/range	gameplay-checked	66	56	66	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/reloadtime	gameplay-checked	27	22	27	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon1#1/soundhitclass	presentation-checked	1	1	1	soundhitclass precedence over soundhit	tools/crusades_registry_test.cpp
+weapon1#1/turnrate	gameplay-checked	1	1	1	degrees to radians conversion	tools/crusades_registry_test.cpp
+weapon1#1/type	gameplay-checked	2	2	2	family enum and melee/ballistic/beam dispatch	tools/crusades_registry_test.cpp
+weapon1#1/variationtime	gameplay-checked	1	1	1	float source and30Hz variation ticks	tools/crusades_registry_test.cpp
+weapon1#1/weaponvelocity	gameplay-checked	6	4	6	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/aimtolerance	gameplay-checked	5	5	5	aimtolerance/aimtolerence fallback1024	tools/crusades_registry_test.cpp
+weapon2#1/areaofeffect	gameplay-checked	9	9	9	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/builduptime	gameplay-checked	1	1	1	float source and30Hz buildup ticks	tools/crusades_registry_test.cpp
+weapon2#1/buttonimagedisabled	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon2#1/buttonimagedown	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon2#1/buttonimageselected	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon2#1/buttonimageup	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon2#1/damage#1/default	gameplay-checked	21	16	21	default uint16 damage	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/dragon	gameplay-checked	5	5	5	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/factory	gameplay-checked	11	7	11	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/fort	gameplay-checked	12	8	12	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/god	gameplay-checked	1	1	1	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/lodestone	gameplay-checked	1	1	1	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/mechanical	gameplay-checked	8	8	8	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/monarch	gameplay-checked	4	3	4	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/naval	gameplay-checked	6	6	6	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/stalwart	gameplay-checked	5	5	5	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/damage#1/tier1	gameplay-checked	2	2	2	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon2#1/decaytime	gameplay-checked	2	2	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/duration	gameplay-checked	2	2	2	float source and30Hz duration ticks	tools/crusades_registry_test.cpp
+weapon2#1/edgeeffectiveness	gameplay-checked	2	2	2	edgeeffectiveness/edgeeffectivness fallback1	tools/crusades_registry_test.cpp
+weapon2#1/explosionclass	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon2#1/lightmap	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon2#1/manapershot	gameplay-checked	6	5	6	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/maxvariation	gameplay-checked	2	2	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/minrange	gameplay-checked	1	0	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/model	presentation-checked	1	1	1	lowercase and strip .3do suffix	tools/crusades_registry_test.cpp
+weapon2#1/name	presentation-consumer-checked	2	2	2	name load and downstream status/fx consumers	src/sim/sim.cpp; tools/crusades_registry_test.cpp authored name/status and changed-name visual fallback
+weapon2#1/noairweapon	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/particlespersecond	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon2#1/range	gameplay-checked	10	7	10	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/reloadtime	gameplay-checked	9	7	9	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon2#1/shakemagnitude	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon2#1/soundhit	presentation-checked	3	3	3	soundhitclass precedence over soundhit	tools/crusades_registry_test.cpp
+weapon2#1/soundhitclass	presentation-checked	2	2	2	soundhitclass precedence over soundhit	tools/crusades_registry_test.cpp
+weapon2#1/subtype	gameplay-checked	1	1	1	kind, mindcontrol, remote, status, straight/lightning/flame dispatch assertions	tools/crusades_registry_test.cpp
+weapon2#1/type	gameplay-checked	2	2	2	family enum and melee/ballistic/beam dispatch	tools/crusades_registry_test.cpp
+weapon2#1/variationtime	gameplay-checked	1	1	1	float source and30Hz variation ticks	tools/crusades_registry_test.cpp
+weapon2#1/waterexplosionclass	presentation-checked	2	2	2	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon2#1/weaponart	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon2#1/weaponvelocity	gameplay-checked	4	4	4	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon3#1/aimtolerance	gameplay-checked	2	2	2	aimtolerance/aimtolerence fallback1024	tools/crusades_registry_test.cpp
+weapon3#1/areaofeffect	gameplay-checked	5	4	5	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon3#1/buttonimagedisabled	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon3#1/buttonimagedown	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon3#1/buttonimageselected	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon3#1/buttonimageup	presentation-only	1	1	1	authored icon reference; current HUD uses name-derived weaponIcon; no simulation read	src/client/gameview_hud.cpp weaponIcon; source audit records exact key values
+weapon3#1/damage#1/airship	gameplay-checked	1	1	1	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/default	gameplay-checked	8	5	8	default uint16 damage	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/dragon	gameplay-checked	3	1	3	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/factory	gameplay-checked	8	5	8	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/fort	gameplay-checked	9	6	9	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/god	gameplay-checked	3	1	3	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/lodestone	gameplay-checked	1	0	1	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/monarch	gameplay-checked	10	6	10	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/damage#1/naval	gameplay-checked	2	1	2	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
+weapon3#1/duration	gameplay-checked	1	1	1	float source and30Hz duration ticks	tools/crusades_registry_test.cpp
+weapon3#1/edgeeffectiveness	gameplay-checked	1	1	1	edgeeffectiveness/edgeeffectivness fallback1	tools/crusades_registry_test.cpp
+weapon3#1/explosionclass	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon3#1/lightmap	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon3#1/manapershot	gameplay-checked	5	5	5	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon3#1/name	presentation-consumer-checked	2	1	2	name load and downstream status/fx consumers	src/sim/sim.cpp; tools/crusades_registry_test.cpp authored name/status and changed-name visual fallback
+weapon3#1/noairweapon	gameplay-checked	1	1	1	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon3#1/particlespersecond	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon3#1/range	gameplay-checked	3	3	3	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon3#1/reloadtime	gameplay-checked	3	3	3	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
+weapon3#1/soundhit	presentation-checked	1	1	1	soundhitclass precedence over soundhit	tools/crusades_registry_test.cpp
+weapon3#1/soundhitclass	presentation-checked	1	1	1	soundhitclass precedence over soundhit	tools/crusades_registry_test.cpp
+weapon3#1/subtype	gameplay-checked	1	1	1	kind, mindcontrol, remote, status, straight/lightning/flame dispatch assertions	tools/crusades_registry_test.cpp
+weapon3#1/type	gameplay-checked	1	1	1	family enum and melee/ballistic/beam dispatch	tools/crusades_registry_test.cpp
+weapon3#1/waterexplosionclass	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon3#1/weaponart	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
+weapon3#1/weaponvelocity	gameplay-checked	2	2	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp

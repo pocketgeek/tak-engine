@@ -232,8 +232,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     t.defaultFire = uint8_t(int(info->numberOr("standingfireorder", 2)) & 3);
                 }
             }
-            t.waterMult = Fixed::fromRetailNumber(info->numberOr("watermultiplier",
-                                info->numberOr("watermultipliser", 1)));
+            // Native 4bfc62 reads only this spelling, defaulting to 16.16 1.0.
+            // The Crusades deer definitions' "watermultipliser" is ignored.
+            t.waterMult = Fixed::fromRetailNumber(info->numberOr("watermultiplier", 1));
             // Exact key only: the icd's parser knows no typo fallback, so
             // verpult's "roadmultplier" never counted in retail either. The
             // retail default is ~1.2 (16.16 0x13333), NOT 1.0.
@@ -310,6 +311,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 }
             }
             t.canFly = info->numberOr("canfly", 0) != 0;
+            // Native 4bfe91-4bfed5 sets UnitDef+260 bit31 from either key;
+            // 4d453c tests that bit before delivering the WindChange callback.
+            t.receivesWind = info->numberOr("wind", 0) != 0 ||
+                             info->numberOr("windgenerator", 0) != 0;
             t.transportLandEligible=info->numberOr("minwaterdepth",-10000)<0;
             std::string mc = lower(info->valueOr("movementclass", ""));
             if (mc.rfind("water", 0) == 0) t.domain = UnitType::Domain::Water;
@@ -555,11 +560,15 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.edge = float(w->numberOr("edgeeffectiveness",
                                 w->numberOr("edgeeffectivness", 1.0)));
                 if (const auto* dmg = w->child("DAMAGE")) {
-                    wp.damage = float(dmg->numberOr("default", 0));
+                    wp.damage = uint16_t(std::atoi(dmg->valueOr("default", "0").c_str()));
                     // Per-target-category damage (every DAMAGE key but `default`).
                     for (const auto& [k, v] : dmg->values)
-                        if (k != "default")
-                            wp.dmgVs[k] = float(std::atof(v.c_str()));
+                        if (k != "default") {
+                            // Retail stores integer damage after a binary64 product
+                            // (CRT precision53), before attack/armor modifiers.
+                            volatile double amount = double(wp.damage) * std::atof(v.c_str());
+                            wp.dmgVs[k] = int32_t(amount);
+                        }
                 }
                 return wp;
             };
@@ -3481,8 +3490,7 @@ void World::attack(int unitId, int targetId, bool queue) {
 //
 // Deterministic: types_ is a name-sorted std::map and dmgVs a string-keyed map, so
 // both are walked in the same order on every peer and the same token always gets the
-// same id. Order within a weapon's override list is preserved, which is what keeps
-// category precedence identical -- damageVs returns the FIRST category that matches.
+// same id. Damage uses the single DamageCategory token, not CATEGORY/TEDClass.
 void TypeRegistry::internCategories() {
     catIds_.clear();
     auto idOf = [&](const std::string& tok) {
@@ -3493,6 +3501,7 @@ void TypeRegistry::internCategories() {
         return id;
     };
     for (auto& [name, t] : types_) {
+        t.damageCategoryId = t.damageCategory.empty() ? -1 : idOf(t.damageCategory);
         t.catIds.clear();
         t.catIds.reserve(t.categories.size());
         for (const auto& c : t.categories) t.catIds.push_back(idOf(c));
@@ -3509,41 +3518,16 @@ void TypeRegistry::internCategories() {
 }
 
 float Weapon::damageVs(const UnitType* t) const {
-    // A per-category DAMAGE entry is a MULTIPLIER on `default`, not a damage figure.
-    // This returned the entry directly, which is how the Barracks became unkillable:
-    // arakeep is damagecategory=factory, the Crusades swordsman declares factory=0.5,
-    // and 0.5 was read as half a hit point. Against 17162 HP with healtime=1.25 (0.8
-    // HP/s of regen) the building out-healed a besieging army by three orders of
-    // magnitude -- every arrow visibly connecting, the health bar never moving.
-    //
-    // The data says multiplier plainly once you look at all of it. Across both
-    // datasets the values cluster on 0.04/0.08/0.2/0.25/0.5/0.75/1.1/1.25/1.5/2/3 --
-    // 0.25 and 0.5 alone are 129 of the 249 entries in unitscb. Read as absolute
-    // damage those are fractions of one HP, i.e. every override in the game would
-    // mean "this weapon does nothing", which is not a balance system. Read as
-    // multipliers they are exactly the expected table: siege weapons strong against
-    // structures (arasmith factory=2.0, fort=2.0), infantry weak against them
-    // (factory=0.5), an assassin devastating against soft targets (araspy human=6,
-    // tier1=6), anti-air multiplied against flyers (verball airship=4). The clincher
-    // is npcemen, a campaign duellist with buri=100 against Lord Buriash (2940 HP):
-    // as a multiplier that is the scripted one-shot kill the mission wants, as
-    // absolute damage it is 100 and the duel takes thirty hits.
-    if (t && !dmgVsIds.empty()) {
-        // Integer compares over two short vectors, instead of a string-keyed tree walk
-        // per candidate. Same traversal order, so the same category wins.
-        for (int c : t->catIds)
-            for (const auto& [k, v] : dmgVsIds)
-                if (k == c) return damage * v;
+    // KINGDOMS.icd 531e50 reads only UnitDef+9e (DamageCategory); 531de0
+    // returns the precomputed integer table entry, or the unsigned default.
+    if (!t) return damage;
+    if (t->damageCategoryId >= 0 && !dmgVsIds.empty()) {
+        for (const auto& [key, amount] : dmgVsIds)
+            if (key == t->damageCategoryId) return float(amount);
         return damage;
     }
-    // Fallback for a registry that was never interned (tools, tests): the original
-    // lookup, so behaviour does not depend on whether internCategories() ran.
-    if (t && !dmgVs.empty())
-        for (const auto& c : t->categories) {
-            auto it = dmgVs.find(c);
-            if (it != dmgVs.end()) return damage * it->second;
-        }
-    return damage;
+    const auto it = dmgVs.find(t->damageCategory);
+    return it == dmgVs.end() ? damage : float(it->second);
 }
 
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,

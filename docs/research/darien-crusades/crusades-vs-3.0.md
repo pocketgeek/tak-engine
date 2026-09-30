@@ -16,7 +16,7 @@ See the [complete generated difference report](patch-diff.md).
 |---|---|
 | `CustomDialogSet_DISPLAY-Select Destination Directory` | Extracted installer dialog differs |
 | `WiseScript.bin` | Extracted installer script differs; branches not interpreted |
-| `MAINDIR/kingdoms.mmz` | Payload bytes differ; format/function not established here |
+| `MAINDIR/kingdoms.mmz` | ZIP updater manifest differs; [format and role traced](updater-manifest.md), installation branches remain unproven |
 
 `KINGDOMS.icd`, `Kingdoms.exe`, `bymaia.dll`, `Rover.dll`, `Jersey.hpi`,
 `V2Rocket.hpi`, `V3Rocket.hpi`, `boneyards.hpi`, `boneyards2.hpi`, and
@@ -32,7 +32,7 @@ The Crusades payload adds:
 - 181 KMP map containers and 724 decoded CRT/OTA/TNT/TXT members.
 - `meta.hpi` and its 115 decoded members: 31 GAF, 31 PCX, 29 PNG, 20 GUI,
   two TSF, one BAT and one TDF.
-- Five BIK movie files.
+- Five BIK chunks forming one movie; [native assembly and full decode](asset-parse-sweep.md) verify the relationship.
 - One additional HTML file.
 
 It omits six standalone unit readmes under `MAINDIR/Docs`:
@@ -43,12 +43,16 @@ installed readmes.
 ## Parser checks
 
 All archive members were decoded and hashed using existing `hpitool`.
-A follow-up pass checked 203 representative/all-added format candidates:
+The initial follow-up checked 203 representative/all-added format candidates:
 **181 OTA + one TDF + one TNT passed**. **All 20 added GUI files were rejected
 by `tdftool`**, starting with its expected-section check. The observed Boneyards
 GUI format is numeric text, unlike the TDF GUI syntax; these require separate
 format research. Results are recorded in [parser-checks.json](inventories/parser-checks.json).
-No parser failure was silently classified as successful coverage.
+No parser failure was silently classified as successful coverage. The later
+[complete added-asset sweep](asset-parse-sweep.md) supersedes that initial sample:
+all 181 TNTs, all added image/sprite resources and every frame of the assembled
+movie were parsed/decoded. The 20 numeric GUI files remain an explicitly
+unsupported format, and three OTA byte-round-trip differences are documented.
 
 The patch page's advertised 182 maps versus 181 extracted map containers remains
 an open discrepancy. We have not inferred an extra territory or map to close it.

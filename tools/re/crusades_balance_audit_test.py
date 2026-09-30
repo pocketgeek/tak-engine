@@ -1,6 +1,7 @@
 """Synthetic archived data exercises VFS/TDF balance comparison; no game assets."""
 import csv
 import io
+import hashlib
 from pathlib import Path
 import subprocess
 import tempfile
@@ -12,7 +13,7 @@ HPI = ROOT / 'build/hpitool'
 
 @unittest.skipUnless(AUDIT.exists() and HPI.exists(), 'Build crusades_balance_audit and hpitool first')
 class BalanceAuditTests(unittest.TestCase):
-    def run_audit(self, files):
+    def run_audit(self, files, *options):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / 'input'
@@ -25,7 +26,7 @@ class BalanceAuditTests(unittest.TestCase):
             data.mkdir()
             subprocess.run([str(HPI), 'pack', str(source), str(data/'data.hpi')],
                            check=True, capture_output=True)
-            return subprocess.run([str(AUDIT), str(data)], text=True, capture_output=True)
+            return subprocess.run([str(AUDIT), str(data), *options], text=True, capture_output=True)
 
     def test_nested_diff_and_prose_redaction(self):
         result = self.run_audit({
@@ -62,6 +63,20 @@ class BalanceAuditTests(unittest.TestCase):
         rows = list(csv.DictReader(io.StringIO(result.stdout), delimiter='\t'))
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0]['field'],'effect#1/value')
+
+    def test_manifest_records_decoded_bytes_and_archive_source(self):
+        text = '[UNITINFO]{MaxDamage=10;}'
+        result = self.run_audit({'units/example.fbi': text}, '--manifest')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = list(csv.DictReader(io.StringIO(result.stdout), delimiter='\t'))
+        archive = next(r for r in rows if r['kind'] == 'archive')
+        member = next(r for r in rows if r['kind'] == 'member')
+        self.assertEqual(archive['path'], 'data.hpi')
+        self.assertEqual(member['path'].lower(), 'units/example.fbi')
+        self.assertTrue(member['source'].startswith('data.hpi'))
+        encoded = text.replace(';', ';\n').encode()
+        self.assertEqual(int(member['size']), len(encoded))
+        self.assertEqual(member['sha256'], hashlib.sha256(encoded).hexdigest())
 
     def test_absent_overlay_fails(self):
         result = self.run_audit({'units/test.fbi': '[UNITINFO]{MaxDamage=1;}'})

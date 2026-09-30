@@ -68,9 +68,12 @@ It is not evidence for an untouched Iron Plague CD or standard-3.0 installation.
 
 Its `KINGDOMS.icd` is 2,277,500 bytes but hashes to
 `1144a394889811ae6d113f8fe470dac5de0b0a7aae3c9ee063f74b8d20b730db`, distinct
-from EXE-3. This pass does not identify the cause of the difference. Local
+from EXE-3. The same executable bytes were subsequently recovered from the user-owned
+GOG offline installer (GOG-2.0.0.22 below), establishing a packaged source for
+the difference without attributing it to a local modification. Local
 `bymaia.dll`, `Rover.dll`, and `Boneyards/Metagame/Darien.def` match the patch
-payload bytes. Original Iron Plague media comparisons remain outstanding.
+payload bytes. Original Iron Plague CD data have now also been acquired and
+compared; see the [provenance investigation](distribution-provenance.md).
 
 ## Extraction tooling
 
@@ -108,3 +111,91 @@ of future features and are not evidence that every described rule was running
 unchanged on the final service. See the [rules analysis](campaign-rules-evidence.md).
 An internet search for the momentum/orphan-battle text found no useful
 independent corroboration; unrelated search results were not used as evidence.
+
+
+## Original Iron Plague CD and GOG corroboration
+
+**IRON-PLAGUE-CD** — [English Thailand-release preservation item](https://archive.org/details/tak-iron-plague-thai-release),
+retrieved 2026-09-30 from its `Images/IRON_PLAGUE.bin` download. The uploader's
+regional attribution is unverified; the disc volume identifies Cavedog as
+publisher. Size 715374912 bytes; SHA-256
+`e5c4f6504e5151992f977f44a18788b47e85daedbd83f6ff0a935cb7b5abc82e`.
+Observed SHA-1 `900bc863716c04c6247c898543342c6b70482553` matches the published
+Archive file metadata. Its decoded MODE1 ISO SHA-1 also matches the independently
+listed [Iron Plague ISO](https://archive.org/details/total-annihilation-kingdoms-iron-plague).
+This is cross-listing byte corroboration, not publisher authentication.
+Original BIN and extracted files remain ignored. Full measurements, extraction
+method, tool revision, CD/CAB inventories and differences are recorded in
+[distribution-provenance.md](distribution-provenance.md).
+
+**GOG-2.0.0.22** — user-owned offline
+`setup_total_annihilation_kingdoms_2.0.0.22.exe`, 959342944 bytes; SHA-256
+`6d40e338887dc94d036c7858ce683637ada307a36fad0bc21c80729bf7bd570e`.
+Found in local Downloads and inspected 2026-09-30; original download date and
+independently published digest unknown. Innoextract 1.9 extracted a selected
+40-file research scope without running the installer. All 40 files match the
+corresponding current `assets/game` files. Main base/IP archives also match
+original CD bytes. This does not reclassify the entire live tree as pristine.
+
+**WEB-NEWS** — [Preserved Cavedog Kingdoms news page](https://zx.net.nz/mirror/www.cavedog.com/ta-kingdoms/news.html),
+retrieved 2026-09-30; 6956 bytes; SHA-256
+`d5a8a389ae51bdfbf7e56dfde66ebd1687edb53dec92374fedf5e7530ec31263`.
+Publisher-authored promotional text preserved by a third party identifies Honor
+and Terror and battles contributing to Darien's outcome. It corroborates the
+campaign framing; it supplies no numeric campaign rule formulas. Snapshot date
+is unknown. The page contains mirror-era script additions, so its digest pins
+retrieved bytes rather than an authenticated original publisher file.
+
+**RECON-HISTORY** — `MAINDIR/Boneyards/Profile/TAK_reconhistory.htm`, 6907
+bytes; SHA-256 `c89738d776303f29ef40965a5d3feee168806891ca7344dc421a9bccc336b948`.
+**RECON-0** — sibling `Tak_rec0.htm`, 6906 bytes; SHA-256
+`4b9b49e05c3f5d109a71f94c71cd84363a3303b9d6a31e351b07f02e23ca4314`.
+Both are byte-identical between PATCH-STANDARD and PATCH-CRUSADES. Active
+native template references and their limits are described in
+[territory-parameters.md](territory-parameters.md).
+
+## Manual, contemporary press and public-source search coverage
+
+**MANUAL-IP** — [Preserved Iron Plague manual](https://archive.org/details/total-annihilation-kingdoms-iron-plague-manual),
+`Total_Annihilation_Kingdoms_-_Iron_Plague_manual_big_text.pdf`, retrieved
+2026-09-30; 5327133 bytes; SHA-256
+`70802a0b8d9e8fcdb22118c4eab1dfcf908aca40fc07f1ae62daee0e41dbf026`.
+Publisher-authored printed manual preserved as a third-party scan/OCR derivative,
+not a publisher-authenticated digital original. Printed page 1 (PDF page 2)
+was visually inspected: original Kingdoms is required, and Crusades requires
+additional disk space beyond the expansion. OCR was used for searching, not
+for exact spelling or layout claims. The document supplies installation/support
+information, not the missing server formulas. Original PDF remains ignored.
+
+**PRESS-GAMEOVER** — Dick Ritchie's [Iron Plague review](https://www.game-over.net/review/march2000/plague/),
+March 2000 URL; retrieved HTML 15602 bytes, SHA-256
+`4a0d0d26f295ea3d348901145bc9c37073dc25acba2c2ba7b4313a48a3b2612d`.
+The exact publication day is unavailable because its surviving HTML contains
+unexpanded date-server directives. It corroborates inclusion of the online
+Crusades mode, not precise metagame mechanics. Its three linked screenshots
+`Screen0.JPG`, `Screen1.JPG`, and `Screen2.JPG` were retrieved and visually
+inspected: all show ordinary tactical battles, **not** the strategic map.
+They cannot establish campaign labels, rank displays or battle-selection flow.
+
+The Milestone 1.7 search covered the requested source categories as follows:
+
+| Source category | Outcome / limit |
+|---|---|
+| Cavedog/support/download pages | WEB-PATCH and WEB-NEWS preserved publisher text; downloaded update payloads fingerprinted |
+| Boneyards pages and FAQs | Original shipped Help144/146/147 and recon templates provide primary offline copies; linked online `totalannihilation.com/boneyards/by_tak/dcrusades.html` mirror candidates returned 404 |
+| Manuals, release/patch notes | MANUAL-IP, CD readme, README-3 and extracted updater manifest inspected |
+| Gaming press/contemporary reviews | PRESS-GAMEOVER inspected; contemporary reporting corroborates availability, not numeric rules |
+| Old clan/fan pages | Exact-name searches with clan/Boneyards terms yielded later encyclopedia repetitions, not verified contemporary rule evidence |
+| Usenet | Exact-name searches restricted to `groups.google.com` found no useful inspected Crusades thread; this is search failure, not proof none existed |
+| Archived forums | [2008 CodeWeavers discussion](https://www.codeweavers.com/compatibility/crossover/forum/total-annihilation-kingdoms?msg=43479) identifies the two patch filenames; [2007 player recollection](https://forum.quartertothree.com/t/caveat-emptor-most-regretted-game-purchases/38482?page=7) recalls the metagame, but neither establishes its rules |
+| Screenshots | PRESS-GAMEOVER's tactical shots inspected and excluded from metagame-layout evidence; packaged strategic art/templates remain the direct available evidence |
+| Videos | Exact-name video/YouTube searches found no verified recording of a live original Crusades service; unrelated tactical gameplay is not a substitute |
+| Download mirrors | FTP-MIRROR, HASH-CROSSCHECK and IRON-PLAGUE-CD provide actual retrieved and hashed artifacts |
+
+Queries included `"Darien Crusades"` combined with `screenshot`, `review`,
+`clan`, `forum`, `video`, and domain restrictions for Google Groups, YouTube
+and TA Universe. A search hit was not treated as an inspected original rule.
+No campaign arithmetic, adjacency list, server source or authoritative campaign
+snapshot was recovered through this public-material pass. These are bounded
+search results as of 2026-09-30, not a claim that every surviving archive has
+been exhausted.

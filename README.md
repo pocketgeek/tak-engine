@@ -508,6 +508,8 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
+Current development builds use **protocol 204** for retail damage-category
+selection and integer damage tables; update clients and servers together.
 Version **0.7.13 uses protocol 198** for shared authored-scenario setup
 and preserved map companions. Version **0.7.14 uses protocol 200** for
 construction restrictions, authored stats, independent scenario outcomes and

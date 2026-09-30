@@ -2,9 +2,12 @@
 // Never emits whole definitions or descriptive game prose.
 #include "hpi/hpi.h"
 #include "tdf/tdf.h"
+#include "net/crypto.h"
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <fstream>
+#include <array>
 #include <map>
 #include <set>
 #include <string>
@@ -45,10 +48,39 @@ static bool prose(const std::string& key) {
     return leaf=="name" || leaf=="description" || leaf=="designation";
 }
 int main(int argc,char**argv) {
-    if(argc!=2){std::cerr<<"usage: crusades_balance_audit <retail-data-root>\n";return 2;}
+    const bool manifest=argc==3 && std::string(argv[2])=="--manifest";
+    if(argc!=2 && !manifest){std::cerr<<"usage: crusades_balance_audit <retail-data-root> [--manifest]\n";return 2;}
     try {
         auto root=tak::hpi::mountRetailRoot(argv[1],tak::hpi::OverridePolicy::None);
         tak::hpi::Vfs vfs(&root,true); // downloaded map resources cannot change this audit
+        if(manifest) {
+            tak::hpi::MountSet sources(argv[1],tak::hpi::MountConfig{
+                .includeLoose=false,.archiveExts={".hpi"},.keep={},
+                .archiveNames=tak::hpi::kRootHpiNames});
+            std::cout<<"kind\tpath\tsource\tsize\tsha256\n";
+            for(const auto& path:sources.archiveFiles()) {
+                std::ifstream file(path,std::ios::binary);
+                if(!file)throw std::runtime_error("Cannot fingerprint archive");
+                tak::crypto::Sha256 hash;
+                std::array<char,65536> buffer{};size_t size=0;
+                while(file.read(buffer.data(),buffer.size()) || file.gcount()) {
+                    const auto count=size_t(file.gcount());size+=count;hash.update(buffer.data(),count);
+                }
+                if(!file.eof())throw std::runtime_error("Archive fingerprint read failed");
+                std::cout<<"archive\t"<<escaped(path.filename().string())<<"\t-\t"<<size
+                         <<'\t'<<tak::crypto::toHex(hash.final())<<'\n';
+            }
+            for(const auto* prefix:{"units","unitscb","canbuild","canbuildcb","gamedata"})
+                for(const auto& path:vfs.list(prefix)) {
+                    const auto bytes=vfs.read(path);
+                    if(!sources.has(path) || sources.read(path)!=bytes)
+                        throw std::runtime_error("VFS/source disagreement: "+path);
+                    std::cout<<"member\t"<<escaped(path)<<'\t'<<escaped(sources.sourceOf(path))
+                             <<'\t'<<bytes.size()<<'\t'
+                             <<tak::crypto::toHex(tak::crypto::sha256(bytes.data(),bytes.size()))<<'\n';
+                }
+            return 0;
+        }
         std::cout<<"kind\tpath\tfield\tstandard\tcrusades\n";
         size_t compared=0,changedFiles=0,changedFields=0,addedFiles=0;
         for(const auto& prefix:{std::string("units"),std::string("canbuild")}) {

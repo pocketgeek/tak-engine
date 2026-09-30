@@ -1,28 +1,38 @@
 # Darien Crusades research
 
-Status: the plan's **first actionable task** is complete. The full historical
-archaeology milestone remains open; there is no campaign implementation here.
+This directory records the Milestone 1 archaeology, native-reader verification
+and source-scoped balance audit. See the [acceptance audit](milestone-one-status.md)
+for current completion and validation status. No historical campaign service has
+been implemented.
 
 - [Milestone 1 acceptance audit](milestone-one-status.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)
 - [Installer inventory and extraction](installer-inventory.md)
+- [Original CD and GOG distribution provenance](distribution-provenance.md)
+- [Added-asset parser sweep](asset-parse-sweep.md)
 - [Crusades versus the smaller 3.0 update](crusades-vs-3.0.md)
 - [Local Iron Plague-era installation comparison](crusades-vs-iron-plague.md)
 - [Evidence matrix](evidence-matrix.md)
 - [Territory definition and companion tables](territory-format.md)
+- [Territory parameters and geometry](territory-parameters.md)
 - [Updater manifest](updater-manifest.md)
 - [Binary trace notes](binary-notes.md)
 - [Campaign rules recovered from shipped help](campaign-rules-evidence.md)
+- [Territory selection, battle entry and result lifecycle](campaign-flow.md)
 - [Battle settings and score-report boundary](battle-contract.md)
 - [Report queue, encoding and incoming reports](report-transport.md)
+- [Native balance field findings](balance-field-review.md)
 - [Machine-readable inventories](inventories/)
 
 All committed artifacts are metadata or original research notes. Original
 installers, extracted files, scripts, artwork and game data stay outside Git.
-The research does not launch installers or the game. Nothing was added to
-production networking, campaign storage, balance rules, or `World::stateHash()`.
+The research does not launch installers or the retail game. Native blocks are
+checked in isolated emulation. Proven balance-reader and combat mismatches were
+corrected in the engine; these changes and their validation are recorded in the
+[balance reference](../../crusades-balance-reference.md). No campaign storage or
+historical campaign-server protocol was added.
 
 ## Reproduce an inventory
 
@@ -58,22 +68,25 @@ byte changes. A parser candidate means a tool recognizes that format, not that
 this particular asset has passed a semantic parse. These inventories do not
 resolve mount precedence or prove the contents of a completed installation.
 
-## Next research steps
+## Recovered boundaries and remaining historical unknowns
 
-1. Decode installer conditions and updater precedence. The MMZ updater-manifest
-   role is established, but it does not prove which files an installer writes.
-2. Recover Darien definition semantics, particularly the borders/parcel data;
-   field names alone do not prove battle eligibility or a territory graph.
-3. Continue the Rover score-report trace through serialization, replies and
-   report finalization; the client-to-Rover message boundary is now documented.
-4. Recover fatigue/support/toughness arithmetic and result protocol. Shipped
-   help now documents server calculations, momentum history and deferred
-   results, but supplies neither exact formulas nor the wire contract.
-5. Complete the per-field Crusades Balance audit independently of the metagame.
+The package/member comparisons now include the original Iron Plague CD and a
+fingerprinted GOG distribution. The added assets have a format-by-format parse
+sweep. Territory selection, host/join, launch settings, tactical staging, report
+serialization and result-event gates have native traces. Balance differences
+have complete source reports and effective registry checks.
+
+The surviving client does not establish historical server capture/ranking
+formulas, authoritative result acceptance, deduplication or durable campaign
+mutation. Territory hit-test imagery is not an adjacency graph. Extracted
+installer payloads and updater manifests do not establish every installation
+branch or the order of later online updates. These boundaries remain explicit
+in the linked evidence; they are not requests to invent missing rules.
 
 ## Validation
 
-All 146 Python research tests passed, including 13 inventory/comparison
+The initial inventory/parser pass recorded 146 passing Python research tests,
+including 13 inventory/comparison
 cases and 10 territory-parser cases. These cover hashes, changed/added/removed files, case-only renames,
 case-fold collisions, archive identity, filter disclosure, symlinks, missing
 sources, invalid manifests, output/input isolation, malformed HPI listings and
@@ -83,5 +96,7 @@ validated the fingerprinted definition and reproduced the aggregate report.
 Its synthetic tests cover multiline and CP1252 text, omitted prose, malformed
 fields, types, counts, dimensions, duplicate identities and trailing garbage.
 
-No engine rebuild or gameplay sweep was required: only research Python and
-Markdown/metadata changed.
+That initial pass changed only research tooling and metadata. Later native
+balance findings required engine changes, rebuilds and gameplay validation;
+consult the [current acceptance audit](milestone-one-status.md) and
+[balance reference](../../crusades-balance-reference.md) for the final results.
