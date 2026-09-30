@@ -33,4 +33,21 @@ storage and performance rather than the interface.
 
 ## Publication
 
-Platform package builds and final version checks are recorded after tagging.
+Tag `v0.7.15` points to `e5a10f6`. All tag workflows passed:
+[Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36659267050),
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36659267131), and
+[macOS ARM64](https://github.com/pocketgeek/tak-engine/actions/runs/36659267123).
+The duplicate branch package runs for the same commit were canceled; the tag
+runs performed the platform checks and published the packages.
+
+All **14** packages/debug archives are attached to the
+[release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.15).
+Downloaded Windows and macOS ZIPs and the Ubuntu 24.04 package passed SHA-256
+verification against GitHub's asset digests. Archive contents include client,
+server and Cartographer; ZIP license files, Linux desktop launchers and package
+version, and both macOS app-bundle versions were checked.
+
+All targets were rebuilt locally in Release, optimized Debug and sanitizer
+configurations. Client and server report `0.7.15 (build v0.7.15)` in all three.
+The version-stamped suites passed again: **124/124**, **129/129**, **125/125**.
+No new interactive Windows/macOS session or nine-hour spectator test is claimed.
