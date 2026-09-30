@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.14-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.15-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -44,7 +44,22 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.14
+## New in 0.7.15
+
+- **Long-match performance:** fully expired unit records are removed from the
+  simulation, and render snapshots use compact storage. Old casualties no longer
+  keep adding full records to simulation and rendering work.
+- **Preserved lifecycle:** active corpses, scripts and in-flight attacks remain
+  available; unit IDs and delayed kill attribution stay intact.
+
+Version **0.7.15 uses protocol 201**. Update clients and servers together;
+0.7.14 uses protocol 200 and cannot join the same match.
+See the [release notes](docs/release-0.7.15-notes.md),
+[validation report](docs/release-0.7.15-validation.md), and
+[performance measurements](docs/unit-retirement-performance-2026-09-29.md).
+The original nine-hour Windows slowdown still needs a long-session retest.
+
+### Previously in 0.7.14
 
 <table>
   <tr><td><a href="docs/img/cartographer.png"><img src="docs/img/cartographer.png" alt="Cartographer with a searchable unit browser, terrain canvas and minimap"></a><br><sub>Cartographer: unit browser and map canvas</sub></td>
@@ -65,9 +80,6 @@ the GOG edition, supplies the game data.
   background saving, map checks, regions/rules, F6 model inspection and F5 Test Map.
 
 Version **0.7.14 uses protocol 200**. Update clients and servers together.
-The current checkout uses **protocol 201**, with expired-unit cleanup and compact
-render snapshots to reduce long-match overhead; it cannot join released 0.7.14
-matches. See the [long-match performance checks](docs/unit-retirement-performance-2026-09-29.md).
 See the [release notes](docs/release-0.7.14-notes.md),
 [validation report](docs/release-0.7.14-validation.md), and
 [Cartographer guide](docs/user-guide.md#map-editor). Full retail mission-runtime
@@ -144,7 +156,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.14** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.15** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -449,7 +461,7 @@ Version **0.7.13 uses protocol 198** for shared authored-scenario setup
 and preserved map companions. Version **0.7.14 uses protocol 200** for
 construction restrictions, authored stats, independent scenario outcomes and
 retail trigger/placement behavior.
-The current checkout uses **protocol 201** for deterministic expired-unit cleanup.
+Version **0.7.15 uses protocol 201** for deterministic expired-unit cleanup.
 Rebuild/update clients and servers together; different protocol versions cannot share a match.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
