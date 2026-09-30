@@ -83,6 +83,20 @@ Settings loadSettings() {
         else if (key == "playerName")      s.playerName = val;
         else if (key == "accountName")     s.accountName = val;
         else if (key == "audioDevice")     s.audioDevice = val;
+        else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
+        else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
+        else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
+        else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
+        else if (key == "gameCreate.randomStarts") s.gameCreate.randomStarts = asBool();
+        else if (key == "gameCreate.spectate") s.gameCreate.spectate = asBool();
+        else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
+        else if (key == "gameCreate.unitCap") s.gameCreate.unitCap = asInt(250, 2000);
+        else if (key == "gameCreate.fog") s.gameCreate.fog = asInt(0, 2);
+        else if (key == "gameCreate.overrides") s.gameCreate.overrides = asInt(0, 2);
+        else if (key == "gameCreate.mapSort") s.gameCreate.mapSort = asInt(0, 2);
+        else if (key == "gameCreate.mapSortDir") s.gameCreate.mapSortDir = (asInt(-1, 1) < 0 ? -1 : 1);
+        else if (key == "gameCreate.name") s.gameCreate.name = val;
+        else if (key == "gameCreate.generator") s.gameCreate.generator = val;
         else if (key == "lastMap")         s.lastMap = val;
         else if (key == "knownServers") {  // comma-joined, most recent first
             std::stringstream ks(val);
@@ -148,6 +162,20 @@ bool saveSettings(const Settings& s) {
     o << "playerName = " << s.playerName << "\n";
     o << "accountName = " << s.accountName << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
+    o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
+    o << "gameCreate.doubleSight = " << s.gameCreate.doubleSight << "\n";
+    o << "gameCreate.speedUnlock = " << s.gameCreate.speedUnlock << "\n";
+    o << "gameCreate.monarchExpendable = " << s.gameCreate.monarchExpendable << "\n";
+    o << "gameCreate.randomStarts = " << s.gameCreate.randomStarts << "\n";
+    o << "gameCreate.spectate = " << s.gameCreate.spectate << "\n";
+    o << "gameCreate.generated = " << s.gameCreate.generated << "\n";
+    o << "gameCreate.unitCap = " << s.gameCreate.unitCap << "\n";
+    o << "gameCreate.fog = " << s.gameCreate.fog << "\n";
+    o << "gameCreate.overrides = " << s.gameCreate.overrides << "\n";
+    o << "gameCreate.mapSort = " << s.gameCreate.mapSort << "\n";
+    o << "gameCreate.mapSortDir = " << s.gameCreate.mapSortDir << "\n";
+    o << "gameCreate.name = " << s.gameCreate.name << "\n";
+    o << "gameCreate.generator = " << s.gameCreate.generator << "\n";
     o << "lastMap = " << s.lastMap << "\n";
     if (!s.knownServers.empty()) {
         o << "knownServers = ";

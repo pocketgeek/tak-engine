@@ -79,6 +79,20 @@ int main() {
     // identity / session
     flips("playerName",      [](Settings& s) { s.playerName = "someone"; });
     flips("accountName",     [](Settings& s) { s.accountName = "someone"; });
+    flips("gameCreate.crusades", [](Settings& s) { s.gameCreate.crusades = !s.gameCreate.crusades; });
+    flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
+    flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
+    flips("gameCreate.monarchExpendable", [](Settings& s) { s.gameCreate.monarchExpendable = !s.gameCreate.monarchExpendable; });
+    flips("gameCreate.randomStarts", [](Settings& s) { s.gameCreate.randomStarts = !s.gameCreate.randomStarts; });
+    flips("gameCreate.spectate", [](Settings& s) { s.gameCreate.spectate = !s.gameCreate.spectate; });
+    flips("gameCreate.generated", [](Settings& s) { s.gameCreate.generated = !s.gameCreate.generated; });
+    flips("gameCreate.unitCap", [](Settings& s) { ++s.gameCreate.unitCap; });
+    flips("gameCreate.fog", [](Settings& s) { ++s.gameCreate.fog; });
+    flips("gameCreate.overrides", [](Settings& s) { ++s.gameCreate.overrides; });
+    flips("gameCreate.mapSort", [](Settings& s) { ++s.gameCreate.mapSort; });
+    flips("gameCreate.mapSortDir", [](Settings& s) { ++s.gameCreate.mapSortDir; });
+    flips("gameCreate.name", [](Settings& s) { s.gameCreate.name = "test"; });
+    flips("gameCreate.generator", [](Settings& s) { s.gameCreate.generator = "test"; });
     flips("lastMap",         [](Settings& s) { s.lastMap = "Inner Circle"; });
     flips("dataDir",         [](Settings& s) { s.dataDir = "/somewhere/else"; });
     flips("dataManifest",    [](Settings& s) { s.dataManifest = "deadbeef"; });
@@ -129,6 +143,8 @@ int main() {
         cur.playerName = "curtis";
         cur.accountName = "curtis";
         cur.lastMap = "Inner Circle";
+        cur.gameCreate.crusades = true;
+        cur.gameCreate.generator = "saved recipe";
         cur.hotkeys["selectAll"] = "ctrl+a";
         // Preferences that must be RESET.
         cur.unitShadows = false;
@@ -139,6 +155,7 @@ int main() {
         cur.bilinear = true;
 
         const Settings d = tak::preferenceDefaults(cur);
+        if (!(d.gameCreate == cur.gameCreate)) ++g_fail;
         auto keep = [&](const char* what, bool ok) {
             std::printf("  keeps %-18s %s\n", what, ok ? "ok" : "FAIL (destroyed by DEFAULTS)");
             if (!ok) ++g_fail;

@@ -444,6 +444,20 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
     auto in = [](const SDL_FRect& r, float mx, float my) {
         return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
     };
+    if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
+        if (openDrop_ >= 0) { openDrop_ = -1; return false; }
+        const float mx = float(e.button.x), my = float(e.button.y);
+        const float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;
+        if (my < panel_.y + titleH || my > panel_.y + panel_.h - footerH) return false;
+        for (auto& c : ctls_) {
+            if (!in(c.row, mx, my) || c.kind != Control::Toggle) continue;
+            c.set(c.get() > 0.5f ? 0.0f : 1.0f);
+            dirty_ = true;
+            if (onChange_) onChange_();
+            break;
+        }
+        return false;
+    }
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
         if (nameEditing_) { nameEditing_ = false; SDL_StopTextInput(); }
         float bmx = float(e.button.x), bmy = float(e.button.y);

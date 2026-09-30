@@ -165,6 +165,11 @@ bool CampaignScreen::input(const SDL_Event& e,int w,int h) {
         if(key==SDLK_TAB && !d.camps.empty())d.selectCampaign((d.tab+1)%int(d.camps.size()));
     }
     if(e.type==SDL_MOUSEWHEEL)d.page=std::clamp(d.page-e.wheel.y,0,std::max(0,d.count()-1));
+    if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_RIGHT) {
+        const float x=float(e.button.x),y=float(e.button.y);
+        if(Impl::inside(d.rect(lay,"NextPage"),x,y))d.page=std::max(0,d.page-1);
+        if(Impl::inside(d.rect(lay,"PreviousPage"),x,y))d.page=std::min(std::max(0,d.count()-1),d.page+1);
+    }
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
         const float x=float(e.button.x),y=float(e.button.y);
         if(Impl::inside(d.rect(lay,"Previous"),x,y)){d.click("Previous");return true;}

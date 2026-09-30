@@ -72,6 +72,15 @@ struct Settings {
     std::string accountName;       // last multiplayer account signed in with. The
                                    // PASSWORD is deliberately not here and is never
                                    // written to disk -- see src/net/auth.h.
+    struct GameCreate {
+        bool crusades = false, doubleSight = false, speedUnlock = false;
+        bool monarchExpendable = false, randomStarts = false, spectate = false;
+        bool generated = false;
+        int unitCap = 2000, fog = 1, overrides = 1;
+        int mapSort = 0, mapSortDir = 1;
+        std::string name = "game", generator;
+        friend bool operator==(const GameCreate&, const GameCreate&) = default;
+    } gameCreate;
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
     // Servers that connected successfully (most recent first, capped at 8). The
     // menu's CONNECT dropdown lists these under the default server.
@@ -127,7 +136,7 @@ struct Settings {
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.accountName == b.accountName
-            && a.lastMap == b.lastMap
+            && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
             && a.audioDevice == b.audioDevice
@@ -164,6 +173,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.playerName = cur.playerName;
     d.accountName = cur.accountName;
     d.lastMap = cur.lastMap;
+    d.gameCreate = cur.gameCreate;
     d.hotkeys = cur.hotkeys;                      // reset from the Hotkeys screen
     d.dataDir = cur.dataDir;
     d.dataManifest = cur.dataManifest;

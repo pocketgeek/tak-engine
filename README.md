@@ -418,6 +418,7 @@ only displays it). Chat is available in live networked games (single-player also
 | **Shift** + selection | Add to the selection |
 | **Ctrl** + selection | Remove from the selection |
 | **Right-click** | Contextual move, attack, or other applicable order; **Shift** queues |
+| **Right-click a cycling setting** | Previous choice (left-click selects the next); works in game setup, lobby, options toggles, and streaming settings |
 | **Middle-drag / screen edges** | Pan the camera |
 | **Mouse wheel** | Zoom toward the cursor |
 | **Minimap left-click / drag** | Move the camera; an armed order instead targets that location |
@@ -540,7 +541,13 @@ Unit scripts control corpse selection and the handoff from death animation to
 wreck. Buildings also use the authored palette shading and per-piece shadow
 flags observed in retail Glide.
 
-The in-game stats panel shows **Real Time**, **Game Time**, **Client CPU**
+Game-create choices are remembered between sessions: balance, sight/radar, unit
+cap, monarch rule, speed changes, spectating, fog, start locations, overrides,
+game name, map selection/sorting, and random-map settings (including the seed).
+Game passwords are not saved.
+
+The in-game stats panel shows a local **Clock** (24-hour time) beneath **Units**,
+plus **Real Time**, **Game Time**, **Client CPU**
 (the game process’s share of total CPU capacity), and whole-system GPU usage. When the client
 launches a local server for a skirmish or campaign, **Server CPU** shows that
 server process’s share of total CPU capacity (0–100%). It is omitted for remote

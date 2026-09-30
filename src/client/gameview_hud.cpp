@@ -1,3 +1,4 @@
+#include <ctime>
 #include "client/guiart.h"
 #include "client/gameview.h"
 #include "client/artscale.h"
@@ -687,6 +688,17 @@ namespace {
             if (up->alive() && up->type && (spectating_ || up->player == localPlayer_)) ++units;
         std::snprintf(b, sizeof b, "%d", units);
         rows.push_back({"UNITS", b});
+
+        const std::time_t clockNow = std::time(nullptr);
+        std::tm localClock{};
+#ifdef _WIN32
+        const bool haveClock = localtime_s(&localClock, &clockNow) == 0;
+#else
+        const bool haveClock = localtime_r(&clockNow, &localClock) != nullptr;
+#endif
+        if (haveClock) std::strftime(b, sizeof b, "%H:%M", &localClock);
+        else std::snprintf(b, sizeof b, "--:--");
+        rows.push_back({"CLOCK", b});
 
         if (!spectating_) {
             std::snprintf(b, sizeof b, "%d", framePlayer(localPlayer_).kills);
@@ -1764,7 +1776,7 @@ namespace {
         }
     }
 
-    void GameView::colorSwatch(float x, float y, float s, int color, std::function<void()> action) {
+    void GameView::colorSwatch(float x, float y, float s, int color, std::function<void(int)> action) {
         SDL_FRect r{x, y, s, s};
         SDL_Color c = playerColors_[color % 10];
         SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, 255);

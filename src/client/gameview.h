@@ -2162,6 +2162,8 @@ private:
     // first visible row; the rest is geometry cached each frame for wheel + scrollbar
     // drag handling in lobbyInput (all in panel-local logical coords).
     int mapScroll_ = 0;
+    void saveCreatePreferences();
+    bool createPrefApplied_ = false;
     bool mapPrefApplied_ = false;      // adopted settings_->lastMap once this session
     bool mapDrag_ = false;             // dragging the scrollbar thumb
     // Random-map generator ("Generate Random Map" in the picker): the current params,
@@ -2198,7 +2200,14 @@ private:
     struct GameChat { std::string who, text; float age = 0; };
     std::vector<GameChat> gameChat_;
     uint64_t chatLastMs_ = 0;
-    std::vector<std::pair<SDL_FRect, std::function<void()>>> lobbyHots_;
+    struct LobbyHot {
+        SDL_FRect rect;
+        std::function<void()> action;
+        std::function<void(int)> cycle;
+        LobbyHot(SDL_FRect r, std::function<void()> a) : rect(r), action(std::move(a)) {}
+        LobbyHot(SDL_FRect r, std::function<void(int)> c) : rect(r), cycle(std::move(c)) {}
+    };
+    std::vector<LobbyHot> lobbyHots_;
     int localPlayer_ = 0;
     // Player-colour slot per player (which colour variant of each unit texture to
     // use); defaults to the player index. Overridable via --color / --aicolor and
@@ -3077,10 +3086,16 @@ private:
                   enabled ? SDL_Color{225, 230, 240, 255} : SDL_Color{110, 115, 125, 255});
         if (enabled && action) lobbyHots_.push_back({r, std::move(action)});
     }
+    // Only selectors accept right-click; ordinary actions stay left-click only.
+    void lbCycle(float x, float y, float w, float h, const std::string& label, bool enabled,
+                 std::function<void(int)> cycle) {
+        lbBtn(x, y, w, h, label, enabled, {});
+        if (enabled && cycle) lobbyHots_.emplace_back(SDL_FRect{x,y,w,h}, std::move(cycle));
+    }
     // A text-input field: label + box; clicking activates it (id != 0).
     void lbField(float x, float y, float w, const std::string& label,
                  const std::string& value, int id);
-    void colorSwatch(float x, float y, float s, int color, std::function<void()> action);
+    void colorSwatch(float x, float y, float s, int color, std::function<void(int)> action);
 
     void drawLobby(int winW, int winH);
 

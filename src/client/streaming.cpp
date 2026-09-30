@@ -256,14 +256,16 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
         }
     }
     if(e.type==SDL_TEXTINPUT && p_->editing && !p_->stream.active() && p_->config.key.size()<256)p_->config.key+=e.text.text;
-    if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+    if(e.type==SDL_MOUSEBUTTONDOWN && (e.button.button==SDL_BUTTON_LEFT || e.button.button==SDL_BUTTON_RIGHT)) {
+        const int direction=e.button.button==SDL_BUTTON_LEFT?1:-1;
         SDL_FPoint pt{float(e.button.x),float(e.button.y)};
         const auto paste=p_->pasteRect();
         if(SDL_PointInFRect(&pt,&paste)) {
-            if(!p_->stream.active())p_->pasteKey();
+            if(direction>0 && !p_->stream.active())p_->pasteKey();
             return true;
         }
         for(int i=0;i<6;++i) {auto r=p_->row(i);if(!SDL_PointInFRect(&pt,&r))continue;
+            if(direction<0 && (i==0 || i==5))return true;
             if(i==5) {
                 if(p_->stream.active())p_->stream.stop();
                 else {
@@ -279,7 +281,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
             } else if(!p_->stream.active()) {
                 p_->editing=i==0;if(p_->editing)SDL_StartTextInput();else SDL_StopTextInput();
                 if(i==1){
-                    p_->resolution=(p_->resolution+1)%6;
+                    p_->resolution=(p_->resolution+direction+6)%6;
                     constexpr int widths[]={1280,1920,2560,3840};
                     constexpr int heights[]={720,1080,1440,2160};
                     if(p_->resolution>=4){
@@ -294,8 +296,14 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                 if(i==2)p_->config.fps=p_->config.fps==30?60:30;
                 if(i==3){
                     constexpr int rates[]={3000,6000,9000,12000,20000,30000,45000,60000,80000};
-                    const auto next=std::upper_bound(std::begin(rates),std::end(rates),p_->config.bitrateKbps);
-                    p_->config.bitrateKbps=next==std::end(rates)?rates[0]:*next;
+                    if(direction>0) {
+                        const auto next=std::upper_bound(std::begin(rates),std::end(rates),p_->config.bitrateKbps);
+                        p_->config.bitrateKbps=next==std::end(rates)?rates[0]:*next;
+                    } else {
+                        auto prev=std::lower_bound(std::begin(rates),std::end(rates),p_->config.bitrateKbps);
+                        if(prev==std::begin(rates))prev=std::end(rates);
+                        p_->config.bitrateKbps=*--prev;
+                    }
                 }
                 if(i==4)p_->config.encoder=p_->config.encoder.empty()?"libx264":"";
             }
