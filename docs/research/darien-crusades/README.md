@@ -13,6 +13,7 @@ archaeology milestone remains open; there is no campaign implementation here.
 - [Updater manifest](updater-manifest.md)
 - [Binary trace notes](binary-notes.md)
 - [Campaign rules recovered from shipped help](campaign-rules-evidence.md)
+- [Battle settings and score-report boundary](battle-contract.md)
 - [Machine-readable inventories](inventories/)
 
 All committed artifacts are metadata or original research notes. Original
@@ -60,7 +61,8 @@ resolve mount precedence or prove the contents of a completed installation.
    role is established, but it does not prove which files an installer writes.
 2. Recover Darien definition semantics, particularly the borders/parcel data;
    field names alone do not prove battle eligibility or a territory graph.
-3. Trace the patched engine and Boneyards DLL paths using their recorded hashes.
+3. Continue the Rover score-report trace through serialization, replies and
+   report finalization; the client-to-Rover message boundary is now documented.
 4. Recover fatigue/support/toughness arithmetic and result protocol. Shipped
    help now documents server calculations, momentum history and deferred
    results, but supplies neither exact formulas nor the wire contract.

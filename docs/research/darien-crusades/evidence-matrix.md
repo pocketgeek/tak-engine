@@ -31,6 +31,9 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E23 | Rank affects battle victory-point stakes | CONFIRMED documentation claim | HELP-147 FAQ 8; numeric weighting UNKNOWN |
 | E24 | War objectives combine territorial control with designated locations and can vary between wars | CONFIRMED documentation claim | HELP-147 FAQ 22, 30; exact objective parameters and reset timing UNKNOWN |
 | E25 | Borders.png is read and converted into an image-sized buffer | RECONSTRUCTED | EXE-3 `0x459da0` onward. This does not recover the campaign adjacency graph |
+| E26 | Battle entry applies supplied race permissions and forces Crusades balance in campaign mode | RECONSTRUCTED | [Battle contract](battle-contract.md), EXE-3 `0x48b070`; per-territory permissions rather than unconditional FAQ race lists |
+| E27 | Per-player statistics are passed to Rover through interface slot 0x78 | RECONSTRUCTED | EXE-3 `0x501042`, `0x5ab719`; Rover initializer resolves slot to `0x10004132` |
+| E28 | Rover builds a score_report object with area_id, game_id, dpid and conditional last fields, then adds score properties | RECONSTRUCTED | ROVER `0x10014de0`, `0x10004132`; message construction, not a verified wire packet or server capture algorithm |
 
 No production historical rule is inferred from the example formulas in the plan.
 The current work does not claim completion of Milestone 1's binary/protocol audit

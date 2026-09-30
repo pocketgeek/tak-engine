@@ -52,5 +52,6 @@ These traces use the same EXE-3 fingerprint above.
 The momentum trace independently supports the FAQ's history-based concept, but
 the FAQ alone supplies the twenty-battle window. The Borders.png path supports
 an image-rendering role; it does not prove the absence of a separate geometry or
-adjacency calculation elsewhere. The complete battle-result submission path
-remains untraced.
+adjacency calculation elsewhere. The subsequent [battle-contract trace](battle-contract.md) follows score
+properties into Rover's score_report builder. Wire serialization and result
+acknowledgement remain untraced.
