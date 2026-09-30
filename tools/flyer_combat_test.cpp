@@ -5,6 +5,14 @@
 #include <cstdio>
 #include <algorithm>
 
+namespace tak::sim { struct RetailReplayProbe {
+    static void capture(World& w,int id,int owner) {w.captureUnit(*w.unit(id),owner);}
+    static void impact(World& w,const Weapon& weapon,int from,int target) {
+        const auto* source=w.unit(from);auto* victim=w.unit(target);
+        w.applyHit(weapon,victim->x.toFloat(),victim->z.toFloat(),source->player,from,victim);
+    }
+}; }
+
 int main(int argc,char** argv) {
     if (argc!=2) return 2;
     auto vfs=tak::hpi::mountRetailRoot(argv[1]);
@@ -15,6 +23,37 @@ int main(int argc,char** argv) {
     };
     for (bool crusades:{false,true}) {
         tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
+        // A different converter can turn the target while this Harpy is still
+        // aiming. Both explicit AI orders and automatic attack-move targets
+        // must release it and preserve the queued destination.
+        for(bool automatic:{false,true}) for(int newOwner:{0,2}) {
+            const auto* harpy=registry.find("zonharp");
+            auto victim=*registry.find("arasword");victim.maxHp=25000;
+            victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
+            tak::sim::World world;world.setVisPlayer(-1);world.setPlayerCount(3);world.setTeam(2,0);
+            world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+            const int from=world.spawn(harpy,1000,1000,0,0),target=world.spawn(&victim,1180,1000,0,1);
+            world.attack(from,target,false);world.unit(from)->orders.front().autoTarget=automatic;
+            world.order(from,1800,1800,true);
+            world.tick(1.f/30);
+            tak::sim::RetailReplayProbe::capture(world,target,newOwner);
+            world.tick(1.f/30);
+            const auto* unit=world.unit(from);
+            check(std::none_of(unit->orders.begin(),unit->orders.end(),[&](const auto& o){return o.targetId==target;}),
+                  "Harpy releases a target converted to its owner or ally");
+            check(!unit->scriptAimTarget && !unit->firedWeapons && !unit->captureProg,
+                  "conversion cancels Harpy aim and further weapon releases");
+            check(!unit->orders.empty(),"conversion preserves the Harpy's queued move");
+            const auto& charm=registry.find("tarmind")->weapons.front();
+            for(int i=0;i<20;++i)tak::sim::RetailReplayProbe::impact(world,charm,from,target);
+            check(world.unit(target)->player==newOwner,"late charm impacts do not take a converted ally");
+            world.stop(from);
+            const int next=world.spawn(&victim,world.unit(from)->x.toFloat(),world.unit(from)->z.toFloat()+48,0,1);
+            world.unit(from)->fireState=2;world.unit(from)->moveState=2;
+            bool acquired=false;
+            for(int i=0;i<300 && !acquired;++i) {world.tick(1.f/30);acquired=world.unit(from)->scriptAimTarget==next;}
+            check(acquired,"Harpy can acquire another enemy after conversion");
+        }
         int namedLightning=0;
         for(const auto& [name,type]:registry.types())for(const auto& weapon:type.weapons) {
             if(!weapon.lightning || weapon.hwEffectName.empty())continue;

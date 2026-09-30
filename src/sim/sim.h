@@ -1969,7 +1969,7 @@ private:
     // Where a newly produced unit is sent: the nearest free, occupiable spot to the
     // factory's exit. See the definition -- the fixed five-point fan it replaced is
     // what made units walk at each other for ever.
-    bool exitSpot(const UnitType* t, float fx, float fz, float& outX, float& outZ) const;
+    bool exitSpot(const UnitType* t, float fx, float fz, float& outX, float& outZ, int departingId = 0) const;
     // Route a move/attack/patrol order aimed at a production BUILDING into its rally.
     // True when it was consumed that way. See the definition.
     static bool setRally(Unit& u, const Order& o, bool queue);

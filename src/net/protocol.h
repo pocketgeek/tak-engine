@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 201;      // 201: deterministic final-retirement compaction and delayed kill attribution
+constexpr uint32_t kNetVersion = 202;      // 202: conversion target retirement and production-exit clearance
                                            // 195: directed mana sharing and chat recipients
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering

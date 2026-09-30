@@ -3583,6 +3583,8 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         // against this category" is exactly "can be charmed", which damageVs()
         // already computes. Conversion is permanent, like contact capture.
         if (w.mindControl) {
+            // A previously launched charm may arrive after another conversion.
+            if (allied(fromPlayer,e.player)) return;
             // Retail's charm roll (icd 0x52da10), gates in this exact order so the
             // RNG stream can never diverge between peers. Note the [DAMAGE] table is
             // the ACQUISITION filter -- it decides what you may TARGET -- so a
@@ -4274,11 +4276,18 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     }
 
     Unit* target = unit(u.orders.front().targetId);
-    if (!target || !target->alive() ||
+    // Auto-acquisition and conversion attacks require a hostile target throughout
+    // the order, not just when it starts. Another caster may have turned it since
+    // then. Ordinary explicit attacks retain their intentional friendly-fire use.
+    const bool requiresEnemy=u.orders.front().autoTarget || u.type->canCapture ||
+        std::any_of(u.type->weapons.begin(),u.type->weapons.end(),
+                    [](const Weapon& w){return w.mindControl;});
+    if (!target || !target->alive() || (requiresEnemy && allied(u.player,target->player)) ||
         (target->hp<=Fixed() && !(target->retailSite && target->underConstruction))) {
-        // 51a9a0 retires a dying target during lookup, before a pending
-        // script release can create a projectile against it.
+        // Clear both the order and script aim before a pending release can fire
+        // at a dying target or an ally that has just been converted.
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+        u.captureProg=0;
         dropLeg(u);
         cancelPath(u);
         u.routeStamp = -1;
@@ -7560,7 +7569,14 @@ void World::summonReadyGods() {
 // Nearest point to (fx,fz) that a `t`-sized body fits in AND nothing is standing on.
 // Returns false (leaving out* at the requested point) when the whole neighbourhood is
 // taken, so the caller can decide whether to wait or to proceed anyway.
-bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& outZ) const {
+static int productionExitDistance(const UnitType* t) {
+    // The unchanged retail navigator may finish short of a crowded goal by
+    // 50/halfCellTicks cells. Even that accepted stop must clear the birth site.
+    const int tolerance=t->canFly ? 0 : ((t->halfCellTicks>0 ? 50/t->halfCellTicks : 0)+1)*16;
+    return std::max(60,footCells(t)*8+12+tolerance+16);
+}
+
+bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& outZ, int departingId) const {
     outX = fx;
     outZ = fz;
     if (!t) return false;
@@ -7571,6 +7587,18 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
     // the spot is somewhere this unit can actually come to rest.
     const float clr = float(std::max(t->footX, t->footZ)) * 8.0f + 10.0f;
     const int cx = footprintCell(fx, foot), cz = footprintCell(fz, foot);
+    // Earlier output may still be walking to its exit. Reserve its current leg's
+    // destination too, or successive completions choose the same apparently free
+    // spot and the later unit stops in the doorway when traffic blocks arrival.
+    std::vector<std::pair<float,float>> reserved;
+    const Unit* departing=departingId ? unit(departingId) : nullptr;
+    if(departing)for(const auto& u:units_) {
+        if(!u.alive() || !u.type || u.underConstruction || u.orders.empty())continue;
+        const auto& o=u.orders[currentLeg(u.orders)];
+        if(o.targetId || o.buildType || o.reclaimFeat || o.repairTarget)continue;
+        const float x=o.x.toFloat(),z=o.z.toFloat();
+        if(std::abs(x-fx)<=256 && std::abs(z-fz)<=256)reserved.emplace_back(x,z);
+    }
     for (int r = 0; r <= 12; ++r)
         for (int j = -r; j <= r; ++j)
             for (int i = -r; i <= r; ++i) {
@@ -7578,6 +7606,14 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
                 const int nx = cx + i, nz = cz + j;
                 if (!g.fits(nx, nz, foot)) continue;
                 const float wx = footprintWaypoint(nx, foot).toFloat(), wz = footprintWaypoint(nz, foot).toFloat();
+                // Ring search may retreat toward the birth position when its
+                // preferred exit is occupied. Keep the destination outside that
+                // footprint with enough room for the departing body's full width.
+                if(departing) {
+                    const float dx=wx-departing->x.toFloat(),dz=wz-departing->z.toFloat();
+                    const float distance=float(productionExitDistance(t));
+                    if(std::max(std::abs(dx),std::abs(dz))<distance)continue;
+                }
                 bool taken = false;
                 forEachNear(wx, wz, clr, [&](int idx) {
                     const Unit& e = units_[size_t(idx)];
@@ -7585,6 +7621,10 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
                     const float dx = e.x.toFloat() - wx, dz = e.z.toFloat() - wz;
                     if (dx * dx + dz * dz < clr * clr) taken = true;
                 });
+                for(const auto& [x,z]:reserved) {
+                    const float dx=x-wx,dz=z-wz;
+                    if(dx*dx+dz*dz<clr*clr)taken=true;
+                }
                 if (taken) continue;
                 outX = wx;
                 outZ = wz;
@@ -8301,8 +8341,8 @@ void World::tickProduction(Unit& u, float dt) {
     //
     // Deterministic: a fixed outward ring scan over the nav grid and the unit grid,
     // both of which every peer builds identically.
-    float gx = sx, gz = sz + 60.0f;
-    if (exitSpot(t, gx, gz, gx, gz)) order(id, gx, gz, false);
+    float gx = sx, gz = sz + float(productionExitDistance(t));
+    if (exitSpot(t, gx, gz, gx, gz,id)) order(id, gx, gz, false);
     // ...then hand it the factory's RALLY plan, queued behind that step. A production
     // building accepts move / fight-move / patrol / attack orders (and queues them) --
     // it cannot act on them itself, so they describe what its OUTPUT should do. The

@@ -54,6 +54,10 @@ the GOG edition, supplies the game data.
 
 Version **0.7.15 uses protocol 201**. Update clients and servers together;
 0.7.14 uses protocol 200 and cannot join the same match.
+The current checkout uses **protocol 202** for corrected conversion targeting:
+Harpies and other converters stop attacking newly allied targets. Produced units
+also receive exit destinations that account for crowded-goal stopping distance,
+so they clear the production spot before parking.
 See the [release notes](docs/release-0.7.15-notes.md),
 [validation report](docs/release-0.7.15-validation.md), and
 [performance measurements](docs/unit-retirement-performance-2026-09-29.md).
