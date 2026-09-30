@@ -9,7 +9,7 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E01 | Cavedog offered update downloads with and without Darien Crusades | CONFIRMED | WEB-PATCH and fingerprinted downloads |
 | E02 | These two patch payloads share engine and Boneyards executable bytes | CONFIRMED | Inventories; includes EXE-3, BYMAIA and ROVER. Does not establish the earlier introduction date of code paths |
 | E03 | The larger payload includes maps and extra metagame art/dialogs/movies | CONFIRMED | Generated payload diff and decoded HPI/KMP membership |
-| E04 | Darien territory presentation data survives in a shipped definition file | CONFIRMED | DARIEN-DEF has 313 `command=parcel` declarations with 313 distinct names; observed field names include `chatareaid`, anchors, native race, terrain, `parcels`, `borders`. Not yet a fully validated graph |
+| E04 | Darien territory presentation data survives in a shipped definition file | CONFIRMED | [Validated format](territory-format.md): 313 parcels, unique names/IDs, complete observed schema. Declares 871 borders but provides no edge records; not a recovered graph |
 | E05 | Occupied territory flames reflect player activity, including the minimap | CONFIRMED | README-3 line 5; exact rendering thresholds not recovered |
 | E06 | Territories may change hands without a battle based on fatigue, side support and toughness | CONFIRMED | README-3 line 6 gives a qualitative comparison. Timing, accumulation, side selection, rounding and exact algorithm remain UNKNOWN |
 | E07 | Hosts could choose original or Crusades unit balance | CONFIRMED | README-3 line 7; this is distinct from joining the persistent metagame |
@@ -23,6 +23,9 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E15 | Exact standard-versus-Crusades gameplay value differences | UNKNOWN in this pass | Both packages share V3Rocket; the internal base/Crusades data needs a separate per-field audit |
 | E16 | Exactly 182 maps extracted from this Crusades payload | UNKNOWN | WEB-PATCH advertises 182; observed payload has 181 KMP containers, each with one TNT |
 | E17 | A TAK-Engine persistent campaign database and server-issued battle/result objects | MODERN design proposal | Reconstruction plan, not an implemented feature or an original Cavedog implementation claim |
+| E18 | MMZ contains a Maia package/update manifest | CONFIRMED contents; RECONSTRUCTED role | [Manifest notes](updater-manifest.md); package versions 30BA/30BB, bundle/resource descriptors, companion update API. Not a campaign database |
+| E19 | PreInit is a 313-byte table consumed in ascending territory-ID order, with C/H/T mapped to 0/1/2 | RECONSTRUCTED reader; CONFIRMED bytes | [Binary trace](binary-notes.md). Does not establish live campaign starting owners |
+| E20 | wdhit is a decimal table read near crest setup | CONFIRMED bytes; RECONSTRUCTED reader | 80 integers; exact entry meaning UNKNOWN. No recovered campaign script here |
 
 No production historical rule is inferred from the example formulas in the plan.
 The current work does not claim completion of Milestone 1's binary/protocol audit

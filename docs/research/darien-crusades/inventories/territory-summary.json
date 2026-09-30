@@ -1,0 +1,64 @@
+{
+  "border_edge_records": 0,
+  "declared": {
+    "borders": 871,
+    "height": 1672,
+    "parcels": 313,
+    "width": 1083
+  },
+  "encoding": "cp1252",
+  "limitations": [
+    "Declared border count is not a recovered adjacency graph.",
+    "No ownership or campaign rules inferred.",
+    "Header dimensions preserved verbatim; axes not corrected."
+  ],
+  "multiline_descriptions": 1,
+  "native_race_counts": {
+    "Aramon": 93,
+    "Neutral": 32,
+    "Taros": 67,
+    "Veruna": 49,
+    "Zhon": 72
+  },
+  "numeric_ranges": {
+    "chatareaid": [
+      8193,
+      8506
+    ],
+    "nativeicon": [
+      0,
+      0
+    ],
+    "xfireanchor": [
+      28,
+      1649
+    ],
+    "xtextanchor": [
+      35,
+      1637
+    ],
+    "yfireanchor": [
+      11,
+      1073
+    ],
+    "ytextanchor": [
+      11,
+      1073
+    ]
+  },
+  "observed_parcels": 313,
+  "schema_version": 1,
+  "source_bytes": 171051,
+  "source_sha256": "6241e8c2fd18c01112c4f1ff177554d5fdffac3acec32bbf7abe10a6d4aa97b1",
+  "terrain_counts": {
+    "Coastal": 93,
+    "Forest": 47,
+    "Hills": 18,
+    "Islands": 44,
+    "Mountains": 47,
+    "Plains": 40,
+    "Urban": 24
+  },
+  "unique_chatareaids": 313,
+  "unique_names": 313
+}

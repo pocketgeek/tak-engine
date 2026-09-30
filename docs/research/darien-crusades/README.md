@@ -1,4 +1,4 @@
-# Darien Crusades: first research pass
+# Darien Crusades research
 
 Status: the plan's **first actionable task** is complete. The full historical
 archaeology milestone remains open; there is no campaign implementation here.
@@ -8,7 +8,10 @@ archaeology milestone remains open; there is no campaign implementation here.
 - [Installer inventory and extraction](installer-inventory.md)
 - [Crusades versus the smaller 3.0 update](crusades-vs-3.0.md)
 - [Local Iron Plague-era installation comparison](crusades-vs-iron-plague.md)
-- [Initial evidence matrix](evidence-matrix.md)
+- [Evidence matrix](evidence-matrix.md)
+- [Territory definition and companion tables](territory-format.md)
+- [Updater manifest](updater-manifest.md)
+- [Initial binary trace notes](binary-notes.md)
 - [Machine-readable inventories](inventories/)
 
 All committed artifacts are metadata or original research notes. Original
@@ -52,8 +55,8 @@ resolve mount precedence or prove the contents of a completed installation.
 
 ## Next research steps
 
-1. Decode the installer conditions and `kingdoms.mmz` role; payload comparison
-   does not determine which files an installer writes on every starting version.
+1. Decode installer conditions and updater precedence. The MMZ updater-manifest
+   role is established, but it does not prove which files an installer writes.
 2. Recover Darien definition semantics, particularly the borders/parcel data;
    field names alone do not prove battle eligibility or a territory graph.
 3. Trace the patched engine and Boneyards DLL paths using their recorded hashes.
@@ -63,12 +66,15 @@ resolve mount precedence or prove the contents of a completed installation.
 
 ## Validation
 
-All 136 Python research tests passed, including 13 new inventory/comparison
-cases. These cover hashes, changed/added/removed files, case-only renames,
+All 146 Python research tests passed, including 13 inventory/comparison
+cases and 10 territory-parser cases. These cover hashes, changed/added/removed files, case-only renames,
 case-fold collisions, archive identity, filter disclosure, symlinks, missing
 sources, invalid manifests, output/input isolation, malformed HPI listings and
 an actual synthetic HPI pack/read round trip. The checked-in inventories
-reproduce the checked-in difference report exactly.
+reproduce the checked-in difference report exactly. The territory parser also
+validated the fingerprinted definition and reproduced the aggregate report.
+Its synthetic tests cover multiline and CP1252 text, omitted prose, malformed
+fields, types, counts, dimensions, duplicate identities and trailing garbage.
 
 No engine rebuild or gameplay sweep was required: only research Python and
 Markdown/metadata changed.
