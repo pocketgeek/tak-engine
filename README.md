@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.16-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.17-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -44,7 +44,21 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.16
+## New in 0.7.17
+
+- **Reverse setting selection:** right-click cycles backward through game-create,
+  lobby, and streaming choices. Options toggles accept either mouse button;
+  ordinary action buttons remain left-click only.
+- **Remembered game setup:** game-create settings and random-map recipes return
+  after restarting, including the seed. Game passwords are not saved.
+- **Local clock:** a 24-hour clock appears beneath Units in the stats panel;
+  Real Time and Game Time still show elapsed time.
+
+Protocol remains **203**; this release changes the client interface, not simulation
+or network rules. See the [release notes](docs/release-0.7.17-notes.md) and
+[validation report](docs/release-0.7.17-validation.md).
+
+### Previously in 0.7.16
 
 - **Larger generated maps:** sizes up to 64×64, with terrain-themed ruins around
   every new mana spot. Lodestone construction space and approach routes stay clear;
@@ -172,7 +186,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.16** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.17** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
