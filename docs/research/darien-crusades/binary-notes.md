@@ -35,3 +35,22 @@ Reproduce with `objdump -d -Mintel --start-address=ADDRESS
 --stop-address=ADDRESS /path/to/the/fingerprinted/KINGDOMS.icd`. Keep any
 disassembly in local scratch space, not Git. Addresses are research aids, not
 new production dependencies.
+
+## Campaign display and entry paths (second pass)
+
+These traces use the same EXE-3 fingerprint above.
+
+| Location | Reconstructed behavior | What it does not establish |
+|---|---|---|
+| `0x459da0`–`0x459f43` | Loads Borders.png through `0x463fa0`, allocates image-sized storage, and converts indexed pixels through a lookup table to 16-bit values | No adjacency list or attack eligibility graph has been recovered from this path |
+| `0x45fdff`, `0x45fe26`, `0x45fe4e` | Fetches `traffic`, `influence`, `victory_pnts` with accessor `0x5aba59`; successful reads store values at territory object offsets `0x1c7`, `0x1cb`, `0x1cf` | Does not reveal their originating server calculation or transport encoding |
+| `0x4603ce`–`0x460410` | Fetches the `momentum` string via `0x5abad7`, scans to its terminating zero, counts uppercase H and T, skips other characters | No twenty-entry cap or rolling-history maintenance in this loop |
+| `0x460473`, `0x460524` | Publishes the two counts as `hmomentum` and `tmomentum` display fields | Not authoritative result accumulation |
+| `0x46054d`–`0x46062f` | If H exceeds T, formats Honor's count over H+T; if T exceeds H, formats Terror's count over H+T; ties bypass both branches | This is display text, not the threshold for capture; no assertion about a preexisting field's value on ties |
+| `0x48b070`–`0x48b128` | Battle-entry callback examines its status argument and chooses failure messages, including same-allegiance and allegiance-capacity restrictions | Not the server's implementation of those checks; wire status mapping not fully audited |
+
+The momentum trace independently supports the FAQ's history-based concept, but
+the FAQ alone supplies the twenty-battle window. The Borders.png path supports
+an image-rendering role; it does not prove the absence of a separate geometry or
+adjacency calculation elsewhere. The complete battle-result submission path
+remains untraced.

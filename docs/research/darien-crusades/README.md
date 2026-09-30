@@ -11,7 +11,8 @@ archaeology milestone remains open; there is no campaign implementation here.
 - [Evidence matrix](evidence-matrix.md)
 - [Territory definition and companion tables](territory-format.md)
 - [Updater manifest](updater-manifest.md)
-- [Initial binary trace notes](binary-notes.md)
+- [Binary trace notes](binary-notes.md)
+- [Campaign rules recovered from shipped help](campaign-rules-evidence.md)
 - [Machine-readable inventories](inventories/)
 
 All committed artifacts are metadata or original research notes. Original
@@ -60,8 +61,9 @@ resolve mount precedence or prove the contents of a completed installation.
 2. Recover Darien definition semantics, particularly the borders/parcel data;
    field names alone do not prove battle eligibility or a territory graph.
 3. Trace the patched engine and Boneyards DLL paths using their recorded hashes.
-4. Recover fatigue/support/toughness updates and result protocol from primary
-   evidence. The readme gives a qualitative threshold, not a complete algorithm.
+4. Recover fatigue/support/toughness arithmetic and result protocol. Shipped
+   help now documents server calculations, momentum history and deferred
+   results, but supplies neither exact formulas nor the wire contract.
 5. Complete the per-field Crusades Balance audit independently of the metagame.
 
 ## Validation

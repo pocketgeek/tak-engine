@@ -18,14 +18,19 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E10 | Tested numeric Boneyards GUI files are rejected by the ordinary TDF parser | CONFIRMED | All 20 added GUI candidates rejected by current `tdftool`; 181 OTA, one TDF, one TNT passed |
 | E11 | Exact territory capture algorithm | UNKNOWN | Readme is insufficient to implement historical arithmetic |
 | E12 | Border definitions restrict attack eligibility | UNKNOWN | Definition labels alone are not gameplay evidence |
-| E13 | Exact server/client division of campaign authority | UNKNOWN | Inventory locates components, but no code-path or protocol trace yet |
-| E14 | Allegiance restrictions, matchmaking and invalid/disconnected battle outcomes | UNKNOWN | No verified original rule recovered in this pass |
+| E13 | Boneyards performs campaign calculations | CONFIRMED documentation claim | HELP-147 FAQ 5 explicitly assigns the math to servers. Exact protocol and division of individual operations remain UNKNOWN; see [rules evidence](campaign-rules-evidence.md) |
+| E14 | Allegiance restrictions and battle sizes | CONFIRMED documentation claims; partial binary corroboration | HELP-147 FAQ 13–15, 19–20; entry callback has same-allegiance rejection. Exceptional race combinations and final-service rules unresolved; disconnected/invalid outcomes UNKNOWN |
 | E15 | Exact standard-versus-Crusades gameplay value differences | UNKNOWN in this pass | Both packages share V3Rocket; the internal base/Crusades data needs a separate per-field audit |
 | E16 | Exactly 182 maps extracted from this Crusades payload | UNKNOWN | WEB-PATCH advertises 182; observed payload has 181 KMP containers, each with one TNT |
 | E17 | A TAK-Engine persistent campaign database and server-issued battle/result objects | MODERN design proposal | Reconstruction plan, not an implemented feature or an original Cavedog implementation claim |
 | E18 | MMZ contains a Maia package/update manifest | CONFIRMED contents; RECONSTRUCTED role | [Manifest notes](updater-manifest.md); package versions 30BA/30BB, bundle/resource descriptors, companion update API. Not a campaign database |
 | E19 | PreInit is a 313-byte table consumed in ascending territory-ID order, with C/H/T mapped to 0/1/2 | RECONSTRUCTED reader; CONFIRMED bytes | [Binary trace](binary-notes.md). Does not establish live campaign starting owners |
 | E20 | wdhit is a decimal table read near crest setup | CONFIRMED bytes; RECONSTRUCTED reader | 80 integers; exact entry meaning UNKNOWN. No recovered campaign script here |
+| E21 | Momentum tracks twenty recent battles | CONFIRMED documentation claim; RECONSTRUCTED display | HELP-147 FAQ 5b; client counts H/T history symbols. Server window policy not recovered from code |
+| E22 | Results finishing after territory capture can be deferred until it becomes contested again | CONFIRMED documentation claim | HELP-147 FAQ 11 describes orphan battles and entrenchment. Exact persistence, deduplication and reset behavior UNKNOWN |
+| E23 | Rank affects battle victory-point stakes | CONFIRMED documentation claim | HELP-147 FAQ 8; numeric weighting UNKNOWN |
+| E24 | War objectives combine territorial control with designated locations and can vary between wars | CONFIRMED documentation claim | HELP-147 FAQ 22, 30; exact objective parameters and reset timing UNKNOWN |
+| E25 | Borders.png is read and converted into an image-sized buffer | RECONSTRUCTED | EXE-3 `0x459da0` onward. This does not recover the campaign adjacency graph |
 
 No production historical rule is inferred from the example formulas in the plan.
 The current work does not claim completion of Milestone 1's binary/protocol audit

@@ -87,3 +87,24 @@ hashes when reproducing:
 `hpitool`/`tdftool`/`tnttool` were the existing 0.7.17 local builds. Inventory and
 comparison use `tools/re/crusades_inventory.py` in this research commit. No
 extractor or proprietary payload is vendored or added to the engine build.
+
+## Shipped Crusades help (reviewed 2026-09-30)
+
+These files occur byte-identically in both extracted official patch payloads,
+under `MAINDIR/Boneyards/Help/`. Container provenance is PATCH-STANDARD/PATCH-CRUSADES
+as identified above; consult the inventory paths if using a different checkout.
+No HTML, screenshots or original page prose is committed.
+
+| ID | File | Bytes | SHA-256 |
+|---|---|---:|---|
+| HELP-144 | Help144.htm | 5447 | `7853c86cf670e6d927020b95ec9008df8129e6af6bb8dab42b33b525edab1d06` |
+| HELP-146 | Help146.htm | 3780 | `b0402b71681c32a1429b452b1f39a540ee0f4ad2f1cc8e46ea7cb113f23145e1` |
+| HELP-147 | Help147.htm | 17753 | `f3297d825e040d405da60b64f5e9ec0100ac62e5aef63465d072c815abac96df` |
+
+HELP-144 is an overview explicitly framed as the 1999-12-08 open beta.
+HELP-146 is the quickstart. HELP-147 is a numbered FAQ, useful for stable
+section references even when HTML line endings differ. They contain promises
+of future features and are not evidence that every described rule was running
+unchanged on the final service. See the [rules analysis](campaign-rules-evidence.md).
+An internet search for the momentum/orphan-battle text found no useful
+independent corroboration; unrelated search results were not used as evidence.
