@@ -34,6 +34,9 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E26 | Battle entry applies supplied race permissions and forces Crusades balance in campaign mode | RECONSTRUCTED | [Battle contract](battle-contract.md), EXE-3 `0x48b070`; per-territory permissions rather than unconditional FAQ race lists |
 | E27 | Per-player statistics are passed to Rover through interface slot 0x78 | RECONSTRUCTED | EXE-3 `0x501042`, `0x5ab719`; Rover initializer resolves slot to `0x10004132` |
 | E28 | Rover builds a score_report object with area_id, game_id, dpid and conditional last fields, then adds score properties | RECONSTRUCTED | ROVER `0x10014de0`, `0x10004132`; message construction, not a verified wire packet or server capture algorithm |
+| E29 | Score-report success initially means local enqueue, not server acceptance | RECONSTRUCTED | [Transport trace](report-transport.md), ROVER `0x1000df32`, worker `0x10011839` |
+| E30 | Tagged messages use delimiter escaping and a rolling byte XOR before socket send | RECONSTRUCTED; isolated native codec checks passed | ROVER serializers and `0x10010e8b`; full-message and end-to-end validation pending |
+| E31 | Incoming battle_report notifications are dispatched for a matching area/game | RECONSTRUCTED | ROVER `0x1000a378`, `0x1000a522`; acknowledgement and campaign-credit semantics UNKNOWN |
 
 No production historical rule is inferred from the example formulas in the plan.
 The current work does not claim completion of Milestone 1's binary/protocol audit

@@ -139,7 +139,8 @@ and does not prove that Boneyards reporting depended on it.
 
 ## Remaining boundary work
 
-Trace `0x1000df32` through serialization/dispatch, identify report replies and
+The [transport follow-up](report-transport.md) traces `0x1000df32` through
+queueing, serialization and socket submission. Next, identify acknowledgements and
 finalization, and determine the relationship between reporting events and
 surrender/disconnect outcomes. The client boundary alone cannot establish how
 the historical server deduplicated reports, weighted ranks, or credited orphan

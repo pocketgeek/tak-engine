@@ -3,6 +3,7 @@
 Status: the plan's **first actionable task** is complete. The full historical
 archaeology milestone remains open; there is no campaign implementation here.
 
+- [Milestone 1 acceptance audit](milestone-one-status.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)
 - [Installer inventory and extraction](installer-inventory.md)
@@ -14,6 +15,7 @@ archaeology milestone remains open; there is no campaign implementation here.
 - [Binary trace notes](binary-notes.md)
 - [Campaign rules recovered from shipped help](campaign-rules-evidence.md)
 - [Battle settings and score-report boundary](battle-contract.md)
+- [Report queue, encoding and incoming reports](report-transport.md)
 - [Machine-readable inventories](inventories/)
 
 All committed artifacts are metadata or original research notes. Original
