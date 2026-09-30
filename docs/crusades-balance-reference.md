@@ -66,3 +66,26 @@ checking retail's reader.
 The existing four synthetic audit tests validate report mechanics, not all
 retail balance semantics. The broader Python research suite currently has
 150 passing tests. No engine balance behavior has changed in this pass.
+
+## Loaded registry checks
+
+`crusades_registry_test` now loads both modes through `setupRegistry`, with
+loose overrides and downloaded-map resources excluded. For the local corpus it
+checks 404 canonical unit/mode cases and 66 complete ordered builder/mode menus.
+It verifies twelve scalar fields (cost, build time, health, healing, worker rate,
+income, storage, sight, radar, mana capacity/regeneration and build distance),
+plus each authored weapon's range, reload time and projectile speed. Integer
+fields are checked after truncation; float fields after their storage conversion.
+Expected menus come from the selected source namespace, including whole-menu
+replacement, priorities and alphabetical tie breaks.
+
+```sh
+cmake --build build --target crusades_registry_test
+ctest --test-dir build -R '^crusades_registry$' --output-on-failure
+```
+
+This is loader coverage, not a retail execution comparison or complete balance
+coverage. Alias-only definitions, category damage, movement-class inheritance,
+bit fields and remaining authored fields still need explicit checks. The test
+deliberately fails if either Crusades overlay is absent, so a base-only install
+cannot silently pass as a two-mode audit.

@@ -11,7 +11,7 @@ acceptance criteria in [the plan](../../darien-crusades-plan.md).
 | 4. Territory/battle data | 313 validated parcels; map/settings properties; score-report schema | Adjacency source and map-to-territory data provenance; no invented graph |
 | 5. Fatigue/support/toughness | Primary documentation for side resistance, neighbor influence, time erosion, traffic and momentum | Audit surviving parameters/code; retain exact arithmetic as UNKNOWN unless recovered |
 | 6. Evidence classification | Maintained evidence matrix with primary source IDs, binary fingerprints and offsets | Consolidated final answers and unresolved historical limits |
-| 7. Exact Crusades Balance | Retail branch corroborated; VFS/TDF field-diff tool and four synthetic regression cases pass; local survey in balance reference | Exhaustive effective-data diff, per-field loader coverage and meaningful regression tests |
+| 7. Exact Crusades Balance | Retail branch corroborated; VFS/TDF field-diff tool and four synthetic regression cases pass; registry checks cover 404 unit/mode cases and 66 complete ordered menus | Exhaustive effective-data diff; remaining category, movement, alias and per-field loader coverage |
 
 ## Current work order
 
