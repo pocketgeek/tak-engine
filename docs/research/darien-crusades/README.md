@@ -1,17 +1,20 @@
 # Darien Crusades research
 
 This directory records the Milestone 1 archaeology, native-reader verification
-and source-scoped balance audit. See the [acceptance audit](milestone-one-status.md)
-for current completion and validation status. No historical campaign service has
-been implemented.
+and source-scoped balance audit, plus the Milestone 2 campaign model. See the
+[Milestone 1 acceptance audit](milestone-one-status.md) and
+[Milestone 2 model and validation](campaign-model.md) for completion status.
+No historical campaign service has been implemented.
 
 - [Milestone 1 acceptance audit](milestone-one-status.md)
+- [Milestone 2 clean-room campaign model](campaign-model.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)
 - [Installer inventory and extraction](installer-inventory.md)
 - [Original CD and GOG distribution provenance](distribution-provenance.md)
 - [Added-asset parser sweep](asset-parse-sweep.md)
+- [Numeric GUI parser validation](numeric-gui.md)
 - [Crusades versus the smaller 3.0 update](crusades-vs-3.0.md)
 - [Local Iron Plague-era installation comparison](crusades-vs-iron-plague.md)
 - [Evidence matrix](evidence-matrix.md)

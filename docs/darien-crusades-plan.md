@@ -372,6 +372,11 @@ implementation exists.
 
 # Milestone 2 — Clean-room campaign model
 
+Completed 2026-09-30. Implementation, format and acceptance evidence:
+[campaign model](research/darien-crusades/campaign-model.md).
+This server-side module is separate from the existing single-player campaign
+controller. It does not yet expose a playable online Crusades mode.
+
 ## Objective
 
 Define a modern internal representation capable of expressing the recovered

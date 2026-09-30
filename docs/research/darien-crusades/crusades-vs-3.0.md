@@ -46,13 +46,14 @@ All archive members were decoded and hashed using existing `hpitool`.
 The initial follow-up checked 203 representative/all-added format candidates:
 **181 OTA + one TDF + one TNT passed**. **All 20 added GUI files were rejected
 by `tdftool`**, starting with its expected-section check. The observed Boneyards
-GUI format is numeric text, unlike the TDF GUI syntax; these require separate
-format research. Results are recorded in [parser-checks.json](inventories/parser-checks.json).
+GUI format is numeric text, unlike the TDF GUI syntax. Subsequent validation
+used the engine's existing numeric GUI parser instead. Results are recorded in [parser-checks.json](inventories/parser-checks.json).
 No parser failure was silently classified as successful coverage. The later
 [complete added-asset sweep](asset-parse-sweep.md) supersedes that initial sample:
 all 181 TNTs, all added image/sprite resources and every frame of the assembled
-movie were parsed/decoded. The 20 numeric GUI files remain an explicitly
-unsupported format, and three OTA byte-round-trip differences are documented.
+movie were parsed/decoded. All 20 numeric GUI files also [parse to EOF with the
+existing GUI parser](numeric-gui.md). Three OTA byte-round-trip differences are
+documented.
 
 The patch page's advertised 182 maps versus 181 extracted map containers remains
 an open discrepancy. We have not inferred an extra territory or map to close it.

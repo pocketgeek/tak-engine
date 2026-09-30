@@ -46,7 +46,7 @@ patches are byte-identical, as are their 1,263 decoded members.
 | HPI/KMP containers | `hpitool` | Every member in both patch inventories read and hashed |
 | TNT terrain | `tnttool` | All 181 added TNT files parsed |
 | OTA/FBI/TDF/TSF | `tdftool`, `tnttool` | All added OTA, one TDF and two TSF parsed; three OTA byte round trips differ |
-| Boneyards GUI | `tdftool` candidate rejected | All 20 added numeric-text GUI files failed; separate format needed |
+| Boneyards GUI | Existing `src/gui/gui.cpp` numeric parser | All 20 added GUI files parsed to EOF; [numeric GUI validation](numeric-gui.md) |
 | GAF sprite banks | `gaftool` (requires palette) | All 31 added GAF files loaded with frame decoding |
 | COB / 3DO | `cobtool` / `modeltool` | None added in the standard/Crusades package difference |
 | BIK movie chunks | `biktool` | Five chunks assemble one 1,110-frame movie; all joined frames decoded |
@@ -57,4 +57,4 @@ patches are byte-identical, as are their 1,263 decoded members.
 Its parcel declarations use a different tagged representation. The strict
 [territory parser](territory-format.md) validates its complete observed schema.
 The later [added-asset sweep](asset-parse-sweep.md) supersedes the initial parser
-coverage and explains the numeric GUI limitation and movie assembly.
+coverage and explains the existing numeric GUI parser and movie assembly.
