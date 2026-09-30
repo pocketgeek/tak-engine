@@ -355,7 +355,7 @@ Debug builds also support direct playback:
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
 compatible engine behavior and game data. Released **0.7.13 uses protocol 198**;
-the current checkout uses **200** for authored construction restrictions, neutral
+0.7.14 uses **200** for authored construction restrictions, neutral
 ownership, stats and scenario outcomes. Use matching builds for all clients and
 the server. Different-protocol peers and replays are rejected.
 
@@ -422,7 +422,7 @@ Verified authored scenarios can start with a single participant in the current
 checkout. Ordinary skirmishes still require at least two.
 The snapshot enables authored placements/rules on both client and server without
 changing ordinary retail-map skirmish setup. The following runtime additions are
-in the current checkout (protocol 200), after released 0.7.13 (protocol 198):
+in 0.7.14 (protocol 200), following 0.7.13 (protocol 198):
 
 - **Use Only** limits what players and AIs can construct. Existing placements and
   units created by scenario actions are retained even if their types are excluded.

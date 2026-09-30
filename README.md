@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.13-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.14-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -44,44 +44,31 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.13
+## New in 0.7.14
 
 <table>
   <tr><td><a href="docs/img/cartographer.png"><img src="docs/img/cartographer.png" alt="Cartographer with a searchable unit browser, terrain canvas and minimap"></a><br><sub>Cartographer: unit browser and map canvas</sub></td>
   <td><a href="docs/img/cartographer-model.png"><img src="docs/img/cartographer-model.png" alt="Cartographer's rotatable 3D preview of an Aramon Archer"></a><br><sub>F6 model inspector</sub></td></tr>
 </table>
 
-- **Cartographer desktop workflow:** packaged editor launchers, remembered game
-  data and window preferences, readable scalable text, menus, searchable map
-  opening and recent files.
-- **Safer editing:** undo/redo, background saves and exports, recovery snapshots,
-  cropping checks, and protection for placed objects during terrain edits.
-- **Finding and placing things:** searchable terrain, unit and feature browsers,
-  thumbnails, group selection/editing, a searchable placed-unit list, named map
-  labels, and rotatable **F6** model previews.
-- **Map and scenario tools:** engine-backed placement/passability overlays,
-  navigable validation results, reproducible random-map previews, editable
-  regions, typed rule operands, and objective templates.
-- **Test Map (F5):** opens an isolated snapshot in the game's normal private
-  lobby, with authored scenario setup shared by client and server. Optional
-  trigger logs help diagnose scenario execution.
-- **Diplomacy:** unit-gifting and mana-sharing controls are hidden for non-allies;
-  chat recipient controls remain available.
+- **Authored scenarios:** Use Only construction restrictions, neutral placements,
+  armor/weapon and veteran defaults, and independent player victory/defeat.
+- **Retail trigger behavior:** corrected All Players rule ownership, once-per-second
+  evaluation, resource limits/reset, absolute HP changes, creation/destruction,
+  ownership transfer, movement destinations and wildcard selectors.
+- **Placement and names:** footprint-origin positioning agrees between the editor
+  and game; authored display names appear in-game with retail's 31-byte limit.
+  The unused vertical field is preserved without inventing an altitude override.
+- **Scenario feedback:** Display gameclock now works; validation explains name
+  truncation and flag aliases. Optional Test Map trigger logs remain available.
+- **Cartographer workflow:** searchable browsers, undo/redo and recovery,
+  background saving, map checks, regions/rules, F6 model inspection and F5 Test Map.
 
-Version **0.7.13 uses protocol 198**. Update clients and servers together.
-See the [release notes](docs/release-0.7.13-notes.md),
-[validation report](docs/release-0.7.13-validation.md), and
-[Cartographer guide](docs/user-guide.md#map-editor). The editor preserves unsupported
-scenario data, but full retail mission-runtime parity is not claimed; current
-limits are documented in the guide and [trigger reference](docs/crt-triggers.md).
-
-**Current checkout (after 0.7.13):** protocol **200** adds authored Use Only
-construction restrictions, neutral placements, armor/weapon and veteran defaults,
-and per-player scenario victory/defeat. It also corrects All Players rule ownership
-and once-per-game-second trigger evaluation. Trigger actions now honor resource
-limits/reset, raw HP changes, wildcard selectors and ownership bookkeeping; named
-placements use footprint origins and display their authored names. These changes are not in the 0.7.13
-packages; rebuild clients and servers together. See the
+Version **0.7.14 uses protocol 200**. Update clients and servers together.
+See the [release notes](docs/release-0.7.14-notes.md),
+[validation report](docs/release-0.7.14-validation.md), and
+[Cartographer guide](docs/user-guide.md#map-editor). Full retail mission-runtime
+parity is not claimed; remaining limits are documented in the
 [scenario reference](docs/crt-triggers.md).
 
 ### Previously in 0.7.12
@@ -154,7 +141,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.13** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.14** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -234,11 +221,11 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   **Test Map (F5)** opens a temporary snapshot in the normal private game lobby,
   leaving the editor and unsaved document open. Seat the players used by your
   scenario, then start. Verified authored scenarios can start with one player in
-  the current checkout; ordinary skirmishes still require two participants.
+  0.7.14; ordinary skirmishes still require two participants.
   Authored placements and rules run on both client and server.
   **Scenario → Log Test Map triggers** optionally records firing groups and
   attempted actions in a bounded local log; the launch message shows its path.
-  In the current checkout, **Use Only** limits player/AI construction, neutral
+  In 0.7.14, **Use Only** limits player/AI construction, neutral
   placements keep a separate owner, and custom armor/weapon percentages affect
   combat. Victory/Defeat rules determine authored scenario outcomes; no such rule
   means the scenario can remain a sandbox. See [scenario details and limits](docs/crt-triggers.md).
@@ -456,7 +443,7 @@ it to change.
 
 Use the **same engine build and compatible game data** on every participant.
 Version **0.7.13 uses protocol 198** for shared authored-scenario setup
-and preserved map companions. The current checkout uses **protocol 200** for
+and preserved map companions. Version **0.7.14 uses protocol 200** for
 construction restrictions, authored stats, independent scenario outcomes and
 retail trigger/placement behavior.
 Rebuild/update clients and servers together; 198, 199 and 200 cannot share a match.

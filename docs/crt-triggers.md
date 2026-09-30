@@ -54,7 +54,7 @@ to `World` when the map OTA declares `hasscenario=1` and explicitly opts in with
 `[TAKPlaytest] { authoredscenario=1; }`; the world ticks it and hashes its rule state.
 Messages are filtered for the local viewer without changing that state.
 Released **0.7.13 uses protocol 198**. The implementation described below is the
-**current checkout, protocol 200**; update every client and server together.
+**0.7.14, protocol 200**; update every client and server together.
 
 Rules execute at startup and whenever the integer game second advances (30 ticks).
 A true group executes again at the next evaluation; Disable Rule makes it a

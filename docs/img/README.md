@@ -1,13 +1,13 @@
 # README screenshots
 
-Captured on 2026-09-29 from the **v0.7.12** source, tagged commit `7d463ee`.
-All nine scenes were freshly captured after tagging and visually inspected.
+Captured on 2026-09-29 from the **0.7.14** release-preparation build, based on engine commit `2fa44e8`.
+All nine game scenes were freshly captured before tagging and visually inspected.
 Images are actual engine output at 1600 × 1000, encoded as JPEG at quality 90
 with full chroma resolution. No units, effects, or UI were added afterward.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.7.12 |
+| `title.jpg` | Title menu showing version 0.7.14 |
 | `army.jpg` | Part of the Aramon army in the 16,000-unit local patrol fixture on Ulasem Arena, one simulated second in, 0.9× zoom; fog disabled; no AI or combat |
 | `gameplay.jpg` | Aramon base in the local development demo on Ulasem Arena, one simulated second in; camera follows the selected barracks at 2× zoom |
 | `naval.jpg` | Development naval demo on Cairbray Coast Landing, eight simulated seconds in; ships on water |
@@ -36,21 +36,21 @@ The army capture uses `TAK_PATROL_PERF=1 TAK_PATROL_PERF_ZOOM=0.9`,
 `--time 1 --nofog`, and the same renderer/preferences as the other game shots.
 The 16,000 count is for the entire fixture, not the number visible in the image.
 
-## Cartographer screenshots for 0.7.13
+## Cartographer screenshots for 0.7.14
 
-`cartographer.png` and `cartographer-model.png` were freshly captured on
-2026-09-29 from the 0.7.13 release source (`af7f653`, before the version-only
-release stamp). Both are unmodified 921 × 691 PNG captures of the actual editor.
-The map is Ulasem Arena using the user's retail data.
+`cartographer.png` and `cartographer-model.png` were freshly captured from the
+same 0.7.14 release-preparation source. Both are unmodified 921 × 691 PNGs of
+Ulasem Arena using the actual editor and the user’s retail data.
 
 - `cartographer.png`: Units browser, map canvas, feature art and minimap. A
-  scratch capture harness sends the same Tab events as the keyboard and waits
-  for background art/minimap work before capturing the live editor renderer.
-- `cartographer-model.png`: F6 model inspector showing an Aramon Archer from
-  the unit browser. Captured through the editor's model workflow test after
-  asynchronous model/texture loading. This is a visual inspector, not a combat
-  scene. The capture uses SDL's dummy video driver/software renderer.
+  scratch SDL harness sends Tab key events and waits for background artwork.
+- `cartographer-model.png`: F6 model inspector showing an Aramon Archer.
+  The editor workflow test captures after asynchronous model/texture loading.
 
-Both images were visually inspected. No asset geometry, units or UI were added
-after capture. The 0.7.12 game gallery above remains representative and has not
-been relabeled as newly captured.
+Both were visually inspected. The editor captures use SDL’s dummy video driver
+and software renderer. No geometry, units, effects or UI were added afterward.
+All eleven gallery files were refreshed for this release.
+
+The campaign, match-creation and sample-results recaptures are byte-identical
+to their previous gallery files: those static screens did not change. They were
+recaptured and inspected alongside the eight images with new rendered output.
