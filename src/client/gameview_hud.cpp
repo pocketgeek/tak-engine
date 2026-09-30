@@ -1651,7 +1651,7 @@ namespace {
             }
             if (int t1 = guiIdxLeft("UnitText"); u && t1 >= 0) {
                 SDL_FRect nr = place(t1);
-                blockText(u->type->name, nr.x, nr.y, tpx, {236, 226, 192, 255});
+                blockText(u->displayName(), nr.x, nr.y, tpx, {236, 226, 192, 255});
             }
             bar(guiIdxLeft("HealthBar"), u ? u->hp / std::max(1.0f, float(u->type->maxHp)) : 0.0f,
                 {210, 70, 60, 255});
@@ -1972,7 +1972,7 @@ namespace {
                 }
                 float tx = px + 70;
                 SDL_Color blk{0, 0, 0, 255};
-                blockText(u->type->name, tx, bar.y + 9, 2.6f, blk);
+                blockText(u->displayName(), tx, bar.y + 9, 2.6f, blk);
                 std::snprintf(buf, sizeof buf, "HP %d/%d", int(u->hp),
                               int(u->type->maxHp));
                 blockText(buf, tx, bar.y + 32, 2.3f, blk);

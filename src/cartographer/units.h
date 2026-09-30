@@ -12,19 +12,22 @@
 #include <vector>
 
 namespace tak::hpi { class Vfs; }
+namespace tak::sim { class TypeRegistry; }
 
 namespace cart {
 
 struct PlacedUnit {
     std::string type;      // unit FBI name (objectName), UPPERCASE as in the .crt
     int player = 0;        // player id / start slot (0..8)
-    float x = 0, z = 0;    // map pixels (cell*16 + 8 = cell centre)
+    float x = 0, z = 0;    // footprint center in map pixels
     int health = 100;      // %  0..100
     int armor = 100;       // %  0..1000
     int weapon = 100;      // %  0..1000
     int veteran = 0;       //    0..9
     float angle = 0;       // degrees 0..359
-    std::string name;      // optional unique name
+    std::string name;      // optional display name
+    int vertical = 200;    // retained CRT field; native placement ignores it
+    int footX = 1, footZ = 1; // coordinate conversion metadata, not serialized
 };
 
 // Parse a map's .crt in full (units + rules + regions + custom types). Empty
@@ -32,7 +35,7 @@ struct PlacedUnit {
 tak::crt::Scenario loadScenario(const tak::hpi::Vfs& vfs, const std::string& crtPath);
 
 // The editor's working unit list, from a parsed Scenario (cells -> map pixels).
-std::vector<PlacedUnit> toPlaced(const tak::crt::Scenario& s);
+std::vector<PlacedUnit> toPlaced(const tak::crt::Scenario& s, const tak::sim::TypeRegistry* registry = nullptr);
 
 // Serialize the map's .crt: replace `base`'s unit list with `units` (map pixels
 // -> cells), keeping base's custom types, trigger rules, and regions intact.

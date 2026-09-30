@@ -1748,7 +1748,7 @@
         // isn't a player -- no personal mana readout.
         if (!panelTex_ && !spectating_) {
             const PlayerR& tm = framePlayer(localPlayer_);
-            float cap = std::max(tm.storage, 100.0f);
+            float cap = std::max(tm.storage, 1.0f);
             SDL_FRect bg{10, 10, 180, 12};
             SDL_SetRenderDrawColor(ren_, 20, 20, 30, 230);
             SDL_RenderFillRectF(ren_, &bg);
@@ -1763,7 +1763,7 @@
                 if (!selection_.empty()) {
                     const auto* u = frameUnitP(selection_.front());
                     if (u && u->alive() && u->type) {
-                        std::snprintf(buf, sizeof buf, "%s  %d/%d", u->type->name.c_str(),
+                        std::snprintf(buf, sizeof buf, "%s  %d/%d", u->displayName().c_str(),
                                       int(u->hp), int(u->type->maxHp));
                         hudFont_.draw(ren_, buf, 12, 40, 1.5f, {220, 220, 190, 255});
                         if (u->type->isBuilder) {
@@ -1819,6 +1819,16 @@
         // After the command panel: the readout fills the strip BETWEEN the two, and it
         // measures the panel's drawn position to find its own bottom edge.
         drawStatsPanel(winW, winH);
+        if (front().scenarioClock) {
+            const unsigned seconds=front().gameTick/30;
+            char clock[64];
+            std::snprintf(clock,sizeof clock,"GAME TIME %u:%02u:%02u",seconds/3600,(seconds/60)%60,seconds%60);
+            const SDL_FRect background{8,32,blockWidth(clock,2.f)+12,28};
+            SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren_,14,13,18,235);
+            SDL_RenderFillRectF(ren_,&background);
+            blockText(clock,14,38,2.f,{240,242,248,255});
+        }
         if (showCounts_) drawUnitCounts(winW);
         if (showHDebug_) drawHDebug();
 

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <charconv>
+#include <bit>
 
 namespace tak::sim {
 
@@ -16,8 +17,7 @@ std::string lower(std::string s) {
     return s;
 }
 int toInt(const std::string& s) { return std::atoi(s.c_str()); }
-// cell coord -> world pixel centre (matches the placed-unit spawn convention).
-float cellToWorld(float cell) { return cell * 16.0f + 8.0f; }
+std::string flagKey(const std::string& name) { return name.empty() ? std::string(1,'\0') : name.substr(0,1); }
 }  // namespace
 
 ScenarioScript::ScenarioScript(const tak::crt::Scenario& scen, const TypeRegistry& reg,
@@ -49,28 +49,56 @@ const UnitType* ScenarioScript::findType(const std::string& name) const {
     return reg_.find(lower(name));
 }
 
+bool ScenarioScript::typeMatches(const Unit& unit, const std::string& name) const {
+    // Native 515ac0 resolves unknown names to type zero, the wildcard ID.
+    const auto* type=findType(name);
+    return unit.type && (!type || unit.type==type);
+}
+
 const tak::crt::Region* ScenarioScript::region(const std::string& name) const {
-    std::string want = lower(name);
-    if (want.empty() || want == "anywhere") return nullptr;   // whole map
-    for (const auto& r : regions_)
-        if (lower(r.name) == want) return &r;
+    const auto want=lower(name);
+    for (const auto& r:regions_) if (lower(r.name)==want) return &r;
     return nullptr;
 }
 
-bool ScenarioScript::inRegion(World&, float x, float z, const std::string& loc) const {
-    const tak::crt::Region* r = region(loc);
-    int cx = int(x / 16.0f), cz = int(z / 16.0f);
-    if (!r) return cx >= 0 && cz >= 0 && cx < mapW_ && cz < mapH_;   // whole map
-    int lox = std::min(r->x1, r->x2), hix = std::max(r->x1, r->x2);
-    int loz = std::min(r->z1, r->z2), hiz = std::max(r->z1, r->z2);
-    return cx >= lox && cx <= hix && cz >= loz && cz <= hiz;
+bool ScenarioScript::regionBounds(const std::string& name,int& x1,int& z1,int& x2,int& z2) const {
+    // Native loader inserts Anywhere before authored regions. It includes an
+    // off-map margin, so temporarily off-map units still count.
+    if (lower(name)=="anywhere") {
+        x1=z1=-10000;x2=mapW_+10000;z2=mapH_+10000;return true;
+    }
+    const auto* r=region(name);
+    if (!r) return false;
+    x1=r->x1;z1=r->z1;x2=r->x2;z2=r->z2;return true;
 }
 
-void ScenarioScript::regionCenter(const std::string& loc, float& x, float& z) const {
-    const tak::crt::Region* r = region(loc);
-    if (!r) { x = cellToWorld(float(mapW_) * 0.5f); z = cellToWorld(float(mapH_) * 0.5f); return; }
-    x = cellToWorld(float(r->x1 + r->x2) * 0.5f);
-    z = cellToWorld(float(r->z1 + r->z2) * 0.5f);
+bool ScenarioScript::inRegion(World&, const Unit& unit, const std::string& loc) const {
+    int x1,z1,x2,z2;
+    if (!regionBounds(loc,x1,z1,x2,z2)) return false;
+    if (!unit.type) return false;
+    const int cx=footprintOrigin(unit.x,unit.type->footX),cz=footprintOrigin(unit.z,unit.type->footZ);
+    return cx>=x1 && cx<=x2 && cz>=z1 && cz<=z2;
+}
+
+bool ScenarioScript::regionCenter(const std::string& loc,float& x,float& z) const {
+    int x1,z1,x2,z2;
+    if (!regionBounds(loc,x1,z1,x2,z2)) return false;
+    // Signed half-distance truncates toward zero; no half-cell offset.
+    auto coordinate=[](int low,int high) {
+        const int32_t difference=std::bit_cast<int32_t>(uint32_t(high)-uint32_t(low));
+        const uint32_t cell=uint32_t(low)+uint32_t(difference/2);
+        return Fixed::raw(std::bit_cast<int32_t>(cell << 20)).toFloat();
+    };
+    x=coordinate(x1,x2);z=coordinate(z1,z2);
+    return true;
+}
+
+int32_t ScenarioScript::deathCount(const PState& state,bool killed,const std::string& name) const {
+    const auto* type=findType(name);
+    const auto& values=killed ? state.killed : state.lost;
+    const auto& key=type ? type->id : (killed ? state.firstKilled : state.firstLost);
+    const auto it=values.find(key);
+    return it==values.end() ? 0 : it->second;
 }
 
 int ScenarioScript::parsePlayer(const std::string& s) const {
@@ -88,13 +116,10 @@ int ScenarioScript::parsePlayer(const std::string& s) const {
 
 int ScenarioScript::countControl(World& w, int player, const std::string& typeName,
                                  const std::string& loc) const {
-    const bool any = lower(typeName) == "any unit";
-    const UnitType* t = findType(typeName);
-    if (!any && !t) return 0;
-    int n = 0;
-    for (const auto& u : w.units())
-        if (u.alive() && u.player == player && (any || u.type == t) &&
-            inRegion(w, u.x.toFloat(), u.z.toFloat(), loc)) ++n;
+    int n=0;
+    for (const auto& u:w.units())
+        if (u.alive() && u.hp>Fixed() && !u.underConstruction && u.player==player && typeMatches(u,typeName) &&
+            inRegion(w,u,loc)) ++n;
     return n;
 }
 
@@ -121,42 +146,38 @@ bool ScenarioScript::evalCond(World& w, int player, const tak::crt::Rule& c, boo
         case 1:  return int64_t(clock_) > int64_t(toInt(s[0])) * 30;            // Gametime > v
         case 2:  return int64_t(clock_) < int64_t(toInt(s[0])) * 30;            // Gametime < v
         case 3: { auto it = ps.timers.find(toInt(s[0]));   // Timer > v (unset => false)
-                  return it != ps.timers.end() && it->second.value > float(toInt(s[1])); }
+                  return it != ps.timers.end() && it->second.value > toInt(s[1]); }
         case 4: { auto it = ps.timers.find(toInt(s[0]));   // Timer < v (unset => false)
-                  return it != ps.timers.end() && it->second.value < float(toInt(s[1])); }
-        case 5:  return ps.killed[lower(s[1])] > toInt(s[0]);   // killed more than N X
-        case 6:  return ps.killed[lower(s[1])] < toInt(s[0]);   // killed less than N X
-        case 9:  return ps.lost[lower(s[1])] > toInt(s[0]);     // lost more than N X
-        case 10: return ps.lost[lower(s[1])] < toInt(s[0]);     // lost less than N X
-        case 7: case 8: case 11: case 12: {                    // killed/lost most/least X
-            const UnitType* t = findType(s[0]);
-            std::map<std::string, int32_t>& mine = (c.opcode <= 8) ? ps.killed : ps.lost;
-            bool most = (c.opcode == 7 || c.opcode == 11);
-            int32_t v = mine[lower(s[0])];
-            (void)t;
-            bool win = true;
-            for (size_t q = 0; q < state_.size(); ++q) {
-                if (int(q) == player) continue;
-                int32_t o = ((c.opcode <= 8) ? state_[q].killed : state_[q].lost)[lower(s[0])];
-                if (most ? (o >= v) : (o <= v)) win = false;
+                  return it != ps.timers.end() && it->second.value < toInt(s[1]); }
+        case 5: return deathCount(ps,true,s[1])>toInt(s[0]);
+        case 6: return deathCount(ps,true,s[1])<toInt(s[0]);
+        case 9: return deathCount(ps,false,s[1])>toInt(s[0]);
+        case 10:return deathCount(ps,false,s[1])<toInt(s[0]);
+        case 7: case 8: case 11: case 12: {
+            const bool killed=c.opcode<=8,most=c.opcode==7 || c.opcode==11;
+            const auto mine=deathCount(ps,killed,s[0]);
+            for (int q=0;q<maxPlayer_;++q) {
+                if (q==player || !participates(q) || w.player(q).defeated) continue;
+                const auto other=deathCount(state_[size_t(q)],killed,s[0]);
+                if (most ? other>=mine : other<=mine) return false;
             }
-            return win && v > 0;
+            return true;
         }
-        case 13: case 14: {                                    // control the most/least X at L
-            int mine = countControl(w, player, s[0], s[1]);
-            bool most = (c.opcode == 13);
-            bool win = mine > 0 || !most;
-            for (int q = 0; q < maxPlayer_; ++q) {
-                if (q == player) continue;
-                int o = countControl(w, q, s[0], s[1]);
-                if (most ? (o >= mine) : (o < mine)) win = false;
+        case 13: case 14: {
+            const int mine=countControl(w,player,s[0],s[1]);
+            for (int q=0;q<maxPlayer_;++q) {
+                if (q==player || !participates(q) || w.player(q).defeated) continue;
+                const int other=countControl(w,q,s[0],s[1]);
+                if (c.opcode==13 ? other>=mine : other<=mine) return false;
             }
-            return win;
+            return true;
         }
         case 15: return countControl(w, player, s[1], s[2]) > toInt(s[0]);   // control > N X at L
         case 16: return countControl(w, player, s[1], s[2]) < toInt(s[0]);   // control < N X at L
-        case 17: return ps.flags[s[0]] > toInt(s[1]);          // Flag f > v
-        case 18: return ps.flags[s[0]] < toInt(s[1]);          // Flag f < v
+        case 17: case 18: {
+            const auto it=ps.flags.find(flagKey(s[0]));
+            return it!=ps.flags.end() && (c.opcode==17 ? it->second>toInt(s[1]) : it->second<toInt(s[1]));
+        }
         case 19: return true;                                  // Always
         case 20: return false;                                 // Never
         case 21: case 22: {                                    // opponents left </> N
@@ -165,11 +186,7 @@ bool ScenarioScript::evalCond(World& w, int player, const tak::crt::Rule& c, boo
                 if (participates(q) && q != player && !w.allied(player, q) && !w.player(q).defeated) ++opp;
             return c.opcode == 21 ? opp < toInt(s[0]) : opp > toInt(s[0]);
         }
-        case 23: {                                             // Random: N percent true
-            rng_ = rng_ * 6364136223846793005ULL + 1442695040888963407ULL;
-            uint32_t roll = uint32_t((rng_ >> 33) % 100);
-            return int(roll) < toInt(s[0]);
-        }
+        case 23: return w.scenarioRandomPercent(toInt(s[0]));
         case 24: return w.player(player).mana < float(toInt(s[0]));   // Resources < v
         case 25: return w.player(player).mana > float(toInt(s[0]));   // Resources > v
         default: return false;
@@ -181,67 +198,73 @@ void ScenarioScript::runAction(World& w, int player, int group, const tak::crt::
     const auto& s = a.slot;
     PState& ps = state_[size_t(player)];
     switch (a.opcode) {
-        case 0: ps.timers[toInt(s[0])] = {float(toInt(s[1])), false}; break;   // countdown t=v
-        case 1: ps.timers[toInt(s[0])] = {float(toInt(s[1])), true};  break;   // countup t=v
-        case 2: ps.flags[s[0]] = toInt(s[1]); break;                           // set flag f=v
-        case 3: ps.flags[s[1]] += toInt(s[0]); break;                          // add v to flag f
-        case 4: ps.flags[s[1]] -= toInt(s[0]); break;                          // sub v from flag f
-        case 5: applyOutcome(w, player, 1, 0); break;                         // Victory for me
-        case 6: applyOutcome(w, player, -1, 0); break;                        // Defeat for me
-        case 7: {                                                              // Create X at L
-            if (const UnitType* t = findType(s[0])) {
-                float x, z; regionCenter(s[1], x, z);
-                w.spawn(t, x, z, 0.0f, player);
+        case 0: ps.timers[toInt(s[0])] = {toInt(s[1]), false}; break;   // countdown t=v
+        case 1: ps.timers[toInt(s[0])] = {toInt(s[1]), true};  break;   // countup t=v
+        case 2: ps.flags[flagKey(s[0])] = toInt(s[1]); break;                           // set flag f=v
+        case 3: case 4: {
+            const auto it=ps.flags.find(flagKey(s[1]));
+            if(it!=ps.flags.end()) {
+                const uint32_t amount=uint32_t(toInt(s[0]));
+                it->second=std::bit_cast<int32_t>(a.opcode==3 ? uint32_t(it->second)+amount : uint32_t(it->second)-amount);
             }
             break;
         }
-        case 8:                                                                // Destroy X at L
-            if (const UnitType* t = findType(s[0]))
-                for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[1]))
-                        u.hp = Fixed();
+        case 5: applyOutcome(w, player, 1, 0); break;                         // Victory for me
+        case 6: applyOutcome(w, player, -1, 0); break;                        // Defeat for me
+        case 7: {                                                              // Create X at L
+            const UnitType* t = findType(s[0]);
+            int lx, lz, hx, hz;
+            if (!t || !regionBounds(s[1], lx, lz, hx, hz)) break;
+            w.scenarioCreate(t,player,lx,lz,hx,hz);
             break;
-        case 9:                                                                // I own all X at L
-            if (const UnitType* t = findType(s[0]))
-                for (auto& u : w.units())
-                    if (u.alive() && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[1])) u.player = player;
+        }
+        case 8: {                                                              // Destroy X at L
+            std::vector<int> targets;
+            for (const auto& u:w.units())
+                if (u.alive() && u.player==player && typeMatches(u,s[0]) && inRegion(w,u,s[1])) targets.push_back(u.id);
+            for (int id:targets) w.scenarioDestroy(id);
             break;
-        case 10:                                                               // Heal X by v at L
-            if (const UnitType* t = findType(s[0]))
-                for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[2]))
-                        u.hp = fxMin(Fixed::fromFloat(u.type->maxHp),
-                                     u.hp + Fixed::fromFloat(u.type->maxHp * float(toInt(s[1])) / 100.0f));
+        }
+        case 9: {                                                              // I own all X at L
+            std::vector<int> targets;
+            for (const auto& u : w.units())
+                if (u.alive() && u.player != player && typeMatches(u,s[0]) && inRegion(w,u,s[1]))
+                    targets.push_back(u.id);
+            for (int id : targets) w.scenarioTransfer(id,player);
             break;
-        case 11:                                                               // Damage X by v at L
-            if (const UnitType* t = findType(s[0]))
-                for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[2]))
-                        u.hp = fxMax(Fixed(),
-                                     u.hp - Fixed::fromFloat(u.type->maxHp * float(toInt(s[1])) / 100.0f));
+        }
+        case 10:                                                               // Heal X by HP at L
+        case 11: {                                                             // Damage X by HP at L
+            // Native 51a140 sends an unsigned 16-bit HP amount, not a percentage.
+            std::vector<int> targets;
+            for (const auto& u:w.units())
+                if (u.alive() && u.player==player && typeMatches(u,s[0]) && inRegion(w,u,s[2])) targets.push_back(u.id);
+            for (int id:targets) w.scenarioAdjustHealth(id,uint16_t(toInt(s[1])),a.opcode==10);
             break;
+        }
         case 12: showClock_ = true; break;                                     // Display gameclock
         case 13: pending_.push_back({clock_, parsePlayer(s[0]), s[1]}); break;  // Display P text
         case 14: disabled_[size_t(player)][size_t(group)] = 1; break;          // Disable rule
-        case 15:                                                               // Move all X at L1 to L2
-            if (const UnitType* t = findType(s[0])) {
-                float dx, dz; regionCenter(s[2], dx, dz);
-                for (auto& u : w.units())
-                    if (u.alive() && u.player == player && u.type == t && inRegion(w, u.x.toFloat(), u.z.toFloat(), s[1]))
-                        w.order(u.id, dx, dz, false);
-            }
+        case 15: {                                                             // Move all X at L1 to L2
+            float dx, dz;
+            if (!regionCenter(s[2],dx,dz)) break;
+            for (auto& u : w.units())
+                if (u.alive() && u.hp > Fixed() && !u.underConstruction && u.player == player &&
+                    typeMatches(u,s[0]) && inRegion(w,u,s[1]))
+                    w.order(u.id,dx,dz,false);
             break;
-        case 16: w.player(player).storage = float(toInt(s[0])); break;         // resource limit
-        case 17: w.player(player).mana = float(toInt(s[0])); break;            // resources = v
-        case 18: w.player(player).mana += float(toInt(s[0])); break;           // add v
-        case 19: w.player(player).mana = std::max(0.0, w.player(player).mana - double(toInt(s[0]))); break;
-        case 20: break;                                                        // resources normal (no-op)
+        }
+        case 16: case 17: case 18: case 19: case 20:
+            w.applyScenarioResourceAction(player,a.opcode,toInt(s[0])); break;
         case 21: applyOutcome(w, player, 1, 1); break;                        // Victory me + teammates
         case 22: applyOutcome(w, player, -1, 1); break;                       // Defeat me + teammates
         case 23: applyOutcome(w, player, 1, 2); break;                        // Victory for opponents
         case 24: applyOutcome(w, player, -1, 2); break;                       // Defeat for opponents
-        case 25: pending_.push_back({clock_, parsePlayer(s[0]),
-                                    s[1] + std::to_string(ps.flags[s[2]]) + s[3]}); break; // Display P text flag text
+        case 25: {
+            const auto it=ps.flags.find(flagKey(s[2]));
+            if(it!=ps.flags.end())pending_.push_back({clock_,parsePlayer(s[0]),s[1]+std::to_string(it->second)+s[3]});
+            break;
+        }
         default: break;
     }
 }
@@ -271,7 +294,7 @@ void ScenarioScript::evaluate(World& w, bool initial) {
     for (auto& ps : state_)
         for (auto& [id, t] : ps.timers) {
             (void)id;
-            t.value += t.countUp ? 1.0f : -1.0f;
+            t.value=std::bit_cast<int32_t>(uint32_t(t.value)+(t.countUp ? 1u : uint32_t(-1)));
         }
     for (int p = 0; p < int(players_.size()); ++p) {
         if (!participates(p) || w.player(p).defeated) continue;
@@ -296,10 +319,19 @@ void ScenarioScript::unitDied(World& w, int id) {
     const Unit* u = w.unit(id);
     if (!u || !u->type) return;
     std::string ty = u->type->id; // CRT operands identify FBI types, not localized display names
-    if (u->player >= 0 && u->player < int(state_.size())) state_[size_t(u->player)].lost[ty]++;
-    // Kill credit to the last attacker's owner.
-    if (const Unit* k = w.unit(u->lastHitBy))
-        if (k->player >= 0 && k->player < int(state_.size())) state_[size_t(k->player)].killed[ty]++;
+    if (u->player >= 0 && u->player < int(state_.size())) {
+        auto& state=state_[size_t(u->player)];
+        if(state.firstLost.empty())state.firstLost=ty;
+        state.lost[ty]++;
+    }
+    // Native 4cd626 uses the owner recorded by the hit, not the attacker's
+    // current owner (the attacker may since have been captured or retired).
+    const int killer=u->lastHitPlayer;
+    if (killer>=0 && killer<int(state_.size()) && killer!=u->player) {
+        auto& state=state_[size_t(killer)];
+        if(state.firstKilled.empty())state.firstKilled=ty;
+        state.killed[ty]++;
+    }
 }
 
 std::vector<ScenarioScript::Msg> ScenarioScript::drainMessages() {
@@ -315,7 +347,6 @@ std::vector<ScenarioScript::Msg> ScenarioScript::drainMessages() {
 void ScenarioScript::foldHash(uint64_t& h) const {
     auto mix = [&](uint64_t v) { h ^= v; h *= 1099511628211ULL; };
     mix(uint64_t(ticks_));
-    mix(rng_);
     mix(participants_);
     for (auto outcome : outcomes_) mix(uint8_t(outcome));
     for (size_t p = 0; p < state_.size(); ++p) {
@@ -325,11 +356,14 @@ void ScenarioScript::foldHash(uint64_t& h) const {
             mix(uint64_t(int64_t(v)));
         }
         for (const auto& [id, t] : ps.timers) {
-            uint32_t bits; std::memcpy(&bits, &t.value, 4);
+            const uint32_t bits=uint32_t(t.value);
             mix((uint64_t(uint32_t(id)) << 1) ^ (uint64_t(bits) << 8) ^ uint64_t(t.countUp));
         }
         for (const auto& [k, v] : ps.killed) { mix(0x11); for (char c : k) mix(uint8_t(c)); mix(uint64_t(int64_t(v))); }
         for (const auto& [k, v] : ps.lost)   { mix(0x22); for (char c : k) mix(uint8_t(c)); mix(uint64_t(int64_t(v))); }
+        for (const auto* key:{&ps.firstKilled,&ps.firstLost}) {
+            mix(key->size());for(unsigned char c:*key)mix(c);
+        }
         for (uint8_t d : disabled_[p]) mix(d);
     }
 }

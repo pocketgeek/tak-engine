@@ -31,11 +31,19 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
     crt::Unit monarch;monarch.objectName="araking";monarch.player=0;
     monarch.x=int(starts[0].first/16);monarch.z=int(starts[0].second/16);
     monarch.health=75;monarch.armor=150;monarch.weapon=175;monarch.veteran=3;
+    monarch.uniqueName="Network monarch with a deliberately long display name";
+    monarch.y=999;
     scenario.units.push_back(monarch);
     auto neutral=monarch;neutral.player=8;neutral.x+=10;neutral.uniqueName="Neutral monarch";
     scenario.units.push_back(neutral);
     scenario.customTypes.push_back({"araking",{100,200,200,2}});
-    scenario.players[1].push_back({{{0,{}}},{{13,{"Player 1","Solo authored network"}},{14,{}}}});
+    scenario.regions.push_back({"Reinforcements",monarch.x-6,monarch.z-6,monarch.x+6,monarch.z+6});
+    scenario.regions.push_back({"Rally",monarch.x+4,monarch.z+4,monarch.x+6,monarch.z+6});
+    scenario.players[1].push_back({{{0,{}}},{{13,{"Player 1","Solo authored network"}},
+        {16,{"500"}},{17,{"123"}},{7,{"ARAARCH","Reinforcements"}},
+        {11,{"ARAARCH","7","Anywhere"}},
+        {15,{"ARAARCH","Anywhere","Rally"}},{14,{}}}});
+    scenario.players[1].push_back({{{1,{"3"}}},{{20,{}},{14,{}}}});
     scenario.players[1].push_back({{{1,{"8"}}},{{5,{}},{14,{}}}});
     std::vector<hpi::PackFile> entries;
     const auto stem=stock->mapPath.substr(0,stock->mapPath.size()-4);
@@ -50,7 +58,7 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
         } else entries.push_back({path,data});
     }
     entries.push_back({"kmap/solo authored.crt",crt::write(scenario)});
-    const std::string restriction="[ARAARCH]{}\n";
+    const std::string restriction="[ARAKING]{}\n";
     entries.push_back({"kmap/solo authored.tdf",{restriction.begin(),restriction.end()}});
     write(std::filesystem::path(hostRoot)/"Maps"/"solo-authored.kmp",hpi::pack(entries));
     auto hostData=hpi::mountRetailRoot(hostRoot,hpi::OverridePolicy::None);
@@ -69,11 +77,19 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
         cfg.startSeed=client.startSeed();cfg.randomStarts=client.startRoom().opts.randomStarts;
         cfg.unitCap=client.startRoom().opts.unitCap;cfg.slots={{true,0,0,1,false,false}};
         sim::setupMatch(world,registry,cfg);
-        check(world.numPlayers()==1 && world.units().size()==2,"solo/neutral owners became extra lobby players");
+        check(world.numPlayers()==1 && world.units().size()==3,"scripted reinforcement missing or neutral became a lobby player");
         check(world.unit(1)->scenarioArmor>2.99f && world.unit(1)->scenarioArmor<3.01f &&
               world.unit(1)->scenarioWeapon>3.49f && world.unit(1)->scenarioWeapon<3.51f,
               "authored stat multipliers lost on network participant");
-        check(!world.buildAllowed(registry.find("tarnecro")) && world.buildAllowed(registry.find("araarch")),"transferred Use Only not installed");
+        check(!world.buildAllowed(registry.find("tarnecro")) && !world.buildAllowed(registry.find("araarch")) &&
+              world.buildAllowed(registry.find("araking")),"transferred Use Only not installed");
+        check(world.unit(1)->scenarioName==monarch.uniqueName.substr(0,31),"named placement lost on network participant");
+        check(world.player(0).scenarioResourceLimit==500 && world.player(0).mana==123,"startup resource actions lost on network participant");
+        const auto* reinforcement=world.unit(3);
+        check(reinforcement && reinforcement->type==registry.find("araarch") &&
+              reinforcement->hp.floorInt()==reinforcement->type->maxHp-7,
+              "scripted create bypass or raw HP damage failed on network participant");
+        check(!reinforcement->orders.empty(),"scripted reinforcement move was not queued");
         client.reportLoaded(hpi::gameplayHash(base));
     };
     const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(90);
@@ -108,6 +124,8 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
                 for(const auto& c:bundle.cmds)sim::applyCommand(world,registry,c);
                 for(const auto& e:bundle.events)sim::applyEvent(world,e);
                 world.tick(1.f/30.f);
+                if(tick<90)check(world.player(0).scenarioResourceLimit==500 && world.player(0).mana==123,
+                                 "resource limit did not suppress natural income during network replay");
                 const auto hash=world.stateHash();
                 if(reference)hashes[tick]=hash;else check(hashes.at(tick)==hash,"solo observer replay diverged");
                 if(!client.isSpectator() && tick%net::kHashPeriod==0)client.sendHash(tick,hash);
@@ -123,8 +141,11 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
         if(observerLoaded && ht>=330 && wh.scenarioOutcome(0)==1 && wo.scenarioOutcome(0)==1 && ot==ht) {
             check(ht>240 && sent,"solo result occurred before authored victory condition");
             check(wh.scenarioOutcome(0)==1 && wo.scenarioOutcome(0)==1,"server result differs from scenario");
-            check(wh.unit(1)->buildQueue.empty() && wh.units().size()==2,"network construction bypassed Use Only");
-            std::cout<<"PASS: solo authored start, neutral/stat/Use Only transfer, host/referee/late observer parity, victory verified after "<<ht<<" ticks hash "<<std::hex<<wh.stateHash()<<'\n';
+            check(wh.unit(1)->buildQueue.empty() && wh.units().size()==3,"network construction bypassed Use Only");
+            check(wh.player(0).scenarioResourceLimit==0 && wo.player(0).scenarioResourceLimit==0 && wh.player(0).mana>123,
+                  "timed Resources Normal did not restore income across peers");
+            check(wo.unit(1)->scenarioName==monarch.uniqueName.substr(0,31),"late observer lost authored display name");
+            std::cout<<"PASS: solo authored names, neutral/stats/restrictions, scripted create/raw HP/move/resource reset, host/referee/late observer parity, victory verified after "<<ht<<" ticks hash "<<std::hex<<wh.stateHash()<<'\n';
             return 0;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));

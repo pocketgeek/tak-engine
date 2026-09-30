@@ -141,6 +141,11 @@ int main() {
         check(operandHas(true,{13,{"Player 99","Message"}},"Player 1 through"),"invalid display player rejected");
         check(!operandHas(true,{13,{"All Players","Message"}},"Player 1 through"),"broadcast display remains valid");
         check(operandHas(true,{2,{"","1"}},"flag name is empty"),"empty flag diagnosed");
+        check(operandHas(true,{2,{"score","1"}},"first byte"),"multi-byte flag names explain aliasing");
+        check(!operandHas(true,{2,{"s","1"}},"first byte"),"one-byte flag needs no alias warning");
+        check(!operandHas(false,{9,{"Any Unit","0","Anywhere"}},"not supported"),"Any Unit control wildcard accepted");
+        check(!operandHas(true,{8,{"Any Unit","Anywhere"}},"not supported"),"Any Unit action wildcard accepted");
+        check(operandHas(true,{7,{"Any Unit","Anywhere"}},"not supported"),"creation requires a concrete type");
         tak::crt::Rule truncated{13,{"Player 1",std::string("a\0b",3)}};
         check(operandHas(true,truncated,"embedded NUL"),"embedded NUL cannot silently truncate CRT operand");
         tak::tnt::Map map;map.width=map.height=32;map.heights.resize(1024,60);map.features.resize(1024,0xffff);
@@ -226,6 +231,8 @@ int main() {
         auto run=[&] {return cart::validateMap(map,metadata,scenario,units,{},registry,vfs);};
         auto has=[](const auto& issues,const std::string& text) {for(const auto& issue:issues)if(issue.message.find(text)!=std::string::npos)return true;return false;};
         check(run().empty(),"flat map, unit and reversed inclusive region validate");
+        units[0].name=std::string(32,'N');check(has(run(),"limited to 31 bytes"),"runtime display-name truncation warned");units[0].name="First";
+        units[0].vertical=99;check(has(run(),"vertical placement is preserved but ignored"),"unused vertical metadata warned");units[0].vertical=200;
         files->erase("objects3d/test.3do");
         check(has(run(),"unit model is missing"),"missing placed-unit model diagnosed");
         (*files)["objects3d/test.3do"]=emptyModel;
@@ -233,7 +240,7 @@ int main() {
         metadata.starts[1].number=9;check(has(run(),"must be 1 through 8"),"start number range");metadata.starts[1].number=2;
         map.features[0]=7;check(has(run(),"Missing feature definition"),"invalid feature reference diagnosed");map.features[0]=0xffff;
         map.seaLevel=100;check(has(run(),"engine placement rejects"),"engine rejects ground unit in deep water");map.seaLevel=0;
-        units.push_back(units.front());check(has(run(),"duplicate unique name"),"duplicate names detected");
+        units.push_back(units.front());check(!has(run(),"duplicate unique name"),"duplicate cosmetic display names were rejected");
         check(has(run(),"blocked by earlier preplaced units"),"preplaced occupancy diagnosed separately from terrain");
         units.back().x=400;units.back().name="Second";
         check(!has(run(),"blocked by earlier preplaced units"),"separated preplaced units remain clear");units.pop_back();

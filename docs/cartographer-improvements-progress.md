@@ -940,8 +940,9 @@ Cartographer or mission-runtime parity.
   checks do not validate every possible sound/animation referenced by scripts.
 - After 0.7.13, protocol 199 adds neutral/stat overrides, Use Only enforcement,
   custom outcomes and the verified retail rule cadence. Remaining runtime limits
-  in `crt-triggers.md` include unique-name/vertical overrides and unverified
-  wildcard/action combinations. Optional trigger execution logging is available
+  in `crt-triggers.md` describe the supported subset. Protocol 200 adds verified
+  trigger actions/selectors, resource overrides, display names and footprint
+  origins; vertical values are preserved but ignored by retail. Optional trigger execution logging is available
   for Test Map. Unsupported saved data is retained, and validation/start errors
   describe the supported subset.
 - Loose export rolls back ordinary write failures but is not power-loss-atomic.

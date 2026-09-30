@@ -59,7 +59,7 @@ struct UnitSelection {
         const float dz=std::clamp(z-clipboard[0].z,8-minZ,height-8-maxZ);
         indices.clear();
         for(auto unit:clipboard) {
-            unit.x+=dx;unit.z+=dz;unit.name.clear(); // names must not alias trigger references
+            unit.x+=dx;unit.z+=dz;unit.name.clear(); // copies start without the original display label
             indices.insert(int(units.size()));units.push_back(std::move(unit));
         }
         return true;

@@ -75,10 +75,12 @@ See the [release notes](docs/release-0.7.13-notes.md),
 scenario data, but full retail mission-runtime parity is not claimed; current
 limits are documented in the guide and [trigger reference](docs/crt-triggers.md).
 
-**Current checkout (after 0.7.13):** protocol **199** adds authored Use Only
+**Current checkout (after 0.7.13):** protocol **200** adds authored Use Only
 construction restrictions, neutral placements, armor/weapon and veteran defaults,
 and per-player scenario victory/defeat. It also corrects All Players rule ownership
-and once-per-game-second trigger evaluation. These changes are not in the 0.7.13
+and once-per-game-second trigger evaluation. Trigger actions now honor resource
+limits/reset, raw HP changes, wildcard selectors and ownership bookkeeping; named
+placements use footprint origins and display their authored names. These changes are not in the 0.7.13
 packages; rebuild clients and servers together. See the
 [scenario reference](docs/crt-triggers.md).
 
@@ -454,9 +456,10 @@ it to change.
 
 Use the **same engine build and compatible game data** on every participant.
 Version **0.7.13 uses protocol 198** for shared authored-scenario setup
-and preserved map companions. The current checkout uses **protocol 199** for
-construction restrictions, authored stats and independent scenario outcomes.
-Rebuild/update clients and servers together; 198 and 199 cannot share a match.
+and preserved map companions. The current checkout uses **protocol 200** for
+construction restrictions, authored stats, independent scenario outcomes and
+retail trigger/placement behavior.
+Rebuild/update clients and servers together; 198, 199 and 200 cannot share a match.
 Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
 server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
 and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and

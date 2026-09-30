@@ -432,6 +432,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     // Unit-type list for the palette (units + scen loaded above, before saveMap).
     std::vector<std::string> unitTypes = cart::unitTypeNames(vfs);
     tak::sim::TypeRegistry unitRegistry;tak::sim::setupRegistry(unitRegistry,vfs,false);
+    units=cart::toPlaced(scen,&unitRegistry);
     std::fprintf(stderr, "cartographer: %zu placed units, %zu unit types\n",
                  units.size(), unitTypes.size());
     std::fprintf(stderr, "cartographer: %zu sections for world '%s'\n",
@@ -843,9 +844,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             mLabel[3] = "WEAPON %";      mf[3] = std::to_string(u.weapon);      mfNumeric[3] = true;
             mLabel[4] = "VETERAN (0-9)"; mf[4] = std::to_string(u.veteran);     mfNumeric[4] = true;
             mLabel[5] = "ANGLE (DEG)";   mf[5] = std::to_string(int(u.angle));  mfNumeric[5] = true;
-            mLabel[6] = selectedUnits.indices.size()>1?"NAME (SINGLE UNIT ONLY)":"UNIQUE NAME";mf[6]=u.name;mfNumeric[6]=false;
-            mLabel[7] = "X (CELL)";mf[7]=std::to_string(int(u.x/16));mfNumeric[7]=true;
-            mLabel[8] = "Z (CELL)";mf[8]=std::to_string(int(u.z/16));mfNumeric[8]=true;
+            mLabel[6] = selectedUnits.indices.size()>1?"NAME (SINGLE UNIT ONLY)":"DISPLAY NAME";mf[6]=u.name;mfNumeric[6]=false;
+            mLabel[7] = "X (CELL)";mf[7]=std::to_string(int((u.x-u.footX*8)/16));mfNumeric[7]=true;
+            mLabel[8] = "Z (CELL)";mf[8]=std::to_string(int((u.z-u.footZ*8)/16));mfNumeric[8]=true;
         } else {
             return;   // nothing to open
         }
@@ -1029,13 +1030,10 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                     mfocus=i;fieldEditor.focus(mf[i]);return;
                 }
             }
-            const float dx=mf[7]==mfOriginal[7]?0:values[7]*16.0f+8-origin.x;
-            const float dz=mf[8]==mfOriginal[8]?0:values[8]*16.0f+8-origin.z;
+            const float dx=mf[7]==mfOriginal[7]?0:values[7]*16.0f+origin.footX*8-origin.x;
+            const float dz=mf[8]==mfOriginal[8]?0:values[8]*16.0f+origin.footZ*8-origin.z;
             if(targets.size()==1 && mf[6]!=origin.name) {
                 if(mf[6].size()>255) {modalError="Use a name shorter than 256 bytes.";return;}
-                for(int i=0;i<int(units.size());++i)if(i!=editUnit && !mf[6].empty() && lowerText(units[i].name)==lowerText(mf[6])) {
-                    modalError="That unique name is already used by another unit.";return;
-                }
             }
             for(int i:targets)if(i>=0 && i<int(units.size()) && (units[i].x+dx<0 || units[i].z+dz<0 || units[i].x+dx>=mapView.map().width*16 || units[i].z+dz>=mapView.map().height*16)) {
                 modalError="The selection would extend outside the map.";return;
@@ -1315,7 +1313,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             if(nextVfs.has(stem+".ota")) {const auto data=nextVfs.read(stem+".ota");nextMetadata=tak::tnt::Scenario::parse(std::string(data.begin(),data.end()));}
             nextMetadata.generatorRecipe=cart::mapGeneratorRecipe(nextVfs,path,nextMetadata.generatorRecipe);
             auto nextScenario=cart::loadScenario(nextVfs,stem+".crt");
-            auto nextUnits=cart::toPlaced(nextScenario);
+            auto nextUnits=cart::toPlaced(nextScenario,&unitRegistry);
             std::set<std::string> nextUseOnly;
             if(!nextMetadata.useOnlyUnits.empty())for(const auto& type:cart::loadUseOnly(nextVfs,stem+".tdf"))nextUseOnly.insert(type);
             minimapCancel->store(true,std::memory_order_relaxed);if(minimapJob.valid())minimapJob.wait();
@@ -1472,7 +1470,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
         map.seaLevel=state->seaLevel;map.stockTerrain=state->stockTerrain;
         mapView.editMap()=std::move(map);mapView.tilesEdited();minimapSource=nullptr;invalidateMinimap();
         scenario=tak::tnt::Scenario::parse(state->metadata);
-        scen=tak::crt::parse(state->scenario);cart::applyScenarioInfo(scen,state->editorMetadata);units=cart::toPlaced(scen);
+        scen=tak::crt::parse(state->scenario);cart::applyScenarioInfo(scen,state->editorMetadata);units=cart::toPlaced(scen,&unitRegistry);
         regionDrag.cancel();regionSelected=-1;
         useOnly=state->useOnly;mapName=state->name;dirty=history.dirty();edited=true;
         selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
@@ -2227,7 +2225,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                         cart::PlacedUnit u;
                         u.type = unitTypes[size_t(selectedType)];
                         u.player = currentPlayer;
-                        u.x = cx * 16.0f + 8; u.z = cz * 16.0f + 8;
+                        std::string id=u.type;std::transform(id.begin(),id.end(),id.begin(),[](unsigned char c){return char(std::tolower(c));});
+                        if(const auto* type=unitRegistry.find(id)) {u.footX=type->footX;u.footZ=type->footZ;}
+                        u.x = cx * 16.0f + u.footX*8; u.z = cz * 16.0f + u.footZ*8;
                         units.push_back(u);
                         draggingUnit = int(units.size()) - 1;selectedUnits.indices={draggingUnit};
                         unitsEdited = true; dirty = true; historyPending=true;
@@ -2321,8 +2321,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
                 } else if (tool == UNITS && draggingUnit >= 0) {
                     int cx, cz;   // drag a unit to a new cell centre
                     if (mouseCell(e.motion.x, e.motion.y, cx, cz)) {
-                        units[size_t(draggingUnit)].x = cx * 16.0f + 8;
-                        units[size_t(draggingUnit)].z = cz * 16.0f + 8;
+                        units[size_t(draggingUnit)].x = cx * 16.0f + units[size_t(draggingUnit)].footX*8;
+                        units[size_t(draggingUnit)].z = cz * 16.0f + units[size_t(draggingUnit)].footZ*8;
                         unitsEdited = true; dirty = true; historyPending=true;
                     }
                 } else if (draggingStart >= 0) {

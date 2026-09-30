@@ -54,7 +54,7 @@ to `World` when the map OTA declares `hasscenario=1` and explicitly opts in with
 `[TAKPlaytest] { authoredscenario=1; }`; the world ticks it and hashes its rule state.
 Messages are filtered for the local viewer without changing that state.
 Released **0.7.13 uses protocol 198**. The implementation described below is the
-**current checkout, protocol 199**; update every client and server together.
+**current checkout, protocol 200**; update every client and server together.
 
 Rules execute at startup and whenever the integer game second advances (30 ticks).
 A true group executes again at the next evaluation; Disable Rule makes it a
@@ -115,14 +115,36 @@ rule execution. `scenario_test` compares traced, untraced and failing-sink rule
 hashes, as well as log ordering, escaping and truncation.
 
 Unseated player owners, missing types, off-map placements and invalid owner IDs
-produce visible setup errors. Unique names and vertical placement fields remain
-preserved in CRT data but are not runtime unit identity/altitude overrides. The
+produce visible setup errors. Authored names appear as cosmetic unit labels,
+truncated to retail's 31 bytes, and do not replace unit type IDs in triggers.
+Placement cells identify footprint origins. Vertical placement values are
+preserved but ignored by native placement; authored angles remain an engine
+extension. See the [placement evidence](scenario-placement-retail-2026-09-29.md). The
 ordinary lobby requires at least two participants; a verified authored scenario
 can start with one. Not every wildcard/action
 combination or neutral lifecycle has been compared with retail; this is not a
 claim of complete mission-runtime parity.
 
+Selectors use case-insensitive exact region names and inclusive footprint-origin
+bounds. Unknown type names resolve to the native wildcard; missing regions select
+nothing. Flags use the first byte of their name, so `alpha` and `apple` alias.
+See the [selector evidence](scenario-selectors-retail-2026-09-29.md) for strict
+most/least comparisons and retail's first-inserted wildcard death-counter behavior.
+
+Trigger Heal/Damage actions use absolute HP, not percentages. Create scans for a
+free cell in the selected region; Move targets its integer midpoint. Ownership
+changes preserve HP while clearing the previous owner's commands/group and
+updating ownership bookkeeping. See the [action evidence](scenario-actions-retail-2026-09-29.md).
+
+A positive resource limit persists, caps storage and suppresses natural income;
+Resources normal removes it. Display gameclock enables a separate game-time
+readout. Pool changes retain native float rounding and
+negative values are clamped at tick-end. See the [resource evidence](scenario-resources-retail-2026-09-29.md).
+
 The scenario tests cover malformed input, control operands and wildcards,
 authored setup and peer hashes, construction restrictions, permanent combat stats,
 neutral targeting/capture, and explicit outcomes. The retail-stat probe runs
 native custom-default and placement arithmetic without launching the game.
+
+For the integrated build, native comparison and client/server results, see the
+[2026-09-29 action/placement validation](scenario-actions-validation-2026-09-29.md).

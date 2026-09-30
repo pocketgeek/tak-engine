@@ -1905,6 +1905,7 @@
             s.gen = fb.gen;
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
             s.id = u.id; s.type = u.type; s.player = u.player;
+            if (s.scenarioName != u.scenarioName) s.scenarioName = u.scenarioName;
             s.hp = u.hp.toFloat(); s.mana = u.mana; s.veteran = u.veteran;
             s.deadFor = u.deadFor < 0 ? -1.0f : float(u.deadFor) / 30.0f;   // ticks -> seconds
             s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
@@ -2040,6 +2041,7 @@
         }
         fb.winningTeam = world_.winningTeam();
         fb.gameTick = world_.tickCount();
+        fb.scenarioClock = world_.scenario() && world_.scenario()->showClock();
         fb.wind = world_.wind();
         // Fog snapshot: copy world_.vis_ into this buffer only when THIS buffer's fog is stale
         // (fog recomputes ~4Hz, so at most ~2 copies per change -- one per buffer). A spectator

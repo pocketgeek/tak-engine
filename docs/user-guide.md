@@ -355,7 +355,7 @@ Debug builds also support direct playback:
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
 compatible engine behavior and game data. Released **0.7.13 uses protocol 198**;
-the current checkout uses **199** for authored construction restrictions, neutral
+the current checkout uses **200** for authored construction restrictions, neutral
 ownership, stats and scenario outcomes. Use matching builds for all clients and
 the server. Different-protocol peers and replays are rejected.
 
@@ -422,7 +422,7 @@ Verified authored scenarios can start with a single participant in the current
 checkout. Ordinary skirmishes still require at least two.
 The snapshot enables authored placements/rules on both client and server without
 changing ordinary retail-map skirmish setup. The following runtime additions are
-in the current checkout (protocol 199), after released 0.7.13 (protocol 198):
+in the current checkout (protocol 200), after released 0.7.13 (protocol 198):
 
 - **Use Only** limits what players and AIs can construct. Existing placements and
   units created by scenario actions are retained even if their types are excluded.
@@ -440,6 +440,16 @@ in the current checkout (protocol 199), after released 0.7.13 (protocol 198):
   does not automatically defeat opponents. Defeat removes the defeated player's
   units immediately. Normal skirmish elimination is disabled in an authored
   scenario, so add terminal rules if it should end.
+
+- **Display Name** sets the placed unit's in-game label (retail retains up to 31
+  bytes). It is cosmetic, accepts duplicates, and is not a trigger identifier.
+  CRT vertical values are retained when saving but do not override altitude;
+  retail ignores that field. Position cells refer to the footprint's origin.
+- **Heal/Damage** amounts are HP, not percentages. A positive **resource limit**
+  caps storage and suspends natural income; **Set resources normal** restores
+  the units' normal income/storage. Scripted resource changes still work.
+- Missing regions select nothing. Unknown unit-type names behave like **Any Unit**
+  in retail, so resolve Check Map's unknown-type warnings before playing.
 
 See [scenario runtime details and limits](crt-triggers.md) before distributing a map.
 

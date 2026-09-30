@@ -179,6 +179,8 @@ struct UnitR {
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)
     bool alliedToLocal = false;                // cached alliedToLocal(player)
+    std::string scenarioName;
+    const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     bool embarked() const { return inTransport != 0; }
     bool moving() const { return moving_; }
@@ -192,8 +194,7 @@ struct PlayerR {
     float mana = 0, storage = 0, income = 0, expenditure = 0;
     void captureEconomy(const tak::sim::Player& player) {
         mana=float(player.mana);
-        storage=player.retailResources ? player.retailResources->capacity
-                                      : std::max(player.storage,100.0f);
+        storage=player.manaCapacity();
         // Retail HUD calls 401330/401350: the oldest 29 tick samples,
         // scaled to mana/second. The current sample enters next tick.
         double produced=0,used=0;
@@ -238,6 +239,7 @@ struct Frame {
     int winningTeam = -1;                // world_.winningTeam() (victory overlay)
     tak::sim::RetailWind wind;
     uint32_t gameTick = 0;               // world_.tickCount() (benchmark timing)
+    bool scenarioClock = false;         // CRT Display gameclock action
     uint64_t tickMs = 0;                 // wall-clock of this tick (for interpolation)
     float tickDurMs = 1000.0f / 30.0f;
     uint32_t gen = 0;                    // capture generation (UnitR.gen == this => live this tick)

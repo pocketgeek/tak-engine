@@ -81,10 +81,13 @@ std::vector<MapIssue> validateRuleOperands(bool action,const tak::crt::Rule& rul
            std::none_of(scenario.regions.begin(),scenario.regions.end(),[&](const auto& region){return folded(region.name)==value;}))issue(field+"unknown region: "+raw);
         if(params[s]==PKind::UnitType && !registry.find(value)) {
             const bool wildcard=value=="any unit";
-            const bool supported=wildcard && !action && rule.opcode>=13 && rule.opcode<=16;
+            const bool supported=wildcard && !(action && rule.opcode==7);
             if(!supported)issue(field+(wildcard?"Any Unit is not supported by this rule in the current engine":"unknown unit type: "+raw),!wildcard);
         }
-        if(params[s]==PKind::Flag && raw.empty())issue(field+"flag name is empty");
+        if(params[s]==PKind::Flag) {
+            if(raw.empty())issue(field+"flag name is empty");
+            else if(raw.size()>1)issue(field+"retail uses only the first byte of a flag name; names beginning with the same byte share one flag",false);
+        }
         if(params[s]==PKind::Player) {
             bool valid=value=="all players";
             for(int p=1;p<=8;++p)valid|=value=="player "+std::to_string(p) || value==std::to_string(p);
@@ -129,7 +132,7 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
             issue("Missing feature definition: "+(feature<map.featureNames.size()?map.featureNames[feature]:std::to_string(feature)),float(i%map.width)*16,float(i/map.width)*16,true);
     }
     std::vector<bool> terrainAccepted;terrainAccepted.reserve(units.size());
-    std::set<std::string> restrictions,names,regions,checkedModels;
+    std::set<std::string> restrictions,regions,checkedModels;
     for(const auto& type:useOnly)restrictions.insert(folded(type));
     for(const auto& type:scenario.customTypes)
         if(type.stat[0]!=100)
@@ -137,9 +140,10 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
     for(const auto& unit:units) {
         terrainAccepted.push_back(false);
         const auto label=unit.name.empty()?unit.type:unit.name;
+        if(unit.name.size()>31)issue(label+": in-game display name is limited to 31 bytes",unit.x,unit.z);
+        if(unit.vertical!=200)issue(label+": vertical placement is preserved but ignored by retail",unit.x,unit.z);
         if(!inside(unit.x,unit.z)) {issue(label+": outside map",-1,-1,true);continue;}
         if(unit.player<0 || unit.player>8)issue(label+": invalid owner",unit.x,unit.z,true);
-        if(!unit.name.empty() && !names.insert(folded(unit.name)).second)issue(label+": duplicate unique name",unit.x,unit.z,true);
         if(!restrictions.empty() && !restrictions.count(folded(unit.type)))issue(label+": Use Only prevents constructing more of this type (this placement remains)",unit.x,unit.z);
         const auto* type=registry.find(folded(unit.type));
         if(!type) {issue(label+": unknown unit type",unit.x,unit.z,true);continue;}

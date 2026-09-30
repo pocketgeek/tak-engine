@@ -1,5 +1,6 @@
 #include "cartographer/units.h"
 #include "cartographer/scenarioinfo.h"
+#include "sim/sim.h"
 
 #include "hpi/hpi.h"
 #include "tdf/tdf.h"
@@ -20,15 +21,19 @@ tak::crt::Scenario loadScenario(const tak::hpi::Vfs& vfs, const std::string& crt
     return scenario;
 }
 
-std::vector<PlacedUnit> toPlaced(const tak::crt::Scenario& s) {
+std::vector<PlacedUnit> toPlaced(const tak::crt::Scenario& s, const tak::sim::TypeRegistry* registry) {
     std::vector<PlacedUnit> out;
     out.reserve(s.units.size());
     for (const auto& u : s.units) {
         PlacedUnit p;
         p.type = u.objectName;
         p.player = u.player;
-        p.x = float(u.x) * 16.0f + 8.0f;   // cell -> pixel centre
-        p.z = float(u.z) * 16.0f + 8.0f;
+        std::string id=u.objectName;
+        std::transform(id.begin(),id.end(),id.begin(),[](unsigned char c){return char(std::tolower(c));});
+        if (registry) if (const auto* type=registry->find(id)) {p.footX=type->footX;p.footZ=type->footZ;}
+        p.x = float(u.x) * 16.0f + p.footX*8.0f;
+        p.z = float(u.z) * 16.0f + p.footZ*8.0f;
+        p.vertical = u.y;
         p.health = u.health;
         p.armor = u.armor;
         p.weapon = u.weapon;
@@ -50,9 +55,9 @@ std::vector<uint8_t> saveScenario(tak::crt::Scenario base,
         tak::crt::Unit u;
         u.objectName = p.type;
         u.uniqueName = p.name;
-        u.x = int32_t(std::floor(p.x / 16.0f));   // pixel -> cell
-        u.z = int32_t(std::floor(p.z / 16.0f));
-        u.y = 200;                                // constant in shipped maps
+        u.x = int32_t(std::floor((p.x-p.footX*8.0f) / 16.0f));   // pixel -> cell
+        u.z = int32_t(std::floor((p.z-p.footZ*8.0f) / 16.0f));
+        u.y = p.vertical;                         // preserve, but do not interpret
         u.player = p.player;
         u.health = std::clamp(p.health, 0, 100);
         u.armor = std::clamp(p.armor, 0, 1000);

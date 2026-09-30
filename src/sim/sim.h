@@ -909,6 +909,9 @@ struct Unit {
     int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
     const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle
 
+    // Retail scenario rename: cosmetic label, independent of FBI type identity.
+    std::string scenarioName;
+    const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
     bool embarked() const { return inTransport != 0; }
@@ -1219,8 +1222,13 @@ struct Player {
     // RetailConstructionResources preserves that arithmetic for the pending
     // economy/construction integration.
     double mana = 500;
+    float scenarioResourceLimit = 0; // CRT override: positive values also suppress natural income
     float storage = 0;   // recomputed each tick from alive units
     float income = 0;
+    float manaCapacity() const {
+        return retailResources ? retailResources->capacity :
+            (scenarioResourceLimit > 0 ? scenarioResourceLimit : std::max(storage,100.0f));
+    }
     // Income multiplier (1.0 = normal). Only ever != 1 for an Absurd-difficulty AI,
     // set once at match setup and applied to every mana source. Constant per game and
     // its effect lands in `mana` (which IS hashed), so it need not be hashed itself,
@@ -1282,6 +1290,11 @@ class World {
     friend struct RetailReplayProbe;
 public:
     int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
+    // CRT ownership transfer: preserves HP/progress, clears the former owner's commands.
+    bool scenarioTransfer(int unitId, int newPlayer);
+    int scenarioCreate(const UnitType* type,int player,int lx,int lz,int hx,int hz);
+    void scenarioDestroy(int unitId,uint8_t deathType=0);
+    void scenarioAdjustHealth(int unitId,uint16_t amount,bool heal);
     // Benchmark: install the staged spawn plan (see BenchStage). endTick marks when the
     // benchmark run finishes; benchmarkMode() is true while a plan is installed.
     void setBenchmarkPlan(std::vector<BenchStage> plan, uint32_t endTick) {
@@ -1665,6 +1678,11 @@ public:
     // Player::defeated as a side effect. Idempotent; call once per tick.
     int updateOutcome();
     int winningTeam() const { return winningTeam_; }
+    void applyScenarioResourceAction(int player, int opcode, int32_t value);
+    bool scenarioRandomPercent(int threshold) {
+        damageCrtUsed_=true; // Scenario draws also require the shared CRT state in the hash.
+        return double(threshold)>double(crtRand(0x4cac22))*0.0030517578125;
+    }
     bool hasScenarioOutcomes() const;
     // Explicit CRT result for one participant; -1 asks for a completed spectator
     // result (all participants finished, victory if any won). Not a campaign.

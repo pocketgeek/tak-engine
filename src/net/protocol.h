@@ -17,7 +17,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 199;      // 199: authored restrictions, neutral/stat overrides and per-player scenario outcomes
+constexpr uint32_t kNetVersion = 200;      // 200: retail scenario actions, selectors, resource overrides and placement origins
                                            // 195: directed mana sharing and chat recipients
                                            // 191: infinite mobile builders accept move/patrol rally orders
                                            // 190: structures never enter navigation steering

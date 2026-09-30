@@ -627,9 +627,13 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 auto name = placed.objectName;
                 std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
                 const auto* type = reg.find(name);
-                const float x = float(placed.x) * 16 + 8, z = float(placed.z) * 16 + 8;
+                const float x = float(placed.x) * 16 + type->footX * 8, z = float(placed.z) * 16 + type->footZ * 8;
                 const int id = world.spawn(type, x, z, float(placed.angle) * 3.14159265f / 180.0f, placed.player);
                 if (auto* unit = world.unit(id)) {
+                    // Native 51f4c0 keeps at most 31 bytes; this is a display label.
+                    unit->scenarioName = placed.uniqueName.substr(0,31);
+                    // The CRT vertical field is not read by native 4cc8e6..4cc953.
+                    // Terrain/flight initialization supplies height, not placed.y.
                     // Native 4cd32d..4cd3e2: placement veteran replaces the type default;
                     // placement armor/weapon multiply the type defaults. Health is current
                     // HP percentage, truncated and clamped to [0, type maximum], not max HP.

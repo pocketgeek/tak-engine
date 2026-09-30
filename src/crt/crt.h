@@ -30,9 +30,9 @@ namespace tak::crt {
 
 struct Unit {
     std::string objectName;      // FBI type name (@0x000, char[256])
-    std::string uniqueName;      // scenario-unique name (@0x100, usually empty)
-    int32_t x = 0, z = 0;        // 16px cell coords (@0x200 / @0x208)
-    int32_t y = 200;             // vertical; constant 200 in shipped maps (@0x204)
+    std::string uniqueName;      // custom display name (@0x100; runtime uses first 31 bytes)
+    int32_t x = 0, z = 0;        // 16px footprint-origin cells (@0x200 / @0x208)
+    int32_t y = 200;             // retained vertical field; native loader ignores it (@0x204)
     int32_t player = 0;          // 0..8 (@0x20c)
     int32_t health = 100;        // %   0..100  (@0x210)
     int32_t armor = 100;         // %   0..1000 (@0x214)

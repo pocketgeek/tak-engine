@@ -66,7 +66,7 @@ int main() try {
     check(fires(15,"1","aNy UnIt","Hill"),"Any Unit counts multiple types");
     check(!fires(15,"2","Any Unit","Hill"),"Any Unit respects region bounds");
     check(fires(15,"2","Any Unit","Anywhere"),"Anywhere counts units outside named regions");
-    check(!fires(15,"0","missing","Hill"),"unknown type is not a wildcard");
+    check(fires(15,"0","missing","Hill"),"native unknown type resolves to wildcard");
     check(fires(13,"Any Unit","Hill"),"control-most supports Any Unit");
     check(!fires(14,"Any Unit","Hill"),"control-least supports Any Unit");
     {
@@ -86,7 +86,7 @@ int main() try {
         human.start(world);server.start(world);human.step(world,1.f/30);server.step(world,1.f/30);
         const auto visible=human.drainMessages();const auto all=server.drainMessages();
         check(visible.size()==1 && visible[0].text=="Collected 42 items","flag message interpolation or recipient filtering");
-        check(all.size()==2 && all[1].text=="Remaining 0 items","unset flag message should use zero");
+        check(all.size()==1 && all[0].text=="Collected 42 items","unset flag message should be skipped");
         uint64_t clientHash=0,serverHash=0;human.foldHash(clientHash);server.foldHash(serverHash);
         check(clientHash==serverHash,"message filtering changed deterministic rule state");
         check(actions==std::vector<int>({-1,2,25,25}),"trace did not record group and each attempted action");
@@ -114,7 +114,7 @@ int main() try {
         scene.players[2].push_back({{{9,{"0","SOLDIER"}}},{{13,{"Player 2","loss"}}}});
         sim::ScenarioScript script(scene,registry,-1,2,64,64);script.start(world);
         const int target=world.units()[3].id;
-        world.unit(target)->lastHitBy=world.units()[0].id;
+        world.unit(target)->lastHitBy=world.units()[0].id;world.unit(target)->lastHitPlayer=0;
         script.unitDied(world,target);for(int tick=0;tick<30;++tick)script.step(world,1.f/30);
         check(script.drainMessages().size()==2,"kill/loss conditions used localized display name instead of unit identifier");
     }

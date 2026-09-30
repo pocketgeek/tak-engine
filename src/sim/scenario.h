@@ -24,6 +24,7 @@ namespace tak::sim {
 class World;
 class TypeRegistry;
 struct UnitType;
+struct Unit;
 
 class ScenarioScript {
 public:
@@ -64,12 +65,13 @@ public:
 private:
     TraceSink trace_;
     void trace(int player,int group,int action,const crt::Rule* rule) noexcept;
-    struct Timer { float value = 0; bool countUp = false; };
+    struct Timer { int32_t value = 0; bool countUp = false; };
     struct PState {
         std::map<std::string, int32_t> flags;    // sorted -> deterministic hashing
         std::map<int32_t, Timer> timers;
         std::map<std::string, int32_t> killed;   // lowercased type -> count I killed
         std::map<std::string, int32_t> lost;     // lowercased type -> count I lost
+        std::string firstKilled, firstLost; // native type-zero query returns first inserted counter
     };
 
     // ---- evaluation ----
@@ -80,9 +82,12 @@ private:
 
     // ---- parameter helpers ----
     const UnitType* findType(const std::string& name) const;
-    const tak::crt::Region* region(const std::string& name) const;   // nullptr => whole map
-    bool inRegion(World& w, float x, float z, const std::string& loc) const;
-    void regionCenter(const std::string& loc, float& x, float& z) const;
+    const tak::crt::Region* region(const std::string& name) const;
+    bool typeMatches(const Unit& unit, const std::string& name) const;
+    bool regionBounds(const std::string& name,int& x1,int& z1,int& x2,int& z2) const;
+    int32_t deathCount(const PState& state,bool killed,const std::string& type) const;
+    bool inRegion(World& w, const Unit& unit, const std::string& loc) const;
+    bool regionCenter(const std::string& loc, float& x, float& z) const;
     int parsePlayer(const std::string& s) const;   // "Player N"->N-1, "All..."->-1
     void applyOutcome(World& w, int player, int result, int recipients);
 
@@ -99,7 +104,6 @@ private:
     std::vector<Msg> pending_;
     int32_t clock_ = 0;   // TICKS
     uint32_t ticks_ = 0;
-    uint64_t rng_ = 0x9e3779b97f4a7c15ULL;   // deterministic stream for "Random"
     bool showClock_ = false;
     bool started_ = false;
 };

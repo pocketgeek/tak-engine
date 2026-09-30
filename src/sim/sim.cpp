@@ -4446,6 +4446,149 @@ bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     return true;
 }
 
+// Native 4cc3c0 searches the primary unit grid, not terrain/build eligibility.
+int World::scenarioCreate(const UnitType* type,int player,int lx,int lz,int hx,int hz) {
+    if (!type || !validUnitOwner(player) || atUnitCap(player)) return 0;
+    lx=std::max(0,lx);lz=std::max(0,lz);
+    hx=std::min(terW_-1,hx);hz=std::min(terH_-1,hz);
+    int cx=int(int64_t(lx)+(int64_t(hx)-lx)/2);
+    int cz=int(int64_t(lz)+(int64_t(hz)-lz)/2);
+    std::set<std::pair<int,int>> occupied;
+    for (const auto& u:units_) {
+        if (!u.alive() || u.hp<=Fixed() || !u.type || u.embarked() ||
+            (!u.type->isStructure() && u.flightGroundMode!=1)) continue;
+        const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+        // Native primary insertion requires the complete footprint strictly
+        // inside the far edge. Partial/off-map bodies occupy no primary cells.
+        if (ox<0 || oz<0 || ox+u.type->footX>=terW_ || oz+u.type->footZ>=terH_) continue;
+        bool opened=false;
+        if (const auto script=unitScripts_.find(u.id);script!=unitScripts_.end()) opened=script->second.yardOpen;
+        for (int z=std::max(lz,oz);z<=std::min(hz,oz+u.type->footZ-1);++z)
+            for (int x=std::max(lx,ox);x<=std::min(hx,ox+u.type->footX-1);++x) {
+                if (u.type->isStructure() && !u.type->yardMap.empty()) {
+                    const char yard=u.type->yardMap.at(size_t(z-oz)*u.type->footX+x-ox);
+                    // 4c0f77..4c0fdd: . =0, y/Y=0x29/31, c/C=0x2d/35;
+                    // insertion tests bit 4 when closed, bit 2 when opened.
+                    if (yard=='.' || yard=='y' || yard=='Y' || (!opened && yard=='O') ||
+                        (opened && (yard=='c' || yard=='C'))) continue;
+                }
+                occupied.emplace(z,x);
+            }
+    }
+    bool found=false;
+    for (int z=lz;z<=hz && !found;++z) for (int x=lx;x<=hx;++x)
+        if (!occupied.contains({z,x})) {cx=x;cz=z;found=true;break;}
+    // Match native fixed-point wrapping for malformed/out-of-map fallback
+    // positions without signed overflow or float-to-int overflow.
+    const auto coordinate=[](int cell,int footprint) {
+        return Fixed::raw(std::bit_cast<int32_t>(uint32_t(cell)*0x100000u+uint32_t(footprint)*0x80000u)).toFloat();
+    };
+    return spawn(type,coordinate(cx,type->footX),coordinate(cz,type->footZ),0.f,player);
+}
+
+void World::scenarioDestroy(int unitId,uint8_t deathType) {
+    auto* target=unit(unitId);
+    if (!target || !target->alive() || !target->type) return;
+    // Detach every current worker before retiring the site, so no later worker
+    // can restore its HP. Keep unrelated queued production available afterward.
+    for (auto& builder:units_) {
+        if (builder.id==unitId) continue;
+        if (builder.buildSiteId==unitId || (builder.retailBuild && builder.retailBuild->target==unitId)) {
+            builder.buildSiteId=0;
+            cancelBuilds(builder.id);
+            builder.productionSiteId=0;
+        }
+        if (builder.repairId==unitId) cancelBuilds(builder.id);
+    }
+    cancelBuilds(unitId);stop(unitId);
+    auto& u=*unit(unitId);
+    const int owner=u.player;
+    u.hp=Fixed();u.deathType=deathType;u.severity=0;u.corpseStatue=-1;
+    u.retailSite.reset();u.beingBuilt=false;
+    beginUnitDeath(u);
+    if (u.type->isStructure()) blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
+    retireCorpse(u);
+    u.speed=Fixed();u.selfDestructT=-1;
+    updateBodyIndex(u);
+    for (auto& plane:searchGrades_) refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
+        footprintOrigin(u.z,u.type->footZ),u.type->footX,u.type->footZ);
+    if (validUnitOwner(owner)) {
+        ++players_[size_t(owner)].losses;
+        if (players_[size_t(owner)].unitCount>0) --players_[size_t(owner)].unitCount;
+    }
+    if (!scoreAutomaticDisabled_ && !u.underConstruction && validUnitOwner(u.lastHitPlayer) && u.lastHitPlayer!=owner) {
+        auto& score=players_[size_t(u.lastHitPlayer)].score;
+        score=std::bit_cast<int32_t>(uint32_t(score)+uint32_t(u.type->experiencePoints));
+    }
+    if (auto* killer=unit(u.lastHitBy);killer && killer->type) {
+        if (!allied(killer->player,owner) && validUnitOwner(killer->player)) ++players_[size_t(killer->player)].kills;
+        if (killer->alive() && killer->type->canMove && !killer->type->noVeteran) {
+            ++killer->xp;killer->veteran=std::min(10,killer->xp);
+        }
+    }
+    if (scenario_) scenario_->unitDied(*this,unitId);
+    if (mission_) mission_->unitDied(*this,unitId);
+}
+
+void World::scenarioAdjustHealth(int unitId,uint16_t amount,bool heal) {
+    auto* u=unit(unitId);
+    if (!u || !u->type || !u->alive() || (u->hp<=Fixed() && !u->underConstruction)) return;
+    const int64_t delta=int64_t(amount)*Fixed::kOne;
+    if (heal) u->hp=Fixed::raw(int32_t(std::min<int64_t>(Fixed::fromInt(u->maximumHp()).v,int64_t(u->hp.v)+delta)));
+    else {
+        // Native HP subtraction is a wrapping 16-bit word operation. Express
+        // the corresponding fixed-point wrap as unsigned arithmetic, never UB.
+        const int32_t next=std::bit_cast<int32_t>(uint32_t(u->hp.v)-(uint32_t(amount)<<16));
+        u->overkill=Fixed::raw(next<0 ? int32_t(std::min<int64_t>(-int64_t(next),INT32_MAX)) : 0);
+        u->hp=Fixed::raw(std::max(0,next));
+    }
+    if (u->retailSite) {
+        auto& progress=u->retailSite->progress;
+        progress.hp=uint16_t(u->hp.floorInt());
+        // Native healing leaves construction progress untouched; damage writes
+        // 1 - HP/maxHP while unfinished, before testing for a lethal result.
+        if (!heal && progress.remaining!=0)
+            progress.remaining=float(1.0-double(progress.hp)/std::max(1,u->maximumHp()));
+    }
+    if (!heal) {
+        u->deathType=13;u->lastHitBy=0;u->lastHitPlayer=-1;
+        if (u->underConstruction && u->hp<=Fixed()) scenarioDestroy(unitId,13);
+    }
+}
+
+// Native CRT ownership uses 514da0, which preserves health rather than applying
+// charm's half-health floor. Keep stable engine IDs while removing owner commands.
+bool World::scenarioTransfer(int unitId, int newPlayer) {
+    Unit* u = unit(unitId);
+    if (!u || !u->type || !u->alive() || u->hp <= Fixed() ||
+        !validUnitOwner(newPlayer) || u->player == newPlayer || atUnitCap(newPlayer)) return false;
+    const int oldPlayer = u->player;
+    // Retail transfers allocate a new object; old construction workers lose
+    // their target. Stable engine IDs must not keep those old jobs attached.
+    for (auto& builder:units_) if (builder.id!=unitId &&
+        (builder.buildSiteId==unitId || builder.repairId==unitId ||
+         (builder.retailBuild && builder.retailBuild->target==unitId))) {
+        if (builder.buildSiteId==unitId) builder.buildSiteId=0;
+        cancelBuilds(builder.id);builder.productionSiteId=0;
+    }
+    if (u->retailSite) u->retailSite->builder=0;
+    cancelBuilds(unitId);
+    stop(unitId);
+    if (validUnitOwner(oldPlayer) && players_[size_t(oldPlayer)].unitCount > 0)
+        --players_[size_t(oldPlayer)].unitCount;
+    ++players_[size_t(newPlayer)].unitCount;
+    if (mission_) mission_->unitCaptured(*this, unitId);
+    u->player = newPlayer;
+    u->rally.clear();
+    u->selfDestructT = -1;
+    u->squad = 0;
+    u->lastHitBy = 0;
+    u->lastHitPlayer = -1;
+    u->captureProg = 0;
+    gPlayersValid_ = false;
+    return true;
+}
+
 // Switch a unit's allegiance: contact charm (cancapture) and mind-control weapons
 // both land here, so a converted unit behaves identically either way -- it drops
 // its old orders, comes up at half health if it was nearly dead, and forgets who
@@ -8646,7 +8789,13 @@ void World::tick(float dt) {
     // Difficulty income cheat: scale the summed income so the boost flows through the
     // mana accrual below, allied surplus sharing, and god-favour alike. manaMult is 1
     // for everyone but an Absurd AI, so this is an exact no-op (x1.0) otherwise.
-    for (auto& tm : players_) tm.income *= tm.manaMult;
+    for (auto& tm : players_) {
+        tm.income *= tm.manaMult;
+        if (tm.scenarioResourceLimit > 0) {
+            tm.income = 0;
+            tm.storage = tm.scenarioResourceLimit;
+        }
+    }
     // Apply income, then share the economy across allies: mana that would
     // overflow a player's storage flows to teammates that still have headroom,
     // so a maxed-out ally feeds the team instead of wasting mogrium. It is truly
@@ -8680,7 +8829,7 @@ void World::tick(float dt) {
         tm.mana=tm.retailResources->stored;tm.storage=tm.retailResources->capacity;
     }
     const int np = int(players_.size());
-    auto cap = [&](int i) { return std::max(players_[size_t(i)].storage, 100.0f); };
+    auto cap = [&](int i) { return players_[size_t(i)].manaCapacity(); };
     bool teamDone[kMaxPlayers] = {};
     for (int lead = 0; lead < np; ++lead) {
         int team = players_[size_t(lead)].team;
@@ -9112,7 +9261,8 @@ void World::tick(float dt) {
             const Weapon* deathWeapon=selfDestruct
                 ? (u.type->hasSelfDestructAs ? &u.type->selfDestructAs : nullptr)
                 : (u.type->hasExplodeAs ? &u.type->explodeAs : nullptr);
-            if (deathWeapon && u.deathType!=14 && u.deathType!=15)
+            if (deathWeapon && u.deathType!=0 &&
+                (u.deathType<6 || u.deathType>11) && u.deathType<14)
                 deathBlasts_.push_back({deathWeapon, u.x.toFloat(), u.z.toFloat(), u.player, u.id});
             // Killed decides corpse admission; Dying controls when the original
             // body retires. Only then does decomposition or water sinking begin.
@@ -9496,6 +9646,8 @@ void World::tick(float dt) {
             }
             r.produced=r.requested=0;
         }
+        if (scenario_ && !player.retailResources)
+            player.mana = std::clamp(player.mana,0.0,double(player.manaCapacity()));
         player.displayResources.advance();
         if (player.retailAi) {
             auto& ai=*player.retailAi;
@@ -9591,7 +9743,7 @@ void World::tick(float dt) {
                 if (!member.underConstruction) ++entry->inputs.completed;
             }
             const float stored=float(player.mana);
-            const float capacity=std::max(player.storage,100.0f); // current World economy host
+            const float capacity=player.manaCapacity(); // current World economy host
             const float ratio=double(capacity)>0.01 ? stored/capacity : 0.0f;
             const bool shortfall=cache.resources.shortfall(stored);
             for (auto& entry:cache.entries)
@@ -10315,6 +10467,7 @@ uint64_t World::stateHash() const {
         mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1));
         if (t.manaShareMask != 0xff) { mix(0x53484152454d414eull); mix(t.manaShareMask); }
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
+        if (t.scenarioResourceLimit != 0) { mix(0x4352544c494d4954ull); mixf(t.scenarioResourceLimit); }
         mix(t.cacheClock.enabled); mix(t.cacheClock.lastRefresh);
         if (t.retailResources) {
             mix(0x5245534fu);const auto& r=*t.retailResources;
@@ -10466,7 +10619,32 @@ void World::setMission(std::unique_ptr<MissionScript> m) {
 }
 int World::missionOutcome() const { return mission_ ? mission_->outcome() : 0; }
 
+void World::applyScenarioResourceAction(int player, int opcode, int32_t value) {
+    if (player < 0 || player >= numPlayers()) return;
+    auto& p=players_[size_t(player)];
+    // Native 4cb593..4cb68a writes the override separately from capacity.
+    // Pool writes round to float; subtraction may remain negative until tick-end.
+    switch (opcode) {
+        case 16: case 20:
+            p.scenarioResourceLimit=opcode==16 ? float(value) : 0.f;
+            if (p.retailResources) p.retailResources->capacityOverride=p.scenarioResourceLimit;
+            return;
+        case 17: p.mana=float(value); break;
+        case 18:
+            p.mana=float(double(float(p.mana))+double(value));
+            if (p.retailResources) p.retailResources->totalProduced+=double(value);
+            break;
+        case 19: p.mana=float(double(float(p.mana))-double(value)); break;
+        default:return;
+    }
+    if (p.retailResources) p.retailResources->stored=float(p.mana);
+}
+
 void World::clearScenarioState() {
+    for (auto& p:players_) {
+        if (p.scenarioResourceLimit != 0 && p.retailResources) p.retailResources->capacityOverride=0;
+        p.scenarioResourceLimit=0;
+    }
     scenario_.reset();
     forcedDefeat_.clear();
     hadMonarch_.clear();
