@@ -1,0 +1,1220 @@
+[
+  {
+    "archive": "MAINDIR/Maps/ Adamantine Gate.kmp",
+    "path": "kmap/Adamantine Gate.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Adamantine Gate.kmp",
+    "path": "kmap/Adamantine Gate.tnt",
+    "tool": "build/tnttool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Aibel's Seaport.kmp",
+    "path": "kmap/Aibel's Seaport.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Alchemist Glen.kmp",
+    "path": "kmap/Alchemist Glen.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Arches of Zhon.kmp",
+    "path": "kmap/Arches of Zhon.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Barb Coast.kmp",
+    "path": "kmap/Barb Coast.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Bay of Mist.kmp",
+    "path": "kmap/Bay of Mist.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Bell Toll.kmp",
+    "path": "kmap/Bell Toll.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Black Forest.kmp",
+    "path": "kmap/Black Forest.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Blood Feud.kmp",
+    "path": "kmap/Blood Feud.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Brandon's Woods.kmp",
+    "path": "kmap/Brandon's Woods.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Burial Mound.kmp",
+    "path": "kmap/Burial Mound.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Caer Conlin.kmp",
+    "path": "kmap/Caer Conlin.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Canal Crossing.kmp",
+    "path": "kmap/Canal Crossing.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Canal Walls.kmp",
+    "path": "kmap/Canal Walls.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Cauldron Waters.kmp",
+    "path": "kmap/Cauldron Waters.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Clan Village.kmp",
+    "path": "kmap/Clan Village.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Crab Cove.kmp",
+    "path": "kmap/Crab Cove.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Crash Barrens.kmp",
+    "path": "kmap/Crash Barrens.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Crossings.kmp",
+    "path": "kmap/Crossings.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Cursed Temple.kmp",
+    "path": "kmap/Cursed Temple.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Dan'gel Ravine.kmp",
+    "path": "kmap/Dan'gel Ravine.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Dancing River.kmp",
+    "path": "kmap/Dancing River.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Drake Point.kmp",
+    "path": "kmap/Drake Point.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Dreadrock Canal.kmp",
+    "path": "kmap/Dreadrock Canal.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Drialia's Cliffs.kmp",
+    "path": "kmap/Drialia's Cliffs.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Dry Ring.kmp",
+    "path": "kmap/Dry Ring.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ East Kaluen.kmp",
+    "path": "kmap/East Kaluen.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Edmont's Field.kmp",
+    "path": "kmap/Edmont's Field.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Endocott Isle.kmp",
+    "path": "kmap/Endocott Isle.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Ensign's Lament.kmp",
+    "path": "kmap/Ensign's Lament.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Evergreen Ridge.kmp",
+    "path": "kmap/Evergreen Ridge.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Extinct Volcano.kmp",
+    "path": "kmap/Extinct Volcano.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Fallow Fields.kmp",
+    "path": "kmap/Fallow Fields.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Fel Doom.kmp",
+    "path": "kmap/Fel Doom.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Fey Citadel.kmp",
+    "path": "kmap/Fey Citadel.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Field of Dasanko.kmp",
+    "path": "kmap/Field of Dasanko.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Fire Ant Field.kmp",
+    "path": "kmap/Fire Ant Field.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Fossil Cleft.kmp",
+    "path": "kmap/Fossil Cleft.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Fountainhead.kmp",
+    "path": "kmap/Fountainhead.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Four Barracks.kmp",
+    "path": "kmap/Four Barracks.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Gaerion Wood.kmp",
+    "path": "kmap/Gaerion Wood.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Ghost Shipping.kmp",
+    "path": "kmap/Ghost Shipping.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Green Island.kmp",
+    "path": "kmap/Green Island.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Greenstone Point.kmp",
+    "path": "kmap/Greenstone Point.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Greenwater.kmp",
+    "path": "kmap/Greenwater.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Grimm Farms.kmp",
+    "path": "kmap/Grimm Farms.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Hall of Heroes.kmp",
+    "path": "kmap/Hall of Heroes.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Hallowed River.kmp",
+    "path": "kmap/Hallowed River.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Hanging Gardens.kmp",
+    "path": "kmap/Hanging Gardens.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Harsh Dunes.kmp",
+    "path": "kmap/Harsh Dunes.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Hedgemaze.kmp",
+    "path": "kmap/Hedgemaze.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Highland Village.kmp",
+    "path": "kmap/Highland Village.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Hillspire Vista.kmp",
+    "path": "kmap/Hillspire Vista.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Human Menagerie.kmp",
+    "path": "kmap/Human Menagerie.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Icy Peaks.kmp",
+    "path": "kmap/Icy Peaks.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Ihom Coast.kmp",
+    "path": "kmap/Ihom Coast.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Ill Fens.kmp",
+    "path": "kmap/Ill Fens.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Inclined Forest.kmp",
+    "path": "kmap/Inclined Forest.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Into the Woods.kmp",
+    "path": "kmap/Into the Woods.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Invasion Bluffs.kmp",
+    "path": "kmap/Invasion Bluffs.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Inwaari Temple.kmp",
+    "path": "kmap/Inwaari Temple.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Inzacata.kmp",
+    "path": "kmap/Inzacata.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Iobar's Theatre.kmp",
+    "path": "kmap/Iobar's Theatre.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Irontaste Lake.kmp",
+    "path": "kmap/Irontaste Lake.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Isle of Sand.kmp",
+    "path": "kmap/Isle of Sand.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Ivy Mountains.kmp",
+    "path": "kmap/Ivy Mountains.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Jungle Adventure.kmp",
+    "path": "kmap/Jungle Adventure.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Jungle Hunt.kmp",
+    "path": "kmap/Jungle Hunt.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Jungle Island.kmp",
+    "path": "kmap/Jungle Island.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Kandran Moat.kmp",
+    "path": "kmap/Kandran Moat.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Kingmaker Isle.kmp",
+    "path": "kmap/Kingmaker Isle.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Kraken Temple.kmp",
+    "path": "kmap/Kraken Temple.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Lantern District.kmp",
+    "path": "kmap/Lantern District.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Lieber's Project.kmp",
+    "path": "kmap/Lieber's Project.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Living Wastes.kmp",
+    "path": "kmap/Living Wastes.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Lobster Manor.kmp",
+    "path": "kmap/Lobster Manor.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Long Canal.kmp",
+    "path": "kmap/Long Canal.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Lost River Valley.kmp",
+    "path": "kmap/Lost River Valley.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ M'hari Outskirts.kmp",
+    "path": "kmap/M'hari Outskirts.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mana Quarry.kmp",
+    "path": "kmap/Mana Quarry.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Manorhome.kmp",
+    "path": "kmap/Manorhome.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Marina Largo.kmp",
+    "path": "kmap/Marina Largo.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Marlok Bay.kmp",
+    "path": "kmap/Marlok Bay.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mateo Grasslands.kmp",
+    "path": "kmap/Mateo Grasslands.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mithril Run.kmp",
+    "path": "kmap/Mithril Run.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mogrium Mound.kmp",
+    "path": "kmap/Mogrium Mound.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mountain Madness.kmp",
+    "path": "kmap/Mountain Madness.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mountain Temple.kmp",
+    "path": "kmap/Mountain Temple.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mud Fern Lakes.kmp",
+    "path": "kmap/Mud Fern Lakes.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Mukiltrom Valley.kmp",
+    "path": "kmap/Mukiltrom Valley.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Narmer Harbor.kmp",
+    "path": "kmap/Narmer Harbor.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Navigator Island.kmp",
+    "path": "kmap/Navigator Island.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Neegam's Pass.kmp",
+    "path": "kmap/Neegam's Pass.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ New Hindigal.kmp",
+    "path": "kmap/New Hindigal.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Oggin Landing.kmp",
+    "path": "kmap/Oggin Landing.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Oldhenge.kmp",
+    "path": "kmap/Oldhenge.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Oracle at Pentus.kmp",
+    "path": "kmap/Oracle at Pentus.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Orc Rocks.kmp",
+    "path": "kmap/Orc Rocks.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Overseer Island.kmp",
+    "path": "kmap/Overseer Island.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Overseer Plateau.kmp",
+    "path": "kmap/Overseer Plateau.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Parched Sea.kmp",
+    "path": "kmap/Parched Sea.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Path of Pardu.kmp",
+    "path": "kmap/Path of Pardu.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Peasant Grove.kmp",
+    "path": "kmap/Peasant Grove.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Peninsular Vina.kmp",
+    "path": "kmap/Peninsular Vina.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Peream Land.kmp",
+    "path": "kmap/Peream Land.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Phantom Crest.kmp",
+    "path": "kmap/Phantom Crest.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Plateau Aerinarr.kmp",
+    "path": "kmap/Plateau Aerinarr.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Precipices.kmp",
+    "path": "kmap/Precipices.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Qinzi Plazas.kmp",
+    "path": "kmap/Qinzi Plazas.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Quartz Springs.kmp",
+    "path": "kmap/Quartz Springs.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Red Rivers.kmp",
+    "path": "kmap/Red Rivers.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Riverfork Wood.kmp",
+    "path": "kmap/Riverfork Wood.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Riverlook.kmp",
+    "path": "kmap/Riverlook.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Robber Road.kmp",
+    "path": "kmap/Robber Road.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Rump's Roost.kmp",
+    "path": "kmap/Rump's Roost.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Rynn's Valley.kmp",
+    "path": "kmap/Rynn's Valley.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Salt Pillars.kmp",
+    "path": "kmap/Salt Pillars.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Sandy Shore.kmp",
+    "path": "kmap/Sandy Shore.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Sardonic Isles.kmp",
+    "path": "kmap/Sardonic Isles.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Savage Isle.kmp",
+    "path": "kmap/Savage Isle.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Scribe's Slough.kmp",
+    "path": "kmap/Scribe's Slough.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Sea Castle.kmp",
+    "path": "kmap/Sea Castle.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Sea Snake.kmp",
+    "path": "kmap/Sea Snake.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Seas of Flame.kmp",
+    "path": "kmap/Seas of Flame.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Seygon Canal.kmp",
+    "path": "kmap/Seygon Canal.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Shiaugh Lakes.kmp",
+    "path": "kmap/Shiaugh Lakes.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Shifting Sands.kmp",
+    "path": "kmap/Shifting Sands.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Signal Pointe.kmp",
+    "path": "kmap/Signal Pointe.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Sinibad's Cove.kmp",
+    "path": "kmap/Sinibad's Cove.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Siren Rocks.kmp",
+    "path": "kmap/Siren Rocks.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Slaver Den.kmp",
+    "path": "kmap/Slaver Den.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Soulspit.kmp",
+    "path": "kmap/Soulspit.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Sparkly Bay.kmp",
+    "path": "kmap/Sparkly Bay.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Spectre Keep.kmp",
+    "path": "kmap/ Spectre Keep.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Still Lake.kmp",
+    "path": "kmap/Still Lake.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Stone Baths.kmp",
+    "path": "kmap/Stone Baths.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Streets of Pain.kmp",
+    "path": "kmap/Streets of Pain.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Syphon Channels.kmp",
+    "path": "kmap/Syphon Channels.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Talgath's Toll.kmp",
+    "path": "kmap/Talgath's Toll.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Tartaglia Narrows.kmp",
+    "path": "kmap/Tartaglia Narrows.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Tarza's River.kmp",
+    "path": "kmap/Tarza's River.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Temple of Blood.kmp",
+    "path": "kmap/Temple of Blood.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Tenfinger Road.kmp",
+    "path": "kmap/Tenfinger Road.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Terror Hamlet.kmp",
+    "path": "kmap/Terror Hamlet.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Terror Town.kmp",
+    "path": "kmap/Terror Town.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ The Glavnos.kmp",
+    "path": "kmap/The Glavnos.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ The Lochs.kmp",
+    "path": "kmap/The Lochs.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ The Magic Knot.kmp",
+    "path": "kmap/The Magic Knot.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ The Muldoons.kmp",
+    "path": "kmap/The Muldoons.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ The Quandary.kmp",
+    "path": "kmap/The Quandary.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ The Sea Wood.kmp",
+    "path": "kmap/The Sea Wood.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ The Vault.kmp",
+    "path": "kmap/The Vault.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Theatre of Cruelty.kmp",
+    "path": "kmap/ Theatre of Cruelty.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Thorn Boscage.kmp",
+    "path": "kmap/Thorn Boscage.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Three Jewels.kmp",
+    "path": "kmap/Three Jewels.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Toad River.kmp",
+    "path": "kmap/Toad River.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Treehenge.kmp",
+    "path": "kmap/Treehenge.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Tribal Shores.kmp",
+    "path": "kmap/Tribal Shores.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Tribelands.kmp",
+    "path": "kmap/Tribelands.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Troubled Waters.kmp",
+    "path": "kmap/Troubled Waters.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Twisted Grove.kmp",
+    "path": "kmap/Twisted Grove.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Twitching Rock.kmp",
+    "path": "kmap/Twitching Rock.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Two Sins.kmp",
+    "path": "kmap/Two Sins.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Ulasem.kmp",
+    "path": "kmap/Ulasem.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Unholy Purpose.kmp",
+    "path": "kmap/Unholy Purpose.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Urban Riverside.kmp",
+    "path": "kmap/Urban Riverside.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Valysia City.kmp",
+    "path": "kmap/Valysia City.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Verdun Cliffs.kmp",
+    "path": "kmap/ Verdun Cliffs.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Volcanic Isles.kmp",
+    "path": "kmap/Volcanic Isles.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Volcanic Stone.kmp",
+    "path": "kmap/Volcanic Stone.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Voyager Isles.kmp",
+    "path": "kmap/Voyager Isles.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Walls of Carin Vel.kmp",
+    "path": "kmap/Walls of Carin Vel.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Walls of Elam.kmp",
+    "path": "kmap/Walls of Elam.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Waterworks.kmp",
+    "path": "kmap/Waterworks.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Whispering Wood.kmp",
+    "path": "kmap/Whispering Wood.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Windswept Isle.kmp",
+    "path": "kmap/Windswept Isle.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Worm Wood.kmp",
+    "path": "kmap/Worm Wood.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Yew Wood.kmp",
+    "path": "kmap/Yew Wood.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Zhon Highlands.kmp",
+    "path": "kmap/Zhon Highlands.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Zhorl Valley.kmp",
+    "path": "kmap/Zhorl Valley.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/Maps/ Zirra Channel.kmp",
+    "path": "kmap/Zirra Channel.ota",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "Fonts/metamap font.tdf",
+    "tool": "build/tdftool",
+    "exit_code": 0
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYAcceptOrRejectAllDialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYFilterHousesDialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYHCreate1Dialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYHCreate2Dialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYHCrestDialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYHOUSE0.GUI",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYHouseConsole_Honor.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYHouseConsole_Terror.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYHouseNonMember.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaBattleHostDialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaConsole.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaLeave.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaWarBattlesWindow.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaWarConsole.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaWarFinderWindow.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaWarGatheringWindow.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMetaWarPeopleWindow.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYMovieViewerDialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYPageMessageDialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  },
+  {
+    "archive": "MAINDIR/meta.hpi",
+    "path": "guis/BYWarPlayerPageDialogue.gui",
+    "tool": "build/tdftool",
+    "exit_code": 1
+  }
+]

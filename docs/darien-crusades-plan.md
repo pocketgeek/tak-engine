@@ -1123,6 +1123,10 @@ Do not reverse this order.
 
 # First actionable task
 
+Completed first pass on 2026-09-30: [research tooling, inventories, sources and
+evidence matrix](research/darien-crusades/README.md). This does not mark the full
+Milestone 1 historical/binary audit complete.
+
 The first implementation task for an agent should be research tooling and
 documentation only:
 
