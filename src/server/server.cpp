@@ -25,6 +25,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cmath>
+#include <fstream>
 #include <functional>
 #include <mutex>
 #include <random>
@@ -55,6 +57,10 @@
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
 #include "version.h"
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 using namespace tak::net;
 
@@ -177,6 +183,11 @@ struct Room {
     std::string campaignBattleId, campaignLaunchToken, campaignRoomToken, campaignId;
     std::string campaignAccounts[2];
     int64_t campaignExpires = 0;
+    std::optional<tak::srv::crusades::VerifiedMatchResult> campaignResult;
+    std::optional<tak::srv::crusades::ResultOutcome> campaignFault;
+    uint64_t campaignResultDue = 0;
+    bool campaignResultRecorded = false;
+    bool campaignResigned[2] = {}, campaignDisconnected[2] = {}, campaignTimeout[2] = {}, campaignLoaded[2] = {};
     std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
     uint32_t hostId = 0;
@@ -320,6 +331,8 @@ public:
         if (!requireAuth_) throw std::runtime_error("Crusades requires account authentication");
         crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(database);
         campaignSession_ = tak::crypto::toHex(tak::crypto::randomVec(32));
+        campaignReplayDir_ = replayDir_.empty() ? std::filesystem::absolute(database).parent_path()/"crusades-replays"
+                                             : std::filesystem::absolute(std::filesystem::u8path(replayDir_));
         if (!definition.empty()) {
             const auto campaign = tak::srv::crusades::loadDefinition(definition);
             if (campaign.id().size() > 128)
@@ -367,11 +380,15 @@ private:
     tak::srv::AccountStore accounts_;
     std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
     std::string campaignSession_;
+    std::filesystem::path campaignReplayDir_;
     int64_t campaignSweepTime_ = -1;
     void issueCampaignBattle(Client& c, const Frame& f);
     tak::srv::crusades::BattleContext campaignContext(const Room& r, bool requirePresent) const;
     void cancelCampaignBattle(Room& r);
     void closeCampaignLobby(uint32_t roomId, const char* reason);
+    void finalizeCampaign(Room& room, bool abandoning = false);
+    std::pair<std::string,std::string> saveCampaignReplay(Room& room);
+    Writer replayBytes(Room& room);
     tak::srv::LoginThrottle throttle_;
     // A mounted data set at one override tier: the VFS, its base + Crusades
     // registries, and the gameplay-data fingerprint peers are held to.
@@ -542,8 +559,7 @@ static bool roomOccupied(const Room& r) {
 // an async writer here would be complexity bought against a cost I could not measure.
 // Worth revisiting only if replays get much larger (many seated humans issuing orders
 // every tick) or the store is slow.
-void Server::writeReplay(Room& r) {
-    if (replayDir_.empty() || r.log.empty()) return;
+Writer Server::replayBytes(Room& r) {
     // Self-contained replay: header (see net/replayhdr.h -- one definition, shared
     // with the client writer and the loader), every tick bundle, then the referee's
     // recorded hash checkpoints. A viewer can rebuild the world, play it back, and
@@ -580,6 +596,11 @@ void Server::writeReplay(Room& r) {
     // this is what lets a replay say where it diverged from the real game.
     w.u32(uint32_t(r.replayChecks.size()));
     for (const auto& [tk, hs] : r.replayChecks) { w.u32(tk); w.u64(hs); }
+    return w;
+}
+void Server::writeReplay(Room& r) {
+    if (replayDir_.empty() || r.log.empty() || !r.campaignBattleId.empty()) return;
+    const Writer w=replayBytes(r);
     std::string path = replayDir_ + "/game-" + std::to_string(r.id) + "-" +
                        std::to_string(r.createdMs) + ".takrep";
     if (FILE* f = std::fopen(path.c_str(), "wb")) {
@@ -862,7 +883,7 @@ tak::srv::crusades::BattleContext Server::campaignContext(const Room& r, bool re
     rules.u8(o.speed);rules.u8(o.speedUnlock);rules.u32(o.unitCap);rules.u8(o.monarchExpendable);
     rules.u8(o.stressTest);rules.u8(o.fogExplored);rules.u8(o.benchmark);rules.u8(o.randomStarts);rules.u8(o.doubleSight);
     for (int i=0;i<kMaxSlots;++i) {
-        const auto& slot=r.slots[i];
+        const auto& slot=r.running ? r.startSlots[i] : r.slots[i];
         rules.u8(slot.type);rules.u8(slot.faction);rules.u8(slot.color);rules.u8(slot.team);rules.u8(slot.aiLevel);
         if(i>=2) {if(slot.type!=3 || r.slotClient[i]>=0)throw std::runtime_error("extra campaign participant");continue;}
         if(slot.type!=1)throw std::runtime_error("campaign requires two human participants");
@@ -878,6 +899,164 @@ tak::srv::crusades::BattleContext Server::campaignContext(const Room& r, bool re
     }
     context.rulesDigest=tak::crypto::toHex(tak::crypto::sha256(rules.b.data(),rules.b.size()));
     return context;
+}
+
+std::pair<std::string,std::string> Server::saveCampaignReplay(Room& r) {
+    namespace fs=std::filesystem;
+    const Writer bytes=replayBytes(r);
+    const auto digest=tak::crypto::toHex(tak::crypto::sha256(bytes.b.data(),bytes.b.size()));
+    // Content-addressed filename plus issued identity: immutable, safe on Windows,
+    // and directly traceable from the database without changing replay format.
+    const auto identity=tak::crypto::toHex(tak::crypto::sha256(r.campaignBattleId));
+    const std::string name="battle-"+identity+"-"+digest+".takrep";
+    fs::create_directories(campaignReplayDir_);
+    const auto final=campaignReplayDir_/name;
+    const auto matches=[&]() {
+        std::ifstream input(final,std::ios::binary);if(!input)return false;
+        tak::crypto::Sha256 hash;char buffer[16384];
+        while(input.read(buffer,sizeof buffer) || input.gcount())hash.update(buffer,size_t(input.gcount()));
+        return input.eof() && !input.bad() && tak::crypto::toHex(hash.final())==digest;
+    };
+    const auto synchronize=[&]() {
+#ifdef _WIN32
+        HANDLE file=CreateFileW(final.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("cannot open published replay for sync");
+        const bool synced=FlushFileBuffers(file)!=0;const bool closed=CloseHandle(file)!=0;
+        if(!synced || !closed)throw std::runtime_error("cannot durably sync published replay");
+#else
+        // Also required on the retry path: a previous publication could have
+        // succeeded before its directory durability barrier failed.
+        const auto syncPath=[](const fs::path& path) {
+            const int fd=::open(path.c_str(),O_RDONLY);
+            if(fd<0)throw std::runtime_error("cannot open replay artifact for sync");
+            const bool synced=::fsync(fd)==0;const bool closed=::close(fd)==0;
+            if(!synced || !closed)throw std::runtime_error("cannot durably publish campaign replay");
+        };
+        syncPath(final);
+        for(auto directory=campaignReplayDir_;;directory=directory.parent_path()) {
+            syncPath(directory);
+            if(directory==directory.parent_path())break;
+        }
+#endif
+    };
+    if(fs::exists(final)) {
+        if(!matches())throw std::runtime_error("campaign replay artifact failed verification");
+        synchronize();
+        return {name,digest};
+    }
+    auto temporary=final;temporary+="."+tak::crypto::toHex(tak::crypto::randomVec(8))+".tmp";
+    struct Cleanup {fs::path path;~Cleanup(){std::error_code ec;fs::remove(path,ec);}} cleanup{temporary};
+#ifdef _WIN32
+    HANDLE file=CreateFileW(temporary.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);
+    if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("cannot create campaign replay");
+    bool ok=true;
+    for(size_t offset=0;offset<bytes.b.size();) {
+        DWORD count=0;const DWORD amount=DWORD(std::min<size_t>(bytes.b.size()-offset,1u<<20));
+        if(!WriteFile(file,bytes.b.data()+offset,amount,&count,nullptr) || !count){ok=false;break;}
+        offset+=count;
+    }
+    if(ok && !FlushFileBuffers(file))ok=false;
+    if(!CloseHandle(file))ok=false;
+    if(!ok)throw std::runtime_error("cannot durably write campaign replay");
+    if(!MoveFileExW(temporary.c_str(),final.c_str(),MOVEFILE_WRITE_THROUGH) && !matches())
+        throw std::runtime_error("cannot publish campaign replay");
+#else
+    const int file=::open(temporary.c_str(),O_WRONLY|O_CREAT|O_EXCL,0600);
+    if(file<0)throw std::runtime_error("cannot create campaign replay");
+    bool ok=true;
+    for(size_t offset=0;offset<bytes.b.size();) {
+        const auto count=::write(file,bytes.b.data()+offset,bytes.b.size()-offset);
+        if(count<0 && errno==EINTR)continue;
+        if(count<=0){ok=false;break;}offset+=size_t(count);
+    }
+    if(ok && ::fsync(file)!=0)ok=false;
+    if(::close(file)!=0)ok=false;
+    if(!ok)throw std::runtime_error("cannot durably write campaign replay");
+    // Publish without replacing an existing immutable artifact.
+    if(::link(temporary.c_str(),final.c_str())!=0 && !matches())
+        throw std::runtime_error("cannot publish campaign replay");
+    fs::remove(temporary);
+#endif
+    if(!matches())throw std::runtime_error("campaign replay verification failed");
+    synchronize();
+    return {name,digest};
+}
+
+void Server::finalizeCampaign(Room& r,bool abandoning) {
+    namespace campaign=tak::srv::crusades;
+    using Outcome=campaign::ResultOutcome;
+    if(r.campaignBattleId.empty() || !r.running || r.campaignResultRecorded)return;
+    if(!r.campaignResult) {
+        std::optional<Outcome> reason=r.campaignFault;
+        int winner=-1;
+        if(!reason && !r.ref)reason=Outcome::RefereeFailure;
+        if(!reason && r.ref && r.ref->winningTeam()>=0) {
+            for(int i=0;i<2;++i)if(r.startSlots[i].team==r.ref->winningTeam())winner=i;
+            if(winner<0 || r.tick==0 || !r.campaignLoaded[0] || !r.campaignLoaded[1])reason=Outcome::InvalidClient;
+            else if(r.campaignTimeout[0] || r.campaignTimeout[1])reason=Outcome::Timeout;
+            else if(r.campaignDisconnected[1-winner] && !r.campaignResigned[1-winner])reason=Outcome::Disconnect;
+            else reason=r.campaignResigned[1-winner]?Outcome::Resignation:Outcome::Victory;
+        }
+        if(!reason && r.ref && r.ref->numPlayers()>=2 && r.ref->player(0).defeated && r.ref->player(1).defeated)
+            reason=Outcome::Draw;
+        if(!reason && abandoning)reason=(r.campaignTimeout[0]||r.campaignTimeout[1])?Outcome::Timeout:
+            (r.campaignDisconnected[0]||r.campaignDisconnected[1])?Outcome::Disconnect:Outcome::ServerAbort;
+        if(!reason)return;
+        campaign::VerifiedMatchResult result;
+        result.outcome=*reason;result.finalTick=r.log.size();result.finalStateHash=r.ref?r.ref->stateHash():0;
+        result.gameplayFingerprint=dataFor(r.opts.overridePolicy).hash;result.engineBuild=tak::kBuildId;
+        if(*reason==Outcome::Victory || *reason==Outcome::Resignation)result.winners.push_back(r.campaignAccounts[winner]);
+        static const char* factions[]={"aramon","taros","veruna","zhon","creon"};
+        for(int i=0;i<2;++i) {
+            campaign::ParticipantMatchResult row;
+            row.accountId=r.campaignAccounts[i];row.faction=factions[r.startSlots[i].faction%5];row.team=r.startSlots[i].team;
+            if(r.ref && i<r.ref->numPlayers()) {
+                const auto& p=r.ref->player(i);
+                row.kills=p.kills;row.losses=p.losses;row.score=p.score;row.built=p.built;
+                row.currentUnits=p.unitCount;row.defeated=p.defeated;
+            }
+            result.participantResults.push_back(std::move(row));
+        }
+        if(result.finalTick) {
+            const auto tick=uint32_t(result.finalTick-1);
+            if(!r.replayChecks.empty() && r.replayChecks.back().first==tick)r.replayChecks.back().second=result.finalStateHash;
+            else r.replayChecks.emplace_back(tick,result.finalStateHash);
+        }
+        r.campaignResult=std::move(result);
+        // Freeze the referee and replay at this terminal snapshot, while allowing
+        // two seconds for already-in-flight client hashes to invalidate integrity.
+        r.campaignResultDue=nowMs()+((*reason==Outcome::Victory || *reason==Outcome::Resignation)?2000:0);
+    }
+    auto& result=*r.campaignResult;
+    if(r.campaignFault) {result.outcome=*r.campaignFault;result.winners.clear();}
+    if(nowMs()<r.campaignResultDue)return;
+    if(result.replayId.empty()) {
+        try {auto artifact=saveCampaignReplay(r);result.replayId=std::move(artifact.first);result.replayDigest=std::move(artifact.second);}
+        catch(const std::exception& e) {
+            std::fprintf(stderr,"campaign replay: %s\n",e.what());
+            if(result.outcome==Outcome::Victory || result.outcome==Outcome::Resignation) {
+                result.outcome=Outcome::ServerAbort;result.winners.clear();
+            }
+        }
+    }
+    try {
+        const auto context=campaignContext(r,false);
+        try {crusades_->recordVerifiedResult(r.campaignBattleId,r.campaignRoomToken,context,result,campaignNow());}
+        catch(const campaign::StaleBattleError&) {
+            if(result.outcome!=Outcome::Victory && result.outcome!=Outcome::Resignation)throw;
+            // A proven stale allegiance/campaign cannot
+            // become points. Retain the exact room snapshot as a no-credit abort.
+            result.outcome=Outcome::ServerAbort;result.winners.clear();
+            crusades_->recordVerifiedResult(r.campaignBattleId,r.campaignRoomToken,context,result,campaignNow());
+        }
+        r.campaignResultRecorded=true;
+        std::fprintf(stderr,"campaign battle %s recorded outcome %d at tick %llu\n",r.campaignBattleId.c_str(),int(result.outcome),
+            static_cast<unsigned long long>(result.finalTick));
+    } catch(const std::exception& e) {
+        try {if(crusades_->verifiedResult(r.campaignBattleId)) {r.campaignResultRecorded=true;return;}}catch(const std::exception&) {}
+        std::fprintf(stderr,"campaign result persistence: %s\n",e.what());
+        r.campaignResultDue=nowMs()+1000; // Keep the frozen room; never discard an unrecorded outcome.
+    }
 }
 
 void Server::cancelCampaignBattle(Room& r) {
@@ -1201,6 +1380,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // Re-seat the client and rotate the token (single use).
             room.slotClient[slot] = int(c.id);
             room.slotDropped[slot] = false;
+            if(!room.campaignBattleId.empty() && slot<2)room.campaignDisconnected[slot]=false;
             room.slotToken[slot] = randToken();
             room.desyncFlagged.clear();   // fresh sim; old desync flags are stale
             c.cmdQueue.clear();   // never inherit a previous room's queue
@@ -1318,7 +1498,11 @@ void Server::leaveRoom(Client& c, const char* reason) {
     if (!r) return;
     if(!r->campaignBattleId.empty()) {
         if(!r->running) {closeCampaignLobby(r->id,"campaign participant left");return;}
-        cancelCampaignBattle(*r); // M5 abort marker, not a scored result.
+        finalizeCampaign(*r);
+        if(c.slot>=0 && c.slot<2 && !r->campaignResult) {
+            if(std::strcmp(reason,"left")==0) r->campaignResigned[c.slot]=true;
+            else r->campaignDisconnected[c.slot]=true;
+        }
     }
     dropPendingCommands(c, *r);
     // A spectator just detaches from the stream -- no slot, nothing to forfeit.
@@ -1339,7 +1523,7 @@ void Server::leaveRoom(Client& c, const char* reason) {
             // Voluntary leave mid-game = immediate forfeit (sequenced event so the
             // sim disposes the units in lockstep).
             r->slots[c.slot].type = 3;
-            r->pendingEvents.push_back({tak::net::Event::Kind::Leave, uint8_t(c.slot)});
+            r->pendingEvents.push_back({r->campaignBattleId.empty()?tak::net::Event::Kind::Leave:tak::net::Event::Kind::CampaignForfeit, uint8_t(c.slot)});
         }
     }
     uint32_t rid = r->id;
@@ -1688,6 +1872,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::SetPause: {
+            if(!r->campaignBattleId.empty())return; // Issued matches cannot be held indefinitely by a host.
             // A player asking to pause. Only the host may (in single-player the host
             // IS the only human), and only in a running game. Unlike the drop-driven
             // pause this one has NO budget: nobody has disconnected, so nothing should
@@ -1749,6 +1934,13 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // here, before the first tick, instead of desyncing mid-game.
             Reader rd(f.payload.data(), f.payload.size());
             uint64_t clientHash = rd.u64();
+            if(!r->campaignBattleId.empty()) {
+                if(!rd.ok || rd.p!=rd.end || !clientHash || clientHash!=dataFor(r->opts.overridePolicy).hash || c.slot<0 || c.slot>=2) {
+                    r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
+                    c.conn.fail("invalid campaign gameplay fingerprint");return;
+                }
+                r->campaignLoaded[c.slot]=true;
+            }
             if (rd.ok && clientHash != 0) {
                 uint64_t want = dataFor(r->opts.overridePolicy).hash;
                 if (clientHash != want) {
@@ -1797,6 +1989,17 @@ void Server::gameMsg(Client& c, const Frame& f) {
         }
         case Msg::PlayerCommands: {
             if (!r->running) return;
+            if(!r->campaignBattleId.empty()) {
+                if(r->campaignResult || r->campaignFault)return;
+                Reader verify(f.payload.data(),f.payload.size());const uint32_t count=verify.u32();
+                if(count>f.payload.size()/35) {r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;}
+                for(uint32_t i=0;i<count && verify.ok;++i) {
+                    const auto command=verify.cmd();
+                    if(uint8_t(command.kind)>uint8_t(Cmd::ShareMana) || !std::isfinite(command.x) || !std::isfinite(command.z) ||
+                        !std::isfinite(command.x2) || !std::isfinite(command.z2))verify.ok=false;
+                }
+                if(!verify.ok || verify.p!=verify.end) {r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;}
+            }
             Reader rd(f.payload.data(), f.payload.size());
             uint32_t n = rd.u32();
             for (uint32_t i = 0; i < n && rd.ok; ++i) {
@@ -1819,7 +2022,12 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (!r->running) return;
             Reader rd(f.payload.data(), f.payload.size());
             uint32_t tk = rd.u32(); uint64_t h = rd.u64();
+            if(!r->campaignBattleId.empty() && (!rd.ok || rd.p!=rd.end)) {
+                r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;
+            }
             if (!rd.ok) return;
+            if(!r->campaignBattleId.empty() && r->refHash.count(tk) && h!=r->refHash.at(tk))
+                r->campaignFault=tak::srv::crusades::ResultOutcome::Desync;
             // A report is only meaningful for a tick the server has actually CLOSED.
             // Without this check `tk` is whatever the peer says: a future tick both
             // advanced ackTick (so the client claimed flow-control progress it had not
@@ -1892,6 +2100,7 @@ void Server::checkHashes(Room& r, uint32_t tick) {
         for (auto& [cid, h] : it->second) ++ctally[h];
         if (ctally.size() == 1 && it->second.begin()->second != canon && !r.refSuspect) {
             r.refSuspect = true;
+            if(!r.campaignBattleId.empty())r.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
             std::fprintf(stderr, "game %u: REFEREE SUSPECT at tick %u -- all %d clients agree "
                                  "with each other but disagree with the server sim; not dropping.\n",
                          r.id, tick, live);
@@ -1901,6 +2110,7 @@ void Server::checkHashes(Room& r, uint32_t tick) {
     for (auto& [cid, h] : it->second) {
         if (h != canon && !r.desyncFlagged[cid]) {
             r.desyncFlagged[cid] = true;
+            if(!r.campaignBattleId.empty())r.campaignFault=tak::srv::crusades::ResultOutcome::Desync;
             auto ci = clients_.find(cid);
             if (ci != clients_.end()) {
                 Writer w; w.u32(tick); w.str("desync detected (state diverged from the game)");
@@ -1913,6 +2123,7 @@ void Server::checkHashes(Room& r, uint32_t tick) {
 }
 
 bool Server::canAdvance(const Room& r) const {
+    if(r.campaignResult || r.campaignFault)return false;
     // Slow to the slowest CONSUMER so nobody is flooded past what they can process:
     // the server may not run more than kMaxLeadTicks past the least-advanced acked
     // tick. Seated humans are the primary constraint (AIs are server-run and always
@@ -2065,6 +2276,7 @@ void Server::dropClient(uint32_t id, const char* reason) {
         // with their resume token within the grace window. Auto-pause (budget
         // permitting) so nobody is fighting a frozen empire meanwhile.
         int s = c.slot;
+        if(!r->campaignBattleId.empty() && s<2)r->campaignDisconnected[s]=true;
         dropPendingCommands(c, *r);   // the slot is HELD; its in-flight orders are not
         r->slotDropped[s] = true;
         r->slotClient[s] = -1;
@@ -2091,6 +2303,10 @@ void Server::onFrame(Client& c, const Frame& f) {
     if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
+    if(auto* room=roomOf(c); room && !room->campaignBattleId.empty() && room->running &&
+        (f.kind==Msg::CrusadesBattleResult || f.kind==Msg::GameStarting || f.kind==Msg::TickBundle || f.kind==Msg::MissionOutcome)) {
+        room->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;
+    }
     if (f.kind == Msg::CrusadesIssueBattle) { issueCampaignBattle(c,f); return; }
     if (f.kind == Msg::CrusadesGetAllegiance || f.kind == Msg::CrusadesSetAllegiance) {
         // Only successful SCRAM proof/registration populates account. Hello's
@@ -2159,8 +2375,15 @@ int Server::run() {
         // the past, so counting it here pinned the timeout at 0 and span the
         // server at full CPU for as long as the pause lasted -- and a manual
         // pause has no expiry, so that is indefinite.
-        for (auto& [rid, r] : rooms_)
+        for (auto& [rid, r] : rooms_) {
+            (void)rid;
+            if(r.campaignResult || r.campaignFault) {
+                if(r.campaignResult && !r.campaignResultRecorded && r.campaignResultDue>now)
+                    soonest=std::min(soonest,r.campaignResultDue);
+                continue;
+            }
             if (r.running && !r.paused && r.nextTickMs < soonest) soonest = r.nextTickMs;
+        }
         // A client still streaming catch-up needs servicing regardless of the
         // tick clock -- otherwise resuming into a PAUSED game would feed it one
         // chunk per idle second, since a paused room no longer pulls the
@@ -2231,8 +2454,9 @@ int Server::run() {
                                (budgetOut && i == r.pausePlayer);
                 if (!forfeit) continue;
                 r.slotDropped[i] = false;
+                if(!r.campaignBattleId.empty() && i<2)r.campaignTimeout[i]=true;
                 r.slots[i].type = 3;   // slot closed; the player is out
-                r.pendingEvents.push_back({tak::net::Event::Kind::Forfeit, uint8_t(i)});
+                r.pendingEvents.push_back({r.campaignBattleId.empty()?tak::net::Event::Kind::Forfeit:tak::net::Event::Kind::CampaignForfeit, uint8_t(i)});
                 std::fprintf(stderr, "game %u: player %d FORFEIT (grace/budget expired)\n", rid, i);
                 if (r.paused && r.pausePlayer == i) {
                     r.paused = false; r.pausePlayer = -1; r.nextTickMs = now;
@@ -2246,12 +2470,15 @@ int Server::run() {
         std::vector<std::pair<uint32_t, const char*>> doneRooms;
         for (auto& [rid, r] : rooms_) {
             if (!r.running) continue;
+            if(!r.campaignBattleId.empty()) {
+                finalizeCampaign(r,!roomOccupied(r) || !roomActive(r));
+                if(!r.campaignResultRecorded)continue;
+            }
             if (!roomOccupied(r)) doneRooms.push_back({rid, "last player left"});
             else if (!roomActive(r)) doneRooms.push_back({rid, "all players gone"});
         }
         for (auto& [rid, why] : doneRooms) {
             Room& r = rooms_.at(rid);
-            cancelCampaignBattle(r); // Results/credit are deliberately deferred to M6.
             writeReplay(r);
             // Detach any lingering spectators before the room vanishes: reset their
             // server-side state to Lobby (their client already shows the game's end
@@ -2288,7 +2515,7 @@ int Server::run() {
         now = nowMs();
         std::vector<Room*> due;
         for (auto& [rid, r] : rooms_)
-            if (r.running && !r.paused && r.nextTickMs <= now) due.push_back(&r);
+            if (r.running && !r.paused && !r.campaignResult && !r.campaignFault && r.nextTickMs <= now) due.push_back(&r);
         auto tickRoom = [&](Room& r) {
             // Heavy games can take longer than their nominal tick interval.
             // Bound catch-up work between socket polls: advancing the entire
@@ -2300,7 +2527,14 @@ int Server::run() {
                 // `now`: an immediate deadline makes the poll above return at
                 // once, so the server would spin until the laggard acked.
                 if (!canAdvance(r)) { r.nextTickMs = now + kFlowRetryMs; break; }
-                closeTick(r);
+                try {closeTick(r);}
+                catch(const std::exception& e) {
+                    if(r.campaignBattleId.empty())throw;
+                    r.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
+                    std::fprintf(stderr,"campaign referee failed: %s\n",e.what());break;
+                }
+                if(!r.campaignBattleId.empty() && (r.ref->winningTeam()>=0 ||
+                    (r.ref->numPlayers()>=2 && r.ref->player(0).defeated && r.ref->player(1).defeated)))break;
                 if (nowMs() - batchStart >= 8) break;
             }
         };
@@ -2310,6 +2544,8 @@ int Server::run() {
             tickPool_.run(due.size(), [&](size_t i) { tickRoom(*due[i]); });
         else
             for (Room* rp : due) tickRoom(*rp);
+        // Shared SQLite state is accessed only after every tick worker joined.
+        for(auto& [id,room]:rooms_) {(void)id;if(!room.campaignBattleId.empty() && room.running)finalizeCampaign(room);}
         // Feed catch-up streams. A client resuming or spectating takes its
         // history from the room log a chunk at a time, only topping up when its
         // write buffer has drained, so a long game cannot put its whole replay

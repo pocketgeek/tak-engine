@@ -2,7 +2,8 @@
 
 This directory records the Milestone 1 archaeology, native-reader verification
 and source-scoped balance audit, plus the Milestone 2 campaign model and
-Milestone 3 transactional store and Milestone 4 authenticated allegiance. See the
+Milestone 3 transactional store, Milestone 4 authenticated allegiance,
+Milestone 5 battle issuance and Milestone 6 authoritative results. See the
 [Milestone 1 acceptance audit](milestone-one-status.md) and
 [Milestone 2 model](campaign-model.md), [Milestone 3 store](campaign-store.md)
 and [Milestone 4 allegiance](campaign-allegiance.md)
@@ -14,6 +15,7 @@ No historical campaign service has been implemented.
 - [Milestone 3 transactional campaign store](campaign-store.md)
 - [Milestone 4 authenticated campaign allegiance](campaign-allegiance.md)
 - [Milestone 5 authoritative battle issuance](campaign-battles.md)
+- [Milestone 6 authoritative match results](campaign-results.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
 - [Reusable provenance template](source-template.md)
@@ -40,8 +42,8 @@ installers, extracted files, scripts, artwork and game data stay outside Git.
 The research does not launch installers or the retail game. Native blocks are
 checked in isolated emulation. Proven balance-reader and combat mismatches were
 corrected in the engine; these changes and their validation are recorded in the
-[balance reference](../../crusades-balance-reference.md). No campaign storage or
-historical campaign-server protocol was added.
+[balance reference](../../crusades-balance-reference.md). The later milestones add modern campaign storage and authenticated service
+boundaries; they do not claim to reproduce the historical campaign-server protocol.
 
 ## Reproduce an inventory
 

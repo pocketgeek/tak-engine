@@ -176,3 +176,10 @@ result scoring.
 cmake --build build --target crusades_battle_test
 ctest --test-dir build -R '^crusades_battle$' --output-on-failure
 ```
+
+## Subsequent result processing
+
+The lifecycle description above records the M5 boundary.
+[Milestone 6](campaign-results.md) subsequently adds typed authoritative results,
+atomic terminal completion and replay association. Untyped `completeBattle` now
+fails closed. M6 still does not apply territory points.

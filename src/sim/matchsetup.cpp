@@ -152,8 +152,9 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
 void applyEvent(World& world, const tak::net::Event& e) {
     int p = e.player;
     if (p < 0 || p >= world.numPlayers()) return;
-    if (world.hasScenarioOutcomes() && (e.kind == tak::net::Event::Kind::Forfeit ||
-                                       e.kind == tak::net::Event::Kind::Leave))
+    if (e.kind == tak::net::Event::Kind::CampaignForfeit ||
+        (world.hasScenarioOutcomes() && (e.kind == tak::net::Event::Kind::Forfeit ||
+                                       e.kind == tak::net::Event::Kind::Leave)))
         world.forceDefeat(p);
     for (auto& u : world.units())
         if (u.alive() && u.player == p) world.stop(u.id);

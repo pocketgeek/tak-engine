@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 206;      // 206: server-issued Crusades battle rooms
+constexpr uint32_t kNetVersion = 207;      // 207: server-sequenced campaign forfeits
+                                           // 206: server-issued Crusades battle rooms
                                            // 205: authenticated Crusades allegiance query/change
                                            // 204: retail damage-category selection and integer damage tables
                                            // 203: generated-map v4 recipes and gentler Easy AI
@@ -364,7 +365,9 @@ struct GameOptions {
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer
 // (and the referee) applies it on the same tick and the log replays identically.
 struct Event {
-    enum class Kind : uint8_t { Forfeit = 1, Leave = 2 /* reserved: AllianceChange=3 */ };
+    // CampaignForfeit is emitted only by an issued campaign room. Ordinary
+    // skirmish Leave/Forfeit keep their existing inert-army behavior.
+    enum class Kind : uint8_t { Forfeit = 1, Leave = 2, CampaignForfeit = 3 };
     Kind kind = Kind::Forfeit;
     uint8_t player = 0;
 };

@@ -2,8 +2,17 @@
 
 #include "server/crusades/campaign.h"
 #include <memory>
+#include <stdexcept>
 
 namespace tak::srv::crusades {
+
+// Definite eligibility invalidation, distinct from transient persistence or
+// decoding failures. Callers may audit a no-credit abort for this condition;
+// ordinary I/O errors must retain the verified result for retry.
+class StaleBattleError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 struct BattleResult {
     std::string battleId;
@@ -54,6 +63,27 @@ struct IssuedBattle {
     BattleStatus status;
     std::string launchToken;
     std::optional<std::string> roomToken;
+};
+
+enum class ResultOutcome {
+    Victory = 0, Resignation = 1, Disconnect = 2, Timeout = 3,
+    ServerAbort = 4, Draw = 5, RefereeFailure = 6, Desync = 7,
+    InvalidClient = 8, ParticipantSubstitution = 9
+};
+struct ParticipantMatchResult {
+    std::string accountId;
+    int64_t kills = 0, losses = 0, score = 0, built = 0, currentUnits = 0;
+    std::string faction;
+    int64_t team = 0;
+    bool defeated = false;
+};
+struct VerifiedMatchResult {
+    ResultOutcome outcome = ResultOutcome::ServerAbort;
+    std::vector<std::string> winners;
+    uint64_t finalTick = 0, finalStateHash = 0, gameplayFingerprint = 0;
+    std::string engineBuild;
+    std::string replayId, replayDigest;
+    std::vector<ParticipantMatchResult> participantResults;
 };
 
 struct StoreOptions {
@@ -117,11 +147,20 @@ public:
         const std::string& roomToken, BattleContext context, int64_t now);
     IssuedBattle authorizeBattleReport(const std::string& battleId, const std::string& roomToken,
         BattleContext context, int64_t now) const;
-    // Terminal lifecycle marker only; no result/campaign-point processing (M6).
+    // Retained only to fail closed for old callers: completion now requires a
+    // VerifiedMatchResult. Always throws without changing persistent state.
     void completeBattle(const std::string& battleId, const std::string& roomToken,
         BattleContext context, int64_t now);
     void cancelBattle(const std::string& battleId, int64_t now);
     void expireBattles(int64_t now);
+    // The trusted referee service creates this object; there is no client
+    // result-upload API. Store checks structure/bindings, not replay execution.
+    // Victory/resignation require fresh revisions and a durable replay identity
+    // plus SHA256. All other outcomes are audited without winner/credit.
+    // Atomically stores the result and terminal status, never territory points.
+    void recordVerifiedResult(const std::string& battleId, const std::string& roomToken,
+        BattleContext context, VerifiedMatchResult result, int64_t now);
+    std::optional<VerifiedMatchResult> verifiedResult(const std::string& battleId) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

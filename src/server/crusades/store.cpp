@@ -10,7 +10,7 @@
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 3;
+constexpr int kSchemaVersion = 4;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -46,6 +46,14 @@ const std::vector<std::string>& battleSchemaStatements() {
         "CREATE TRIGGER battle_status_no_delete BEFORE DELETE ON battle_status_events BEGIN SELECT RAISE(ABORT,'immutable battle status'); END",
         "CREATE TRIGGER battle_rooms_no_update BEFORE UPDATE ON battle_rooms BEGIN SELECT RAISE(ABORT,'immutable battle room'); END",
         "CREATE TRIGGER battle_rooms_no_delete BEFORE DELETE ON battle_rooms BEGIN SELECT RAISE(ABORT,'immutable battle room'); END",
+    };
+    return statements;
+}
+const std::vector<std::string>& resultSchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE TABLE verified_match_results(battle_id TEXT PRIMARY KEY REFERENCES issued_battles(id),replay_id TEXT UNIQUE,replay_digest TEXT,outcome INTEGER NOT NULL CHECK(outcome BETWEEN 0 AND 9),winner_account TEXT,payload BLOB NOT NULL,recorded_unix INTEGER NOT NULL CHECK(recorded_unix>=0))",
+        "CREATE TRIGGER verified_results_no_update BEFORE UPDATE ON verified_match_results BEGIN SELECT RAISE(ABORT,'immutable verified result'); END",
+        "CREATE TRIGGER verified_results_no_delete BEFORE DELETE ON verified_match_results BEGIN SELECT RAISE(ABORT,'immutable verified result'); END",
     };
     return statements;
 }
@@ -261,6 +269,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             auto expected = schemaStatements();
             if (version >= 2) expected.insert(expected.end(), allegianceSchemaStatements().begin(), allegianceSchemaStatements().end());
             if (version >= 3) expected.insert(expected.end(), battleSchemaStatements().begin(), battleSchemaStatements().end());
+            if (version >= 4) expected.insert(expected.end(), resultSchemaStatements().begin(), resultSchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
@@ -291,9 +300,11 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
     }
     if (version < 2)
         for (const auto& sql : allegianceSchemaStatements()) exec(db, sql.c_str());
-    if (version < 3) {
+    if (version < 3)
         for (const auto& sql : battleSchemaStatements()) exec(db, sql.c_str());
-        exec(db, "PRAGMA user_version=3");
+    if (version < 4) {
+        for (const auto& sql : resultSchemaStatements()) exec(db, sql.c_str());
+        exec(db, "PRAGMA user_version=4");
         if (version != 0 && impl_->options.beforeCommit) impl_->options.beforeCommit();
     }
     transaction.finish();
@@ -503,11 +514,11 @@ void validateContext(const IssuedBattle& battle, BattleContext context) {
         throw std::runtime_error("battle context mismatch");
 }
 void validateBattleFresh(sqlite3* db, const CampaignStore& store, const IssuedBattle& battle) {
-    if (store.load(battle.campaignId).revision != battle.campaignRevision) throw std::runtime_error("stale battle campaign revision");
+    if (store.load(battle.campaignId).revision != battle.campaignRevision) throw StaleBattleError("stale battle campaign revision");
     for (size_t i = 0; i < 2; ++i) {
         const auto current = readAllegiance(db, battle.campaignId, battle.context.participants[i]);
         if (!current || current->revision != battle.participantRevisions[i] || current->alliance != battle.participantAlliances[i])
-            throw std::runtime_error("stale battle allegiance");
+            throw StaleBattleError("stale battle allegiance");
     }
 }
 void transitionBattle(sqlite3* db, const std::string& id, BattleStatus status, int64_t now) {
@@ -586,11 +597,10 @@ IssuedBattle CampaignStore::authorizeBattleReport(const std::string& id, const s
     auto current = battle(id); validateReport(impl_->db, *this, current, roomToken, std::move(context), now);
     transaction.finish(); return current;
 }
-void CampaignStore::completeBattle(const std::string& id, const std::string& roomToken, BattleContext context, int64_t now) {
-    Transaction transaction(impl_->db);
-    const auto current = battle(id); validateReport(impl_->db, *this, current, roomToken, std::move(context), now);
-    transitionBattle(impl_->db, id, BattleStatus::Completed, now); impl_->finish(transaction);
+void CampaignStore::completeBattle(const std::string&, const std::string&, BattleContext, int64_t) {
+    throw std::runtime_error("battle completion requires a verified referee result");
 }
+
 void CampaignStore::cancelBattle(const std::string& id, int64_t now) {
     Transaction transaction(impl_->db); const auto current = battle(id);
     if ((current.status != BattleStatus::Issued && current.status != BattleStatus::Started) || now < current.changedUnix)
@@ -607,6 +617,129 @@ void CampaignStore::expireBattles(int64_t now) {
     }
     for (const auto& id : ids) transitionBattle(impl_->db, id, BattleStatus::Expired, now);
     impl_->finish(transaction);
+}
+
+namespace {
+bool eligibleOutcome(ResultOutcome outcome) {
+    return outcome == ResultOutcome::Victory || outcome == ResultOutcome::Resignation;
+}
+void validateResult(VerifiedMatchResult& result, const IssuedBattle& battle) {
+    const int outcome = static_cast<int>(result.outcome);
+    if (outcome < 0 || outcome > 9) throw std::runtime_error("invalid verified result outcome");
+    battleString(result.engineBuild);
+    const bool eligible = eligibleOutcome(result.outcome);
+    if ((eligible && (result.winners.size() != 1 || result.finalTick == 0)) || (!eligible && !result.winners.empty()))
+        throw std::runtime_error("invalid verified result winner/duration");
+    if (result.replayId.empty() != result.replayDigest.empty() || (eligible && result.replayId.empty()))
+        throw std::runtime_error("missing verified replay identity");
+    if (!result.replayId.empty()) {
+        battleString(result.replayId);
+        if (result.replayDigest.size() != 64 || !std::all_of(result.replayDigest.begin(), result.replayDigest.end(),
+            [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
+            throw std::runtime_error("invalid replay SHA256");
+    }
+    if (result.participantResults.size() != battle.context.participants.size()) throw std::runtime_error("result participant count mismatch");
+    std::sort(result.participantResults.begin(), result.participantResults.end(),
+        [](const auto& a, const auto& b) { return a.accountId < b.accountId; });
+    for (size_t i = 0; i < result.participantResults.size(); ++i) {
+        const auto& participant = result.participantResults[i];
+        validateAccountId(participant.accountId); battleString(participant.faction);
+        if (participant.accountId != battle.context.participants[i] || participant.kills < 0 || participant.losses < 0 ||
+            participant.built < 0 || participant.currentUnits < 0 || participant.team < 0)
+            throw std::runtime_error("invalid verified participant stats");
+    }
+    if (eligible) {
+        const auto& winner = result.winners.front();
+        validateAccountId(winner);
+        if (!std::binary_search(battle.context.participants.begin(), battle.context.participants.end(), winner))
+            throw std::runtime_error("winner is not a battle participant");
+        if (result.participantResults[0].team == result.participantResults[1].team)
+            throw std::runtime_error("opposing battle participants share a team");
+        for (const auto& participant : result.participantResults)
+            if (participant.defeated == (participant.accountId == winner))
+                throw std::runtime_error("winner contradicts referee defeat state");
+    }
+}
+void putSigned(std::string& data, int64_t value) {
+    uint64_t bits; std::memcpy(&bits, &value, sizeof bits); put(data, bits, 8);
+}
+int64_t readSigned(Reader& reader) {
+    const uint64_t bits = reader.get(8); int64_t value; std::memcpy(&value, &bits, sizeof value); return value;
+}
+std::string encodeResult(const VerifiedMatchResult& result) {
+    std::string data = "TAKCR1";
+    put(data, static_cast<unsigned>(result.outcome), 1);
+    put(data, result.winners.size(), 1);
+    for (const auto& winner : result.winners) putString(data, winner);
+    put(data, result.finalTick, 8); put(data, result.finalStateHash, 8); put(data, result.gameplayFingerprint, 8);
+    putString(data, result.engineBuild); putString(data, result.replayId); putString(data, result.replayDigest);
+    put(data, result.participantResults.size(), 1);
+    for (const auto& participant : result.participantResults) {
+        putString(data, participant.accountId);
+        putSigned(data, participant.kills); putSigned(data, participant.losses); putSigned(data, participant.score);
+        putSigned(data, participant.built); putSigned(data, participant.currentUnits);
+        putString(data, participant.faction); putSigned(data, participant.team); put(data, participant.defeated ? 1 : 0, 1);
+    }
+    return data;
+}
+VerifiedMatchResult decodeResult(const std::string& data, const IssuedBattle& battle) {
+    if (data.substr(0, 6) != "TAKCR1") throw std::runtime_error("unsupported verified result encoding");
+    Reader reader{data, 6}; VerifiedMatchResult result;
+    result.outcome = static_cast<ResultOutcome>(reader.get(1));
+    const auto winners = reader.get(1);
+    if (winners > 1) throw std::runtime_error("invalid result winner count");
+    for (uint64_t n = 0; n < winners; ++n) result.winners.push_back(reader.string());
+    result.finalTick = reader.get(8); result.finalStateHash = reader.get(8); result.gameplayFingerprint = reader.get(8);
+    result.engineBuild = reader.string(); result.replayId = reader.string(); result.replayDigest = reader.string();
+    const auto count = reader.get(1);
+    if (count != 2) throw std::runtime_error("invalid result roster count");
+    for (uint64_t n = 0; n < count; ++n) {
+        ParticipantMatchResult participant;
+        participant.accountId = reader.string(); participant.kills = readSigned(reader); participant.losses = readSigned(reader);
+        participant.score = readSigned(reader); participant.built = readSigned(reader); participant.currentUnits = readSigned(reader);
+        participant.faction = reader.string(); participant.team = readSigned(reader); participant.defeated = reader.present();
+        result.participantResults.push_back(std::move(participant));
+    }
+    if (reader.offset != data.size()) throw std::runtime_error("trailing verified result bytes");
+    validateResult(result, battle); return result;
+}
+} // namespace
+
+void CampaignStore::recordVerifiedResult(const std::string& id, const std::string& roomToken,
+        BattleContext context, VerifiedMatchResult result, int64_t now) {
+    Transaction transaction(impl_->db);
+    const auto current = battle(id);
+    battleString(roomToken);
+    if (current.status != BattleStatus::Started || !current.roomToken || *current.roomToken != roomToken || now < current.changedUnix)
+        throw std::runtime_error("battle cannot accept a verified result from this room");
+    validateContext(current, std::move(context));
+    validateResult(result, current);
+    if (eligibleOutcome(result.outcome)) validateBattleFresh(impl_->db, *this, current);
+    Statement insert(impl_->db, "INSERT INTO verified_match_results(battle_id,replay_id,replay_digest,outcome,winner_account,payload,recorded_unix) VALUES(?,?,?,?,?,?,?)");
+    insert.text(1, id);
+    if (!result.replayId.empty()) { insert.text(2, result.replayId); insert.text(3, result.replayDigest); }
+    insert.integer(4, static_cast<int>(result.outcome));
+    if (!result.winners.empty()) insert.text(5, result.winners.front());
+    insert.blob(6, encodeResult(result)); insert.integer(7, now); insert.done();
+    transitionBattle(impl_->db, id, eligibleOutcome(result.outcome) ? BattleStatus::Completed : BattleStatus::Cancelled, now);
+    impl_->finish(transaction);
+}
+
+std::optional<VerifiedMatchResult> CampaignStore::verifiedResult(const std::string& id) const {
+    Transaction transaction(impl_->db, false);
+    const auto current = battle(id);
+    Statement query(impl_->db, "SELECT payload,replay_id,replay_digest,outcome,winner_account,recorded_unix FROM verified_match_results WHERE battle_id=?");
+    query.text(1, id);
+    std::optional<VerifiedMatchResult> result;
+    if (query.row()) {
+        result = decodeResult(query.bytes(0), current);
+        const auto expectedStatus = eligibleOutcome(result->outcome) ? BattleStatus::Completed : BattleStatus::Cancelled;
+        if (current.status != expectedStatus || query.bytes(1) != result->replayId || query.bytes(2) != result->replayDigest ||
+            query.number(3) != static_cast<int>(result->outcome) || query.bytes(4) != (result->winners.empty() ? "" : result->winners.front()) ||
+            query.number(5) != current.changedUnix)
+            throw std::runtime_error("verified result metadata/lifecycle mismatch");
+    }
+    transaction.finish(); return result;
 }
 
 } // namespace tak::srv::crusades

@@ -169,6 +169,41 @@ int testSortDeterminism() {
     return fails ? 1 : 0;
 }
 
+// A campaign resignation must be an actual shared simulation event, not
+// fabricated scoreboard state. Ordinary skirmish leave remains unchanged.
+int testCampaignForfeit() {
+    tak::sim::UnitType type;type.id=type.name="synthetic";type.maxHp=100;
+    int failures=0;
+    for(auto kind:{Event::Kind::Leave,Event::Kind::Forfeit,Event::Kind::CampaignForfeit}) {
+        tak::sim::World direct,wire;
+        for(auto* world:{&direct,&wire}) {
+            world->setSerialThreads(true);world->setPlayerCount(2);
+            world->setTeam(0,0);world->setTeam(1,1);
+            world->setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
+            world->spawn(&type,100,100,{},0);world->spawn(&type,400,400,{},1);
+            world->tick(1.f/30);
+        }
+        const auto before=direct.stateHash();
+        const Event event{kind,0};Writer encoded;encoded.u8(uint8_t(event.kind));encoded.u8(event.player);
+        Reader input(encoded.b.data(),encoded.b.size());const Event decoded{Event::Kind(input.u8()),input.u8()};
+        tak::sim::applyEvent(direct,event);tak::sim::applyEvent(wire,decoded);
+        direct.tick(1.f/30);wire.tick(1.f/30);
+        if(direct.stateHash()!=wire.stateHash())++failures;
+        if(kind==Event::Kind::CampaignForfeit) {
+            if(!direct.player(0).defeated || direct.player(1).defeated || direct.winningTeam()!=1 || before==direct.stateHash())++failures;
+            // Repeated events may reset the ordinary unit Stop timer, but must
+            // preserve the outcome and remain identical through the wire path.
+            tak::sim::applyEvent(direct,event);tak::sim::applyEvent(wire,decoded);
+            direct.tick(1.f/30);wire.tick(1.f/30);
+            if(direct.stateHash()!=wire.stateHash() || !direct.player(0).defeated ||
+                direct.player(1).defeated || direct.winningTeam()!=1)++failures;
+        } else if(direct.player(0).defeated || direct.winningTeam()!=-1)++failures;
+        if(direct.player(0).unitCount!=1 || direct.player(1).unitCount!=1)++failures;
+    }
+    std::printf("campaign forfeit: %s\n",failures?"FAIL":"referee/direct/wire agree; ordinary leave unchanged");
+    return failures?1:0;
+}
+
 // ---- Part 2: real-world sim equivalence (needs game data) -----------------
 
 // The monarch (first alive unit) of each player, in player order.
@@ -267,6 +302,7 @@ int main(int argc, char** argv) {
     fails += testCommandRoundTrip();
     fails += testBundleRoundTrip();
     fails += testSortDeterminism();
+    fails += testCampaignForfeit();
     if (argc >= 3) {
         fails += testSimEquivalence(argv[1], argv[2]);
     } else {

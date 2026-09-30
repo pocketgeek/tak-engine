@@ -619,6 +619,9 @@ campaign state
 
 # Milestone 6 — Authoritative match-result processing
 
+Completed 2026-09-30. See [the result contract, modern outcome policy and
+validation evidence](research/darien-crusades/campaign-results.md).
+
 ## Objective
 
 Use `takserver` as the authority for Crusades results.

@@ -67,12 +67,13 @@ void binding(const fs::path& path){
     rejects([&]{s.commit("synthetic",0,saved.state,"forged credit",c::BattleResult{b.id,"I won"});},"generic result API cannot apply issued battle credit");
     check(!s.battleResult("synthetic",b.id) && s.load("synthetic").revision==0,"forged generic credit is atomic no-op");
     check(s.authorizeBattleReport(b.id,"room-one",good,250).id==b.id,"launch expiry does not terminate already-started match");
-    s.completeBattle(b.id,"room-one",good,251);
-    check(s.battle(b.id).status==c::BattleStatus::Completed,"completion is terminal marker");
+    rejects([&]{s.completeBattle(b.id,"room-one",good,251);},"unverified completion disabled");
+    s.cancelBattle(b.id,251);
+    check(s.battle(b.id).status==c::BattleStatus::Cancelled,"cancellation is terminal marker");
     rejects([&]{s.completeBattle(b.id,"room-one",good,252);},"completed battle cannot complete twice");
     rejects([&]{s.authorizeBattleReport(b.id,"room-one",good,252);},"completed battle cannot report again");
     rejects([&]{s.startBattle(b.id,b.launchToken,"room-two",good,252);},"completed battle cannot launch again");
-    check(!s.battleResult("synthetic",b.id) && s.load("synthetic").revision==0,"M5 completion creates no M6 credit or result payload");
+    check(!s.battleResult("synthetic",b.id) && s.load("synthetic").revision==0,"cancellation creates no campaign credit or result payload");
 }
 void terminalAndStale(const fs::path& path){
     c::CampaignStore s(path);seed(s);auto good=context();auto expired=issue(s);
@@ -113,8 +114,8 @@ void rollbackAndRestart(const fs::path& path){
      rejects([&]{s.startBattle(original.id,original.launchToken,"restart-room",context(),110);},"failed room binding is atomic");
      check(s.battle(original.id).status==c::BattleStatus::Issued && !s.battle(original.id).roomToken,"failed start leaves capability usable");
      fail=false;s.startBattle(original.id,original.launchToken,"restart-room",context(),110);
-     fail=true;rejects([&]{s.completeBattle(original.id,"restart-room",context(),120);},"failed completion is atomic");
-     check(s.battle(original.id).status==c::BattleStatus::Started,"failed completion leaves started status");}
+     fail=true;rejects([&]{s.cancelBattle(original.id,120);},"failed cancellation is atomic");
+     check(s.battle(original.id).status==c::BattleStatus::Started,"failed cancellation leaves started status");}
     {c::CampaignStore reopened(path);const auto loaded=reopened.battle(original.id);
      check(loaded.context.mapDigest==original.context.mapDigest && loaded.launchToken==original.launchToken && loaded.roomToken=="restart-room" && loaded.status==c::BattleStatus::Started,"restart preserves issuance, binding and lifecycle");
      rejects([&]{reopened.authorizeBattleReport(original.id,"new-process-recycled-room",context(),130);},"restart cannot reuse numeric room identity");
@@ -155,7 +156,7 @@ void migration(const fs::path& root){
             check(enrolled && enrolled->alliance==c::Alliance::Terror && enrolled->revision==1 && enrolled->joinedUnix==1 && enrolled->changedUnix==2,"v2 participant and revision preserved");
             check(migrated.allegianceHistory("synthetic","alice").size()==2,"v2 allegiance audit preserved");}
         else check(!migrated.allegiance("synthetic","alice"),"v1 migration invents no allegiance");
-        {Raw raw(path);check(raw.count("PRAGMA user_version")==3,"battle schema version3 installed");}
+        {Raw raw(path);check(raw.count("PRAGMA user_version")==4,"current schema version4 installed");}
     }
 }
 } // namespace

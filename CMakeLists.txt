@@ -975,6 +975,9 @@ add_test(NAME crusades_allegiance COMMAND crusades_allegiance_test)
 add_executable(crusades_battle_test tools/crusades_battle_test.cpp)
 target_link_libraries(crusades_battle_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_battle COMMAND crusades_battle_test)
+add_executable(crusades_result_test tools/crusades_result_test.cpp)
+target_link_libraries(crusades_result_test PRIVATE tak-crusades-store tak-sqlite)
+add_test(NAME crusades_result COMMAND crusades_result_test)
 add_library(tak-crusades-allegiance STATIC src/server/crusades/allegiance.cpp)
 target_link_libraries(tak-crusades-allegiance PUBLIC tak-crusades-store PRIVATE tak-formats)
 
@@ -996,6 +999,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_battle_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(crusades_battle_network PROPERTIES TIMEOUT 120)
+    add_test(NAME crusades_result_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/crusades_result_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(crusades_result_network PROPERTIES TIMEOUT 120)
   endif()
 endif()
 
