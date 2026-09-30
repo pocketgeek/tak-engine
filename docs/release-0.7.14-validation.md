@@ -38,7 +38,7 @@ The release version is set by CMake; protocol remains 200. Local Release,
 optimized Debug and sanitizer targets are rebuilt with the release version.
 The version-stamped suites passed again: Release **123/123**, optimized Debug
 **127/127**, and AddressSanitizer/LeakSanitizer **123/123**. Package publication
-and final release checks are recorded after tagging.
+and final release checks are recorded below.
 
 ## Screenshots
 
@@ -47,3 +47,21 @@ Actual engine/editor rendering is used; sample results and development scenes
 are identified in captions and [capture notes](img/README.md). Retail assets,
 stream keys and temporary capture harnesses are not distributed. The unrelated
 untracked weapon probe remains outside this release.
+
+## Published packages
+
+Tag `v0.7.14` points to `4c58e5e`. All tag workflows passed:
+[Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36653682604),
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36653682574), and
+[macOS ARM64](https://github.com/pocketgeek/tak-engine/actions/runs/36653682602).
+All **14** platform packages and debug archives are attached to the release.
+
+Downloaded macOS and Windows ZIPs and the Ubuntu 24.04 package were inspected
+for client, server, Cartographer and licenses. Linux desktop launchers and macOS
+bundle versions were checked; the app bundles identify version 0.7.14. The first
+Linux inspection guessed the desktop filenames incorrectly; the corrected check
+verified `tak-client.desktop` and `tak-cartographer.desktop` successfully.
+Native interactive Windows/macOS sessions were not run on this Linux host.
+
+All targets in local Release, optimized Debug and sanitizer builds were refreshed
+after tagging. Client/server versions report `0.7.14 (build v0.7.14)`.
