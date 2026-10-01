@@ -51,6 +51,8 @@ Public listeners require a certificate by default; players enter just the server
 name (for example, `tak.pgnet.us`). TLS and port 7677 are selected automatically.
 Account, game, upload, map-storage and replay budgets limit abuse, and
 an optional Linux service template isolates server state from retail data.
+Built-in Let’s Encrypt support (`--acme-domain` and `--acme-agree-tos`) obtains
+and renews certificates, opening port 80 only for HTTP validation.
 See [public-server deployment and limitations](docs/public-server.md).
 These changes are newer than the 0.7.20 release; update client and server together.
 

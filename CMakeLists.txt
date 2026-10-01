@@ -1096,8 +1096,17 @@ add_test(NAME replay_file COMMAND replay_file_test)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
+add_library(tak-acme STATIC src/server/acme.cpp)
+target_include_directories(tak-acme PRIVATE "${TAK_FFMPEG_PREFIX}/include")
+target_link_libraries(tak-acme PUBLIC tak-formats tak-crusades-servicelease)
+add_executable(acme_test tools/acme_test.cpp)
+target_link_libraries(acme_test PRIVATE tak-acme)
+add_test(NAME acme COMMAND acme_test)
+set_tests_properties(acme PROPERTIES TIMEOUT 30)
+add_executable(acme_test_driver tools/acme_test_driver.cpp)
+target_link_libraries(acme_test_driver PRIVATE tak-acme)
 add_executable(takserver src/server/server.cpp src/server/accounts.cpp src/ai/ai.cpp)
-target_link_libraries(takserver PRIVATE tak-formats tak-crusades-allegiance tak-crusades-network tak-crusades-servicelease)
+target_link_libraries(takserver PRIVATE tak-acme tak-formats tak-crusades-allegiance tak-crusades-network tak-crusades-servicelease)
 if(APPLE)
   target_link_libraries(takserver PRIVATE "-framework CoreFoundation")
 endif()
@@ -1171,7 +1180,7 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 # SDL2 still dlopens its X11/Wayland/audio backends, which every desktop that can run the
 # game already has; those are not declared (they aren't link-time deps of a static SDL2).
 if(UNIX AND NOT APPLE)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt DESTINATION share/licenses/tak-engine)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
@@ -1221,7 +1230,7 @@ if(UNIX AND NOT APPLE)
 
   include(CPack)
 elseif(WIN32)
-  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt DESTINATION .)
+  install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt DESTINATION .)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.

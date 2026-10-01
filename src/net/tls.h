@@ -11,6 +11,7 @@ struct TlsContext {
     ssl_ctx_st* handle=nullptr;
     ~TlsContext();
     static std::shared_ptr<TlsContext> server(const std::string& certificate,const std::string& key);
+    static std::shared_ptr<TlsContext> serverPem(const std::string& certificateChain,const std::string& privateKey);
     static std::shared_ptr<TlsContext> client();
 };
 }

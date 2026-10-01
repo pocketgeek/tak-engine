@@ -262,7 +262,13 @@ int listenOn(uint16_t port, std::string& err, bool loopbackOnly) {
     if (!v6) fd = int(socket(AF_INET, SOCK_STREAM, 0));
     if (fd < 0) { err = "socket failed"; return -1; }
     int one = 1;
+#ifdef _WIN32
+    // Windows SO_REUSEADDR permits another process to bind the same live port.
+    // Challenge and game listeners must have exclusive ownership.
+    setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&one), sizeof one);
+#else
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&one), sizeof one);
+#endif
     if (v6) {
         int off = 0;   // dual-stack: accept IPv4-mapped too
         setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof off);

@@ -14,6 +14,7 @@
 
 #include "net/mappackage.h"
 #include "server/commands.h"
+#include "server/acme.h"
 #include "net/crusades.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
@@ -390,6 +391,7 @@ public:
 #ifndef NDEBUG
     void allowBenchmarks() {testWork_=true;}
 #endif
+    void setAcme(std::shared_ptr<tak::srv::AcmeCertificates> acme) {acme_=std::move(acme);tlsContext_=acme_->context();}
     void setTls(std::shared_ptr<tak::net::TlsContext> context) {tlsContext_=std::move(context);}
     void setLimits(tak::srv::Limits limits) {limits_=limits;}
     void closeRegistration() { registrationOpen_=false; }
@@ -473,6 +475,7 @@ private:
     bool testWork_=false;
     tak::srv::Limits limits_;
     std::shared_ptr<tak::net::TlsContext> tlsContext_;
+    std::shared_ptr<tak::srv::AcmeCertificates> acme_;
     bool loopbackOnly_ = false;
     tak::srv::AccountStore accounts_;
     std::unique_ptr<tak::srv::crusades::CampaignServiceLease> campaignLease_;
@@ -3051,7 +3054,7 @@ int Server::run() {
                 setupSocket(fd);
                 auto c = std::make_unique<Client>();
                 c->id = nextClientId_++;
-                c->conn = Conn(fd,tlsContext_);
+                c->conn = Conn(fd,acme_?acme_->context():tlsContext_);
                 c->peer = address;
                 c->connectedMs = c->lastRecvMs = nowMs();
                 clients_[c->id] = std::move(c);
@@ -3275,6 +3278,8 @@ static int serverMain(int argc, char** argv) {
     if (const char* b = std::getenv("TAK_PAUSE_BUDGET_MS")) kPauseBudgetMs = uint64_t(std::atoll(b));
     uint16_t port = 7677;
     std::string dataRoot, replayDir,tlsCert,tlsKey,mapRoot;
+    tak::srv::AcmeOptions acme;acme.state="takserver-acme";
+    bool acmeOption=false;
     bool allowTestWork=false;
     bool allowPlaintext=false;
     std::string accountsPath = "takserver-accounts.conf";
@@ -3301,6 +3306,11 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--closed-registration")) closedRegistration=true;
         else if (!std::strcmp(argv[i], "--tls-cert") && i+1<argc) tlsCert=argv[++i];
         else if (!std::strcmp(argv[i], "--tls-key") && i+1<argc) tlsKey=argv[++i];
+        else if (!std::strcmp(argv[i], "--acme-domain") && i+1<argc) {acme.domain=argv[++i];acmeOption=true;}
+        else if (!std::strcmp(argv[i], "--acme-email") && i+1<argc) {acme.email=argv[++i];acmeOption=true;}
+        else if (!std::strcmp(argv[i], "--acme-state") && i+1<argc) {acme.state=std::filesystem::u8path(argv[++i]);acmeOption=true;}
+        else if (!std::strcmp(argv[i], "--acme-agree-tos")) {acme.agreeTerms=true;acmeOption=true;}
+        else if (!std::strcmp(argv[i], "--acme-staging")) {acme.directory="https://acme-staging-v02.api.letsencrypt.org/directory";acmeOption=true;}
         else if (!std::strcmp(argv[i], "--allow-plaintext")) allowPlaintext=true;
         else if (!std::strcmp(argv[i], "--local")) loopbackOnly = true;
         else if (!std::strcmp(argv[i], "--version") || !std::strcmp(argv[i], "-v")) {
@@ -3312,6 +3322,8 @@ static int serverMain(int argc, char** argv) {
                         "                 [--replaydir <dir>] [--accounts <file>]\n"
                         "                 [--no-auth] [--local] [--closed-registration]\n"
                         "                 [--tls-cert fullchain.pem --tls-key private.pem]\n"
+                        "                 [--acme-domain hostname --acme-agree-tos]\n"
+                        "                 [--acme-email address] [--acme-state directory] [--acme-staging]\n"
                         "                 [--allow-plaintext] (trusted LAN/test networks only)\n"
                         "                 [--map-cache-dir <writable directory>]\n"
                         "                 [--max-games N] [--max-running-games N] [--max-accounts N]\n"
@@ -3344,8 +3356,11 @@ static int serverMain(int argc, char** argv) {
             return 0;
         } else {std::fprintf(stderr,"takserver: unknown option or missing value: %s\n",argv[i]);return 1;}
     }
-    if(tlsCert.empty()!=tlsKey.empty() || (!loopbackOnly && tlsCert.empty() && !allowPlaintext)) {
-        std::fprintf(stderr,"takserver: public listeners require --tls-cert and --tls-key. Use --local for private games, or explicitly --allow-plaintext for a trusted LAN/test network.\n");return 1;
+    if(acmeOption && (acme.domain.empty() || !acme.agreeTerms || !tlsCert.empty() || !tlsKey.empty() || allowPlaintext || loopbackOnly || port==80)) {
+        std::fprintf(stderr,"takserver: ACME requires --acme-domain and --acme-agree-tos; cannot combine with manual TLS, plaintext, --local, or game port 80.\n");return 1;
+    }
+    if(tlsCert.empty()!=tlsKey.empty() || (!loopbackOnly && tlsCert.empty() && !allowPlaintext && !acmeOption)) {
+        std::fprintf(stderr,"takserver: public listeners require --tls-cert and --tls-key, or --acme-domain and --acme-agree-tos. Use --local for private games, or explicitly --allow-plaintext for a trusted LAN/test network.\n");return 1;
     }
     // --data is mandatory. The server used to run without it as a pure relay, with
     // the clients cross-checking hashes among themselves; that mode is gone. It gave
@@ -3429,6 +3444,7 @@ static int serverMain(int argc, char** argv) {
     if (!replayDir.empty()) s.setReplayDir(replayDir);
     if (fixedSeed) s.setFixedSeed(fixedSeed);
     s.setLimits(limits);
+    if(acmeOption)s.setAcme(std::make_shared<tak::srv::AcmeCertificates>(acme));
     if(!tlsCert.empty())s.setTls(tak::net::TlsContext::server(tlsCert,tlsKey));
     if (loopbackOnly) s.setLoopbackOnly();
     if (closedRegistration) s.closeRegistration();

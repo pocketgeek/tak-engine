@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <stdexcept>
 
@@ -43,15 +44,16 @@ static void trust(const std::filesystem::path& cert) {
 struct Echo {
     int listener=-1;uint16_t port=0;std::atomic<bool> stop=false;
     std::thread worker;
-    explicit Echo(std::shared_ptr<TlsContext> context) {
+    std::atomic<std::shared_ptr<TlsContext>> active;
+    explicit Echo(std::shared_ptr<TlsContext> context):active(std::move(context)) {
         std::string error;listener=listenOn(0,error,true);check(listener>=0,"listen");
         sockaddr_in address{};socklen_t length=sizeof address;
         check(getsockname(listener,reinterpret_cast<sockaddr*>(&address),&length)==0,"port");port=ntohs(address.sin_port);
-        worker=std::thread([this,context] {
+        worker=std::thread([this] {
             std::vector<Conn> peers;
             while(!stop.load()) {
                 const int fd=int(accept(listener,nullptr,nullptr));
-                if(fd>=0) {setupSocket(fd);peers.emplace_back(fd,context);}
+                if(fd>=0) {setupSocket(fd);peers.emplace_back(fd,active.load());}
                 for(auto& peer:peers) {
                     if(!peer.ok())continue;
                     peer.recv();Frame f;
@@ -79,6 +81,11 @@ int main(int argc,char** argv) {
         {
             Echo server(TlsContext::server(cert.string(),key.string()));
             Conn good;check(good.connect("tls://localhost",server.port),"trusted hostname rejected");
+            auto read=[](const auto& path) {std::ifstream in(path,std::ios::binary);return std::string(std::istreambuf_iterator<char>(in),{});};
+            const auto bundle=read(cert)+read(key);
+            server.active.store(TlsContext::serverPem(bundle,bundle));
+            // An established connection must survive a renewal context swap;
+            // later connections below also exercise the new in-memory context.
             const std::vector<uint8_t> payload(65536,0x5a);
             for(int i=0;i<64;++i)good.send(Msg::Chat,payload);
             int received=0;const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);

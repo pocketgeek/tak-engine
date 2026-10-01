@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/pem.h>
 #include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
@@ -71,6 +72,25 @@ std::shared_ptr<TlsContext> TlsContext::server(const std::string& certificate,co
        SSL_CTX_use_PrivateKey_file(c->handle,key.c_str(),SSL_FILETYPE_PEM)!=1 ||
        SSL_CTX_check_private_key(c->handle)!=1)throw std::runtime_error("cannot load TLS certificate/private key");
     return c;
+}
+std::shared_ptr<TlsContext> TlsContext::serverPem(const std::string& chain,const std::string& privateKey) {
+    if(chain.size()>1024*1024 || privateKey.size()>1024*1024)
+        throw std::runtime_error("TLS certificate bundle too large");
+    auto c=context(true);
+    std::unique_ptr<BIO,decltype(&BIO_free)> certificates(BIO_new_mem_buf(chain.data(),int(chain.size())),BIO_free);
+    std::unique_ptr<BIO,decltype(&BIO_free)> keys(BIO_new_mem_buf(privateKey.data(),int(privateKey.size())),BIO_free);
+    if(!certificates || !keys)throw std::runtime_error("cannot allocate TLS bundle reader");
+    std::unique_ptr<X509,decltype(&X509_free)> leaf(PEM_read_bio_X509_AUX(certificates.get(),nullptr,nullptr,nullptr),X509_free);
+    std::unique_ptr<EVP_PKEY,decltype(&EVP_PKEY_free)> key(PEM_read_bio_PrivateKey(keys.get(),nullptr,nullptr,nullptr),EVP_PKEY_free);
+    if(!leaf || !key || SSL_CTX_use_certificate(c->handle,leaf.get())!=1 ||
+       SSL_CTX_use_PrivateKey(c->handle,key.get())!=1 || SSL_CTX_check_private_key(c->handle)!=1)
+        throw std::runtime_error("invalid TLS certificate/private key bundle");
+    while(auto* extra=PEM_read_bio_X509(certificates.get(),nullptr,nullptr,nullptr)) {
+        if(SSL_CTX_add_extra_chain_cert(c->handle,extra)!=1) {
+            X509_free(extra);throw std::runtime_error("invalid TLS certificate chain");
+        }
+    }
+    ERR_clear_error();return c;
 }
 std::shared_ptr<TlsContext> TlsContext::client() {
     auto c=context(false);

@@ -51,6 +51,89 @@ listener. The gameplay protocol remains 212.
 The login exchange alone is not session encryption. Do not expose the old
 plaintext port alongside TLS as a compatibility fallback.
 
+## Built-in Let’s Encrypt certificates
+
+`takserver` can obtain and renew its own certificate without Certbot or another
+installed ACME program:
+
+```sh
+takserver --data /srv/tak-data \
+  --accounts /var/lib/takserver/accounts.conf \
+  --map-cache-dir /var/lib/takserver/maps \
+  --replaydir /var/lib/takserver/replays \
+  --acme-domain tak.example.org --acme-agree-tos \
+  --acme-state /var/lib/takserver/acme
+```
+
+Replace `tak.example.org` with a DNS hostname you control. Its A/AAAA records
+must reach this machine, including IPv6 if published. Allow incoming TCP **80**
+through the firewall/router and outgoing HTTPS **443** to the CA. The game still
+uses TCP **7677**. The server opens an HTTP listener only while an HTTP-01
+challenge is pending, serves only its exact challenge token, and closes it after
+validation or failure. It does not run a general website, redirect service, or
+permanent port-80 listener, and does not change your firewall automatically.
+If another service already owns port 80, issuance fails cleanly; TAK will not stop
+that service or fall back to plaintext. Wildcards and IP certificates are not
+supported by this implementation.
+
+`--acme-agree-tos` records the operator’s agreement to the CA subscriber terms.
+`--acme-email you@example.org` optionally supplies an account contact. The state
+directory defaults to `takserver-acme`; use a persistent absolute directory for a
+service. Keep it private and back it up: it contains the account key, certificate
+key, certificate chain and retry state. A process lease prevents two servers from
+managing the same directory. A directory is tied to its hostname and CA; use
+separate directories for different hosts and staging.
+
+Initial issuance must succeed before the game listener starts. Subsequent starts
+reuse a valid saved certificate. Renewal runs in a background worker with bounded
+requests, nonce retries, persistent exponential backoff and CA `Retry-After`
+handling. It renews when about one-third of certificate lifetime remains (half
+for certificates shorter than ten days), without assuming a fixed 90-day lifetime.
+ACME Renewal Information (ARI) scheduling is not yet implemented. A successful
+renewal atomically saves the certificate/key bundle and switches new connections
+to it; existing games keep their established TLS sessions. Renewal failures keep
+the previous certificate and log the problem. An expired certificate will still
+be rejected by clients, so administrators must monitor renewal failures.
+
+On Linux, the listener needs permission to bind port 80. The optional
+[systemd ACME drop-in](../packaging/systemd/takserver-acme.conf) grants only
+`CAP_NET_BIND_SERVICE` while retaining the main service sandbox. Copy it to
+`/etc/systemd/system/takserver.service.d/acme.conf`, replace its hostname, and
+review the paths before restarting. It replaces the manual certificate options
+and credential entry. Do not run the game server as root just to bind port 80.
+On Windows/macOS, configure the service account and firewall so the process can
+bind TCP 80. Platform service installers are not supplied for those systems.
+State uses private owner ACLs on Windows and owner-only Unix
+permissions. No new DLL/shared-library dependency is added; OpenSSL is static and
+the vendored JSON parser is header-only (see `ACME-LICENSES.txt`).
+
+Use `--acme-staging` with a **separate state directory** to exercise Let’s Encrypt’s
+test service before production. Staging certificates are not trusted by ordinary
+clients. For local development, `acme_test_driver` and
+`tools/acme_pebble_test.py` exercise issuance, saved-state reuse, background
+renewal, occupied-port failure, retained certificates, backoff and listener cleanup
+against [Pebble](https://github.com/letsencrypt/pebble). The test driver’s custom
+CA endpoint and challenge port are not production server options. The native
+`acme` CTest covers responder bounds, exact paths, slow peers and cleanup.
+
+For the integration script, run Pebble with its default port 5002 for HTTP
+validation, `PEBBLE_AUTHZREUSE=0`, and DNS/hosts mapping `acme.tak.test` to this
+machine. Point `--ca` at Pebble’s API root certificate:
+
+```sh
+python3 tools/acme_pebble_test.py --driver build-o2/acme_test_driver \
+  --ca /path/to/pebble.minica.pem
+```
+
+The optional integration harness needs Python’s `cryptography` package to create
+an already-due fixture; the game/server and native CTests do not need Python
+cryptography, Pebble, or a container runtime. Validation on 2026-10-01 passed the
+169-test optimized Debug suite, six focused Release and Clang checks, and both
+native and end-to-end ACME checks under AddressSanitizer/LeakSanitizer. Pebble was
+configured to reject 50% of nonces to exercise retry handling. The TLS regression
+also replaces the server context while an established connection transfers data.
+These checks do not issue a production certificate or alter any live service.
+
 ## Resource controls
 
 | Option | Default | Scope |
