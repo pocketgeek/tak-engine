@@ -32,7 +32,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.18 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.19 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -56,9 +56,9 @@ the GOG edition, supplies the game data.
 - **Maintenance:** remove 22 unused engine helpers/fields and two obsolete tool
   blocks, preserving the live simulation, pathfinding and presentation systems.
 
-Protocol remains **211**. Update clients and servers together; the source-build
-compatibility check also rejects mismatched engine revisions. Media and campaign
-storage dependencies remain statically linked. See the
+Protocol remains **211**. Use matching engine builds and compatible game data
+on all clients and servers. Media and campaign storage dependencies remain
+statically linked. See the
 [release notes](docs/release-0.7.19-notes.md) and
 [validation report](docs/release-0.7.19-validation.md).
 
@@ -590,7 +590,7 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.18 uses protocol 211**, including Darien Crusades campaign
+Version **0.7.19 uses protocol 211**, including Darien Crusades campaign
 messages and retail damage-category corrections. Update clients and servers
 together; 0.7.17 and earlier cannot join these matches. Incompatible clients
 and recordings are rejected.

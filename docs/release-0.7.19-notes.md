@@ -16,7 +16,6 @@
   unchanged, with deterministic simulation checks covering the cleanup.
 
 Protocol remains **211**, campaign payload **4**, database schema **9**.
-Update clients and servers together: source fingerprints also enforce matching
-engine revisions. No new dynamic dependencies or bundled retail data are added.
+Use matching engine builds and compatible game data on all clients and servers. No new dynamic dependencies or bundled retail data are added.
 
 See the [validation report](https://github.com/pocketgeek/tak-engine/blob/main/docs/release-0.7.19-validation.md).
