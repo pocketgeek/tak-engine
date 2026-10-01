@@ -5,7 +5,11 @@ service. It is a modern interface around the recovered campaign data and
 server-authoritative duel flow, not a claim to reproduce the original Boneyards
 lobby. The screen labels the remaining limitation: **Historical capture rules
 incomplete**. The interface is available from the authenticated multiplayer
-game browser through **Darien Crusades**.
+game browser through **Darien Crusades**. Milestones 10 and 11 extend this screen
+with [modern territory FIFO matchmaking](campaign-matchmaking.md) and
+[verified terminal history and retained tactical replays](campaign-history.md).
+The current subtitle identifies modern FIFO duels and incomplete historical
+capture rules.
 
 ## Navigation and territory inspection
 
@@ -17,10 +21,13 @@ territory, including parcels without a mapped local shape. Clicking either the
 map or a list row selects the same territory.
 
 Details show server ownership, open/active battle counts, native faction,
-terrain, effective battle map, all seven recon metrics and authored neighbors.
+terrain, effective battle map, all seven recon metrics and authored neighbors,
+plus authoritative matchmaking availability and waiting counts for each alliance.
 Missing fields display **Unknown**, distinct from zero or an explicitly empty
 neighbor list. Activity counts come from the server's current rooms, not from
-battle-point inference or decorative fires. Own recent battles are shown
+battle-point inference or decorative fires. Original README-3 describes flames
+based on territory player counts on the full map and minimap; modern offered/active
+room counts do not reproduce that display. Own recent battles are shown
 separately. Long descriptions and neighbor lists wrap in a clipped, scrollable
 detail pane.
 
@@ -47,12 +54,40 @@ confirmed enrollment, a valid opponent account and the client's Lobby state.
 The server still performs every authority and eligibility check. No AI or
 client-specified winner/map/rules capability is introduced.
 
+**Find opponent** searches the selected territory when the authoritative board
+confirms both player and territory eligibility at the displayed campaign revision.
+The server pairs opposite alliances in arrival order for that campaign and
+territory. The older waiter hosts the room and the other player receives an
+invitation. **Cancel search** waits for server confirmation; neither action
+predicts local queue counts or battle issuance. Direct **Request battle** by
+opponent account remains available through the same issuance checks. The
+[M10 contract](campaign-matchmaking.md) records expiry, reconnect, reservation
+and eligibility policies.
+
 Own battle references trigger bounded status queries as their lifecycle changes.
 The list shows invitations, running/results-pending battles and terminal status;
 completed results identify the authoritative winner when present. Join
 Invitation uses only an issued battle's live nonzero room ID. Leaving a battle
 uses the existing room action. The host's already-seated issued room and actual
 battle/lobby flow remain the containing GameView's responsibility.
+
+## History and replay playback
+
+**History** opens the selected territory's verified terminal results for an
+enrolled account. Previous/Next paginate the archive; scrolling browses entries
+and clicking one shows its recorded outcome, participants, map, date and statistics.
+Missing recordings leave history visible. **Watch replay** downloads an available supported recording
+only while the player is in the lobby, outside a search or active battle. The
+client verifies the recording digest before handing it to the existing tactical
+viewer. Cancel download discards an unfinished transfer. Returning from playback
+preserves the campaign connection, selected territory and history selection.
+See [M11 archive access, retention and playback](campaign-history.md).
+
+This tactical archive is modern. The original help describes a Crusades movie
+showing battle lines and conquered territories; that strategic history display
+does not establish the modern battle archive or replay-access policy.
+
+## Networking and reconnect
 
 The screen never calls socket `poll`, accesses a simulation `World`, modifies a
 snapshot or records a tactical command. `MpClient` owns networking and cache
@@ -70,8 +105,15 @@ authenticated duel service. See [network snapshots](campaign-network.md),
 [territory policy boundaries](campaign-territory-rules.md), and
 [retail campaign flow](campaign-flow.md). A local map image does not make the
 unknown historical capture or campaign-victory calculations available.
+The [Milestone 12 historical validation](../../darien-crusades-reconstruction.md)
+compares current presentation and service choices with that evidence.
 
-## Focused validation
+## M9 focused validation record — 2026-09-30
+
+The following 57-check UI and full-suite counts record the M9 implementation
+before FIFO matchmaking and history/replay were added. Current extension checks
+and workflows are recorded in the [M10](campaign-matchmaking.md) and
+[M11](campaign-history.md) validation sections.
 
 `tools/crusades_ui_test.cpp` uses software SDL, a real `MpClient`, real SCRAM
 mutual authentication and a synthetic 40-territory server snapshot. Its 57 checks
@@ -124,7 +166,7 @@ Synthetic tests cover the bounded CP1252 definition parser, PNG checksums,
 filters, indexed formats, ownership composition and geometry hit testing.
 Existing static zlib handles PNG inflation; no new dynamic library is required.
 
-## M9 acceptance evidence
+## M9 acceptance evidence — 2026-09-30
 
 | Criterion | Evidence |
 |---|---|

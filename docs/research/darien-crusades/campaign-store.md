@@ -52,6 +52,12 @@ access the same database.
 - `battleResult` returns the opaque payload associated with a campaign/battle
   identity, or absence when no such completed result is stored.
 
+`commit` is a trusted API for caller-authored state under any permitted campaign
+policy; it does not require fixture rules. No client request directly exposes
+this API. Reserved issued-battle identities must use the verified-result path,
+whose historical rules leave territory state unchanged and whose synthetic
+updates require explicit fixture opt-in. See [the rules boundary](campaign-territory-rules.md).
+
 A result payload is caller-owned evidence; storing it does not authenticate a
 player's report or calculate a tactical-score-to-campaign conversion. The
 append-only application API explains changes by retaining each full state and
@@ -71,10 +77,15 @@ adds an immutable `battle_participants` projection and an index on campaign,
 account and creation order for bounded player-status queries. Migration from
 versions 1–5 decodes and validates existing battle rosters before populating
 the projection, in the same transaction as the schema version update. Failed
-migrations leave the prior schema and records intact. No results are reapplied. The
-three tables below describe the original persistence layer. An empty unclaimed
-database may be initialized; unrelated or
-unsupported-version databases are rejected. There is no migration from a
+migrations leave the prior schema and records intact. [Milestone 10](campaign-matchmaking.md)
+adds the account-wide reservation index in schema version 7.
+[Milestone 11](campaign-history.md) adds the immutable verified
+`territory_battle_history` projection in the current schema version 8. Migration
+backfills that projection from existing verified results without manufacturing
+results or rules decisions. Supported earlier versions upgrade atomically;
+no results are reapplied. The three tables below describe the original
+persistence layer. An empty unclaimed database may be initialized; unrelated
+or unsupported-version databases are rejected. There is no migration from a
 historical service database or from account credentials.
 
 | Table | Stored information |
@@ -85,8 +96,10 @@ historical service database or from account credentials.
 
 The current state is the snapshot at the campaign's current revision, not a
 second independently updated copy. Revision zero records the initial state.
-Every successful mutation appends exactly one revision. Triggers reject updates
-or deletions of existing events/results and modifications of campaign
+Each successful `commit` appends exactly one campaign revision. Later allegiance
+and battle/result operations use their own audit records and do not necessarily
+advance campaign state. Triggers reject updates or deletions of existing
+events/results and modifications of campaign
 identity/definition through ordinary SQL. Reopening validates the exact supported table/constraint/trigger definitions
 in a coherent read transaction before changing persistent settings, and checks
 again under the initialization write lock. Missing, extra or replaced schema

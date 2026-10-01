@@ -1,17 +1,23 @@
 # Milestone 8: campaign network snapshots
 
-M8 adds a modern, engine-owned campaign read protocol and `MpClient` integration.
+M8 introduced a modern, engine-owned campaign read protocol and `MpClient`
+integration.
 It is separate from the historical Boneyards protocol and from tactical command
-bundles. Completed September 30, 2026. The strategic map UI remains Milestone 9.
+bundles. Completed September 30, 2026. Milestones 9–11 subsequently added activity,
+matchmaking and retained history/replays. The current network protocol is **211**,
+campaign payload version **4**, and storage schema **8**; the numbered extension
+sections below preserve the earlier introduction versions.
 
 ## Messages and authority
 
-The new request/response families are campaign catalog, full campaign snapshot,
+The M8 request/response families were campaign catalog, full campaign snapshot,
 own player campaign status, battle status and structured error. Their codecs
 live in `src/net/crusades.{h,cpp}`. Each payload begins with a little-endian
-version (`u16`, currently 1) and request ID (`u32`); network protocol version
-208 gates the new message families. Its outer network message
-identifies the family. Zero request ID is reserved for server notifications.
+version (`u16`, currently 4) and request ID (`u32`). M8 introduced payload version
+1 and network protocol 208; current clients use protocol 211. The outer network
+message identifies the family. Zero request ID is reserved for server notifications.
+Current families also include the [matchmaking board and Find/Cancel requests](campaign-matchmaking.md)
+and [territory-history pages and retained replay chunks](campaign-history.md).
 
 The catalog is paginated. Full snapshots contain campaign identity, display name,
 revision, persisted rules policy and territories with optional ownership, map
@@ -32,10 +38,12 @@ The most recently requested full campaign snapshot selects the connection's
 implicit subscription. The server checks subscribed revisions once per second,
 using a cheap revision read, and sends a full replacement only when needed.
 Outgoing-buffer backpressure prevents refresh traffic from accumulating behind a
-slow connection. Explicit reads are limited to 32 per second per connection:
-the first excess request receives a correlated `Unavailable` error and further
+slow connection. Ordinary explicit campaign reads are limited to 32 per second
+per connection: the first excess request receives a correlated `Unavailable` error and further
 excess requests in that window are dropped. The client's 15-second pending-read
 expiry releases slots for unanswered requests without disconnecting the game.
+Retained replay pulls have a separate 64-per-second quota and bounded 64 KiB
+chunks, as described in the M11 contract.
 
 Authenticated battle participants receive lifecycle notifications for issuance,
 start, cancellation, expiry and durable result completion. A restarted server
@@ -43,10 +51,12 @@ can report an old orphan `Started` record, but its room ID is zero; this reports
 a durable historical record and does not offer live reattachment or reconstruct
 a lost referee. No room token or launch capability is exposed.
 
-Schema version 6 adds an indexed participant-to-battle lookup for bounded own
+M8 schema version 6 added an indexed participant-to-battle lookup for bounded own
 history reads. Migration preserves prior records and policy bindings. This
-index does not grant access to another account's history, and notifications do
-not change the persisted Historical Darien policy. Native historical arithmetic
+index does not grant access to another account's private player-status records.
+M11 separately permits enrolled members to read verified terminal territory
+history and retained recordings; live battle status remains participant-only.
+Notifications do not change the persisted Historical Darien policy. Native historical arithmetic
 remains unresolved and blocked; no read protocol invents territory credit.
 
 ## Strict decoding and replicas
@@ -59,10 +69,12 @@ snapshots at 1024 territories, neighbor lists at 256 and recent battle lists at
 plausible partial state.
 
 `Replica` applies full snapshots atomically. Older revisions and conflicting
-content at the same revision are rejected without changing cached state.
+persisted content at the same revision are rejected without changing cached state.
 Equivalent canonical content at the same revision is unchanged, even if request
 IDs or input ordering differ. This is not a delta protocol; refresh requests
 retrieve another full snapshot.
+The M9 extension permits ordered activity-only updates at the same persisted
+revision; ownership, definition fields and recon metrics still cannot conflict.
 
 ## MpClient behavior
 
@@ -102,7 +114,11 @@ command/event bundles, recorded replay bytes or hash log. They never access a
 `World`. Rules authority remains in the server/store; the historical policy
 still has [unrecovered territory arithmetic](campaign-territory-rules.md).
 
-## Validation
+## M8 validation record — 2026-09-30
+
+The following counts and full-suite results record M8 acceptance before the
+M9–M11 extensions. Later validation is recorded in their linked contracts and
+the [Milestone 12 historical validation](../../darien-crusades-reconstruction.md).
 
 `tools/crusades_client_network_test.cpp` drives the real `MpClient` over loopback
 with a scripted server and real SCRAM mutual authentication, requiring no game
@@ -139,13 +155,13 @@ the local ARM cross-build legs lack the required target headers and were skipped
 |---|---|
 | Reconnect obtains a complete valid snapshot | Real `MpClient` authenticated reconnect and real server restart tests |
 | Stale updates rejected or corrected | Replica atomicity/conflict tests, live stale/ahead reads and persisted subscription refresh |
-| Protocol changes versioned | Network version 208, payload version 1, malformed/version tests |
+| Protocol changes versioned at M8 introduction | Network version 208, payload version 1, malformed/version tests; current versions are 211 and 4 |
 | Campaign traffic cannot alter tactical commands | Client bundle/replay byte preservation, real referee replay verification and forged-snapshot no-credit test |
 
 ## M9 activity extension
 
-Network version 209 and campaign payload version 2 append optional offered/active
-battle counts to each territory. These are current server-room observations,
+M9 introduced network version 209 and campaign payload version 2, appending
+optional offered/active battle counts to each territory. These are current server-room observations,
 independent of the stored ownership revision and historical battle-point metrics.
 Unknown activity remains distinct from zero. Ordered activity-only snapshots may
 refresh the client at the same campaign revision; conflicting persistent fields
@@ -153,14 +169,14 @@ still fail validation. Full legacy clients must update to the matching protocol.
 
 ## M10 matchmaking extension
 
-Network version 210 and campaign payload version 3 add the separate authoritative
-matchmaking board and Find/Cancel requests. Schema version 7 indexes account-wide
+M10 introduced network version 210 and campaign payload version 3, adding the
+separate authoritative matchmaking board and Find/Cancel requests. Schema version 7 indexes account-wide
 battle reservations. See [the matchmaking contract and live checks](campaign-matchmaking.md).
 
 ## M11 history and replay extension
 
-Network version 211 and campaign payload 4 append authenticated territory-history
-pages and bounded retained replay chunks. Current storage schema is 8. Completed
+M11 introduced the current network version 211 and campaign payload 4, appending
+authenticated territory-history pages and bounded retained replay chunks. Current storage schema is 8. Completed
 archives are available to enrolled members of their campaign, while active battle
 status remains participant-only. [The history contract](campaign-history.md)
 records permissions, retention, digest verification and real server/viewer gates.

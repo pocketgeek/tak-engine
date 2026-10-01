@@ -5,13 +5,18 @@ and source-scoped balance audit, plus the Milestone 2 campaign model and
 Milestone 3 transactional store, Milestone 4 authenticated allegiance,
 Milestone 5 battle issuance, Milestone 6 authoritative results, Milestone 7
 evidence-bound territory rules, Milestone 8 campaign networking and
-Milestone 9 strategic presentation. See the
+Milestone 9 strategic presentation, Milestone 10 territory matchmaking and
+Milestone 11 history/replay integration. See the
 [Milestone 1 acceptance audit](milestone-one-status.md) and
 [Milestone 2 model](campaign-model.md), [Milestone 3 store](campaign-store.md)
 and [Milestone 8 network contract](campaign-network.md), plus
-[Milestone 9 interface](campaign-ui.md), for completion status and validation.
+[Milestone 9 interface](campaign-ui.md), [Milestone 10 matchmaking](campaign-matchmaking.md)
+and [Milestone 11 archive](campaign-history.md), for completion status and validation.
 The modern server framework and strategic map UI are implemented. Automatic
 historical captures remain blocked by missing retail rules.
+The [Milestone 12 historical validation](../../darien-crusades-reconstruction.md)
+compares the current implementation with primary evidence and explicitly
+classifies recovered behavior, modern choices and historical unknowns.
 
 - [Milestone 1 acceptance audit](milestone-one-status.md)
 - [Milestone 2 clean-room campaign model](campaign-model.md)
@@ -22,6 +27,9 @@ historical captures remain blocked by missing retail rules.
 - [Milestone 7 territory rules and evidence boundaries](campaign-territory-rules.md)
 - [Milestone 8 campaign network snapshots](campaign-network.md)
 - [Milestone 9 strategic interface](campaign-ui.md)
+- [Milestone 10 modern territory matchmaking](campaign-matchmaking.md)
+- [Milestone 11 territory history and retained replays](campaign-history.md)
+- [Milestone 12 historical validation](../../darien-crusades-reconstruction.md)
 - [Strategic interface evidence](campaign-ui-evidence.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)
@@ -39,8 +47,6 @@ historical captures remain blocked by missing retail rules.
 - [Binary trace notes](binary-notes.md)
 - [Campaign rules recovered from shipped help](campaign-rules-evidence.md)
 - [Territory selection, battle entry and result lifecycle](campaign-flow.md)
-- [Modern territory matchmaking and validation](campaign-matchmaking.md)
-- [Territory history and retained replay integration](campaign-history.md)
 - [Battle settings and score-report boundary](battle-contract.md)
 - [Report queue, encoding and incoming reports](report-transport.md)
 - [Native balance field findings](balance-field-review.md)

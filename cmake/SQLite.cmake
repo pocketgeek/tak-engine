@@ -1,6 +1,13 @@
 # Pinned public-domain SQLite amalgamation. Compile it ourselves on every
 # platform: no system sqlite shared library or additional shipped DLL is used.
 enable_language(C)
+# CMake appends C's implicit libraries when this archive joins a C++ link.
+# Fedora names its shared unwinder gcc_s_asneeded, unlike C++'s gcc_s, so
+# the extra -l can override the Linux -static-libgcc policy. Leave the driver
+# to select that runtime and retain all other implicit C libraries.
+if(UNIX AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  list(FILTER CMAKE_C_IMPLICIT_LINK_LIBRARIES EXCLUDE REGEX "^gcc_s(_asneeded)?$")
+endif()
 include(FetchContent)
 FetchContent_Declare(tak_sqlite
   URL https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip

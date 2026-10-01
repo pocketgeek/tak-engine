@@ -102,9 +102,12 @@ state/history, opaque legacy results, existing allegiances and issued battles.
 Failed migration leaves the previous schema and data intact. M7 subsequently
 adds policy/decision tables in schema version 5. [M8](campaign-network.md) adds
 an indexed participant projection in schema version 6.
-[M10](campaign-matchmaking.md) adds the account-wide reservation index in current
-schema version 7. Earlier versions upgrade atomically and old results are not
-retroactively scored.
+[M10](campaign-matchmaking.md) adds the account-wide reservation index in
+schema version 7. [M11](campaign-history.md) adds the immutable verified
+territory-history projection in the current schema version 8. Migration
+backfills that projection from existing verified results; it does not manufacture
+results or rules decisions. Supported earlier versions upgrade atomically and
+old results are not retroactively scored.
 
 ## Validation
 

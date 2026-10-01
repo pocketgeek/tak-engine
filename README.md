@@ -371,6 +371,9 @@ See the [strategic interface and setup guide](docs/research/darien-crusades/camp
 and [server battle setup](docs/research/darien-crusades/campaign-battles.md).
 The [matchmaking guide](docs/research/darien-crusades/campaign-matchmaking.md)
 describes the modern policy and its verification. The [history and replay guide](docs/research/darien-crusades/campaign-history.md) explains archive access and retention.
+The [historical validation audit](docs/darien-crusades-reconstruction.md) separates
+confirmed retail evidence, reconstructed client behavior, modern service choices
+and the original server rules still missing.
 
 ## Controls
 

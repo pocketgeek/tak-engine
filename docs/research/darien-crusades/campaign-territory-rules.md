@@ -101,6 +101,13 @@ per-result decision records. Creation defaults to Historical Darien. Migration
 from versions 1–4 assigns that explicit historical identity to existing
 campaigns and issued battles; it does not invent decisions for old results.
 
+Later migrations add the participant projection in schema 6 and account-wide
+reservation index in schema 7. [Milestone 11](campaign-history.md) adds the
+immutable verified territory-history projection in the current schema 8.
+Migration backfills that projection from existing verified results without
+manufacturing results or rules decisions; supported older schemas upgrade
+atomically.
+
 The result, rules decision, optional campaign snapshot/revision and terminal
 battle status commit in one SQLite transaction. The winning allegiance comes
 from the eligible verified result and its pinned roster, not from a client rule
@@ -109,12 +116,20 @@ decisions retain before/after revisions, evidence, disposition, explanation and
 resulting snapshot. An unchanged historical decision is still audited without
 advancing the campaign state revision.
 
-Only explicit fixture policy may alter state, and only for an eligible result.
+The verified-result rules path alters state only under an explicitly enabled
+fixture policy and an eligible result.
 No-credit outcomes cannot earn fixture points. Duplicate result protection also
 prevents duplicate rules application. The store defaults to `allowFixtureRules=false`; fixture creation/loading
 requires explicit trusted test opt-in, which the shipped server never enables.
 The reserved modern policy is rejected. Thus the live historical duel service
 cannot accidentally offer fixture behavior.
+
+The separate trusted `CampaignStore::commit` API accepts validated,
+caller-authored state under any permitted campaign policy. It is not directly
+exposed by a client request and rejects reserved issued-battle result identities.
+The fixture-only restriction above applies to verified-result rule evaluation,
+not to that authored-state persistence API. See [the store contract](campaign-store.md)
+and the [M12 reconstruction audit](../../darien-crusades-reconstruction.md).
 
 All six focused suites pass ASan/UBSan with leak detection and instrumented
 SQLite: pure rules 91, rules store 30, results 135, battle issuance 167,

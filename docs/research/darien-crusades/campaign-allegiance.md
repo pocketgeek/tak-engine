@@ -93,7 +93,10 @@ schema version 4. [Milestone 7](campaign-territory-rules.md) adds policy and
 decision records in schema version 5. [Milestone 8](campaign-network.md) adds an
 indexed battle-participant projection in schema version 6.
 [Milestone 10](campaign-matchmaking.md) adds the account-wide reservation index
-in current schema version 7; opening earlier versions upgrades atomically.
+in schema version 7. [Milestone 11](campaign-history.md) adds the immutable
+verified territory-history projection in the current schema version 8.
+Opening supported earlier versions upgrades atomically and backfills history
+from existing verified results without generating new results or rules decisions.
 
 | Table | Fields |
 |---|---|
@@ -104,7 +107,7 @@ Triggers prevent allegiance-event updates/deletions and participant identity
 rewrites. Opening a supported version-1 database validates its exact old schema,
 then, in the M4 implementation, created the new tables/triggers and published
 version 2 in one transaction. Current opening includes the later tables and
-publishes version 6 in the same atomic migration.
+publishes version 8 in the same atomic migration.
 It creates no inferred participants and does not rewrite old definitions,
 snapshots, history, binary result payloads or duplicate-result identities.
 Interrupted migration rolls back the schema additions and version together.

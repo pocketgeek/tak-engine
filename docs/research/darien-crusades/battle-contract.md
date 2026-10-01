@@ -2,8 +2,14 @@
 
 Classification: **RECONSTRUCTED by static tracing**, unless noted. Addresses use
 EXE-3 and ROVER from [sources.md](sources.md), not the differently hashed local
-engine. No game, installer or network service was launched. This is research,
-not an implemented campaign protocol.
+engine. No game, installer or network service was launched during this tracing
+investigation. This is research, not an implementation of the original
+Boneyards campaign protocol. Its complete server behavior remains unrecovered. The
+authenticated TAK-Engine [battle service](campaign-battles.md),
+[referee results](campaign-results.md) and [territory archive](campaign-history.md)
+are modern implementations with separate authority and policy contracts.
+The [M12 reconstruction audit](../../darien-crusades-reconstruction.md)
+compares those contracts with the recovered historical behavior.
 
 ## Settings passed into battle entry
 

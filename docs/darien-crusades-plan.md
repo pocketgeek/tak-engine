@@ -947,6 +947,12 @@ and point to either:
 - reverse-engineering evidence;
 - an explicitly documented modern decision.
 
+Completed audit: [historical validation and implementation boundaries](darien-crusades-reconstruction.md).
+All twelve categories are classified against recovered evidence and current
+code. The audit is complete; historical territory mathematics and war lifecycle
+remain unrecovered. Modern battle/history infrastructure does not imply a
+complete original Boneyards service.
+
 ---
 
 # Milestone 13 — Public-server hardening

@@ -171,9 +171,8 @@ endif()
 # Each flag is TESTED before it is used, rather than assumed: -static-libstdc++ needs
 # libstdc++.a, which several distros split into a separate package (Fedora's
 # libstdc++-static, and it is absent by default). Adding the flag blind turns a missing
-# package into "cannot find -lstdc++" at link time, so a developer without it could no
-# longer build at all. Tested, it simply stays dynamic there and the CI gate -- which
-# installs the package -- is what holds the release to the static result.
+# package into "cannot find -lstdc++" at link time. The probes fail configuration
+# with an explanation of the missing package; they never select a shared fallback.
 if(UNIX AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   include(CheckCXXSourceCompiles)
   function(tak_try_link_flag flag var)

@@ -3,6 +3,9 @@
 Classifications follow [the reconstruction plan](../../darien-crusades-plan.md).
 CONFIRMED here applies only to the precisely worded observation, not an implied
 implementation. Source IDs resolve through [sources.md](sources.md).
+The [Milestone 12 historical validation](../../darien-crusades-reconstruction.md)
+compares these recovered claims with current engine behavior and records modern
+choices and remaining historical unknowns.
 
 | ID | Observation / proposed behavior | Classification | Evidence and limits |
 |---|---|---|---|
@@ -10,7 +13,7 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E02 | These two patch payloads share engine and Boneyards executable bytes | CONFIRMED | Inventories; includes EXE-3, BYMAIA and ROVER. Does not establish the earlier introduction date of code paths |
 | E03 | The larger payload includes maps and extra metagame art/dialogs and five chunks of one movie | CONFIRMED | Generated payload diff and decoded HPI/KMP membership |
 | E04 | Darien territory presentation data survives in a shipped definition file | CONFIRMED | [Validated format](territory-format.md): 313 parcels, unique names/IDs, complete observed schema. Declares 871 borders but provides no edge records; not a recovered graph |
-| E05 | Occupied territory flames reflect player activity, including the minimap | CONFIRMED | README-3 line 5; exact rendering thresholds not recovered |
+| E05 | Occupied territory flames reflect player activity, including the minimap | CONFIRMED documentation claim | README-3 line 5 ties flames to the number of players; HELP-147 FAQ 29 describes contested-territory activity. Exact rendering thresholds not recovered. Current offered/active room counts are MODERN observations, not recovered player-count flames |
 | E06 | Territories may change hands without a battle based on fatigue, side support and toughness | CONFIRMED | README-3 line 6 gives a qualitative comparison. Timing, accumulation, side selection, rounding and exact algorithm remain UNKNOWN |
 | E07 | Hosts could choose original or Crusades unit balance | CONFIRMED | README-3 line 7; this is distinct from joining the persistent metagame |
 | E08 | Recon templates display shared fatigue and side-specific toughness, support and battle victory points | CONFIRMED template schema; RECONSTRUCTED active use | RECON-HISTORY / RECON-0 lines 49–73; EXE-3 recon constructor references at `0x457da7`, `0x459061`, `0x460d8c`. [Parameter analysis](territory-parameters.md); placeholder zeroes are not campaign starting values |
@@ -22,7 +25,7 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E14 | Allegiance restrictions and battle sizes | CONFIRMED documentation claims; partial binary corroboration | HELP-147 FAQ 13–15, 19–20; entry callback has same-allegiance rejection. Exceptional race combinations and final-service rules unresolved; disconnected/invalid outcomes UNKNOWN |
 | E15 | Exact standard-versus-Crusades gameplay value differences | CONFIRMED source/registry comparison with native corrections | [Balance reference](../../crusades-balance-reference.md): three fingerprinted source scopes, 177 changed field paths classified, complete raw/effective reports and final registry checks. [Validation](milestone-one-validation.md) records all tests and scope limits |
 | E16 | Exactly 182 maps extracted from this Crusades payload | UNKNOWN | WEB-PATCH advertises 182; observed payload has 181 KMP containers, each with one TNT |
-| E17 | A TAK-Engine persistent campaign database and server-issued battle/result objects | MODERN implementation | Milestones 4–10 implement authenticated store, room/result bindings and [territory matchmaking](campaign-matchmaking.md); no original Cavedog implementation claim |
+| E17 | A TAK-Engine persistent campaign database and server-issued battle/result objects | MODERN implementation | Milestones 4–11 implement authenticated store, room/result bindings, [territory matchmaking](campaign-matchmaking.md) and [retained history/replays](campaign-history.md); no original Cavedog implementation claim |
 | E18 | MMZ contains a Maia package/update manifest | CONFIRMED contents; RECONSTRUCTED role | [Manifest notes](updater-manifest.md); package versions 30BA/30BB, bundle/resource descriptors, companion update API. Not a campaign database |
 | E19 | PreInit is a 313-byte table consumed in ascending territory-ID order, with C/H/T mapped to 0/1/2 | RECONSTRUCTED reader; CONFIRMED bytes | [Binary trace](binary-notes.md). Does not establish live campaign starting owners |
 | E20 | wdhit is a decimal table read near crest setup | CONFIRMED bytes; RECONSTRUCTED reader | 80 integers; exact entry meaning UNKNOWN. No recovered campaign script here |
@@ -52,9 +55,10 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E44 | Received session/address/password reach tactical create/join and common staging | RECONSTRUCTED | EXE-3 `0x48b623`–`0x48b694`, `0x4a47b0`, host `0x49c410`→`0x4e7400`→`0x544d30`, join `0x5454a0`→`0x4e78c0`, staging `0x49f860`; [flow](campaign-flow.md). No recovered authentication token or live first-combat-tick claim |
 
 No production historical rule is inferred from the example formulas in the plan.
-See [the acceptance audit](milestone-one-status.md) for unfinished accessible work
-and the separate list of bounded historical unknowns. Milestone 1 is not marked
-complete by this matrix.
+See [the completed Milestone 1 acceptance audit](milestone-one-status.md) for the
+verified research scope and bounded historical unknowns. Research completion
+does not make the missing historical server rules known or turn modern service
+policy into original behavior.
 
 ## Balance correctness findings
 
@@ -70,3 +74,4 @@ complete by this matrix.
 |---|---|---|---|
 | E48 | Find opponent pairs opposite-alliance searches for one territory in arrival order, with fixed two-player server rules | MODERN implementation | [M10 policy and live validation](campaign-matchmaking.md); recovered territory/war-console resources do not establish the historical matching algorithm |
 | E49 | Enrolled campaign members can read immutable verified territory outcomes and watch retained, digest-verified recordings; artifact loss does not change result metadata | MODERN implementation | [M11 history policy and integration checks](campaign-history.md); existing tactical replay layout is reused, historical archive/access policy remains unproven |
+| E50 | The original Crusades history movie shows territorial battle-line progression | CONFIRMED documentation claim | HELP-146 history section; HELP-144 movie-player section; HELP-147 FAQ 22. Current tactical battle replay playback is a MODERN archive feature, not a reconstruction of the strategic movie or its service protocol |
