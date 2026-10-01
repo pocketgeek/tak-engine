@@ -24,8 +24,9 @@ trusted by their operating system. The certificate file includes intermediate
 certificates. Renew it before expiry and restart the server to load the renewal;
 there is no live certificate reload.
 
-Players enter **`tls://your-server.example:7677`** in the multiplayer server
-field. TLS verifies both the certificate chain and the DNS name/IP address.
+Players enter just **`your-server.example`** in the multiplayer server field.
+The client automatically uses TLS and port **7677**. An optional `:port` supports
+servers on other ports; existing `tls://` addresses also work. TLS verifies both the certificate chain and the DNS name/IP address.
 An invalid certificate fails the connection; there is no plaintext fallback.
 A TLS listener accepts only TLS connections. TLS 1.2 or later protects the whole
 session, including registration, login, game passwords, chat and commands.
@@ -40,9 +41,12 @@ for a private CA. There is deliberately no “ignore certificate errors” optio
 `--local` binds loopback and permits plaintext for a private local client or
 an encrypted tunnel. `--allow-plaintext` explicitly permits an unencrypted
 external listener for a trusted LAN/test environment. It is **not** a public
-Internet deployment setting. Existing bare hostnames select plaintext; they
-must be changed to `tls://...` when the server switches to TLS. Old clients
-cannot connect to a TLS listener. The gameplay protocol remains 212.
+Internet deployment setting. To use one from the multiplayer menu, explicitly
+enter `tcp://hostname` (and an optional `:port`). Bare menu hostnames always use
+TLS, with no plaintext fallback. Automatically launched single-player servers
+keep their private loopback connection. Debug command-line harness connections
+retain their explicit transport behavior. Old clients cannot connect to a TLS
+listener. The gameplay protocol remains 212.
 
 The login exchange alone is not session encryption. Do not expose the old
 plaintext port alongside TLS as a compatibility fallback.
