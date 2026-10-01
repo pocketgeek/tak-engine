@@ -29,7 +29,34 @@ are implemented. Retail was not launched during this audit.
 
 ## Release verification
 
-Tagged platform builds and published-package verification are pending.
+All local Release, optimized GCC Debug, GCC Debug and Clang Debug targets were
+rebuilt as **0.7.20**. The versioned Release suite passed **156/156** again.
+Client and server both report build `v0.7.20`.
+
+Tag `v0.7.20` points to `00245d39ffb012a53fce3e898efaf2bcf32c85f7`.
+All tagged workflows passed:
+[Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36899094767),
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/36899094497), and
+[macOS](https://github.com/pocketgeek/tak-engine/actions/runs/36899094633).
+The naval source revision also passed
+[determinism CI](https://github.com/pocketgeek/tak-engine/actions/runs/36897034531).
+Duplicate main-branch package jobs for the release commit were cancelled in
+favour of the identical tagged builds.
+
+All **19** expected assets are published in the non-draft, non-prerelease
+[0.7.20 release](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.20).
+All downloaded files match GitHub's SHA-256 digests. Every Windows/macOS Release
+and Debug ZIP passed archive integrity, executable inventory, license,
+architecture and dependency checks. Windows client/editor use the GUI subsystem;
+macOS bundles declare 0.7.20, macOS 14 and their included icons. Native CI checks
+signatures and DMG integrity. Debug macOS ZIPs contain standalone executables.
+The Ubuntu 24.04 DEB has the correct version, client/editor launchers and all four
+binaries; extracted client/server report 0.7.20 and the binaries link only system
+libraries. No new dynamic dependencies or retail data are shipped.
+
+Interactive Windows/macOS gameplay was not tested locally; native CI covers
+startup and platform regressions.
+
 README release and compatibility guidance are updated. Existing screenshots
 remain explicitly identified as 0.7.19 captures; this release changes AI and
 production behavior without changing the pictured interface.
