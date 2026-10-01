@@ -309,10 +309,10 @@
     }
 
     bool GameView::mpStep() {
-        if (outcome_ < 0 && !spectating_ && !replayMode_ && missionStem_.empty()) {
+        if (outcome_ != 0 && !spectating_ && !replayMode_ && missionStem_.empty()) {
             const uint64_t now = SDL_GetTicks64();
-            if (!defeatStartedMs_) defeatStartedMs_ = now;
-            if (now - defeatStartedMs_ >= 3000) menuRequested_ = true;
+            if (!resultStartedMs_) resultStartedMs_ = now;
+            if (now - resultStartedMs_ >= 3000) menuRequested_ = true;
         }
 
         if (!mp_->poll()) { netError_ = mp_->error().empty() ? "disconnected" : mp_->error(); return false; }
@@ -850,7 +850,7 @@ void GameView::autoplayStep() {
             bool spec = mp_->isSpectator();
             mp_->clearRejoin();
             world_.resetForReplay();
-            netTick_ = 0; outcome_ = 0; defeatStartedMs_ = 0; netError_.clear();
+            netTick_ = 0; outcome_ = 0; resultStartedMs_ = 0; netError_.clear();
             // Replaying history from tick 0: hold our own orders and stop counting
             // acknowledgements until the log is spent (see cmdCatchUp_).
             // The SERVER says where history ends; we do not guess (see

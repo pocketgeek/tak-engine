@@ -3472,7 +3472,7 @@ private:
     std::vector<tak::cob::Vm*> vmTick_;     // scratch list for the parallel pass
     SoundClasses soundClasses_;
     uint32_t salt_ = 0;
-    uint64_t defeatStartedMs_ = 0;   // main-thread wall clock, independent of sim speed/pause
+    uint64_t resultStartedMs_ = 0;   // main-thread wall clock, independent of sim speed/pause
     std::atomic<int> outcome_{0};   // 0 = playing, 1 = victory, -1 = defeat (worker writes, main reads)
     // TAK_FAKE_DESYNC=TICK: report a wrong hash from this tick on (see reportedHash).
     // Debug-only -- devEnv reads no environment at all in a release build, so this is
