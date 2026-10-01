@@ -2194,10 +2194,7 @@ void World::tickGroundMission(Unit& u) {
                         if (enemy && enemy->alive() && !enemy->embarked() && enemy->type &&
                             !w.allied(u.player,enemy->player) && !enemy->cloaked &&
                             fxLen(enemy->x-u.x,enemy->z-u.z)<=Fixed::fromFloat(u.type->maxRange()+90)) {
-                            for (const auto& weapon:u.type->weapons)
-                                if (!(enemy->type->canFly && weapon.noAir) && weapon.damageVs(enemy->type)>0) {
-                                    target=enemy->id; break;
-                                }
+                            if (w.canAttackTarget(u,*enemy)) target=enemy->id;
                         }
                     }
                     if (!target) return false;
@@ -3473,6 +3470,11 @@ void World::attack(int unitId, int targetId, bool queue) {
         return;
     }
     if (u->type->weapon.damage <= 0) return;
+    const Unit* target=unit(targetId);
+    const bool converts=u->type->canCapture ||
+        std::any_of(u->type->weapons.begin(),u->type->weapons.end(),
+                    [](const Weapon& weapon){return weapon.mindControl;});
+    if (converts && (!target || !canAttackTarget(*u,*target))) return;
     if (!queue) {
         u->orders.clear();
         cancelPath(*u);
@@ -3753,6 +3755,7 @@ static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
 
 void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     const Weapon& w = u.type->weapons[size_t(slot)];
+    if ((w.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,target)) return;
     // manapershot: a caster spends personal mana to fire; if it can't pay, the
     // shot doesn't happen (reload not consumed, so it fires the moment it can).
     if (w.manaCost > 0 && u.type->maxMana > 0) {
@@ -4090,6 +4093,32 @@ bool World::combatLineOfSight(const Unit& from,const Unit& to) const {
         std::max(to.type->footX,to.type->footZ)/2);
 }
 
+bool World::canCaptureTarget(int player,const Unit& target) const {
+    // Match the charm impact gates before choosing or pursuing a target. The
+    // weapon damage table is an additional targeting filter, not an immunity
+    // override for commanders, protected units, passengers or petrified units.
+    return target.type && target.alive() && target.hp>Fixed() &&
+        !target.embarked() && !target.type->commander && !target.type->cantBeCaptured &&
+        target.stonedFor<=0 && !allied(player,target.player) && !atUnitCap(player);
+}
+
+bool World::canAttackTarget(const Unit& from,const Unit& target) const {
+    if (!from.type || !target.type) return false;
+    // Contact capture is independent of damage, but obeys the same immunity and
+    // capacity gates as mind-control impacts.
+    if (from.type->canCapture) return canCaptureTarget(from.player,target);
+    const auto usable=[&](const Weapon& weapon) {
+        return !(target.type->canFly && weapon.noAir) && weapon.damageVs(target.type)>0 &&
+            (!weapon.mindControl || canCaptureTarget(from.player,target));
+    };
+    if (from.type->weaponSwitching && !from.type->weapons.empty()) {
+        const int slot=std::clamp(from.weaponSlot,0,int(from.type->weapons.size())-1);
+        const auto& selected=from.type->weapons[size_t(slot)];
+        if (selected.mindControl) return usable(selected);
+    }
+    return std::any_of(from.type->weapons.begin(),from.type->weapons.end(),usable);
+}
+
 int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
     // VTOL landing also clears active. Only switchable units interpret it as
     // power-off; ordinary landed flyers must still acquire and fire.
@@ -4112,18 +4141,9 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
                       (u.orders.front().targetId == 0 &&
                        (u.orders.front().attackMove || u.orders.front().patrol)) ||
                       u.orders.front().guard);
-    // Can any of this unit's weapons deal real damage to `e`? (noairweapon gates
-    // flyers.) Requiring damage > 0 stops an army from piling onto -- and firing
-    // forever at -- a building/target its weapons cannot scratch (a per-category
-    // damage.<cat>=0 override), which never dies so the attack order never clears.
-    auto canDamage = [&](const Unit& e) {
-        for (const auto& wp : u.type->weapons)
-            if (!(e.type->canFly && wp.noAir) && wp.damageVs(e.type) > 0.0f) return true;
-        return false;
-    };
     auto canTarget = [&](const Unit& e) {
         if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
-        return canDamage(e);
+        return canAttackTarget(u,e);
     };
     // Auto-acquisition is staggered across ticks by unit id: an idle armed unit
     // rescans for a target every kAcqStride ticks (~0.13s at 30Hz), not every
@@ -4230,11 +4250,6 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     if (!u.standbyActive && !u.guardNoMoveActive) acquireTarget(u, false);
     const int activeTarget=!u.orders.empty() && !u.orders.front().guard ? u.orders.front().targetId : 0;
     if(u.scriptAimTarget && u.scriptAimTarget!=activeTarget)clearScriptWeaponTarget(u);
-    const auto canDamage = [&](const Unit& e) {
-        for (const auto& wp : u.type->weapons)
-            if (!(e.type->canFly && wp.noAir) && wp.damageVs(e.type) > 0.0f) return true;
-        return false;
-    };
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
     if (u.orders.front().guard) {
@@ -4277,14 +4292,11 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         u.routeStamp = -1;
         return;
     }
-    // Give up a target this unit can neither damage NOR capture, instead of
-    // firing at it forever -- it will never die or convert. Covers a converter
-    // (0-damage charm weapon) ordered onto a cantBeCaptured building, and any
-    // unit whose weapons all do 0 to the target's category. Capturable targets
-    // are exempt: a charmer keeps contact until the capture branch converts it.
-    bool canConvert = u.type->canCapture && target->type &&
-                      !target->type->cantBeCaptured && !allied(u.player, target->player);
-    if (target->type && !canDamage(*target) && !canConvert) {
+    // Recheck live immunity/capacity and the selected capture spell while aiming too.
+    // A queued target may have become protected, embarked or otherwise unusable.
+    if (!canAttackTarget(u,*target)) {
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+        u.captureProg=0;
         dropLeg(u);
         cancelPath(u);
         u.routeStamp = -1;
@@ -4413,6 +4425,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // of them at once and they rarely share a range band.
     auto tryFire = [&](int sl) {
         const Weapon& sw = u.type->weapons[size_t(sl)];
+        if ((sw.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,*target)) return;
         if (sw.noAir && target->type && target->type->canFly) return;
         if (!(sw.melee || los)) return;
         if (sw.melee ? !adj : dist > sw.range + pad) return;
@@ -4434,8 +4447,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     }
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
-    if (u.type->canCapture && target->type && !target->type->cantBeCaptured &&
-        !allied(u.player, target->player)) {
+    if (u.type->canCapture && canCaptureTarget(u.player,*target)) {
         ++u.captureProg;
         if (u.captureProg > 3 * int32_t(kTick) ||
             target->hp < Fixed::fromFloat(target->type->maxHp * 0.25f)) {

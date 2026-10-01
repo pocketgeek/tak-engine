@@ -2205,6 +2205,8 @@ private:
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
     bool acquireTarget(Unit& u, bool missionPoll);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
+    bool canCaptureTarget(int player, const Unit& target) const;
+    bool canAttackTarget(const Unit& from, const Unit& target) const;
     int findTarget(Unit& u, bool missionPoll, bool groundResponse = false);
     void rebuildOccupancy();
     bool canFollowTraffic(const Unit& self, const Unit& other) const;
