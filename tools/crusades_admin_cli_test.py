@@ -22,9 +22,11 @@ def string(value):
     return struct.pack('<I', len(data)) + data
 
 
+# SQLite's transaction context does not close the connection. Close explicitly
+# so Windows cleanup never depends on garbage collection releasing file handles.
 def contents(path):
     """Compare every persistent application row, including opaque BLOB bytes."""
-    with sqlite3.connect(path) as db:
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
         names = [row[0] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
         return {name: sorted(db.execute('SELECT * FROM "' + name + '"').fetchall(), key=repr)
@@ -74,7 +76,7 @@ def seed_battles(path):
     context = b'TAKCB1' + string('maps/authored.ota') + string('map-digest') + string('rules-digest')
     context += string('alice') + struct.pack('<BQ', 1, 0)
     context += string('bravo') + struct.pack('<BQ', 2, 0)
-    with sqlite3.connect(path) as db:
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
         for account, alliance in [('alice', 1), ('bravo', 2)]:
             db.execute('INSERT INTO campaign_participants VALUES(?,?,?)', ('synthetic', account, 0))
             db.execute('INSERT INTO allegiance_events VALUES(?,?,?,?,?,?)',
@@ -233,7 +235,7 @@ def test(binary):
         assert rows[-1]['before_state'] == 'started' and rows[-1]['after_state'] == 'cancelled'
         assert rows[-1]['before_revision'] == rows[-1]['after_revision'] == 1
         # Audit append-only triggers reject alteration/deletion.
-        with sqlite3.connect(database) as db:
+        with contextlib.closing(sqlite3.connect(database)) as db, db:
             for sql in ['UPDATE admin_events SET reason=\'tampered\'',
                         'DELETE FROM admin_events']:
                 try:
@@ -321,7 +323,7 @@ def test(binary):
         # remove the incomplete backup, while retaining the source untouched.
         corrupt = root / 'corrupt-source.sqlite'
         shutil.copyfile(backup, corrupt)
-        with sqlite3.connect(corrupt) as db:
+        with contextlib.closing(sqlite3.connect(corrupt)) as db, db:
             trigger = db.execute("SELECT sql FROM sqlite_master WHERE name='campaign_definition_no_update'").fetchone()[0]
             db.execute('DROP TRIGGER campaign_definition_no_update')
             db.execute("UPDATE campaigns SET definition='invalid synthetic definition'")
@@ -338,14 +340,14 @@ def test(binary):
         # or even create a companion lock for the otherwise valid database.
         old_schema = root / 'version-eight.sqlite'
         shutil.copyfile(backup, old_schema)
-        with sqlite3.connect(old_schema) as db:
+        with contextlib.closing(sqlite3.connect(old_schema)) as db, db:
             db.execute('DROP TABLE admin_events')
             db.execute('PRAGMA user_version=8')
         old_contents = contents(old_schema)
         for args in [('health', '--limit', 0), ('events', 'synthetic', '--after', '-2'),
                      ('campaign', 'synthetic', '--after', '4294967296'), ('audit', 'synthetic', '--limit', 65)]:
             run(old_schema, *args, ok=False)
-            with sqlite3.connect(old_schema) as db:
+            with contextlib.closing(sqlite3.connect(old_schema)) as db, db:
                 assert db.execute('PRAGMA user_version').fetchone()[0] == 8
             assert contents(old_schema) == old_contents
             assert not Path(str(old_schema) + '.service-lock').exists()
@@ -362,10 +364,10 @@ def test(binary):
         run(':memory:', 'health', ok=False)
         bad_schema = root / 'unsupported.sqlite'
         shutil.copyfile(backup, bad_schema)
-        with sqlite3.connect(bad_schema) as db:
+        with contextlib.closing(sqlite3.connect(bad_schema)) as db, db:
             db.execute('PRAGMA user_version=2147483647')
         run(bad_schema, 'health', ok=False)
-        with sqlite3.connect(bad_schema) as db:
+        with contextlib.closing(sqlite3.connect(bad_schema)) as db, db:
             assert db.execute('PRAGMA user_version').fetchone()[0] == 2147483647
 
         # Legacy event/audit text may contain invalid UTF-8 even though the
@@ -376,7 +378,7 @@ def test(binary):
         invalid_bytes = (b'\x80\xc0\xaf\xe0\x80\x80\xed\xa0\x80\xf4\x90\x80\x80\xff\xc2')
         legacy_reason = 'Café 世界 🍃: '.encode('utf-8') + invalid_bytes
         expected_reason = 'Café 世界 🍃: ' + '\ufffd' * len(invalid_bytes)
-        with sqlite3.connect(legacy) as db:
+        with contextlib.closing(sqlite3.connect(legacy)) as db, db:
             for table, trigger_name, where in [('campaign_events', 'campaign_events_no_update', 'revision=0'),
                                                ('admin_events', 'admin_events_no_update', 'sequence=1')]:
                 trigger = db.execute('SELECT sql FROM sqlite_master WHERE name=?', (trigger_name,)).fetchone()[0]
@@ -386,7 +388,7 @@ def test(binary):
         assert run(legacy, 'campaign', 'synthetic')[0]['name'] == 'Synthetic 世界'
         assert run(legacy, 'events', 'synthetic')[0]['reason'] == expected_reason
         assert run(legacy, 'audit', 'synthetic')[0]['reason'] == expected_reason
-        with sqlite3.connect(legacy) as db:
+        with contextlib.closing(sqlite3.connect(legacy)) as db, db:
             assert db.execute('SELECT CAST(reason AS BLOB) FROM campaign_events WHERE revision=0').fetchone()[0] == legacy_reason
             assert db.execute('SELECT CAST(reason AS BLOB) FROM admin_events WHERE sequence=1').fetchone()[0] == legacy_reason
         if os.name != 'nt':
