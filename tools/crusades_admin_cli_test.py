@@ -367,6 +367,35 @@ def test(binary):
         run(bad_schema, 'health', ok=False)
         with sqlite3.connect(bad_schema) as db:
             assert db.execute('PRAGMA user_version').fetchone()[0] == 2147483647
+
+        # Legacy event/audit text may contain invalid UTF-8 even though the
+        # definition/state itself is valid. Inspecting it must still produce
+        # valid JSON, retain good Unicode, and never rewrite the stored bytes.
+        legacy = root / 'legacy-text.sqlite'
+        shutil.copyfile(backup, legacy)
+        invalid_bytes = (b'\x80\xc0\xaf\xe0\x80\x80\xed\xa0\x80\xf4\x90\x80\x80\xff\xc2')
+        legacy_reason = 'Café 世界 🍃: '.encode('utf-8') + invalid_bytes
+        expected_reason = 'Café 世界 🍃: ' + '\ufffd' * len(invalid_bytes)
+        with sqlite3.connect(legacy) as db:
+            for table, trigger_name, where in [('campaign_events', 'campaign_events_no_update', 'revision=0'),
+                                               ('admin_events', 'admin_events_no_update', 'sequence=1')]:
+                trigger = db.execute('SELECT sql FROM sqlite_master WHERE name=?', (trigger_name,)).fetchone()[0]
+                db.execute('DROP TRIGGER ' + trigger_name)
+                db.execute('UPDATE ' + table + ' SET reason=CAST(? AS TEXT) WHERE ' + where, (legacy_reason,))
+                db.execute(trigger)
+        assert run(legacy, 'campaign', 'synthetic')[0]['name'] == 'Synthetic 世界'
+        assert run(legacy, 'events', 'synthetic')[0]['reason'] == expected_reason
+        assert run(legacy, 'audit', 'synthetic')[0]['reason'] == expected_reason
+        with sqlite3.connect(legacy) as db:
+            assert db.execute('SELECT CAST(reason AS BLOB) FROM campaign_events WHERE revision=0').fetchone()[0] == legacy_reason
+            assert db.execute('SELECT CAST(reason AS BLOB) FROM admin_events WHERE sequence=1').fetchone()[0] == legacy_reason
+        if os.name != 'nt':
+            # POSIX argv can carry non-UTF-8 bytes; Windows utf8Main already
+            # rejects unpaired wide surrogates before entering the command.
+            run(legacy, 'reset', 'synthetic', '--expected-revision', 1,
+                '--actor', 'operator', '--reason', 'POSIX invalid byte: \udcff')
+            audit = run(legacy, 'audit', 'synthetic')
+            assert audit[-2]['reason'] == 'POSIX invalid byte: \ufffd'
     print(f'PASS: {checks} offline Crusades admin CLI checks')
 
 

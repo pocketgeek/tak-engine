@@ -57,11 +57,31 @@ std::string json(std::string_view input) {
     }
     std::string out = "\"";
     constexpr char hex[] = "0123456789abcdef";
-    for (const unsigned char ch : input) {
+    for (size_t offset = 0; offset < input.size();) {
+        const auto ch = static_cast<unsigned char>(input[offset]);
+        if (ch >= 0x80) {
+            size_t width = 0;
+            uint32_t scalar = 0, minimum = 0;
+            if (ch >= 0xc2 && ch <= 0xdf) { width = 2; scalar = ch & 0x1f; minimum = 0x80; }
+            else if (ch >= 0xe0 && ch <= 0xef) { width = 3; scalar = ch & 0x0f; minimum = 0x800; }
+            else if (ch >= 0xf0 && ch <= 0xf4) { width = 4; scalar = ch & 0x07; minimum = 0x10000; }
+            bool valid = width && width <= input.size() - offset;
+            for (size_t i = 1; valid && i < width; ++i) {
+                const auto next = static_cast<unsigned char>(input[offset+i]);
+                valid = (next & 0xc0) == 0x80;
+                scalar = (scalar << 6) | (next & 0x3f);
+            }
+            valid = valid && scalar >= minimum && scalar <= 0x10ffff &&
+                !(scalar >= 0xd800 && scalar <= 0xdfff);
+            if (valid) { out.append(input.substr(offset,width)); offset += width; }
+            else { out += "\\ufffd"; ++offset; }
+            continue;
+        }
         if (ch == '"' || ch == '\\') { out += '\\'; out += static_cast<char>(ch); }
         else if (ch < 0x20 || ch == 0x7f) {
             out += "\\u00"; out += hex[ch >> 4]; out += hex[ch & 15];
         } else out += static_cast<char>(ch);
+        ++offset;
     }
     if (clipped) out += " [truncated]";
     return out + '"';

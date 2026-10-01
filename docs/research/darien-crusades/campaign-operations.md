@@ -69,7 +69,9 @@ does not certify those external resources.
 
 List pages are 1–64 rows and return an exclusive next cursor. Campaign inspection
 pages territory IDs; event inspection pages revisions; audit inspection pages
-sequence IDs. Display strings are clipped at 1,024 UTF-8 bytes. Missing databases
+sequence IDs. Display strings are clipped at 1,024 input bytes without splitting valid UTF-8.
+Inspection replaces invalid legacy text bytes with U+FFFD in JSON output while
+preserving the original stored bytes. Missing databases
 fail without creating one except for the explicit `start` command. Invalid
 arguments are rejected before opening or migrating the store.
 
@@ -228,7 +230,7 @@ The acceptance checks map to these executable gates:
 | Backup recovers a usable service | `crusades_hardening_network`: stop, SQLite backup, restore into a new directory, start a fresh authenticated server, read allegiance/result/replay and issue a new battle. |
 | Duplicate and replay paths reject changes | Existing result/battle/referee tests and M13 replayed SCRAM proof, rotated resume token and interrupted-battle capability tests. |
 | Unsupported versions fail safely | Protocol/parser/store tests and live incompatible Hello/campaign-payload checks. |
-| Administration is auditable | 161 store/admin checks, 105 CLI checks, 15 lease/process checks, transactional rollback, immutable audit and startup recovery tests. |
+| Administration is auditable | 161 store/admin checks, 110 CLI checks, 15 lease/process checks, transactional rollback, immutable audit and startup recovery tests. |
 
 All administration/store code and the pinned SQLite amalgamation also passed
 ASan/UBSan with leak detection enabled on Linux (161 checks, no diagnostics).
@@ -240,7 +242,9 @@ installation includes `crusades_admin`.
 Final integration, 2026-09-30: **all Release and Debug targets rebuilt**;
 **153/153 Release CTests and 161/161 Debug CTests passed**, including all seven
 authenticated live-server gates, actual campaign UI tests, referee verification,
-transport/combat and retail pathfinding regressions. This completes M13.
+transport/combat and retail pathfinding regressions. A subsequent CLI-only
+reporting fix was separately checked for valid JSON with malformed legacy text,
+including preserved source bytes and valid Unicode. This completes M13.
 
 Source boundaries:
 [`CampaignStore`](../../../src/server/crusades/store.h),
