@@ -100,6 +100,7 @@ constexpr size_t kMaxServerTxBytes = 64u << 20, kMaxClientTxBytes = 4u << 20;
 struct WorkBudget {
     uint64_t window = 0;
     unsigned used = 0;
+    bool available(uint64_t now,unsigned limit,unsigned cost=1) const {return now-window>=1000 || (used<=limit && cost<=limit-used);}
     bool take(uint64_t now, unsigned limit,unsigned cost=1) {
         if (now-window >= 1000) {window=now;used=0;}
         if (used>limit || cost>limit-used)return false;
@@ -475,10 +476,11 @@ private:
     tak::srv::AccountStore accounts_;
     std::unique_ptr<tak::srv::crusades::CampaignServiceLease> campaignLease_;
     std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
-    SharedWorkBudget acceptKeys_,lobbyWorkKeys_, uploadWorkKeys_;
+    SharedWorkBudget acceptKeys_,lobbyWorkKeys_;
     WorkBudget acceptWork_;
     WorkBudget lobbyGlobalWork_, uploadGlobalWork_, accountWriteWork_;
     bool allowLobbyWork(Client& c,const Frame& f);
+    bool canRead(const Client& c,uint64_t now) const {return !c.mapReceive.size || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64));}
     size_t mapMemory() const;
     SharedWorkBudget campaignWorkKeys_, campaignReplayKeys_;
     SharedWorkBudget loginWorkKeys_{tak::srv::LoginThrottle::kForgetMs};
@@ -2866,9 +2868,8 @@ bool Server::allowCampaignWork(Client& c,const Frame& f) {
 // alone lets a peer flood indefinitely by sending just below that cap.
 bool Server::allowLobbyWork(Client& c,const Frame& f) {
     unsigned cost=1;
-    bool upload=false;
     switch(f.kind) {
-        case Msg::MapChunk: upload=true;cost=unsigned((f.payload.size()+1023)/1024);break;
+        case Msg::MapChunk:return true; // upload reads are paced before recv(), not discarded
         case Msg::CreateGame: case Msg::StartGame: case Msg::MapOffer: cost=16;break;
         case Msg::ListGames: case Msg::JoinGame: case Msg::Spectate:
         case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
@@ -2876,11 +2877,11 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
         case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause: break;
         default:return true; // Login, campaign and command queues have their own budgets.
     }
-    auto& keys=upload?uploadWorkKeys_:lobbyWorkKeys_;
-    auto& global=upload?uploadGlobalWork_:lobbyGlobalWork_;
-    const unsigned personal=upload?4096:128,shared=upload?16384:2048;
+    auto& keys=lobbyWorkKeys_;
+    auto& global=lobbyGlobalWork_;
+    const unsigned personal=128,shared=2048;
     const auto now=nowMs();
-    auto& local=upload?c.uploadWork:c.lobbyWork;
+    auto& local=c.lobbyWork;
     if(!local.take(now,personal,cost)) {c.conn.fail("request rate exceeded");return false;}
     // A hostile peer behind a NAT must not disconnect healthy neighbours.
     // Keepalive has only the per-connection budget; shared exhaustion drops
@@ -2994,7 +2995,7 @@ int Server::run() {
         pollfd lp{}; lp.fd = listenFd_; lp.events = POLLIN; pfds.push_back(lp);
         ids.push_back(0);
         for (auto& [id, c] : clients_) {
-            short ev = POLLIN;
+            short ev = canRead(*c,nowMs()) ? POLLIN : 0;
             if (c->conn.wantWrite()) ev |= POLLOUT;
             pollfd cp{}; cp.fd = c->conn.fd(); cp.events = ev; pfds.push_back(cp);
             ids.push_back(id);
@@ -3021,8 +3022,8 @@ int Server::run() {
         // chunk per idle second, since a paused room no longer pulls the
         // deadline in.
         for (const auto& [id, c] : clients_) {
-            if (c->conn.bufferedInput())soonest=now;
-            if ((c->replaying || c->mapSend.package) && now + 10 < soonest) soonest = now + 10;
+            if (c->conn.bufferedInput() && canRead(*c,now))soonest=now;
+            if ((c->replaying || c->mapSend.package || c->mapReceive.size) && now + 10 < soonest) soonest = now + 10;
         }
         int timeout = int(soonest > now ? soonest - now : 0);
 
@@ -3063,8 +3064,11 @@ int Server::run() {
             auto it = clients_.find(id);
             if (it == clients_.end()) continue;
             Client& c = *it->second;
-            if ((pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) || c.conn.bufferedInput()) {
-                if (!c.conn.recv()) { dead.push_back(id); continue; }
+            if(!canRead(c,now) && (pfds[i].revents & (POLLHUP|POLLERR))) {dead.push_back(id);continue;}
+            if (((pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) || c.conn.bufferedInput()) && canRead(c,now)) {
+                const bool uploading=c.mapReceive.size!=0;
+                if(uploading) {c.uploadWork.take(now,4096,64);uploadGlobalWork_.take(now,16384,64);}
+                if (!c.conn.recv(uploading?65536:1u<<20)) { dead.push_back(id); continue; }
                 Frame fr;
                 unsigned frames=0;
                 while (c.conn.poll(fr)) {

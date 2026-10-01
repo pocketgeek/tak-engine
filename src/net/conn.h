@@ -51,7 +51,7 @@ public:
     //  poll(): pop the next complete frame (returns false if none buffered yet).
     //  flushWrite(): push queued bytes out; false on error. wantWrite() true
     //  while bytes remain (register POLLOUT).
-    bool recv();
+    bool recv(size_t budget=1u<<20);
     // Did the peer send EOF? recv() returns TRUE on a clean close so the caller can
     // still drain whatever complete frames were buffered alongside the FIN; call this
     // AFTER the poll() drain to finish the connection off. See recv() for why.

@@ -175,7 +175,7 @@ bool Conn::flushWrite() {
     return true;
 }
 
-bool Conn::recv() {
+bool Conn::recv(size_t budget) {
     if(!tlsHandshake())return err_.empty();
     char buf[16384];
     // Two bounds, because this loop used to run until the socket blocked with no
@@ -189,7 +189,7 @@ bool Conn::recv() {
     // buffering, so without this a peer can queue far more than one frame's
     // worth of unvalidated bytes. Well above kMaxFrame so a legitimate maximum
     // frame plus a partial next one always fits.
-    constexpr size_t kRecvPassBytes = 1u << 20;    // 1 MiB serviced per pass
+    const size_t kRecvPassBytes = std::min(budget,size_t(1u<<20));    // 1 MiB serviced per pass
     constexpr size_t kMaxRxBacklog  = 1u << 22;    // 4 MiB unread -> peer is abusive
     size_t got = 0;
     for (;;) {
@@ -200,7 +200,7 @@ bool Conn::recv() {
         }
         long long n;
         if(tls_) {
-            n=SSL_read(static_cast<SSL*>(tls_),buf,sizeof buf);
+            n=SSL_read(static_cast<SSL*>(tls_),buf,int(std::min(sizeof buf,kRecvPassBytes-got)));
             if(n<=0) {
                 const int why=SSL_get_error(static_cast<SSL*>(tls_),int(n));
                 if(why==SSL_ERROR_WANT_READ || why==SSL_ERROR_WANT_WRITE) {tlsWantWrite_=why==SSL_ERROR_WANT_WRITE;break;}
@@ -212,7 +212,7 @@ bool Conn::recv() {
                 }
                 err_="TLS receive failed";return false;
             }
-        } else n=::recv(fd_,buf,sizeof buf,0);
+        } else n=::recv(fd_,buf,int(std::min(sizeof buf,kRecvPassBytes-got)),0);
         if (n > 0) { rxBuf_.insert(rxBuf_.end(), buf, buf + n); got += size_t(n); continue; }
         // EOF. Do NOT fail here: a peer that sends its last message and closes
         // usually lands both in one segment, so this same call has already buffered

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise public admission and work budgets on a real authenticated server."""
 import argparse
+import hashlib
 import contextlib
 from pathlib import Path
 import re
@@ -91,6 +92,18 @@ def main():
                 p.receive('AuthChallenge');p.send('AuthRegister',auth.field(bytes(32))+auth.field(bytes(32)))
                 assert p.receive('AuthResult').num('<B') not in (0,1)
                 assert process.poll() is None
+        with server(a.server.resolve(),a.data.resolve(),root) as (port,h,process):
+            with contextlib.closing(login(port,h,'Alice')) as p:
+                create(p);rid=room(p)
+                data=bytes(8<<20)
+                p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field(hashlib.sha256(data).hexdigest())+struct.pack('<I',len(data)))
+                assert p.receive('MapRequest').num('<I')==rid
+                # More than a second's upload budget: pace this, do not disconnect.
+                for offset in range(0,len(data),65536):
+                    p.send('MapChunk',struct.pack('<II',rid,offset)+data[offset:offset+65536])
+                error=p.receive('MapError');assert error.num('<I')==rid
+                assert b'budget' not in error.field() # fully received; invalid map payload rejected
+                p.send('Ping');p.receive('Pong');assert process.poll() is None
         subprocess.run([str(a.tls_tool.resolve()),'--fixtures',str(root)],check=True)
         context=ssl.create_default_context(cafile=str(root/'cert.pem'))
         with server(a.server.resolve(),a.data.resolve(),root,'--tls-cert',str(root/'cert.pem'),'--tls-key',str(root/'key.pem')) as (port,h,process):
