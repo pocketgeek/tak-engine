@@ -599,9 +599,9 @@ wreck. Buildings also use the authored palette shading and per-piece shadow
 flags observed in retail Glide.
 
 Game-create choices are remembered between sessions: balance, sight/radar, unit
-cap, monarch rule, speed changes, spectating, fog, start locations, overrides,
+cap, monarch rule, speed changes, fog, start locations, overrides,
 game name, map selection/sorting, and random-map settings (including the seed).
-Game passwords are not saved.
+Spectate starts off for each skirmish setup. Game passwords are not saved.
 
 The in-game stats panel shows a local **Clock** (24-hour time) beneath **Units**,
 plus **Real Time**, **Game Time**, **Client CPU**

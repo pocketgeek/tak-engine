@@ -88,7 +88,6 @@ Settings loadSettings() {
         else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
         else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
         else if (key == "gameCreate.randomStarts") s.gameCreate.randomStarts = asBool();
-        else if (key == "gameCreate.spectate") s.gameCreate.spectate = asBool();
         else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
         else if (key == "gameCreate.unitCap") s.gameCreate.unitCap = asInt(250, 2000);
         else if (key == "gameCreate.fog") s.gameCreate.fog = asInt(0, 2);
@@ -167,7 +166,6 @@ bool saveSettings(const Settings& s) {
     o << "gameCreate.speedUnlock = " << s.gameCreate.speedUnlock << "\n";
     o << "gameCreate.monarchExpendable = " << s.gameCreate.monarchExpendable << "\n";
     o << "gameCreate.randomStarts = " << s.gameCreate.randomStarts << "\n";
-    o << "gameCreate.spectate = " << s.gameCreate.spectate << "\n";
     o << "gameCreate.generated = " << s.gameCreate.generated << "\n";
     o << "gameCreate.unitCap = " << s.gameCreate.unitCap << "\n";
     o << "gameCreate.fog = " << s.gameCreate.fog << "\n";

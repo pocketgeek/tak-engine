@@ -84,7 +84,6 @@ int main() {
     flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
     flips("gameCreate.monarchExpendable", [](Settings& s) { s.gameCreate.monarchExpendable = !s.gameCreate.monarchExpendable; });
     flips("gameCreate.randomStarts", [](Settings& s) { s.gameCreate.randomStarts = !s.gameCreate.randomStarts; });
-    flips("gameCreate.spectate", [](Settings& s) { s.gameCreate.spectate = !s.gameCreate.spectate; });
     flips("gameCreate.generated", [](Settings& s) { s.gameCreate.generated = !s.gameCreate.generated; });
     flips("gameCreate.unitCap", [](Settings& s) { ++s.gameCreate.unitCap; });
     flips("gameCreate.fog", [](Settings& s) { ++s.gameCreate.fog; });

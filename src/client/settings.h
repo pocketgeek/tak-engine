@@ -74,7 +74,7 @@ struct Settings {
                                    // written to disk -- see src/net/auth.h.
     struct GameCreate {
         bool crusades = false, doubleSight = false, speedUnlock = false;
-        bool monarchExpendable = false, randomStarts = false, spectate = false;
+        bool monarchExpendable = false, randomStarts = false;
         bool generated = false;
         int unitCap = 2000, fog = 1, overrides = 1;
         int mapSort = 0, mapSortDir = 1;

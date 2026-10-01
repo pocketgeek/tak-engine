@@ -350,7 +350,6 @@ std::string mapDisplayName(const std::string& id) {
         pref.speedUnlock = createSpeedUnlock_;
         pref.monarchExpendable = createMonarchExp_;
         pref.randomStarts = createRandomStarts_;
-        pref.spectate = spSpectate_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
         pref.overrides = createOverride_;
@@ -372,7 +371,7 @@ std::string mapDisplayName(const std::string& id) {
             createSpeedUnlock_ = pref.speedUnlock;
             createMonarchExp_ = pref.monarchExpendable;
             createRandomStarts_ = pref.randomStarts;
-            spSpectate_ = pref.spectate;
+            spSpectate_ = false;  // Opt in for each skirmish; never restore from settings.
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
             createFog_ = uint8_t(pref.fog); createOverride_ = uint8_t(pref.overrides);
@@ -810,6 +809,7 @@ std::string mapDisplayName(const std::string& id) {
             mp_->leaveGame();
             if (campaign) openCrusades(crusadesSelectedTerritory());
             else lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
+            spSpectate_ = false;
             mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
         if (!room.mapsReady) blockText(mp_->mapStatus().empty() ? "WAITING FOR MAP VERIFICATION" : mp_->mapStatus(),
             bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
