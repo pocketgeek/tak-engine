@@ -4,6 +4,8 @@
 // framing. Shared by takserver and the takclient client. One Conn per socket.
 
 #include <cstdint>
+#include <memory>
+#include "net/tls.h"
 #include <string>
 #include <vector>
 
@@ -20,7 +22,7 @@ struct Frame {
 class Conn {
 public:
     Conn() = default;
-    explicit Conn(int fd) : fd_(fd) {}
+    explicit Conn(int fd, std::shared_ptr<TlsContext> tls = {});
     ~Conn();
     Conn(const Conn&) = delete;
     Conn& operator=(const Conn&) = delete;
@@ -56,13 +58,19 @@ public:
     bool peerClosed() const { return peerClosed_; }
     bool poll(Frame& out);
     bool flushWrite();
-    bool wantWrite() const { return txOff_ < txBuf_.size(); }
+    bool wantWrite() const { return tlsWantWrite_ || txOff_ < txBuf_.size(); }
+    bool bufferedInput() const;
     // Bytes still queued for this peer. Callers feeding a large backlog (the
     // resume/spectate replay) use this to pace themselves instead of pushing the
     // whole thing into memory at once.
     size_t txPending() const { return txBuf_.size() - txOff_; }
 
 private:
+    std::shared_ptr<TlsContext> tlsContext_;
+    void* tls_=nullptr;
+    bool tlsReady_=false,tlsWantWrite_=false;
+    size_t tlsWriteSize_=0;
+    bool tlsHandshake();
     int fd_ = -1;
     std::string err_;
     bool peerClosed_ = false;

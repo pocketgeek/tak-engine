@@ -595,6 +595,30 @@ else()
   message(FATAL_ERROR "pkg-config is required to locate the static Bink and streaming FFmpeg")
 endif()
 
+# Multiplayer TLS shares the pinned, static OpenSSL distribution used by media
+# on Linux. Other platforms build the same archives; no SSL DLLs are shipped.
+foreach(_tls_lib ssl crypto)
+  if(NOT EXISTS "${TAK_FFMPEG_PREFIX}/lib/lib${_tls_lib}.a")
+    message(FATAL_ERROR "Missing static TLS archive; run tools/build-ffmpeg-bink.sh")
+  endif()
+endforeach()
+add_library(tak_tls STATIC src/net/tls.cpp)
+target_include_directories(tak_tls PUBLIC src PRIVATE "${TAK_FFMPEG_PREFIX}/include")
+target_include_directories(tak-formats PRIVATE "${TAK_FFMPEG_PREFIX}/include")
+target_link_libraries(tak_tls PUBLIC "${TAK_FFMPEG_PREFIX}/lib/libssl.a"
+  "${TAK_FFMPEG_PREFIX}/lib/libcrypto.a" ${CMAKE_DL_LIBS})
+if(WIN32)
+  target_link_libraries(tak_tls PUBLIC crypt32 ws2_32 bcrypt advapi32 user32 gdi32)
+elseif(APPLE)
+  target_link_libraries(tak_tls PUBLIC "-framework Security" "-framework CoreFoundation")
+endif()
+target_link_libraries(tak-formats PUBLIC tak_tls)
+
+add_executable(tls_test tools/tls_test.cpp)
+target_include_directories(tls_test PRIVATE "${TAK_FFMPEG_PREFIX}/include")
+target_link_libraries(tls_test PRIVATE tak-formats)
+add_test(NAME tls COMMAND tls_test)
+
 # One INTERFACE target both takclient and biktool link.
 if(FFMPEG_FOUND)
   add_library(tak_ffmpeg INTERFACE)
@@ -1078,6 +1102,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --admin "$<TARGET_FILE:crusades_admin>")
     set_tests_properties(crusades_hardening_network PROPERTIES TIMEOUT 180)
+    add_test(NAME server_public COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>")
+    set_tests_properties(server_public PROPERTIES TIMEOUT 120)
     add_test(NAME crusades_auth_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_auth_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

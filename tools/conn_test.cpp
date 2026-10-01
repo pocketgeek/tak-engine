@@ -181,6 +181,17 @@ int main() {
         if (p.peer >= 0) ::close(p.peer);
     }
 
+    {
+        Conn c;
+        c.send(Msg::Chat,std::vector<uint8_t>(tak::net::kMaxFrame));
+        check(!c.ok() && c.txPending()==0,"oversized outbound frame rejected before allocation");
+    }
+    {
+        Conn c;
+        const std::vector<uint8_t> payload(65536);
+        for(int i=0;i<600;++i)c.send(Msg::Chat,payload);
+        check(c.txPending()<=(32u<<20),"backlog cannot overshoot its limit on append");
+    }
     std::printf(g_fail ? "conn_test: %d FAILURE(S)\n" : "conn_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

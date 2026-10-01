@@ -3,6 +3,14 @@
 #include "net/netcompat.h"
 
 #include <cstring>
+#include <algorithm>
+#include <chrono>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509v3.h>
+#ifndef _WIN32
+#include <arpa/inet.h>
+#endif
 #include <utility>
 
 namespace tak::net {
@@ -16,11 +24,31 @@ void setupSocket(int fd) {
     sockSetNonBlock(fd);
 }
 
+Conn::Conn(int fd,std::shared_ptr<TlsContext> tls):tlsContext_(std::move(tls)),fd_(fd) {
+    if(tlsContext_) {
+        tls_=SSL_new(tlsContext_->handle);
+        if(!tls_ || !attachTlsSocket(static_cast<SSL*>(tls_),fd_)) {err_="cannot initialize TLS connection";return;}
+        SSL_set_accept_state(static_cast<SSL*>(tls_));
+    }
+}
+bool Conn::bufferedInput() const {return tls_ && SSL_pending(static_cast<SSL*>(tls_))>0;}
+bool Conn::tlsHandshake() {
+    if(!tls_ || tlsReady_)return true;
+    const int result=SSL_do_handshake(static_cast<SSL*>(tls_));
+    if(result==1) {tlsReady_=true;tlsWantWrite_=false;return true;}
+    const int why=SSL_get_error(static_cast<SSL*>(tls_),result);
+    tlsWantWrite_=why==SSL_ERROR_WANT_WRITE;
+    if(why!=SSL_ERROR_WANT_READ && why!=SSL_ERROR_WANT_WRITE)err_="TLS handshake failed";
+    return false;
+}
 Conn::~Conn() { closeNow(); }
 
 Conn& Conn::operator=(Conn&& o) noexcept {
     if (this != &o) {
         closeNow();
+        tlsContext_=std::move(o.tlsContext_);tls_=o.tls_;o.tls_=nullptr;
+        tlsReady_=o.tlsReady_;tlsWantWrite_=o.tlsWantWrite_;tlsWriteSize_=o.tlsWriteSize_;
+        o.tlsReady_=o.tlsWantWrite_=false;o.tlsWriteSize_=0;
         fd_ = o.fd_; err_ = std::move(o.err_);
         rxBuf_ = std::move(o.rxBuf_); rxOff_ = o.rxOff_;
         txBuf_ = std::move(o.txBuf_); txOff_ = o.txOff_;
@@ -31,10 +59,14 @@ Conn& Conn::operator=(Conn&& o) noexcept {
 }
 
 void Conn::closeNow() {
+    if(tls_) {if(tlsReady_ && err_.empty())SSL_shutdown(static_cast<SSL*>(tls_));SSL_free(static_cast<SSL*>(tls_));tls_=nullptr;}
+    tlsContext_.reset();tlsReady_=tlsWantWrite_=false;tlsWriteSize_=0;
     if (fd_ >= 0) { sockClose(fd_); fd_ = -1; }
 }
 
-bool Conn::connect(const std::string& host, uint16_t port, int timeoutMs) {
+bool Conn::connect(const std::string& address, uint16_t port, int timeoutMs) {
+    const bool secure=address.starts_with("tls://");
+    const std::string host=secure?address.substr(6):address;
     netStartup();
     addrinfo hints{}, *res = nullptr;
     hints.ai_family = AF_UNSPEC;       // IPv4 or IPv6
@@ -66,6 +98,27 @@ bool Conn::connect(const std::string& host, uint16_t port, int timeoutMs) {
     freeaddrinfo(res);
     if (!connected) { err_ = "connect failed to " + host; return false; }
     setupSocket(fd_);
+    if(secure) {
+        try {tlsContext_=TlsContext::client();}
+        catch(const std::exception& e) {err_=e.what();closeNow();return false;}
+        tls_=SSL_new(tlsContext_->handle);
+        if(!tls_ || !attachTlsSocket(static_cast<SSL*>(tls_),fd_)) {err_="TLS initialization failed";closeNow();return false;}
+        auto* ssl=static_cast<SSL*>(tls_);
+        SSL_set_connect_state(ssl);
+        X509_VERIFY_PARAM_set_hostflags(SSL_get0_param(ssl),X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+        unsigned char ip[16];
+        const bool numeric=inet_pton(AF_INET,host.c_str(),ip)==1 || inet_pton(AF_INET6,host.c_str(),ip)==1;
+        if((numeric ? X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl),host.c_str()) : SSL_set1_host(ssl,host.c_str()))!=1 ||
+           (!numeric && SSL_set_tlsext_host_name(ssl,host.c_str())!=1)) {err_="invalid TLS hostname";closeNow();return false;}
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeoutMs);
+        while(!tlsHandshake() && err_.empty()) {
+            const auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now()).count();
+            if(remaining<=0) {err_="TLS handshake timed out";break;}
+            pollfd p{};p.fd=fd_;p.events=tlsWantWrite_?POLLOUT:POLLIN;
+            if(TAK_POLL(&p,1,int(remaining))<=0) {err_="TLS handshake timed out";break;}
+        }
+        if(!err_.empty()) {closeNow();return false;}
+    }
     return true;
 }
 
@@ -75,7 +128,8 @@ void Conn::send(Msg kind, const std::vector<uint8_t>& payload) {
     // stream paces itself at 256 KiB), so hitting this means the peer has stopped
     // reading; the connection is failed and dropped by the caller.
     constexpr size_t kMaxTxBacklog = 32u << 20;
-    if (txBuf_.size() - txOff_ > kMaxTxBacklog) {
+    if (payload.size() >= kMaxFrame || payload.size()+5 > kMaxTxBacklog ||
+        txBuf_.size()-txOff_ > kMaxTxBacklog-(payload.size()+5)) {
         err_ = "send backlog exceeded";
         return;
     }
@@ -87,6 +141,7 @@ void Conn::send(Msg kind, const std::vector<uint8_t>& payload) {
 }
 
 bool Conn::flushWrite() {
+    if(!tlsHandshake())return err_.empty();
     // Drop the part already on the wire rather than carrying it until the buffer
     // happens to empty. A peer that drains partially and is topped up again --
     // exactly what the paced replay stream does -- never reaches the empty state
@@ -97,10 +152,21 @@ bool Conn::flushWrite() {
         txBuf_.erase(txBuf_.begin(), txBuf_.begin() + long(txOff_));
         txOff_ = 0;
     }
-    while (txOff_ < txBuf_.size()) {
-        long long n = ::send(fd_, reinterpret_cast<const char*>(txBuf_.data() + txOff_),
-                             int(txBuf_.size() - txOff_), MSG_NOSIGNAL);
-        if (n > 0) { txOff_ += size_t(n); continue; }
+    size_t sent=0;
+    while (txOff_ < txBuf_.size() && sent<(1u<<20)) {
+        long long n;
+        if(tls_) {
+            if(!tlsWriteSize_)tlsWriteSize_=std::min(txBuf_.size()-txOff_,size_t(16384));
+            n=SSL_write(static_cast<SSL*>(tls_),txBuf_.data()+txOff_,int(tlsWriteSize_));
+            if(n<=0) {
+                const int why=SSL_get_error(static_cast<SSL*>(tls_),int(n));
+                if(why==SSL_ERROR_WANT_READ || why==SSL_ERROR_WANT_WRITE) {tlsWantWrite_=why==SSL_ERROR_WANT_WRITE;return true;}
+                err_="TLS send failed";return false;
+            }
+            tlsWriteSize_=0;tlsWantWrite_=false;
+        } else n=::send(fd_,reinterpret_cast<const char*>(txBuf_.data()+txOff_),
+                       int(std::min(txBuf_.size()-txOff_,size_t(1u<<20)-sent)),MSG_NOSIGNAL);
+        if (n > 0) { txOff_ += size_t(n); sent+=size_t(n); continue; }
         if (n < 0 && sockWouldBlock(sockErr())) break;   // socket full
         err_ = "send failed: " + sockErrStr(sockErr());
         return false;
@@ -110,6 +176,7 @@ bool Conn::flushWrite() {
 }
 
 bool Conn::recv() {
+    if(!tlsHandshake())return err_.empty();
     char buf[16384];
     // Two bounds, because this loop used to run until the socket blocked with no
     // limit on either time or memory. A peer that keeps writing can keep it
@@ -131,7 +198,21 @@ bool Conn::recv() {
             err_ = "receive backlog exceeded";
             return false;
         }
-        long long n = ::recv(fd_, buf, sizeof buf, 0);
+        long long n;
+        if(tls_) {
+            n=SSL_read(static_cast<SSL*>(tls_),buf,sizeof buf);
+            if(n<=0) {
+                const int why=SSL_get_error(static_cast<SSL*>(tls_),int(n));
+                if(why==SSL_ERROR_WANT_READ || why==SSL_ERROR_WANT_WRITE) {tlsWantWrite_=why==SSL_ERROR_WANT_WRITE;break;}
+                if(why==SSL_ERROR_ZERO_RETURN ||
+                   (why==SSL_ERROR_SSL && ERR_GET_REASON(ERR_peek_last_error())==SSL_R_UNEXPECTED_EOF_WHILE_READING)) {
+                    // Complete authenticated frames preceding EOF still belong to
+                    // the peer. poll() never surfaces an incomplete trailing frame.
+                    peerClosed_=true;ERR_clear_error();break;
+                }
+                err_="TLS receive failed";return false;
+            }
+        } else n=::recv(fd_,buf,sizeof buf,0);
         if (n > 0) { rxBuf_.insert(rxBuf_.end(), buf, buf + n); got += size_t(n); continue; }
         // EOF. Do NOT fail here: a peer that sends its last message and closes
         // usually lands both in one segment, so this same call has already buffered

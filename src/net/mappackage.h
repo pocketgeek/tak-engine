@@ -42,10 +42,10 @@ struct Sender {
     void pump(Conn& conn);
 };
 // Content-addressed cache; never extract network paths into the filesystem.
-void saveCache(const std::filesystem::path& root, const Package& package);
+void saveCache(const std::filesystem::path& root, const Package& package,uint64_t quota=0);
 std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std::string& digest);
 // A reusable .kmp, including stock tile artwork and authored start positions.
 // Called on game start, not while previewing or creating a room.
 std::filesystem::path saveGenerated(const std::filesystem::path& root,
-                                    const hpi::Vfs& vfs, const std::string& recipe);
+                                    const hpi::Vfs& vfs, const std::string& recipe,uint64_t quota=0);
 }

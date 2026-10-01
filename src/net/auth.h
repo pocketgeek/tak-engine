@@ -14,9 +14,9 @@
 //     proof computed over a fresh server nonce, so capturing it replays nowhere.
 //   * The server stores StoredKey = SHA256(ClientKey) and ServerKey. Proving you
 //     know the password requires ClientKey, and recovering ClientKey from
-//     StoredKey is a SHA-256 preimage. So stealing the accounts file does NOT
-//     let the thief log in -- it only lets them run an offline guessing attack,
-//     which the PBKDF2 work factor below is there to make expensive.
+//     StoredKey is a SHA-256 preimage. Verifiers still permit offline guessing
+//     and server impersonation; combining them with a captured login proof
+//     exposes the ClientKey. Protect the account file and use verified TLS.
 //   * Mutual authentication: the server returns a signature only someone holding
 //     ServerKey can produce, so a machine that impersonates the server cannot
 //     convince the client it knows the account.
@@ -24,11 +24,10 @@
 // We speak it over our own binary framing rather than SASL's base64 text, since
 // the protocol is already binary and the encoding carries no security.
 //
-// WHAT THIS IS NOT. There is no transport encryption. SCRAM protects the
-// password and the login; it does not hide the rest of the session, and a
-// man-in-the-middle present at FIRST REGISTRATION of an account can substitute
-// their own credential, because there is nothing yet to bind that account to.
-// Once an account exists, a MITM can no longer authenticate as it.
+// TRANSPORT. SCRAM alone does not encrypt or authenticate subsequent game
+// messages. Native TLS in Conn protects public sessions, including first
+// registration. Explicit plaintext/LAN connections retain those limitations;
+// login proofs are not a substitute for TLS against interception or relaying.
 //
 // Unknown usernames are reported as unknown, by design -- the client has to be
 // told in order to offer to create the account. That does let someone probe

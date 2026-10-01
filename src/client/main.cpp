@@ -868,11 +868,26 @@ int main(int argc, char** argv) {
         if (choice == tak::MainMenu::Choice::Multiplayer) {
             std::string sv = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
             rememberServer = sv;   // remembered (as picked/typed) if the connect succeeds
-            auto colon = sv.find(':');   // accept host:port
-            if (colon != std::string::npos) {
-                int p = std::atoi(sv.substr(colon + 1).c_str());
-                if (p > 0) serverPort = p;
-                sv = sv.substr(0, colon);
+            // Preserve the transport scheme and bracketed IPv6 when extracting
+            // an optional port. Never mistake the colon in tls:// for a port.
+            const size_t begin=sv.starts_with("tls://")?6:0;
+            size_t colon=std::string::npos;
+            if(begin<sv.size() && sv[begin]=='[') {
+                const auto end=sv.find(']',begin);
+                if(end!=std::string::npos) {
+                    if(end+1<sv.size() && sv[end+1]==':')colon=end+1;
+                    const auto host=sv.substr(begin+1,end-begin-1);
+                    if(colon!=std::string::npos) {
+                        const int p=std::atoi(sv.substr(colon+1).c_str());
+                        if(p>0 && p<=65535)serverPort=p;
+                    }
+                    sv=sv.substr(0,begin)+host;colon=std::string::npos;
+                }
+            } else if(sv.find(':',begin)==sv.rfind(':'))colon=sv.find(':',begin);
+            if(colon!=std::string::npos) {
+                const int p=std::atoi(sv.substr(colon+1).c_str());
+                if(p>0 && p<=65535)serverPort=p;
+                sv.resize(colon);
             }
             serverHost = sv.empty() ? std::string("127.0.0.1") : sv;
         } else {

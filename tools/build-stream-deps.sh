@@ -30,6 +30,37 @@ if [ ! -f "$PREFIX/lib/libx264.a" ]; then
    make install-lib-static)
 fi
 platform="${TARGET_OS:-$(uname -s)}"
+# Multiplayer TLS needs static OpenSSL on every platform, including those
+# whose FFmpeg uses the native OS TLS backend.
+openssl_version=3.5.8
+if [ ! -f "$PREFIX/lib/libssl.a" ] || [ "$(cat "$PREFIX/openssl-version" 2>/dev/null || true)" != "$openssl_version" ]; then
+  fetch "openssl-$openssl_version" https://github.com/openssl/openssl.git "openssl-$openssl_version"
+  (cd "$root/openssl-$openssl_version"
+   tls_args=(--prefix="$PREFIX" --libdir=lib no-shared no-module no-tests)
+   case "$platform" in
+     MINGW*|MSYS*|mingw32)
+       if [ "${TARGET_ARCH:-}" = aarch64 ]; then
+         cat > Configurations/99-tak.conf <<'TLSCONFIG'
+my %targets = (
+    "tak-mingw-arm64" => {
+        inherit_from => [ "mingw-common" ],
+        sys_id => "MINGW64", bn_ops => "SIXTY_FOUR_BIT",
+        asm_arch => "aarch64", uplink_arch => undef,
+    },
+);
+TLSCONFIG
+         perl Configure tak-mingw-arm64 no-asm "${tls_args[@]}"
+       else
+         perl Configure mingw64 "${tls_args[@]}"
+       fi ;;
+     Darwin|darwin)
+       CFLAGS="${CFLAGS:-} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET:-14.0}" ./config "${tls_args[@]}" ;;
+     *) ./config "${tls_args[@]}" ;;
+   esac
+   make -j"$JOBS"
+   make install_sw)
+  printf '%s\n' "$openssl_version" > "$PREFIX/openssl-version"
+fi
 case "$platform" in
   Darwin|darwin) exit 0 ;;
 esac
@@ -56,15 +87,6 @@ case "$platform" in
     cmake --install "$root/vpl/build"
     ;;
   *)
-    openssl_version=3.5.8
-    if [ ! -f "$PREFIX/lib/libssl.a" ] || [ "$(cat "$PREFIX/openssl-version" 2>/dev/null || true)" != "$openssl_version" ]; then
-      fetch "openssl-$openssl_version" https://github.com/openssl/openssl.git "openssl-$openssl_version"
-      (cd "$root/openssl-$openssl_version"
-       ./config --prefix="$PREFIX" --libdir=lib no-shared no-module no-tests
-       make -j"$JOBS"
-       make install_sw)
-      printf '%s\n' "$openssl_version" > "$PREFIX/openssl-version"
-    fi
     # Meson is run from pinned source; no pip install or system Meson needed.
     fetch meson https://github.com/mesonbuild/meson.git 1.7.0
     fetch drm https://gitlab.freedesktop.org/mesa/drm.git libdrm-2.4.124

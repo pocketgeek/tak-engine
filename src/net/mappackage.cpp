@@ -5,6 +5,7 @@
 #include "tnt/ota.h"
 #include "crt/crt.h"
 #include "util/virtualpath.h"
+#include "util/storagequota.h"
 #include <algorithm>
 #include <fstream>
 #include <set>
@@ -264,16 +265,23 @@ void Sender::pump(Conn& conn) {
         if (offset == package->bytes.size()) { package.reset(); offset = 0; }
     }
 }
-void saveCache(const std::filesystem::path& root, const Package& p) {
+void saveCache(const std::filesystem::path& root, const Package& p,uint64_t quota) {
     if (!validDigest(p.digest)) throw std::runtime_error("invalid map cache key");
-    writeAtomic(root / "MapCache" / (p.digest + ".takmap"), p.bytes);
-    // The picker sees a unique alias; only the selected archive is mounted at play.
-    const auto archive = root / "MapCache" / (p.digest + ".kmp");
-    if (!std::filesystem::exists(archive)) {
+    const auto canonical=root / "MapCache" / (p.digest+".takmap");
+    const auto archive=root / "MapCache" / (p.digest+".kmp");
+    const bool needCanonical=!std::filesystem::exists(canonical),needArchive=!std::filesystem::exists(archive);
+    if(!needCanonical && !needArchive)return;
+    std::vector<uint8_t> packed;
+    const auto usage=quota ? tak::storageUsage(root/"MapCache")+tak::storageUsage(root/"Maps","Generated-") : 0;
+    if(quota)tak::storageRoom(usage,needCanonical?p.bytes.size():0,quota);
+    if(needArchive) {
         std::vector<hpi::PackFile> files;
-        for (const auto& [path, bytes] : *p.files) files.push_back({path, bytes});
-        writeAtomic(archive, hpi::pack(files));
+        for(const auto& [path,bytes]:*p.files)files.push_back({path,bytes});
+        packed=hpi::pack(files);
     }
+    tak::storageRoom(usage,(needCanonical?p.bytes.size():0)+packed.size(),quota);
+    if(needCanonical)writeAtomic(canonical,p.bytes);
+    if(needArchive)writeAtomic(archive,packed);
 }
 std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std::string& digest) {
     if (!validDigest(digest)) return {};
@@ -287,7 +295,7 @@ std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std:
         return decode(std::move(bytes), digest);
     } catch (const std::exception&) { std::error_code ec; std::filesystem::remove(path, ec); return {}; }
 }
-std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi::Vfs& vfs, const std::string& recipe) {
+std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi::Vfs& vfs, const std::string& recipe,uint64_t quota) {
     if (!mapgen::isGeneratedMapId(recipe)) return {};
     const std::string id = crypto::toHex(crypto::sha256(recipe));
     const auto params = mapgen::decodeMapId(recipe);
@@ -295,6 +303,8 @@ std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi
         mapgen::friendlyLabel(params) + "-" + id.substr(0,16);
     const auto output = root / "Maps" / ("Generated-" + id + ".kmp");
     if (std::filesystem::exists(output)) return output;
+    const auto usage=quota ? tak::storageUsage(root/"MapCache")+tak::storageUsage(root/"Maps","Generated-") : 0;
+    tak::storageRoom(usage,1,quota);
     auto g = mapgen::generate(params, vfs);
     const std::string path = "kmap/" + name;
     std::vector<hpi::PackFile> files{{path + ".tnt", g.map.save()}};
@@ -311,6 +321,8 @@ std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi
     for (auto key : std::set<uint32_t>(g.map.tileKeys.begin(), g.map.tileKeys.end())) {
         auto tile = tilePath(key); files.push_back({tile, vfs.read(tile, g.map.stockTerrain)});
     }
-    writeAtomic(output, hpi::pack(files)); return output;
+    const auto packed=hpi::pack(files);
+    tak::storageRoom(usage,packed.size(),quota);
+    writeAtomic(output,packed); return output;
 }
 }

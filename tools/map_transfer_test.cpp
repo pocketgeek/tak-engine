@@ -410,7 +410,11 @@ int main(int argc, char** argv) try {
     }
     check(!p->files->count("kmap/other.crt") && !p->files->count("scripts/evil.cob"),
           "unrelated files included in package");
+    rejects([&]{net::maps::saveCache(root,*p,1);},"disk quota accepted oversized package");
+    check(!std::filesystem::exists(root/"MapCache"/(p->digest+".takmap")),"quota rejection left partial cache");
     net::maps::saveCache(root,*p);
+    net::maps::saveCache(root,*p,1); // an existing download needs no additional quota
+
     const auto cached = net::maps::loadCache(root,p->digest);
     check(cached && *cached->files == *p->files, "cache companion roundtrip");
     hpi::Vfs catalog; catalog.refreshMapCache(root);

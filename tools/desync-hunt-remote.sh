@@ -635,7 +635,7 @@ run_one() {
   local srv_env=""
   case "$envs" in *TAK_GODS=1*) srv_env="TAK_GODS=1";; esac
   local spid
-  spid=$(rsh1 "nohup env $srv_env $RBIN --port $port --data $RDATA --replaydir $RREPLAY --no-auth \
+  spid=$(rsh1 "nohup env $srv_env $RBIN --port $port --data $RDATA --replaydir $RREPLAY --no-auth --allow-plaintext --allow-benchmarks \
          --seed $seed >/tmp/tak-srv-$port.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
   [ -n "$spid" ] && note_server "$host" "$spid"
   local up=0
@@ -943,7 +943,7 @@ if [ "$VALIDATE" = "1" ]; then
   esac
 
 echo "== validating the detector with a PLANTED desync (TAK_FAKE_DESYNC=900) on $vhost =="
-  vpid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7890 --data $RDATA --no-auth --seed 999 >/tmp/tak-val.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
+  vpid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7890 --data $RDATA --no-auth --allow-plaintext --allow-benchmarks --seed 999 >/tmp/tak-val.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
   [ -n "$vpid" ] && note_server "$vhost" "$vpid"
   for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-val.log 2>/dev/null" && break; sleep 2; done
   env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy TAK_MP_AIS=7 TAK_SPEED=40 TAK_FAKE_DESYNC=900 \
@@ -1007,7 +1007,7 @@ echo "== validating the detector with a PLANTED desync (TAK_FAKE_DESYNC=900) on 
   fi
   {
 
-    npid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7891 --data $RDATA --no-auth --seed 999 >/tmp/tak-neg.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
+    npid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7891 --data $RDATA --no-auth --allow-plaintext --allow-benchmarks --seed 999 >/tmp/tak-neg.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
     [ -n "$npid" ] && note_server "$vhost" "$npid"
     for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-neg.log 2>/dev/null" && break; sleep 2; done
     env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy TAK_MP_AIS=7 TAK_SPEED=40 \

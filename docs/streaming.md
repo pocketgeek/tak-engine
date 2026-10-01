@@ -77,7 +77,7 @@ rate; that readback can add render-thread cost. Lower the resolution/frame rate
 or choose hardware encoding if streaming reduces game performance.
 
 No FFmpeg executable or additional DLL/shared-library bundle is required by
-players. FFmpeg, x264, the Linux OpenSSL/VA-API/DRM loaders and the Windows oneVPL
+players. FFmpeg, x264, OpenSSL, the Linux VA-API/DRM loaders and the Windows oneVPL
 dispatcher are built as static archives. NVIDIA and AMD SDK headers add no runtime
 library bundle. Installed GPU drivers and native OS frameworks remain external,
 just as SDL's display/audio drivers do.
@@ -88,8 +88,8 @@ just as SDL's display/audio drivers do.
 Its pinned dependencies are built by `tools/build-stream-deps.sh`. Linux needs
 Python 3, Ninja, Perl's standard modules (Fedora: `perl-core`), and patch in
 addition to the regular build tools. Perl configures OpenSSL during the build;
-it is not a game dependency. Windows uses Schannel and macOS uses
-SecureTransport, so they do not build OpenSSL. FFmpeg's OpenSSL hostname checking
+it is not a game dependency. Windows streaming uses Schannel and macOS streaming
+uses SecureTransport. Multiplayer TLS uses static OpenSSL on all platforms. FFmpeg's OpenSSL hostname checking
 is patched explicitly for the pinned FFmpeg 7.1 source.
 
 CMake requires the media/codec/TLS/loader archives by full path; CI additionally

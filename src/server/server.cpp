@@ -51,6 +51,8 @@
 #include "ai/ai.h"
 #include "hpi/hpi.h"
 #include "net/auth.h"
+#include "util/storagequota.h"
+#include "server/limits.h"
 #include "net/crypto.h"
 #include "server/accounts.h"
 #include "server/crusades/allegiance.h"
@@ -100,7 +102,7 @@ struct WorkBudget {
     unsigned used = 0;
     bool take(uint64_t now, unsigned limit,unsigned cost=1) {
         if (now-window >= 1000) {window=now;used=0;}
-        if (cost>limit-used)return false;
+        if (used>limit || cost>limit-used)return false;
         used+=cost;return true;
     }
 };
@@ -224,6 +226,8 @@ struct Client {
     // too, so the cursor catches up to the present by itself; until it does,
     // this client is skipped by the live TickBundle broadcast so the stream
     // cannot go out of order.
+    WorkBudget lobbyWork,uploadWork;
+    uint64_t mapReceiveStarted=0,mapReceiveProgress=0;
     bool replaying = false;
     size_t replayPos = 0;        // next index into Room::log to send
 };
@@ -290,6 +294,8 @@ struct Room {
     int8_t missionOutcomeSent = 0;              // campaign result already broadcast (0 = none)
     // durability (M5): the full bundle log for reconnect/replay, per-slot resume
     // tokens, and drop-hold / auto-pause state.
+    size_t logBytes=0;
+    bool resourceLimited=false;
     std::vector<std::vector<uint8_t>> log;      // serialized TickBundle payload per tick
     SlotInfo startSlots[kMaxSlots];             // slot config at game start (for the replay)
     uint64_t slotToken[kMaxSlots] = {};         // resume token per human slot (0 = none)
@@ -379,6 +385,12 @@ public:
     // produce the same state hash twice. Not for a real server.
     void setFixedSeed(uint32_t v) { fixedSeed_ = v; }
     void setNoAuth() { requireAuth_ = false; }
+#ifndef NDEBUG
+    void allowBenchmarks() {testWork_=true;}
+#endif
+    void setTls(std::shared_ptr<tak::net::TlsContext> context) {tlsContext_=std::move(context);}
+    void setLimits(tak::srv::Limits limits) {limits_=limits;}
+    void closeRegistration() { registrationOpen_=false; }
     void setLoopbackOnly() { loopbackOnly_ = true; }
     // Load (or start) the account file. Returns false with `err` set if it exists
     // but cannot be read -- starting anyway would mean running an open server
@@ -433,7 +445,7 @@ public:
         crusades_->recoverInterruptedBattles(unixNow);
     }
     // `dataRoot` is never empty -- main() refuses to start without --data.
-    Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
+    Server(uint16_t port, const std::string& dataRoot,const std::string& mapRoot) : port_(port), dataRoot_(dataRoot),mapRoot_(mapRoot.empty()?dataRoot:mapRoot) {
         // The referee reads the retail install directly, per the ROOM's override
         // tier. Build the pure-retail set eagerly (the connection-level Hello
         // check + the common none/cosmetic game); the Full set is built lazily
@@ -451,14 +463,23 @@ public:
 
 private:
     uint16_t port_;
-    std::string dataRoot_;
+    std::string dataRoot_,mapRoot_;
     // Accounts. requireAuth_ is the default; --no-auth turns it off for a private
     // or LAN server (single-player launches one of those).
     bool requireAuth_ = true;
+    bool registrationOpen_ = true;
+    bool testWork_=false;
+    tak::srv::Limits limits_;
+    std::shared_ptr<tak::net::TlsContext> tlsContext_;
     bool loopbackOnly_ = false;
     tak::srv::AccountStore accounts_;
     std::unique_ptr<tak::srv::crusades::CampaignServiceLease> campaignLease_;
     std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
+    SharedWorkBudget acceptKeys_,lobbyWorkKeys_, uploadWorkKeys_;
+    WorkBudget acceptWork_;
+    WorkBudget lobbyGlobalWork_, uploadGlobalWork_, accountWriteWork_;
+    bool allowLobbyWork(Client& c,const Frame& f);
+    size_t mapMemory() const;
     SharedWorkBudget campaignWorkKeys_, campaignReplayKeys_;
     SharedWorkBudget loginWorkKeys_{tak::srv::LoginThrottle::kForgetMs};
     WorkBudget campaignGlobalWork_, campaignGlobalReplay_, loginGlobalWork_;
@@ -547,6 +568,7 @@ private:
     }
     void buildDataSet(DataSet& ds, tak::hpi::OverridePolicy pol) {
         ds.vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot_), pol);
+        if(mapRoot_!=dataRoot_)ds.vfs.refreshMapCache(std::filesystem::u8path(mapRoot_));
         tak::sim::setupRegistry(ds.reg, ds.vfs, false);
         if (!ds.vfs.list("unitscb").empty()) {
             tak::sim::setupRegistry(ds.regCb, ds.vfs, true);
@@ -706,6 +728,8 @@ Writer Server::replayBytes(Room& r) {
 }
 void Server::writeReplay(Room& r) {
     if (replayDir_.empty() || r.log.empty() || !r.campaignBattleId.empty()) return;
+    try {tak::storageRoom(tak::storageUsage(replayDir_),r.logBytes+65536,limits_.replayDisk);}
+    catch(const std::exception& e) {std::fprintf(stderr,"replay not saved: %s\n",e.what());return;}
     const Writer w=replayBytes(r);
     std::string path = replayDir_ + "/game-" + std::to_string(r.id) + "-" +
                        std::to_string(r.createdMs) + ".takrep";
@@ -901,6 +925,7 @@ void Server::authMsg(Client& c, const Frame& f) {
         c.account = a->name;
         c.name = a->name;
         std::string err;
+        if(!accountWriteWork_.take(now,16)) {sendReject(c,"login persistence rate exceeded; retry later");c.conn.fail("login write budget");return;}
         if (!accounts_.noteLogin(a->name, &err))
             std::fprintf(stderr, "takserver: could not record login: %s\n", err.c_str());
         sendAuthResult(c, AuthStatus::Ok, &sig, "signed in");
@@ -926,6 +951,10 @@ void Server::authMsg(Client& c, const Frame& f) {
         if (uint64_t wait = throttle_.lockedFor(ipKey, now)) { sendThrottled(c, wait); return; }
         throttle_.fail(ipKey, now, tak::srv::LoginThrottle::kAddress);
 
+        if(!registrationOpen_ || accounts_.size()>=limits_.accounts || !accountWriteWork_.take(now,8)) {
+            sendAuthResult(c,AuthStatus::ServerError,nullptr,"registration unavailable; retry later");
+            c.pendAuth.challenged=false;return;
+        }
         tak::auth::Credential cred;
         cred.iters = c.pendAuth.iters;
         cred.salt = c.pendAuth.salt;
@@ -1053,6 +1082,7 @@ std::pair<std::string,std::string> Server::saveCampaignReplay(Room& r) {
         synchronize();
         return {name,digest};
     }
+    tak::storageRoom(tak::storageUsage(campaignReplayDir_),bytes.b.size(),limits_.replayDisk);
     auto temporary=final;temporary+="."+tak::crypto::toHex(tak::crypto::randomVec(8))+".tmp";
     struct Cleanup {fs::path path;~Cleanup(){std::error_code ec;fs::remove(path,ec);}} cleanup{temporary};
 #ifdef _WIN32
@@ -1564,6 +1594,7 @@ bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t
     std::string issued;
     uint32_t roomId=0;
     try {
+        if(rooms_.size()>=limits_.rooms)throw std::runtime_error("server game capacity reached");
         if(c.state!=Client::Lobby || c.roomId || !haveCb_)throw std::runtime_error("campaign match unavailable");
         const auto caller=tak::auth::foldUsername(c.account),opponent=tak::auth::foldUsername(opponentName);
         if(caller==opponent)throw std::runtime_error("opponent must be another account");
@@ -1719,6 +1750,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
     switch (f.kind) {
         case Msg::ListGames: sendGameList(c); break;
         case Msg::CreateGame: {
+            if(rooms_.size()>=limits_.rooms) {sendReject(c,"server game capacity reached");return;}
             Reader r(f.payload.data(), f.payload.size());
             std::string name = r.str(), pass = r.str(), mapId = r.str(), mission = r.str();
             GameOptions o; o.crusades = r.u8(); o.forfeitSelfDestruct = r.u8();
@@ -1740,7 +1772,11 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
-            if (!r.ok) return;
+            if (!r.ok || r.p!=r.end || name.size()>128 || pass.size()>128 || mapId.size()>4096 || mission.size()>256) return;
+            if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
+                sendReject(c,"public servers do not accept benchmark, stress or campaign mission requests");return;
+            }
+            o.speed=std::clamp<uint8_t>(o.speed,1,40);
             if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
             room.id = nextRoomId_++;
@@ -2018,13 +2054,12 @@ bool Server::mapsReady(const Room& r) const {
     return true;
 }
 void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> package) {
+    tak::net::maps::saveCache(std::filesystem::u8path(mapRoot_),*package,limits_.mapDisk);
     room.mapPackage = std::move(package);
     std::fprintf(stderr, "game %u: map verified %s (%zu bytes)\n", room.id,
                  room.mapPackage->digest.c_str(), room.mapPackage->bytes.size());
     room.mapVfs = std::make_unique<tak::hpi::Vfs>(&dataFor(room.opts.overridePolicy).vfs);
     room.mapVfs->setMapFiles(room.mapPackage->files);
-    try { tak::net::maps::saveCache(std::filesystem::u8path(dataRoot_), *room.mapPackage); }
-    catch (const std::exception& e) { std::fprintf(stderr, "map cache: %s\n", e.what()); }
     broadcastLobby(room);
 }
 void Server::mapMsg(Client& c, const Frame& f) {
@@ -2038,8 +2073,13 @@ void Server::mapMsg(Client& c, const Frame& f) {
             if (!rd.ok || rd.p != rd.end || id != room->id || name != room->mapId ||
                 !room->mission.empty() || tak::mapgen::isGeneratedMapId(name))
                 throw std::runtime_error("invalid map offer");
+            // Reserve the advertised upload, not only bytes received so far.
+            // Decoding keeps both the canonical package and extracted files.
+            if(size>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(size)*2>limits_.mapMemory)
+                throw std::runtime_error("server map memory budget reached");
             c.mapReceive.begin(id, size, hash);
-            if (auto cached = tak::net::maps::loadCache(std::filesystem::u8path(dataRoot_), hash)) {
+            c.mapReceiveStarted=c.mapReceiveProgress=nowMs();
+            if (auto cached = tak::net::maps::loadCache(std::filesystem::u8path(mapRoot_), hash)) {
                 c.mapReceive = {}; acceptMap(*room, std::move(cached)); return;
             }
             try {
@@ -2050,6 +2090,7 @@ void Server::mapMsg(Client& c, const Frame& f) {
             Writer request; request.u32(room->id); c.conn.send(Msg::MapRequest, request);
         } else if (f.kind == Msg::MapChunk) {
             if (room->running || room->hostId != c.id || room->mapPackage) return;
+            c.mapReceiveProgress=nowMs();
             if (c.mapReceive.append(rd)) {
                 auto package = tak::net::maps::decode(std::move(c.mapReceive.bytes), c.mapReceive.digest);
                 c.mapReceive = {}; acceptMap(*room, std::move(package));
@@ -2081,6 +2122,9 @@ void Server::mapMsg(Client& c, const Frame& f) {
 void Server::tryStart(Client& c) {
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
+    if(std::count_if(rooms_.begin(),rooms_.end(),[](const auto& entry){return entry.second.running;})>=limits_.running) {
+        sendReject(c,"server running-game capacity reached; retry later");return;
+    }
     if(!r->campaignBattleId.empty()) {
         try { (void)campaignContext(*r,true); }
         catch(const std::exception&) {return;}
@@ -2124,7 +2168,7 @@ void Server::tryStart(Client& c) {
         return;
     }
     if (!wantMission && tak::mapgen::isGeneratedMapId(r->mapId)) {
-        try { tak::net::maps::saveGenerated(std::filesystem::u8path(dataRoot_), dataSet.vfs, r->mapId); }
+        try { tak::net::maps::saveGenerated(std::filesystem::u8path(mapRoot_), dataSet.vfs, r->mapId,limits_.mapDisk); }
         catch (const std::exception& e) {
             Writer w; w.u32(r->id); w.str(std::string("cannot save generated map: ") + e.what());
             c.conn.send(Msg::MapError, w); return;
@@ -2377,7 +2421,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.randomStarts = rd.u8() ? 1 : 0;
             o.doubleSight = rd.u8() ? 1 : 0;
             if (!r->mission.empty()) o.doubleSight = 0;
-            if (!rd.ok) return;
+            if (!rd.ok || rd.p!=rd.end) return;
+            if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark)) {sendReject(c,"public benchmark/stress requests disabled");return;}
             if (o.speed < 1) o.speed = 1;
             if (o.speed > 40) o.speed = 40;   // clamp 0.1x .. 4.0x
             if (!r->running) {
@@ -2689,7 +2734,13 @@ void Server::closeTick(Room& r) {
     for (const auto& cmd : r.pending) w.cmd(cmd);
     w.u32(uint32_t(r.pendingEvents.size()));
     for (const auto& e : r.pendingEvents) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
+    if(w.b.size()+2*sizeof(std::vector<uint8_t>)>limits_.replayMemory-r.logBytes) {
+        r.resourceLimited=true;
+        if(!r.campaignBattleId.empty())r.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
+        return;
+    }
     broadcastRoom(r, Msg::TickBundle, w);
+    r.logBytes+=w.b.size()+2*sizeof(std::vector<uint8_t>);
     r.log.push_back(std::move(w.b));   // keep the full bundle log for reconnect/replay
                                        // (moved: broadcastRoom already copied it out)
 
@@ -2811,8 +2862,45 @@ bool Server::allowCampaignWork(Client& c,const Frame& f) {
     return false;
 }
 
+// Ordinary lobby work needs a wall-clock budget too; a per-poll frame cap
+// alone lets a peer flood indefinitely by sending just below that cap.
+bool Server::allowLobbyWork(Client& c,const Frame& f) {
+    unsigned cost=1;
+    bool upload=false;
+    switch(f.kind) {
+        case Msg::MapChunk: upload=true;cost=unsigned((f.payload.size()+1023)/1024);break;
+        case Msg::CreateGame: case Msg::StartGame: case Msg::MapOffer: cost=16;break;
+        case Msg::ListGames: case Msg::JoinGame: case Msg::Spectate:
+        case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
+        case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::SetGameOptions:
+        case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause: break;
+        default:return true; // Login, campaign and command queues have their own budgets.
+    }
+    auto& keys=upload?uploadWorkKeys_:lobbyWorkKeys_;
+    auto& global=upload?uploadGlobalWork_:lobbyGlobalWork_;
+    const unsigned personal=upload?4096:128,shared=upload?16384:2048;
+    const auto now=nowMs();
+    auto& local=upload?c.uploadWork:c.lobbyWork;
+    if(!local.take(now,personal,cost)) {c.conn.fail("request rate exceeded");return false;}
+    // A hostile peer behind a NAT must not disconnect healthy neighbours.
+    // Keepalive has only the per-connection budget; shared exhaustion drops
+    // expensive requests without revoking anybody else's session.
+    if(f.kind==Msg::Ping || f.kind==Msg::Pong)return true;
+    return keys.take("ip:"+c.peer,now,personal*4,cost) &&
+       (c.account.empty() || keys.take("user:"+tak::auth::foldUsername(c.account),now,personal*2,cost)) &&
+       global.take(now,shared,cost);
+}
+
+size_t Server::mapMemory() const {
+    size_t used=0;
+    for(const auto& [id,peer]:clients_)used+=size_t(peer->mapReceive.size)*2;
+    for(const auto& [id,room]:rooms_)if(room.mapPackage)used+=room.mapPackage->bytes.size()*2;
+    return used;
+}
+
 void Server::onFrame(Client& c, const Frame& f) {
     c.lastRecvMs = nowMs();
+    if(!allowLobbyWork(c,f))return;
     if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
@@ -2884,6 +2972,7 @@ int Server::run() {
     // Build id on its own line: the harness greps it to refuse a server built from
     // different source than the client, which otherwise looks exactly like a desync.
     std::fprintf(stderr, "takserver: build %s\n", tak::kBuildId);
+    std::fprintf(stderr,"takserver: transport %s\n",tlsContext_?"TLS (plaintext rejected)":"UNENCRYPTED TCP");
     if (requireAuth_)
         std::fprintf(stderr, "takserver: accounts required -- %zu in %s\n",
                      accounts_.size(), accounts_.path().c_str());
@@ -2931,8 +3020,10 @@ int Server::run() {
         // tick clock -- otherwise resuming into a PAUSED game would feed it one
         // chunk per idle second, since a paused room no longer pulls the
         // deadline in.
-        for (const auto& [id, c] : clients_)
+        for (const auto& [id, c] : clients_) {
+            if (c->conn.bufferedInput())soonest=now;
             if ((c->replaying || c->mapSend.package) && now + 10 < soonest) soonest = now + 10;
+        }
         int timeout = int(soonest > now ? soonest - now : 0);
 
         int n = TAK_POLL(pfds.data(), (unsigned)pfds.size(), timeout);
@@ -2946,6 +3037,7 @@ int Server::run() {
                 int fd = int(accept(listenFd_, nullptr, nullptr));
                 if (fd < 0) break;
                 const auto address=peerAddress(fd);
+                if(!acceptKeys_.take(address,now,32) || !acceptWork_.take(now,128)) {sockClose(fd);continue;}
                 size_t pending=0,fromAddress=0;
                 for(const auto& [id,peer]:clients_) {
                     (void)id;
@@ -2958,7 +3050,7 @@ int Server::run() {
                 setupSocket(fd);
                 auto c = std::make_unique<Client>();
                 c->id = nextClientId_++;
-                c->conn = Conn(fd);
+                c->conn = Conn(fd,tlsContext_);
                 c->peer = address;
                 c->connectedMs = c->lastRecvMs = nowMs();
                 clients_[c->id] = std::move(c);
@@ -2971,13 +3063,18 @@ int Server::run() {
             auto it = clients_.find(id);
             if (it == clients_.end()) continue;
             Client& c = *it->second;
-            if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
+            if ((pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) || c.conn.bufferedInput()) {
                 if (!c.conn.recv()) { dead.push_back(id); continue; }
                 Frame fr;
                 unsigned frames=0;
                 while (c.conn.poll(fr)) {
                     if(++frames>1024) {c.conn.fail("message flood");break;}
-                    onFrame(c, fr); if (!c.conn.ok()) break;
+                    try {onFrame(c,fr);}
+                    catch(const std::exception& e) {
+                        std::fprintf(stderr,"client request failed: %s\n",e.what());
+                        c.conn.fail("invalid client request");
+                    }
+                    if (!c.conn.ok()) break;
                 }
                 // A clean close is only final once its trailing frames are drained
                 // above -- the last LeaveGame usually arrives in the same segment.
@@ -3029,6 +3126,12 @@ int Server::run() {
         std::vector<std::pair<uint32_t, const char*>> doneRooms;
         for (auto& [rid, r] : rooms_) {
             if (!r.running) continue;
+            if(r.resourceLimited) {
+                for(auto& [cid,peer]:clients_)if(peer->roomId==rid) {
+                    sendReject(*peer,"game replay memory limit reached");peer->conn.fail("game resource limit");
+                }
+                if(r.campaignBattleId.empty()) {doneRooms.push_back({rid,"replay memory limit"});continue;}
+            }
             if(!r.campaignBattleId.empty()) {
                 finalizeCampaign(r,!roomOccupied(r) || !roomActive(r));
                 if(!r.campaignResultRecorded)continue;
@@ -3074,7 +3177,7 @@ int Server::run() {
         now = nowMs();
         std::vector<Room*> due;
         for (auto& [rid, r] : rooms_)
-            if (r.running && !r.paused && !r.campaignResult && !r.campaignFault && r.nextTickMs <= now) due.push_back(&r);
+            if (r.running && !r.paused && !r.campaignResult && !r.campaignFault && !r.resourceLimited && r.nextTickMs <= now) due.push_back(&r);
         auto tickRoom = [&](Room& r) {
             // Heavy games can take longer than their nominal tick interval.
             // Bound catch-up work between socket polls: advancing the entire
@@ -3094,7 +3197,7 @@ int Server::run() {
                 }
                 if(!r.campaignBattleId.empty() && (r.ref->winningTeam()>=0 ||
                     (r.ref->numPlayers()>=2 && r.ref->player(0).defeated && r.ref->player(1).defeated)))break;
-                if (nowMs() - batchStart >= 8) break;
+                if (r.resourceLimited || nowMs() - batchStart >= 8) break;
             }
         };
         bool parallel = due.size() >= 2;
@@ -3139,6 +3242,9 @@ int Server::run() {
         }
         for (auto& [id, c] : clients_) {
             if(!c->conn.ok()) {dead.push_back(id);continue;}
+            if(c->mapReceive.size && (now-c->mapReceiveProgress>30000 || now-c->mapReceiveStarted>300000)) {
+                c->mapReceive={};c->conn.fail("map upload deadline exceeded");dead.push_back(id);continue;
+            }
             c->mapSend.pump(c->conn);
             if (!c->conn.flushWrite()) { dead.push_back(id); continue; }
             if (c->state != Client::Handshake && now - c->lastRecvMs > kPingIdleMs &&
@@ -3164,21 +3270,34 @@ static int serverMain(int argc, char** argv) {
     if (const char* g = std::getenv("TAK_GRACE_MS")) kGraceMs = uint64_t(std::atoll(g));
     if (const char* b = std::getenv("TAK_PAUSE_BUDGET_MS")) kPauseBudgetMs = uint64_t(std::atoll(b));
     uint16_t port = 7677;
-    std::string dataRoot, replayDir;
+    std::string dataRoot, replayDir,tlsCert,tlsKey,mapRoot;
+    bool allowTestWork=false;
+    bool allowPlaintext=false;
     std::string accountsPath = "takserver-accounts.conf";
     std::string crusadesDb, crusadesDefinition;
     uint32_t fixedSeed = 0;
-    bool noAuth = false, loopbackOnly = false;
+    tak::srv::Limits limits;
+    bool noAuth = false, loopbackOnly = false, closedRegistration=false;
     for (int i = 1; i < argc; ++i) {
+        try {if(limits.set(argv[i],i+1<argc?argv[i+1]:"")) {++i;continue;}}
+        catch(const std::exception& e) {std::fprintf(stderr,"takserver: %s: %s\n",argv[i],e.what());return 1;}
         if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
         else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
         else if (!std::strcmp(argv[i], "--replaydir") && i + 1 < argc) replayDir = argv[++i];
+#ifndef NDEBUG
+        else if (!std::strcmp(argv[i], "--allow-benchmarks")) allowTestWork=true;
+#endif
+        else if (!std::strcmp(argv[i], "--map-cache-dir") && i+1<argc)mapRoot=argv[++i];
         else if (!std::strcmp(argv[i], "--accounts") && i + 1 < argc) accountsPath = argv[++i];
         else if (!std::strcmp(argv[i], "--crusades-db") && i + 1 < argc) crusadesDb = argv[++i];
         else if (!std::strcmp(argv[i], "--crusades-definition") && i + 1 < argc) crusadesDefinition = argv[++i];
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
             fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0));
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;
+        else if (!std::strcmp(argv[i], "--closed-registration")) closedRegistration=true;
+        else if (!std::strcmp(argv[i], "--tls-cert") && i+1<argc) tlsCert=argv[++i];
+        else if (!std::strcmp(argv[i], "--tls-key") && i+1<argc) tlsKey=argv[++i];
+        else if (!std::strcmp(argv[i], "--allow-plaintext")) allowPlaintext=true;
         else if (!std::strcmp(argv[i], "--local")) loopbackOnly = true;
         else if (!std::strcmp(argv[i], "--version") || !std::strcmp(argv[i], "-v")) {
             std::printf("takserver (TAK engine) %s (build %s)\n", tak::kVersion, tak::kBuildId);
@@ -3187,7 +3306,13 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--help")) {
             std::printf("usage: takserver --data <retail-install-dir> [--port N]\n"
                         "                 [--replaydir <dir>] [--accounts <file>]\n"
-                        "                 [--no-auth] [--local]\n"
+                        "                 [--no-auth] [--local] [--closed-registration]\n"
+                        "                 [--tls-cert fullchain.pem --tls-key private.pem]\n"
+                        "                 [--allow-plaintext] (trusted LAN/test networks only)\n"
+                        "                 [--map-cache-dir <writable directory>]\n"
+                        "                 [--max-games N] [--max-running-games N] [--max-accounts N]\n"
+                        "                 [--map-memory-mib N] [--map-storage-mib N]\n"
+                        "                 [--replay-memory-mib N] [--replay-storage-mib N]\n"
                         "                 [--crusades-db <file>] [--crusades-definition <file>]\n"
                         "  --data is REQUIRED: it is what the referee sim and the\n"
                         "  server-hosted AI players read. There is no relay-only mode.\n"
@@ -3206,9 +3331,17 @@ static int serverMain(int argc, char** argv) {
                         "  not historical rank penalties or house restrictions.\n"
                         "  --no-auth serves anyone who connects, with no account at all. Only\n"
                         "  for a private or LAN server; pair it with --local.\n"
-                        "  --local binds loopback only, so nothing off this machine connects.\n");
+                        "  --local binds loopback only, so nothing off this machine connects.\n"
+                        "  --closed-registration allows existing accounts only.\n"
+                        "  Limits default to 16 games / 4 running, 10000 accounts, 512 MiB\n"
+                        "  shared map memory, 4096 MiB map storage, 256 MiB replay memory\n"
+                        "  per game and 4096 MiB replay storage. Limits must be positive.\n"
+                        "  Benchmark/stress and local campaign missions require --local --no-auth.\n");
             return 0;
-        }
+        } else {std::fprintf(stderr,"takserver: unknown option or missing value: %s\n",argv[i]);return 1;}
+    }
+    if(tlsCert.empty()!=tlsKey.empty() || (!loopbackOnly && tlsCert.empty() && !allowPlaintext)) {
+        std::fprintf(stderr,"takserver: public listeners require --tls-cert and --tls-key. Use --local for private games, or explicitly --allow-plaintext for a trusted LAN/test network.\n");return 1;
     }
     // --data is mandatory. The server used to run without it as a pure relay, with
     // the clients cross-checking hashes among themselves; that mode is gone. It gave
@@ -3283,10 +3416,18 @@ static int serverMain(int argc, char** argv) {
             std::fprintf(stderr,"takserver: %s\n",e.what());return 1;
         }
     }
-    Server s(port, dataRoot);
+    Server s(port, dataRoot,mapRoot);
+#ifndef NDEBUG
+    if(allowTestWork)s.allowBenchmarks();
+#else
+    (void)allowTestWork;
+#endif
     if (!replayDir.empty()) s.setReplayDir(replayDir);
     if (fixedSeed) s.setFixedSeed(fixedSeed);
+    s.setLimits(limits);
+    if(!tlsCert.empty())s.setTls(tak::net::TlsContext::server(tlsCert,tlsKey));
     if (loopbackOnly) s.setLoopbackOnly();
+    if (closedRegistration) s.closeRegistration();
     if (noAuth) {
         s.setNoAuth();
     } else {
@@ -3312,6 +3453,7 @@ int main(int argc,char** argv) {
 #ifdef _WIN32
     return tak::utf8Main(serverMain);
 #else
-    return serverMain(argc,argv);
+    try {return serverMain(argc,argv);}
+    catch(const std::exception& e) {std::fprintf(stderr,"takserver: %s\n",e.what());return 1;}
 #endif
 }

@@ -156,7 +156,7 @@ run_one() {
   local spid="" tries=0
   while [ $tries -lt 5 ]; do
     # shellcheck disable=SC2086
-    env $srv_env $SERVER --port "$port" --data "$DATA" --no-auth --seed "$seed" >"$slog" 2>&1 &
+    env $srv_env $SERVER --port "$port" --data "$DATA" --no-auth --local --seed "$seed" >"$slog" 2>&1 &
     spid=$!
     for _ in $(seq 120); do
       grep -q listening "$slog" 2>/dev/null && break

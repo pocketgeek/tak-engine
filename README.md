@@ -44,6 +44,15 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
+## Current development: public-server hardening
+
+Native TLS protects multiplayer connections without adding dynamic dependencies.
+Public listeners require a certificate by default; players use a `tls://` server
+address. Account, game, upload, map-storage and replay budgets limit abuse, and
+an optional Linux service template isolates server state from retail data.
+See [public-server deployment and limitations](docs/public-server.md).
+These changes are newer than the 0.7.20 release; update client and server together.
+
 ## New in 0.7.20
 
 Naval AI now plans coastal production for Aramon's War Galleys, Veruna and Creon
