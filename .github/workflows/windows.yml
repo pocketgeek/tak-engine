@@ -95,7 +95,8 @@ jobs:
           fi
 
       - name: Cache static FFmpeg (Bink)
-        uses: actions/cache@v4
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
         with:
           path: third_party/ffmpeg-bink
           key: ffmpeg-bink-windows-${{ matrix.arch }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
@@ -105,6 +106,13 @@ jobs:
             test ! -f third_party/ffmpeg-bink/src/ffbuild/config.log || tail -180 third_party/ffmpeg-bink/src/ffbuild/config.log
             exit 1
           fi
+
+      - name: Save successful static FFmpeg build
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/ffmpeg-bink
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
       - name: Configure + build
         # links MSYS2's static libSDL2.a/libjpeg.a/libz.a (SDL2::SDL2-static

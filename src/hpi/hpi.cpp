@@ -45,9 +45,11 @@ std::optional<std::filesystem::path> looseFile(const std::filesystem::path& root
         auto p=root/std::filesystem::u8path(name);
         std::error_code ec;
         if (std::filesystem::is_regular_file(p,ec)) return p;
-    } catch (const std::filesystem::filesystem_error&) {
+    } catch (const std::runtime_error&) {
         // Legacy archive names need not be UTF-8. An unrepresentable loose-file
         // candidate must not prevent reading the byte-identical archive entry.
+        // libstdc++ reports filesystem_error (a runtime_error); libc++'s UTF-8
+        // conversion reports runtime_error directly.
     }
     return {};
 }
