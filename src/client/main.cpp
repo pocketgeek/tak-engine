@@ -1311,14 +1311,24 @@ int main(int argc, char** argv) {
             if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
         });
     uint64_t last = SDL_GetPerformanceCounter();
+    auto windowTarget = [&] {
+        SDL_SetRenderTarget(ren, nullptr);
+        SDL_RenderSetScale(ren, 1.0f, 1.0f);
+        SDL_RenderSetViewport(ren, nullptr);
+        SDL_RenderSetClipRect(ren, nullptr);
+    };
     while (running) {
         if (tak::termRequested()) { running = false; quitApp = true; break; }
+        // SDL stores viewport/scale per target. Always begin on the current
+        // drawable, including after a resize or an interrupted off-screen pass.
+        windowTarget();
         // Pin the newest published sim snapshot for this whole iteration -- input handlers
         // (below) AND the render pass (further down) read front(), so the pin must span both
         // so a concurrent publish from the sim worker (Stage B) can't tear them. Released by
         // endFrame() after the cursor overlay, once every front()-reading pass is done.
         if (gameView) gameView->beginFrame();
         SDL_Event e;
+        bool targetsReset = false, windowResized = false;
         while (SDL_PollEvent(&e)) {
             if (crusadesView && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                 returnToCrusades = true; continue;
@@ -1332,9 +1342,11 @@ int main(int argc, char** argv) {
             }
             // The GPU lost every render-target texture's contents (device/driver
             // reset). Rebuild the baked atlases so sprites don't blink out.
-            if ((e.type == SDL_RENDER_TARGETS_RESET ||
-                 e.type == SDL_RENDER_DEVICE_RESET) && gameView)
-                gameView->invalidateRenderTargets();
+            if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
+                targetsReset = true;
+            if (e.type == SDL_WINDOWEVENT &&
+                (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED || e.window.event == SDL_WINDOWEVENT_RESIZED))
+                windowResized = true;
             // 'S' grabs a screenshot in the asset viewers; in game it is the
             // Stop hotkey (Keys.TDF LOWER_S), handled by GameView::input.
             // Capture at the CURRENT output size, not the default window constants --
@@ -1369,6 +1381,15 @@ int main(int argc, char** argv) {
             if (mapView) mapView->input(e);
             if (modelView) modelView->input(e);
             if (gameView) gameView->input(e, ww, wh);
+        }
+        if (targetsReset || windowResized) {
+            windowTarget();
+            if (aaTex) gpuvram::destroy(aaTex);
+            aaTex = nullptr; aaW = aaH = 0;
+            if (targetsReset) {
+                if (gameView) gameView->invalidateRenderTargets();
+                if (mapView) mapView->invalidateRenderTargets();
+            }
         }
         uint64_t now = SDL_GetPerformanceCounter();
         float dt = float(now - last) / float(SDL_GetPerformanceFrequency());
@@ -1479,7 +1500,8 @@ int main(int argc, char** argv) {
         if (!renAccelerated) { aaS = 1.0f; if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; } }
         if (gpuvram::blocked()) { aaS = 1.0f; if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; } }
         while (aaS > 1.0f && w > 0 && h > 0 &&
-               !gpuvram::wouldFit(size_t(w * aaS) * size_t(h * aaS) * 4))
+               gpuvram::bytes() - (aaTex ? size_t(aaW) * size_t(aaH) * 4 : 0) +
+                   size_t(w * aaS) * size_t(h * aaS) * 4 > gpuvram::cap())
             aaS = (aaS > 1.5f) ? 1.4142f : 1.0f;   // 2x -> 1.41x -> off
         bool aaOn = false;
         if (gameView && aaS > 1.0f && !gameView->inLobbyPhase()) {
@@ -1515,7 +1537,19 @@ int main(int argc, char** argv) {
         // the whole frame on some backends). Prepare/bake at 1x, then set the scale.
         if (mapView) mapView->ensureChunks(w, h);
         if (gameView) gameView->prepare(w, h);
-        if (aaOn) { SDL_SetRenderTarget(ren, aaTex); SDL_RenderSetScale(ren, aaS, aaS); }
+        windowTarget();
+        if (aaOn) {
+            if (SDL_SetRenderTarget(ren, aaTex) == 0) {
+                SDL_RenderSetScale(ren, aaS, aaS);
+                SDL_RenderSetViewport(ren, nullptr);
+                SDL_RenderSetClipRect(ren, nullptr);
+            } else {
+                std::fprintf(stderr, "AA: target bind failed; rendering directly: %s\n", SDL_GetError());
+                windowTarget();
+                gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0;
+                gpuvram::noteFail(); aaOn = false;
+            }
+        }
         SDL_SetRenderDrawColor(ren, 18, 18, 26, 255);
         SDL_RenderClear(ren);
         // Optional per-phase profiler (TAK_PROF=1): prints where each frame's
@@ -1586,8 +1620,7 @@ int main(int argc, char** argv) {
         }
         double t4 = prof ? pnow() : 0;
         if (aaOn) {   // downscale the supersampled frame onto the window
-            SDL_RenderSetScale(ren, 1.0f, 1.0f);
-            SDL_SetRenderTarget(ren, nullptr);
+            windowTarget();
             SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear);   // ensure a smooth downscale
             // Blit to an EXPLICIT full-drawable rect. A nullptr dst resolves to the
             // renderer's logical size, which on some backends (Wayland) is smaller
