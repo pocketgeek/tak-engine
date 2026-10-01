@@ -32,7 +32,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.16 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.18 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -215,7 +215,7 @@ Choose the package for your system:
 Release filenames also include the project name and version. Install Linux
 packages with `apt install ./…deb`, `dnf install ./…rpm`, or `pacman -U ./…pkg.tar.zst`
 using administrator privileges. Linux packages include the client, dedicated
-server, and Cartographer map editor.
+server, Cartographer map editor, and the offline `crusades_admin` tool.
 
 Game libraries are bundled; your system still provides windowing, audio, and
 graphics support. On macOS, right-click → **Open** on the first launch if needed.
@@ -257,6 +257,9 @@ for layout, archive precedence, and troubleshooting a rejected folder.
   retail or Crusades balance, and five AI difficulty levels.
 - **Multiplayer:** hosted games, shared allied vision, spectators, reconnects,
   and a server referee running the same deterministic simulation as the clients.
+- **Darien Crusades:** territory browsing, two-player tactical battles, verified
+  history and retained replays on an explicitly configured campaign server.
+  Historical territory capture and campaign-victory rules remain incomplete.
 - **Campaigns and scenarios:** mission scripts and scenario triggers, using
   the original game data. Individual missions remain subject to ongoing fixes.
 - **Replays:** open recorded matches through **Settings → Load Replay**.
@@ -354,6 +357,10 @@ Some campaign scripts explicitly control the score instead. See the
 [retail scoring evidence](docs/campaign-presentation-2026-09-26.md#result-score).
 
 ### Darien Crusades strategic campaigns
+
+<a href="docs/img/crusades.jpg"><img src="docs/img/crusades.jpg" width="900" alt="Darien Crusades territory browser with Torcairn selected"></a>
+
+<sub>Local imported Darien definition: original territory artwork; ownership and battle-map assignments remain unknown.</sub>
 
 Sign in to a multiplayer server, then choose **Darien Crusades** in the game
 browser. Select a campaign and browse its territories, server ownership, battle
@@ -563,21 +570,10 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Current development builds use **protocol 204** for retail damage-category
-selection and integer damage tables; update clients and servers together.
-Version **0.7.13 uses protocol 198** for shared authored-scenario setup
-and preserved map companions. Version **0.7.14 uses protocol 200** for
-construction restrictions, authored stats, independent scenario outcomes and
-retail trigger/placement behavior.
-Version **0.7.15 uses protocol 201** for deterministic expired-unit cleanup.
-Version **0.7.16 uses protocol 203** for conversion/production fixes, gentler Easy AI,
-and version-4 generated maps up to 64×64.
-Rebuild/update clients and servers together; different protocol versions cannot share a match.
-Versions **0.7.10 and 0.7.11 use protocol 194**. Restart/update both client and
-server together. **Released versions 0.7.9 and 0.7.8 use protocol 189** for script-controlled corpse selection
-and death lifetimes. Version **0.7.7 uses protocol 187**; versions 0.7.6 and
-0.7.5 use protocol 184. These builds cannot share a match. Older incompatible
-clients and recordings are rejected.
+Version **0.7.18 uses protocol 211**, including Darien Crusades campaign
+messages and retail damage-category corrections. Update clients and servers
+together; 0.7.17 and earlier cannot join these matches. Incompatible clients
+and recordings are rejected.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 

@@ -40,10 +40,15 @@ the pinned, SHA-256-verified archive on first configure; subsequent builds reuse
 the extracted source under the build directory. For offline configuration,
 set `-DFETCHCONTENT_SOURCE_DIR_TAK_SQLITE=/path/to/sqlite-amalgamation-3530400`
 to an extracted copy containing `sqlite3.c` and `sqlite3.h`. It adds no runtime
-SQLite DLL/shared-library dependency. Campaign storage is not yet connected to
-a playable Crusades game mode.
-The opt-in authenticated allegiance service and its server flags are documented
-in [Milestone 4](research/darien-crusades/campaign-allegiance.md).
+SQLite DLL/shared-library dependency. The opt-in authenticated Crusades service
+supports tactical battles, territory browsing, matchmaking, results and retained
+replays. Operators supply campaign definitions and battle-map assignments.
+Historical territory-capture and campaign-victory rules remain incomplete; see
+the [operations guide](research/darien-crusades/campaign-operations.md).
+
+For Clang AddressSanitizer builds, select both `CMAKE_C_COMPILER=clang` and
+`CMAKE_CXX_COMPILER=clang++`: SQLite is compiled as C, so mixing GCC C with
+Clang C++ can introduce incompatible sanitizer runtimes.
 
 For developer launch modes, diagnostics, and headless harnesses, use a Debug
 build. An optimized Debug build keeps those features while improving performance:
