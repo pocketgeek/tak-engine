@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.17-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.18-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -44,19 +44,33 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.17
+## New in 0.7.18
 
-- **Reverse setting selection:** right-click cycles backward through game-create,
-  lobby, and streaming choices. Options toggles accept either mouse button;
-  ordinary action buttons remain left-click only.
-- **Remembered game setup:** game-create settings and random-map recipes return
-  after restarting, including the seed. Game passwords are not saved.
-- **Local clock:** a 24-hour clock appears beneath Units in the stats panel;
-  Real Time and Game Time still show elapsed time.
+- **Darien Crusades service:** authenticated allegiance, territory browsing,
+  opponent matching, tactical battles, verified results, history and retained
+  replays. Servers explicitly enable it and supply territory map assignments;
+  original territory-capture and campaign-victory rules remain incomplete.
+- **Crusades balance corrections:** retail-derived damage, wind and water fields
+  and build menus, backed by the documented balance audit.
+- **Naval AI:** coastal shipyard planning and scripted launch checks let Veruna
+  establish fleets without queuing ships at unusable launch positions.
+- **Capture targeting:** Harpies and other converters reject targets they cannot
+  capture and stop attacking targets that become ineligible.
+- **Game flow and rendering:** victory opens results after three seconds,
+  Spectate starts off for each skirmish setup, and supersampled rendering recovers
+  more reliably after window resizing and renderer target resets.
 
-Protocol remains **203**; this release changes the client interface, not simulation
-or network rules. See the [release notes](docs/release-0.7.17-notes.md) and
-[validation report](docs/release-0.7.17-validation.md).
+Protocol is **211**; update clients and servers together. SQLite campaign storage
+is statically linked, with no new shared library to ship. See the
+[release notes](docs/release-0.7.18-notes.md) and
+[validation report](docs/release-0.7.18-validation.md).
+
+### Previously in 0.7.17
+
+- Right-click cycles backward through game-create, lobby and streaming choices.
+- Game-create settings and random-map recipes persist between sessions; passwords
+  and Spectate are not saved.
+- A local 24-hour clock appears beneath Units in the stats panel.
 
 ### Previously in 0.7.16
 
@@ -186,7 +200,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.17** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.18** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
