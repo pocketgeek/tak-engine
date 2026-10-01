@@ -117,3 +117,21 @@ testing, not the server's neighbor graph. Missing server tables/formulas remain
 UNKNOWN, with the search scope and remaining evidence needed recorded in
 [territory parameters and geometry](territory-parameters.md). No server
 implementation is claimed complete by this document.
+
+## Older ladder documentation found on the FTP mirror
+
+The [expanded FTP survey](sources.md#expanded-cavedog-ftp-survey) recovered
+older Kingdoms help from the byte-identical `v1.1BA Patch.EXE` and
+`v1.1BAPatch.exe` installers. Help27 describes Clash of Nations as a four-race
+ladder with separate numerical and iconic ranks. Help35 and Help41–44 give
+numerical promotion requirements involving completed games, wins, win
+percentage and victories against specified opponents; rank labels occur in
+Help30/34/39. The combined and individual promotion tables disagree on some
+requirements. Their individual file hashes are recorded in the survey inventory.
+
+This recovers concrete **Clash of Nations documentation**, not Darien Crusades
+rank-to-victory-point weights, final-service promotion arithmetic or allegiance
+switch penalties. No ladder threshold is applied to the modern campaign on
+this evidence. The Crusades help in the older 20BH package is byte-identical
+to the corresponding later patch help, so it adds no alternate fatigue,
+support, resistance, momentum or war-ending formula.

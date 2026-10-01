@@ -41,3 +41,44 @@ To inspect a user-supplied file offline, Python's standard `zipfile.ZipFile` can
 list members and read `Kingdoms.mmm` without extracting paths or executing
 anything. Original manifest text remains outside Git; committed inventories
 already fingerprint the compressed files.
+
+## Earlier updater manifests from the FTP survey
+
+The [expanded FTP survey](sources.md#expanded-cavedog-ftp-survey) adds thirteen
+decoded MMZ members from earlier TA and Kingdoms packages. Metadata and hashes
+are in [the survey inventory](inventories/cavedog-ftp-survey.json). The earlier
+Kingdoms manifests advertise versions 20, 20BD and 20BH, as well as bootstrap
+packages; `tak30BAupdate.EXE` supplies the already recorded 30BA manifest bytes.
+
+Their historical Kingdoms update locators include:
+
+```text
+ftp://ftp.boneyards.net/boneyards/tak/updates
+ftp://ftp2.boneyards.net:8889/boneyards/tak/updates
+http://update.boneyards.net/boneyards/tak/updates
+http://update2.boneyards.net:8887/boneyards/tak/updates
+```
+
+These are historical declarations, not verified active services. Earlier TA
+manifests use the analogous `/boneyards/ta/updates` path; the games' campaign
+data must remain separate.
+
+`TAKBY20c.exe` already advertises `metagame.byz`, with Darien.def, PreInit.jje
+and the allegiance shield images. The 20BH/30BA manifests advertise more of
+the familiar metagame art and wdhit.jje. No inspected earlier Kingdoms manifest
+adds MetaMask, Borders or HonorMap resource names or a campaign server package.
+The original updater bundle files themselves are not present under their
+advertised names in the inspected 367-file Cavedog mirror directory.
+
+`byserver.byz` and bootstrap `byserver_f.byz` target `Boneyards/server.byd`.
+The extracted 41-byte server.byd is a tab-separated directory entry specifying
+the bypacific host, boneyards.net domain and a beta-region label. It is not
+server source, an executable, a campaign database or a rule script. Likewise,
+the 30BA manifest's `servers` block contains a support URL; its name is not
+evidence of bundled server code.
+
+A preserved copy of the separate Boneyards update tree or its `metagame.byz`
+versions remains a concrete archival lead. Merely finding a modern server at
+one of these domains would not authenticate original campaign rules. Neither
+the locators nor the newly found older definition justify inferring missing
+territory connections or live initial owners.

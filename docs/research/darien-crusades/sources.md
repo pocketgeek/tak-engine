@@ -18,6 +18,8 @@ pass; it was not used as inspected evidence.
 **FTP-MIRROR** — [Preserved ftp.cavedog.com directory](https://ftp.zx.net.nz/pub/archive/ftp.cavedog.com/cavedog/).
 Direct download URLs and observed fingerprints follow. Its displayed 2005 file
 timestamps are mirror metadata, not claimed original release dates.
+The expanded FTP survey below records the older Boneyards packages and its
+explicit inspection limits.
 
 **HASH-CROSSCHECK** — [ModDB Crusades download listing](https://www.moddb.com/games/total-annihilation-kingdoms-the-iron-plague/downloads/ta-kingdoms-v30-patch-darien-crusades).
 Third-party listing added 2016-09-14. Its advertised byte size and MD5 for
@@ -35,6 +37,47 @@ update digest was verified in this pass.
 Observed MD5s: Crusades `71e17a18fc41ae745cabf77e9bcd03c6` (independently
 matched); standard `9e93a1956c52e8086c52b71383576070` (local measurement only).
 No publisher cryptographic signature was authenticated.
+
+## Expanded Cavedog FTP survey
+
+Inspected on **2026-09-30 UTC**. The preserved FTP root links `cavedog/` and
+`humongous/`. The Cavedog directory has **367 file links**, with no child
+directories. Names were reviewed throughout; **36 selected artifacts** were
+downloaded and fingerprinted, including the two patches already investigated.
+This does not claim inspection of every map, unit installer or wallpaper.
+The Humongous root listing contains children's games/demo directories; its
+`patches/` child listing had no file links when retrieved. These observations
+apply to this mirror, not every historical Cavedog FTP snapshot.
+
+The metadata-only [FTP survey inventory](inventories/cavedog-ftp-survey.json)
+records all 367 names/URLs, each selected artifact's size and SHA-256, extracted
+file hashes, archive checks, thirteen decoded Maia manifest fingerprints and
+the older Darien definition comparison. It also records incomplete inspections.
+Original downloads, extracted assets and retrieved listings remain ignored in
+`assets/research/darien-crusades/ftp-survey/`. No installer or game was launched.
+
+| Relevant artifacts | Observed contents and consequence |
+|---|---|
+| `TAKBY20b.exe`, `TAKBY20c.exe`, `BYMaia20.zip` | Client updater DLLs and manifests. Every inspected `bymaia.dll` matches BYMAIA above; its repeated availability does not recover campaign server code. |
+| `TAK1x-20.EXE`, `tak1x-bone.exe`, `tak30BAupdate.EXE` | Older Kingdoms client distributions. Their 33, 36 and 35 help HTML files respectively all have byte-identical counterparts in PATCH-CRUSADES. The latter two include the familiar Crusades help pages. |
+| `tak1x-bone.exe` | A distinct 171,052-byte `Darien.def`, SHA-256 `114254a9fbad1d4f602d268ddfe365ba6459233b9b00b19df350249d0605c45a`. Still 313 parcels and no border edge records. The 42 changed fields comprise 37 display coordinates, four descriptions and one name; native races, terrain and world header match the later definition. `PreInit.jje` and `wdhit.jje` match the later patch bytes. |
+| `tak30BAupdate.EXE` | Decoded `Kingdoms.mmm` matches the existing Standard 30BA manifest hash. Its Darien definition and companion JJE tables match DARIEN-DEF and the existing tables. |
+| `v1.1BA Patch.EXE`, `v1.1BAPatch.exe` | Byte-identical Kingdoms packages: SHA-256 `91f7f577157a6c3bdfeb41b50f8b9e9b0937115ea22c8a0216b005090377118a`. Older help includes Clash of Nations rank names and numerical promotion tables. Those are ladder documentation, not recovered Crusades rank weighting or allegiance rules. The combined Help35 table also differs from individual race tables, so it is not a single unambiguous authoritative rule set. |
+| `TABY20b.exe`, `TABY20c.exe`, `v1x-by.exe`, `v1x-by1.EXE`, `v31-by.exe`, `v31-by1.EXE` | Original Total Annihilation Boneyards client distributions, including `BYPacific_map.gwm`. Their Galactic War material must not be substituted for Darien data. |
+| `BYKMaia20.exe`, `v1x-345by.exe`, `non-intelupdate.exe` | RTPatch executables, inspected statically but not fully applied/decoded. Visible BYK target names include `UPGRADE.DLL` and `BYMAIA.DLL`; the other two identify original Total Annihilation. These remain partial inspections, not proof that every patched byte has been reviewed. |
+| `aramonmap.zip`, `taros_map.zip`, `veruna_map.zip`, `zhonmap.zip` | Each contains one JPG/BMP image and no data file. The inspected Aramon image is an illustrated geographic map, not a territory ID or adjacency table. |
+| `clanfiles.zip` | Original TA clan-profile HTML guidance and its palette; not Darien Houses server logic. |
+| `noack.zip` | A Kingdoms HPI containing five empty faction acknowledgement WAV members; not a campaign/network acknowledgement implementation. |
+| `thanks.exe` | Two Kingdoms holiday maps. |
+
+The remaining selected FAQ/manual, settings, unit-stat spreadsheet, art and SFX
+packages are fingerprinted in the inventory. None of the decoded files/members
+examined in this pass supplied campaign server sources, adjacency edges, live
+initial/reset owners, fatigue/support/toughness formulas or war objectives.
+Three delta patches and eighteen original-TA archive containers were not fully
+decoded; this is a scoped negative result, not proof those materials never
+existed. See [extraction limits](installer-inventory.md) and the
+[updater delivery leads](updater-manifest.md).
 
 Raw downloads and extracted payloads are retained locally under the ignored
 `assets/research/darien-crusades/` directory, in `downloads/`, `standard/`, and

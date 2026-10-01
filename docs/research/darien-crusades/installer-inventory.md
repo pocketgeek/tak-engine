@@ -58,3 +58,36 @@ Its parcel declarations use a different tagged representation. The strict
 [territory parser](territory-format.md) validates its complete observed schema.
 The later [added-asset sweep](asset-parse-sweep.md) supersedes the initial parser
 coverage and explains the existing numeric GUI parser and movie assembly.
+
+## Older FTP packages
+
+The expanded [source survey](sources.md#expanded-cavedog-ftp-survey) covers 36
+selected artifacts. The [metadata inventory](inventories/cavedog-ftp-survey.json)
+separates complete loose payload extraction from archive member decoding:
+
+- Fourteen additional Wise packages extracted with the pinned WiseUnpacker.
+- Eleven ZIPs and two ZIP SFX executables extracted without running them.
+  `update.EXE` and `clash.exe` are complete embedded ZIP containers according
+  to 7-Zip, unlike the partial ZIP found inside the Wise standard patch.
+- Four loose files hashed as downloaded.
+- Two previously inventoried standard/Crusades patches referenced by their
+  existing inventories instead of duplicating those entries.
+- Three RTPatch executables inspected as PE sections/resources only:
+  `BYKMaia20.exe`, `v1x-345by.exe`, and `non-intelupdate.exe`. Their delta output
+  files were not reconstructed. Successful 7-Zip resource extraction does not
+  make them complete patch inventories.
+
+All selected packages have source hashes. The new extraction inventory contains
+3,270 loose/resource/member records, excluding the two previous inventories.
+All Kingdoms HPI/UFO/KMP members encountered in this pass were read and hashed.
+Eighteen original TA v1 HPI/UFO containers were rejected by the existing TAK
+v2 archive reader; each failure is recorded under `archive_checks`, and those
+containers are hashed only as loose files. They comprise the two art/audio HPI
+files in `update.EXE` and four unit UFOs in each of four original TA Boneyards
+packages. No parser success or content review is claimed for these containers.
+
+`complete_loose_payload_inventory` refers to extractor output, not installed
+state, execution coverage or successful decoding of every nested archive.
+The thirteen MMZ members were read with Python `zipfile`; metadata records
+their decoded sizes, hashes, package declarations, locators, bundle names and
+resource paths. Original manifest/help prose stays outside Git.
