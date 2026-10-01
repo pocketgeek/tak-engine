@@ -95,8 +95,8 @@ frameworks. CI checks these dependency boundaries for release packages.
   and CMake commands. As on Windows x64, use the toolchain's static archives
   instead of `build-static-deps.sh`. The Windows workflow runs natively on
   `windows-11-arm`, checks executable architecture and static dependency imports,
-  and produces Release and Debug portable ZIPs. ARM64 ZIPs are uploaded on future
-  release tags; the NSIS installer remains x64 only. The pinned FFmpeg version
+  and produces Release and Debug portable ZIPs. ARM64 ZIPs are published starting with
+  version 0.7.19; the NSIS installer remains x64 only. The pinned FFmpeg version
   excludes NVENC on Windows ARM64; x264 CPU streaming remains available. Qualcomm
   hardware encoding is not implemented.
 - **macOS ARM64 and Intel x64:** install Xcode Command Line Tools, then
@@ -106,7 +106,7 @@ frameworks. CI checks these dependency boundaries for release packages.
   executables link only system libraries/frameworks, and packages signed app
   bundles, DMGs, and Release/Debug ZIPs. CI packages target macOS 14 or later;
   use `MACOSX_DEPLOYMENT_TARGET=14.0` for matching source builds. Intel packages
-  are available as CI artifacts and are uploaded on future release tags.
+  are published starting with version 0.7.19, as well as CI artifacts.
   See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
 - **Linux x64:** CI packages Ubuntu 22.04/24.04/26.04, Debian 12/13,
   Fedora 44, and Arch; use the package matching your distribution.

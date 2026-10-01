@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.18-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.19-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -44,7 +44,25 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.18
+## New in 0.7.19
+
+- **Native Windows ARM64:** Release and Debug portable ZIPs, built and tested on
+  Windows 11 ARM64. The x64 installer remains available. Windows ARM64 streaming
+  supports CPU encoding; NVENC and Qualcomm hardware encoding are unavailable.
+- **Native Intel macOS:** x64 app bundles, DMGs and Release/Debug ZIPs alongside
+  Apple Silicon packages. Both macOS architectures require macOS 14 or later.
+- **Platform reliability:** correct ARM64 media dependency targets and legacy
+  map-path conversion handling with libc++.
+- **Maintenance:** remove 22 unused engine helpers/fields and two obsolete tool
+  blocks, preserving the live simulation, pathfinding and presentation systems.
+
+Protocol remains **211**. Update clients and servers together; the source-build
+compatibility check also rejects mismatched engine revisions. Media and campaign
+storage dependencies remain statically linked. See the
+[release notes](docs/release-0.7.19-notes.md) and
+[validation report](docs/release-0.7.19-validation.md).
+
+### Previously in 0.7.18
 
 - **Darien Crusades service:** authenticated allegiance, territory browsing,
   opponent matching, tactical battles, verified results, history and retained
@@ -200,13 +218,15 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.18** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.19** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
 | --- | --- |
 | Windows x64 | `windows-x64-setup.exe` installer, or the portable ZIP |
-| macOS Apple Silicon | `macos-arm64.dmg`; drag **Total Annihilation - Kingdoms** to Applications |
+| Windows 11 ARM64 | `windows-arm64.zip` portable package |
+| macOS Apple Silicon, macOS 14+ | `macos-arm64.dmg`; drag **Total Annihilation - Kingdoms** to Applications |
+| macOS Intel, macOS 14+ | `macos-x64.dmg`; drag **Total Annihilation - Kingdoms** to Applications |
 | Ubuntu 22.04 / 24.04 / 26.04 | Matching `ubuntu…-amd64.deb` |
 | Debian 12 / 13 | Matching `debian…-amd64.deb` |
 | Fedora 44 | `fedora44-x86_64.rpm` |
