@@ -1,6 +1,6 @@
 # Public server hardening validation — 2026-10-01
 
-Implementation: `61c800a`, `3aaecfe`, `d43b04b`, and `c40473e` on main.
+Implementation: `61c800a`, `3aaecfe`, `d43b04b`, `c40473e`, and `2c00566` on main.
 This is post-0.7.20 development work; no release or live deployment was made.
 
 ## Checks
@@ -30,9 +30,15 @@ This is post-0.7.20 development work; no release or live deployment was made.
 
 The static TLS integration passed both macOS architectures in
 [run 36910306663](https://github.com/pocketgeek/tak-engine/actions/runs/36910306663).
-Windows and subsequent main builds are tracked by the repository’s
-[Actions page](https://github.com/pocketgeek/tak-engine/actions). A passing Linux
-run alone does not establish Windows compatibility.
+Windows x64 passed its complete run, and Windows ARM64 passed Release build,
+TLS/native tests, startup regressions, and system-only DLL import checks in
+[run 36910306773](https://github.com/pocketgeek/tak-engine/actions/runs/36910306773).
+ARM64 Debug packaging and subsequent main runs were still in progress when this
+report was written. Linux packaging passed in
+[run 36910306706](https://github.com/pocketgeek/tak-engine/actions/runs/36910306706).
+These platform runs cover the static TLS integration at `d43b04b`; later command
+admission changes have the local validation above. Current results are on the
+[Actions page](https://github.com/pocketgeek/tak-engine/actions).
 
 ## Remote encrypted multiplayer
 
