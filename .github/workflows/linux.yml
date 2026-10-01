@@ -109,6 +109,7 @@ jobs:
         with:
           path: third_party/ffmpeg-bink
           key: ffmpeg-bink-${{ matrix.tag }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
+          restore-keys: ffmpeg-bink-${{ matrix.tag }}-n7.1.1-stream-v2-
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
       - name: Cache static deps (zlib/libjpeg/SDL2)

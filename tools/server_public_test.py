@@ -36,8 +36,10 @@ def server(binary, data, root, *options):
             try:p.wait(timeout=10)
             except subprocess.TimeoutExpired:p.kill();p.wait()
 
-def login(port, fingerprint, name):
-    p=Peer(port);p.hello(fingerprint);p.login(name,[]);return p
+def login(port, fingerprint, name, context=None):
+    p=Peer(port)
+    if context:p.socket=context.wrap_socket(p.socket,server_hostname="localhost")
+    p.hello(fingerprint);p.login(name,[]);return p
 
 def options(stress=0,benchmark=0):
     return bytes([0,1,0,10,0])+struct.pack('<I',2000)+bytes([0,stress,0,benchmark,0,0])
@@ -54,6 +56,8 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--server',type=Path,required=True);ap.add_argument('--data',type=Path,required=True);ap.add_argument('--tls-tool',type=Path,required=True);a=ap.parse_args()
     with tempfile.TemporaryDirectory(prefix='tak-public-') as tmp:
         root=Path(tmp)
+        subprocess.run([str(a.tls_tool.resolve()),"--fixtures",str(root)],check=True)
+        context=ssl.create_default_context(cafile=str(root/"cert.pem"))
         with server(a.server.resolve(),a.data.resolve(),root,'--max-games','1','--map-memory-mib','1') as (port,h,process):
             with contextlib.closing(login(port,h,'Alice')) as p,contextlib.closing(login(port,h,'Bob')) as q:
                 for stress,bench,mission in [(1,0,''),(0,1,''),(0,0,'mission')]:
@@ -92,8 +96,8 @@ def main():
                 p.receive('AuthChallenge');p.send('AuthRegister',auth.field(bytes(32))+auth.field(bytes(32)))
                 assert p.receive('AuthResult').num('<B') not in (0,1)
                 assert process.poll() is None
-        with server(a.server.resolve(),a.data.resolve(),root) as (port,h,process):
-            with contextlib.closing(login(port,h,'Alice')) as p:
+        with server(a.server.resolve(),a.data.resolve(),root,'--tls-cert',str(root/'cert.pem'),'--tls-key',str(root/'key.pem')) as (port,h,process):
+            with contextlib.closing(login(port,h,'Alice',context)) as p:
                 create(p);rid=room(p)
                 data=bytes(8<<20)
                 p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field(hashlib.sha256(data).hexdigest())+struct.pack('<I',len(data)))
@@ -104,8 +108,6 @@ def main():
                 error=p.receive('MapError');assert error.num('<I')==rid
                 assert b'budget' not in error.field() # fully received; invalid map payload rejected
                 p.send('Ping');p.receive('Pong');assert process.poll() is None
-        subprocess.run([str(a.tls_tool.resolve()),'--fixtures',str(root)],check=True)
-        context=ssl.create_default_context(cafile=str(root/'cert.pem'))
         with server(a.server.resolve(),a.data.resolve(),root,'--tls-cert',str(root/'cert.pem'),'--tls-key',str(root/'key.pem')) as (port,h,process):
             with contextlib.closing(Peer(port)) as p:
                 p.socket=context.wrap_socket(p.socket,server_hostname='localhost')

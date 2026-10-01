@@ -2109,7 +2109,7 @@ void Server::mapMsg(Client& c, const Frame& f) {
             if (!room->running) broadcastLobby(*room);
         } else if (f.kind == Msg::MapError) {
             auto id = rd.u32(); auto why = rd.str();
-            if (rd.ok && id == room->id) {
+            if (rd.ok && rd.p==rd.end && why.size()<=512 && id == room->id) {
                 c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
                 Writer chat; chat.str("SERVER"); chat.str(c.name + ": " + why);
                 broadcastRoom(*room, Msg::Chat, chat);
@@ -3454,10 +3454,11 @@ static int serverMain(int argc, char** argv) {
 }
 
 int main(int argc,char** argv) {
+    try {
 #ifdef _WIN32
-    return tak::utf8Main(serverMain);
+        return tak::utf8Main(serverMain);
 #else
-    try {return serverMain(argc,argv);}
-    catch(const std::exception& e) {std::fprintf(stderr,"takserver: %s\n",e.what());return 1;}
+        return serverMain(argc,argv);
 #endif
+    } catch(const std::exception& e) {std::fprintf(stderr,"takserver: %s\n",e.what());return 1;}
 }

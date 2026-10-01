@@ -36,7 +36,7 @@ openssl_version=3.5.8
 if [ ! -f "$PREFIX/lib/libssl.a" ] || [ "$(cat "$PREFIX/openssl-version" 2>/dev/null || true)" != "$openssl_version" ]; then
   fetch "openssl-$openssl_version" https://github.com/openssl/openssl.git "openssl-$openssl_version"
   (cd "$root/openssl-$openssl_version"
-   tls_args=(--prefix="$PREFIX" --libdir=lib no-shared no-module no-tests)
+   tls_args=(--prefix="$PREFIX" --libdir=lib no-shared no-module no-tests no-apps)
    case "$platform" in
      MINGW*|MSYS*|mingw32)
        if [ "${TARGET_ARCH:-}" = aarch64 ]; then
