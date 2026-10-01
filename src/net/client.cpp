@@ -136,7 +136,7 @@ bool MpClient::campaignAuthenticated() const {
         state_ != State::Offline && state_ != State::Done && state_ != State::Connecting;
 }
 void MpClient::clearCampaignCache() {
-    campaignReplica_.clear(); campaignList_.reset(); campaignPlayer_.reset(); campaignBattles_.clear(); campaignRoomBindings_.clear();
+    campaignReplica_.clear(); campaignList_.reset(); campaignPlayer_.reset(); campaignMatchmaking_.reset(); campaignBattles_.clear(); campaignRoomBindings_.clear();
     campaignError_.reset(); campaignInvitation_.reset(); campaignPending_.clear();
     campaignRequestId_ = 0; campaignRefreshAttempt_.clear();
 }
@@ -165,10 +165,34 @@ uint32_t MpClient::getPlayerCampaignStatus(const std::string& campaign) {
 uint32_t MpClient::getCampaignBattleStatus(const std::string& battle) {
     return sendCampaignRequest(Msg::CrusadesGetBattleStatus, crusades::BattleStatusRequest{0, battle}, battle);
 }
+uint32_t MpClient::getCampaignMatchmaking(const std::string& campaign) {
+    return sendCampaignRequest(Msg::CrusadesGetMatchmaking, crusades::MatchmakingRequest{0, campaign}, campaign);
+}
+uint32_t MpClient::searchCampaignBattle(const std::string& campaign, uint32_t territory) {
+    return sendCampaignRequest(Msg::CrusadesSearchBattle, crusades::MatchSearchRequest{0, campaign, territory}, campaign);
+}
+uint32_t MpClient::cancelCampaignSearch(const std::string& campaign) {
+    return sendCampaignRequest(Msg::CrusadesCancelSearch, crusades::MatchCancelRequest{0, campaign}, campaign);
+}
 void MpClient::subscribeCampaign(const std::string& campaign) {
-    if (campaign.empty()) { campaignSubscription_.clear(); campaignPlayer_.reset(); campaignRefreshAttempt_.clear(); return; }
+    // Outstanding queue reads/operations belong to the subscription that issued
+    // them. Dropping their correlations prevents late replies from restoring a
+    // previous search after switching away and back to the same campaign.
+    const auto discardMatchRequests = [&] {
+        for (auto it = campaignPending_.begin(); it != campaignPending_.end();) {
+            const auto kind = it->second.kind;
+            if (kind == Msg::CrusadesGetMatchmaking || kind == Msg::CrusadesSearchBattle || kind == Msg::CrusadesCancelSearch)
+                it = campaignPending_.erase(it);
+            else ++it;
+        }
+    };
+    if (campaign.empty()) {
+        discardMatchRequests(); campaignSubscription_.clear(); campaignPlayer_.reset();
+        campaignMatchmaking_.reset(); campaignRefreshAttempt_.clear(); return;
+    }
     // Validate before retaining a reconnect subscription, even while offline.
     (void)crusades::encode(crusades::Request{crusades::SnapshotRequest{1, campaign, crusades::kUnknownRevision}});
+    if (campaignSubscription_ != campaign) { discardMatchRequests(); campaignMatchmaking_.reset(); }
     campaignSubscription_ = campaign; campaignRefreshAttempt_.clear(); campaignPlayer_.reset();
     if (campaignAuthenticated()) { getCampaignSnapshot(campaign); getPlayerCampaignStatus(campaign); }
 }
@@ -237,6 +261,7 @@ void MpClient::campaignFrame(const Frame& f) {
         if (f.kind==Msg::CrusadesCampaignSnapshot) {kind=cw::ResponseKind::Snapshot;expected=Msg::CrusadesGetSnapshot;}
         if (f.kind==Msg::CrusadesPlayerStatus) {kind=cw::ResponseKind::PlayerStatus;expected=Msg::CrusadesGetPlayerStatus;}
         if (f.kind==Msg::CrusadesBattleStatus) {kind=cw::ResponseKind::BattleStatus;expected=Msg::CrusadesGetBattleStatus;}
+        if (f.kind==Msg::CrusadesMatchmakingStatus) {kind=cw::ResponseKind::Matchmaking;expected=Msg::CrusadesGetMatchmaking;}
         auto response=cw::decodeResponse(kind,f.payload);
         const auto id=std::visit([](const auto& v){return v.requestId;},response);
         auto pending=campaignPending_.find(id);
@@ -244,7 +269,9 @@ void MpClient::campaignFrame(const Frame& f) {
         if (id) {
             if (pending==campaignPending_.end()) return;
             target=pending->second.target;
-            if (kind!=cw::ResponseKind::Error && pending->second.kind!=expected)
+            const bool matchOperation = kind == cw::ResponseKind::Matchmaking &&
+                (pending->second.kind == Msg::CrusadesSearchBattle || pending->second.kind == Msg::CrusadesCancelSearch);
+            if (kind!=cw::ResponseKind::Error && pending->second.kind!=expected && !matchOperation)
                 throw cw::DecodeError(cw::ErrorCode::Malformed,"campaign response kind does not match request");
         }
         if (auto* value=std::get_if<cw::Snapshot>(&response)) {
@@ -283,7 +310,8 @@ void MpClient::campaignFrame(const Frame& f) {
             if(old!=campaignBattles_.end()) {
                 const auto& before=old->second;
                 const bool identityChanged=before.campaignId!=value->campaignId || before.campaignRevision!=value->campaignRevision ||
-                    before.territory!=value->territory || before.mapIdentifier!=value->mapIdentifier || before.expiresUnix!=value->expiresUnix;
+                    before.territory!=value->territory || before.mapIdentifier!=value->mapIdentifier || before.expiresUnix!=value->expiresUnix ||
+                    (before.roomId && value->roomId && before.roomId!=value->roomId);
                 auto a=before,b=*value;a.requestId=b.requestId=0;
                 if(identityChanged || uint8_t(before.status)>uint8_t(value->status) ||
                     (before.status>=cw::BattlePhase::Cancelled && cw::encode(cw::Response{a})!=cw::encode(cw::Response{b}))) {
@@ -297,6 +325,27 @@ void MpClient::campaignFrame(const Frame& f) {
                 campaignRoomBindings_[value->roomId] = value->battleId;
             }
             campaignBattles_[value->battleId]=std::move(*value);
+        } else if (auto* value=std::get_if<cw::MatchmakingStatus>(&response)) {
+            if (id && value->campaignId != target) throw cw::DecodeError(cw::ErrorCode::Malformed,"matchmaking response target mismatch");
+            if (id) campaignPending_.erase(id);
+            if (value->campaignId != campaignSubscription_) return;
+            const auto* snapshot = campaignReplica_.find(value->campaignId);
+            if ((snapshot && value->campaignRevision < snapshot->revision) ||
+                (campaignMatchmaking_ && (value->campaignRevision < campaignMatchmaking_->campaignRevision ||
+                    value->generation < campaignMatchmaking_->generation))) {
+                campaignError_ = cw::Error{id,cw::ErrorCode::StaleRevision,value->campaignId,value->campaignRevision,"Rejected stale matchmaking status"};
+                return;
+            }
+            // The generation advances for every personal or aggregate change,
+            // including persisted revision changes. Equal generations are immutable.
+            if (campaignMatchmaking_ && value->generation == campaignMatchmaking_->generation) {
+                auto before = *campaignMatchmaking_, after = *value; before.requestId = after.requestId = 0;
+                if (cw::encode(cw::Response{before}) != cw::encode(cw::Response{after})) {
+                    campaignError_ = cw::Error{id,cw::ErrorCode::StaleRevision,value->campaignId,value->campaignRevision,"Rejected conflicting matchmaking status"};
+                    return;
+                }
+            }
+            campaignMatchmaking_ = std::move(*value);
         } else if (auto* value=std::get_if<cw::Error>(&response)) {
             if(id)campaignPending_.erase(id);
             campaignError_=*value;
@@ -509,7 +558,7 @@ void MpClient::onFrame(const Frame& f) {
     Reader r(f.payload.data(), f.payload.size());
     if (f.kind == Msg::CrusadesCampaignList || f.kind == Msg::CrusadesCampaignSnapshot ||
         f.kind == Msg::CrusadesPlayerStatus || f.kind == Msg::CrusadesBattleStatus ||
-        f.kind == Msg::CrusadesError || f.kind == Msg::CrusadesBattleResult ||
+        f.kind == Msg::CrusadesError || f.kind == Msg::CrusadesMatchmakingStatus || f.kind == Msg::CrusadesBattleResult ||
         f.kind == Msg::CrusadesAllegianceResult) { campaignFrame(f); return; }
     switch (f.kind) {
         case Msg::Welcome:

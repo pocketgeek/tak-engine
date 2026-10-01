@@ -14,7 +14,7 @@ import crusades_result_network_test as results
 ABSENT = 2**64 - 1
 
 
-def request(peer, kind, identity, extra=b'', version=2):
+def request(peer, kind, identity, extra=b'', version=3):
     peer.send(kind, struct.pack('<HI', version, identity) + extra)
 
 
@@ -22,7 +22,7 @@ def response(peer, kind, identity):
     # Unsolicited lifecycle updates may precede an explicit query response.
     while True:
         r = peer.receive(kind)
-        assert r.num('<H') == 2
+        assert r.num('<H') == 3
         actual = r.num('<I')
         if actual == identity:
             return r
@@ -150,7 +150,7 @@ def run(binary, data):
                                       (5, auth.field('synthetic') + struct.pack('<Q', ABSENT - 1))]:
                 request(alice, 'CrusadesGetSnapshot', identity, payload)
                 error(alice, identity, 1)
-            request(alice, 'CrusadesGetSnapshot', 6, auth.field('synthetic') + struct.pack('<Q', ABSENT), version=3)
+            request(alice, 'CrusadesGetSnapshot', 6, auth.field('synthetic') + struct.pack('<Q', ABSENT), version=4)
             error(alice, 6, 2)
             request(alice, 'CrusadesGetSnapshot', 7, auth.field('unknown') + struct.pack('<Q', ABSENT))
             error(alice, 7, 5)

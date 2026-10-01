@@ -128,7 +128,7 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_result_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import takclient takserver cartographer cartographer_document_test cartographer_validation_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
+          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import takclient takserver cartographer cartographer_document_test cartographer_validation_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
 
       - name: Crusades model and durable store
         run: |
@@ -136,6 +136,7 @@ jobs:
           ./build/crusades_store_test
           ./build/crusades_allegiance_test
           ./build/crusades_battle_test
+          ./build/crusades_matchmaking_test
           ./build/crusades_result_test
           ./build/crusades_rules_test
           ./build/crusades_rules_store_test

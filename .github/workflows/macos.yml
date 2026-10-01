@@ -57,7 +57,7 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_result_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
       - name: Crusades model and durable store
         run: |
@@ -65,6 +65,7 @@ jobs:
           ./build/crusades_store_test
           ./build/crusades_allegiance_test
           ./build/crusades_battle_test
+          ./build/crusades_matchmaking_test
           ./build/crusades_result_test
           ./build/crusades_rules_test
           ./build/crusades_rules_store_test

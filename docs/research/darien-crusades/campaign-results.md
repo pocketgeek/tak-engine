@@ -101,8 +101,10 @@ M6 migrated versions 1, 2 and 3 transactionally to version 4, preserving definit
 state/history, opaque legacy results, existing allegiances and issued battles.
 Failed migration leaves the previous schema and data intact. M7 subsequently
 adds policy/decision tables in schema version 5. [M8](campaign-network.md) adds
-an indexed participant projection in current schema version 6; versions 1–5
-upgrade atomically and old results are not retroactively scored.
+an indexed participant projection in schema version 6.
+[M10](campaign-matchmaking.md) adds the account-wide reservation index in current
+schema version 7. Earlier versions upgrade atomically and old results are not
+retroactively scored.
 
 ## Validation
 

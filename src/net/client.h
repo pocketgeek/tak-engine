@@ -96,6 +96,10 @@ public:
     uint32_t getCampaignSnapshot(const std::string& campaign, uint64_t expected = crusades::kUnknownRevision);
     uint32_t getPlayerCampaignStatus(const std::string& campaign);
     uint32_t getCampaignBattleStatus(const std::string& battle);
+    uint32_t getCampaignMatchmaking(const std::string& campaign);
+    uint32_t searchCampaignBattle(const std::string& campaign, uint32_t territory);
+    uint32_t cancelCampaignSearch(const std::string& campaign);
+    const std::optional<crusades::MatchmakingStatus>& campaignMatchmaking() const { return campaignMatchmaking_; }
     void subscribeCampaign(const std::string& campaign);
     bool campaignRoom() const { return campaignRoomBindings_.count(room_.id) != 0; }
     const std::string& subscribedCampaign() const { return campaignSubscription_; }
@@ -229,6 +233,7 @@ private:
     crusades::Replica campaignReplica_;
     std::optional<crusades::CampaignList> campaignList_;
     std::optional<crusades::PlayerStatus> campaignPlayer_;
+    std::optional<crusades::MatchmakingStatus> campaignMatchmaking_;
     std::map<std::string, crusades::BattleStatus> campaignBattles_;
     std::map<uint32_t, std::string> campaignRoomBindings_;
     std::optional<crusades::Error> campaignError_;

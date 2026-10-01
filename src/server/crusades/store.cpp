@@ -10,7 +10,7 @@
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 6;
+constexpr int kSchemaVersion = 7;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -77,6 +77,12 @@ const std::vector<std::string>& readIndexSchemaStatements() {
         "CREATE INDEX battle_participants_account ON battle_participants(campaign_id,account_id,created_unix DESC,battle_id DESC)",
         "CREATE TRIGGER battle_participants_no_update BEFORE UPDATE ON battle_participants BEGIN SELECT RAISE(ABORT,'immutable battle participant'); END",
         "CREATE TRIGGER battle_participants_no_delete BEFORE DELETE ON battle_participants BEGIN SELECT RAISE(ABORT,'immutable battle participant'); END",
+    };
+    return statements;
+}
+const std::vector<std::string>& participationSchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE INDEX battle_participants_global_account ON battle_participants(account_id,battle_id)",
     };
     return statements;
 }
@@ -302,6 +308,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             if (version >= 4) expected.insert(expected.end(), resultSchemaStatements().begin(), resultSchemaStatements().end());
             if (version >= 5) expected.insert(expected.end(), rulesSchemaStatements().begin(), rulesSchemaStatements().end());
             if (version >= 6) expected.insert(expected.end(), readIndexSchemaStatements().begin(), readIndexSchemaStatements().end());
+            if (version >= 7) expected.insert(expected.end(), participationSchemaStatements().begin(), participationSchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
@@ -355,6 +362,10 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             }
         }
         exec(db,"PRAGMA user_version=6");
+    }
+    if (version < 7) {
+        for (const auto& sql : participationSchemaStatements()) exec(db,sql.c_str());
+        exec(db,"PRAGMA user_version=7");
         if (version != 0 && impl_->options.beforeCommit) impl_->options.beforeCommit();
     }
     Statement policies(db, "SELECT policy_id FROM campaign_rules");
@@ -652,6 +663,8 @@ IssuedBattle CampaignStore::issueBattle(const std::string& campaignId, int64_t e
     result.campaignId = campaignId; result.campaignRevision = campaign.revision; result.territory = territory;
     result.context = std::move(context); result.createdUnix = result.changedUnix = now; result.expiresUnix = expires; result.status = BattleStatus::Issued;
     for (const auto& account : result.context.participants) {
+        if (activeBattleForAccount(account,now))
+            throw std::runtime_error("battle participant already has an active battle");
         const auto allegiance = readAllegiance(impl_->db, campaignId, account);
         if (!allegiance) throw std::runtime_error("unenrolled battle participant");
         result.participantAlliances.push_back(allegiance->alliance); result.participantRevisions.push_back(allegiance->revision);
@@ -668,6 +681,25 @@ IssuedBattle CampaignStore::issueBattle(const std::string& campaignId, int64_t e
     policy.text(1, result.id); policy.text(2, result.policyId); policy.done();
     Statement event(impl_->db, "INSERT INTO battle_status_events VALUES(?,0,0,?)"); event.text(1, result.id); event.integer(2, now); event.done();
     impl_->finish(transaction); return result;
+}
+
+std::optional<IssuedBattle> CampaignStore::activeBattleForAccount(const std::string& accountId,
+                                                                int64_t now) const {
+    validateAccountId(accountId);
+    if (now < 0) throw std::runtime_error("invalid active battle query time");
+    // The account index bounds this to the account's own history. Read the
+    // current immutable event through issued_battles.revision, not any old
+    // Started event. issueBattle invokes this under BEGIN IMMEDIATE so another
+    // writer cannot reserve either account between the check and insertion.
+    Statement query(impl_->db,
+        "SELECT b.id FROM battle_participants p "
+        "JOIN issued_battles b ON b.id=p.battle_id "
+        "JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision "
+        "WHERE p.account_id=? AND (e.status=1 OR (e.status=0 AND b.expires_unix>?)) "
+        "ORDER BY b.created_unix,b.id LIMIT 1");
+    query.text(1,accountId); query.integer(2,now);
+    if (!query.row()) return std::nullopt;
+    return battle(query.bytes(0));
 }
 
 IssuedBattle CampaignStore::battle(const std::string& id) const {
@@ -695,6 +727,18 @@ void CampaignStore::startBattle(const std::string& id, const std::string& launch
     if (current.status != BattleStatus::Issued || current.launchToken != launchToken || now < current.createdUnix || now >= current.expiresUnix)
         throw std::runtime_error("battle cannot be started");
     validateContext(current, std::move(context)); validateBattleFresh(impl_->db, *this, current);
+    // Older stores allowed overlapping offers, and the wall clock can move
+    // backwards after another offer was issued. Reserve the active slot again
+    // under this write transaction; excluding self avoids masking a conflict.
+    for (const auto& account : current.context.participants) {
+        Statement active(impl_->db,
+            "SELECT b.id FROM battle_participants p "
+            "JOIN issued_battles b ON b.id=p.battle_id "
+            "JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision "
+            "WHERE p.account_id=? AND b.id<>? AND (e.status=1 OR (e.status=0 AND b.expires_unix>?)) LIMIT 1");
+        active.text(1, account); active.text(2, id); active.integer(3, now);
+        if (active.row()) throw std::runtime_error("battle participant already has another active battle");
+    }
     Statement room(impl_->db, "INSERT INTO battle_rooms(room_token,battle_id) VALUES(?,?)"); room.text(1, roomToken); room.text(2, id); room.done();
     transitionBattle(impl_->db, id, BattleStatus::Started, now); impl_->finish(transaction);
 }

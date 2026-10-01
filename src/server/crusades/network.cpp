@@ -10,6 +10,7 @@ ReadResponse pack(const wire::Response& response) {
     case wire::ResponseKind::Snapshot:msg=net::Msg::CrusadesCampaignSnapshot;break;
     case wire::ResponseKind::PlayerStatus:msg=net::Msg::CrusadesPlayerStatus;break;
     case wire::ResponseKind::BattleStatus:msg=net::Msg::CrusadesBattleStatus;break;
+    case wire::ResponseKind::Matchmaking:msg=net::Msg::CrusadesMatchmakingStatus;break;
     case wire::ResponseKind::Error:break;
     }
     net::Writer payload;payload.b=wire::encode(response);return {msg,std::move(payload)};
@@ -81,6 +82,7 @@ ReadResponse campaignReadResponse(CampaignStore* store,const std::string& accoun
                 out.battles.push_back({battle.id,battle.territory,static_cast<wire::BattlePhase>(battle.status)});
             return pack(out);
         }
+        if(!std::holds_alternative<wire::BattleStatusRequest>(request))return campaignReadError(id,wire::ErrorCode::Malformed);
         const auto& r=std::get<wire::BattleStatusRequest>(request);
         // Unknown IDs and unauthorized IDs deliberately share the same reply.
         IssuedBattle battle;

@@ -827,6 +827,13 @@ The client must not calculate authoritative territory ownership locally.
 
 # Milestone 10 — Crusades matchmaking and active battles
 
+Completed 2026-09-30. See
+[modern matchmaking, authority boundaries and acceptance evidence](research/darien-crusades/campaign-matchmaking.md).
+Real-server pairing, cancellation, referee/result/replay linkage and actual
+authenticated SDL Find/Cancel/invitation workflows pass. FIFO territory searches
+are an explicitly modern policy; historical pressure, rank and capture formulas
+remain unknown and are not invented by this milestone.
+
 ## Objective
 
 Provide the server-side workflow that turns campaign pressure into playable

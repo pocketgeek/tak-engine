@@ -24,6 +24,71 @@ namespace {
 uint32_t request(net::Frame frame,net::Msg expected,cw::RequestKind kind){check(frame.kind==expected,"wrong campaign request kind");auto value=cw::decodeRequest(kind,frame.payload);return std::visit([](const auto& v){return v.requestId;},value);}
 void reply(Peer& peer,net::MpClient& client,net::Msg kind,cw::Response value){net::Writer bytes;bytes.b=cw::encode(value);peer.send(kind,bytes,client);}
 cw::Snapshot snapshot(uint32_t id,uint64_t revision){cw::Snapshot value;value.requestId=id;value.campaignId="test";value.displayName="Test";value.revision=revision;value.rulesPolicy="historical-darien-v1";cw::Territory t;t.id=1;t.displayName="One";t.owner=cw::Owner::Contested;t.recon.fatigueVictoryPoints=2.5;value.territories={t};return value;}
+void matchmaking(){
+ net::MpClient client;Peer peer;peer.login(client);
+ request(peer.receive(client),net::Msg::CrusadesListCampaigns,cw::RequestKind::List);
+ client.subscribeCampaign("test");
+ const auto full=request(peer.receive(client),net::Msg::CrusadesGetSnapshot,cw::RequestKind::Snapshot);
+ request(peer.receive(client),net::Msg::CrusadesGetPlayerStatus,cw::RequestKind::PlayerStatus);
+ reply(peer,client,net::Msg::CrusadesCampaignSnapshot,snapshot(full,2));
+ const auto read=client.getCampaignMatchmaking("test");
+ check(read==request(peer.receive(client),net::Msg::CrusadesGetMatchmaking,cw::RequestKind::Matchmaking),"matchmaking request not correlated");
+ cw::MatchmakingStatus board;board.requestId=read;board.campaignId="test";board.campaignRevision=2;board.generation=1;board.canSearch=true;
+ board.territories={{1,true,1,0,0,0}};
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,board);
+ check(client.campaignMatchmaking()&&client.campaignMatchmaking()->generation==1,"matchmaking board not cached");
+ const auto search=client.searchCampaignBattle("test",1);auto frame=peer.receive(client);
+ check(search==request(frame,net::Msg::CrusadesSearchBattle,cw::RequestKind::MatchSearch)&&std::get<cw::MatchSearchRequest>(cw::decodeRequest(cw::RequestKind::MatchSearch,frame.payload)).territory==1,"match search identity/correlation");
+ board.requestId=search;board.generation=2;board.searchingTerritory=1;board.searchExpiresUnix=123;
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,board);
+ check(client.campaignMatchmaking()->searchingTerritory==1,"search operation response not accepted");
+ auto invalid=board;invalid.requestId=0;invalid.generation=1;invalid.searchingTerritory.reset();invalid.searchExpiresUnix.reset();
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,invalid);
+ check(client.campaignMatchmaking()->generation==2&&client.campaignMatchmaking()->searchingTerritory==1,"old queue generation rolled status back");
+ invalid=board;invalid.requestId=0;invalid.territories[0].waitingHonor=9;
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,invalid);
+ check(client.campaignMatchmaking()->territories[0].waitingHonor==1,"equal generation conflicting queue overwritten");
+ invalid=board;invalid.requestId=0;invalid.campaignRevision=3;
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,invalid);
+ check(client.campaignMatchmaking()->campaignRevision==2&&client.campaignError()->code==cw::ErrorCode::StaleRevision,"equal generation with changed persisted revision accepted");
+ invalid=board;invalid.requestId=0;invalid.generation=3;invalid.campaignRevision=1;
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,invalid);
+ check(client.campaignMatchmaking()->generation==2,"lower persisted revision with higher queue generation accepted");
+ invalid=board;invalid.requestId=0;invalid.generation=3;invalid.campaignId="other";
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,invalid);
+ check(client.campaignMatchmaking()->campaignId=="test","unsubscribed matchmaking update published");
+ net::Writer malformed;malformed.b=cw::encode(cw::Response{board});malformed.b.pop_back();peer.send(net::Msg::CrusadesMatchmakingStatus,malformed,client);
+ check(client.campaignMatchmaking()->generation==2&&client.campaignError()->code==cw::ErrorCode::Malformed,"partial malformed matchmaking state published");
+ const auto wrong=client.getCampaignMatchmaking("test");request(peer.receive(client),net::Msg::CrusadesGetMatchmaking,cw::RequestKind::Matchmaking);
+ reply(peer,client,net::Msg::CrusadesCampaignSnapshot,snapshot(wrong,3));
+ check(client.campaignReplica().find("test")->revision==2,"wrong matchmaking response family mutated snapshot");
+ const auto wrongTarget=client.getCampaignMatchmaking("test");request(peer.receive(client),net::Msg::CrusadesGetMatchmaking,cw::RequestKind::Matchmaking);
+ invalid=board;invalid.requestId=wrongTarget;invalid.generation=3;invalid.campaignId="other";
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,invalid);
+ check(client.campaignMatchmaking()->generation==2&&client.campaignError()->code==cw::ErrorCode::Malformed,"mismatched queue target accepted");
+ const auto cancel=client.cancelCampaignSearch("test");
+ check(cancel==request(peer.receive(client),net::Msg::CrusadesCancelSearch,cw::RequestKind::MatchCancel),"cancel request not correlated");
+ board.requestId=cancel;board.generation=3;board.searchingTerritory.reset();board.searchExpiresUnix.reset();
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,board);
+ check(!client.campaignMatchmaking()->searchingTerritory,"cancel operation response not accepted");
+ board.requestId=0;board.generation=4;board.canSearch=false;board.territories[0].eligible=false;
+ reply(peer,client,net::Msg::CrusadesMatchmakingStatus,board);
+ check(!client.campaignMatchmaking()->canSearch,"unsolicited authoritative queue update ignored");
+ const auto late=client.getCampaignMatchmaking("test");request(peer.receive(client),net::Msg::CrusadesGetMatchmaking,cw::RequestKind::Matchmaking);
+ client.subscribeCampaign("other");
+ request(peer.receive(client),net::Msg::CrusadesGetSnapshot,cw::RequestKind::Snapshot);request(peer.receive(client),net::Msg::CrusadesGetPlayerStatus,cw::RequestKind::PlayerStatus);
+ check(!client.campaignMatchmaking(),"subscription change retained old queue");
+ board.requestId=late;board.generation=5;reply(peer,client,net::Msg::CrusadesMatchmakingStatus,board);
+ check(!client.campaignMatchmaking(),"late old subscription reply restored queue");
+ client.subscribeCampaign("test");
+ request(peer.receive(client),net::Msg::CrusadesGetSnapshot,cw::RequestKind::Snapshot);request(peer.receive(client),net::Msg::CrusadesGetPlayerStatus,cw::RequestKind::PlayerStatus);
+ board.requestId=late;board.generation=5;reply(peer,client,net::Msg::CrusadesMatchmakingStatus,board);
+ check(!client.campaignMatchmaking(),"late reply restored old queue after switching away and back");
+ board.requestId=0;board.generation=0;reply(peer,client,net::Msg::CrusadesMatchmakingStatus,board);
+ check(client.campaignMatchmaking()&&client.campaignMatchmaking()->generation==0,"subscription reset retained stale queue generation");
+ client.subscribeCampaign("");check(!client.campaignMatchmaking(),"empty subscription retained queue");
+ client.disconnect();check(client.getCampaignMatchmaking("test")==0&&client.searchCampaignBattle("test",1)==0&&client.cancelCampaignSearch("test")==0&&!client.campaignMatchmaking(),"offline queue operation/cache retained");
+}
 void run(){
  net::MpClient client;client.subscribeCampaign("test");check(client.getCampaignSnapshot("test")==0,"offline request sent");Peer peer;peer.login(client);
  const auto list=request(peer.receive(client),net::Msg::CrusadesListCampaigns,cw::RequestKind::List);
@@ -54,7 +119,10 @@ void run(){
  net::Writer invitation;invitation.u8(0);invitation.str("test");invitation.str("issued:test");invitation.u32(7);invitation.str(std::string(300,'m'));invitation.u64(999);invitation.str("");peer.send(net::Msg::CrusadesBattleResult,invitation,client);
  const auto battleId=request(peer.receive(client),net::Msg::CrusadesGetBattleStatus,cw::RequestKind::BattleStatus);check(client.campaignInvitation()&&client.campaignInvitation()->roomId==7,"legacy invitation not exposed");
  cw::BattleStatus battle;battle.requestId=battleId;battle.campaignId="test";battle.battleId="issued:test";battle.campaignRevision=4;battle.territory=1;battle.status=cw::BattlePhase::Issued;battle.mapIdentifier=std::string(300,'m');battle.expiresUnix=999;battle.roomId=7;
- reply(peer,client,net::Msg::CrusadesBattleStatus,battle);battle.requestId=0;battle.status=cw::BattlePhase::Started;reply(peer,client,net::Msg::CrusadesBattleStatus,battle);check(client.campaignBattles().at("issued:test").status==cw::BattlePhase::Started,"lifecycle notification ignored");
+ reply(peer,client,net::Msg::CrusadesBattleStatus,battle);battle.requestId=0;
+ battle.roomId=8;reply(peer,client,net::Msg::CrusadesBattleStatus,battle);
+ check(client.campaignBattles().at("issued:test").roomId==7,"issued battle rebound to a different room");
+ battle.roomId=7;battle.status=cw::BattlePhase::Started;reply(peer,client,net::Msg::CrusadesBattleStatus,battle);check(client.campaignBattles().at("issued:test").status==cw::BattlePhase::Started,"lifecycle notification ignored");
  battle.status=cw::BattlePhase::Issued;reply(peer,client,net::Msg::CrusadesBattleStatus,battle);check(client.campaignBattles().at("issued:test").status==cw::BattlePhase::Started,"battle status regressed");
  battle.status=cw::BattlePhase::Completed;battle.roomId=0;battle.result=cw::BattleResult{cw::Outcome::Victory,100,123,{"alice"}};reply(peer,client,net::Msg::CrusadesBattleStatus,battle);
  battle.result->finalStateHash=999;reply(peer,client,net::Msg::CrusadesBattleStatus,battle);check(client.campaignBattles().at("issued:test").result->finalStateHash==123,"terminal result rewritten");
@@ -68,4 +136,4 @@ void run(){
  net::MpClient anonymous;Peer open;check(anonymous.connect("127.0.0.1",open.port,"guest"),"anonymous connect");open.acceptClient();check(open.receive(anonymous).kind==net::Msg::Hello,"anonymoushello");net::Writer welcome;welcome.u32(2);welcome.str("guest");open.send(net::Msg::Welcome,welcome,anonymous);check(anonymous.listCampaigns()==0,"anonymous campaign request permitted");reply(open,anonymous,net::Msg::CrusadesCampaignSnapshot,snapshot(0,1));check(!anonymous.campaignReplica().find("test"),"anonymous notification accepted");anonymous.disconnect();
 }
 }
-int main(){try{run();std::cout<<"PASS: "<<checks<<" real MpClient campaign checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
+int main(){try{run();matchmaking();std::cout<<"PASS: "<<checks<<" real MpClient campaign checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

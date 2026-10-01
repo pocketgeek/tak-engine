@@ -31,7 +31,8 @@ c::BattleStatus battleStatus() {
 void roundTrips() {
     const std::vector<c::Request> requests{
         c::ListRequest{1,"",64}, c::ListRequest{UINT32_MAX,"last",1}, c::SnapshotRequest{2,"test",c::kUnknownRevision},
-        c::SnapshotRequest{3,"test",uint64_t(INT64_MAX)}, c::PlayerStatusRequest{4,"test"}, c::BattleStatusRequest{5,"issued:123"}};
+        c::SnapshotRequest{3,"test",uint64_t(INT64_MAX)}, c::PlayerStatusRequest{4,"test"}, c::BattleStatusRequest{5,"issued:123"}, c::MatchmakingRequest{6,"test"},
+        c::MatchSearchRequest{7,"test",1}, c::MatchCancelRequest{8,"test"}};
     for (const auto& request : requests) {
         const auto bytes = c::encode(request);
         check(bytes[0] == c::kVersion && bytes[1] == 0, "explicit little-endian version");
@@ -41,7 +42,11 @@ void roundTrips() {
     c::PlayerStatus player; player.requestId = 6; player.campaignId = "test"; player.campaignRevision = 12;
     player.allegiance = c::PlayerAllegiance{c::Alliance::Terror,4,100,200}; player.battles = {{"old",1,c::BattlePhase::Cancelled},{"new",2,c::BattlePhase::Started}}; player.battlesTruncated = true;
     c::PlayerStatus absent; absent.campaignId = "test";
-    const std::vector<c::Response> responses{list,snapshot(),player,absent,battleStatus(),c::Error{9,c::ErrorCode::StaleRevision,"test",13,"Refresh required"},c::Error{0,c::ErrorCode::Disabled,"",{},"Disabled"}};
+    c::MatchmakingStatus board; board.requestId=8; board.campaignId="test"; board.campaignRevision=12;
+    board.generation=4; board.canSearch=true; board.searchingTerritory=1; board.searchExpiresUnix=123;
+    board.territories={{1,true,1,2,3,4},{2,false,0,0,0,0}};
+    c::MatchmakingStatus empty; empty.campaignId="test";
+    const std::vector<c::Response> responses{board,empty,list,snapshot(),player,absent,battleStatus(),c::Error{9,c::ErrorCode::StaleRevision,"test",13,"Refresh required"},c::Error{0,c::ErrorCode::Disabled,"",{},"Disabled"}};
     for (const auto& response : responses) {
         const auto bytes = c::encode(response);
         check(c::encode(c::decodeResponse(c::kindOf(response), bytes)) == bytes, "response roundtrip");
@@ -71,11 +76,11 @@ void malformed() {
     rejects([]{ (void)c::encode(c::Request{c::ListRequest{1,"",0}}); }, "zero page size");
     rejects([]{ (void)c::encode(c::Request{c::ListRequest{1,"",65}}); }, "oversized page size");
     rejects([]{ (void)c::encode(c::Request{c::SnapshotRequest{1,"x",uint64_t(INT64_MAX)+1}}); }, "invalid expected revision");
-    rejects([]{ (void)c::decodeRequest(static_cast<c::RequestKind>(99),{1,0,1,0,0,0}); }, "invalid request kind");
-    rejects([]{ (void)c::decodeResponse(static_cast<c::ResponseKind>(99),{1,0,1,0,0,0}); }, "invalid response kind");
+    rejects([]{ (void)c::decodeRequest(static_cast<c::RequestKind>(99),{uint8_t(c::kVersion),0,1,0,0,0}); }, "invalid request kind");
+    rejects([]{ (void)c::decodeResponse(static_cast<c::ResponseKind>(99),{uint8_t(c::kVersion),0,1,0,0,0}); }, "invalid response kind");
     for (const auto& invalid : std::vector<std::string>{std::string("a\0b",3),"a\nb","\xc0\xaf","\xed\xa0\x80","\xf4\x90\x80\x80","\xe2\x82","\xc2\x85"}) {
         rejects([&]{ (void)c::encode(c::Request{c::PlayerStatusRequest{1,invalid}}); }, "invalid UTF-8/control identifier");
-        c::Bytes payload{1,0,1,0,0,0,uint8_t(invalid.size()),0}; payload.insert(payload.end(),invalid.begin(),invalid.end());
+        c::Bytes payload{uint8_t(c::kVersion),0,1,0,0,0,uint8_t(invalid.size()),0}; payload.insert(payload.end(),invalid.begin(),invalid.end());
         rejects([&]{ (void)c::decodeRequest(c::RequestKind::PlayerStatus,payload); }, "malformed wire UTF-8/control string");
     }
     c::PlayerStatus p; p.campaignId = "a";
@@ -108,6 +113,67 @@ void malformed() {
     rejects([&]{ (void)c::encode(c::Response{list}); }, "unordered campaign page");
     list.entries.pop_back(); list.nextCursor = "c";
     rejects([&]{ (void)c::encode(c::Response{list}); }, "mismatched page cursor");
+}
+void matchmakingValidation() {
+    c::MatchmakingStatus board; board.campaignId="a"; board.canSearch=true;
+    board.territories={{1,true,0,0,0,0},{2,false,0,0,0,0}};
+    auto bytes=c::encode(c::Response{board});
+    // Prefix6, identifier3, revision8, generation8 => boolean at25.
+    bytes[25]=2; rejects([&]{(void)c::decodeResponse(c::ResponseKind::Matchmaking,bytes);},"invalid matchmaking boolean");
+    bytes=c::encode(c::Response{board});bytes[26]=2;
+    rejects([&]{(void)c::decodeResponse(c::ResponseKind::Matchmaking,bytes);},"invalid search optional flag");
+    bytes=c::encode(c::Response{board});bytes[33]=2;
+    rejects([&]{(void)c::decodeResponse(c::ResponseKind::Matchmaking,bytes);},"invalid territory eligibility boolean");
+    bytes=c::encode(c::Response{board});bytes[27]=1;bytes[28]=4;
+    rejects([&]{(void)c::decodeResponse(c::ResponseKind::Matchmaking,bytes);},"oversized received matchmaking count");
+    auto invalid=board; invalid.territories[1].id=1;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"duplicate matchmaking territory");
+    invalid=board; std::reverse(invalid.territories.begin(),invalid.territories.end());
+    rejects([&]{(void)c::encode(c::Response{invalid});},"unordered matchmaking territory");
+    invalid=board; invalid.territories[0].id=0;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"zero matchmaking territory");
+    invalid=board; invalid.searchingTerritory=1;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"missing own search expiry");
+    invalid=board; invalid.searchExpiresUnix=10;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"missing own search identity");
+    for (const uint32_t id:{0u,3u}) {
+        invalid=board;invalid.searchingTerritory=id;invalid.searchExpiresUnix=10;
+        rejects([&]{(void)c::encode(c::Response{invalid});},"invalid own search territory");
+    }
+    invalid=board;invalid.searchingTerritory=1;invalid.searchExpiresUnix=0;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"zero own search expiry");
+    invalid=board;invalid.searchingTerritory=1;invalid.searchExpiresUnix=10;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"own search without waiting count");
+    invalid.territories[0].waitingHonor=1;invalid.territories[0].eligible=false;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"own search on ineligible territory");
+    invalid.territories[0].eligible=true;invalid.canSearch=false;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"own search while unavailable");
+    invalid.canSearch=true;
+    bytes=c::encode(c::Response{invalid});bytes[25]=0;
+    rejects([&]{(void)c::decodeResponse(c::ResponseKind::Matchmaking,bytes);},"received own search while unavailable");
+    bytes=c::encode(c::Response{invalid});bytes[45]=0;
+    rejects([&]{(void)c::decodeResponse(c::ResponseKind::Matchmaking,bytes);},"received own search on ineligible territory");
+    bytes=c::encode(c::Response{invalid});bytes[46]=0;
+    rejects([&]{(void)c::decodeResponse(c::ResponseKind::Matchmaking,bytes);},"received own search without waiting account");
+    invalid=board;invalid.generation=UINT64_MAX;
+    rejects([&]{(void)c::encode(c::Response{invalid});},"out of range matchmaking generation");
+    for (size_t field=0;field<4;++field) {
+        invalid=board;auto& t=invalid.territories[0];
+        const std::vector<uint32_t*> fields{&t.waitingHonor,&t.waitingTerror,&t.offered,&t.active};*fields[field]=1000001;
+        rejects([&]{(void)c::encode(c::Response{invalid});},"out of range matchmaking count");
+    }
+    invalid=board;invalid.territories.clear();
+    for(uint32_t id=1;id<=c::kMaxTerritories;++id) invalid.territories.push_back({id,true,1000000,1000000,1000000,1000000});
+    check(std::get<c::MatchmakingStatus>(c::decodeResponse(c::ResponseKind::Matchmaking,c::encode(c::Response{invalid}))).territories.size()==c::kMaxTerritories,"maximum matchmaking board");
+    invalid.territories.push_back({uint32_t(c::kMaxTerritories+1),true,0,0,0,0});
+    rejects([&]{(void)c::encode(c::Response{invalid});},"too many matchmaking territories");
+    rejects([]{(void)c::encode(c::Request{c::MatchSearchRequest{1,"test",0}});},"zero match search request territory");
+    for(const c::Request& r:std::vector<c::Request>{c::MatchmakingRequest{1,"test"},c::MatchSearchRequest{2,"test",1},c::MatchCancelRequest{3,"test"}}) {
+        const auto wire=c::encode(r);
+        for(size_t n=0;n<wire.size();++n) rejects([&]{(void)c::decodeRequest(c::kindOf(r),c::Bytes(wire.begin(),wire.begin()+n));},"every truncated match request prefix");
+        auto trailing=wire;trailing.push_back(0);
+        rejects([&]{(void)c::decodeRequest(c::kindOf(r),trailing);},"trailing match request byte");
+    }
 }
 void snapshotValidation() {
     auto wireSource = snapshot(); wireSource.territories.resize(1);
@@ -212,6 +278,6 @@ void replica() {
 }
 } // namespace
 int main() {
-    try { roundTrips(); malformed(); snapshotValidation(); activity(); replica(); std::cout << "PASS: " << checks << " Crusades protocol/replica checks\n"; }
+    try { roundTrips(); malformed(); snapshotValidation(); matchmakingValidation(); activity(); replica(); std::cout << "PASS: " << checks << " Crusades protocol/replica checks\n"; }
     catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

@@ -2,10 +2,12 @@
 #include "server/crusades/store.h"
 #include <sqlite3.h>
 #include <chrono>
+#include <atomic>
 #include <filesystem>
 #include <iostream>
 #include <set>
 #include <stdexcept>
+#include <thread>
 
 namespace c=tak::srv::crusades;
 namespace fs=std::filesystem;
@@ -39,7 +41,8 @@ void issueValidation(const fs::path& path){
     std::set<std::string> ids,tokens;
     for(int n=0;n<12;++n){const auto b=issue(s);check(ids.insert(b.id).second,"globally distinct generated ID");
         check(tokens.insert(b.launchToken).second,"distinct generated launch capability");
-        check(b.status==c::BattleStatus::Issued && b.campaignRevision==0 && b.territory==1,"issued record pins campaign state");}
+        check(b.status==c::BattleStatus::Issued && b.campaignRevision==0 && b.territory==1,"issued record pins campaign state");
+        s.cancelBattle(b.id,100);}
     auto reversed=good;reversed.participants={"bob","alice"};auto canonical=s.issueBattle("synthetic",0,1,reversed,100,200);
     check(canonical.context.participants==good.participants && canonical.participantAlliances==std::vector<c::Alliance>{c::Alliance::Honor,c::Alliance::Terror},"sorted roster preserves account-side associations");
     check(s.load("synthetic").revision==0 && s.history("synthetic").size()==1,"issuance does not apply campaign points or state mutations");
@@ -54,8 +57,11 @@ void binding(const fs::path& path){
     s.startBattle(b.id,b.launchToken,"room-one",good,110);
     check(s.battle(b.id).status==c::BattleStatus::Started && s.battle(b.id).roomToken=="room-one","server room bound once");
     rejects([&]{s.startBattle(b.id,b.launchToken,"room-two",good,111);},"launch capability cannot replay");
-    const auto other=issue(s);
-    rejects([&]{s.startBattle(other.id,other.launchToken,"room-one",good,111);},"room identity cannot bind another battle");
+    s.setAllegiance("synthetic","carol",c::Alliance::Honor,-1,1);
+    s.setAllegiance("synthetic","david",c::Alliance::Terror,-1,1);
+    auto otherContext=good;otherContext.participants={"carol","david"};
+    const auto other=s.issueBattle("synthetic",0,1,otherContext,100,200);
+    rejects([&]{s.startBattle(other.id,other.launchToken,"room-one",otherContext,111);},"room identity cannot bind another battle");
     rejects([&]{s.authorizeBattleReport(b.id,"ordinary-room",good,115);},"ordinary match cannot forge room identity");
     rejects([&]{s.authorizeBattleReport("invented-id","room-one",good,115);},"unissued battle cannot report");
     for(int kind=0;kind<5;++kind){bad=good;switch(kind){case 0:bad.mapIdentifier="maps/other.ota";break;
@@ -87,10 +93,12 @@ void terminalAndStale(const fs::path& path){
     s.setAllegiance("synthetic","alice",c::Alliance::Terror,0,410);
     s.setAllegiance("synthetic","alice",c::Alliance::Honor,1,420);
     rejects([&]{s.startBattle(changed.id,changed.launchToken,"changed-room",good,430);},"switch-away-and-back invalidates pinned allegiance revision");
+    s.cancelBattle(changed.id,430);
     auto changedAfterStart=issue(s,450,490);s.startBattle(changedAfterStart.id,changedAfterStart.launchToken,"changed-started-room",good,451);
     s.setAllegiance("synthetic","bob",c::Alliance::Honor,0,452);
     s.setAllegiance("synthetic","bob",c::Alliance::Terror,1,453);
     rejects([&]{s.authorizeBattleReport(changedAfterStart.id,"changed-started-room",good,454);},"postlaunch allegiance revision change blocks credit");
+    s.cancelBattle(changedAfterStart.id,454);
     auto stale=issue(s,500,600);s.startBattle(stale.id,stale.launchToken,"stale-room",good,510);
     auto current=s.load("synthetic");s.commit("synthetic",current.revision,current.state,"explicit state revision");
     rejects([&]{s.authorizeBattleReport(stale.id,"stale-room",good,520);},"campaign revision change invalidates report authorization");
@@ -125,6 +133,92 @@ void rollbackAndRestart(const fs::path& path){
      auto another=issue(reopened,150,250);
      rejects([&]{reopened.startBattle(another.id,another.launchToken,"restart-room",context(),160);},"terminal battle room token never reassigned");}
 }
+void globalParticipation(const fs::path& path){
+    bool fail=false;
+    c::CampaignStore first(path,c::StoreOptions{[&]{if(fail)throw std::runtime_error("injected participation failure");}});
+    seed(first);
+    auto otherDefinition=c::loadDefinitionText("campaign 1 \"other\" \"Other\"\nterritory 1 \"One\"\nmap 1 \"maps/one.ota\"\n");
+    first.create(otherDefinition,c::makeInitialState(otherDefinition),"other initial");
+    first.setAllegiance("other","alice",c::Alliance::Honor,-1,1);
+    first.setAllegiance("other","bob",c::Alliance::Terror,-1,1);
+    c::CampaignStore second(path);
+    check(!first.activeBattleForAccount("alice",100),"new account has active battle");
+    rejects([&]{first.activeBattleForAccount("Alice",100);},"noncanonical active account query");
+    rejects([&]{first.activeBattleForAccount("alice",-1);},"negative active query time");
+    const auto offered=issue(first);
+    check(second.activeBattleForAccount("alice",199)->id==offered.id&&
+          second.activeBattleForAccount("bob",199)->id==offered.id,"second handle misses active offer for either participant");
+    rejects([&]{issue(second);},"alternate database handle issued duplicate participants");
+    rejects([&]{second.issueBattle("other",0,1,context(),150,250);},"cross-campaign duplicate participation");
+    // The unexpired second participant alone must be sufficient to reject.
+    first.setAllegiance("other","aaron",c::Alliance::Honor,-1,1);
+    auto partial=context();partial.participants={"aaron","bob"};
+    rejects([&]{second.issueBattle("other",0,1,partial,150,250);},"second participant conflict missed");
+    check(!first.activeBattleForAccount("alice",200),"exclusive offer deadline still reserves account");
+    const auto fresh=second.issueBattle("other",0,1,context(),200,300);
+    rejects([&]{first.startBattle(offered.id,offered.launchToken,"rewound",context(),199);},"clock rewind started old offer over new reservation");
+    check(first.battle(offered.id).status==c::BattleStatus::Issued&&!first.battle(offered.id).roomToken,"rejected conflicting start wrote room or lifecycle");
+    second.startBattle(fresh.id,fresh.launchToken,"new-room",context(),201);
+    check(first.activeBattleForAccount("alice",1000)->id==fresh.id,"Started reservation expired with launch deadline");
+    rejects([&]{first.issueBattle("synthetic",0,1,context(),1000,1100);},"Started participant reused after deadline");
+    second.cancelBattle(fresh.id,1001);
+    check(!first.activeBattleForAccount("alice",1001)&&!first.activeBattleForAccount("bob",1001),"terminal cancellation did not release both participants");
+    fail=true;rejects([&]{issue(first,1002,1102);},"failed issuance ignored rollback injection");fail=false;
+    check(!second.activeBattleForAccount("alice",1002),"failed issuance retained global participant reservation");
+    const auto retry=issue(first,1002,1102);
+    fail=true;rejects([&]{first.cancelBattle(retry.id,1003);},"failed cancel injection ignored");fail=false;
+    check(second.activeBattleForAccount("bob",1003)->id==retry.id,"failed cancellation released reservation");
+    rejects([&]{second.issueBattle("other",0,1,context(),1003,1103);},"failed cancellation allowed duplicate issuance");
+    first.expireBattles(1102);
+    check(first.battle(retry.id).status==c::BattleStatus::Expired&&!second.activeBattleForAccount("bob",1102),"terminal expiry retained reservation");
+    second.issueBattle("other",0,1,context(),1102,1202);
+    {Raw raw(path);check(raw.count("SELECT count(*) FROM battle_participants")==8,"failed writes left participant projection fragments");}
+    std::atomic<unsigned> ready=0;
+    std::atomic<bool> go=false;
+    std::optional<c::IssuedBattle> winners[2];
+    std::exception_ptr failures[2];
+    const auto compete=[&](unsigned n,c::CampaignStore& store,const char* campaign){
+        ++ready;while(!go.load())std::this_thread::yield();
+        try{winners[n]=store.issueBattle(campaign,0,1,context(),1300,1400);}
+        catch(...){failures[n]=std::current_exception();}
+    };
+    std::thread one(compete,0,std::ref(first),"synthetic"),two(compete,1,std::ref(second),"other");
+    while(ready.load()!=2)std::this_thread::yield();
+    go=true;one.join();two.join();
+    check(bool(winners[0])!=bool(winners[1]),"concurrent handles did not grant exactly one global reservation");
+    const auto loser=winners[0]?1:0;
+    bool duplicate=false;
+    try{std::rethrow_exception(failures[loser]);}
+    catch(const std::runtime_error& error){duplicate=std::string(error.what()).find("already has an active battle")!=std::string::npos;}
+    check(duplicate,"concurrent loser failed for an unrelated reason");
+    const auto winner=winners[0]?winners[0]->id:winners[1]->id;
+    check(first.activeBattleForAccount("alice",1300)->id==winner&&second.activeBattleForAccount("bob",1300)->id==winner,"concurrent claim did not atomically reserve both participants");
+}
+void participationMigration(const fs::path& path){
+    std::string id;
+    {c::CampaignStore store(path);seed(store);id=issue(store).id;}
+    {
+        Raw raw(path);
+        // Schema 6 permitted overlapping offers. Preserve an independently
+        // constructed old offer to verify migration does not discard history.
+        raw.sql("INSERT INTO issued_battles SELECT 'legacy-overlap',campaign_id,campaign_revision,territory,context,created_unix,expires_unix,'legacy-launch',0 FROM issued_battles");
+        raw.sql("INSERT INTO battle_status_events VALUES('legacy-overlap',0,0,100)");
+        raw.sql("INSERT INTO issued_battle_rules VALUES('legacy-overlap','historical-darien-v1')");
+        raw.sql("INSERT INTO battle_participants SELECT 'legacy-overlap',campaign_id,account_id,created_unix FROM battle_participants");
+        raw.sql("DROP INDEX battle_participants_global_account");raw.sql("PRAGMA user_version=6");
+    }
+    rejects([&]{c::CampaignStore store(path,c::StoreOptions{[]{throw std::runtime_error("schema7 interrupted");}});},"6 to 7 migration ignored failure hook");
+    {Raw raw(path);check(raw.count("PRAGMA user_version")==6&&raw.count("SELECT count(*) FROM sqlite_master WHERE name='battle_participants_global_account'")==0,"failed schema7 migration left partial index or version");}
+    c::CampaignStore migrated(path);
+    check(migrated.battle(id).status==c::BattleStatus::Issued&&migrated.battle("legacy-overlap").status==c::BattleStatus::Issued,"migration changed old overlapping lifecycle");
+    check(migrated.ownBattleIds("synthetic","alice").ids.size()==2,"migration lost old duplicate history");
+    rejects([&]{issue(migrated);},"migrated active participants allowed duplicate offer");
+    rejects([&]{migrated.startBattle(id,migrated.battle(id).launchToken,"legacy-room",context(),110);},"migrated overlapping offer started without resolving conflict");
+    migrated.cancelBattle("legacy-overlap",110);
+    migrated.startBattle(id,migrated.battle(id).launchToken,"legacy-room",context(),111);
+    check(migrated.activeBattleForAccount("alice",500)->id==id,"resolved migrated offer could not retain Started participation");
+    {Raw raw(path);check(raw.count("PRAGMA user_version")==7&&raw.count("SELECT count(*) FROM battle_participants")==4,"schema7 index migration changed history");}
+}
 // Build exact older schemas by retaining their original, unchanged SQL objects.
 // Data is written before removing only the later milestone's unused objects.
 void olderDatabase(const fs::path& path,int version){
@@ -156,7 +250,7 @@ void migration(const fs::path& root){
             check(enrolled && enrolled->alliance==c::Alliance::Terror && enrolled->revision==1 && enrolled->joinedUnix==1 && enrolled->changedUnix==2,"v2 participant and revision preserved");
             check(migrated.allegianceHistory("synthetic","alice").size()==2,"v2 allegiance audit preserved");}
         else check(!migrated.allegiance("synthetic","alice"),"v1 migration invents no allegiance");
-        {Raw raw(path);check(raw.count("PRAGMA user_version")==6,"current schema version6 installed");}
+        {Raw raw(path);check(raw.count("PRAGMA user_version")==7,"current schema version7 installed");}
     }
 }
 } // namespace
@@ -164,7 +258,7 @@ int main(){
     const auto root=fs::temp_directory_path()/("tak-battles-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     struct Cleanup{fs::path p;~Cleanup(){std::error_code e;fs::remove_all(p,e);}}cleanup{root};
     try{fs::create_directories(root);issueValidation(":memory:");issueValidation(root/"issue.sqlite");binding(root/"binding.sqlite");
-        terminalAndStale(root/"terminal.sqlite");rollbackAndRestart(root/"restart.sqlite");migration(root);
+        terminalAndStale(root/"terminal.sqlite");rollbackAndRestart(root/"restart.sqlite");globalParticipation(root/"global.sqlite");participationMigration(root/"participation-migration.sqlite");migration(root);
         std::cout<<"PASS: "<<checks<<" Crusades battle issuance checks\n";return 0;
     }catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}
 }

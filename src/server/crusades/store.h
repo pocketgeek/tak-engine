@@ -170,6 +170,13 @@ public:
     // cancellation/completion. Room tokens are globally single-use in this DB.
     IssuedBattle issueBattle(const std::string& campaignId, int64_t expectedRevision,
         TerritoryId territory, BattleContext context, int64_t now, int64_t expires);
+    // Modern service safety policy, across all campaigns in this database.
+    // Issued battles reserve accounts until their launch deadline; Started
+    // battles remain busy until explicitly cancelled or durably completed.
+    // issueBattle and startBattle enforce this inside their write transactions,
+    // across processes. Old overlapping offers must be cancelled before launch.
+    std::optional<IssuedBattle> activeBattleForAccount(const std::string& accountId,
+                                                     int64_t now) const;
     IssuedBattle battle(const std::string& battleId) const;
     void startBattle(const std::string& battleId, const std::string& launchToken,
         const std::string& roomToken, BattleContext context, int64_t now);

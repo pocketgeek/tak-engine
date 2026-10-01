@@ -343,8 +343,11 @@ Some campaign scripts explicitly control the score instead. See the
 
 Sign in to a multiplayer server, then choose **Darien Crusades** in the game
 browser. Select a campaign and browse its territories, server ownership, battle
-activity and details. Join Honor or Terror, enter an enrolled opponent's account,
-and request a battle on a territory with an assigned map. Eligible invitations
+activity and details. Join Honor or Terror and use **Find opponent** on an
+eligible territory, or enter an enrolled opponent's account to request a battle
+directly. The server pairs opposite-alliance searches in arrival order and shows
+waiting, offered and active battle counts. **Cancel search** removes your waiting
+entry; searches also expire after ten minutes. Eligible invitations
 open the existing battle lobby; its factions and rules are chosen by the server.
 Within the running app, **Sign in again** restores the campaign and territory
 when you reconnect to the same server with the same account.
@@ -360,6 +363,8 @@ definition. The `crusades_import` tool can create an unowned, unmapped definitio
 from your installed `Darien.def`; battle-map assignments require server authoring.
 See the [strategic interface and setup guide](docs/research/darien-crusades/campaign-ui.md)
 and [server battle setup](docs/research/darien-crusades/campaign-battles.md).
+The [matchmaking guide](docs/research/darien-crusades/campaign-matchmaking.md)
+describes the modern policy and its verification.
 
 ## Controls
 

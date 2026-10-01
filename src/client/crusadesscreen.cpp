@@ -39,10 +39,10 @@ struct Clip {SDL_Renderer* r;SDL_Rect old;bool on;Clip(SDL_Renderer* renderer,SD
 struct CrusadesScreen::Impl {
  SDL_Renderer* ren;net::MpClient& mp;Font font;float fontScale=1;SDL_Texture* fallbackFont=nullptr;
  crusadesmap::LoadResult local;SDL_Texture* mapTexture=nullptr;std::string mapCampaign;uint64_t mapRevision=UINT64_MAX;bool retail=false;
- int width=960,height=540,listOffset=0,detailOffset=0,battleOffset=0;uint32_t selected=0,pendingSelected=0,lastCatalogId=UINT32_MAX;
- std::string selectedCampaign,search,opponent,selectedBattle,statusText;enum class Focus{None,Search,Opponent}focus=Focus::None;
+ int width=960,height=540,listOffset=0,detailOffset=0,battleOffset=0;uint32_t selected=0,pendingSelected=0,lastCatalogId=UINT32_MAX,pendingMatchRequest=0;enum class PendingMatch{None,Search,Cancel};PendingMatch pendingMatchAction=PendingMatch::None;
+ std::string selectedCampaign,search,opponent,selectedBattle,statusText,boardQueryKey;enum class Focus{None,Search,Opponent}focus=Focus::None;
  std::set<std::string> queriedBattles;std::vector<uint32_t> filtered;SDL_Rect mapRect{228,112,390,228},imageRect=mapRect;
- enum class Command {Back,Reconnect,Refresh,Campaign,More,Honor,Terror,Issue,Join,Cancel,PrevBattle,NextBattle};
+ enum class Command {Back,Reconnect,Refresh,Campaign,More,Honor,Terror,Issue,Find,CancelSearch,Join,Cancel,PrevBattle,NextBattle};
  struct Button {SDL_Rect rect;std::string label;Command command;bool enabled;};std::vector<Button> buttons;
  Impl(SDL_Renderer* r,const hpi::Vfs& v,net::MpClient& client):ren(r),mp(client),local(crusadesmap::loadPresentation(v)){
   for(const char* path:{"fonts/b_times new roman (100).gaf","fonts/bodfontbody.gaf"})try{font=Font(r,v,path);if(font.ok())break;}catch(...){}
@@ -61,6 +61,8 @@ struct CrusadesScreen::Impl {
  bool connected()const{return mp.state()!=net::MpClient::State::Done&&mp.state()!=net::MpClient::State::Offline;}
  bool authenticated()const{return connected()&&(mp.auth()==net::MpClient::Auth::Ok||mp.auth()==net::MpClient::Auth::Created);}
  const cw::PlayerStatus* player()const {const auto& p=mp.playerCampaignStatus();return p&&p->campaignId==mp.subscribedCampaign()?&*p:nullptr;}
+ const cw::MatchmakingStatus* board()const {const auto& b=mp.campaignMatchmaking();return b&&b->campaignId==mp.subscribedCampaign()?&*b:nullptr;}
+ const cw::MatchTerritory* matchTerritory()const {const auto* b=board();const auto* s=snapshot();if(!b||!s||b->campaignRevision!=s->revision)return nullptr;auto it=std::find_if(b->territories.begin(),b->territories.end(),[&](const auto& t){return t.id==selected;});return it==b->territories.end()?nullptr:&*it;}
  const cw::Territory* territory()const {const auto* s=snapshot();if(!s)return nullptr;auto i=std::find_if(s->territories.begin(),s->territories.end(),[&](const auto& t){return t.id==selected;});return i==s->territories.end()?nullptr:&*i;}
  void rect(SDL_Rect r,SDL_Color c){SDL_SetRenderDrawColor(ren,c.r,c.g,c.b,c.a);SDL_RenderFillRect(ren,&r);}
  int textWidth(const std::string& s)const{return font.ok()?font.width(s,fontScale):int(s.size()*8.4f);}
@@ -70,17 +72,26 @@ struct CrusadesScreen::Impl {
  }
  void button(SDL_Rect r,std::string label,Command command,bool enabled=true){buttons.push_back({r,label,command,enabled});rect(r,enabled?SDL_Color{65,65,57,255}:SDL_Color{37,40,39,255});SDL_SetRenderDrawColor(ren,enabled?155:75,enabled?139:77,enabled?96:69,255);SDL_RenderDrawRect(ren,&r);text(label,r.x+7,r.y+7,r.w-14,enabled?ink:muted);}
  void focusOn(Focus f){focus=f;if(f==Focus::None)SDL_StopTextInput();else SDL_StartTextInput();}
- void refresh(){if(!authenticated())return;mp.listCampaigns();if(!mp.subscribedCampaign().empty()){mp.getCampaignSnapshot(mp.subscribedCampaign());mp.getPlayerCampaignStatus(mp.subscribedCampaign());}queriedBattles.clear();statusText.clear();}
+ void refresh(){if(!authenticated())return;mp.listCampaigns();if(!mp.subscribedCampaign().empty()){mp.getCampaignSnapshot(mp.subscribedCampaign());mp.getPlayerCampaignStatus(mp.subscribedCampaign());mp.getCampaignMatchmaking(mp.subscribedCampaign());}queriedBattles.clear();statusText.clear();}
  void select(uint32_t id){selected=id;pendingSelected=0;detailOffset=0;}
  void update(){
-  const auto* s=snapshot();if(selectedCampaign!=mp.subscribedCampaign()){selectedCampaign=mp.subscribedCampaign();selected=0;listOffset=detailOffset=0;selectedBattle.clear();queriedBattles.clear();}
+  const auto* s=snapshot();if(selectedCampaign!=mp.subscribedCampaign()){selectedCampaign=mp.subscribedCampaign();selected=0;listOffset=detailOffset=0;selectedBattle.clear();queriedBattles.clear();boardQueryKey.clear();pendingMatchRequest=0;pendingMatchAction=PendingMatch::None;statusText.clear();}
+  if(pendingMatchRequest&&board()&&(board()->requestId==pendingMatchRequest||(pendingMatchAction==PendingMatch::Search&&(board()->searchingTerritory||!board()->canSearch))||(pendingMatchAction==PendingMatch::Cancel&&!board()->searchingTerritory))){pendingMatchRequest=0;pendingMatchAction=PendingMatch::None;statusText.clear();}
   filtered.clear();if(s){std::string needle=glyphs(search,false);std::transform(needle.begin(),needle.end(),needle.begin(),[](unsigned char c){return char(std::tolower(c));});for(const auto& t:s->territories){auto name=glyphs(t.displayName,false);std::transform(name.begin(),name.end(),name.begin(),[](unsigned char c){return char(std::tolower(c));});if(needle.empty()||name.find(needle)!=std::string::npos||std::to_string(t.id).find(needle)!=std::string::npos)filtered.push_back(t.id);}if(pendingSelected){auto it=std::find_if(s->territories.begin(),s->territories.end(),[&](const auto& t){return t.id==pendingSelected;});if(it!=s->territories.end())select(pendingSelected);else pendingSelected=0;}if(selected&&!territory())selected=0;}
   listOffset=std::clamp(listOffset,0,std::max(0,int(filtered.size())-13));
   if(s&&(mapCampaign!=s->campaignId||mapRevision!=s->revision)){
    if(mapTexture){SDL_DestroyTexture(mapTexture);mapTexture=nullptr;}mapCampaign=s->campaignId;mapRevision=s->revision;retail=local.presentation&&local.presentation->compatible(*s);
    if(retail)try{auto im=local.presentation->compose(*s);mapTexture=SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,int(im.width),int(im.height));if(!mapTexture||SDL_UpdateTexture(mapTexture,nullptr,im.rgba.data(),int(im.width*4))!=0){if(mapTexture)SDL_DestroyTexture(mapTexture);mapTexture=nullptr;retail=false;}}catch(...){retail=false;}
   }
-  if(authenticated()){if(const auto* p=player())for(const auto& b:p->battles){const auto key=b.id+":"+std::to_string(int(b.status));if(queriedBattles.size()>128)queriedBattles.clear();if(!queriedBattles.count(key)&&mp.getCampaignBattleStatus(b.id))queriedBattles.insert(key);}}
+  if(authenticated()){if(const auto* p=player()){
+   // The server pushes queue changes. Only re-read when authoritative enrollment
+   // or strategic revision changes, rather than polling the board every frame.
+   if(s){const auto key=selectedCampaign+":"+std::to_string(s->revision)+":"+(p->allegiance?std::to_string(p->allegiance->revision):"none");if(key!=boardQueryKey&&mp.getCampaignMatchmaking(selectedCampaign))boardQueryKey=key;}
+   for(const auto& b:p->battles){const auto key=b.id+":"+std::to_string(int(b.status));if(queriedBattles.size()>128)queriedBattles.clear();if(!queriedBattles.count(key)&&mp.getCampaignBattleStatus(b.id))queriedBattles.insert(key);}
+  }}
+  // A matched guest receives an invitation without entering its room. Select
+  // that card by default so joining does not require finding it among history.
+  if(selectedBattle.empty())for(const auto* b:battles())if(b->status==cw::BattlePhase::Issued&&b->roomId){selectedBattle=b->battleId;auto all=battles();auto it=std::find(all.begin(),all.end(),b);battleOffset=std::max(0,int(it-all.begin())-2);break;}
  }
  std::vector<const cw::BattleStatus*> battles()const{std::vector<const cw::BattleStatus*> out;for(const auto& [id,b]:mp.campaignBattles()){(void)id;if(b.campaignId==mp.subscribedCampaign())out.push_back(&b);}return out;}
  void drawMap(const cw::Snapshot& s){
@@ -89,12 +100,13 @@ struct CrusadesScreen::Impl {
   else {imageRect=mapRect;int cols=std::max(1,int(std::ceil(std::sqrt(s.territories.size()*float(mapRect.w)/mapRect.h))));int rows=std::max(1,int((s.territories.size()+cols-1)/cols));for(size_t i=0;i<s.territories.size();++i){const auto& t=s.territories[i];int x=int(i)%cols,y=int(i)/cols;SDL_Rect cell{mapRect.x+x*mapRect.w/cols,mapRect.y+y*mapRect.h/rows,std::max(1,mapRect.w/cols-2),std::max(1,mapRect.h/rows-2)};rect(cell,color(t.owner));if(cell.w>42&&cell.h>20)text(std::to_string(t.id),cell.x+3,cell.y+4,cell.w-6);if(t.id==selected){SDL_SetRenderDrawColor(ren,255,255,255,255);SDL_RenderDrawRect(ren,&cell);}}}
  }
  std::vector<std::string> details(){std::vector<std::string> lines;const auto* t=territory();if(!t){lines.push_back("Select a territory");return lines;}lines={t->displayName,"Territory "+std::to_string(t->id),"Owner: "+owner(t->owner),"Open battles: "+(t->activity?std::to_string(t->activity->offered):"Unknown"),"Active battles: "+(t->activity?std::to_string(t->activity->active):"Unknown"),"Native faction: "+t->nativeFaction.value_or("Unknown"),"Terrain: "+t->terrain.value_or("Unknown"),"Battle map: "+t->assignedMap.value_or(t->mapIdentifier.value_or("Unknown")),"Fatigue: "+metric(t->recon.fatigueVictoryPoints),"Honor required: "+metric(t->recon.honorRequiredVictoryPoints),"Honor support: "+metric(t->recon.honorSupportVictoryPoints),"Honor battle points: "+metric(t->recon.honorBattleVictoryPoints),"Terror required: "+metric(t->recon.terrorRequiredVictoryPoints),"Terror support: "+metric(t->recon.terrorSupportVictoryPoints),"Terror battle points: "+metric(t->recon.terrorBattleVictoryPoints)};
+  const auto* m=matchTerritory();lines.insert(lines.begin()+3,{"Match available: "+std::string(m?(m->eligible?"Yes":"No"):"Unknown"),"Waiting Honor: "+(m?std::to_string(m->waitingHonor):"Unknown"),"Waiting Terror: "+(m?std::to_string(m->waitingTerror):"Unknown")});
   if(!t->neighbors)lines.push_back("Neighbors: Unknown");else{std::string list="Neighbors:";for(auto id:*t->neighbors)list+=" "+std::to_string(id);if(t->neighbors->empty())list+=" None";lines.push_back(list);}
   if(local.presentation){const auto* p=local.presentation->parcel(t->id);if(p&&p->name==t->displayName&&!p->description.empty()){lines.push_back("Local description:");lines.push_back(p->description);}}
   std::vector<std::string> wrapped;for(const auto& line:lines){std::string part;std::istringstream words(line);std::string word;while(words>>word){if(!part.empty()&&textWidth(glyphs(part+" "+word,font.ok()))>300){wrapped.push_back(part);part.clear();}if(part.empty())while(textWidth(glyphs(word,font.ok()))>300){size_t cut=1;while(cut<word.size()&&textWidth(glyphs(word.substr(0,cut+1),font.ok()))<=300)++cut;while(cut>0&&cut<word.size()&&(uint8_t(word[cut])&0xc0)==0x80)--cut;if(!cut)break;wrapped.push_back(word.substr(0,cut));word.erase(0,cut);}if(!part.empty())part+=' ';part+=word;}wrapped.push_back(part);}return wrapped;
  }
  void draw(int w,int h){width=std::max(1,w);height=std::max(1,h);update();buttons.clear();rect({0,0,960,540},{20,27,29,255});
-  text("DARIEN CRUSADES",14,12,630,gold);text("Modern two-player battles - historical capture rules incomplete",14,35,745,muted);
+  text("DARIEN CRUSADES",14,12,630,gold);text("Modern territory FIFO duels - historical capture rules incomplete",14,35,745,muted);
   button({770,10,88,28},"Refresh",Command::Refresh,authenticated());button({866,10,80,28},"Back",Command::Back);
   if(!connected()){text("Disconnected. Sign in again to refresh this campaign.",14,70,900);button({14,108,190,32},"Sign in again",Command::Reconnect);return;}
   if(!authenticated()){text("Sign in to an account to view campaigns.",14,80,880);return;}
@@ -102,7 +114,8 @@ struct CrusadesScreen::Impl {
   button({14,60,360,28},campaignLabel,Command::Campaign,catalog&&!catalog->entries.empty());button({384,60,98,28},catalog&&!catalog->nextCursor.empty()?"More":"First page",Command::More,bool(catalog));
   const auto* ownStatus=player();
   const std::string activeLabel=ownStatus&&ownStatus->battlesTruncated?"Recent active battles: ":"Your active battles: ";
-  text(activeLabel+(ownStatus?std::to_string(std::count_if(ownStatus->battles.begin(),ownStatus->battles.end(),[](const auto& b){return b.status==cw::BattlePhase::Issued||b.status==cw::BattlePhase::Started;})):"Unknown"),502,67,440,muted);
+  const auto* mm=board();
+  text(mm&&mm->searchingTerritory?"Finding opposite alliance at #"+std::to_string(*mm->searchingTerritory):activeLabel+(ownStatus?std::to_string(std::count_if(ownStatus->battles.begin(),ownStatus->battles.end(),[](const auto& b){return b.status==cw::BattlePhase::Issued||b.status==cw::BattlePhase::Started;})):"Unknown"),502,67,440,muted);
   rect({14,96,202,25},focus==Focus::Search?SDL_Color{68,70,58,255}:SDL_Color{40,46,45,255});text(search.empty()?"Search territories":search,20,102,190);
   const auto* s=snapshot();if(s){drawMap(*s);Clip listClip(ren,{14,126,202,270});for(int row=0;row<13&&listOffset+row<int(filtered.size());++row){auto id=filtered[size_t(listOffset+row)];const auto& t=*std::find_if(s->territories.begin(),s->territories.end(),[&](const auto& v){return v.id==id;});if(id==selected)rect({14,126+row*20,202,20},{72,70,54,255});rect({17,132+row*20,7,7},color(t.owner));text(t.displayName,29,130+row*20,182);} }
   else text(mp.subscribedCampaign().empty()?"No campaign selected":"Waiting for campaign snapshot",238,142,370,muted);
@@ -115,6 +128,10 @@ struct CrusadesScreen::Impl {
   button({14,450,95,29},"Honor",Command::Honor,p&&(!side||*side!=cw::Alliance::Honor));button({116,450,95,29},"Terror",Command::Terror,p&&(!side||*side!=cw::Alliance::Terror));
   text("Opponent account",228,428,370,muted);rect({228,450,208,29},focus==Focus::Opponent?SDL_Color{68,70,58,255}:SDL_Color{40,46,45,255});text(opponent,234,457,196);
   const auto* t=territory();button({446,450,172,29},"Request battle",Command::Issue,mp.state()==net::MpClient::State::Lobby&&side&&t&&(t->assignedMap||t->mapIdentifier)&&auth::validUsername(opponent));
+  const auto* mt=matchTerritory();const bool searching=mm&&mm->searchingTerritory.has_value();
+  button({228,485,188,24},searching?"Searching...":"Find opponent",Command::Find,mp.state()==net::MpClient::State::Lobby&&mm&&mm->canSearch&&!searching&&mt&&mt->eligible);
+  button({426,485,192,24},"Cancel search",Command::CancelSearch,mp.state()==net::MpClient::State::Lobby&&searching);
+  text("Opposite alliances only",14,488,200,muted);
   const auto found=mp.campaignBattles().find(selectedBattle);const auto* battle=found==mp.campaignBattles().end()?nullptr:&found->second;
   button({630,430,65,26},"Prev",Command::PrevBattle,!bs.empty());button({702,430,65,26},"Next",Command::NextBattle,!bs.empty());
   button({630,465,150,29},"Join invitation",Command::Join,battle&&battle->status==cw::BattlePhase::Issued&&battle->roomId&&mp.state()==net::MpClient::State::Lobby);
@@ -136,6 +153,8 @@ struct CrusadesScreen::Impl {
    case Command::More:mp.listCampaigns(mp.campaignList()?mp.campaignList()->nextCursor:"");break;
    case Command::Honor:case Command::Terror:if(p)mp.setCampaignAllegiance(mp.subscribedCampaign(),p->allegiance?p->allegiance->revision:UINT64_MAX,b.command==Command::Honor?cw::Alliance::Honor:cw::Alliance::Terror);break;
    case Command::Issue:if(territory()&&(territory()->assignedMap||territory()->mapIdentifier)&&p&&p->allegiance&&auth::validUsername(opponent)&&mp.state()==net::MpClient::State::Lobby)mp.issueCampaignBattle(mp.subscribedCampaign(),selected,opponent);break;
+   case Command::Find:if(board()&&board()->canSearch&&!board()->searchingTerritory&&matchTerritory()&&matchTerritory()->eligible&&mp.state()==net::MpClient::State::Lobby){if((pendingMatchRequest=mp.searchCampaignBattle(mp.subscribedCampaign(),selected))){pendingMatchAction=PendingMatch::Search;statusText="Search requested; waiting for server confirmation.";}}break;
+   case Command::CancelSearch:if(board()&&board()->searchingTerritory&&mp.state()==net::MpClient::State::Lobby){if((pendingMatchRequest=mp.cancelCampaignSearch(mp.subscribedCampaign()))){pendingMatchAction=PendingMatch::Cancel;statusText="Cancellation requested; waiting for server confirmation.";}}break;
    case Command::Join:{auto it=mp.campaignBattles().find(selectedBattle);if(it!=mp.campaignBattles().end()&&it->second.status==cw::BattlePhase::Issued&&it->second.roomId&&mp.state()==net::MpClient::State::Lobby)mp.joinGame(it->second.roomId,"");}break;
    case Command::Cancel:if(mp.state()==net::MpClient::State::InRoom)mp.leaveGame();break;
    case Command::PrevBattle:case Command::NextBattle:{auto all=battles();if(!all.empty()){auto it=std::find_if(all.begin(),all.end(),[&](auto* v){return v->battleId==selectedBattle;});int i=it==all.end()?(b.command==Command::PrevBattle?0:-1):int(it-all.begin());i=(i+(b.command==Command::PrevBattle?-1:1)+int(all.size()))%int(all.size());selectedBattle=all[size_t(i)]->battleId;battleOffset=std::max(0,i-2);}}break;

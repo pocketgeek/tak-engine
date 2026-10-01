@@ -91,8 +91,9 @@ adds battle issuance through migration to version 3.
 [Milestone 6](campaign-results.md) subsequently adds authoritative results in
 schema version 4. [Milestone 7](campaign-territory-rules.md) adds policy and
 decision records in schema version 5. [Milestone 8](campaign-network.md) adds an
-indexed battle-participant projection in current schema version 6; opening
-versions 1–5 upgrades atomically.
+indexed battle-participant projection in schema version 6.
+[Milestone 10](campaign-matchmaking.md) adds the account-wide reservation index
+in current schema version 7; opening earlier versions upgrades atomically.
 
 | Table | Fields |
 |---|---|

@@ -13,7 +13,7 @@
 // credential, retail wire format or original campaign assets are involved.
 namespace tak::net::crusades {
 using Bytes = std::vector<uint8_t>;
-constexpr uint16_t kVersion = 2;
+constexpr uint16_t kVersion = 3;
 constexpr uint64_t kUnknownRevision = UINT64_MAX;
 constexpr size_t kMaxPayload = 240 * 1024;
 constexpr size_t kMaxCampaigns = 64;
@@ -38,7 +38,11 @@ struct ListRequest { uint32_t requestId = 0; std::string afterCampaignId; uint16
 struct SnapshotRequest { uint32_t requestId = 0; std::string campaignId; uint64_t expectedRevision = kUnknownRevision; };
 struct PlayerStatusRequest { uint32_t requestId = 0; std::string campaignId; };
 struct BattleStatusRequest { uint32_t requestId = 0; std::string battleId; };
-using Request = std::variant<ListRequest, SnapshotRequest, PlayerStatusRequest, BattleStatusRequest>;
+struct MatchmakingRequest { uint32_t requestId = 0; std::string campaignId; };
+struct MatchSearchRequest { uint32_t requestId = 0; std::string campaignId; uint32_t territory = 0; };
+struct MatchCancelRequest { uint32_t requestId = 0; std::string campaignId; };
+using Request = std::variant<ListRequest, SnapshotRequest, PlayerStatusRequest, BattleStatusRequest,
+    MatchmakingRequest, MatchSearchRequest, MatchCancelRequest>;
 
 struct CampaignEntry { std::string id, displayName; uint64_t revision = 0; std::string rulesPolicy; };
 struct CampaignList { uint32_t requestId = 0; std::vector<CampaignEntry> entries; std::string nextCursor; };
@@ -98,6 +102,24 @@ struct BattleStatus {
     uint32_t roomId = 0;
     std::optional<BattleResult> result;
 };
+// Modern rendezvous queue: aggregate counts only, never accounts or launch secrets.
+struct MatchTerritory {
+    uint32_t id = 0;
+    bool eligible = false;
+    uint32_t waitingHonor = 0, waitingTerror = 0, offered = 0, active = 0;
+};
+struct MatchmakingStatus {
+    uint32_t requestId = 0;
+    std::string campaignId;
+    // generation advances for any visible personal/aggregate change, including
+    // campaignRevision. Equal generations must have identical payloads except
+    // requestId. Both caches and generations reset across server connections.
+    uint64_t campaignRevision = 0, generation = 0;
+    bool canSearch = false;
+    std::optional<uint32_t> searchingTerritory;
+    std::optional<uint64_t> searchExpiresUnix;
+    std::vector<MatchTerritory> territories;
+};
 struct Error {
     uint32_t requestId = 0;
     ErrorCode code = ErrorCode::Malformed;
@@ -105,10 +127,10 @@ struct Error {
     std::optional<uint64_t> currentRevision;
     std::string reason;
 };
-using Response = std::variant<CampaignList, Snapshot, PlayerStatus, BattleStatus, Error>;
+using Response = std::variant<CampaignList, Snapshot, PlayerStatus, BattleStatus, Error, MatchmakingStatus>;
 
-enum class RequestKind { List, Snapshot, PlayerStatus, BattleStatus };
-enum class ResponseKind { List, Snapshot, PlayerStatus, BattleStatus, Error };
+enum class RequestKind { List, Snapshot, PlayerStatus, BattleStatus, Matchmaking, MatchSearch, MatchCancel };
+enum class ResponseKind { List, Snapshot, PlayerStatus, BattleStatus, Error, Matchmaking };
 RequestKind kindOf(const Request& request);
 ResponseKind kindOf(const Response& response);
 

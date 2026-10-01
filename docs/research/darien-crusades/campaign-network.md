@@ -150,3 +150,9 @@ independent of the stored ownership revision and historical battle-point metrics
 Unknown activity remains distinct from zero. Ordered activity-only snapshots may
 refresh the client at the same campaign revision; conflicting persistent fields
 still fail validation. Full legacy clients must update to the matching protocol.
+
+## M10 matchmaking extension
+
+Network version 210 and campaign payload version 3 add the separate authoritative
+matchmaking board and Find/Cancel requests. Schema version 7 indexes account-wide
+battle reservations. See [the matchmaking contract and live checks](campaign-matchmaking.md).

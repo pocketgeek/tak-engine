@@ -209,6 +209,35 @@ void write(Writer& writer, const BattleStatus& status) {
         for (const auto& winner : r.winners) { account(winner); writer.text(winner, 20); }
     }
 }
+void write(Writer& writer, const MatchmakingStatus& status) {
+    writer.text(status.campaignId, kMaxIdentifier);
+    revision(status.campaignRevision); revision(status.generation);
+    writer.number(status.campaignRevision, 8); writer.number(status.generation, 8);
+    writer.number(status.canSearch ? 1 : 0, 1);
+    require(status.searchingTerritory.has_value() == status.searchExpiresUnix.has_value(), "incomplete own match search");
+    writer.number(status.searchingTerritory ? 1 : 0, 1);
+    if (status.searchingTerritory) {
+        require(status.canSearch, "own match search is not searchable");
+        require(*status.searchingTerritory != 0 && *status.searchExpiresUnix > 0, "invalid own match search identity/time");
+        revision(*status.searchExpiresUnix);
+        writer.number(*status.searchingTerritory, 4); writer.number(*status.searchExpiresUnix, 8);
+    }
+    if (status.territories.size() > kMaxTerritories) fail("too many matchmaking territories", ErrorCode::TooLarge);
+    writer.number(status.territories.size(), 2);
+    uint32_t previous = 0; bool foundSearch = !status.searchingTerritory;
+    for (const auto& t : status.territories) {
+        require(t.id != 0 && t.id > previous, "unordered or duplicate matchmaking territory"); previous = t.id;
+        if (status.searchingTerritory && t.id == *status.searchingTerritory) {
+            require(t.eligible && (t.waitingHonor || t.waitingTerror), "own match search has no eligible waiting territory");
+            foundSearch = true;
+        }
+        require(t.waitingHonor <= 1000000 && t.waitingTerror <= 1000000 && t.offered <= 1000000 && t.active <= 1000000,
+            "invalid matchmaking activity counts");
+        writer.number(t.id, 4); writer.number(t.eligible ? 1 : 0, 1);
+        writer.number(t.waitingHonor, 4); writer.number(t.waitingTerror, 4); writer.number(t.offered, 4); writer.number(t.active, 4);
+    }
+    require(foundSearch, "own search references missing matchmaking territory");
+}
 void write(Writer& writer, const Error& error) {
     require(static_cast<unsigned>(error.code) >= 1 && static_cast<unsigned>(error.code) <= 8, "invalid campaign error code");
     writer.number(static_cast<unsigned>(error.code), 1); writer.text(error.campaignId, kMaxIdentifier, true);
@@ -232,8 +261,13 @@ Bytes encode(const Request& request) {
             writer.text(message.campaignId, kMaxIdentifier);
             if (message.expectedRevision != kUnknownRevision) revision(message.expectedRevision);
             writer.number(message.expectedRevision, 8);
-        } else if constexpr (std::is_same_v<T, PlayerStatusRequest>) writer.text(message.campaignId, kMaxIdentifier);
-        else writer.text(message.battleId, kMaxIdentifier);
+        } else if constexpr (std::is_same_v<T, BattleStatusRequest>) writer.text(message.battleId, kMaxIdentifier);
+        else {
+            writer.text(message.campaignId, kMaxIdentifier);
+            if constexpr (std::is_same_v<T, MatchSearchRequest>) {
+                require(message.territory != 0, "zero match search territory"); writer.number(message.territory, 4);
+            }
+        }
     }, request);
     return std::move(writer.bytes);
 }
@@ -251,6 +285,9 @@ Request decodeRequest(RequestKind kind, const Bytes& payload) {
     case RequestKind::Snapshot: { SnapshotRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); m.expectedRevision = reader.number(8); result = m; break; }
     case RequestKind::PlayerStatus: { PlayerStatusRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); result = m; break; }
     case RequestKind::BattleStatus: { BattleStatusRequest m; m.requestId = id; m.battleId = reader.text(kMaxIdentifier); result = m; break; }
+    case RequestKind::Matchmaking: { MatchmakingRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); result = m; break; }
+    case RequestKind::MatchSearch: { MatchSearchRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); m.territory = uint32_t(reader.number(4)); result = m; break; }
+    case RequestKind::MatchCancel: { MatchCancelRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); result = m; break; }
     default: fail("unknown campaign request kind");
     }
     reader.done(); (void)encode(result); return result;
@@ -303,6 +340,18 @@ Response decodeResponse(ResponseKind kind, const Bytes& payload) {
         Error m; m.requestId = id; m.code = static_cast<ErrorCode>(reader.number(1)); m.campaignId = reader.text(kMaxIdentifier, true);
         if (reader.flag()) m.currentRevision = reader.number(8);
         m.reason = reader.text(kMaxReason); result = std::move(m); break;
+    }
+    case ResponseKind::Matchmaking: {
+        MatchmakingStatus m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier);
+        m.campaignRevision = reader.number(8); m.generation = reader.number(8); m.canSearch = reader.flag();
+        if (reader.flag()) { m.searchingTerritory = uint32_t(reader.number(4)); m.searchExpiresUnix = reader.number(8); }
+        const auto count = reader.count(2, kMaxTerritories);
+        for (size_t i = 0; i < count; ++i) {
+            MatchTerritory t; t.id = uint32_t(reader.number(4)); t.eligible = reader.flag();
+            t.waitingHonor = uint32_t(reader.number(4)); t.waitingTerror = uint32_t(reader.number(4));
+            t.offered = uint32_t(reader.number(4)); t.active = uint32_t(reader.number(4)); m.territories.push_back(t);
+        }
+        result = std::move(m); break;
     }
     default: fail("unknown campaign response kind");
     }

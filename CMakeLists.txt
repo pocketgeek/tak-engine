@@ -982,7 +982,7 @@ target_link_libraries(crusades_rules_test PRIVATE tak-crusades)
 add_test(NAME crusades_rules COMMAND crusades_rules_test)
 
 include(cmake/SQLite.cmake)
-add_library(tak-crusades-store STATIC src/server/crusades/store.cpp)
+add_library(tak-crusades-store STATIC src/server/crusades/store.cpp src/server/crusades/matchmaking.cpp)
 target_link_libraries(tak-crusades-store PUBLIC tak-crusades PRIVATE tak-sqlite tak-crypto)
 add_executable(crusades_store_test tools/crusades_store_test.cpp)
 target_link_libraries(crusades_store_test PRIVATE tak-crusades-store tak-sqlite)
@@ -994,6 +994,9 @@ add_test(NAME crusades_allegiance COMMAND crusades_allegiance_test)
 add_executable(crusades_battle_test tools/crusades_battle_test.cpp)
 target_link_libraries(crusades_battle_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_battle COMMAND crusades_battle_test)
+add_executable(crusades_matchmaking_test tools/crusades_matchmaking_test.cpp)
+target_link_libraries(crusades_matchmaking_test PRIVATE tak-crusades-store)
+add_test(NAME crusades_matchmaking COMMAND crusades_matchmaking_test)
 add_executable(crusades_result_test tools/crusades_result_test.cpp)
 target_link_libraries(crusades_result_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_result COMMAND crusades_result_test)
@@ -1041,11 +1044,19 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_protocol_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(crusades_protocol_network PROPERTIES TIMEOUT 120)
+    add_test(NAME crusades_matchmaking_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/crusades_matchmaking_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(crusades_matchmaking_network PROPERTIES TIMEOUT 180)
     if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_test(NAME crusades_ui_network COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tools/crusades_ui_network_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
       set_tests_properties(crusades_ui_network PROPERTIES TIMEOUT 180)
+      add_test(NAME crusades_matchmaking_ui_network COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/crusades_matchmaking_network_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(crusades_matchmaking_ui_network PROPERTIES TIMEOUT 240)
     endif()
   endif()
 endif()

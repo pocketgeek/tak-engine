@@ -22,7 +22,7 @@ implementation. Source IDs resolve through [sources.md](sources.md).
 | E14 | Allegiance restrictions and battle sizes | CONFIRMED documentation claims; partial binary corroboration | HELP-147 FAQ 13–15, 19–20; entry callback has same-allegiance rejection. Exceptional race combinations and final-service rules unresolved; disconnected/invalid outcomes UNKNOWN |
 | E15 | Exact standard-versus-Crusades gameplay value differences | CONFIRMED source/registry comparison with native corrections | [Balance reference](../../crusades-balance-reference.md): three fingerprinted source scopes, 177 changed field paths classified, complete raw/effective reports and final registry checks. [Validation](milestone-one-validation.md) records all tests and scope limits |
 | E16 | Exactly 182 maps extracted from this Crusades payload | UNKNOWN | WEB-PATCH advertises 182; observed payload has 181 KMP containers, each with one TNT |
-| E17 | A TAK-Engine persistent campaign database and server-issued battle/result objects | MODERN design proposal | Reconstruction plan, not an implemented feature or an original Cavedog implementation claim |
+| E17 | A TAK-Engine persistent campaign database and server-issued battle/result objects | MODERN implementation | Milestones 4–10 implement authenticated store, room/result bindings and [territory matchmaking](campaign-matchmaking.md); no original Cavedog implementation claim |
 | E18 | MMZ contains a Maia package/update manifest | CONFIRMED contents; RECONSTRUCTED role | [Manifest notes](updater-manifest.md); package versions 30BA/30BB, bundle/resource descriptors, companion update API. Not a campaign database |
 | E19 | PreInit is a 313-byte table consumed in ascending territory-ID order, with C/H/T mapped to 0/1/2 | RECONSTRUCTED reader; CONFIRMED bytes | [Binary trace](binary-notes.md). Does not establish live campaign starting owners |
 | E20 | wdhit is a decimal table read near crest setup | CONFIRMED bytes; RECONSTRUCTED reader | 80 integers; exact entry meaning UNKNOWN. No recovered campaign script here |
@@ -63,3 +63,9 @@ complete by this matrix.
 | E45 | Wind callback requires wind or windgenerator | RECONSTRUCTED and native-tested | EXE-3 `0x4bfe91`–`0x4bfed5`, `0x4d453c`; sixteen flag pairs/96 callback cases; corrected engine gate and two-mode roster checks |
 | E46 | Damage overrides use the single DamageCategory and precomputed integer damage | RECONSTRUCTED and native-tested | EXE-3 `0x531813`, `0x531b57`, `0x531de0`, `0x531e50`; CRT 53-bit precision traced/executed; [native review](balance-field-review.md), 14 arithmetic/four lookup cases and synthetic/roster regressions |
 | E47 | Misspelled watermultipliser is ignored, changing Crusades deer to default1.0 | RECONSTRUCTED and source/registry-tested | EXE-3 `0x4bfc62` reads only watermultiplier with 0x10000 default; original lifdeer/lifdeer2 deltas; corrected loader/research inputs |
+
+## Modern service policy
+
+| ID | Behavior | Classification | Evidence |
+|---|---|---|---|
+| E48 | Find opponent pairs opposite-alliance searches for one territory in arrival order, with fixed two-player server rules | MODERN implementation | [M10 policy and live validation](campaign-matchmaking.md); recovered territory/war-console resources do not establish the historical matching algorithm |
