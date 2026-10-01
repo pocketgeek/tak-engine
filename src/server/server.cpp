@@ -13,6 +13,7 @@
 // server is a pure relay and clients cross-check hashes among themselves (M3).
 
 #include "net/mappackage.h"
+#include "server/commands.h"
 #include "net/crusades.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
@@ -2506,16 +2507,15 @@ void Server::gameMsg(Client& c, const Frame& f) {
         }
         case Msg::PlayerCommands: {
             if (!r->running) return;
-            if(!r->campaignBattleId.empty()) {
-                if(r->campaignResult || r->campaignFault)return;
-                Reader verify(f.payload.data(),f.payload.size());const uint32_t count=verify.u32();
-                if(count>f.payload.size()/35) {r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;}
-                for(uint32_t i=0;i<count && verify.ok;++i) {
-                    const auto command=verify.cmd();
-                    if(uint8_t(command.kind)>uint8_t(Cmd::ShareMana) || !std::isfinite(command.x) || !std::isfinite(command.z) ||
-                        !std::isfinite(command.x2) || !std::isfinite(command.z2))verify.ok=false;
-                }
-                if(!verify.ok || verify.p!=verify.end) {r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;}
+            if (c.slot < 0) { c.conn.fail("spectators cannot issue commands"); return; }
+            if (!r->campaignBattleId.empty() && (r->campaignResult || r->campaignFault)) return;
+            // Validate the entire batch before enqueuing any part of it. Ordinary
+            // matches have the same untrusted input boundary as campaigns.
+            if (!tak::srv::validPlayerCommands(f.payload)) {
+                if (!r->campaignBattleId.empty())
+                    r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
+                c.conn.fail("invalid player commands");
+                return;
             }
             Reader rd(f.payload.data(), f.payload.size());
             uint32_t n = rd.u32();

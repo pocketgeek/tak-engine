@@ -76,7 +76,15 @@ work budgets. Expensive creation/start/map-offer requests cost more than small
 queries; map chunks have separate byte budgets. Keepalive has a connection
 budget so one abusive connection cannot disconnect its healthy NAT neighbours.
 Authentication and Crusades queries retain their own throttles. Account-file
-rewrites are also limited globally.
+rewrites are also limited globally. New connections are limited before TLS
+allocation (32 per IP and 128 globally per second). Upload reads apply
+backpressure at 4 MiB/s per connection and 16 MiB/s globally; fast legitimate
+senders are paced rather than disconnected.
+
+All player-command batches are checked before enqueueing: invalid command
+types, truncated/trailing data, non-finite coordinates and coordinates outside
+the simulation’s signed 16.16 range are rejected. Spectators cannot submit
+player commands. Ownership is stamped by the server and checked by the simulation.
 
 Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds
@@ -129,7 +137,8 @@ Linux-specific; it is not installed or claimed to apply on those platforms.
 untrusted/expired certificates, abrupt peer closure and plaintext rejection.
 `server_public_test.py` exercises real-server admission, map reservation,
 registration closure, floods, invalid configuration, TLS login and ordinary
-lobby traffic. Existing authentication, campaign, map-transfer and multiplayer
+lobby traffic. `server_commands_test` checks malformed command batches and
+unsafe coordinates. Existing authentication, campaign, map-transfer and multiplayer
 regressions remain required. Native platform CI runs the TLS test and verifies
 that executable imports contain no new non-system dynamic libraries.
 

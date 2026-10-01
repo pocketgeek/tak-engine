@@ -1,0 +1,23 @@
+#pragma once
+#include "net/protocol.h"
+#include <cmath>
+
+namespace tak::srv {
+inline bool validPlayerCommands(const std::vector<uint8_t>& payload) {
+    tak::net::Reader reader(payload.data(),payload.size());
+    const uint32_t count=reader.u32();
+    if (!reader.ok || count>payload.size()/35) return false;
+    const auto coordinate=[](float v) {
+        // Simulation destinations use signed 16.16. Reject values that cannot
+        // be converted safely, including finite but enormous coordinates.
+        return std::isfinite(v) && v>=-32768.0f && v<32768.0f;
+    };
+    for (uint32_t i=0;i<count && reader.ok;++i) {
+        const auto c=reader.cmd();
+        if (uint8_t(c.kind)>uint8_t(tak::net::Cmd::ShareMana) ||
+            !coordinate(c.x) || !coordinate(c.z) ||
+            !coordinate(c.x2) || !coordinate(c.z2)) return false;
+    }
+    return reader.ok && reader.p==reader.end;
+}
+}
