@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.19-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.20-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -44,7 +44,7 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## Current development changes
+## New in 0.7.20
 
 Naval AI now plans coastal production for Aramon's War Galleys, Veruna and Creon
 shipyards, and Zhon's aquatic creatures in both balance modes. Creon shipyards
@@ -53,11 +53,13 @@ small fleets no longer wait for an oversized land-army wave. Taros uses its
 amphibious units and flyers; it has no buildable skirmish ships.
 See the [naval AI audit](docs/naval-ai-2026-10-01.md).
 
-Development builds use **protocol 212** for the production correction. Update
+Version 0.7.20 uses **protocol 212** for the production correction. Update
 clients and servers together; recordings from protocol 211 and earlier need
-their original compatible engine. The latest released version remains 0.7.19.
+their original compatible engine. No new dependencies are added.
+See the [release notes](docs/release-0.7.20-notes.md) and
+[validation report](docs/release-0.7.20-validation.md).
 
-## New in 0.7.19
+### Previously in 0.7.19
 
 - **Native Windows ARM64:** Release and Debug portable ZIPs, built and tested on
   Windows 11 ARM64. The x64 installer remains available. Windows ARM64 streaming
@@ -231,7 +233,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.19** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.20** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -603,11 +605,10 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.19 uses protocol 211**, including Darien Crusades campaign
-messages and retail damage-category corrections. Update clients and servers
-together; 0.7.17 and earlier cannot join these matches. Incompatible clients
-and recordings are rejected. Current development builds use **protocol 212**
-and cannot share matches or recordings with 0.7.19.
+Version **0.7.20 uses protocol 212**, including the naval production correction
+and Darien Crusades campaign messages. Update clients and servers together;
+0.7.19 and earlier cannot join these matches. Incompatible clients and recordings
+are rejected; older recordings require their original compatible engine.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 
