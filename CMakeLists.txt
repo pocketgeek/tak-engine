@@ -155,7 +155,11 @@ if(WIN32)
   # nothing is shipped alongside -- windows.yml gates on the .exe importing no
   # SDL2/jpeg/zlib/FFmpeg DLL at all. (This comment used to say those three were still
   # shipped as DLLs, which stopped being true when that gate went in.)
-  add_link_options(-static-libgcc -static-libstdc++ -static)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_link_options(-static-libgcc -static-libstdc++)
+  endif()
+  # CLANGARM64 uses LLVM compiler-rt/libc++; -static folds those in too.
+  add_link_options(-static)
 endif()
 
 # Linux: fold the C++ runtime in too. SDL2/jpeg/zlib and the Bink FFmpeg are always

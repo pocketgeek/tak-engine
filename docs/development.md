@@ -89,6 +89,14 @@ frameworks. CI checks these dependency boundaries for release packages.
   `build-static-deps.sh` step is not needed. See
   [windows.yml](../.github/workflows/windows.yml) for the exact package list and
   installer build.
+- **Windows ARM64:** use Windows 11 ARM64 and MSYS2 **CLANGARM64** with its
+  native Clang/LLVM and ARM64 dependency packages. Set `CC=clang`, `CXX=clang++`,
+  `TARGET_OS=mingw32`, and `TARGET_ARCH=aarch64` before running the FFmpeg script
+  and CMake commands. As on Windows x64, use the toolchain's static archives
+  instead of `build-static-deps.sh`. The Windows workflow runs natively on
+  `windows-11-arm`, checks executable architecture and static dependency imports,
+  and produces Release and Debug portable ZIPs. ARM64 ZIPs are uploaded on future
+  release tags; the NSIS installer remains x64 only.
 - **macOS ARM64:** install Xcode Command Line Tools, then
   `brew install cmake ninja pkg-config`. Run both dependency scripts and the
   source-build commands above, adding `-DCMAKE_FIND_FRAMEWORK=LAST` at configure

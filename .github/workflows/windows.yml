@@ -1,7 +1,7 @@
 name: Windows build
 run-name: Windows build · ${{ github.ref_name }}
 
-# Builds native Windows x64 (MSYS2/MinGW-w64): uploads a CI artifact and runs the
+# Builds native Windows x64 and ARM64: uploads CI artifacts and runs the
 # determinism gate; on a tag it also attaches the zipped bundle to the GitHub Release.
 # (determinism.yml remains the fast, always-on sim gate.)
 
@@ -24,8 +24,38 @@ permissions:
 
 jobs:
   build:
-    name: Windows x64 (MinGW)
-    runs-on: windows-latest
+    name: Windows ${{ matrix.arch }} (${{ matrix.msystem }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            msystem: MINGW64
+            package: mingw-w64-x86_64
+            cc: gcc
+            cxx: g++
+            ffmpeg_arch: x86_64
+            objdump: objdump
+            machine: 'i386:x86-64'
+            extras: mingw-w64-x86_64-nsis mingw-w64-x86_64-nasm
+          - arch: arm64
+            runner: windows-11-arm
+            msystem: CLANGARM64
+            package: mingw-w64-clang-aarch64
+            cc: clang
+            cxx: clang++
+            ffmpeg_arch: aarch64
+            objdump: llvm-objdump
+            machine: aarch64
+            extras: mingw-w64-clang-aarch64-llvm
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      TARGET_OS: mingw32
+      TARGET_ARCH: ${{ matrix.ffmpeg_arch }}
+      OBJDUMP: ${{ matrix.objdump }}
     defaults:
       run:
         shell: msys2 {0}
@@ -34,31 +64,41 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: ${{ matrix.msystem }}
           update: true
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-SDL2
-            mingw-w64-x86_64-libjpeg-turbo
-            mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-nsis
+            ${{ matrix.package }}-${{ matrix.cc }}
+            ${{ matrix.package }}-cmake
+            ${{ matrix.package }}-ninja
+            ${{ matrix.package }}-SDL2
+            ${{ matrix.package }}-libjpeg-turbo
+            ${{ matrix.package }}-zlib
+            ${{ matrix.package }}-pkgconf
             git
             make
             patch
-            mingw-w64-x86_64-nasm
-            mingw-w64-x86_64-python
+            ${{ matrix.extras }}
+            ${{ matrix.package }}-python
             zip
 
       # Static Bink/streaming FFmpeg so the bundle plays the door videos with no
       # runtime FFmpeg DLLs (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.
+      - name: Verify native runner and compiler target
+        run: |
+          [[ "${{ runner.arch }}" == "${{ matrix.arch == 'arm64' && 'ARM64' || 'X64' }}" ]]
+          target=$($CC -dumpmachine)
+          echo "Native compiler target: $target"
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            [[ "$target" == aarch64-* ]]
+          else
+            [[ "$target" == x86_64-* ]]
+          fi
+
       - name: Cache static FFmpeg (Bink)
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-windows-x64-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
+          key: ffmpeg-bink-windows-${{ matrix.arch }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
 
@@ -102,22 +142,23 @@ jobs:
           ./build/map_transfer_test.exe
           ./build/unit_gift_test.exe
 
-      - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
+      - name: Verify fully static (only system DLL imports)
         run: |
-          admin_imports=$(objdump -p build/crusades_admin.exe | awk '/DLL Name:/{print tolower($3)}')
-          if echo "$admin_imports" | grep -qE 'sqlite|libstdc|libgcc|winpthread'; then
-            echo "::error::crusades_admin imports a non-static dependency"; exit 1
-          fi
-          imports=$(objdump -p build/takclient.exe | awk '/DLL Name:/{print tolower($3)}')
-          echo "$imports"
-          if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml'; then
-            echo "::error::takclient.exe still imports a non-static media DLL -- not fully static"; exit 1
-          fi
-          editor_imports=$(objdump -p build/cartographer.exe | awk '/DLL Name:/{print tolower($3)}')
-          if echo "$editor_imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil'; then
-            echo "::error::cartographer imports a non-static media DLL"; exit 1
-          fi
-          echo "OK: no SDL2/jpeg/zlib/ffmpeg DLL imports -- fully static"
+          for binary in takclient takserver cartographer crusades_admin; do
+            imports=$("$OBJDUMP" -p "build/$binary.exe" | awk '/DLL Name:/{print tolower($3)}')
+            echo "$binary DLL imports: $imports"
+            if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml|sqlite|libstdc|libgcc|winpthread|libc\+\+|libunwind|msys-|cygwin'; then
+              echo "::error::$binary imports a non-static dependency"; exit 1
+            fi
+          done
+
+      - name: Verify executable architecture
+        run: |
+          for binary in takclient takserver cartographer crusades_admin; do
+            header=$("$OBJDUMP" -f "build/$binary.exe")
+            echo "$header"
+            [[ "$header" == *"architecture: ${{ matrix.machine }}"* ]]
+          done
 
       - name: Windows startup regressions
         run: |
@@ -126,9 +167,9 @@ jobs:
           ./build/nvml_test.exe
           ./build/windowsgpu_test.exe
           SDL_VIDEODRIVER=dummy ./build/distant_models_test.exe
-          subsystem=$(objdump -p build/takclient.exe | grep '^Subsystem')
+          subsystem=$("$OBJDUMP" -p build/takclient.exe | grep '^Subsystem')
           [[ "$subsystem" == *"(Windows GUI)"* ]]
-          editor_subsystem=$(objdump -p build/cartographer.exe | grep '^Subsystem')
+          editor_subsystem=$("$OBJDUMP" -p build/cartographer.exe | grep '^Subsystem')
           [[ "$editor_subsystem" == *"(Windows GUI)"* ]]
 
       - name: Streaming encode test
@@ -141,21 +182,17 @@ jobs:
       - name: Project version
         run: echo "VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
 
-      - name: Bundle (exes + required DLLs) + zip
+      - name: Bundle static executables + zip
         run: |
           mkdir -p dist-win
           cp build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe dist-win/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-win/
-          # Safety net: copy any non-system DLL still imported (should be none now that
-          # SDL2/jpeg/zlib are static; graceful if a target ends up dynamic anyway).
-          ldd build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe \
-            | awk '/mingw64\/bin/ {print $3}' | sort -u \
-            | while read -r dll; do cp "$dll" dist-win/; done
-          (cd dist-win && zip -r "../takclient-$VERSION-windows-x64.zip" .)
+          (cd dist-win && zip -r "../takclient-$VERSION-windows-${{ matrix.arch }}.zip" .)
 
       # Proper installer (NSIS via CPack): installs into Program Files\TAK Engine
       # with Start-menu shortcuts + an uninstaller. Same static binaries as the zip.
       - name: Build installer (NSIS)
+        if: matrix.arch == 'x64'
         run: |
           (cd build && cpack -G NSIS)
           ls -l build/tak-engine-*-setup.exe
@@ -163,13 +200,14 @@ jobs:
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: takclient-windows-x64
+          name: takclient-windows-${{ matrix.arch }}
           path: dist-win/
 
       - name: Upload CI artifact (installer)
+        if: matrix.arch == 'x64'
         uses: actions/upload-artifact@v7
         with:
-          name: tak-engine-windows-x64-setup
+          name: tak-engine-windows-${{ matrix.arch }}-setup
           path: build/tak-engine-*-setup.exe
 
       # Debug build: the release binaries are hardened (only --data/--version, no env
@@ -180,20 +218,28 @@ jobs:
           cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-debug --target takclient takserver cartographer crusades_admin
 
-      - name: Bundle (exes + required DLLs) + zip (debug)
+      - name: Verify Debug architecture and static dependencies
+        run: |
+          for binary in takclient takserver cartographer crusades_admin; do
+            header=$("$OBJDUMP" -f "build-debug/$binary.exe")
+            [[ "$header" == *"architecture: ${{ matrix.machine }}"* ]]
+            imports=$("$OBJDUMP" -p "build-debug/$binary.exe" | awk '/DLL Name:/{print tolower($3)}')
+            if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml|sqlite|libstdc|libgcc|winpthread|libc\+\+|libunwind|msys-|cygwin'; then
+              echo "::error::$binary imports a non-static dependency"; exit 1
+            fi
+          done
+
+      - name: Bundle static executables + zip (debug)
         run: |
           mkdir -p dist-win-debug
           cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe dist-win-debug/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-win-debug/
-          ldd build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe \
-            | awk '/mingw64\/bin/ {print $3}' | sort -u \
-            | while read -r dll; do cp "$dll" dist-win-debug/; done
-          (cd dist-win-debug && zip -r ../takclient-windows-x64-debug.zip .)
+          (cd dist-win-debug && zip -r ../takclient-windows-${{ matrix.arch }}-debug.zip .)
 
       - name: Upload CI artifact (debug)
         uses: actions/upload-artifact@v7
         with:
-          name: takclient-windows-x64-debug
+          name: takclient-windows-${{ matrix.arch }}-debug
           path: dist-win-debug/
 
       - name: Determinism gate (cross-platform parity)
@@ -216,8 +262,11 @@ jobs:
         run: |
           gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY `
             --title "TAK Engine $env:GITHUB_REF_NAME" --generate-notes --verify-tag 2>$null
-          $zip = "takclient-$($env:VERSION)-windows-x64.zip"
-          $setup = Get-ChildItem build\tak-engine-*-setup.exe | Select-Object -First 1
-          gh release upload $env:GITHUB_REF_NAME `
-            $zip takclient-windows-x64-debug.zip $setup.FullName `
+          $zip = "takclient-$($env:VERSION)-windows-${{ matrix.arch }}.zip"
+          $files = @($zip, "takclient-windows-${{ matrix.arch }}-debug.zip")
+          if ("${{ matrix.arch }}" -eq "x64") {
+            $setup = Get-ChildItem build\tak-engine-*-setup.exe | Select-Object -First 1
+            $files += $setup.FullName
+          }
+          gh release upload $env:GITHUB_REF_NAME @files `
             --repo $env:GITHUB_REPOSITORY --clobber
