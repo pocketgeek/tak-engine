@@ -44,6 +44,19 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
+## Current development changes
+
+Naval AI now plans coastal production for Aramon's War Galleys, Veruna and Creon
+shipyards, and Zhon's aquatic creatures in both balance modes. Creon shipyards
+can use their open build pads, launch checks include a way out of the yard, and
+small fleets no longer wait for an oversized land-army wave. Taros uses its
+amphibious units and flyers; it has no buildable skirmish ships.
+See the [naval AI audit](docs/naval-ai-2026-10-01.md).
+
+Development builds use **protocol 212** for the production correction. Update
+clients and servers together; recordings from protocol 211 and earlier need
+their original compatible engine. The latest released version remains 0.7.19.
+
 ## New in 0.7.19
 
 - **Native Windows ARM64:** Release and Debug portable ZIPs, built and tested on
@@ -593,7 +606,8 @@ Use the **same engine build and compatible game data** on every participant.
 Version **0.7.19 uses protocol 211**, including Darien Crusades campaign
 messages and retail damage-category corrections. Update clients and servers
 together; 0.7.17 and earlier cannot join these matches. Incompatible clients
-and recordings are rejected.
+and recordings are rejected. Current development builds use **protocol 212**
+and cannot share matches or recordings with 0.7.19.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 

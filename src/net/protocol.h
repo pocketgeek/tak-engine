@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 211;      // 211: completed campaign history and replay transfers
+constexpr uint32_t kNetVersion = 212;      // 212: scripted production pads check open yard occupancy
+                                           // 211: completed campaign history and replay transfers
                                            // 210: campaign territory rendezvous matchmaking
                                            // 209: campaign live territory activity
                                            // 208: versioned Crusades snapshots and battle lifecycle

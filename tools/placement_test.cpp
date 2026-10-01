@@ -217,17 +217,21 @@ void seafortPlacementCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, boo
 }
 // Exercise the complete shipped production scripts at the nearest valid yard
 // row to the reported fort. Each ship must finish and make room for the next.
-void seafortProductionCase(const hpi::Vfs& vfs,const sim::TypeRegistry& reg) {
-    const auto* fort=reg.find("verasy");
-    if (!fort) { ++failures;return; }
-    for (const auto& name:reg.buildable("verasy")) {
+void shipyardProductionCases(const hpi::Vfs& vfs,const sim::TypeRegistry& reg) {
+  for (const auto& [factory,faction]:{std::pair{"verasy",2},std::pair{"crenavy",4}}) {
+    const auto* fort=reg.find(factory);
+    if (!fort) { ++failures;continue; }
+    for (const auto& name:reg.buildable(factory)) for (int angle:{-1,0,1}) {
         const auto* ship=reg.find(name);
         if (!ship) { ++failures;continue; }
         sim::World world;world.setVisPlayer(-1);
         sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=hpi::findMap(vfs,"Varro Passage");
-        cfg.slots={{true,2,0,1.f,false,false}};
+        cfg.slots={{true,faction,0,1.f,false,false}};
         sim::setupMatch(world,reg,cfg);
-        const int id=world.spawn(fort,1600,160,std::nullopt,0);
+        // Both ends and the middle of the actual birth-heading range. Creon's
+        // yard does not counter-rotate its output like the Sea Fort does.
+        const auto heading=sim::bamWrap(int(fort->orientation)+angle*int(fort->buildAngle)/2-(angle>0));
+        const int id=world.spawn(fort,1600,160,sim::radiansFromBam(heading),0);
         world.train(id,ship,2);
         for (int tick=0;tick<18000 && !world.unit(id)->buildQueue.empty();++tick) {
             world.player(0).mana=100000; // isolate placement, readiness and launch
@@ -237,9 +241,10 @@ void seafortProductionCase(const hpi::Vfs& vfs,const sim::TypeRegistry& reg) {
         for (const auto& u:world.units())
             completed+=u.alive() && u.type==ship && !u.underConstruction;
         const bool ok=completed==2 && world.unit(id)->buildQueue.empty();
-        std::printf("      Sea Fort produces two %s: %s\n",name.c_str(),ok?"PASS":"FAIL");
+        std::printf("      %s produces two %s (heading %d): %s\n",factory,name.c_str(),heading.v,ok?"PASS":"FAIL");
         if (!ok) ++failures;
     }
+  }
 }
 
 }  // namespace
@@ -254,7 +259,7 @@ int main(int argc, char** argv) {
         std::printf("balance: %s\n",crusades ? "Crusades" : "standard");
         for (const auto& c : kCases) runCase(vfs, reg, c);
         seafortPlacementCase(vfs,reg,crusades);
-        seafortProductionCase(vfs,reg);
+        shipyardProductionCases(vfs,reg);
         for (const char* id:{"aralode","tarlode","verlode","zonlode","crelode"}) {
             const auto* type=reg.find(id);
             if (!type) { ++failures;continue; }

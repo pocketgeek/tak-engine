@@ -7,6 +7,9 @@ This dated M12 baseline remains the historical evidence record.
 [M13 operations](research/darien-crusades/campaign-operations.md) subsequently
 adds schema 9, administrative auditing, exclusive process ownership and audited
 cancellation of interrupted battles; these are modern service changes.
+The later [naval production correction](naval-ai-2026-10-01.md) uses protocol 212
+and requires compatible tactical recordings; the 210/211 replay compatibility
+described below belongs to this dated baseline.
 
 TAK-Engine has evidence-backed strategic data and presentation, plus a modern
 authenticated battle, referee and history service. It does **not** yet reproduce

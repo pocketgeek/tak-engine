@@ -55,15 +55,15 @@ def snapshot_db(root):
                      for table in tables)
 
 
-def migrate_fixture_to_protocol210(root, identity, digest):
-    """Test-admin fixture: retain an unchanged tactical recording from M10.
+def migrate_fixture_to_protocol(root, identity, digest, protocol):
+    """Test-admin fixture: give an archive an incompatible simulation version.
 
-    Only its strategic protocol header and corresponding content-addressed
+    Only its protocol header and corresponding content-addressed
     identity change. This deliberately bypasses the result immutability trigger
     inside one transaction, restoring its exact definition before committing.
     Production APIs never permit changing a verified result.
     """
-    artifacts = [path for path in root.rglob('*.takrep')
+    artifacts = [path for path in (root / 'crusades-replays').glob('*.takrep')
                  if hashlib.sha256(path.read_bytes()).hexdigest() == digest]
     assert len(artifacts) == 1, artifacts
     original = artifacts[0]
@@ -71,7 +71,7 @@ def migrate_fixture_to_protocol210(root, identity, digest):
     recording = bytearray(original_bytes)
     assert recording[:4] == b'TAKR'
     assert struct.unpack_from('<II', recording, 4) == (9, auth.VERSION)
-    struct.pack_into('<I', recording, 8, 210)
+    struct.pack_into('<I', recording, 8, protocol)
     replacement_digest = hashlib.sha256(recording).hexdigest()
     with contextlib.closing(sqlite3.connect(root / 'campaign.sqlite')) as db:
         replay_id, payload, outcome, winner = db.execute(
@@ -143,10 +143,6 @@ def run(server, client, data, root):
         'territory 1 "One"\nmap 1 "Frey River Plain"\nterritory 2 "Two"\n')
     with auth.server(server, data, root) as (port, fingerprint):
         identity, digest, final_tick, final_hash = verified_battle(port, fingerprint, root)
-        # The real referee above emitted current protocol 211. Re-label only
-        # that temporary fixture as the M10 protocol 210 archival recording;
-        # exact final replay hash below proves its tactical compatibility.
-        digest = migrate_fixture_to_protocol210(root, identity, digest)
         # Carol never participates in that battle. Public archive access requires
         # campaign enrollment, rather than knowledge of an active private token.
         with contextlib.closing(battle.Peer(port)) as carol:
@@ -160,6 +156,13 @@ def run(server, client, data, root):
         assert int(returned[3], 16) == final_hash, 'ordinary replay differs from authoritative archive'
         assert list((observer_data / 'MapCache').glob('*.takmap')), 'installed map fallback did not verify/cache the replay map'
         assert snapshot_db(root) == before, 'watching changed campaign/battle/result state'
+        # A simulation correction changes replay results even if the command
+        # layout is unchanged. Older recordings must remain listed in history
+        # without offering playback using the new simulation.
+        migrate_fixture_to_protocol(root, identity, digest, auth.VERSION-1)
+        before = snapshot_db(root)
+        watch(client, observer_data, root, port, 'history-incompatible-replay', False)
+        assert snapshot_db(root) == before, 'incompatible replay changed durable history'
         # Remove retained bytes without editing the durable archive. Also remove
         # the client's complete cache so this run genuinely exercises absence.
         artifacts = list(root.rglob('*.takrep'))
@@ -169,8 +172,8 @@ def run(server, client, data, root):
         missing_text, _ = watch(client, observer_data, root, port, 'history-missing-replay', False)
         assert snapshot_db(root) == before, 'missing replay erased/changed history'
         server_text = (root / 'server.log').read_text(errors='replace')
-        assert len(re.findall("'Carol' joined lobby", server_text)) == 3, 'Watch caused reconnect/login instead of preserving session'
-    print('PASS: enrolled nonparticipant history, protocol 210 actual SDL retained replay, exact final hash, campaign return and missing-file metadata retention')
+        assert len(re.findall("'Carol' joined lobby", server_text)) == 4, 'Watch caused reconnect/login instead of preserving session'
+    print('PASS: enrolled nonparticipant history, current-protocol SDL retained replay, exact final hash, campaign return, incompatible and missing-file metadata retention')
     print('Artifacts:', root)
 
 

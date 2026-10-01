@@ -5289,7 +5289,7 @@ std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomi
 }
 
 bool World::placementCheck(const UnitType* type, float x, float z, int player,
-                           std::vector<int>* clearFeatures,const std::vector<int>* candidates) const {
+                           std::vector<int>* clearFeatures,const std::vector<int>* candidates,int ignoreId) const {
     if (!type) return false;
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,player);
     // Lodestones must sit on a mana deposit — but only on maps that have any
@@ -5428,7 +5428,7 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
         return true;
     }
     const auto overlaps=[&](const Unit& u) {
-        if (!u.alive()) return false;
+        if (!u.alive() || u.id==ignoreId) return false;
         float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
         float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
         return dx * dx + dz * dz < min * min;
@@ -8161,6 +8161,20 @@ void World::initializeRetailSite(Unit& site,int builderId) {
     }
 }
 
+bool World::canPlaceProduction(int builderId,const UnitType* t,float x,float z) const {
+    const auto* producer=unit(builderId);
+    if (!producer || !producer->type || !t || t->isStructure()) return false;
+    if (!producer->type->productionScript || t->canFly || t->domain!=UnitType::Domain::Water)
+        return canPlace(t,x,z);
+    // An authored factory pad can lie near the producer's centre (Creon's
+    // shipyard does). Test its open footprint, rather than rejecting the
+    // factory itself through the mobile placement radius. Solid yard cells
+    // and other units still block the output.
+    if (!placementCheck(t,x,z,-1,nullptr,nullptr,builderId)) return false;
+    const auto bodies=searchBodyRect(footprintOrigin(x,t->footX),footprintOrigin(z,t->footZ),t->footX,t->footZ);
+    return std::none_of(bodies.cells.begin(),bodies.cells.end(),[](const auto* u){return u!=nullptr;});
+}
+
 bool World::productionPosition(int builderId,const UnitType* t,Fixed& spawnX,Fixed& spawnY,Fixed& spawnZ) {
     auto* builder=unit(builderId);
     if(!builder || !builder->type || !t)return false;
@@ -8177,7 +8191,7 @@ bool World::productionPosition(int builderId,const UnitType* t,Fixed& spawnX,Fix
         const int cx=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
         const int cz=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
         spawnY=Fixed::fromInt(heights_.empty() ? 0 : heights_[size_t(cz)*terW_+cx])+Fixed::raw(offset[1]);
-        if (!canPlace(t,spawnX.toFloat(),spawnZ.toFloat())) return false;
+        if (!canPlaceProduction(builderId,t,spawnX.toFloat(),spawnZ.toFloat())) return false;
     } else {
         const float ex=u.x.toFloat(),ez=u.z.toFloat()+float(u.type->footZ)*8+20;
         float sx=ex,sz=ez;

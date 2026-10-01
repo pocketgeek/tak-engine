@@ -112,6 +112,16 @@ int main(int argc,char** argv) {
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3000,800}});
         check(attacks(think(controller,w))==0,"naval coastal projection rejects a disconnected body of water");
     }
+    for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::Easy,ai::Difficulty::Normal}) {
+        sim::World w;terrain(w,true);w.player(0).income=200;
+        auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
+        const int count=difficulty==ai::Difficulty::Easy ? 2 : 3;
+        for (int i=0;i<count;++i) w.spawn(&boat,2000,800+float(i)*80,0,0);
+        ai::Controller controller(0,empty,profile,1,difficulty,{{3400,800}});
+        const auto cs=think(controller,w,4*60*30);
+        check(attacks(cs)==(difficulty==ai::Difficulty::Passive ? 0 : count),
+              "small fleets deploy despite a large land-army budget; Defensive never attacks");
+    }
     {
         sim::World w;terrain(w);
         int a=w.spawn(&soldier,400,800,0,0),b=w.spawn(&soldier,450,800,0,1);
@@ -316,6 +326,17 @@ int main(int argc,char** argv) {
                 const auto later=think(controller,w,uint32_t(ai::paramsFor(difficulty).thinkPeriod));
                 check(std::any_of(later.begin(),later.end(),[](const auto& c){return c.kind==net::Cmd::Build && c.z==1200;}),
                       "expansion respects a mana site reserved behind movement waypoints");
+            }
+            {
+                sim::World w;terrain(w);w.buildNavClasses(reg);w.player(0).mana=5000;
+                w.spawn(reg.find("araking"),400,800,0,0);
+                ai::Profile p;p.weight["aralode"]=100;
+                ai::Controller controller(0,reg,p,1,ai::Difficulty::Hard);
+                check(think(controller,w).empty(),"AI does not buy nonproducing lodestones on a map without mana spots");
+                w.setManaSpots({{800,800}});
+                const auto cs=think(controller,w,20);
+                check(std::any_of(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Build;}),
+                      "AI still builds a lodestone where a mana deposit exists");
             }
             {
                 sim::World w;terrain(w);w.buildNavClasses(reg);

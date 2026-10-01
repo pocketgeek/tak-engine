@@ -1939,8 +1939,10 @@ public:
     void clearHits() { hits_.clear(); }
 
 private:
+    bool canPlaceProduction(int builderId,const UnitType* type,float x,float z) const;
     bool placementCheck(const UnitType* type, float x, float z, int player,
-                        std::vector<int>* clearFeatures,const std::vector<int>* candidates=nullptr) const;
+                        std::vector<int>* clearFeatures,const std::vector<int>* candidates=nullptr,
+                        int ignoreId=0) const;
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot);

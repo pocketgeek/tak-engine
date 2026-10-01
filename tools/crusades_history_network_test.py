@@ -96,7 +96,7 @@ def history(peer, territory=1, cursor=None, limit=16):
             assert re.fullmatch('[0-9a-f]{64}', entry['replay']['digest'])
             assert 0 < entry['replay']['size'] <= 512 * 1024 * 1024
             assert entry['replay']['format'] == 9
-            assert entry['replay']['protocol'] in (210, 211)
+            assert entry['replay']['protocol'] == auth.VERSION
         assert entry['territory'] == territory and entry['recorded'] > 0
         entries.append(entry)
     next_cursor = (reader.num('<Q'), reader.field().decode()) if flag(reader) else None

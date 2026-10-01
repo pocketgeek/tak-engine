@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <set>
 #include <string>
 
 using namespace tak;
@@ -104,8 +105,15 @@ int main(int argc, char** argv) {
     bool twoAi = std::getenv("TAK_2AI") != nullptr;
     ai::Controller ctl0(0, reg, profile, 0x5678, diff, starts0);
     std::map<int, int> cmdCount;   // Cmd kind -> count
+    std::map<std::string,std::set<int>> completedWater,completedAmphibious;
+    int navalAttacks=0,amphibiousAttacks=0;
     auto sink = [&](const net::Command& c) {
         cmdCount[int(c.kind)]++;
+        if (c.player==1 && (c.kind==net::Cmd::Attack || c.kind==net::Cmd::AttackMove))
+            if (const auto* u=w.unit(c.unitId);u && u->type && !u->type->canFly) {
+                if (u->type->domain==sim::UnitType::Domain::Water) ++navalAttacks;
+                if (u->type->domain==sim::UnitType::Domain::Hover) ++amphibiousAttacks;
+            }
         if (std::getenv("TAK_AI_PICK") && c.kind==net::Cmd::Build)
             std::fprintf(stderr,"    BUILD %s by #%d at (%.2f,%.2f)\n",c.type,c.unitId,c.x,c.z);
         sim::applyCommand(w, reg, c);
@@ -181,6 +189,12 @@ int main(int argc, char** argv) {
         ctl.tick(w, uint32_t(t), sink);
         if (twoAi) ctl0.tick(w, uint32_t(t), sink);
         w.tick(dt);
+        if (t%30==0) for (const auto& u:w.units()) {
+            if (!u.alive() || u.player!=1 || !u.type || u.underConstruction ||
+                u.type->isStructure() || u.type->canFly || u.type->isBuilder) continue;
+            if (u.type->domain==sim::UnitType::Domain::Water) completedWater[u.type->id].insert(u.id);
+            if (u.type->domain==sim::UnitType::Domain::Hover) completedAmphibious[u.type->id].insert(u.id);
+        }
         if (t % (30 * 30) == 0) {
             report(t / 30);
             if (twoAi)
@@ -191,6 +205,13 @@ int main(int argc, char** argv) {
         }
     }
     report(seconds);
+    for (const auto& [label,units]:{std::pair{"naval",&completedWater},std::pair{"amphibious",&completedAmphibious}}) {
+        int total=0;for (const auto& [id,seen]:*units) total+=int(seen.size());
+        std::printf("%s: completed=%d attack_orders=%d |",label,total,
+            units==&completedWater?navalAttacks:amphibiousAttacks);
+        for (const auto& [id,seen]:*units) std::printf(" %s:%zu",id.c_str(),seen.size());
+        std::puts("");
+    }
     int deposits=0,remoteDeposits=0,remoteDefenses=0;float furthest=0;
     for(const auto& u:w.units()) {
         if(!u.alive() || u.player!=1 || !u.type || u.underConstruction)continue;

@@ -548,6 +548,11 @@ endif()
 
 add_executable(aitool tools/aitool.cpp src/ai/ai.cpp)
 target_link_libraries(aitool PRIVATE tak-formats)
+add_executable(naval_ai_test tools/naval_ai_test.cpp src/ai/ai.cpp)
+target_link_libraries(naval_ai_test PRIVATE tak-formats)
+if(TAK_TEST_DATA)
+    add_test(NAME naval_ai COMMAND naval_ai_test "${TAK_TEST_DATA}")
+endif()
 add_executable(simperf tools/simperf.cpp src/ai/ai.cpp)
 target_link_libraries(simperf PRIVATE tak-formats)
 

@@ -4,9 +4,10 @@ M8 introduced a modern, engine-owned campaign read protocol and `MpClient`
 integration.
 It is separate from the historical Boneyards protocol and from tactical command
 bundles. Completed September 30, 2026. Milestones 9–11 subsequently added activity,
-matchmaking and retained history/replays. The current network protocol is **211**,
+matchmaking and retained history/replays. The current network protocol is **212**,
 campaign payload version **4**, and storage schema **9**; the numbered extension
-sections below preserve the earlier introduction versions.
+sections below preserve the earlier introduction versions. Protocol 212 changes
+tactical naval production; campaign payload and storage formats are unchanged.
 
 ## Messages and authority
 
@@ -14,7 +15,7 @@ The M8 request/response families were campaign catalog, full campaign snapshot,
 own player campaign status, battle status and structured error. Their codecs
 live in `src/net/crusades.{h,cpp}`. Each payload begins with a little-endian
 version (`u16`, currently 4) and request ID (`u32`). M8 introduced payload version
-1 and network protocol 208; current clients use protocol 211. The outer network
+1 and network protocol 208; current clients use protocol 212. The outer network
 message identifies the family. Zero request ID is reserved for server notifications.
 Current families also include the [matchmaking board and Find/Cancel requests](campaign-matchmaking.md)
 and [territory-history pages and retained replay chunks](campaign-history.md).

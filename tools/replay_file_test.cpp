@@ -26,10 +26,11 @@ void run(){
  const auto path=root/std::filesystem::u8path("replay-\xc3\xa9.takrep");
  const auto utf=path.u8string();const std::string name(utf.begin(),utf.end());
  auto load=[&](const Writer& value){std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(value.b.data()),std::streamsize(value.b.size()));out.close();ReplayFile replay;return loadReplayFile(name,replay);};
- check(load(recording(210)),"M10 recording refused after strategic protocol bump");
- check(load(recording(211)),"M11 recording refused");
+ check(load(recording()),"current simulation recording refused");
+ check(!load(recording(210)),"recording predating naval production correction accepted");
+ check(!load(recording(211)),"protocol 211 recording accepted by changed simulation");
  check(!load(recording(209)),"older simulation recording accepted");
- check(!load(recording(212)),"future protocol recording accepted");
+ check(!load(recording(kNetVersion+1)),"future protocol recording accepted");
  auto outer=recording();outer.u8(99);check(!load(outer),"outer trailing bytes accepted");
  check(!load(recording(kNetVersion,Command{},0,true)),"inner trailing bytes accepted");
  auto shortFile=recording();shortFile.b.pop_back();check(!load(shortFile),"truncated checkpoint accepted");

@@ -95,6 +95,8 @@ struct Needs {
     int   economy = 0;         // count: income/storage structures
     int   factories = 0;       // count: static or mobile production units
     int   navalFactories = 0;  // dedicated shipyards, including construction
+    int   navalProducers = 0;  // shipyards or mobile conjurers with a water-unit menu
+    int   navalArmy = 0;
     int   builders = 0;        // count: mobile builders (incl. the Monarch)
     int   defenses = 0;
     int   desiredArmy = 0;
@@ -137,7 +139,10 @@ private:
     Needs assessNeeds(const tak::sim::World&) const;
     BuildCat categoryOf(const tak::sim::UnitType*) const;
     bool navalFactory(const tak::sim::UnitType*) const;
+    bool navalProducer(const tak::sim::UnitType*) const;
     const std::vector<std::pair<float,float>>& navalLaunchOffsets(const tak::sim::UnitType*) const;
+    bool navalLaunchClear(const tak::sim::World&,const tak::sim::UnitType* factory,
+                          const tak::sim::UnitType* ship,float x,float z,float dx,float dz) const;
     int   desire(BuildCat, const Needs&) const;
     // `excludeCats` is a bitmask of 1<<int(BuildCat): categories already tried and
     // found unproducible this think, so the pick falls through to the next best.
