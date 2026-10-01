@@ -1958,6 +1958,7 @@
             SDL_SetRenderDrawColor(ren_, 235, 205, 110, 255);
             SDL_RenderFillRectF(ren_, &fill);
             hudFont_.draw(ren_, sb, bx, by - 14, 1.6f, {235, 230, 210, 255});
+            if (campaignReplayReturn_) hudFont_.draw(ren_, "ESC: RETURN TO CAMPAIGN", bx, by + 21, 1.1f, {235, 230, 210, 255});
         }
 
         // In-game chat: recent lines bottom-left, plus a composer while typing.
@@ -2040,7 +2041,7 @@
             });
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
             btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
-            if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
+            if (canReturnToMenu_) btn(campaignReplayReturn_ ? "CAMPAIGN" : "MAIN MENU", [this] { menuRequested_ = true; });
             btn("QUIT", [this] { quitRequested_ = true; });
         }
         drawUnitInfo(winW, winH);   // retail Unit Info dialog, above the HUD

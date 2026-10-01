@@ -1,5 +1,4 @@
 #pragma once
-#include "client/crusadesscreen.h"
 #include "client/retailmodellighting.h"
 
 // GameView -- the in-world game client: rendering, input, the retail HUD, fog,
@@ -12,6 +11,7 @@
 // Must precede SDL.h: on Windows this pulls in winsock2 (with WIN32_LEAN_AND_MEAN)
 // before SDL's <windows.h> would otherwise pull the incompatible winsock v1.
 #include "net/netcompat.h"
+#include "client/crusadesscreen.h"
 #include "client/retailsmoke.h"
 #include "client/weaponanimationqueue.h"
 #include "client/retailpointparticle.h"
@@ -456,6 +456,9 @@ public:
     void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
     void openCrusades(uint32_t territory = 0);
     uint32_t crusadesSelectedTerritory() const;
+    std::string takeCrusadesReplayPath();
+    void setCrusadesReplayError(const std::string& error);
+    void setCampaignReplayReturn() { campaignReplayReturn_ = true; }
     bool reconnectRequested() const { return reconnectRequested_; }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
@@ -859,6 +862,8 @@ public:
     void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
         sounds_.setAudioTap(context, tap);
     }
+    void suspendAudioOutput() { sounds_.releaseOutput(); }
+    void resumeAudioOutput() { sounds_.reopenDevice(); }
 
 private:
     tak::sim::ScenarioScript::TraceSink scenarioTrace_;
@@ -2052,6 +2057,7 @@ private:
     bool paused_ = false;
     bool briefingPaused_ = false;  // reset the render clock after the startup modal
     bool exitMenu_ = false;          // in-game exit overlay (Esc) is open
+    bool campaignReplayReturn_ = false; // Escape/return restores retained strategic view
     bool canReturnToMenu_ = false;   // launched from the front-end -> offer MAIN MENU
     std::vector<std::pair<SDL_FRect, std::function<void()>>> exitHots_;   // overlay hit-rects (screen space)
     // ---- Options (local display/input; see viewer/settings.h) ----

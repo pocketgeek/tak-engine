@@ -9,6 +9,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <fstream>
 #include <map>
 #include <string>
 #include <thread>
@@ -16,6 +17,7 @@
 
 #include "net/auth.h"
 #include "net/crusades.h"
+#include "net/crypto.h"
 #include "net/mappackage.h"
 #include "net/conn.h"
 #include "net/protocol.h"
@@ -100,6 +102,19 @@ public:
     uint32_t searchCampaignBattle(const std::string& campaign, uint32_t territory);
     uint32_t cancelCampaignSearch(const std::string& campaign);
     const std::optional<crusades::MatchmakingStatus>& campaignMatchmaking() const { return campaignMatchmaking_; }
+    uint32_t getTerritoryHistory(const std::string& campaign, uint32_t territory,
+        std::optional<crusades::HistoryCursor> cursor = {}, uint16_t limit = 16);
+    const crusades::TerritoryHistory* territoryHistory(const std::string& campaign, uint32_t territory) const;
+    void setCampaignReplayCacheRoot(const std::filesystem::path& root) { if (root != campaignReplayCacheRoot_) cancelCampaignReplayDownload(); campaignReplayCacheRoot_ = root; }
+    enum class CampaignReplayState { Idle, Downloading, Ready, Failed };
+    struct CampaignReplayDownload {
+        CampaignReplayState state = CampaignReplayState::Idle;
+        std::string battleId, digest; uint64_t receivedBytes = 0, totalBytes = 0;
+        std::filesystem::path path; std::string error;
+    };
+    uint32_t requestCampaignReplay(const std::string& battle);
+    void cancelCampaignReplayDownload();
+    const CampaignReplayDownload& campaignReplayDownload() const { return campaignReplayDownload_; }
     void subscribeCampaign(const std::string& campaign);
     bool campaignRoom() const { return campaignRoomBindings_.count(room_.id) != 0; }
     const std::string& subscribedCampaign() const { return campaignSubscription_; }
@@ -226,7 +241,10 @@ private:
     uint32_t sendCampaignRequest(Msg kind, crusades::Request request, const std::string& target);
     void campaignFrame(const Frame& frame);
     void refreshCampaignOnce(const std::string& campaign);
-    struct CampaignPending { Msg kind; std::string target; uint64_t sentMs; };
+    struct CampaignPending {
+        Msg kind; std::string target; uint64_t sentMs;
+        std::optional<crusades::TerritoryHistoryRequest> history;
+    };
     std::map<uint32_t, CampaignPending> campaignPending_;
     uint32_t campaignRequestId_ = 0;
     std::string campaignSubscription_, campaignRefreshAttempt_;
@@ -235,6 +253,18 @@ private:
     std::optional<crusades::PlayerStatus> campaignPlayer_;
     std::optional<crusades::MatchmakingStatus> campaignMatchmaking_;
     std::map<std::string, crusades::BattleStatus> campaignBattles_;
+    using HistoryKey = std::pair<std::string, uint32_t>;
+    std::map<HistoryKey, crusades::TerritoryHistory> campaignHistory_;
+    std::map<HistoryKey, uint32_t> campaignHistoryRequests_;
+    std::map<std::pair<std::string, std::string>, crusades::HistoryBattle> campaignHistoryRecords_;
+    CampaignReplayDownload campaignReplayDownload_;
+    std::filesystem::path campaignReplayCacheRoot_, campaignReplayPartial_;
+    std::ofstream campaignReplayOutput_;
+    crypto::Sha256 campaignReplayHash_;
+    uint32_t campaignReplayRequest_ = 0;
+    uint64_t campaignReplayNextPullMs_ = 0;
+    void failCampaignReplay(const std::string& error);
+    void acceptCampaignReplayChunk(const crusades::ReplayChunk& chunk);
     std::map<uint32_t, std::string> campaignRoomBindings_;
     std::optional<crusades::Error> campaignError_;
     std::optional<CampaignInvitation> campaignInvitation_;

@@ -40,6 +40,7 @@ historical captures remain blocked by missing retail rules.
 - [Campaign rules recovered from shipped help](campaign-rules-evidence.md)
 - [Territory selection, battle entry and result lifecycle](campaign-flow.md)
 - [Modern territory matchmaking and validation](campaign-matchmaking.md)
+- [Territory history and retained replay integration](campaign-history.md)
 - [Battle settings and score-report boundary](battle-contract.md)
 - [Report queue, encoding and incoming reports](report-transport.md)
 - [Native balance field findings](balance-field-review.md)

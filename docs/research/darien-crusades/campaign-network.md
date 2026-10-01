@@ -156,3 +156,13 @@ still fail validation. Full legacy clients must update to the matching protocol.
 Network version 210 and campaign payload version 3 add the separate authoritative
 matchmaking board and Find/Cancel requests. Schema version 7 indexes account-wide
 battle reservations. See [the matchmaking contract and live checks](campaign-matchmaking.md).
+
+## M11 history and replay extension
+
+Network version 211 and campaign payload 4 append authenticated territory-history
+pages and bounded retained replay chunks. Current storage schema is 8. Completed
+archives are available to enrolled members of their campaign, while active battle
+status remains participant-only. [The history contract](campaign-history.md)
+records permissions, retention, digest verification and real server/viewer gates.
+Protocol-210 format-9 replays retain narrow tactical compatibility under 211;
+this does not grant network-handshake compatibility to older clients.

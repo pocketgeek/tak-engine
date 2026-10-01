@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 210;      // 210: campaign territory rendezvous matchmaking
+constexpr uint32_t kNetVersion = 211;      // 211: completed campaign history and replay transfers
+                                           // 210: campaign territory rendezvous matchmaking
                                            // 209: campaign live territory activity
                                            // 208: versioned Crusades snapshots and battle lifecycle
                                            // 207: server-sequenced campaign forfeits
@@ -308,6 +309,10 @@ enum class Msg : uint8_t {
     CrusadesSearchBattle,     // C->S: own authenticated territory search
     CrusadesCancelSearch,     // C->S: cancel own search, never another account
     CrusadesMatchmakingStatus,// S->C: versioned modern queue aggregate + own search
+    CrusadesGetTerritoryHistory, // C->S: bounded terminal archive page
+    CrusadesTerritoryHistory,    // S->C: verified metadata, opaque replay availability
+    CrusadesGetReplayChunk,      // C->S: battle ID + bounded offset/limit
+    CrusadesReplayChunk,         // S->C: request-bound immutable replay bytes
 
 
 };

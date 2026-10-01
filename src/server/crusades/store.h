@@ -96,6 +96,20 @@ struct VerifiedMatchResult {
     std::vector<ParticipantMatchResult> participantResults;
 };
 
+struct HistoryCursor {
+    int64_t recordedUnix = 0;
+    std::string battleId;
+};
+struct HistoryEntry {
+    IssuedBattle battle;
+    VerifiedMatchResult result;
+    int64_t recordedUnix = 0;
+};
+struct HistoryPage {
+    std::vector<HistoryEntry> entries;
+    bool truncated = false;
+};
+
 struct StoredRulesDecision {
     RulesDecision decision;
     int64_t beforeRevision, afterRevision;
@@ -198,6 +212,14 @@ public:
     void recordVerifiedResult(const std::string& battleId, const std::string& roomToken,
         BattleContext context, VerifiedMatchResult result, int64_t now);
     std::optional<VerifiedMatchResult> verifiedResult(const std::string& battleId) const;
+    // Immutable, verified terminal outcomes, newest (recordedUnix, battleId)
+    // first. Unplayed cancelled/expired offers have no result and are omitted.
+    // Cursor must identify a result in this same campaign/territory at its exact
+    // recorded time. At most 32 rows per page. No replay filesystem is consulted:
+    // absent/corrupt artifacts never remove historical result metadata.
+    // Returned battle capabilities are trusted-server data, not wire fields.
+    HistoryPage territoryHistory(const std::string& campaignId, TerritoryId territory,
+        const std::optional<HistoryCursor>& after = {}, size_t limit = 32) const;
     std::optional<StoredRulesDecision> rulesDecision(const std::string& battleId) const;
 private:
     struct Impl;

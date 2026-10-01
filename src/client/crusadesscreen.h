@@ -2,6 +2,7 @@
 #include <SDL.h>
 #include <memory>
 #include <cstdint>
+#include <string>
 namespace tak {
 namespace hpi { class Vfs; }
 namespace net { class MpClient; }
@@ -18,6 +19,8 @@ public:
     Action input(const SDL_Event&, int logicalMouseX, int logicalMouseY);
     uint32_t selectedTerritory() const;
     void selectTerritory(uint32_t id);
+    std::string takeReplayPath();
+    void setReplayError(const std::string& error);
 private:
     struct Impl;
     std::unique_ptr<Impl> d_;

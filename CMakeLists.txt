@@ -1000,12 +1000,15 @@ add_test(NAME crusades_matchmaking COMMAND crusades_matchmaking_test)
 add_executable(crusades_result_test tools/crusades_result_test.cpp)
 target_link_libraries(crusades_result_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_result COMMAND crusades_result_test)
+add_executable(crusades_history_test tools/crusades_history_test.cpp)
+target_link_libraries(crusades_history_test PRIVATE tak-crusades-store tak-sqlite)
+add_test(NAME crusades_history COMMAND crusades_history_test)
 add_executable(crusades_rules_store_test tools/crusades_rules_store_test.cpp)
 target_link_libraries(crusades_rules_store_test PRIVATE tak-crusades-store tak-sqlite)
 add_test(NAME crusades_rules_store COMMAND crusades_rules_store_test)
 add_library(tak-crusades-allegiance STATIC src/server/crusades/allegiance.cpp)
 target_link_libraries(tak-crusades-allegiance PUBLIC tak-crusades-store PRIVATE tak-formats)
-add_library(tak-crusades-network STATIC src/server/crusades/network.cpp)
+add_library(tak-crusades-network STATIC src/server/crusades/network.cpp src/server/crusades/replayfiles.cpp)
 target_link_libraries(tak-crusades-network PUBLIC tak-crusades-store PRIVATE tak-formats)
 add_executable(crusades_protocol_test tools/crusades_protocol_test.cpp)
 target_link_libraries(crusades_protocol_test PRIVATE tak-formats)
@@ -1013,10 +1016,16 @@ add_test(NAME crusades_protocol COMMAND crusades_protocol_test)
 add_executable(crusades_network_service_test tools/crusades_network_service_test.cpp)
 target_link_libraries(crusades_network_service_test PRIVATE tak-crusades-network tak-formats tak-sqlite)
 add_test(NAME crusades_network_service COMMAND crusades_network_service_test)
+add_executable(crusades_replay_files_test tools/crusades_replay_files_test.cpp)
+target_link_libraries(crusades_replay_files_test PRIVATE tak-crusades-network tak-formats)
+add_test(NAME crusades_replay_files COMMAND crusades_replay_files_test)
 add_executable(crusades_client_network_test tools/crusades_client_network_test.cpp)
 target_link_libraries(crusades_client_network_test PRIVATE tak-formats)
 add_test(NAME crusades_client_network COMMAND crusades_client_network_test)
 set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
+add_executable(replay_file_test tools/replay_file_test.cpp src/client/replayfile.cpp)
+target_link_libraries(replay_file_test PRIVATE tak-formats)
+add_test(NAME replay_file COMMAND replay_file_test)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
@@ -1040,6 +1049,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_result_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(crusades_result_network PROPERTIES TIMEOUT 120)
+    add_test(NAME crusades_history_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/crusades_history_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(crusades_history_network PROPERTIES TIMEOUT 180)
     add_test(NAME crusades_protocol_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_protocol_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
@@ -1053,6 +1066,10 @@ if(TAK_TEST_DATA)
         "${CMAKE_SOURCE_DIR}/tools/crusades_ui_network_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
       set_tests_properties(crusades_ui_network PROPERTIES TIMEOUT 180)
+      add_test(NAME crusades_history_ui_network COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/crusades_history_ui_network_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(crusades_history_ui_network PROPERTIES TIMEOUT 240)
       add_test(NAME crusades_matchmaking_ui_network COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tools/crusades_matchmaking_network_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")

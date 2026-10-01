@@ -3,6 +3,8 @@
 #include "net/netcompat.h"
 #include <chrono>
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <stdexcept>
 #include <thread>
 using namespace tak;
@@ -89,6 +91,87 @@ void matchmaking(){
  client.subscribeCampaign("");check(!client.campaignMatchmaking(),"empty subscription retained queue");
  client.disconnect();check(client.getCampaignMatchmaking("test")==0&&client.searchCampaignBattle("test",1)==0&&client.cancelCampaignSearch("test")==0&&!client.campaignMatchmaking(),"offline queue operation/cache retained");
 }
+void historyAndReplay(){
+ struct Scratch {
+  std::filesystem::path root=std::filesystem::temp_directory_path()/("tak-replay-test-"+crypto::toHex(crypto::randomVec(12)));
+  Scratch(){std::filesystem::create_directories(root);}~Scratch(){std::error_code ec;std::filesystem::remove_all(root,ec);}
+ } scratch;
+ net::MpClient client;client.setCampaignReplayCacheRoot(scratch.root);Peer peer;peer.login(client);
+ request(peer.receive(client),net::Msg::CrusadesListCampaigns,cw::RequestKind::List);
+ net::Writer replay; net::ReplayHeader header;header.mapId="maps/one";header.crusades=1;header.engineVersion="test";net::writeReplayHeader(replay,header);
+ replay.b.resize(cw::kReplayChunkBytes+1234,13); const auto digest=crypto::toHex(crypto::sha256(replay.b.data(),replay.b.size()));
+ cw::HistoryBattle battle;battle.battleId="battle-z";battle.territory=1;battle.campaignRevision=2;battle.recordedUnix=100;battle.mapIdentifier="maps/one";
+ battle.result={cw::Outcome::Victory,100,123,{"alice"}};battle.participants={{"alice",1,2,-3,4,5,"Aramon",0,false},{"bob",2,1,3,4,5,"Veruna",1,true}};
+ battle.replay=cw::ReplayMetadata{digest,replay.b.size(),net::kReplayFormat,net::kNetVersion,{},0};
+ auto historyId=client.getTerritoryHistory("test",1);check(historyId==request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory),"history request correlation");
+ cw::TerritoryHistory history{historyId,"test",1,{battle},cw::HistoryCursor{100,"battle-z"}};
+ reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);check(client.territoryHistory("test",1)&&client.territoryHistory("test",1)->entries[0].participants[0].score==-3,"history not cached or negative score changed");
+ const auto staleId=client.getTerritoryHistory("test",1);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);
+ const auto currentId=client.getTerritoryHistory("test",1);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);
+ history.requestId=currentId;reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);
+ auto empty=history;empty.requestId=staleId;empty.entries.clear();empty.nextCursor.reset();reply(peer,client,net::Msg::CrusadesTerritoryHistory,empty);
+ check(client.territoryHistory("test",1)->entries.size()==1,"late page overwrote newer page");
+ history.requestId=client.getTerritoryHistory("test",1);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);history.entries[0].result.finalStateHash=124;
+ reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);check(client.territoryHistory("test",1)->entries[0].result.finalStateHash==123&&client.campaignError(),"conflicting archive result published");history.entries[0]=battle;
+ const auto paged=client.getTerritoryHistory("test",1,cw::HistoryCursor{100,"battle-z"},1);auto pageRequest=peer.receive(client);
+ request(pageRequest,net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);check(std::get<cw::TerritoryHistoryRequest>(cw::decodeRequest(cw::RequestKind::TerritoryHistory,pageRequest.payload)).cursor->battleId=="battle-z","history cursor lost");
+ history.requestId=paged;reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);check(client.campaignError()&&client.territoryHistory("test",1)->requestId==currentId,"cursor boundary replay accepted");
+ auto first=client.requestCampaignReplay(battle.battleId);check(first!=0,"download unavailable");
+ auto pullFrame=peer.receive(client);check(first==request(pullFrame,net::Msg::CrusadesGetReplayChunk,cw::RequestKind::ReplayChunk),"first replay pull correlation");
+ auto pull=std::get<cw::ReplayChunkRequest>(cw::decodeRequest(cw::RequestKind::ReplayChunk,pullFrame.payload));check(pull.offset==0&&pull.limit==65536,"initial replay pull bounds");
+ cw::ReplayChunk chunk{first,battle.battleId,digest,replay.b.size(),0,cw::Bytes(replay.b.begin(),replay.b.begin()+65536),false};reply(peer,client,net::Msg::CrusadesReplayChunk,chunk);
+ check(client.campaignReplayDownload().receivedBytes==65536&&client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Downloading,"first chunk not streamed");
+ pullFrame=peer.receive(client);pull=std::get<cw::ReplayChunkRequest>(cw::decodeRequest(cw::RequestKind::ReplayChunk,pullFrame.payload));check(pull.offset==65536,"next pull out of order");
+ chunk.requestId=pull.requestId;chunk.offset=65536;chunk.bytes.assign(replay.b.begin()+65536,replay.b.end());chunk.final=true;reply(peer,client,net::Msg::CrusadesReplayChunk,chunk);
+ const auto path=client.campaignReplayDownload().path;check(client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Ready&&std::filesystem::file_size(path)==replay.b.size(),"complete replay not published");
+ check(client.requestCampaignReplay(battle.battleId)==UINT32_MAX&&client.campaignReplayDownload().path==path,"verified cache not reused");
+ {std::ofstream corrupt(path,std::ios::binary|std::ios::trunc);corrupt<<"corrupt";}
+ first=client.requestCampaignReplay(battle.battleId);check(first!=0&&first!=UINT32_MAX&&!std::filesystem::exists(path),"corrupt cache reused");pullFrame=peer.receive(client);
+ chunk={first,battle.battleId,digest,replay.b.size(),0,cw::Bytes(replay.b.begin(),replay.b.begin()+65536),false};chunk.bytes[0]^=1;
+ reply(peer,client,net::Msg::CrusadesReplayChunk,chunk);pullFrame=peer.receive(client);pull=std::get<cw::ReplayChunkRequest>(cw::decodeRequest(cw::RequestKind::ReplayChunk,pullFrame.payload));
+ chunk.requestId=pull.requestId;chunk.offset=65536;chunk.bytes.assign(replay.b.begin()+65536,replay.b.end());chunk.final=true;reply(peer,client,net::Msg::CrusadesReplayChunk,chunk);
+ check(client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Failed&&std::filesystem::is_empty(scratch.root),"digest mismatch published/leaked partial replay");
+ for(int mismatch=0;mismatch<4;++mismatch){
+  first=client.requestCampaignReplay(battle.battleId);pullFrame=peer.receive(client);
+  chunk={first,battle.battleId,digest,replay.b.size(),0,cw::Bytes(replay.b.begin(),replay.b.begin()+65536),false};
+  if(mismatch==0)chunk.battleId="other-battle";
+  if(mismatch==1)chunk.digest=std::string(64,'a');
+  if(mismatch==2)chunk.offset=1;
+  if(mismatch==3)chunk.totalBytes++;
+  reply(peer,client,net::Msg::CrusadesReplayChunk,chunk);
+  check(client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Failed&&std::filesystem::is_empty(scratch.root),"mismatched chunk published/leaked partial");
+ }
+ first=client.requestCampaignReplay(battle.battleId);pullFrame=peer.receive(client);reply(peer,client,net::Msg::CrusadesError,cw::Error{first,cw::ErrorCode::Forbidden,"test",{},"Not enrolled"});
+ check(client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Failed&&client.campaignReplayDownload().error=="Not enrolled"&&std::filesystem::is_empty(scratch.root),"forbidden replay not cleaned up");
+ first=client.requestCampaignReplay(battle.battleId);pullFrame=peer.receive(client);reply(peer,client,net::Msg::CrusadesError,cw::Error{first,cw::ErrorCode::Unavailable,"test",{},"Replay is unavailable"});
+ check(client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Failed&&std::filesystem::is_empty(scratch.root),"missing replay artifact retained partial file");
+ first=client.requestCampaignReplay(battle.battleId);pullFrame=peer.receive(client);net::Writer truncated;truncated.b={uint8_t(cw::kVersion)};peer.send(net::Msg::CrusadesReplayChunk,truncated,client);
+ check(client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Failed&&std::filesystem::is_empty(scratch.root),"truncated chunk retained partial file");
+ first=client.requestCampaignReplay(battle.battleId);pullFrame=peer.receive(client);client.cancelCampaignReplayDownload();chunk={first,battle.battleId,digest,replay.b.size(),0,cw::Bytes(replay.b.begin(),replay.b.begin()+65536),false};reply(peer,client,net::Msg::CrusadesReplayChunk,chunk);
+ check(client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Idle&&std::filesystem::is_empty(scratch.root),"cancelled transfer revived by late chunk");
+ history.entries[0]=battle;history.entries[0].replay.reset();history.nextCursor.reset();history.requestId=client.getTerritoryHistory("test",1);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);
+ check(client.requestCampaignReplay(battle.battleId)==0&&std::filesystem::is_empty(scratch.root),"unavailable history replay requested");
+ history.entries[0]=battle;history.entries[0].battleId="unsupported";history.entries[0].replay->protocolVersion=999;history.requestId=client.getTerritoryHistory("test",1);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);
+ check(client.requestCampaignReplay("unsupported")==0&&std::filesystem::is_empty(scratch.root),"incompatible replay metadata requested");
+ history.entries[0]=battle;history.requestId=client.getTerritoryHistory("test",1);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);
+ // Fill 512 newer immutable records across pages while keeping territory1's
+ // original page visible. Its oldest record is evicted from the smaller map.
+ for(uint32_t territory=2;territory<=33;++territory){
+  cw::TerritoryHistory page;page.campaignId="test";page.territory=territory;
+  for(int n=15;n>=0;--n){auto entry=battle;entry.territory=territory;entry.battleId="zz-"+std::to_string(territory)+"-"+std::to_string(1000+n);entry.recordedUnix=1000+n;entry.replay.reset();entry.participants[0].score=INT64_MIN;entry.participants[0].kills=uint64_t(INT64_MAX);page.entries.push_back(std::move(entry));}
+  page.requestId=client.getTerritoryHistory("test",territory);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);reply(peer,client,net::Msg::CrusadesTerritoryHistory,page);
+ }
+ check(client.territoryHistory("test",33)->entries[0].participants[0].score==INT64_MIN&&client.territoryHistory("test",33)->entries[0].participants[0].kills==uint64_t(INT64_MAX),"extreme signed/unsigned archive stats changed");
+ const auto retainedId=client.territoryHistory("test",1)->requestId;
+ for(int changed=0;changed<3;++changed){
+  history.entries[0]=battle;if(changed==0)history.entries[0].result.finalStateHash++;if(changed==1)history.entries[0].participants[0].score--;if(changed==2)history.entries[0].participants[0].kills++;
+  history.requestId=client.getTerritoryHistory("test",1);request(peer.receive(client),net::Msg::CrusadesGetTerritoryHistory,cw::RequestKind::TerritoryHistory);reply(peer,client,net::Msg::CrusadesTerritoryHistory,history);
+  check(client.territoryHistory("test",1)->requestId==retainedId&&client.territoryHistory("test",1)->entries[0].result.finalStateHash==123&&client.territoryHistory("test",1)->entries[0].participants[0].score==-3&&client.territoryHistory("test",1)->entries[0].participants[0].kills==1,"evicted record lost immutable protection while its page remained cached");
+ }
+ first=client.requestCampaignReplay(battle.battleId);pullFrame=peer.receive(client);client.disconnect();
+ check(!client.territoryHistory("test",1)&&client.campaignReplayDownload().state==net::MpClient::CampaignReplayState::Idle&&std::filesystem::is_empty(scratch.root),"disconnect retained download/history");
+ Peer second;second.login(client);request(second.receive(client),net::Msg::CrusadesListCampaigns,cw::RequestKind::List);check(client.requestCampaignReplay(battle.battleId)==0,"reconnect reused old server history");client.disconnect();
+}
 void run(){
  net::MpClient client;client.subscribeCampaign("test");check(client.getCampaignSnapshot("test")==0,"offline request sent");Peer peer;peer.login(client);
  const auto list=request(peer.receive(client),net::Msg::CrusadesListCampaigns,cw::RequestKind::List);
@@ -136,4 +219,4 @@ void run(){
  net::MpClient anonymous;Peer open;check(anonymous.connect("127.0.0.1",open.port,"guest"),"anonymous connect");open.acceptClient();check(open.receive(anonymous).kind==net::Msg::Hello,"anonymoushello");net::Writer welcome;welcome.u32(2);welcome.str("guest");open.send(net::Msg::Welcome,welcome,anonymous);check(anonymous.listCampaigns()==0,"anonymous campaign request permitted");reply(open,anonymous,net::Msg::CrusadesCampaignSnapshot,snapshot(0,1));check(!anonymous.campaignReplica().find("test"),"anonymous notification accepted");anonymous.disconnect();
 }
 }
-int main(){try{run();matchmaking();std::cout<<"PASS: "<<checks<<" real MpClient campaign checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
+int main(){try{run();matchmaking();historyAndReplay();std::cout<<"PASS: "<<checks<<" real MpClient campaign checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

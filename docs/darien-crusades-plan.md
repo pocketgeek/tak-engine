@@ -892,6 +892,8 @@ Watch Replay
 - Missing/deleted replay does not corrupt campaign history.
 - Historical result metadata remains available independently of replay files.
 
+Implementation and validation: [modern territory history and retained replay contract](research/darien-crusades/campaign-history.md).
+
 ---
 
 # Milestone 12 — Historical validation

@@ -205,10 +205,11 @@ void participationMigration(const fs::path& path){
         raw.sql("INSERT INTO battle_status_events VALUES('legacy-overlap',0,0,100)");
         raw.sql("INSERT INTO issued_battle_rules VALUES('legacy-overlap','historical-darien-v1')");
         raw.sql("INSERT INTO battle_participants SELECT 'legacy-overlap',campaign_id,account_id,created_unix FROM battle_participants");
+        raw.sql("DROP TABLE territory_battle_history");
         raw.sql("DROP INDEX battle_participants_global_account");raw.sql("PRAGMA user_version=6");
     }
-    rejects([&]{c::CampaignStore store(path,c::StoreOptions{[]{throw std::runtime_error("schema7 interrupted");}});},"6 to 7 migration ignored failure hook");
-    {Raw raw(path);check(raw.count("PRAGMA user_version")==6&&raw.count("SELECT count(*) FROM sqlite_master WHERE name='battle_participants_global_account'")==0,"failed schema7 migration left partial index or version");}
+    rejects([&]{c::CampaignStore store(path,c::StoreOptions{[]{throw std::runtime_error("schema8 interrupted");}});},"6 to 8 migration ignored failure hook");
+    {Raw raw(path);check(raw.count("PRAGMA user_version")==6&&raw.count("SELECT count(*) FROM sqlite_master WHERE name='battle_participants_global_account'")==0,"failed schema8 migration left partial index or version");}
     c::CampaignStore migrated(path);
     check(migrated.battle(id).status==c::BattleStatus::Issued&&migrated.battle("legacy-overlap").status==c::BattleStatus::Issued,"migration changed old overlapping lifecycle");
     check(migrated.ownBattleIds("synthetic","alice").ids.size()==2,"migration lost old duplicate history");
@@ -217,7 +218,7 @@ void participationMigration(const fs::path& path){
     migrated.cancelBattle("legacy-overlap",110);
     migrated.startBattle(id,migrated.battle(id).launchToken,"legacy-room",context(),111);
     check(migrated.activeBattleForAccount("alice",500)->id==id,"resolved migrated offer could not retain Started participation");
-    {Raw raw(path);check(raw.count("PRAGMA user_version")==7&&raw.count("SELECT count(*) FROM battle_participants")==4,"schema7 index migration changed history");}
+    {Raw raw(path);check(raw.count("PRAGMA user_version")==8&&raw.count("SELECT count(*) FROM battle_participants")==4,"schema8 index migration changed history");}
 }
 // Build exact older schemas by retaining their original, unchanged SQL objects.
 // Data is written before removing only the later milestone's unused objects.
@@ -250,7 +251,7 @@ void migration(const fs::path& root){
             check(enrolled && enrolled->alliance==c::Alliance::Terror && enrolled->revision==1 && enrolled->joinedUnix==1 && enrolled->changedUnix==2,"v2 participant and revision preserved");
             check(migrated.allegianceHistory("synthetic","alice").size()==2,"v2 allegiance audit preserved");}
         else check(!migrated.allegiance("synthetic","alice"),"v1 migration invents no allegiance");
-        {Raw raw(path);check(raw.count("PRAGMA user_version")==7,"current schema version7 installed");}
+        {Raw raw(path);check(raw.count("PRAGMA user_version")==8,"current schema version8 installed");}
     }
 }
 } // namespace

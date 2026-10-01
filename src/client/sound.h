@@ -43,6 +43,12 @@ public:
         // destroyed. SDL_CloseAudioDevice blocks until the callback returns and
         // won't call it again, so mixThunk can't fire on freed state -- this is the
         // return-to-menu teardown crash (GameView, and thus SoundBank, is freed).
+        releaseOutput();
+    }
+
+    // Retain indexed/decoded resources while a read-only replay temporarily
+    // owns the output. Closing joins SDL's callback before another bank opens.
+    void releaseOutput() {
         if (dev_) { SDL_CloseAudioDevice(dev_); dev_ = 0; }
     }
 

@@ -6,14 +6,23 @@
 #include "net/protocol.h"      // tak::net::Reader / Event / Command
 
 #include <cstdio>
+#include <filesystem>
+#include <cmath>
 #include <utility>
 
 bool loadReplayFile(const std::string& path, ReplayFile& out) {
+#ifdef _WIN32
+    FILE* f = _wfopen(std::filesystem::u8path(path).c_str(), L"rb");
+#else
     FILE* f = std::fopen(path.c_str(), "rb");
+#endif
     if (!f) return false;
     std::fseek(f, 0, SEEK_END);
     long n = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
+    if (n < 0 || uint64_t(n) > tak::net::crusades::kMaxReplayBytes) {
+        std::fclose(f); out.error = "replay file exceeds supported size"; return false;
+    }
     std::vector<uint8_t> d(size_t(n < 0 ? 0 : n));
     if (!d.empty() && std::fread(d.data(), 1, d.size(), f) != d.size()) { std::fclose(f); return false; }
     std::fclose(f);
@@ -27,10 +36,10 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     // simulation rules and quietly produced a different game.
     out.formatVersion = fmt;
     out.protocolVersion = proto;
-    if (proto != tak::net::kNetVersion) {
+    if (!tak::net::supportedReplayProtocol(fmt, proto)) {
         out.error = "recorded under protocol v" + std::to_string(proto) +
                     ", this build is v" + std::to_string(tak::net::kNetVersion) +
-                    " -- the simulation rules have changed since";
+                    " -- this replay protocol is unsupported";
         return false;
     }
     out.mapId = h.mapId;
@@ -81,13 +90,21 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
         if (!br.ok || tick != t) return false;
         tak::net::Bundle bd;
         uint32_t nc = br.u32();
-        for (uint32_t i = 0; i < nc && br.ok; ++i) bd.cmds.push_back(br.cmd());
+        if (uint64_t(nc) * 35 > uint64_t(br.end - br.p)) return false;
+        for (uint32_t i = 0; i < nc && br.ok; ++i) {
+            const auto cmd=br.cmd();
+            if (uint8_t(cmd.kind)>uint8_t(tak::net::Cmd::ShareMana) || cmd.player>=tak::net::kMaxSlots ||
+                !std::isfinite(cmd.x) || !std::isfinite(cmd.z) || !std::isfinite(cmd.x2) || !std::isfinite(cmd.z2)) return false;
+            bd.cmds.push_back(cmd);
+        }
         uint32_t ne = br.u32();
+        if (!br.ok || uint64_t(ne)*2>uint64_t(br.end-br.p)) return false;
         for (uint32_t i = 0; i < ne && br.ok; ++i) {
             tak::net::Event e; e.kind = tak::net::Event::Kind(br.u8()); e.player = br.u8();
+            if (e.player>=tak::net::kMaxSlots || uint8_t(e.kind)<1 || uint8_t(e.kind)>uint8_t(tak::net::Event::Kind::CampaignForfeit)) return false;
             bd.events.push_back(e);
         }
-        if (!br.ok) return false;    // a truncated bundle used to load as a success
+        if (!br.ok || br.p != br.end) return false; // reject truncated or trailing inner data
         out.bundles.push_back(std::move(bd));
     }
     // Hash checkpoints (format 6+). Absent in an older file, which simply means
@@ -105,7 +122,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
             out.checks.push_back(c);
         }
     }
-    return true;
+    return r.ok && r.p == r.end;
 }
 
 std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,

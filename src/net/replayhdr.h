@@ -35,6 +35,17 @@ namespace tak::net {
 // Bump when the layout changes, and handle the older values in readReplayHeader.
 inline constexpr uint32_t kReplayFormat = 9;   // 9: verified map package digest
 
+// Protocol 211 only adds strategic history/replay transfer messages. Its
+// tactical commands, tick bundles and replay layout remain those of 210.
+// Keep this deliberately narrow: a later simulation/protocol change must be
+// reviewed rather than silently accepting all older recordings.
+inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
+    if (format < 1 || format > kReplayFormat) return false;
+    if (protocol == kNetVersion) return true;
+    return format == 9 && (kNetVersion == 210 || kNetVersion == 211) &&
+           (protocol == 210 || protocol == 211);
+}
+
 struct ReplayHeader {
     std::string mapId;
     std::string mapDigest;

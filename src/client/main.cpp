@@ -347,6 +347,53 @@ static void resolveDataDir(std::string& dataRoot, tak::Settings& settings, bool 
     }
 }
 
+// Ordinary local replay launch and campaign Watch Replay share this loader and
+// the existing GameView playback path. No multiplayer client is attached here.
+std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& path,
+                                        const std::string& dataRoot,
+                                        tak::Settings& settings, bool canReturn,
+                                        bool requireMatchingData = false) {
+    ReplayFile rf;
+    if (!loadReplayFile(path, rf))
+        throw std::runtime_error(rf.error.empty() ? "cannot read that replay" : rf.error);
+    const auto rpol = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
+    auto rvfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), rpol);
+    std::string mapPath;
+    if (!rf.mapDigest.empty()) {
+        auto package = tak::net::maps::loadCache(dataRoot, rf.mapDigest);
+        if (!package) try {
+            auto local = tak::net::maps::build(rvfs, rf.mapId);
+            if (local->digest == rf.mapDigest) package = std::move(local);
+        } catch (const std::exception&) {}
+        if (!package) throw std::runtime_error("the verified map copy for this replay is missing");
+        try { tak::net::maps::saveCache(std::filesystem::u8path(dataRoot), *package); }
+        catch (const std::exception& e) { std::fprintf(stderr,"replay: verified map cache unavailable: %s\n",e.what()); }
+        mapPath = package->mapPath; rvfs.setMapFiles(package->files);
+    } else if (!rf.mission.empty()) {
+        mapPath = "missions/" + rf.mission + ".tnt";
+        if (!rvfs.has(mapPath)) throw std::runtime_error("mission '" + rf.mission + "' is not in this game data");
+    } else {
+        mapPath = tak::hpi::findMap(rvfs, rf.mapId);
+        if (mapPath.empty()) throw std::runtime_error("map '" + rf.mapId + "' is not in this game data");
+    }
+    const uint64_t myDataHash = tak::hpi::gameplayHash(rvfs);
+    if (rf.dataHash && rf.dataHash != myDataHash) {
+        if (requireMatchingData) throw std::runtime_error("this replay needs different gameplay data");
+        std::fprintf(stderr, "replay: WARNING -- recorded on gameplay data %016llx, yours is %016llx. Playback will diverge from the recording.\n",
+                     (unsigned long long)rf.dataHash, (unsigned long long)myDataHash);
+    }
+    auto view = std::make_unique<GameView>(ren, std::move(rvfs), mapPath, dataRoot,
+        rpol, false, false, true, "ara", "tar", rf.crusades);
+    view->applySettings(settings); view->setSettings(&settings);
+    if (canReturn) view->setCanReturnToMenu();
+    std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
+                 path.c_str(), rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "",
+                 rf.formatVersion, rf.engineVersion.empty() ? "an older build" : rf.engineVersion.c_str(), rf.checks.size());
+    view->setReplayChecks(std::move(rf.checks));
+    view->startReplay(rf.cfg, std::move(rf.bundles), rf.mission);
+    return view;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -994,101 +1041,17 @@ int main(int argc, char** argv) {
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
     std::unique_ptr<GameView> gameView;
+    std::unique_ptr<GameView> crusadesView; // retained strategic view during read-only playback
+    bool returnToCrusades = false;
     try {
         if (mode == "replay" && !args.empty() && !dataRoot.empty()) {
-            // takclient replay <file.takrep> --data <retail-root>
-            ReplayFile rf;
-            // A refusal is normal, not fatal: the picker lists every .takrep it finds,
-            // including ones recorded under an older protocol, and the loader rightly
-            // turns those away. From the MENU that has to reopen the menu with the
-            // reason; only a command-line launch has nowhere to go but out.
-            auto replayFailed = [&](const std::string& why) {
-                std::fprintf(stderr, "replay: cannot read %s%s%s\n", args[0].c_str(),
-                             why.empty() ? "" : " -- ", why.c_str());
-                if (fromMenu) menuReplayError = why.empty() ? "cannot read that replay" : why;
-            };
-            if (!loadReplayFile(args[0], rf)) {
-                replayFailed(rf.error);
-                if (fromMenu) continue;      // back to the front-end, error shown
+            try {
+                gameView = makeReplayView(ren, args[0], dataRoot, settings, fromMenu);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "replay: cannot read %s -- %s\n", args[0].c_str(), e.what());
+                if (fromMenu) { menuReplayError = e.what(); continue; }
                 return 1;
             }
-            // A campaign recording's terrain is the MISSION's own map. setupMission
-            // builds the world, but GameView still constructs a MapView from mapPath
-            // and reads it immediately -- leaving it empty for a mission threw before
-            // playback ever started. (setupMission requires exactly this file, so if
-            // it is missing the recording cannot be replayed at all.)
-            std::string mapPath;
-            const auto rpol0 = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
-            tak::hpi::Vfs probeVfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), rpol0);
-            if (!rf.mapDigest.empty()) {
-                auto package = tak::net::maps::loadCache(dataRoot, rf.mapDigest);
-                if (!package) try {
-                    auto local = tak::net::maps::build(probeVfs, rf.mapId);
-                    if (local->digest == rf.mapDigest) package = std::move(local);
-                } catch (const std::exception&) {}
-                if (!package) {
-                    replayFailed("the verified map copy for this replay is missing");
-                    if (fromMenu) continue;
-                    return 1;
-                }
-                mapPath = package->mapPath; probeVfs.setMapFiles(package->files);
-            } else if (!rf.mission.empty()) {
-                mapPath = "missions/" + rf.mission + ".tnt";
-                if (!probeVfs.has(mapPath)) {
-                    replayFailed("mission '" + rf.mission + "' is not in this game data");
-                    if (fromMenu) continue;
-                    return 1;
-                }
-            } else {
-                mapPath = tak::hpi::findMap(probeVfs, rf.mapId);
-                if (mapPath.empty()) {
-                    replayFailed("map '" + rf.mapId + "' is not in this game data");
-                    if (fromMenu) continue;
-                    return 1;
-                }
-            }
-            // Replay under the tier the game was RECORDED at, in a mount of its own.
-            // Remounting the outer `vfs` instead left it at the replay's tier while
-            // `pol` still named the session's, so the two disagreed from then on: watch
-            // a None-tier replay and then a Full-tier one and the second would be
-            // hashed against None-tier data while its viewer loaded Full -- a mismatch
-            // warning about nothing. The outer vfs and pol are now untouched, and
-            // everything the replay does -- resolve, hash, construct -- uses this one.
-            auto rpol = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
-            tak::hpi::Vfs rvfs = std::move(probeVfs);   // already mounted at the replay's tier
-            const uint64_t myDataHash = tak::hpi::gameplayHash(rvfs);
-            // From the menu, hand the view its OWN mount and leave the outer vfs
-            // intact -- the front-end still needs it when playback ends, and the
-            // ordinary game launch does exactly this for the same reason.
-            gameView = std::make_unique<GameView>(ren, std::move(rvfs),
-                                                  mapPath, dataRoot, rpol,
-                                                  false, false, /*bare=*/true, "ara", "tar",
-                                                  rf.crusades);
-            gameView->applySettings(settings);   // audio / camera / UI-scale prefs
-            gameView->setSettings(&settings);    // Options edits + persists them
-            // Watching a replay must not be a one-way trip: without this the in-game
-            // menu has no MAIN MENU entry and the only way out is quitting the app.
-            if (fromMenu) gameView->setCanReturnToMenu();
-            std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, "
-                         "recorded by %s, %zu hash checkpoints)\n", args[0].c_str(),
-                         rf.mapId.c_str(), rf.bundles.size(),
-                         rf.crusades ? " (Crusades)" : "", rf.formatVersion,
-                         rf.engineVersion.empty() ? "an older build" : rf.engineVersion.c_str(),
-                         rf.checks.size());
-            // VERIFY the data before replaying it. The recording carries the
-            // fingerprint of the gameplay data it ran on; different data means a
-            // different simulation, and the whole point of recording the hash was to
-            // say so rather than let playback diverge in silence.
-            if (rf.dataHash) {
-                const uint64_t mine = myDataHash;
-                if (mine != rf.dataHash)
-                    std::fprintf(stderr,
-                        "replay: WARNING -- recorded on gameplay data %016llx, yours is "
-                        "%016llx. Playback will diverge from the recording.\n",
-                        (unsigned long long)rf.dataHash, (unsigned long long)mine);
-            }
-            gameView->setReplayChecks(std::move(rf.checks));
-            gameView->startReplay(rf.cfg, std::move(rf.bundles), rf.mission);
         } else if (mode == "map" && !args.empty() && !dataRoot.empty()) {
             // A "~gen1~" id is a random-map recipe MapView builds in memory; a plain
             // name resolves to a real .tnt in the mounted data.
@@ -1145,6 +1108,7 @@ int main(int argc, char** argv) {
                 log->append(tick,player,group,action,rule);
             });
             if (mp) {
+                mp->setCampaignReplayCacheRoot(std::filesystem::u8path(tak::settingsPath()).parent_path() / "ReplayCache");
                 gameView->setMpClient(mp.get());
                 const std::string strategicServer = serverHost + ":" + std::to_string(serverPort);
                 if (strategicServer == crusadesReturnServer && mp->account() == crusadesReturnAccount &&
@@ -1356,6 +1320,9 @@ int main(int argc, char** argv) {
         if (gameView) gameView->beginFrame();
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if (crusadesView && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                returnToCrusades = true; continue;
+            }
             // The window-manager close button (title-bar X) fires SDL_QUIT; we
             // deliberately IGNORE it so it can't yank the player out of a game. Quit
             // only through real paths: the menu's Exit door, the in-game QUIT button
@@ -1579,6 +1546,7 @@ int main(int argc, char** argv) {
             if (benchFrozen) {
                 // frozen -- fall through to draw() so the overlay still renders
             } else if (gameView->replayMode()) {
+                if (crusadesView && mp) mp->poll(); // campaign presence only; never pump battle commands
                 gameView->replayStep(dt);   // play back a recorded .takrep
             } else if (gameView->isNet()) {
                 // Server-sequenced lockstep: one mpAutoStep pumps the connection,
@@ -1776,6 +1744,53 @@ int main(int argc, char** argv) {
         }
         // A MAIN MENU button or post-game Escape ends the session; the outer loop
         // then tears it down and re-shows the menu (quitApp stays false).
+        if (crusadesView && (returnToCrusades || (gameView && gameView->menuRequested()))) {
+            std::fprintf(stderr,"crusades: replay return tick=%zu/%zu hash=%016llx%s\n",
+                         gameView->replayTick(),gameView->replayLength(),
+                         (unsigned long long)gameView->worldHashPublic(),
+                         gameView->replayDiverged()?" DIVERGED":"");
+            gameView->setAudioTap(nullptr,nullptr); gameView.reset();
+            gameView = std::move(crusadesView); returnToCrusades = false;
+            gameView->applySettings(settings);
+            gameView->setAudioTap(&gameStreamAudio,
+                [](void* context,const int16_t* pcm,int frames,int channels) {
+                    auto& audio=*static_cast<GameStreamAudio*>(context);
+                    if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
+                });
+            if (fromMenu) menuMusic.start(vfs, 15);
+            gameView->resumeAudioOutput();
+            last = SDL_GetPerformanceCounter();
+            std::fprintf(stderr, "crusades: returned from read-only replay\n");
+            continue;
+        }
+        if (gameView && !crusadesView && mp) {
+            const auto path = gameView->takeCrusadesReplayPath();
+            if (!path.empty()) try {
+                gameView->setAudioTap(nullptr,nullptr);
+                gameView->suspendAudioOutput();
+                menuMusic.stop();
+                auto replay = makeReplayView(ren, path, dataRoot, settings, true, true);
+                replay->setCampaignReplayReturn();
+                replay->setAudioTap(&gameStreamAudio,
+                    [](void* context,const int16_t* pcm,int frames,int channels) {
+                        auto& audio=*static_cast<GameStreamAudio*>(context);
+                        if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
+                    });
+                crusadesView = std::move(gameView); gameView = std::move(replay);
+                last = SDL_GetPerformanceCounter();
+                std::fprintf(stderr, "crusades: watching retained replay without joining a battle\n");
+                continue;
+            } catch (const std::exception& e) {
+                gameView->setAudioTap(&gameStreamAudio,
+                    [](void* context,const int16_t* pcm,int frames,int channels) {
+                        auto& audio=*static_cast<GameStreamAudio*>(context);
+                        if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
+                    });
+                if (fromMenu) menuMusic.start(vfs,15);
+                gameView->resumeAudioOutput();
+                gameView->setCrusadesReplayError(e.what());
+            }
+        }
         if (gameView && gameView->menuRequested()) running = false;
         // The in-game QUIT button exits the whole app.
         if (gameView && gameView->quitRequested()) { running = false; quitApp = true; }
@@ -1814,6 +1829,7 @@ int main(int argc, char** argv) {
                     // before the capture -- enough to walk a menu into the state worth
                     // photographing (the lobby's map picker needs two clicks).
                     static size_t clickIdx = 0;
+                    bool clickSent = false;
                     if (const char* cl = tak::devEnv("TAK_SHOT_CLICKS")) {
                         std::vector<std::pair<int, int>> pts;
                         std::string acc(cl);
@@ -1839,6 +1855,7 @@ int main(int argc, char** argv) {
                             ev.type = SDL_MOUSEBUTTONUP;
                             SDL_PushEvent(&ev);
                             ++clickIdx;
+                            clickSent = true;
                             shotArmed = false;   // let it land, then try again next pass
                         }
                     }
@@ -1857,7 +1874,10 @@ int main(int argc, char** argv) {
                         if (trailWait > 0) shotArmed = false;
                     }
 #endif
-                    if (const char* kn = tak::devEnv("TAK_SHOT_PRESS"); kn && !pressSent) {
+                    // Replay-return fixtures need their final key after the
+                    // click sequence; preserve the original ordering otherwise.
+                    if (const char* kn = tak::devEnv("TAK_SHOT_PRESS"); kn && !pressSent &&
+                        (!tak::devFlag("TAK_SHOT_PRESS_AFTER_CLICKS") || !clickSent)) {
                         pressSent = true;
                         // Accepts "ctrl+a" / "shift+f1" / "ctrl+shift+d" as well as a
                         // bare key name: every SELECTION hotkey is Ctrl-modified, so
@@ -1941,6 +1961,10 @@ int main(int argc, char** argv) {
                 }
             }
         }
+    }
+    if (crusadesView) {
+        if (gameView) gameView->setAudioTap(nullptr,nullptr);
+        gameView.reset(); gameView=std::move(crusadesView);
     }
     if (gameView) gameView->setAudioTap(nullptr,nullptr);
     if (mp && gameView && !mp->account().empty() && !menuInteractive && !benchmarkLaunch && campaignStem.empty()) {

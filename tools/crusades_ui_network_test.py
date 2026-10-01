@@ -40,7 +40,7 @@ def allegiance(root):
                           "WHERE p.account_id='alice'").fetchone()
 
 
-def launch(client, data, root, port, name, clicks, delay=2500):
+def launch(client, data, root, port, name, clicks, delay=2500, user='Alice', press=None):
     pref = root / 'preferences' / 'TAKengine' / 'TAKingdoms'
     pref.mkdir(parents=True, exist_ok=True)
     (pref / 'settings.ini').write_text('fullscreen = false\nvsync = false\nmaxFps = 30\n')
@@ -52,11 +52,14 @@ def launch(client, data, root, port, name, clicks, delay=2500):
     for key in tuple(environment):
         if key.startswith('TAK_') and key not in ('TAK_SHOT_CRUSADES', 'TAK_SHOT_MS', 'TAK_SHOT_CLICKS'):
             del environment[key]
+    if press:
+        environment['TAK_SHOT_PRESS'] = press
+        environment['TAK_SHOT_PRESS_AFTER_CLICKS'] = '1'
     shot = root / (name + '.png')
     log = (root / (name + '.log')).open('w')
     process = subprocess.Popen([str(client), 'game', 'Frey River Plain', '--data', str(data),
                                 '--server', '127.0.0.1', '--serverport', str(port),
-                                '--user', 'Alice', '--pass', PASSWORD, '--winsize', '960', '540',
+                                '--user', user, '--pass', PASSWORD, '--winsize', '960', '540',
                                 '--maxfps', '30', '--novsync', '--shot', str(shot)],
                                stdout=log, stderr=log, env=environment)
     return process, log, shot

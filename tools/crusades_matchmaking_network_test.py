@@ -17,7 +17,7 @@ import crusades_auth_network_test as auth
 import crusades_battle_network_test as battle
 import crusades_result_network_test as results
 
-WIRE_VERSION = 3
+WIRE_VERSION = 4
 ABSENT = 2**64 - 1
 
 

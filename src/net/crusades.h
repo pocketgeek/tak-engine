@@ -13,7 +13,7 @@
 // credential, retail wire format or original campaign assets are involved.
 namespace tak::net::crusades {
 using Bytes = std::vector<uint8_t>;
-constexpr uint16_t kVersion = 3;
+constexpr uint16_t kVersion = 4;
 constexpr uint64_t kUnknownRevision = UINT64_MAX;
 constexpr size_t kMaxPayload = 240 * 1024;
 constexpr size_t kMaxCampaigns = 64;
@@ -24,10 +24,13 @@ constexpr size_t kMaxIdentifier = 128;
 constexpr size_t kMaxMapIdentifier = 4096;
 constexpr size_t kMaxDisplayName = 1024;
 constexpr size_t kMaxReason = 512;
+constexpr size_t kMaxHistory = 32;
+constexpr size_t kReplayChunkBytes = 64 * 1024;
+constexpr uint64_t kMaxReplayBytes = 512ull * 1024 * 1024;
 
 enum class ErrorCode : uint8_t {
     Malformed = 1, UnsupportedVersion = 2, AuthenticationRequired = 3,
-    Disabled = 4, NotFound = 5, StaleRevision = 6, TooLarge = 7, Unavailable = 8
+    Disabled = 4, NotFound = 5, StaleRevision = 6, TooLarge = 7, Unavailable = 8, Forbidden = 9
 };
 class DecodeError : public std::runtime_error {
 public:
@@ -41,8 +44,17 @@ struct BattleStatusRequest { uint32_t requestId = 0; std::string battleId; };
 struct MatchmakingRequest { uint32_t requestId = 0; std::string campaignId; };
 struct MatchSearchRequest { uint32_t requestId = 0; std::string campaignId; uint32_t territory = 0; };
 struct MatchCancelRequest { uint32_t requestId = 0; std::string campaignId; };
+struct HistoryCursor { uint64_t recordedUnix = 0; std::string battleId; };
+struct TerritoryHistoryRequest {
+    uint32_t requestId = 0; std::string campaignId; uint32_t territory = 0;
+    std::optional<HistoryCursor> cursor; uint16_t limit = 16;
+};
+struct ReplayChunkRequest {
+    uint32_t requestId = 0; std::string battleId; uint64_t offset = 0;
+    uint32_t limit = kReplayChunkBytes;
+};
 using Request = std::variant<ListRequest, SnapshotRequest, PlayerStatusRequest, BattleStatusRequest,
-    MatchmakingRequest, MatchSearchRequest, MatchCancelRequest>;
+    MatchmakingRequest, MatchSearchRequest, MatchCancelRequest, TerritoryHistoryRequest, ReplayChunkRequest>;
 
 struct CampaignEntry { std::string id, displayName; uint64_t revision = 0; std::string rulesPolicy; };
 struct CampaignList { uint32_t requestId = 0; std::vector<CampaignEntry> entries; std::string nextCursor; };
@@ -120,6 +132,33 @@ struct MatchmakingStatus {
     std::optional<uint64_t> searchExpiresUnix;
     std::vector<MatchTerritory> territories;
 };
+// Completed archives contain verified terminal records only. Opaque replay
+// metadata describes immutable bytes; filesystem paths and launch tokens never travel.
+struct HistoryParticipant {
+    std::string accountId;
+    uint64_t kills = 0, losses = 0; int64_t score = 0; uint64_t built = 0, currentUnits = 0;
+    std::string faction; uint8_t team = 0; bool defeated = false;
+};
+struct ReplayMetadata {
+    std::string digest; uint64_t totalBytes = 0;
+    uint32_t format = 0, protocolVersion = 0;
+    std::string mapDigest; uint64_t gameplayFingerprint = 0;
+};
+struct HistoryBattle {
+    std::string battleId; uint32_t territory = 0;
+    uint64_t campaignRevision = 0, recordedUnix = 0;
+    std::string mapIdentifier; BattleResult result;
+    std::vector<HistoryParticipant> participants;
+    std::optional<ReplayMetadata> replay;
+};
+struct TerritoryHistory {
+    uint32_t requestId = 0; std::string campaignId; uint32_t territory = 0;
+    std::vector<HistoryBattle> entries; std::optional<HistoryCursor> nextCursor;
+};
+struct ReplayChunk {
+    uint32_t requestId = 0; std::string battleId, digest;
+    uint64_t totalBytes = 0, offset = 0; Bytes bytes; bool final = false;
+};
 struct Error {
     uint32_t requestId = 0;
     ErrorCode code = ErrorCode::Malformed;
@@ -127,10 +166,10 @@ struct Error {
     std::optional<uint64_t> currentRevision;
     std::string reason;
 };
-using Response = std::variant<CampaignList, Snapshot, PlayerStatus, BattleStatus, Error, MatchmakingStatus>;
+using Response = std::variant<CampaignList, Snapshot, PlayerStatus, BattleStatus, Error, MatchmakingStatus, TerritoryHistory, ReplayChunk>;
 
-enum class RequestKind { List, Snapshot, PlayerStatus, BattleStatus, Matchmaking, MatchSearch, MatchCancel };
-enum class ResponseKind { List, Snapshot, PlayerStatus, BattleStatus, Error, Matchmaking };
+enum class RequestKind { List, Snapshot, PlayerStatus, BattleStatus, Matchmaking, MatchSearch, MatchCancel, TerritoryHistory, ReplayChunk };
+enum class ResponseKind { List, Snapshot, PlayerStatus, BattleStatus, Error, Matchmaking, TerritoryHistory, ReplayChunk };
 RequestKind kindOf(const Request& request);
 ResponseKind kindOf(const Response& response);
 

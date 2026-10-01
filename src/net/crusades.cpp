@@ -238,8 +238,67 @@ void write(Writer& writer, const MatchmakingStatus& status) {
     }
     require(foundSearch, "own search references missing matchmaking territory");
 }
+void digest(const std::string& value, bool empty = false) {
+    if (empty && value.empty()) return;
+    require(value.size() == 64 && std::all_of(value.begin(), value.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    }), "invalid replay digest");
+}
+void cursor(Writer& w, const std::optional<HistoryCursor>& c) {
+    w.number(c ? 1 : 0, 1);
+    if (c) { revision(c->recordedUnix); require(c->recordedUnix > 0, "zero history cursor time"); w.number(c->recordedUnix, 8); w.text(c->battleId, kMaxIdentifier); }
+}
+std::optional<HistoryCursor> cursor(Reader& r) {
+    if (!r.flag()) return {};
+    HistoryCursor c; c.recordedUnix = r.number(8); c.battleId = r.text(kMaxIdentifier); return c;
+}
+void write(Writer& w, const TerritoryHistory& history) {
+    require(history.requestId != 0 && history.territory != 0, "invalid history identity");
+    w.text(history.campaignId, kMaxIdentifier); w.number(history.territory, 4);
+    require(history.entries.size() <= kMaxHistory, "too many history records"); w.number(history.entries.size(), 2);
+    std::set<std::string> ids; uint64_t previousTime = UINT64_MAX; std::string previousId;
+    for (const auto& b : history.entries) {
+        require(b.territory == history.territory && ids.insert(b.battleId).second, "invalid history record territory/ID");
+        revision(b.recordedUnix); revision(b.campaignRevision);
+        require(b.recordedUnix > 0 && (b.recordedUnix < previousTime || (b.recordedUnix == previousTime && b.battleId < previousId)), "unordered history records");
+        previousTime = b.recordedUnix; previousId = b.battleId;
+        w.text(b.battleId, kMaxIdentifier); w.number(b.territory, 4); w.number(b.campaignRevision, 8); w.number(b.recordedUnix, 8); w.text(b.mapIdentifier, kMaxMapIdentifier);
+        const auto& result = b.result; require(static_cast<unsigned>(result.outcome) <= 9, "invalid archive outcome");
+        const bool victory = result.outcome == Outcome::Victory || result.outcome == Outcome::Resignation;
+        require(victory ? (result.winners.size() == 1 && result.finalTick > 0) : result.winners.empty(), "invalid archive winners/tick");
+        w.number(static_cast<unsigned>(result.outcome), 1); w.number(result.finalTick, 8); w.number(result.finalStateHash, 8); w.number(result.winners.size(), 1);
+        for (const auto& id : result.winners) { account(id); w.text(id, 20); }
+        require(!b.participants.empty() && b.participants.size() <= 8, "invalid archive participant count");
+        w.number(b.participants.size(), 1); std::set<std::string> participants;
+        for (const auto& p : b.participants) {
+            account(p.accountId); require(participants.insert(p.accountId).second, "duplicate archive participant"); w.text(p.accountId, 20);
+            for (auto n : {p.kills,p.losses}) { revision(n); w.number(n, 8); }
+            w.number(static_cast<uint64_t>(p.score), 8);
+            for (auto n : {p.built,p.currentUnits}) { revision(n); w.number(n, 8); }
+            w.text(p.faction, kMaxIdentifier); require(p.team <= 7, "invalid archive team"); w.number(p.team, 1); w.number(p.defeated ? 1 : 0, 1);
+        }
+        for (const auto& id : result.winners) require(participants.count(id), "archive winner is not a participant");
+        w.number(b.replay ? 1 : 0, 1);
+        if (b.replay) {
+            const auto& m = *b.replay; digest(m.digest); digest(m.mapDigest, true);
+            require(m.totalBytes > 0 && m.totalBytes <= kMaxReplayBytes && m.format > 0 && m.protocolVersion > 0, "invalid replay metadata");
+            w.text(m.digest, 64); w.number(m.totalBytes, 8); w.number(m.format, 4); w.number(m.protocolVersion, 4); w.text(m.mapDigest, 64, true); w.number(m.gameplayFingerprint, 8);
+        }
+    }
+    if (history.nextCursor) require(!history.entries.empty() && history.nextCursor->recordedUnix == history.entries.back().recordedUnix && history.nextCursor->battleId == history.entries.back().battleId, "invalid history next cursor");
+    cursor(w, history.nextCursor);
+}
+void write(Writer& w, const ReplayChunk& chunk) {
+    require(chunk.requestId != 0, "replay chunk cannot notify"); digest(chunk.digest);
+    require(chunk.totalBytes > 0 && chunk.totalBytes <= kMaxReplayBytes && chunk.offset < chunk.totalBytes &&
+        !chunk.bytes.empty() && chunk.bytes.size() <= kReplayChunkBytes && chunk.bytes.size() <= chunk.totalBytes - chunk.offset &&
+        chunk.final == (chunk.offset + chunk.bytes.size() == chunk.totalBytes), "invalid replay chunk bounds/final flag");
+    w.text(chunk.battleId, kMaxIdentifier); w.text(chunk.digest, 64); w.number(chunk.totalBytes, 8); w.number(chunk.offset, 8);
+    w.number(chunk.final ? 1 : 0, 1); w.number(chunk.bytes.size(), 4);
+    w.bytes.insert(w.bytes.end(), chunk.bytes.begin(), chunk.bytes.end());
+}
 void write(Writer& writer, const Error& error) {
-    require(static_cast<unsigned>(error.code) >= 1 && static_cast<unsigned>(error.code) <= 8, "invalid campaign error code");
+    require(static_cast<unsigned>(error.code) >= 1 && static_cast<unsigned>(error.code) <= 9, "invalid campaign error code");
     writer.number(static_cast<unsigned>(error.code), 1); writer.text(error.campaignId, kMaxIdentifier, true);
     writer.number(error.currentRevision ? 1 : 0, 1);
     if (error.currentRevision) { revision(*error.currentRevision); writer.number(*error.currentRevision, 8); }
@@ -261,6 +320,12 @@ Bytes encode(const Request& request) {
             writer.text(message.campaignId, kMaxIdentifier);
             if (message.expectedRevision != kUnknownRevision) revision(message.expectedRevision);
             writer.number(message.expectedRevision, 8);
+        } else if constexpr (std::is_same_v<T, TerritoryHistoryRequest>) {
+            writer.text(message.campaignId, kMaxIdentifier); require(message.territory != 0, "zero history territory"); writer.number(message.territory, 4);
+            cursor(writer, message.cursor); require(message.limit > 0 && message.limit <= kMaxHistory, "invalid history page limit"); writer.number(message.limit, 2);
+        } else if constexpr (std::is_same_v<T, ReplayChunkRequest>) {
+            writer.text(message.battleId, kMaxIdentifier); require(message.offset < kMaxReplayBytes && message.limit > 0 && message.limit <= kReplayChunkBytes, "invalid replay request bounds");
+            writer.number(message.offset, 8); writer.number(message.limit, 4);
         } else if constexpr (std::is_same_v<T, BattleStatusRequest>) writer.text(message.battleId, kMaxIdentifier);
         else {
             writer.text(message.campaignId, kMaxIdentifier);
@@ -288,6 +353,8 @@ Request decodeRequest(RequestKind kind, const Bytes& payload) {
     case RequestKind::Matchmaking: { MatchmakingRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); result = m; break; }
     case RequestKind::MatchSearch: { MatchSearchRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); m.territory = uint32_t(reader.number(4)); result = m; break; }
     case RequestKind::MatchCancel: { MatchCancelRequest m; m.requestId = id; m.campaignId = reader.text(kMaxIdentifier); result = m; break; }
+    case RequestKind::TerritoryHistory: { TerritoryHistoryRequest m; m.requestId=id; m.campaignId=reader.text(kMaxIdentifier); m.territory=uint32_t(reader.number(4)); m.cursor=cursor(reader); m.limit=uint16_t(reader.number(2)); result=std::move(m); break; }
+    case RequestKind::ReplayChunk: { ReplayChunkRequest m; m.requestId=id; m.battleId=reader.text(kMaxIdentifier); m.offset=reader.number(8); m.limit=uint32_t(reader.number(4)); result=std::move(m); break; }
     default: fail("unknown campaign request kind");
     }
     reader.done(); (void)encode(result); return result;
@@ -352,6 +419,28 @@ Response decodeResponse(ResponseKind kind, const Bytes& payload) {
             t.offered = uint32_t(reader.number(4)); t.active = uint32_t(reader.number(4)); m.territories.push_back(t);
         }
         result = std::move(m); break;
+    }
+    case ResponseKind::TerritoryHistory: {
+        TerritoryHistory m; m.requestId=id; m.campaignId=reader.text(kMaxIdentifier); m.territory=uint32_t(reader.number(4));
+        const auto count=reader.count(2,kMaxHistory);
+        for(size_t i=0;i<count;++i) {
+            HistoryBattle b; b.battleId=reader.text(kMaxIdentifier); b.territory=uint32_t(reader.number(4)); b.campaignRevision=reader.number(8); b.recordedUnix=reader.number(8); b.mapIdentifier=reader.text(kMaxMapIdentifier);
+            b.result.outcome=static_cast<Outcome>(reader.number(1)); b.result.finalTick=reader.number(8); b.result.finalStateHash=reader.number(8);
+            const auto winners=reader.count(1,1); for(size_t j=0;j<winners;++j)b.result.winners.push_back(reader.text(20));
+            const auto participants=reader.count(1,8);
+            for(size_t j=0;j<participants;++j) {
+                HistoryParticipant p; p.accountId=reader.text(20); p.kills=reader.number(8); p.losses=reader.number(8); {const auto bits=reader.number(8); std::memcpy(&p.score,&bits,8);} p.built=reader.number(8); p.currentUnits=reader.number(8);
+                p.faction=reader.text(kMaxIdentifier); p.team=uint8_t(reader.number(1)); p.defeated=reader.flag(); b.participants.push_back(std::move(p));
+            }
+            if(reader.flag()) { ReplayMetadata r; r.digest=reader.text(64); r.totalBytes=reader.number(8); r.format=uint32_t(reader.number(4)); r.protocolVersion=uint32_t(reader.number(4)); r.mapDigest=reader.text(64,true); r.gameplayFingerprint=reader.number(8); b.replay=std::move(r); }
+            m.entries.push_back(std::move(b));
+        }
+        m.nextCursor=cursor(reader); result=std::move(m); break;
+    }
+    case ResponseKind::ReplayChunk: {
+        ReplayChunk m; m.requestId=id; m.battleId=reader.text(kMaxIdentifier); m.digest=reader.text(64); m.totalBytes=reader.number(8); m.offset=reader.number(8); m.final=reader.flag();
+        const auto count=reader.count(4,kReplayChunkBytes); require(count<=reader.bytes.size()-reader.offset,"truncated replay chunk bytes");
+        m.bytes.assign(reader.bytes.begin()+reader.offset,reader.bytes.begin()+reader.offset+count);reader.offset+=count; result=std::move(m); break;
     }
     default: fail("unknown campaign response kind");
     }

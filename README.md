@@ -352,6 +352,12 @@ open the existing battle lobby; its factions and rules are chosen by the server.
 Within the running app, **Sign in again** restores the campaign and territory
 when you reconnect to the same server with the same account.
 
+Choose **History** for an enrolled campaign territory to see verified
+results, dates and player statistics. **Watch Replay** downloads a retained
+recording, verifies it, and opens the existing replay viewer. Press **Esc** to
+return to the same territory. Missing recordings leave the results intact;
+playback requires matching gameplay data and the recorded map.
+
 This is a modern two-player campaign service. Historical territory capture and
 campaign-victory formulas remain incomplete, so a tactical win does not invent
 an ownership change. The strategic map reads original artwork from your own
@@ -364,7 +370,7 @@ from your installed `Darien.def`; battle-map assignments require server authorin
 See the [strategic interface and setup guide](docs/research/darien-crusades/campaign-ui.md)
 and [server battle setup](docs/research/darien-crusades/campaign-battles.md).
 The [matchmaking guide](docs/research/darien-crusades/campaign-matchmaking.md)
-describes the modern policy and its verification.
+describes the modern policy and its verification. The [history and replay guide](docs/research/darien-crusades/campaign-history.md) explains archive access and retention.
 
 ## Controls
 

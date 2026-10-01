@@ -10,7 +10,7 @@
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 7;
+constexpr int kSchemaVersion = 8;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -83,6 +83,15 @@ const std::vector<std::string>& readIndexSchemaStatements() {
 const std::vector<std::string>& participationSchemaStatements() {
     static const std::vector<std::string> statements{
         "CREATE INDEX battle_participants_global_account ON battle_participants(account_id,battle_id)",
+    };
+    return statements;
+}
+const std::vector<std::string>& territoryHistorySchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE TABLE territory_battle_history(campaign_id TEXT NOT NULL REFERENCES campaigns(id),territory INTEGER NOT NULL CHECK(territory BETWEEN 1 AND 4294967295),battle_id TEXT PRIMARY KEY REFERENCES verified_match_results(battle_id),recorded_unix INTEGER NOT NULL CHECK(recorded_unix>=0))",
+        "CREATE INDEX territory_battle_history_page ON territory_battle_history(campaign_id,territory,recorded_unix DESC,battle_id DESC)",
+        "CREATE TRIGGER territory_battle_history_no_update BEFORE UPDATE ON territory_battle_history BEGIN SELECT RAISE(ABORT,'immutable territory battle history'); END",
+        "CREATE TRIGGER territory_battle_history_no_delete BEFORE DELETE ON territory_battle_history BEGIN SELECT RAISE(ABORT,'immutable territory battle history'); END",
     };
     return statements;
 }
@@ -309,6 +318,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             if (version >= 5) expected.insert(expected.end(), rulesSchemaStatements().begin(), rulesSchemaStatements().end());
             if (version >= 6) expected.insert(expected.end(), readIndexSchemaStatements().begin(), readIndexSchemaStatements().end());
             if (version >= 7) expected.insert(expected.end(), participationSchemaStatements().begin(), participationSchemaStatements().end());
+            if (version >= 8) expected.insert(expected.end(), territoryHistorySchemaStatements().begin(), territoryHistorySchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
@@ -366,10 +376,19 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
     if (version < 7) {
         for (const auto& sql : participationSchemaStatements()) exec(db,sql.c_str());
         exec(db,"PRAGMA user_version=7");
-        if (version != 0 && impl_->options.beforeCommit) impl_->options.beforeCommit();
+    }
+    if (version < 8) {
+        for (const auto& sql : territoryHistorySchemaStatements()) exec(db,sql.c_str());
+        // Only previously verified results enter territory history. Never
+        // manufacture a result or decision for an old unplayed offer.
+        exec(db,"INSERT INTO territory_battle_history SELECT b.campaign_id,b.territory,r.battle_id,r.recorded_unix FROM verified_match_results r JOIN issued_battles b ON b.id=r.battle_id");
+        if(scalar(db,"SELECT count(*) FROM territory_battle_history")!=scalar(db,"SELECT count(*) FROM verified_match_results"))
+            throw std::runtime_error("orphaned verified result cannot migrate territory history");
+        exec(db,"PRAGMA user_version=8");
     }
     Statement policies(db, "SELECT policy_id FROM campaign_rules");
     while (policies.row()) (void)permittedPolicy(policies.bytes(0), impl_->options);
+    if (version != 0 && version < kSchemaVersion && impl_->options.beforeCommit) impl_->options.beforeCommit();
     transaction.finish();
 }
 CampaignStore::~CampaignStore() = default;
@@ -854,6 +873,18 @@ VerifiedMatchResult decodeResult(const std::string& data, const IssuedBattle& ba
     if (reader.offset != data.size()) throw std::runtime_error("trailing verified result bytes");
     validateResult(result, battle); return result;
 }
+std::optional<VerifiedMatchResult> readVerifiedResult(sqlite3* db,const IssuedBattle& current) {
+    Statement query(db,"SELECT payload,replay_id,replay_digest,outcome,winner_account,recorded_unix FROM verified_match_results WHERE battle_id=?");
+    query.text(1,current.id);
+    if(!query.row())return std::nullopt;
+    auto result=decodeResult(query.bytes(0),current);
+    const auto expectedStatus=eligibleOutcome(result.outcome)?BattleStatus::Completed:BattleStatus::Cancelled;
+    if(current.status!=expectedStatus || query.bytes(1)!=result.replayId || query.bytes(2)!=result.replayDigest ||
+       query.number(3)!=static_cast<int>(result.outcome) || query.bytes(4)!=(result.winners.empty()?"":result.winners.front()) ||
+       query.number(5)!=current.changedUnix)
+        throw std::runtime_error("verified result metadata/lifecycle mismatch");
+    return result;
+}
 } // namespace
 
 void CampaignStore::recordVerifiedResult(const std::string& id, const std::string& roomToken,
@@ -887,6 +918,9 @@ void CampaignStore::recordVerifiedResult(const std::string& id, const std::strin
     insert.integer(4, static_cast<int>(result.outcome));
     if (!result.winners.empty()) insert.text(5, result.winners.front());
     insert.blob(6, encodeResult(result)); insert.integer(7, now); insert.done();
+    Statement history(impl_->db,"INSERT INTO territory_battle_history VALUES(?,?,?,?)");
+    history.text(1,current.campaignId); history.integer(2,current.territory);
+    history.text(3,id); history.integer(4,now); history.done();
     Statement audit(impl_->db, "INSERT INTO rule_decisions VALUES(?,?,?,?,?,?,?,?)");
     audit.text(1,id); audit.text(2,decision.policyId); audit.integer(3,campaign.revision); audit.integer(4,after);
     audit.integer(5,static_cast<int>(decision.disposition)); audit.integer(6,static_cast<int>(decision.evidence));
@@ -903,18 +937,47 @@ void CampaignStore::recordVerifiedResult(const std::string& id, const std::strin
 std::optional<VerifiedMatchResult> CampaignStore::verifiedResult(const std::string& id) const {
     Transaction transaction(impl_->db, false);
     const auto current = battle(id);
-    Statement query(impl_->db, "SELECT payload,replay_id,replay_digest,outcome,winner_account,recorded_unix FROM verified_match_results WHERE battle_id=?");
-    query.text(1, id);
-    std::optional<VerifiedMatchResult> result;
-    if (query.row()) {
-        result = decodeResult(query.bytes(0), current);
-        const auto expectedStatus = eligibleOutcome(result->outcome) ? BattleStatus::Completed : BattleStatus::Cancelled;
-        if (current.status != expectedStatus || query.bytes(1) != result->replayId || query.bytes(2) != result->replayDigest ||
-            query.number(3) != static_cast<int>(result->outcome) || query.bytes(4) != (result->winners.empty() ? "" : result->winners.front()) ||
-            query.number(5) != current.changedUnix)
-            throw std::runtime_error("verified result metadata/lifecycle mismatch");
-    }
+    auto result=readVerifiedResult(impl_->db,current);
     transaction.finish(); return result;
+}
+
+HistoryPage CampaignStore::territoryHistory(const std::string& campaignId,TerritoryId territory,
+        const std::optional<HistoryCursor>& after,size_t limit) const {
+    if(!limit || limit>32 || !territory)throw std::runtime_error("invalid territory history page");
+    Transaction transaction(impl_->db,false);
+    const auto campaign=load(campaignId);
+    if(!campaign.definition.find(territory))throw std::runtime_error("unknown history territory");
+    if(after) {
+        if(after->recordedUnix<0)throw std::runtime_error("invalid history cursor time");
+        battleString(after->battleId);
+        Statement cursor(impl_->db,"SELECT recorded_unix FROM territory_battle_history WHERE campaign_id=? AND territory=? AND battle_id=?");
+        cursor.text(1,campaignId);cursor.integer(2,territory);cursor.text(3,after->battleId);
+        if(!cursor.row() || cursor.number(0)!=after->recordedUnix)
+            throw std::runtime_error("history cursor does not belong to territory");
+        const auto current=battle(after->battleId);
+        if(current.campaignId!=campaignId || current.territory!=territory ||
+            current.changedUnix!=after->recordedUnix || !readVerifiedResult(impl_->db,current))
+            throw std::runtime_error("history cursor projection mismatch");
+    }
+    Statement query(impl_->db,after?
+        "SELECT battle_id,recorded_unix FROM territory_battle_history WHERE campaign_id=? AND territory=? AND (recorded_unix,battle_id)<(?,?) ORDER BY recorded_unix DESC,battle_id DESC LIMIT ?":
+        "SELECT battle_id,recorded_unix FROM territory_battle_history WHERE campaign_id=? AND territory=? ORDER BY recorded_unix DESC,battle_id DESC LIMIT ?");
+    query.text(1,campaignId);query.integer(2,territory);
+    int index=3;
+    if(after){query.integer(index++,after->recordedUnix);query.text(index++,after->battleId);}
+    query.integer(index,static_cast<int64_t>(limit+1));
+    HistoryPage page;
+    while(query.row()) {
+        if(page.entries.size()==limit){page.truncated=true;break;}
+        auto issued=battle(query.bytes(0));
+        auto result=readVerifiedResult(impl_->db,issued);
+        const auto recorded=query.number(1);
+        if(!result || issued.campaignId!=campaignId || issued.territory!=territory ||
+            recorded<0 || recorded!=issued.changedUnix)
+            throw std::runtime_error("territory history projection mismatch");
+        page.entries.push_back({std::move(issued),std::move(*result),recorded});
+    }
+    transaction.finish();return page;
 }
 
 std::optional<StoredRulesDecision> CampaignStore::rulesDecision(const std::string& id) const {

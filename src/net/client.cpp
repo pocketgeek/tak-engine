@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <system_error>
 
 #include "net/auth.h"
 #include "net/crypto.h"
@@ -41,6 +42,7 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
 }
 
 MpClient::~MpClient() {
+    cancelCampaignReplayDownload();
     if (derive_.joinable()) derive_.join();   // never outlive the key-derivation worker
     crypto::wipe(loginPass_);
 }
@@ -98,8 +100,15 @@ bool MpClient::poll() {
     }
     pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
     uint64_t now = nowMs();
+    if (campaignReplayNextPullMs_ && now >= campaignReplayNextPullMs_ && campaignReplayDownload_.state == CampaignReplayState::Downloading) {
+        campaignReplayNextPullMs_ = 0;
+        campaignReplayRequest_ = sendCampaignRequest(Msg::CrusadesGetReplayChunk,
+            crusades::ReplayChunkRequest{0,campaignReplayDownload_.battleId,campaignReplayDownload_.receivedBytes,crusades::kReplayChunkBytes},campaignReplayDownload_.battleId);
+        if (!campaignReplayRequest_) failCampaignReplay("Cannot request next replay chunk");
+    }
     for (auto it=campaignPending_.begin(); it!=campaignPending_.end();) {
         if (now-it->second.sentMs >= 15000) {
+            if (it->first == campaignReplayRequest_) failCampaignReplay("Replay request timed out");
             campaignError_=crusades::Error{it->first,crusades::ErrorCode::Unavailable,{}, {},"Campaign request timed out"};
             it=campaignPending_.erase(it);
         } else ++it;
@@ -136,6 +145,7 @@ bool MpClient::campaignAuthenticated() const {
         state_ != State::Offline && state_ != State::Done && state_ != State::Connecting;
 }
 void MpClient::clearCampaignCache() {
+    cancelCampaignReplayDownload(); campaignHistory_.clear(); campaignHistoryRequests_.clear(); campaignHistoryRecords_.clear();
     campaignReplica_.clear(); campaignList_.reset(); campaignPlayer_.reset(); campaignMatchmaking_.reset(); campaignBattles_.clear(); campaignRoomBindings_.clear();
     campaignError_.reset(); campaignInvitation_.reset(); campaignPending_.clear();
     campaignRequestId_ = 0; campaignRefreshAttempt_.clear();
@@ -146,7 +156,9 @@ uint32_t MpClient::sendCampaignRequest(Msg kind, crusades::Request request, cons
     std::visit([&](auto& value) { value.requestId = id; }, request);
     try {
         auto bytes = crusades::encode(request);
-        campaignPending_.emplace(id, CampaignPending{kind, target, nowMs()});
+        CampaignPending pending{kind, target, nowMs(), {}};
+        if (const auto* history = std::get_if<crusades::TerritoryHistoryRequest>(&request)) pending.history = *history;
+        campaignPending_.emplace(id, std::move(pending));
         conn_.send(kind, bytes);
         return id;
     } catch (const crusades::DecodeError& e) {
@@ -173,6 +185,102 @@ uint32_t MpClient::searchCampaignBattle(const std::string& campaign, uint32_t te
 }
 uint32_t MpClient::cancelCampaignSearch(const std::string& campaign) {
     return sendCampaignRequest(Msg::CrusadesCancelSearch, crusades::MatchCancelRequest{0, campaign}, campaign);
+}
+uint32_t MpClient::getTerritoryHistory(const std::string& campaign, uint32_t territory,
+    std::optional<crusades::HistoryCursor> cursor, uint16_t limit) {
+    const auto id = sendCampaignRequest(Msg::CrusadesGetTerritoryHistory,
+        crusades::TerritoryHistoryRequest{0,campaign,territory,std::move(cursor),limit},campaign);
+    if (id) {
+        const HistoryKey key{campaign,territory};
+        if (!campaignHistoryRequests_.count(key) && campaignHistoryRequests_.size() >= 64) campaignHistoryRequests_.erase(campaignHistoryRequests_.begin());
+        campaignHistoryRequests_[key] = id;
+    }
+    return id;
+}
+const crusades::TerritoryHistory* MpClient::territoryHistory(const std::string& campaign, uint32_t territory) const {
+    const auto it = campaignHistory_.find({campaign,territory}); return it == campaignHistory_.end() ? nullptr : &it->second;
+}
+void MpClient::cancelCampaignReplayDownload() {
+    if (campaignReplayRequest_) campaignPending_.erase(campaignReplayRequest_);
+    campaignReplayRequest_ = 0; campaignReplayNextPullMs_ = 0;
+    if (campaignReplayOutput_.is_open()) campaignReplayOutput_.close();
+    if (!campaignReplayPartial_.empty()) { std::error_code ec; std::filesystem::remove(campaignReplayPartial_, ec); }
+    campaignReplayPartial_.clear(); campaignReplayHash_.reset(); campaignReplayDownload_ = {};
+}
+void MpClient::failCampaignReplay(const std::string& error) {
+    // Caller may hold a pending-map iterator; erase the correlation at its call site.
+    campaignReplayRequest_ = 0; campaignReplayNextPullMs_ = 0;
+    if (campaignReplayOutput_.is_open()) campaignReplayOutput_.close();
+    if (!campaignReplayPartial_.empty()) { std::error_code ec; std::filesystem::remove(campaignReplayPartial_, ec); }
+    campaignReplayPartial_.clear(); campaignReplayHash_.reset();
+    campaignReplayDownload_.state = CampaignReplayState::Failed; campaignReplayDownload_.path.clear(); campaignReplayDownload_.error = error;
+}
+namespace {
+bool validReplayCache(const std::filesystem::path& path, const crusades::ReplayMetadata& metadata) {
+    std::error_code ec;
+    if (std::filesystem::is_symlink(path,ec) || std::filesystem::file_size(path,ec) != metadata.totalBytes || ec) return false;
+    std::ifstream in(path,std::ios::binary); if (!in) return false;
+    crypto::Sha256 hash; std::array<char,crusades::kReplayChunkBytes> bytes{}; uint64_t read = 0;
+    while (read < metadata.totalBytes) {
+        const auto n = size_t(std::min<uint64_t>(bytes.size(),metadata.totalBytes-read));
+        in.read(bytes.data(),std::streamsize(n)); if (!in) return false;
+        hash.update(bytes.data(),n); read += n;
+    }
+    return crypto::toHex(hash.final()) == metadata.digest;
+}
+}
+uint32_t MpClient::requestCampaignReplay(const std::string& battle) {
+    cancelCampaignReplayDownload(); campaignReplayDownload_.battleId = battle;
+    if (!campaignAuthenticated()) { failCampaignReplay("Sign in to download a campaign replay"); return 0; }
+    const crusades::HistoryBattle* record = nullptr;
+    for (const auto& [key,page] : campaignHistory_) {
+        (void)key;
+        for (const auto& entry : page.entries) if (entry.battleId == battle) { record = &entry; break; }
+        if (record) break;
+    }
+    if (!record || !record->replay) { failCampaignReplay("Replay is unavailable"); return 0; }
+    const auto& metadata = *record->replay;
+    if (!supportedReplayProtocol(metadata.format,metadata.protocolVersion)) { failCampaignReplay("Replay requires a different engine version"); return 0; }
+    if (campaignReplayCacheRoot_.empty()) { failCampaignReplay("Replay cache is unavailable"); return 0; }
+    campaignReplayDownload_.digest = metadata.digest; campaignReplayDownload_.totalBytes = metadata.totalBytes;
+    try {
+        std::filesystem::create_directories(campaignReplayCacheRoot_);
+        const auto path = campaignReplayCacheRoot_ / (metadata.digest + ".takrep");
+        if (validReplayCache(path,metadata)) {
+            campaignReplayDownload_.state = CampaignReplayState::Ready; campaignReplayDownload_.path = path;
+            campaignReplayDownload_.receivedBytes = metadata.totalBytes;
+            // No request was required: nonzero indicates locally fulfilled action.
+            return UINT32_MAX;
+        }
+        std::error_code ec; std::filesystem::remove(path,ec);
+        const auto nonce = crypto::toHex(crypto::randomVec(16));
+        campaignReplayPartial_ = campaignReplayCacheRoot_ / (metadata.digest + "." + nonce + ".part");
+        campaignReplayOutput_.open(campaignReplayPartial_,std::ios::binary | std::ios::trunc);
+        if (!campaignReplayOutput_) throw std::runtime_error("cannot create replay cache file");
+        campaignReplayDownload_.state = CampaignReplayState::Downloading;
+        campaignReplayRequest_ = sendCampaignRequest(Msg::CrusadesGetReplayChunk,crusades::ReplayChunkRequest{0,battle,0,crusades::kReplayChunkBytes},battle);
+        if (!campaignReplayRequest_) throw std::runtime_error("cannot request replay");
+        return campaignReplayRequest_;
+    } catch (const std::exception&) { failCampaignReplay("Cannot write replay cache"); return 0; }
+}
+void MpClient::acceptCampaignReplayChunk(const crusades::ReplayChunk& chunk) {
+    const auto& download = campaignReplayDownload_;
+    if (download.state != CampaignReplayState::Downloading || chunk.requestId != campaignReplayRequest_ ||
+        chunk.battleId != download.battleId || chunk.digest != download.digest || chunk.totalBytes != download.totalBytes || chunk.offset != download.receivedBytes)
+        throw crusades::DecodeError(crusades::ErrorCode::Malformed,"replay chunk identity/order mismatch");
+    campaignReplayOutput_.write(reinterpret_cast<const char*>(chunk.bytes.data()),std::streamsize(chunk.bytes.size()));
+    if (!campaignReplayOutput_) throw std::runtime_error("replay cache write failed");
+    campaignReplayHash_.update(chunk.bytes.data(),chunk.bytes.size()); campaignReplayDownload_.receivedBytes += chunk.bytes.size();
+    campaignReplayRequest_ = 0;
+    if (chunk.final) {
+        campaignReplayOutput_.flush(); if (!campaignReplayOutput_) throw std::runtime_error("replay cache flush failed"); campaignReplayOutput_.close();
+        if (campaignReplayOutput_.fail() || crypto::toHex(campaignReplayHash_.final()) != download.digest) throw std::runtime_error("replay digest mismatch");
+        const auto path = campaignReplayCacheRoot_ / (download.digest + ".takrep");
+        std::filesystem::rename(campaignReplayPartial_,path); campaignReplayPartial_.clear();
+        campaignReplayDownload_.path = path; campaignReplayDownload_.state = CampaignReplayState::Ready; campaignReplayHash_.reset();
+    } else {
+        campaignReplayNextPullMs_ = nowMs() + 20;
+    }
 }
 void MpClient::subscribeCampaign(const std::string& campaign) {
     // Outstanding queue reads/operations belong to the subscription that issued
@@ -262,6 +370,8 @@ void MpClient::campaignFrame(const Frame& f) {
         if (f.kind==Msg::CrusadesPlayerStatus) {kind=cw::ResponseKind::PlayerStatus;expected=Msg::CrusadesGetPlayerStatus;}
         if (f.kind==Msg::CrusadesBattleStatus) {kind=cw::ResponseKind::BattleStatus;expected=Msg::CrusadesGetBattleStatus;}
         if (f.kind==Msg::CrusadesMatchmakingStatus) {kind=cw::ResponseKind::Matchmaking;expected=Msg::CrusadesGetMatchmaking;}
+        if (f.kind==Msg::CrusadesTerritoryHistory) {kind=cw::ResponseKind::TerritoryHistory;expected=Msg::CrusadesGetTerritoryHistory;}
+        if (f.kind==Msg::CrusadesReplayChunk) {kind=cw::ResponseKind::ReplayChunk;expected=Msg::CrusadesGetReplayChunk;}
         auto response=cw::decodeResponse(kind,f.payload);
         const auto id=std::visit([](const auto& v){return v.requestId;},response);
         auto pending=campaignPending_.find(id);
@@ -274,7 +384,53 @@ void MpClient::campaignFrame(const Frame& f) {
             if (kind!=cw::ResponseKind::Error && pending->second.kind!=expected && !matchOperation)
                 throw cw::DecodeError(cw::ErrorCode::Malformed,"campaign response kind does not match request");
         }
-        if (auto* value=std::get_if<cw::Snapshot>(&response)) {
+        if (auto* value=std::get_if<cw::TerritoryHistory>(&response)) {
+            if (!id) return;
+            const auto request = pending->second.history;
+            if (!request || value->campaignId != request->campaignId || value->territory != request->territory || value->entries.size() > request->limit)
+                throw cw::DecodeError(cw::ErrorCode::Malformed,"history response target/limit mismatch");
+            const HistoryKey key{value->campaignId,value->territory};
+            campaignPending_.erase(id);
+            const auto latest = campaignHistoryRequests_.find(key); if (latest == campaignHistoryRequests_.end() || latest->second != id) return;
+            const auto previousRecord = [&](const std::string& battle) -> const cw::HistoryBattle* {
+                const auto record = campaignHistoryRecords_.find({value->campaignId,battle});
+                if (record != campaignHistoryRecords_.end()) return &record->second;
+                // A page can outlive its entry in the smaller immutable-record
+                // cache. Keep every currently visible record protected as well.
+                for (const auto& [pageKey,page] : campaignHistory_) {
+                    if (pageKey.first != value->campaignId) continue;
+                    for (const auto& entry : page.entries) if (entry.battleId == battle) return &entry;
+                }
+                return nullptr;
+            };
+            for (const auto& entry : value->entries) {
+                if (request->cursor && !(entry.recordedUnix < request->cursor->recordedUnix ||
+                    (entry.recordedUnix == request->cursor->recordedUnix && entry.battleId < request->cursor->battleId)))
+                    throw cw::DecodeError(cw::ErrorCode::Malformed,"history response precedes requested cursor");
+                const auto* old = previousRecord(entry.battleId);
+                if (old) {
+                    // Availability may disappear through retention. Verified terminal
+                    // metadata and an available replay's immutable identity may not change.
+                    cw::TerritoryHistory a{1,value->campaignId,value->territory,{*old},{}};
+                    cw::TerritoryHistory b{1,value->campaignId,value->territory,{entry},{}};
+                    if (!a.entries[0].replay || !b.entries[0].replay) { a.entries[0].replay.reset(); b.entries[0].replay.reset(); }
+                    if (cw::encode(cw::Response{a}) != cw::encode(cw::Response{b})) throw cw::DecodeError(cw::ErrorCode::Malformed,"conflicting archive record");
+                }
+            }
+            for (const auto& entry : value->entries) {
+                const auto recordKey=std::make_pair(value->campaignId,entry.battleId);
+                auto saved = entry;
+                const auto* previous = previousRecord(entry.battleId);
+                if (!saved.replay && previous) saved.replay = previous->replay;
+                if (!campaignHistoryRecords_.count(recordKey) && campaignHistoryRecords_.size() >= 512) campaignHistoryRecords_.erase(campaignHistoryRecords_.begin());
+                campaignHistoryRecords_[recordKey]=std::move(saved);
+            }
+            if (!campaignHistory_.count(key) && campaignHistory_.size() >= 64) campaignHistory_.erase(campaignHistory_.begin());
+            campaignHistory_[key]=std::move(*value);
+        } else if (auto* value=std::get_if<cw::ReplayChunk>(&response)) {
+            if (!id) return;
+            campaignPending_.erase(id); acceptCampaignReplayChunk(*value);
+        } else if (auto* value=std::get_if<cw::Snapshot>(&response)) {
             if (id && value->campaignId!=target) throw cw::DecodeError(cw::ErrorCode::Malformed,"campaign response target mismatch");
             if (!id && value->campaignId!=campaignSubscription_) return;
             if(id)campaignPending_.erase(id);
@@ -347,13 +503,19 @@ void MpClient::campaignFrame(const Frame& f) {
             }
             campaignMatchmaking_ = std::move(*value);
         } else if (auto* value=std::get_if<cw::Error>(&response)) {
+            if (id && id == campaignReplayRequest_) failCampaignReplay(value->reason);
             if(id)campaignPending_.erase(id);
             campaignError_=*value;
             if(value->code==cw::ErrorCode::StaleRevision)refreshCampaignOnce(value->campaignId);
         }
     } catch (const std::exception&) {
+        if (f.kind == Msg::CrusadesReplayChunk && f.payload.size() < 6 && campaignReplayDownload_.state == CampaignReplayState::Downloading) {
+            const auto id = campaignReplayRequest_; failCampaignReplay("Replay transfer failed validation"); campaignPending_.erase(id);
+        }
         if(f.kind!=Msg::CrusadesBattleResult && f.kind!=Msg::CrusadesAllegianceResult && f.payload.size()>=6) {
-            Reader header(f.payload.data(),f.payload.size());(void)header.u8();(void)header.u8();campaignPending_.erase(header.u32());
+            Reader header(f.payload.data(),f.payload.size());(void)header.u8();(void)header.u8();const auto failedId=header.u32();
+            if (failedId == campaignReplayRequest_ || (f.kind == Msg::CrusadesReplayChunk && campaignReplayDownload_.state == CampaignReplayState::Downloading && !campaignReplayRequest_)) failCampaignReplay("Replay transfer failed validation");
+            campaignPending_.erase(failedId);
         }
         // No partial publication, disconnection or automatic malformed-response loop.
         campaignError_=cw::Error{0,cw::ErrorCode::Malformed,{}, {},"Malformed campaign response"};
@@ -558,7 +720,8 @@ void MpClient::onFrame(const Frame& f) {
     Reader r(f.payload.data(), f.payload.size());
     if (f.kind == Msg::CrusadesCampaignList || f.kind == Msg::CrusadesCampaignSnapshot ||
         f.kind == Msg::CrusadesPlayerStatus || f.kind == Msg::CrusadesBattleStatus ||
-        f.kind == Msg::CrusadesError || f.kind == Msg::CrusadesMatchmakingStatus || f.kind == Msg::CrusadesBattleResult ||
+        f.kind == Msg::CrusadesError || f.kind == Msg::CrusadesMatchmakingStatus || f.kind == Msg::CrusadesTerritoryHistory ||
+        f.kind == Msg::CrusadesReplayChunk || f.kind == Msg::CrusadesBattleResult ||
         f.kind == Msg::CrusadesAllegianceResult) { campaignFrame(f); return; }
     switch (f.kind) {
         case Msg::Welcome:

@@ -69,3 +69,4 @@ complete by this matrix.
 | ID | Behavior | Classification | Evidence |
 |---|---|---|---|
 | E48 | Find opponent pairs opposite-alliance searches for one territory in arrival order, with fixed two-player server rules | MODERN implementation | [M10 policy and live validation](campaign-matchmaking.md); recovered territory/war-console resources do not establish the historical matching algorithm |
+| E49 | Enrolled campaign members can read immutable verified territory outcomes and watch retained, digest-verified recordings; artifact loss does not change result metadata | MODERN implementation | [M11 history policy and integration checks](campaign-history.md); existing tactical replay layout is reused, historical archive/access policy remains unproven |

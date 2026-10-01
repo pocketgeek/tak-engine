@@ -100,6 +100,12 @@ int main() {
     }
 
     std::printf("the loader refuses what it cannot replay:\n");
+    check(supportedReplayProtocol(9, 210), "format 9 / protocol 210 remains replayable after strategic bump");
+    check(supportedReplayProtocol(9, 211), "format 9 / protocol 211 remains replayable");
+    check(!supportedReplayProtocol(9, 209), "older simulation protocol is refused");
+    check(!supportedReplayProtocol(9, 212), "future protocol is refused");
+    check(!supportedReplayProtocol(8, 210), "compatibility exception requires format 9");
+    check(!supportedReplayProtocol(10, kNetVersion), "unsupported format is refused even with current protocol");
     {
         // A format from the future. The old loader read it anyway, interpreting
         // whatever bytes happened to follow.

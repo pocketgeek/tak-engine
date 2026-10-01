@@ -43,6 +43,13 @@ std::string mapDisplayName(const std::string& id) {
         return crusadesScreen_ ? crusadesScreen_->selectedTerritory() : 0;
     }
 
+    std::string GameView::takeCrusadesReplayPath() {
+        return crusadesScreen_ ? crusadesScreen_->takeReplayPath() : std::string{};
+    }
+    void GameView::setCrusadesReplayError(const std::string& error) {
+        if (crusadesScreen_) crusadesScreen_->setReplayError(error);
+    }
+
     void GameView::drawLobby(int winW, int winH) {
         lobbyHots_.clear();
         // Map-picker geometry is only live while the create screen is shown; clear it

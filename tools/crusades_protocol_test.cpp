@@ -32,7 +32,7 @@ void roundTrips() {
     const std::vector<c::Request> requests{
         c::ListRequest{1,"",64}, c::ListRequest{UINT32_MAX,"last",1}, c::SnapshotRequest{2,"test",c::kUnknownRevision},
         c::SnapshotRequest{3,"test",uint64_t(INT64_MAX)}, c::PlayerStatusRequest{4,"test"}, c::BattleStatusRequest{5,"issued:123"}, c::MatchmakingRequest{6,"test"},
-        c::MatchSearchRequest{7,"test",1}, c::MatchCancelRequest{8,"test"}};
+        c::MatchSearchRequest{7,"test",1}, c::MatchCancelRequest{8,"test"},c::TerritoryHistoryRequest{9,"test",1,c::HistoryCursor{42,"battle-z"},16},c::ReplayChunkRequest{10,"battle-z",0,65536}};
     for (const auto& request : requests) {
         const auto bytes = c::encode(request);
         check(bytes[0] == c::kVersion && bytes[1] == 0, "explicit little-endian version");
@@ -46,7 +46,13 @@ void roundTrips() {
     board.generation=4; board.canSearch=true; board.searchingTerritory=1; board.searchExpiresUnix=123;
     board.territories={{1,true,1,2,3,4},{2,false,0,0,0,0}};
     c::MatchmakingStatus empty; empty.campaignId="test";
-    const std::vector<c::Response> responses{board,empty,list,snapshot(),player,absent,battleStatus(),c::Error{9,c::ErrorCode::StaleRevision,"test",13,"Refresh required"},c::Error{0,c::ErrorCode::Disabled,"",{},"Disabled"}};
+    c::HistoryBattle archive; archive.battleId="battle-z"; archive.territory=1; archive.campaignRevision=12; archive.recordedUnix=42; archive.mapIdentifier="maps/one";
+    archive.result={c::Outcome::Victory,100,123,{"alice"}};
+    archive.participants={{"alice",2,3,-4,5,6,"Aramon",0,false},{"bob",0,1,2,3,4,"Veruna",1,true}};
+    archive.replay=c::ReplayMetadata{std::string(64,'a'),3,9,210,std::string(64,'b'),123};
+    c::TerritoryHistory history{9,"test",1,{archive},c::HistoryCursor{42,"battle-z"}};
+    c::ReplayChunk chunk{10,"battle-z",std::string(64,'a'),3,0,{1,2,3},true};
+    const std::vector<c::Response> responses{history,chunk,board,empty,list,snapshot(),player,absent,battleStatus(),c::Error{9,c::ErrorCode::StaleRevision,"test",13,"Refresh required"},c::Error{0,c::ErrorCode::Disabled,"",{},"Disabled"}};
     for (const auto& response : responses) {
         const auto bytes = c::encode(response);
         check(c::encode(c::decodeResponse(c::kindOf(response), bytes)) == bytes, "response roundtrip");
@@ -175,6 +181,38 @@ void matchmakingValidation() {
         rejects([&]{(void)c::decodeRequest(c::kindOf(r),trailing);},"trailing match request byte");
     }
 }
+void archiveValidation() {
+    c::HistoryBattle b; b.battleId="battle-z"; b.territory=1; b.recordedUnix=100; b.mapIdentifier="maps/one";
+    b.result={c::Outcome::Victory,1,2,{"alice"}};
+    b.participants={{"alice",1,2,INT64_MIN,3,4,"Aramon",0,false},{"bob",0,0,INT64_MAX,0,0,"Veruna",1,true}};
+    c::TerritoryHistory h{1,"test",1,{b},{}};
+    auto valid=c::encode(c::Response{h});
+    check(std::get<c::TerritoryHistory>(c::decodeResponse(c::ResponseKind::TerritoryHistory,valid)).entries[0].participants[0].score==INT64_MIN,"negative score bits lost");
+    auto bad=h; bad.requestId=0; rejects([&]{(void)c::encode(c::Response{bad});},"unsolicited history page");
+    bad=h;bad.entries[0].territory=2;rejects([&]{(void)c::encode(c::Response{bad});},"wrong history territory");
+    bad=h;bad.entries.push_back(b);rejects([&]{(void)c::encode(c::Response{bad});},"duplicate history battle");
+    bad=h;bad.entries.push_back(b);bad.entries[1].battleId="battle-y";
+    check(std::get<c::TerritoryHistory>(c::decodeResponse(c::ResponseKind::TerritoryHistory,c::encode(c::Response{bad}))).entries.size()==2,"equal-time descending cursor order rejected");
+    bad.entries[1].battleId="battle-zz"; rejects([&]{(void)c::encode(c::Response{bad});},"ascending tied history IDs");
+    bad=h;bad.nextCursor=c::HistoryCursor{99,b.battleId};rejects([&]{(void)c::encode(c::Response{bad});},"wrong history next cursor");
+    bad=h;bad.entries[0].participants[0].team=8;rejects([&]{(void)c::encode(c::Response{bad});},"invalid history team");
+    bad=h;bad.entries[0].participants[0].kills=UINT64_MAX;rejects([&]{(void)c::encode(c::Response{bad});},"overflow history count");
+    bad=h;bad.entries[0].participants[0].accountId="carol";rejects([&]{(void)c::encode(c::Response{bad});},"history winner absent from participants");
+    bad=h;bad.entries[0].replay=c::ReplayMetadata{std::string(64,'a'),c::kMaxReplayBytes+1,9,211,{},0};rejects([&]{(void)c::encode(c::Response{bad});},"oversized replay metadata");
+    bad.entries[0].replay->totalBytes=10;bad.entries[0].replay->digest[0]='A';rejects([&]{(void)c::encode(c::Response{bad});},"noncanonical replay digest");
+    valid.back()=2;rejects([&]{(void)c::decodeResponse(c::ResponseKind::TerritoryHistory,valid);},"nonboolean history cursor presence");
+    rejects([]{(void)c::encode(c::Request{c::TerritoryHistoryRequest{1,"test",0,{},1}});},"zero history request territory");
+    rejects([]{(void)c::encode(c::Request{c::TerritoryHistoryRequest{1,"test",1,{},33}});},"oversized history request page");
+    rejects([]{(void)c::encode(c::Request{c::TerritoryHistoryRequest{1,"test",1,c::HistoryCursor{0,"battle"},1}});},"zero history cursor timestamp");
+    for (const auto& r : {c::ReplayChunkRequest{1,"battle",c::kMaxReplayBytes,1},c::ReplayChunkRequest{1,"battle",0,0},c::ReplayChunkRequest{1,"battle",0,65537}})
+        rejects([&]{(void)c::encode(c::Request{r});},"invalid replay pull bounds");
+    c::ReplayChunk chunk{1,"battle",std::string(64,'a'),c::kMaxReplayBytes,c::kMaxReplayBytes-65536,c::Bytes(65536,7),true};
+    valid=c::encode(c::Response{chunk});check(std::get<c::ReplayChunk>(c::decodeResponse(c::ResponseKind::ReplayChunk,valid)).bytes.size()==65536,"maximal chunk rejected");
+    auto malformed=valid; malformed[6+2+6+2+64+8+8]=2;rejects([&]{(void)c::decodeResponse(c::ResponseKind::ReplayChunk,malformed);},"nonboolean replay final flag");
+    chunk.final=false;rejects([&]{(void)c::encode(c::Response{chunk});},"incorrect replay final flag");
+    chunk.final=true;chunk.offset++;rejects([&]{(void)c::encode(c::Response{chunk});},"replay chunk overflow");
+    chunk.offset=0;chunk.bytes.clear();rejects([&]{(void)c::encode(c::Response{chunk});},"empty replay chunk");
+}
 void snapshotValidation() {
     auto wireSource = snapshot(); wireSource.territories.resize(1);
     wireSource.territories[0].neighbors.reset(); wireSource.territories[0].owner.reset();
@@ -278,6 +316,6 @@ void replica() {
 }
 } // namespace
 int main() {
-    try { roundTrips(); malformed(); snapshotValidation(); matchmakingValidation(); activity(); replica(); std::cout << "PASS: " << checks << " Crusades protocol/replica checks\n"; }
+    try { roundTrips(); malformed(); snapshotValidation(); matchmakingValidation(); archiveValidation(); activity(); replica(); std::cout << "PASS: " << checks << " Crusades protocol/replica checks\n"; }
     catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

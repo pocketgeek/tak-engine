@@ -11,6 +11,8 @@ ReadResponse pack(const wire::Response& response) {
     case wire::ResponseKind::PlayerStatus:msg=net::Msg::CrusadesPlayerStatus;break;
     case wire::ResponseKind::BattleStatus:msg=net::Msg::CrusadesBattleStatus;break;
     case wire::ResponseKind::Matchmaking:msg=net::Msg::CrusadesMatchmakingStatus;break;
+    case wire::ResponseKind::TerritoryHistory:msg=net::Msg::CrusadesTerritoryHistory;break;
+    case wire::ResponseKind::ReplayChunk:msg=net::Msg::CrusadesReplayChunk;break;
     case wire::ResponseKind::Error:break;
     }
     net::Writer payload;payload.b=wire::encode(response);return {msg,std::move(payload)};
@@ -52,11 +54,12 @@ ReadResponse campaignReadError(uint32_t id,wire::ErrorCode code) {
     case wire::ErrorCode::Disabled:reason="campaign service disabled";break;
     case wire::ErrorCode::NotFound:reason="campaign resource unavailable";break;
     case wire::ErrorCode::TooLarge:reason="campaign response exceeds protocol limits";break;
+    case wire::ErrorCode::Forbidden:reason="campaign membership required";break;
     default:break;
     }
     return pack(wire::Error{id,code,"",{},reason});
 }
-ReadResponse campaignReadResponse(CampaignStore* store,const std::string& account,const wire::Request& request,const RoomResolver& rooms,const ActivityResolver& activity) {
+ReadResponse campaignReadResponse(CampaignStore* store,const std::string& account,const wire::Request& request,const RoomResolver& rooms,const ActivityResolver& activity,const ReplayResolver& replays) {
     const auto id=std::visit([](const auto& r){return r.requestId;},request);
     if(!canonicalAccount(account))return campaignReadError(id,wire::ErrorCode::AuthenticationRequired);
     if(!store)return campaignReadError(id,wire::ErrorCode::Disabled);
@@ -82,6 +85,39 @@ ReadResponse campaignReadResponse(CampaignStore* store,const std::string& accoun
                 out.battles.push_back({battle.id,battle.territory,static_cast<wire::BattlePhase>(battle.status)});
             return pack(out);
         }
+        if(const auto* r=std::get_if<wire::TerritoryHistoryRequest>(&request)) {
+            if(!store->hasCampaign(r->campaignId))return campaignReadError(id,wire::ErrorCode::NotFound);
+            if(!store->allegiance(r->campaignId,account))return campaignReadError(id,wire::ErrorCode::Forbidden);
+            std::optional<HistoryCursor> cursor;
+            if(r->cursor)cursor=HistoryCursor{static_cast<int64_t>(r->cursor->recordedUnix),r->cursor->battleId};
+            const auto page=store->territoryHistory(r->campaignId,r->territory,cursor,r->limit);
+            wire::TerritoryHistory out;out.requestId=id;out.campaignId=r->campaignId;out.territory=r->territory;
+            for(const auto& entry:page.entries) {
+                const auto& b=entry.battle;const auto& result=entry.result;wire::HistoryBattle h;
+                h.battleId=b.id;h.territory=b.territory;h.campaignRevision=static_cast<uint64_t>(b.campaignRevision);
+                h.recordedUnix=static_cast<uint64_t>(entry.recordedUnix);h.mapIdentifier=b.context.mapIdentifier;
+                h.result={static_cast<wire::Outcome>(result.outcome),result.finalTick,result.finalStateHash,result.winners};
+                for(const auto& p:result.participantResults) {
+                    if(p.team<0||p.team>=net::kMaxSlots)throw std::runtime_error("invalid stored participant team");
+                    h.participants.push_back({p.accountId,static_cast<uint64_t>(p.kills),static_cast<uint64_t>(p.losses),p.score,
+                        static_cast<uint64_t>(p.built),static_cast<uint64_t>(p.currentUnits),p.faction,static_cast<uint8_t>(p.team),p.defeated});
+                }
+                // Artifact problems never hide or change the authoritative result.
+                if(replays)try {
+                    h.replay=replays(b,result);
+                    if(h.replay) {
+                        if(h.replay->digest!=result.replayDigest || h.replay->mapDigest!=b.context.mapDigest ||
+                            h.replay->gameplayFingerprint!=result.gameplayFingerprint)h.replay.reset();
+                        else (void)wire::encode(wire::Response{wire::TerritoryHistory{id,r->campaignId,r->territory,{h},{}}});
+                    }
+                }catch(const std::exception&){h.replay.reset();}
+                out.entries.push_back(std::move(h));
+            }
+            if(page.truncated&&!page.entries.empty()) {
+                const auto& last=page.entries.back();out.nextCursor=wire::HistoryCursor{static_cast<uint64_t>(last.recordedUnix),last.battle.id};
+            }
+            return pack(out);
+        }
         if(!std::holds_alternative<wire::BattleStatusRequest>(request))return campaignReadError(id,wire::ErrorCode::Malformed);
         const auto& r=std::get<wire::BattleStatusRequest>(request);
         // Unknown IDs and unauthorized IDs deliberately share the same reply.
@@ -98,7 +134,7 @@ ReadResponse campaignReadResponse(CampaignStore* store,const std::string& accoun
     }catch(const wire::DecodeError& e){return campaignReadError(id,e.code==wire::ErrorCode::TooLarge?e.code:wire::ErrorCode::Unavailable);}
     catch(const std::exception&){return campaignReadError(id,wire::ErrorCode::Unavailable);}
 }
-ReadResponse handleCampaignRead(CampaignStore* store,const std::string& account,net::Msg operation,const std::vector<uint8_t>& payload,const RoomResolver& rooms,const ActivityResolver& activity) {
+ReadResponse handleCampaignRead(CampaignStore* store,const std::string& account,net::Msg operation,const std::vector<uint8_t>& payload,const RoomResolver& rooms,const ActivityResolver& activity,const ReplayResolver& replays) {
     uint32_t id=0;if(payload.size()>=6)for(unsigned i=0;i<4;++i)id|=uint32_t(payload[2+i])<<(8*i);
     if(!canonicalAccount(account))return campaignReadError(id,wire::ErrorCode::AuthenticationRequired);
     if(!store)return campaignReadError(id,wire::ErrorCode::Disabled);
@@ -108,9 +144,10 @@ ReadResponse handleCampaignRead(CampaignStore* store,const std::string& account,
     case net::Msg::CrusadesGetSnapshot:kind=wire::RequestKind::Snapshot;break;
     case net::Msg::CrusadesGetPlayerStatus:kind=wire::RequestKind::PlayerStatus;break;
     case net::Msg::CrusadesGetBattleStatus:kind=wire::RequestKind::BattleStatus;break;
+    case net::Msg::CrusadesGetTerritoryHistory:kind=wire::RequestKind::TerritoryHistory;break;
     default:return campaignReadError(id,wire::ErrorCode::Malformed);
     }
-    try{return campaignReadResponse(store,account,wire::decodeRequest(kind,payload),rooms,activity);}
+    try{return campaignReadResponse(store,account,wire::decodeRequest(kind,payload),rooms,activity,replays);}
     catch(const wire::DecodeError& e){return campaignReadError(id,e.code);}
     catch(const std::exception&){return campaignReadError(id,wire::ErrorCode::Malformed);}
 }

@@ -55,6 +55,7 @@
 #include "server/accounts.h"
 #include "server/crusades/allegiance.h"
 #include "server/crusades/network.h"
+#include "server/crusades/replayfiles.h"
 #include "server/crusades/matchmaking.h"
 #include "tdf/tdf.h"
 #include "net/conn.h"
@@ -151,6 +152,8 @@ struct Client {
     std::optional<tak::net::crusades::MatchmakingStatus> campaignMatchBoard;
     uint64_t campaignReadWindow = 0;
     unsigned campaignReads = 0;
+    uint64_t campaignReplayWindow = 0;
+    unsigned campaignReplayReads = 0;
     tak::net::maps::Receiver mapReceive;
     tak::net::maps::Sender mapSend;
 
@@ -417,6 +420,7 @@ private:
     void pruneCampaignSearches();
     std::optional<tak::net::crusades::BattleActivity> campaignActivity(const std::string& campaign, uint32_t territory) const;
     void campaignRead(Client& c, const Frame& f);
+    void campaignReplayChunk(Client& c, const Frame& f);
     std::optional<uint32_t> campaignRoomId(const std::string& battleId) const;
     void notifyCampaignBattle(const std::string& battleId);
     void refreshCampaignSnapshot(Client& c, bool force = false);
@@ -1165,7 +1169,8 @@ void Server::campaignRead(Client& c,const Frame& f) {
     const auto account=authenticated?tak::auth::foldUsername(c.account):std::string{};
     const auto reply=tak::srv::crusades::handleCampaignRead(crusades_.get(),account,f.kind,f.payload,
         [this](const std::string& id){return campaignRoomId(id);},
-        [this](const std::string& campaign,uint32_t territory){return campaignActivity(campaign,territory);});
+        [this](const std::string& campaign,uint32_t territory){return campaignActivity(campaign,territory);},
+        [this](const auto& battle,const auto& result){return tak::srv::crusades::ReplayFiles(campaignReplayDir_).inspect(battle,result);});
     c.conn.send(reply.kind,reply.payload);
     if(authenticated) c.campaignProtocol=true;
     if(reply.kind==Msg::CrusadesCampaignSnapshot) {
@@ -1173,6 +1178,37 @@ void Server::campaignRead(Client& c,const Frame& f) {
         c.campaignSubscription=snapshot.campaignId;c.campaignRevision=snapshot.revision;
         c.campaignActivityVersion=campaignActivityVersion_;
     }
+}
+
+void Server::campaignReplayChunk(Client& c,const Frame& f) {
+    namespace wire=tak::net::crusades;
+    uint32_t requestId=0;
+    if(f.payload.size()>=6)for(unsigned i=0;i<4;++i)requestId|=uint32_t(f.payload[2+i])<<(8*i);
+    auto error=[&](wire::ErrorCode code){const auto reply=tak::srv::crusades::campaignReadError(requestId,code);c.conn.send(reply.kind,reply.payload);};
+    // A paced 64KiB transfer uses up to 50 requests/s. Give it its own quota;
+    // archive downloads must not starve campaign reads or allocate whole files.
+    const auto now=nowMs();
+    if(now-c.campaignReplayWindow>=1000){c.campaignReplayWindow=now;c.campaignReplayReads=0;}
+    if(c.campaignReplayReads>=64){if(c.campaignReplayReads==64){++c.campaignReplayReads;error(wire::ErrorCode::Unavailable);}return;}
+    ++c.campaignReplayReads;
+    if(!requireAuth_ || c.account.empty() || (c.state!=Client::Lobby&&c.state!=Client::InGame)) {
+        error(wire::ErrorCode::AuthenticationRequired);return;
+    }
+    if(!crusades_){error(wire::ErrorCode::Disabled);return;}
+    try {
+        const auto request=std::get<wire::ReplayChunkRequest>(wire::decodeRequest(wire::RequestKind::ReplayChunk,f.payload));
+        tak::srv::crusades::IssuedBattle battle;
+        try{battle=crusades_->battle(request.battleId);}catch(const std::exception&){error(wire::ErrorCode::NotFound);return;}
+        const auto result=crusades_->verifiedResult(battle.id);
+        if(!result || (battle.status!=tak::srv::crusades::BattleStatus::Completed&&battle.status!=tak::srv::crusades::BattleStatus::Cancelled)) {
+            error(wire::ErrorCode::NotFound);return;
+        }
+        if(!crusades_->allegiance(battle.campaignId,tak::auth::foldUsername(c.account))){error(wire::ErrorCode::Forbidden);return;}
+        const auto chunk=tak::srv::crusades::ReplayFiles(campaignReplayDir_).read(battle,*result,requestId,request.offset,request.limit);
+        if(!chunk){error(wire::ErrorCode::Unavailable);return;}
+        c.conn.send(Msg::CrusadesReplayChunk,wire::encode(wire::Response{*chunk}));c.campaignProtocol=true;
+    }catch(const wire::DecodeError& e){error(e.code);}
+    catch(const std::exception&){error(wire::ErrorCode::Unavailable);}
 }
 
 void Server::refreshCampaignSnapshot(Client& c,bool force) {
@@ -2672,13 +2708,15 @@ void Server::onFrame(Client& c, const Frame& f) {
     if(auto* room=roomOf(c); room && !room->campaignBattleId.empty() && room->running &&
         (f.kind==Msg::CrusadesBattleResult || f.kind==Msg::GameStarting || f.kind==Msg::TickBundle || f.kind==Msg::MissionOutcome ||
          f.kind==Msg::CrusadesCampaignList || f.kind==Msg::CrusadesCampaignSnapshot || f.kind==Msg::CrusadesPlayerStatus ||
-         f.kind==Msg::CrusadesBattleStatus || f.kind==Msg::CrusadesMatchmakingStatus || f.kind==Msg::CrusadesError)) {
+         f.kind==Msg::CrusadesBattleStatus || f.kind==Msg::CrusadesMatchmakingStatus || f.kind==Msg::CrusadesTerritoryHistory ||
+         f.kind==Msg::CrusadesReplayChunk || f.kind==Msg::CrusadesError)) {
         room->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;
     }
     if(f.kind==Msg::CrusadesListCampaigns || f.kind==Msg::CrusadesGetSnapshot ||
-        f.kind==Msg::CrusadesGetPlayerStatus || f.kind==Msg::CrusadesGetBattleStatus) {
+        f.kind==Msg::CrusadesGetPlayerStatus || f.kind==Msg::CrusadesGetBattleStatus || f.kind==Msg::CrusadesGetTerritoryHistory) {
         campaignRead(c,f);return;
     }
+    if(f.kind==Msg::CrusadesGetReplayChunk){campaignReplayChunk(c,f);return;}
     if(f.kind==Msg::CrusadesGetMatchmaking || f.kind==Msg::CrusadesSearchBattle || f.kind==Msg::CrusadesCancelSearch) {
         campaignMatchmaking(c,f);return;
     }
