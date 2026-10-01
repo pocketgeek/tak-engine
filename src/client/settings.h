@@ -107,10 +107,6 @@ struct Settings {
         auto it = campaignCompleted.find(id);
         return it != campaignCompleted.end() && it->second.count(mission) > 0;
     }
-    int completedCount(const std::string& id) const {
-        auto it = campaignCompleted.find(id);
-        return it == campaignCompleted.end() ? 0 : int(it->second.size());
-    }
 
     // EVERY field above belongs here -- this is a complete comparison of two Settings,
     // with no field exempt. Which fields DEFAULTS should ignore is a separate question,

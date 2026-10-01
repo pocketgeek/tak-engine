@@ -4644,7 +4644,7 @@ which is what tames the tracer's outline-hugging wander.
 
 **Budget**: split per PLAYER with the 5x class (0x4164fa; emulated), the class
 mapped to seated humans (the only lockstep-safe reading of +0x24e7; wired as
-World::setHumanPlayers, empty mask until the lobby passes it).
+the world's `humanMask_`, empty by default; probes assign it directly).
 
 **Measured profile** (crowdbench): opposing columns 29-30/32 (head-on files
 wedge a few -- retail's documented behaviour), chokepoint 22-24/24, group order
@@ -4994,7 +4994,7 @@ share (CONFIRMED, was inferred).** The scheduler's budget split (0x4164a0-
 `edi + (without + 4*edi)` = `without*1 + with*5` (0x416500 `lea ecx,[ecx+edi*4]`
 then 0x416507 `add edi,ecx`) and divides the frame's search budget by it
 (0x416515 `idiv edi`). So a flagged player draws 5 shares to an unflagged
-player's 1 -- exactly the 5x our World::setHumanPlayers applies. (The adjacent
+player's 1 -- exactly the 5x our scheduler applies to `humanMask_`. (The adjacent
 byte `player+0x24ef == 0xa` gates a slot out entirely; 0xa = 10 is the same
 sentinel the player loop caps at.) The port is byte-faithful here.
 

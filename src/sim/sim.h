@@ -1136,25 +1136,20 @@ public:
     bool roadAt(int cx, int cz) const {
         return roads_ && (*roads_)[size_t(cz) * w_ + cx] != 0;
     }
-    bool hasRoads() const { return roads_ != nullptr; }
 
     // Line of sight: no blocked cell between the two world points, ignoring cells
     // within `skip0`/`skip1` cells of each endpoint — so a shooter or target's own
     // building footprint doesn't block the shot, but a wall between them does.
-    // Can a `foot`-cell body travel the straight line between two CELLS without
-    // being stopped? Used to shortcut a traced route (see the path-install code).
-    bool lineFits(int x0, int z0, int x1, int z1, int foot) const;
-
     bool losBetween(float wx0, float wz0, float wx1, float wz1,
                     int skip0 = 0, int skip1 = 0) const;
 
     // Can a `foot`-cell body travel the straight line between two WORLD points?
     //
-    // Unlike lineFits (cell centre to cell centre) and losBetween (which converts its
-    // world endpoints to cells immediately and then walks cell centres), this keeps the
-    // sub-cell position of both endpoints and visits EVERY cell the real segment passes
-    // through. That difference is not cosmetic: a cell-centred walk is a different line
-    // from the one the unit actually travels, and it can skip a cell the body will cross.
+    // Unlike losBetween, which converts its world endpoints to cells immediately
+    // and then walks cell centres, this keeps the sub-cell position of both endpoints
+    // and visits EVERY cell the real segment passes through. A cell-centred walk
+    // follows a different line from the one the unit actually travels, and it can
+    // skip a cell the body will cross.
     // (15,1) -> (24,56) passes through cell (1,0); the cell-to-cell Bresenham between the
     // same endpoints' cells never visits it, so an obstacle sitting there was invisible to
     // validation and the unit was handed a shortcut straight into it.
@@ -1321,7 +1316,6 @@ public:
 
     // Enable retail's background pathfinder for this world (default off).
     void setPathService(bool on) { pathService_ = on; if (!on) paths_.clear(); }
-    bool pathService() const { return pathService_; }
     // Path search work units per tick, shared across all pending requests.
     void setPathBudget(int b) { paths_.setBudget(b); }
 
@@ -1361,8 +1355,6 @@ public:
     void train(int builderId, const UnitType* type, int count = 1);   // queue `count`
     void dequeue(int builderId, const UnitType* type, int count);     // un-queue `count`
     void setRepeat(int builderId, const UnitType* type);   // toggle infinite build
-    // How many of `type` are queued at a builder (for the build-icon count).
-    int queuedCount(int builderId, const UnitType* type) const;
     // Mobile builder constructs a building at (x, z). Returns the new
     // building's id, or 0 if the site is invalid.
     // How startBuild gets the builder to the site:
@@ -1639,7 +1631,6 @@ public:
     void setBuildRestrictions(std::vector<std::string> types, bool enabled = true);
     bool buildAllowed(const UnitType* type) const;
     void setUnitCap(int c) { unitCap_ = c; }
-    void setHumanPlayers(uint32_t mask) { humanMask_ = mask; }
     int unitCap() const { return unitCap_; }
     bool atUnitCap(int player) const {
         return unitCap_ > 0 && player >= 0 && player < int(players_.size()) &&
@@ -2036,10 +2027,6 @@ private:
             if (x < 0 || z < 0 || x >= w || z >= h) return -1;
             return root(raw_[size_t(z) * size_t(w) + size_t(x)]);
         }
-        bool passableAt(int x, int z) const {
-            return x >= 0 && z >= 0 && x < w && z < h &&
-                   raw_[size_t(z) * size_t(w) + size_t(x)] >= 0;
-        }
         bool empty() const { return raw_.empty(); }
 
     private:
@@ -2106,30 +2093,6 @@ private:
                 if (gPlayersValid_ && !(gPlayers_[cell]&players)) continue;
                 for (int i = gHead_[cell]; i >= 0; i = gNext_[size_t(i)])
                     fn(i);
-            }
-        }
-    }
-    // As forEachNear, but stops after `maxVisits` candidates. Deterministic (the grid
-    // iteration order is fixed), so a lockstep-safe density cap: in an overcrowded cell
-    // a unit only needs to interact with a bounded number of the nearest others (e.g.
-    // the separation push is dominated by the closest neighbours). maxVisits <= 0 = all.
-    template <class F>
-    void forEachNearCapped(float x, float z, float radius, int maxVisits, F&& fn) const {
-        if (gW_ <= 0) return;
-        if (maxVisits <= 0) { forEachNear(x, z, radius, std::forward<F>(fn)); return; }
-        int r = int(radius / gCell_) + 1;
-        int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
-        int seen = 0;
-        for (int dz = -r; dz <= r; ++dz) {
-            int gz = cz + dz;
-            if (gz < 0 || gz >= gH_) continue;
-            for (int dx = -r; dx <= r; ++dx) {
-                int gx = cx + dx;
-                if (gx < 0 || gx >= gW_) continue;
-                for (int i = gHead_[size_t(gz) * gW_ + gx]; i >= 0; i = gNext_[size_t(i)]) {
-                    fn(i);
-                    if (++seen >= maxVisits) return;
-                }
             }
         }
     }

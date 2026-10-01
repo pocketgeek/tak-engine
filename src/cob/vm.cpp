@@ -100,7 +100,6 @@ void Vm::reset() {
 std::span<const RetailPiece> Vm::retailPieces() const {
     return native_ ? std::span<const RetailPiece>(native_->state.pieces) : std::span<const RetailPiece>{};
 }
-size_t Vm::threadCount() const { return native_ ? native_->state.vm.active : threads_.size(); }
 int32_t Vm::getStatic(size_t i) const {
     if(native_) return i<native_->state.vm.statics.size() ? int32_t(native_->state.vm.statics[i]) : 0;
     return i<statics_.size() ? statics_[i] : 0;

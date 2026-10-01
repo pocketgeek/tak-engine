@@ -80,7 +80,7 @@ inventory complete.
 | `atan2` | 3 | `sim.cpp:1133` (face target), `:1711,:1718` (steer toward waypoint / flow field) | **SHIM** |
 | `hypot` | 1 | `sim.cpp:1798` (stuck-watchdog travel distance) | **rewrite** as `sqrt(dx*dx+dz*dz)` |
 | `sqrt` | 8 | distances / magnitudes throughout | keep (correctly rounded) |
-| `fmod` | 1 | `sim.cpp:35` `angleDiff` (angle wrap) | keep (exact) |
+| `fmod` | 1 (historical) | Former `sim.cpp:35` angle-wrap helper; later removed as unused | keep (exact) |
 | `abs` | many | sign only | keep (exact) |
 
 Every trig call reduces to one of two shapes:
@@ -154,7 +154,7 @@ function does too. The rules that make this hold:
 
 Accuracy target: within ~1e-5 of `std::sin`/`atan2` so unit motion, facing, and
 AI placement are visually and behaviorally unchanged. (The sim already turns
-units by `clamp(angleDiff, ±maxTurn)` each tick, so it is not sensitive to the
+units by `clamp(shortest angular delta, ±maxTurn)` each tick, so it is not sensitive to the
 last few bits — it just needs *everyone to agree* on those bits.)
 
 ---

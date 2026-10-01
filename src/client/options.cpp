@@ -39,7 +39,7 @@ int deviceIndex(const char* name) {
     return -1;
 }
 
-// Speaker label per channel count (mirrors SoundBank::channelRole / channelGains).
+// Speaker labels match channelGains()'s per-count speaker layout.
 const char* role(int count, int i) {
     switch (count) {
         case 2: { static const char* r[] = {"LEFT", "RIGHT"}; return i < 2 ? r[i] : ""; }

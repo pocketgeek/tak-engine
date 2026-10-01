@@ -277,7 +277,7 @@ bool PathSearch::onGoalLine(PathCell org, PathCell c) const {
 //
 // For a cardinal step, the destination cell is the whole question. For a DIAGONAL, the
 // body passes between the two orthogonal neighbours, and the movers refuse to cut that
-// corner -- as does lineFits, which validates the shortcut afterwards. The search used to
+// corner -- as does segmentFits, which validates the shortcut afterwards. The search used to
 // ask only about the destination, so it could plan a diagonal squeeze between two blocked
 // cells: the mover then stalls at the corner it will not cut, and the shortcut validation
 // rejects the very connection the search had just committed to. Planning a move that two

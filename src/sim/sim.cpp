@@ -57,12 +57,6 @@ std::string lower(std::string s) {
     return s;
 }
 
-float angleDiff(float a, float b) {
-    float d = std::fmod(a - b + kPi, 2 * kPi);
-    if (d < 0) d += 2 * kPi;
-    return d - kPi;
-}
-
 } // namespace
 
 void TypeRegistry::loadMoveInfo(const hpi::Vfs& vfs, const std::string& path) {
@@ -1414,28 +1408,6 @@ bool NavGrid::lineClear(int x0, int z0, int x1, int z1) const {
     }
 }
 
-bool NavGrid::lineFits(int x0, int z0, int x1, int z1, int foot) const {
-    // Like lineClear, but asks whether a body of `foot` cells FITS at every cell the
-    // line crosses -- and, on a diagonal step, at both cells it passes between, so a
-    // shortcut can never squeeze a body through a corner the mover would be stopped by
-    // (the movers themselves refuse diagonal corner-cutting; see the step loop in the
-    // search). Integer Bresenham, so it is exact and identical on every peer.
-    int dx = std::abs(x1 - x0), dz = -std::abs(z1 - z0);
-    int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx + dz;
-    for (int guard = 0; guard < 8192; ++guard) {
-        if (!fits(x0, z0, foot)) return false;
-        if (x0 == x1 && z0 == z1) return true;
-        const int e2 = 2 * err;
-        const bool stepX = e2 >= dz, stepZ = e2 <= dx;
-        if (stepX && stepZ) {   // diagonal: both orthogonal neighbours must fit too
-            if (!fits(x0 + sx, z0, foot) || !fits(x0, z0 + sz, foot)) return false;
-        }
-        if (stepX) { err += dz; x0 += sx; }
-        if (stepZ) { err += dx; z0 += sz; }
-    }
-    return false;
-}
-
 // Floor-divide by the 16-unit cell size. A plain `/ 16` truncates toward zero, so
 // every coordinate in the first cell left of the origin would land in cell 0 along
 // with the first cell right of it.
@@ -1478,9 +1450,8 @@ bool NavGrid::segmentFits(float wx0, float wz0, float wx1, float wz1, int foot) 
         const bool moveZ = stepZ != 0 && (stepX == 0 || tz * adx < tx * adz);
         if (!moveX && !moveZ) {
             // Exactly through a corner. The body passes between two cells, and both
-            // must admit it -- the same rule the movers enforce and lineFits applies
-            // on a diagonal, so a shortcut cannot squeeze through a corner the unit
-            // would be stopped by.
+            // must admit it -- the same diagonal rule the movers enforce, so a
+            // shortcut cannot squeeze through a corner the unit would be stopped by.
             if (!fits(cx + stepX, cz, foot) || !fits(cx, cz + stepZ, foot)) return false;
             cx += stepX; cz += stepZ;
             tx += 16; tz += 16;
@@ -6967,14 +6938,6 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
     }
 }
 
-int World::queuedCount(int builderId, const UnitType* type) const {
-    const Unit* b = unit(builderId);
-    if (!b || !type) return 0;
-    int n = 0;
-    for (const auto* q : b->buildQueue) if (q == type) ++n;
-    return n;
-}
-
 void World::setRepeat(int builderId, const UnitType* type) {
     if (!buildAllowed(type)) return;
     Unit* b = unit(builderId);
@@ -10034,24 +9997,9 @@ void World::hashTrace() const {
         for (int i = 0; i < 8; ++i) { h ^= (v >> (i * 8)) & 0xFF; h *= 1099511628211ULL; }
         return h;
     };
-    // TEMPLATED SO A Fixed CANNOT SLIP THROUGH. These helpers take a float, and Fixed
-    // converts to one implicitly (the port scaffold in fixed.h), so folding a position
-    // silently hashed a float APPROXIMATION of it -- lossy past 256px, which means two
-    // units genuinely a fraction of a pixel apart could produce the same checksum and a
-    // real divergence would be invisible to the very check meant to catch it. That
-    // happened three times in this file before it was noticed. Now it will not compile.
-    // mana is a double (retail's own width -- see Player::mana), so it needs all eight
-    // bytes folded. Narrowing it to a float to reuse bits() would throw away exactly the
-    // low-order state the checksum exists to compare.
+    // Fold fixed-point positions and angles as raw integers below. Mana is a
+    // double, so preserve all eight bytes rather than narrowing it to a float.
     auto bits64 = [](double d) { uint64_t b; std::memcpy(&b, &d, 8); return b; };
-    auto bits = [](auto f) {
-        static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Fixed>,
-                      "fold u.x.v -- the raw fixed-point -- not a float of it");
-        static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Bam>,
-                      "fold the angle's raw int, not a float of it");
-        static_assert(std::is_floating_point_v<decltype(f)>, "bits() is for floats");
-        uint32_t b; std::memcpy(&b, &f, 4); return uint64_t(b);
-    };
     const uint64_t seed = 1469598103934665603ULL;
 
     uint64_t hUnitPos = seed, hUnitHp = seed, hUnitOrd = seed, hUnitMisc = seed;

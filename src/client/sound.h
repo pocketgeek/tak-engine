@@ -599,18 +599,8 @@ public:
     void setSfxVolume(int v) { sfxVol_ = std::clamp(v, 0, 256); }
     void setChannelGain(int i, float g) { if (i >= 0 && i < 8) chanGain_[i] = std::clamp(g, 0.0f, 1.0f); }
 
-    // For the Options screen: how many output channels the device gave us, and a
-    // human label for each (matching channelGains()'s per-count speaker layout).
+    // For the Options screen: how many output channels the device gave us.
     int channelCount() const { return std::clamp(chan_, 1, 8); }
-    const char* channelRole(int i) const {
-        switch (chan_) {
-            case 2: { static const char* r[] = {"LEFT", "RIGHT"}; return i < 2 ? r[i] : ""; }
-            case 4: { static const char* r[] = {"FRONT L", "FRONT R", "REAR L", "REAR R"}; return i < 4 ? r[i] : ""; }
-            case 6: { static const char* r[] = {"FRONT L", "FRONT R", "CENTER", "SUB", "REAR L", "REAR R"}; return i < 6 ? r[i] : ""; }
-            case 8: { static const char* r[] = {"FRONT L", "FRONT R", "CENTER", "SUB", "REAR L", "REAR R", "SIDE L", "SIDE R"}; return i < 8 ? r[i] : ""; }
-            default: return "MONO";
-        }
-    }
 
 private:
     void loadTrack(size_t idx) {

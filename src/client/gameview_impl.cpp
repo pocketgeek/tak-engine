@@ -2128,7 +2128,7 @@
     }
 
     void GameView::cosmeticStep(float dt) {
-        // Reads the render SNAPSHOT (front()/frameHits()), never live world_, so it is safe
+        // Reads the render SNAPSHOT (front()), never live world_, so it is safe
         // on the main thread while the sim worker ticks. Transient combat events
         // arrive through queues so skipped snapshots cannot discard them.
         // Deferred replay write, requested by the sim thread when the result landed.

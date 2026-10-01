@@ -4,10 +4,9 @@
 // straight line really correspond to the line the unit will travel, and does a diagonal
 // step mean the same thing to the search, to the shortcut, and to the mover?
 //
-// WHY THIS TEST EXISTS. Route validation ran through three checks that quietly disagreed
+// WHY THIS TEST EXISTS. Route validation ran through checks that quietly disagreed
 // about what line was being asked about:
 //
-//   lineFits    cell centre -> cell centre
 //   losBetween  takes WORLD endpoints, converts them to cells on entry, then walks cell
 //               centres -- so the sub-cell position it was handed is discarded and it
 //               answers about a different line from the one the unit travels

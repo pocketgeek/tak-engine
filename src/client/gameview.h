@@ -462,7 +462,6 @@ public:
     bool reconnectRequested() const { return reconnectRequested_; }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
-    void requestMenu() { menuRequested_ = true; }
     bool menuRequested() const { return menuRequested_; }
     bool quitRequested() const { return quitRequested_; }   // in-game QUIT -> exit app
     // Menu-launched sessions: the front-end owns the lobby BGM (see manageMusic).
@@ -674,7 +673,6 @@ public:
     // never to compare a hash against a previous run.
     void autoplayStep();
 #endif
-    tak::sim::World& worldRef() { return world_; }
     void selectOnly(int id) { if (spectating_) return; selection_.clear(); selection_.push_back(id); }
 
 #ifndef NDEBUG
@@ -785,8 +783,6 @@ public:
     bool canPickUnit(const UnitR& u) const {
         return !u.embarked() && (alliedToLocal(u.player) || canPickPoint(u.x, u.z));
     }
-    // More snapshot accessors mirroring the World calls the render used to make directly.
-    const std::vector<tak::sim::World::HitFx>& frameHits() const { return front().hits; }
     // Impacts are ONE-SHOT and the sim clears them every tick, while the render
     // only ever sees the newest published snapshot. Whenever the sim outruns the
     // renderer -- replay catch-up, or simply a frame rate under the 30 Hz tick --
@@ -806,7 +802,7 @@ public:
     // world_.discoActive/headbangActive(p) == players_[p].{disco,headbang}Left > 0.
     bool frameDiscoActive(int p) const { return framePlayer(p).discoLeft > 0; }
     bool frameHeadbangActive(int p) const { return framePlayer(p).headbangLeft > 0; }
-    // world_.queuedCount(builderId,type): count of that type queued on the builder.
+    // Count this type in the builder's snapshotted production queue.
     int frameQueuedCount(int builderId, const tak::sim::UnitType* type) const;
 
     // The DISPLAY half: impact sounds/effects, particles, animation state and the
@@ -1067,19 +1063,6 @@ private:
         }
         return (low == 0 || low == 1) ? "flames:flame large" : nullptr;
     }
-    // The `fly` script's first instruction is a PUSH_STATIC that gates the
-    // whole animation; different flyers use different indices (zonhunt=8,
-    // zongod/zonharp=7). Read it straight from the bytecode.
-    static int flyGateOf(const tak::cob::Vm& vm) {
-        const auto& f = vm.file();
-        int si = f.scriptIndex("fly");
-        if (si < 0) return 8;
-        uint32_t e = f.scripts[size_t(si)].entry;
-        if (e + 1 < f.code.size() && f.code[e] == 0x10021004)   // PUSH_STATIC
-            return int(f.code[e + 1]);
-        return 8;
-    }
-
     // At max veterancy, a unit with a `veteranmodel` swaps its mesh for the
     // fancier promoted 3DO (same piece structure, so the COB/anim carries over).
     void maybeSwapVeteranModel(const UnitR& u);
@@ -1298,12 +1281,6 @@ private:
         }
     }
     std::vector<const UnitR*> visUnits_;
-    // unitBatch_: the cross-unit body batch. overlayBatch_: a reusable scratch vertex
-    // buffer for the flat-quad overlay passes -- order/waypoint markers, the two
-    // progress-bar passes in draw(), and the minimap unit dots in the HUD. It was called shadowBatch_ until unit shadows stopped
-    // being concatenated into one array and started drawing straight from each unit's
-    // own buffer; nothing shadow-related uses it now, and leaving the old name on it
-    // invites exactly the wrong inference.
     // Are projected unit shadows on? The Options toggle, with a dev-only TAK_NOSHADOW
     // override. Gates the BUILD as well as the draw -- skipping only the draw would still
     // pay to emit ~700k vertices nobody looks at.
@@ -1324,7 +1301,8 @@ private:
     std::vector<const UnitGeom*> airShadows_;
     size_t airShadowOp_ = SIZE_MAX;   // drawOps_ index to drain airShadows_ before
 
-    std::vector<SDL_Vertex> unitBatch_, overlayBatch_;
+    // Reused scratch vertices for order markers, progress bars and minimap dots.
+    std::vector<SDL_Vertex> overlayBatch_;
     // Body pass assembled in parallel: plan offsets serially, scatter the vertex
     // copies across the pool, then replay the draw ops. Keeps depth order exact.
     std::vector<SDL_Vertex> bodyVerts_;

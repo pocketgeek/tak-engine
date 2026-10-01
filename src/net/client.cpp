@@ -313,11 +313,6 @@ void MpClient::refreshCampaignOnce(const std::string& campaign) {
     campaignRefreshAttempt_ = campaign;
     getCampaignSnapshot(campaign);
 }
-void MpClient::getCampaignAllegiance(const std::string& campaign) {
-    if (!campaignAuthenticated()) return;
-    (void)crusades::encode(crusades::Request{crusades::PlayerStatusRequest{1,campaign}});
-    Writer w; w.str(campaign); send(Msg::CrusadesGetAllegiance,w);
-}
 void MpClient::setCampaignAllegiance(const std::string& campaign, uint64_t revision, crusades::Alliance side) {
     if (!campaignAuthenticated()) return;
     (void)crusades::encode(crusades::Request{crusades::PlayerStatusRequest{1,campaign}});

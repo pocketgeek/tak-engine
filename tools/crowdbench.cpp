@@ -185,54 +185,6 @@ void report(const Result& r) {
                 (unsigned long long)r.failures, (unsigned long long)r.requests);
 }
 
-// Shortest route the grid actually permits, by BFS over the same 8-neighbour adjacency
-// the movers use (no diagonal corner-cutting), in world units.
-//
-// This is the honest denominator. "travel x6.24" only means the pathfinder is doing badly
-// if a much shorter route EXISTS -- in a serpentine the straight line is not available to
-// anybody, so comparing against it overstates the fault. Measuring the optimum says how
-// much of that 6.24 is the maze and how much is us.
-float shortestPath(const World& w, const UnitType* t, float sx, float sz, float gx, float gz) {
-    const NavGrid& g = w.navFor(t);
-    if (g.empty()) return 0;
-    const int W = g.width(), H = g.height();
-    const int foot = std::max(1, std::max(t->footX, t->footZ));
-    const int s = int(sx) / 16, sZ = int(sz) / 16;
-    const int e = int(gx) / 16, eZ = int(gz) / 16;
-    if (s < 0 || sZ < 0 || e < 0 || eZ < 0 || s >= W || sZ >= H || e >= W || eZ >= H) return 0;
-    // Dijkstra on an 8-grid with 10/14 costs (integer, so no float drift).
-    const int kInf = 1 << 29;
-    std::vector<int> dist(size_t(W) * size_t(H), kInf);
-    std::vector<int> heap;
-    auto idx = [&](int x, int z) { return size_t(z) * size_t(W) + size_t(x); };
-    dist[idx(s, sZ)] = 0;
-    heap.push_back(int(idx(s, sZ)));
-    // Simple bucket-free Dijkstra: repeatedly scan (grids here are small enough).
-    std::vector<uint8_t> done(size_t(W) * size_t(H), 0);
-    for (;;) {
-        int best = -1, bestD = kInf;
-        for (size_t i = 0; i < dist.size(); ++i)
-            if (!done[i] && dist[i] < bestD) { bestD = dist[i]; best = int(i); }
-        if (best < 0) break;
-        done[size_t(best)] = 1;
-        const int cx = best % W, cz = best / W;
-        if (cx == e && cz == eZ) return float(bestD) * 1.6f;   // 10 cost == 16 world units
-        static const int dx8[8] = {0, 1, 0, -1, 1, 1, -1, -1};
-        static const int dz8[8] = {-1, 0, 1, 0, -1, 1, 1, -1};
-        for (int k = 0; k < 8; ++k) {
-            const int nx = cx + dx8[k], nz = cz + dz8[k];
-            if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
-            if (!g.fits(nx, nz, foot)) continue;
-            const bool diag = dx8[k] != 0 && dz8[k] != 0;
-            if (diag && (!g.fits(cx + dx8[k], cz, foot) || !g.fits(cx, cz + dz8[k], foot)))
-                continue;      // the movers refuse to cut a corner; so does this
-            const int nd = bestD + (diag ? 14 : 10);
-            if (nd < dist[idx(nx, nz)]) dist[idx(nx, nz)] = nd;
-        }
-    }
-    return 0;   // unreachable
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {

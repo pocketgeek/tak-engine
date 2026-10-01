@@ -55,7 +55,6 @@ public:
     void setMapRoot(const std::filesystem::path& root) { mapRoot_ = root; }
     const std::shared_ptr<maps::Package>& mapPackage() const { return mapPackage_; }
     const std::string& mapStatus() const { return mapStatus_; }
-    bool mapReady() const { return mapReadyRoom_ == room_.id && room_.id != 0; }
     bool connect(const std::string& host, uint16_t port, const std::string& name);
     void disconnect(const std::string& reason = "bye");
     ~MpClient();
@@ -123,7 +122,6 @@ public:
     const std::optional<crusades::PlayerStatus>& playerCampaignStatus() const { return campaignPlayer_; }
     const std::map<std::string, crusades::BattleStatus>& campaignBattles() const { return campaignBattles_; }
     const std::optional<crusades::Error>& campaignError() const { return campaignError_; }
-    void getCampaignAllegiance(const std::string& campaign);
     void setCampaignAllegiance(const std::string& campaign, uint64_t expectedRevision, crusades::Alliance alliance);
     void issueCampaignBattle(const std::string& campaign, uint32_t territory, const std::string& opponent);
     struct CampaignInvitation { std::string campaignId, battleId, map; uint32_t roomId=0; uint64_t expiresUnix=0; };

@@ -70,9 +70,6 @@ inline bool haveDirPicker() {
 #endif
 }
 
-inline void infoBox(const std::string& title, const std::string& msg) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, title.c_str(), msg.c_str(), nullptr);
-}
 inline void errorBox(const std::string& title, const std::string& msg) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), msg.c_str(), nullptr);
 }

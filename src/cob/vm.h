@@ -101,7 +101,6 @@ public:
     const std::vector<PieceState>& pieces() const { return pieces_; }
     std::span<const RetailPiece> retailPieces() const;
     const File& file() const { return *file_; }
-    size_t threadCount() const;
     std::vector<uint32_t> threadPcs() const;
     bool mayReachExplosion(std::span<const uint8_t> reachability) const;
     int32_t getStatic(size_t i) const;

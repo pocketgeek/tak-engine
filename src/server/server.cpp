@@ -386,7 +386,6 @@ public:
     bool loadAccounts(const std::string& path, std::string& err) {
         return accounts_.load(path, &err);
     }
-    size_t accountCount() const { return accounts_.size(); }
     void enableCrusades(const std::filesystem::path& database,
                         const std::filesystem::path& definition) {
         if (!requireAuth_) throw std::runtime_error("Crusades requires account authentication");
