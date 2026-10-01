@@ -99,10 +99,15 @@ frameworks. CI checks these dependency boundaries for release packages.
   release tags; the NSIS installer remains x64 only. The pinned FFmpeg version
   excludes NVENC on Windows ARM64; x264 CPU streaming remains available. Qualcomm
   hardware encoding is not implemented.
-- **macOS ARM64:** install Xcode Command Line Tools, then
+- **macOS ARM64 and Intel x64:** install Xcode Command Line Tools, then
   `brew install cmake ninja pkg-config`. Run both dependency scripts and the
   source-build commands above, adding `-DCMAKE_FIND_FRAMEWORK=LAST` at configure
-  time. See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
+  time. CI builds and tests each architecture on a native runner, checks that
+  executables link only system libraries/frameworks, and packages signed app
+  bundles, DMGs, and Release/Debug ZIPs. CI packages target macOS 14 or later;
+  use `MACOSX_DEPLOYMENT_TARGET=14.0` for matching source builds. Intel packages
+  are available as CI artifacts and are uploaded on future release tags.
+  See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
 - **Linux x64:** CI packages Ubuntu 22.04/24.04/26.04, Debian 12/13,
   Fedora 44, and Arch; use the package matching your distribution.
 

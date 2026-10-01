@@ -1,7 +1,7 @@
 name: macOS build
 run-name: macOS build · ${{ github.ref_name }}
 
-# Builds native macOS ARM64 (Apple Silicon): uploads a CI artifact and runs the
+# Builds native macOS ARM64 and Intel x64: uploads CI artifacts and runs the
 # determinism gate; on a tag it also attaches the zipped bundle to the GitHub Release.
 
 # Runs on every push to main AS WELL AS on a version tag. It used to be tag-only,
@@ -23,10 +23,30 @@ permissions:
 
 jobs:
   build:
-    name: macOS ARM64
-    runs-on: macos-14   # Apple Silicon (ARM64)
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            machine: arm64
+            runner_arch: ARM64
+            runner: macos-14
+          - arch: x64
+            machine: x86_64
+            runner_arch: X64
+            runner: macos-15-intel
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
       - uses: actions/checkout@v7
+
+      - name: Verify native runner
+        run: |
+          [[ "${{ runner.arch }}" == "${{ matrix.runner_arch }}" ]]
+          [[ "$(uname -m)" == "${{ matrix.machine }}" ]]
+          clang --version
 
       - name: Install dependencies
         run: brew install ninja pkg-config nasm
@@ -34,22 +54,40 @@ jobs:
       # Static Bink/streaming FFmpeg so the bundle plays the door videos with no
       # runtime FFmpeg (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.
       - name: Cache static FFmpeg (Bink)
-        uses: actions/cache@v4
+        id: ffmpeg-cache
+        uses: actions/cache/restore@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-macos-arm64-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
+          key: ffmpeg-bink-macos-${{ matrix.arch }}-min14-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
       - name: Build static FFmpeg (Bink)
-        run: ./tools/build-ffmpeg-bink.sh
+        run: |
+          if ! ./tools/build-ffmpeg-bink.sh; then
+            test ! -f third_party/ffmpeg-bink/src/ffbuild/config.log || tail -180 third_party/ffmpeg-bink/src/ffbuild/config.log
+            exit 1
+          fi
+      - name: Save successful static FFmpeg build
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/ffmpeg-bink
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
       # Static zlib/libjpeg/SDL2 (built from source, like Linux) so the binary is fully
       # self-contained -- no Homebrew dylibs referenced. SDL2 still links the system
       # frameworks (Cocoa/Metal/CoreAudio/...), which macOS forbids linking statically.
       - name: Cache static deps (zlib/libjpeg/SDL2)
-        uses: actions/cache@v4
+        id: static-cache
+        uses: actions/cache/restore@v4
         with:
           path: third_party/static-deps
-          key: static-deps-macos-arm64-zlib1.3.1-jpeg3.0.4-sdl2.32.10
+          key: static-deps-macos-${{ matrix.arch }}-min14-zlib1.3.1-jpeg3.0.4-sdl2.32.10-${{ hashFiles('tools/build-static-deps.sh') }}
       - name: Build static deps (zlib/libjpeg/SDL2)
         run: ./tools/build-static-deps.sh
+      - name: Save successful static dependency build
+        if: steps.static-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/static-deps
+          key: ${{ steps.static-cache.outputs.cache-primary-key }}
 
       - name: Configure + build
         # FIND_FRAMEWORK=LAST keeps FindJPEG off Mono.framework's ancient libjpeg; the
@@ -92,21 +130,16 @@ jobs:
           ./build/map_transfer_test
           ./build/unit_gift_test
 
-      - name: Verify fully static (only system libs/frameworks linked)
+      - name: Verify Release architecture and static dependencies
         run: |
-          if otool -L build/crusades_admin | tail -n +2 | grep -qE '@rpath|@loader_path|/opt/homebrew|/usr/local'; then
-            echo "::error::crusades_admin links a non-system dylib"; exit 1
-          fi
-          otool -L build/takclient
-          # macOS can't static-link libSystem/frameworks, so those are expected; assert
-          # NO Homebrew/@rpath/local dylib (SDL2/jpeg/zlib/ffmpeg must be baked in).
-          if otool -L build/takclient | tail -n +2 | grep -qE '@rpath|@loader_path|/opt/homebrew|/usr/local'; then
-            echo "::error::takclient links a non-system dylib -- not fully static"; exit 1
-          fi
-          if otool -L build/cartographer | tail -n +2 | grep -qE '@rpath|@loader_path|/opt/homebrew|/usr/local'; then
-            echo "::error::cartographer links a non-system dylib"; exit 1
-          fi
-          echo "OK: only system libs/frameworks linked -- as static as macOS allows"
+          for binary in takclient takserver cartographer crusades_admin; do
+            [[ "$(lipo -archs "build/$binary")" == "${{ matrix.machine }}" ]]
+            otool -L "build/$binary"
+            imports=$(otool -L "build/$binary" | tail -n +2 | awk '{print $1}')
+            if echo "$imports" | grep -qvE '^(/usr/lib/|/System/Library/)'; then
+              echo "::error::$binary links a non-system dylib"; exit 1
+            fi
+          done
 
       - name: Streaming encode test
         run: |
@@ -136,6 +169,7 @@ jobs:
           iconutil -c iconset "$APPDIR/Contents/Resources/takclient.icns" -o /tmp/takclient.iconset
           cp build/takclient build/takserver build/crusades_admin "$APPDIR/Contents/MacOS/"
           sed "s/@VERSION@/$VERSION/g" packaging/macos/Info.plist > "$APPDIR/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOSX_DEPLOYMENT_TARGET" "$APPDIR/Contents/Info.plist"
           plutil -lint "$APPDIR/Contents/Info.plist"
           codesign --force --deep -s - "$APPDIR"
           # FinderInfo attributes invalidate strict bundle signature verification.
@@ -147,13 +181,14 @@ jobs:
           cp build/cartographer "$EDITOR_APP/Contents/MacOS/"
           cp res/icons/cartographer.icns "$EDITOR_APP/Contents/Resources/"
           sed "s/@VERSION@/$VERSION/g" packaging/macos/Cartographer-Info.plist > "$EDITOR_APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOSX_DEPLOYMENT_TARGET" "$EDITOR_APP/Contents/Info.plist"
           plutil -lint "$EDITOR_APP/Contents/Info.plist"
           codesign --force --deep -s - "$EDITOR_APP"
           codesign --verify --deep --strict "$EDITOR_APP"
           ln -s /Applications dist-dmg/Applications
           hdiutil create -volname "Total Annihilation - Kingdoms" -srcfolder dist-dmg -ov -format UDZO \
-            "tak-engine-$VERSION-macos-arm64.dmg"
-          hdiutil verify "tak-engine-$VERSION-macos-arm64.dmg"
+            "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg"
+          hdiutil verify "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg"
 
       # The zip carries the SAME .app (launch that from Finder -- no Terminal)
       # plus the bare binaries for people who want the CLI/server.
@@ -165,18 +200,18 @@ jobs:
           ditto --rsrc --extattr "dist-dmg/TAK Cartographer.app" "dist-macos/TAK Cartographer.app"
           cp build/takclient build/takserver build/cartographer build/crusades_admin dist-macos/
           # Preserve the signed bundle intact in the zip.
-          ditto -c -k --sequesterRsrc dist-macos "takclient-$VERSION-macos-arm64.zip"
+          ditto -c -k --sequesterRsrc dist-macos "takclient-$VERSION-macos-${{ matrix.arch }}.zip"
 
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: takclient-macos-arm64
-          path: takclient-*-macos-arm64.zip
+          name: takclient-macos-${{ matrix.arch }}
+          path: takclient-*-macos-${{ matrix.arch }}.zip
 
       - name: Upload CI artifact (DMG)
         uses: actions/upload-artifact@v7
         with:
-          name: tak-engine-macos-arm64-dmg
+          name: tak-engine-macos-${{ matrix.arch }}-dmg
           path: tak-engine-*.dmg
 
       # Debug build: the release binaries are hardened (only --data/--version, no env
@@ -188,17 +223,27 @@ jobs:
             -DCMAKE_FIND_FRAMEWORK=LAST
           cmake --build build-debug --target takclient takserver cartographer crusades_admin
 
+      - name: Verify Debug architecture and static dependencies
+        run: |
+          for binary in takclient takserver cartographer crusades_admin; do
+            [[ "$(lipo -archs "build-debug/$binary")" == "${{ matrix.machine }}" ]]
+            imports=$(otool -L "build-debug/$binary" | tail -n +2 | awk '{print $1}')
+            if echo "$imports" | grep -qvE '^(/usr/lib/|/System/Library/)'; then
+              echo "::error::$binary links a non-system dylib"; exit 1
+            fi
+          done
+
       - name: Bundle + zip (debug)
         run: |
           mkdir -p dist-macos-debug
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-macos-debug/
           cp build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin dist-macos-debug/
-          (cd dist-macos-debug && zip -r ../takclient-macos-arm64-debug.zip .)
+          (cd dist-macos-debug && zip -r ../takclient-macos-${{ matrix.arch }}-debug.zip .)
 
       - name: Upload CI artifact (debug)
         uses: actions/upload-artifact@v7
         with:
-          name: takclient-macos-arm64-debug
+          name: takclient-macos-${{ matrix.arch }}-debug
           path: dist-macos-debug/
 
       - name: Determinism gate (cross-platform parity)
@@ -221,6 +266,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
           gh release upload "$GITHUB_REF_NAME" \
-            "takclient-$VERSION-macos-arm64.zip" takclient-macos-arm64-debug.zip \
-            "tak-engine-$VERSION-macos-arm64.dmg" \
+            "takclient-$VERSION-macos-${{ matrix.arch }}.zip" takclient-macos-${{ matrix.arch }}-debug.zip \
+            "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg" \
             --repo "$GITHUB_REPOSITORY" --clobber
