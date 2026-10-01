@@ -24,6 +24,18 @@ int main() {
     }
     Command c;c.kind=Cmd(255);
     check(!tak::srv::validPlayerCommands(batch(c)),"unknown command");
+    for (Cmd kind:{Cmd::Train,Cmd::Unqueue}) {
+        c.kind=kind;
+        for (int n:{0,1,5,10}) {
+            c.targetId=n;
+            check(tak::srv::validPlayerCommands(batch(c)),"normal production count");
+        }
+        for (int n:{-1,11,std::numeric_limits<int>::max()}) {
+            c.targetId=n;
+            check(!tak::srv::validPlayerCommands(batch(c)),"unsafe production count");
+        }
+    }
+    c=Command{};
     c.kind=Cmd::Move;auto bytes=batch(c);
     for(size_t n=0;n<bytes.size();++n)
         check(!tak::srv::validPlayerCommands(std::vector<uint8_t>(bytes.begin(),bytes.begin()+n)),"truncated batch");

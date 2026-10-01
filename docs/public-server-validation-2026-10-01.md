@@ -5,8 +5,8 @@ This is post-0.7.20 development work; no release or live deployment was made.
 
 ## Checks
 
-- Release full suite: **159/159 passed** after the final command-validation change.
-- Optimized Debug full suite: **167/167 passed** after the final change.
+- Release full suite: **159/159 passed** after the command-coordinate validation change.
+- Optimized Debug full suite: **167/167 passed** after the command-coordinate validation change.
 - Final focused Clang network/input suite: **5/5 passed**.
 - Native TLS tests cover trusted, untrusted, expired and wrong-host certificates,
   plaintext rejection, framed transfer with backpressure, and abrupt peer closure.
@@ -15,12 +15,24 @@ This is post-0.7.20 development work; no release or live deployment was made.
   TLS authentication, and an 8 MiB paced TLS upload without disconnecting its sender.
 - Command-validation tests reject malformed batches, unknown command types,
   NaN/infinity, and coordinates outside signed 16.16; every valid command kind
-  remains accepted. These tests also passed under AddressSanitizer/LeakSanitizer.
-- Before the final command-validation change, the focused Clang suite passed
+  remains accepted. Production batches above the UI maximum of ten are rejected.
+  These tests also passed under AddressSanitizer/LeakSanitizer.
+- After adding the production-count bound, focused Release checks passed **2/2**,
+  optimized Debug network/command checks **3/3**, Clang command checks **1/1**,
+  and ASan/LSan command checks passed.
+- Before the command-validation change, the focused Clang suite passed
   **6/6**, and the ASan/LSan network/storage suite passed **6/6**.
 - `systemd-analyze verify packaging/systemd/takserver.service` passed.
   The service sandbox was not installed or exercised as a live service.
 - Linux Release `takserver` has no dynamic OpenSSL dependency.
+
+## Native platform CI
+
+The static TLS integration passed both macOS architectures in
+[run 36910306663](https://github.com/pocketgeek/tak-engine/actions/runs/36910306663).
+Windows and subsequent main builds are tracked by the repository’s
+[Actions page](https://github.com/pocketgeek/tak-engine/actions). A passing Linux
+run alone does not establish Windows compatibility.
 
 ## Remote encrypted multiplayer
 

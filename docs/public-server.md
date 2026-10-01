@@ -84,7 +84,9 @@ senders are paced rather than disconnected.
 All player-command batches are checked before enqueueing: invalid command
 types, truncated/trailing data, non-finite coordinates and coordinates outside
 the simulation’s signed 16.16 range are rejected. Spectators cannot submit
-player commands. Ownership is stamped by the server and checked by the simulation.
+player commands. Production count requests are limited to the client’s maximum
+batch of ten, preventing a forged count from allocating billions of queue entries.
+Ownership is stamped by the server and checked by the simulation.
 
 Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds

@@ -17,6 +17,11 @@ inline bool validPlayerCommands(const std::vector<uint8_t>& payload) {
         if (uint8_t(c.kind)>uint8_t(tak::net::Cmd::ShareMana) ||
             !coordinate(c.x) || !coordinate(c.z) ||
             !coordinate(c.x2) || !coordinate(c.z2)) return false;
+        // Ctrl+Shift requests ten units, the largest client production batch.
+        // A forged INT_MAX count would otherwise allocate billions of entries
+        // in World::train before another network/resource check could run.
+        if ((c.kind==tak::net::Cmd::Train || c.kind==tak::net::Cmd::Unqueue) &&
+            (c.targetId<0 || c.targetId>10)) return false;
     }
     return reader.ok && reader.p==reader.end;
 }
