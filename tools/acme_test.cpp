@@ -11,6 +11,10 @@
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
+#include <filesystem>
+#include <fstream>
+#include <openssl/pem.h>
+#include <openssl/x509v3.h>
 using namespace tak::net;
 using tak::srv::acme_detail::Challenge;
 namespace {
@@ -68,6 +72,36 @@ int main() {
         tak::srv::AcmeOptions options;options.domain="tak.pgnet.us";options.state="unused-acme-test-state";
         rejected=false;try {tak::srv::AcmeCertificates certificates(options);}catch(const std::exception&) {rejected=true;}
         check(rejected,"terms agreement not enforced");
-        std::puts("ACME responder and configuration checks passed");return 0;
+        // Saved-state startup must work offline, including Unicode state paths
+        // and owner-only Windows ACLs. No certificate authority is contacted.
+        const auto root=std::filesystem::temp_directory_path()/
+            (std::filesystem::path(u8"tak-acme-é-")+=std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(root);
+        try {
+            EVP_PKEY* key=EVP_RSA_gen(2048);check(key,"fixture key");
+            X509* cert=X509_new();check(cert,"fixture certificate");
+            X509_set_version(cert,2);ASN1_INTEGER_set(X509_get_serialNumber(cert),1);
+            X509_gmtime_adj(X509_getm_notBefore(cert),-60);X509_gmtime_adj(X509_getm_notAfter(cert),7*86400);
+            X509_set_pubkey(cert,key);auto* subject=X509_get_subject_name(cert);
+            X509_NAME_add_entry_by_txt(subject,"CN",MBSTRING_ASC,reinterpret_cast<const unsigned char*>("acme.example.test"),-1,-1,0);
+            X509_set_issuer_name(cert,subject);
+            auto* san=X509V3_EXT_conf_nid(nullptr,nullptr,NID_subject_alt_name,"DNS:acme.example.test");
+            check(san && X509_add_ext(cert,san,-1)==1,"fixture SAN");X509_EXTENSION_free(san);
+            check(X509_sign(cert,key,EVP_sha256())>0,"fixture signature");
+            BIO* bio=BIO_new(BIO_s_mem());check(bio,"fixture BIO");
+            check(PEM_write_bio_X509(bio,cert)==1 && PEM_write_bio_PrivateKey(bio,key,nullptr,nullptr,0,nullptr,nullptr)==1,"fixture PEM");
+            char* bytes=nullptr;const long length=BIO_get_mem_data(bio,&bytes);
+            {std::ofstream out(root/"current.pem",std::ios::binary);out.write(bytes,length);}
+            BIO_free(bio);X509_free(cert);EVP_PKEY_free(key);
+            options.domain="acme.example.test";options.state=root;options.agreeTerms=true;
+            {
+                tak::srv::AcmeCertificates saved(options);check(bool(saved.context()),"offline saved certificate");
+                rejected=false;try {tak::srv::AcmeCertificates duplicate(options);}catch(const std::exception&) {rejected=true;}
+                check(rejected,"shared state lease not enforced");
+                check(!std::filesystem::exists(root/"account.pem"),"offline startup contacted CA");
+            }
+            std::filesystem::remove_all(root);
+        }catch(...) {std::filesystem::remove_all(root);throw;}
+        std::puts("ACME responder, saved state and configuration checks passed");return 0;
     }catch(const std::exception& e) {std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

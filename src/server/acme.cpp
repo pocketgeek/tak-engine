@@ -41,6 +41,11 @@ namespace tak::srv {
 namespace {
 using Json=nlohmann::json;
 using Clock=std::chrono::steady_clock;
+// Keep the macOS 14 SDK baseline: no experimental libc++ jthread/stop_token.
+struct Stop {
+    const std::atomic<bool>* flag=nullptr;
+    bool stop_requested() const {return flag && flag->load();}
+};
 using Key=std::unique_ptr<EVP_PKEY,decltype(&EVP_PKEY_free)>;
 using Bio=std::unique_ptr<BIO,decltype(&BIO_free)>;
 constexpr size_t maxBody=1024*1024;
@@ -119,7 +124,7 @@ Url url(const std::string& text) {
     require(!u.host.empty(),"missing HTTPS hostname");return u;
 }
 struct Socket {int fd=-1;~Socket(){if(fd>=0)tak::net::sockClose(fd);}};
-void waitSocket(int fd,short events,Clock::time_point deadline,std::stop_token stop) {
+void waitSocket(int fd,short events,Clock::time_point deadline,Stop stop) {
     for(;;) {
         require(!stop.stop_requested(),"cancelled");require(Clock::now()<deadline,"network timeout");
         pollfd p{};p.fd=fd;p.events=events;const int n=TAK_POLL(&p,1,100);
@@ -128,7 +133,7 @@ void waitSocket(int fd,short events,Clock::time_point deadline,std::stop_token s
     }
 }
 struct Response {int status=0;std::map<std::string,std::string> headers;std::string body;};
-Response https(const std::string& endpoint,const std::string& method,const std::string& body,std::stop_token stop) {
+Response https(const std::string& endpoint,const std::string& method,const std::string& body,Stop stop) {
     using namespace tak::net;const auto u=url(endpoint);netStartup();Socket socket;
     addrinfo hints{},*addresses=nullptr;hints.ai_socktype=SOCK_STREAM;hints.ai_family=AF_UNSPEC;
     require(getaddrinfo(u.host.c_str(),std::to_string(u.port).c_str(),&hints,&addresses)==0,"cannot resolve CA");
@@ -215,7 +220,8 @@ bool dnsName(const std::string& name) {
 }
 class ChallengeResponder {
     Socket listener_;
-    std::jthread worker_;
+    std::atomic<bool> stopping_{false};
+    std::thread worker_;
 public:
     ChallengeResponder(uint16_t port,std::string token,std::string authorization) {
         require(token.size()>=22 && token.size()<=256 && token.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")==token.npos,"invalid challenge token");
@@ -223,7 +229,8 @@ public:
         require(listener_.fd>=0,("cannot listen for HTTP-01 on port "+std::to_string(port)+": "+error).c_str());
         std::fprintf(stderr,"ACME: HTTP-01 listening on port %u for validation only\n",port);
         const int fd=listener_.fd;
-        worker_=std::jthread([fd,path="/.well-known/acme-challenge/"+token,authorization=std::move(authorization)](std::stop_token stop) {
+        worker_=std::thread([this,fd,path="/.well-known/acme-challenge/"+token,authorization=std::move(authorization)] {
+            const Stop stop{&stopping_};
             struct Peer {int fd;std::string input,output;size_t sent=0;Clock::time_point deadline;};
             std::vector<Peer> peers;
             while(!stop.stop_requested()) {
@@ -264,7 +271,7 @@ public:
             for(const auto& peer:peers)tak::net::sockClose(peer.fd);
         });
     }
-    ~ChallengeResponder() {worker_.request_stop();if(worker_.joinable())worker_.join();std::fprintf(stderr,"ACME: HTTP-01 validation finished; closing listener\n");}
+    ~ChallengeResponder() {stopping_=true;if(worker_.joinable())worker_.join();std::fprintf(stderr,"ACME: HTTP-01 validation finished; closing listener\n");}
 };
 struct RetryError:std::runtime_error {long seconds;RetryError(std::string text,long delay):runtime_error(std::move(text)),seconds(delay){}};
 long retryAfter(const Response& r,long fallback) {
@@ -288,7 +295,7 @@ class Client {
     Key account_{nullptr,EVP_PKEY_free};
     Json directory_;
     std::string origin_,nonce_,kid_;
-    std::stop_token stop_;
+    Stop stop_;
     Clock::time_point deadline_=Clock::now()+std::chrono::minutes(5);
     Response request(const std::string& endpoint,const std::string& method,const std::string& body) {
         require(url(endpoint).origin==origin_,"CA endpoint changed origin");
@@ -320,7 +327,7 @@ class Client {
         while(Clock::now()<until) {require(!stop_.stop_requested(),"cancelled");std::this_thread::sleep_for(std::chrono::milliseconds(100));}
     }
 public:
-    Client(AcmeOptions options,std::stop_token stop):options_(std::move(options)),stop_(stop) {
+    Client(AcmeOptions options,Stop stop):options_(std::move(options)),stop_(stop) {
         origin_=url(options_.directory).origin;
         const auto existing=readFile(options_.state/"account.pem");
         account_=existing.empty()?newKey():parseKey(existing);
@@ -396,10 +403,12 @@ bool acme_detail::validDomain(const std::string& domain) {return dnsName(domain)
 struct AcmeCertificates::Impl {
     AcmeOptions options;
     std::unique_ptr<crusades::CampaignServiceLease> lease;
-    std::atomic<std::shared_ptr<tak::net::TlsContext>> current;
+    std::shared_ptr<tak::net::TlsContext> current;
     std::time_t renewAt=0,nextAttempt=0;
     unsigned failures=0;
-    std::jthread worker;
+    std::atomic<bool> stopping{false};
+    std::thread worker;
+    ~Impl() {stopping=true;if(worker.joinable())worker.join();}
     explicit Impl(AcmeOptions value):options(std::move(value)) {
         require(options.agreeTerms,"--acme-agree-tos is required");
         require(dnsName(options.domain),"use one lowercase public DNS hostname (no wildcard, IP or scheme)");
@@ -431,14 +440,15 @@ struct AcmeCertificates::Impl {
         auto retry=readFile(options.state/"retry.json");if(!retry.empty()) {auto r=json(retry);nextAttempt=r.value("next",std::time_t{});failures=std::min(r.value("failures",0u),4u);}
         const auto bundle=readFile(options.state/"current.pem");
         if(!bundle.empty()) {
-            try {renewAt=renewalTime(bundle,options.domain);current.store(tak::net::TlsContext::serverPem(bundle,bundle));}
+            try {renewAt=renewalTime(bundle,options.domain);std::atomic_store(&current,tak::net::TlsContext::serverPem(bundle,bundle));}
             catch(const std::exception& e) {std::fprintf(stderr,"ACME: stored certificate unavailable: %s\n",e.what());}
         }
-        if(!current.load()) {
+        if(!std::atomic_load(&current)) {
             require(std::time(nullptr)>=nextAttempt,"issuance backoff active; check earlier error and retry later");
             try {issue({});}catch(const std::exception& e) {recordFailure(e);throw;}
         }
-        worker=std::jthread([this](std::stop_token stop) {
+        worker=std::thread([this] {
+            const Stop stop{&stopping};
             while(!stop.stop_requested()) {
                 const auto now=std::time(nullptr);
                 if(now>=renewAt && now>=nextAttempt) {
@@ -448,13 +458,13 @@ struct AcmeCertificates::Impl {
             }
         });
     }
-    void issue(std::stop_token stop) {
+    void issue(Stop stop) {
         std::fprintf(stderr,"ACME: obtaining certificate for %s\n",options.domain.c_str());
         Client client(options,stop);auto bundle=client.issue();const auto renewal=renewalTime(bundle,options.domain);
         require(renewal>std::time(nullptr),"issued certificate already due for renewal");
         auto context=tak::net::TlsContext::serverPem(bundle,bundle);
         save(options.state/"current.pem",bundle);
-        current.store(std::move(context));renewAt=renewal;nextAttempt=0;failures=0;
+        std::atomic_store(&current,std::move(context));renewAt=renewal;nextAttempt=0;failures=0;
         save(options.state/"retry.json",Json{{"next",0},{"failures",0}}.dump());
         std::fprintf(stderr,"ACME: certificate installed; existing game connections retained\n");
     }
@@ -469,5 +479,5 @@ struct AcmeCertificates::Impl {
 };
 AcmeCertificates::AcmeCertificates(AcmeOptions options):impl_(std::make_unique<Impl>(std::move(options))){}
 AcmeCertificates::~AcmeCertificates()=default;
-std::shared_ptr<tak::net::TlsContext> AcmeCertificates::context() const {return impl_->current.load();}
+std::shared_ptr<tak::net::TlsContext> AcmeCertificates::context() const {return std::atomic_load(&impl_->current);}
 }
