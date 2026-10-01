@@ -133,6 +133,9 @@ Linux-specific; it is not installed or claimed to apply on those platforms.
 
 ## Validation and remaining limits
 
+See the [2026-10-01 validation report](public-server-validation-2026-10-01.md)
+for local suites, remote TLS matches, and the deployment boundary.
+
 `tls_test` checks encrypted framing/backpressure, valid connections, wrong host,
 untrusted/expired certificates, abrupt peer closure and plaintext rejection.
 `server_public_test.py` exercises real-server admission, map reservation,
