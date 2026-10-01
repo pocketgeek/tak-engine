@@ -95,6 +95,24 @@ int main(int argc,char** argv) {
               "naval attacks choose reachable water within range of the enemy shore");
     }
     {
+        sim::World w;terrain(w,true);auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
+        const int ship=w.spawn(&boat,2000,800,0,0);
+        ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        const auto cs=think(controller,w);
+        check(attacks(cs)==1 && cs[0].unitId==ship && cs[0].x<2560,
+              "ships approach an enemy coast even when the starting position lies beyond weapon range");
+    }
+    {
+        sim::World w;std::vector<uint8_t> heights(256*256,100);
+        for(int z=0;z<256;++z)for(int x=0;x<256;++x)
+            if((x>=48 && x<80) || (x>=144 && x<176))heights[z*256+x]=0;
+        w.setTerrain(std::move(heights),256,256,20);w.setVisPlayer(-1);
+        auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
+        w.spawn(&boat,1000,800,0,0);
+        ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3000,800}});
+        check(attacks(think(controller,w))==0,"naval coastal projection rejects a disconnected body of water");
+    }
+    {
         sim::World w;terrain(w);
         int a=w.spawn(&soldier,400,800,0,0),b=w.spawn(&soldier,450,800,0,1);
         w.attack(a,b,false);w.unit(a)->orders.front().autoTarget=true;
@@ -340,6 +358,56 @@ int main(int argc,char** argv) {
                     std::printf("  factory %s: ",fixture[1]);
                     check(produced,"new construction produces through its script-oriented yard");
                 }
+            }
+            {
+                // Start from the actual inland Veruna spawn, with the ordinary
+                // land-factory budget already filled. The AI must find a coast,
+                // construct the Sea Fort and complete a ship through normal orders.
+                sim::World naval;naval.setVisPlayer(-1);
+                sim::MatchConfig config;config.vfs=&vfs;
+                config.mapPath=hpi::findMap(vfs,"Varro Passage");
+                config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};
+                const auto starts=sim::setupMatch(naval,reg,config);
+                naval.spawn(reg.find("verkeep"),256,2800,0,0);
+                naval.spawn(reg.find("vercastl"),256,2100,0,0);
+                ai::Profile p;p.weight["verasy"]=100;p.weight["verscout"]=100;
+                p.weight["verflag"]=10000; // tempting larger ship whose launch footprint is blocked
+                ai::Controller controller(0,reg,p,1,ai::Difficulty::Normal,{starts.back()});
+                naval.player(0).mana=100000;naval.player(0).income=40;
+                const auto cs=think(controller,naval);
+                check(std::any_of(cs.begin(),cs.end(),[](const auto& c) {
+                    return c.kind==net::Cmd::Build && std::string(c.type)=="verasy";
+                }),"Veruna establishes a shipyard beyond the old search radius despite full land production");
+                for(const auto& c:cs)sim::applyCommand(naval,reg,c);
+                bool ship=false;
+                for(uint32_t tick=1;tick<=18000 && !ship;++tick) {
+                    naval.player(0).mana=100000;naval.player(0).income=40;
+                    controller.tick(naval,tick,[&](const auto& c){sim::applyCommand(naval,reg,c);});
+                    naval.tick(1.f/30.f);
+                    ship=std::any_of(naval.units().begin(),naval.units().end(),[](const auto& u) {
+                        return u.alive() && !u.underConstruction && u.type && u.type->id=="verscout";
+                    });
+                }
+                check(ship,"AI completes a Sea Fort and launches a Scout on Varro Passage");
+            }
+            {
+                sim::World naval;naval.setVisPlayer(-1);
+                sim::MatchConfig config;config.vfs=&vfs;
+                config.mapPath=hpi::findMap(vfs,"Varro Passage");
+                config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};config.startSeed=1;
+                const auto starts=sim::setupMatch(naval,reg,config);
+                const auto p=ai::loadProfile(vfs);
+                ai::Controller controller(0,reg,p,1,ai::Difficulty::Normal,{starts.back()});
+                bool ship=false;
+                for(uint32_t tick=0;tick<12000 && !ship;++tick) {
+                    controller.tick(naval,tick,[&](const auto& c){sim::applyCommand(naval,reg,c);});
+                    naval.tick(1.f/30.f);
+                    ship=std::any_of(naval.units().begin(),naval.units().end(),[](const auto& u) {
+                        return u.player==0 && u.alive() && !u.underConstruction && u.type &&
+                            u.type->domain==sim::UnitType::Domain::Water;
+                    });
+                }
+                check(ship,"Normal AI produces boats from the actual opening economy and retail build profile");
             }
             {
                 const sim::UnitType* factory=nullptr;const sim::UnitType* ship=nullptr;

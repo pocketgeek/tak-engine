@@ -94,6 +94,7 @@ struct Needs {
     int   population = 0;      // includes construction and this think's planned units
     int   economy = 0;         // count: income/storage structures
     int   factories = 0;       // count: static or mobile production units
+    int   navalFactories = 0;  // dedicated shipyards, including construction
     int   builders = 0;        // count: mobile builders (incl. the Monarch)
     int   defenses = 0;
     int   desiredArmy = 0;
@@ -135,6 +136,8 @@ private:
     // target, and let a producer build the most-needed thing its menu offers.
     Needs assessNeeds(const tak::sim::World&) const;
     BuildCat categoryOf(const tak::sim::UnitType*) const;
+    bool navalFactory(const tak::sim::UnitType*) const;
+    const std::vector<std::pair<float,float>>& navalLaunchOffsets(const tak::sim::UnitType*) const;
     int   desire(BuildCat, const Needs&) const;
     // `excludeCats` is a bitmask of 1<<int(BuildCat): categories already tried and
     // found unproducible this think, so the pick falls through to the next best.
@@ -182,6 +185,7 @@ private:
     DiffParams dp_;
     std::vector<std::pair<float, float>> enemyStarts_;
     std::optional<std::pair<float,float>> home_;
+    mutable std::unordered_map<const tak::sim::UnitType*,std::vector<std::pair<float,float>>> navalOffsets_;
     int raidersSincePush_ = 0;
     bool scouted_ = false;        // one-shot early scout sent
     uint32_t lastRaidTick_ = 0;   // last tick a harassing raid was sent (raid cooldown)

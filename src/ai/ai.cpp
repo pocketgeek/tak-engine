@@ -117,6 +117,45 @@ BuildCat Controller::categoryOf(const tak::sim::UnitType* t) const {
     return BuildCat::Army;
 }
 
+bool Controller::navalFactory(const tak::sim::UnitType* type) const {
+    if (!type || !type->isStructure()) return false;
+    bool ships = false;
+    for (const auto& id : registry_.buildable(type->id)) {
+        const auto* child = registry_.find(id);
+        if (!child || child->isStructure()) continue;
+        if (child->canFly || child->domain != tak::sim::UnitType::Domain::Water) return false;
+        ships = true;
+    }
+    return ships;
+}
+
+const std::vector<std::pair<float,float>>& Controller::navalLaunchOffsets(const tak::sim::UnitType* type) const {
+    auto [it,inserted] = navalOffsets_.try_emplace(type);
+    if (!inserted || !type->productionScript) return it->second;
+    const tak::sim::UnitType* ship = nullptr;
+    for (const auto& id:registry_.buildable(type->id)) {
+        const auto* child=registry_.find(id);
+        if (child && !child->isStructure() && child->domain==tak::sim::UnitType::Domain::Water) {ship=child;break;}
+    }
+    if (!ship) return it->second;
+    // QueryBuildInfo can change script statics/pieces. Evaluate the authored
+    // output in private worlds, never on the referee whose state is replicated.
+    // Cache both query phases and birth orientations once per shipyard type.
+    for (int angle=0; angle<16; ++angle) {
+        tak::sim::World preview;preview.setVisPlayer(-1);
+        const int id=preview.spawn(type,2000,2000,float(angle)*0.392699082f,0);
+        preview.tick(1.f/30.f); // Create counter-rotates the yard where the script requests it.
+        for (int phase=0; phase<2; ++phase) {
+            tak::sim::Fixed x,y,z;
+            preview.productionPosition(id,ship,x,y,z);
+            it->second.emplace_back(x.toFloat()-2000,z.toFloat()-2000);
+        }
+    }
+    std::sort(it->second.begin(),it->second.end());
+    it->second.erase(std::unique(it->second.begin(),it->second.end()),it->second.end());
+    return it->second;
+}
+
 // Count the empire by category and set the targets the planner steers toward.
 Needs Controller::assessNeeds(const tak::sim::World& world) const {
     Needs n;
@@ -138,6 +177,7 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
         }
         ++n.population;
         ++n.counts[u.type];
+        if (navalFactory(u.type)) ++n.navalFactories;
         switch (categoryOf(u.type)) {
             case BuildCat::Economy:  ++n.economy;   break;
             case BuildCat::Factory:  ++n.factories; break;
@@ -215,8 +255,13 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     const bool sustained = aggressive || diff_ == Difficulty::Passive;
     const bool mobileFactory = !producer.type->isStructure() &&
                                categoryOf(producer.type) == BuildCat::Factory;
-    auto priority = [&](BuildCat cat) {
+    auto priority = [&](const tak::sim::UnitType* type) {
+        const auto cat = categoryOf(type);
         int value = desire(cat, needs);
+        // Land production must not fill the whole factory budget before the AI
+        // establishes its first usable shipyard. Terrain feasibility is checked below.
+        if (navalFactory(type) && needs.navalFactories == 0 && needs.factories > 0 &&
+            needs.income >= 40) value = std::max(value, 70);
         if (mobileFactory && needs.income >= 20 && value > 0) {
             // Zhon's factories can ALSO build economy. Keep them producing an
             // opening force instead of sending every handler off to a lodestone.
@@ -266,7 +311,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         const auto* ut = registry_.find(id);
         if (usable(ut) <= 0) continue;
         if (ut && (excludeCats & (1 << int(categoryOf(ut))))) continue;
-        best = std::max(best, priority(categoryOf(ut)));
+        best = std::max(best, priority(ut));
     }
     // TAK_AI_PICK: why a producer chose nothing. A stalled economy is almost always
     // "every menu entry scored 0", and this says which gate did it.
@@ -298,7 +343,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     for (const auto& id : menu) {
         const auto* ut = registry_.find(id);
         int w = usable(ut);
-        if (w <= 0 || priority(categoryOf(ut)) != best) continue;
+        if (w <= 0 || priority(ut) != best) continue;
         if (ut && (excludeCats & (1 << int(categoryOf(ut))))) continue;
         total += w;
         if (rand(total) < w) chosen = ut;   // reservoir sample
@@ -327,14 +372,64 @@ bool Controller::reachablePoint(const tak::sim::World& world, const tak::sim::Un
             const float px=tx+detmath::cos(a)*r,pz=tz+detmath::sin(a)*r;
             if (reachable(px,pz)) { x=px;z=pz;return true; }
         }
+    if (type->domain == tak::sim::UnitType::Domain::Water) {
+        // An inland starting position is a strategic destination, not a firing
+        // target. Project it onto a nearby connected coast so ships can contest
+        // the sea even when they cannot bombard the Monarch from there.
+        for (float r = 256; r <= 1536; r += 256)
+            for (int i = 0; i < 16; ++i) {
+                const float a = float(i) * 0.392699082f;
+                const float px = tx + detmath::cos(a) * r, pz = tz + detmath::sin(a) * r;
+                if (reachable(px,pz)) { x=px;z=pz;return true; }
+            }
+    }
     return false;
 }
 
 int Controller::terrainWeight(const tak::sim::World& world,const tak::sim::Unit& producer,
                                const tak::sim::UnitType* type,int weight) const {
-    if (type->isStructure()) return weight;
+    if (type->isStructure()) {
+        if (!navalFactory(type)) return weight;
+        float nx = producer.x.toFloat(), nz = producer.z.toFloat();
+        if (producer.type->commander) { auto home=homeOf(world);nx=home.first;nz=home.second; }
+        float x, z;
+        if (!placeSite(world,type,producer,nx,nz,x,z)) return 0;
+        auto yard = producer; yard.x = tak::sim::Fixed::fromFloat(x); yard.z = tak::sim::Fixed::fromFloat(z);
+        for (const auto& id : registry_.buildable(type->id)) {
+            const auto* ship = registry_.find(id);
+            const auto wi = profile_.weight.find(id), li = profile_.limit.find(id);
+            if (ship && !ship->isBuilder && world.buildAllowed(ship) &&
+                wi != profile_.weight.end() && wi->second > 0 &&
+                (li == profile_.limit.end() || li->second != 0) && terrainWeight(world,yard,ship,weight) > 0)
+                return weight;
+        }
+        return 0;
+    }
     float px=producer.x.toFloat(),pz=producer.z.toFloat();
     bool launch=false;
+    if (navalFactory(producer.type)) {
+        const auto& outputs=navalLaunchOffsets(producer.type);
+        const auto& grid=world.navFor(type);
+        const int ownerX=tak::sim::footprintOrigin(producer.x,producer.type->footX);
+        const int ownerZ=tak::sim::footprintOrigin(producer.z,producer.type->footZ);
+        launch=!outputs.empty();
+        for (const auto& offset:outputs) {
+            const float x=producer.x.toFloat()+offset.first,z=producer.z.toFloat()+offset.second;
+            const int sx=tak::sim::footprintOrigin(x,type->footX),sz=tak::sim::footprintOrigin(z,type->footZ);
+            for(int j=0;j<type->footZ && launch;++j)for(int i=0;i<type->footX && launch;++i) {
+                const int gx=sx+i,gz=sz+j,ox=gx-ownerX,oz=gz-ownerZ;
+                // Activate opens the producer's C yard. Ignore only those own
+                // door cells; water depth, slopes and other obstacles still apply.
+                const bool door=ox>=0 && oz>=0 && ox<producer.type->footX && oz<producer.type->footZ &&
+                    !producer.type->yardMap.empty() &&
+                    (producer.type->yardMap[size_t(oz)*producer.type->footX+ox]=='C' ||
+                     producer.type->yardMap[size_t(oz)*producer.type->footX+ox]=='c');
+                launch=grid.terrainWalkable(gx,gz) && (door || grid.walkable(gx,gz));
+            }
+            px=x;pz=z;
+        }
+        if (!launch && producer.type->productionScript) return 0;
+    }
     for (int r=48;r<=304 && !launch;r+=64)
         for (int i=0;i<8;++i) {
             const float a=float(i)*0.785398163f;
@@ -409,7 +504,9 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     if (!t) return false;
     const auto home=homeOf(world);
     const bool aggressive=diff_==Difficulty::Hard || diff_==Difficulty::Absurd;
-    const float radius=!dp_.attack ? 600.0f : (builder.type->commander ? 900.0f : aggressive ? 100000.0f : 1600.0f);
+    const bool naval=navalFactory(t);
+    const float homeRadius=!dp_.attack ? 600.0f : (builder.type->commander ? 900.0f : aggressive ? 100000.0f : 1600.0f);
+    const float radius=naval ? std::max(homeRadius,900.0f) : homeRadius;
     // Reserve the largest lodestone this faction may use, including upgrades.
     // This is AI policy, not a change to the player's placement/navigation rules.
     int manaFootX=0,manaFootZ=0;
@@ -420,9 +517,23 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                 manaFootZ=std::max(manaFootZ,type.footZ);
             }
     const bool factory=!registry_.buildable(t->id).empty();
+    const auto* launches=naval ? &navalLaunchOffsets(t) : nullptr;
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
         float approachX=x,approachZ=z;
+        if (launches && !launches->empty()) {
+            bool output=false;
+            for (const auto& id:registry_.buildable(t->id)) {
+                const auto* ship=registry_.find(id);
+                const auto wi=profile_.weight.find(id),li=profile_.limit.find(id);
+                if (!ship || ship->isBuilder || !world.buildAllowed(ship) ||
+                    wi==profile_.weight.end() || wi->second<=0 || (li!=profile_.limit.end() && li->second==0)) continue;
+                if (std::all_of(launches->begin(),launches->end(),[&](const auto& offset) {
+                    return world.canPlace(ship,x+offset.first,z+offset.second);
+                })) { output=true;break; }
+            }
+            if (!output) return false;
+        }
         if (manaFootX>0) for (const auto& [mx,mz]:world.manaSpots()) {
             const int x0=tak::sim::footprintOrigin(x,t->footX);
             const int z0=tak::sim::footprintOrigin(z,t->footZ);
@@ -497,7 +608,8 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         }
         return found;
     }
-    for (float r = 70; r < 340; r += 30)
+    const float searchRadius = t->minWaterDepth > 0 || navalFactory(t) ? std::min(radius,1600.0f) : 340.0f;
+    for (float r = 70; r < searchRadius; r += 30)
         for (float a = 0; a < 6.28f; a += 0.5f) {
             float x = tak::sim::footprintWaypoint(tak::sim::footprintCell(nx + detmath::cos(a) * r,t->footX),t->footX).toFloat();
             float z = tak::sim::footprintWaypoint(tak::sim::footprintCell(nz + detmath::sin(a) * r,t->footZ),t->footZ).toFloat();
@@ -725,6 +837,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                     assigned.push_back(pid);
                     ++needs.population;
                     ++needs.counts[pick];
+                    if (navalFactory(pick)) ++needs.navalFactories;
                     switch (categoryOf(pick)) {
                         case BuildCat::Army: ++needs.army; break;
                         case BuildCat::Factory: ++needs.factories; break;
