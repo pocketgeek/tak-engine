@@ -51,11 +51,12 @@ validation.
 Room binding combines a random server-session identity with the room number.
 It is stored uniquely and cannot be reassigned, even after the battle ends.
 A recycled numeric room ID after server restart therefore does not inherit
-campaign authorization. M5 does not restore interrupted battles after a server
-restart: old Started records remain in storage but cannot attach to a new
-server-session room. They are not automatically cancelled because ownership of
-shared-database server sessions is not yet modeled. Unstarted tickets still
-expire at their launch deadline. An invited opponent who disconnects before
+campaign authorization. Since [M13](campaign-operations.md), one process lease
+protects the campaign database. Startup cancels interrupted Issued and
+Started battles in a single audited transaction, preserving their records and
+releasing reservations without inventing results or territory credit. Running
+referees are not resumed. Unstarted tickets during normal service operation
+still expire at their launch deadline. An invited opponent who disconnects before
 joining leaves the invitation pending until that deadline; host departure or a
 seated participant leaving the prestart room cancels it immediately.
 

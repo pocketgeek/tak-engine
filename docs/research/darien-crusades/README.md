@@ -6,7 +6,8 @@ Milestone 3 transactional store, Milestone 4 authenticated allegiance,
 Milestone 5 battle issuance, Milestone 6 authoritative results, Milestone 7
 evidence-bound territory rules, Milestone 8 campaign networking and
 Milestone 9 strategic presentation, Milestone 10 territory matchmaking and
-Milestone 11 history/replay integration. See the
+Milestone 11 history/replay integration, Milestone 12 historical validation
+and Milestone 13 public-server hardening. See the
 [Milestone 1 acceptance audit](milestone-one-status.md) and
 [Milestone 2 model](campaign-model.md), [Milestone 3 store](campaign-store.md)
 and [Milestone 8 network contract](campaign-network.md), plus
@@ -30,6 +31,7 @@ classifies recovered behavior, modern choices and historical unknowns.
 - [Milestone 10 modern territory matchmaking](campaign-matchmaking.md)
 - [Milestone 11 territory history and retained replays](campaign-history.md)
 - [Milestone 12 historical validation](../../darien-crusades-reconstruction.md)
+- [Milestone 13 public-server operations](campaign-operations.md)
 - [Strategic interface evidence](campaign-ui-evidence.md)
 - [Crusades Balance audit](../../crusades-balance-reference.md)
 - [Sources and fingerprints](sources.md)

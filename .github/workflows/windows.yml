@@ -49,6 +49,7 @@ jobs:
             make
             patch
             mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-python
             zip
 
       # Static Bink/streaming FFmpeg so the bundle plays the door videos with no
@@ -66,10 +67,13 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test crusades_servicelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
       - name: Crusades model and durable store
         run: |
+          ./build/crusades_admin_test.exe
+          ./build/crusades_servicelease_test.exe
+          python3 tools/crusades_admin_cli_test.py build/crusades_admin.exe
           ./build/crusades_campaign_test.exe
           ./build/crusades_store_test.exe
           ./build/crusades_allegiance_test.exe
@@ -100,6 +104,10 @@ jobs:
 
       - name: Verify fully static (no SDL2/jpeg/zlib/ffmpeg DLL imports)
         run: |
+          admin_imports=$(objdump -p build/crusades_admin.exe | awk '/DLL Name:/{print tolower($3)}')
+          if echo "$admin_imports" | grep -qE 'sqlite|libstdc|libgcc|winpthread'; then
+            echo "::error::crusades_admin imports a non-static dependency"; exit 1
+          fi
           imports=$(objdump -p build/takclient.exe | awk '/DLL Name:/{print tolower($3)}')
           echo "$imports"
           if echo "$imports" | grep -qE 'sdl2|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml'; then
@@ -136,11 +144,11 @@ jobs:
       - name: Bundle (exes + required DLLs) + zip
         run: |
           mkdir -p dist-win
-          cp build/takclient.exe build/takserver.exe build/cartographer.exe dist-win/
+          cp build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe dist-win/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-win/
           # Safety net: copy any non-system DLL still imported (should be none now that
           # SDL2/jpeg/zlib are static; graceful if a target ends up dynamic anyway).
-          ldd build/takclient.exe build/takserver.exe build/cartographer.exe \
+          ldd build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win/; done
           (cd dist-win && zip -r "../takclient-$VERSION-windows-x64.zip" .)
@@ -170,14 +178,14 @@ jobs:
       - name: Configure + build (debug)
         run: |
           cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build-debug --target takclient takserver cartographer
+          cmake --build build-debug --target takclient takserver cartographer crusades_admin
 
       - name: Bundle (exes + required DLLs) + zip (debug)
         run: |
           mkdir -p dist-win-debug
-          cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe dist-win-debug/
+          cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe dist-win-debug/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-win-debug/
-          ldd build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe \
+          ldd build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe \
             | awk '/mingw64\/bin/ {print $3}' | sort -u \
             | while read -r dll; do cp "$dll" dist-win-debug/; done
           (cd dist-win-debug && zip -r ../takclient-windows-x64-debug.zip .)

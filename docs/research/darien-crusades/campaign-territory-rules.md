@@ -103,7 +103,7 @@ campaigns and issued battles; it does not invent decisions for old results.
 
 Later migrations add the participant projection in schema 6 and account-wide
 reservation index in schema 7. [Milestone 11](campaign-history.md) adds the
-immutable verified territory-history projection in the current schema 8.
+immutable verified territory-history projection introduced in schema 8.
 Migration backfills that projection from existing verified results without
 manufacturing results or rules decisions; supported older schemas upgrade
 atomically.
@@ -146,3 +146,11 @@ unchanged. Final Windows server syntax checking passed; Windows and macOS
 runtime behavior was not tested locally. No tactical simulation or protocol
 change was needed for M7; its protocol was 207. [M8](campaign-network.md)
 subsequently introduces campaign networking in protocol 208 and schema 6.
+
+## Milestone 13 operations
+
+The current store schema is **9**, adding immutable administrative events.
+[Public-server operations](campaign-operations.md) describes transactional
+migrations from versions 1–8, audited start/reset/cancellation, interrupted-battle
+recovery, offline inspection and tested backup restoration. These are modern
+service policies; historical territory rules remain unchanged.

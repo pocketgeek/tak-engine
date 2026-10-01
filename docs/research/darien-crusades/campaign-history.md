@@ -6,7 +6,7 @@ simulation and the retail pathfinding rules are unchanged.
 
 ## Results remain authoritative
 
-The schema-8 store maintains an indexed, immutable `territory_battle_history`
+Introduced in schema 8, the store maintains an indexed, immutable `territory_battle_history`
 projection of verified terminal results. It records the campaign, territory and
 server result time and backfills existing verified results on migration. History
 pages use the descending `(recordedUnix, battleId)` key, with at most 32 rows;
@@ -113,3 +113,7 @@ CI jobs, now including the new synthetic history/artifact/replay-loader gates.
 The six available x86 GCC/Clang O0/O2/O3 determinism legs retain golden hash
 `dcef618cd2e4d558`. The optional local aarch64 legs lacked usable target headers
 and were skipped; no ARM execution is claimed.
+
+Current schema 9 preserves this archive and adds administrative auditing; see
+[Milestone 13 operations](campaign-operations.md) for backup, restoration and
+interrupted-battle recovery.

@@ -57,6 +57,7 @@
 #include "server/crusades/network.h"
 #include "server/crusades/replayfiles.h"
 #include "server/crusades/matchmaking.h"
+#include "server/crusades/servicelease.h"
 #include "tdf/tdf.h"
 #include "net/conn.h"
 #include "net/protocol.h"
@@ -88,6 +89,41 @@ constexpr uint64_t kTimeoutMs = 15000;    // drop a silent seated player after t
 // merely hitching. Give spectators a much longer grace so a transient stall doesn't
 // tear the connection down (the client's own self-timeout below is widened to match).
 constexpr uint64_t kSpectatorTimeoutMs = 120000;
+constexpr uint64_t kLoginDeadlineMs = 30000;
+constexpr size_t kMaxClients = 256, kMaxPendingLogins = 64, kMaxClientsPerAddress = 64;
+constexpr size_t kMaxServerTxBytes = 64u << 20, kMaxClientTxBytes = 4u << 20;
+
+// Service work quotas survive socket churn. Bound identity memory as well as
+// work, and retain quiet keys briefly so reconnecting cannot reset the quota.
+struct WorkBudget {
+    uint64_t window = 0;
+    unsigned used = 0;
+    bool take(uint64_t now, unsigned limit,unsigned cost=1) {
+        if (now-window >= 1000) {window=now;used=0;}
+        if (cost>limit-used)return false;
+        used+=cost;return true;
+    }
+};
+class SharedWorkBudget {
+public:
+    explicit SharedWorkBudget(uint64_t retentionMs=60000):retentionMs_(retentionMs) {}
+    bool take(const std::string& key,uint64_t now,unsigned limit,unsigned cost=1) {
+        if(now-lastSweep_>=1000) {
+            std::erase_if(keys_,[this,now](const auto& entry){return now-entry.second.window>=retentionMs_;});
+            lastSweep_=now;
+        }
+        auto found=keys_.find(key);
+        if(found==keys_.end()) {
+            if(keys_.size()>=4096)return false;
+            found=keys_.emplace(key,WorkBudget{}).first;
+        }
+        return found->second.take(now,limit,cost);
+    }
+private:
+    std::map<std::string,WorkBudget> keys_;
+    uint64_t lastSweep_ = 0;
+    uint64_t retentionMs_;
+};
 // per-client command cap per tick lives in protocol.h: the CLIENT has to know it
 // too, so it can spread a big batch instead of having the excess discarded here.
 using tak::net::kCmdCapPerTick;
@@ -139,6 +175,7 @@ struct Client {
     uint32_t roomId = 0;
     int slot = -1;
     uint64_t lastRecvMs = 0;
+    uint64_t connectedMs = 0;
     uint64_t lastPingMs = 0;
     bool loaded = false;
     uint32_t mapReadyRoom = 0, mapOfferedRoom = 0;
@@ -154,6 +191,9 @@ struct Client {
     unsigned campaignReads = 0;
     uint64_t campaignReplayWindow = 0;
     unsigned campaignReplayReads = 0;
+    WorkBudget campaignWork, campaignReplayWork;
+    uint64_t campaignLimitedWindow = 0;
+    bool campaignLimitNotified = false;
     tak::net::maps::Receiver mapReceive;
     tak::net::maps::Sender mapSend;
 
@@ -350,16 +390,34 @@ public:
     void enableCrusades(const std::filesystem::path& database,
                         const std::filesystem::path& definition) {
         if (!requireAuth_) throw std::runtime_error("Crusades requires account authentication");
-        crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(database);
+        std::optional<tak::srv::crusades::CampaignDefinition> bootstrap;
+        if(!definition.empty()) {
+            bootstrap=tak::srv::crusades::loadDefinition(definition);
+            tak::srv::crusades::validateCampaignNetworkState(*bootstrap,tak::srv::crusades::makeInitialState(*bootstrap));
+        }
+        campaignLease_ = std::make_unique<tak::srv::crusades::CampaignServiceLease>(database);
+        crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(campaignLease_->databasePath());
+        // Validate every page, including campaigns other than the configured
+        // bootstrap, before admitting clients or auditing startup mutations.
+        std::string after;
+        for(;;) {
+            const auto page=crusades_->campaignIds(after,64);
+            for(const auto& id:page.ids) {
+                const auto existing=crusades_->load(id);
+                tak::srv::crusades::validateCampaignNetworkState(existing.definition,existing.state,existing.rules);
+            }
+            if(!page.truncated)break;
+            after=page.ids.back();
+        }
+        const auto unixNow=std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
         campaignSession_ = tak::crypto::toHex(tak::crypto::randomVec(32));
         campaignReplayDir_ = replayDir_.empty() ? std::filesystem::absolute(database).parent_path()/"crusades-replays"
                                              : std::filesystem::absolute(std::filesystem::u8path(replayDir_));
-        if (!definition.empty()) {
-            const auto campaign = tak::srv::crusades::loadDefinition(definition);
-            if (campaign.id().size() > 128)
-                throw std::runtime_error("network campaign ID exceeds 128 bytes");
+        if (bootstrap) {
+            const auto& campaign = *bootstrap;
             if (!crusades_->hasCampaign(campaign.id())) {
-                crusades_->create(campaign,tak::srv::crusades::makeInitialState(campaign),"CampaignStarted");
+                crusades_->adminStart(campaign,{}, {"takserver","server configured campaign definition",-1,unixNow});
             } else {
                 const auto existing = crusades_->load(campaign.id());
                 bool same = campaign.displayName() == existing.definition.displayName() &&
@@ -373,6 +431,7 @@ public:
                 if (!same) throw std::runtime_error("authored campaign differs from persisted definition");
             }
         }
+        crusades_->recoverInterruptedBattles(unixNow);
     }
     // `dataRoot` is never empty -- main() refuses to start without --data.
     Server(uint16_t port, const std::string& dataRoot) : port_(port), dataRoot_(dataRoot) {
@@ -399,7 +458,12 @@ private:
     bool requireAuth_ = true;
     bool loopbackOnly_ = false;
     tak::srv::AccountStore accounts_;
+    std::unique_ptr<tak::srv::crusades::CampaignServiceLease> campaignLease_;
     std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
+    SharedWorkBudget campaignWorkKeys_, campaignReplayKeys_;
+    SharedWorkBudget loginWorkKeys_{tak::srv::LoginThrottle::kForgetMs};
+    WorkBudget campaignGlobalWork_, campaignGlobalReplay_, loginGlobalWork_;
+    bool allowCampaignWork(Client& c,const Frame& f);
     std::string campaignSession_;
     std::filesystem::path campaignReplayDir_;
     int64_t campaignSweepTime_ = -1;
@@ -672,7 +736,7 @@ void Server::handshake(Client& c, const Frame& f) {
     uint64_t dataHash = r.u64();
     std::string name = r.str();
     (void)build; (void)dataHash;   // logged; clients are gated by version here
-    if (!r.ok) { sendReject(c, "malformed hello"); c.conn.fail("bad hello"); return; }
+    if (!r.ok || r.p!=r.end) { sendReject(c, "malformed hello"); c.conn.fail("bad hello"); return; }
     if (ver != kNetVersion) {
         sendReject(c, "protocol version mismatch (server " + std::to_string(kNetVersion) +
                        ", client " + std::to_string(ver) + ") -- update your build");
@@ -733,12 +797,15 @@ void Server::sendAuthResult(Client& c, AuthStatus st, const tak::crypto::Digest*
 void Server::authMsg(Client& c, const Frame& f) {
     Reader r(f.payload.data(), f.payload.size());
     const uint64_t now = nowMs();
+    if(!loginWorkKeys_.take(c.peer,now,64) || !loginGlobalWork_.take(now,256)) {
+        sendReject(c,"login request rate exceeded; retry later");c.conn.fail("login rate");return;
+    }
 
     if (f.kind == Msg::AuthBegin) {
         if (c.pendAuth.challenged) { sendReject(c, "duplicate login"); c.conn.fail("dup auth"); return; }
         std::string user = r.str();
         std::vector<uint8_t> cnonce = r.bytes(tak::auth::kNonceLen);
-        if (!r.ok) { sendReject(c, "malformed login"); c.conn.fail("bad auth"); return; }
+        if (!r.ok || r.p!=r.end) { sendReject(c, "malformed login"); c.conn.fail("bad auth"); return; }
 
         // Rate-limit on BOTH the name and the address, so neither hammering one
         // account from many hosts nor many accounts from one host gets a free run.
@@ -797,7 +864,7 @@ void Server::authMsg(Client& c, const Frame& f) {
             sendReject(c, "unexpected login proof"); c.conn.fail("bad auth"); return;
         }
         std::vector<uint8_t> proofBytes = r.bytes(tak::crypto::kHashLen);
-        if (!r.ok) { sendReject(c, "malformed login proof"); c.conn.fail("bad auth"); return; }
+        if (!r.ok || r.p!=r.end) { sendReject(c, "malformed login proof"); c.conn.fail("bad auth"); return; }
         // Check the lock HERE too, not just at AuthBegin. A guesser that opens a
         // hundred connections first, collects a hundred challenges, and only then
         // starts sending proofs would otherwise never meet the throttle at all --
@@ -850,7 +917,7 @@ void Server::authMsg(Client& c, const Frame& f) {
         }
         std::vector<uint8_t> stored = r.bytes(tak::crypto::kHashLen);
         std::vector<uint8_t> serverKey = r.bytes(tak::crypto::kHashLen);
-        if (!r.ok) { sendReject(c, "malformed registration"); c.conn.fail("bad auth"); return; }
+        if (!r.ok || r.p!=r.end) { sendReject(c, "malformed registration"); c.conn.fail("bad auth"); return; }
 
         // Registration is the one unauthenticated operation that WRITES, and each
         // one rewrites the whole account file on the tick thread -- so a flood is
@@ -1759,7 +1826,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
         case Msg::Rejoin: {
             Reader r(f.payload.data(), f.payload.size());
             uint32_t gid = r.u32(); uint64_t token = r.u64();
-            if (!r.ok) return;
+            if (!r.ok || r.p!=r.end) return;
             auto it = rooms_.find(gid);
             auto reject = [&](const std::string& why) {
                 Writer jr; jr.u8(0); jr.u8(0); jr.str(why); c.conn.send(Msg::JoinResult, jr);
@@ -1771,6 +1838,9 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 if (room.slotDropped[i] && token != 0 && room.slotToken[i] == token) { slot = i; break; }
             if (slot < 0) { reject("invalid or expired resume token"); break; }
             if(!room.campaignBattleId.empty()) {
+                if(room.campaignResult || room.campaignFault || room.campaignResultRecorded) {
+                    reject("campaign battle has ended");break;
+                }
                 if(slot>=2 || !requireAuth_ || c.account.empty() || tak::auth::foldUsername(c.account)!=room.campaignAccounts[slot]) {
                     reject("resume account does not match campaign participant");break;
                 }
@@ -2700,11 +2770,64 @@ void Server::dropClient(uint32_t id, const char* reason) {
     clients_.erase(it);
 }
 
+bool Server::allowCampaignWork(Client& c,const Frame& f) {
+    const bool replay=f.kind==Msg::CrusadesGetReplayChunk;
+    auto& local=replay?c.campaignReplayWork:c.campaignWork;
+    auto& keys=replay?campaignReplayKeys_:campaignWorkKeys_;
+    auto& global=replay?campaignGlobalReplay_:campaignGlobalWork_;
+    const auto now=nowMs();
+    // A catalog page loads up to 64 full definitions/states. Charge its
+    // requested page size so maximum pages cannot amplify a cheap query budget.
+    unsigned cost=1;
+    if(f.kind==Msg::CrusadesListCampaigns) {
+        cost=8;
+        if(f.payload.size()>=10) {
+            const size_t afterSize=size_t(f.payload[6])|(size_t(f.payload[7])<<8);
+            if(afterSize<=128 && f.payload.size()==10+afterSize) {
+                const auto offset=8+afterSize;
+                const unsigned limit=unsigned(f.payload[offset])|(unsigned(f.payload[offset+1])<<8);
+                cost=std::max(1u,(std::min(limit,64u)+7)/8);
+            }
+        }
+    }
+    if(local.take(now,64,cost) &&
+        (c.account.empty() || keys.take("account:"+tak::auth::foldUsername(c.account),now,64,cost)) &&
+        keys.take("ip:"+c.peer,now,256,cost) && global.take(now,1024,cost))return true;
+    if(now-c.campaignLimitedWindow>=1000) {c.campaignLimitedWindow=now;c.campaignLimitNotified=false;}
+    if(c.campaignLimitNotified)return false;
+    c.campaignLimitNotified=true;
+    const char* reason="campaign request rate exceeded; retry later";
+    if(f.kind==Msg::CrusadesIssueBattle) {
+        c.conn.send(Msg::CrusadesBattleResult,battleReply(4,"","",0,"",0,reason));
+    } else if(f.kind==Msg::CrusadesGetAllegiance || f.kind==Msg::CrusadesSetAllegiance) {
+        Writer reply;reply.u8(f.kind==Msg::CrusadesSetAllegiance?1:0);reply.u8(4);reply.str("");
+        reply.u8(0);reply.u64(UINT64_MAX);reply.u64(0);reply.u64(0);reply.str(reason);
+        c.conn.send(Msg::CrusadesAllegianceResult,reply);
+    } else {
+        uint32_t requestId=0;
+        if(f.payload.size()>=6)for(unsigned i=0;i<4;++i)requestId|=uint32_t(f.payload[2+i])<<(8*i);
+        const auto reply=tak::srv::crusades::campaignReadError(requestId,tak::net::crusades::ErrorCode::Unavailable);
+        c.conn.send(reply.kind,reply.payload);
+    }
+    return false;
+}
+
 void Server::onFrame(Client& c, const Frame& f) {
     c.lastRecvMs = nowMs();
     if (f.kind == Msg::Ping) { c.conn.send(Msg::Pong); return; }
     if (f.kind == Msg::Pong) return;
     if (f.kind == Msg::Bye) { c.conn.fail("bye"); return; }
+    switch(f.kind) {
+        case Msg::CrusadesListCampaigns: case Msg::CrusadesGetSnapshot:
+        case Msg::CrusadesGetPlayerStatus: case Msg::CrusadesGetBattleStatus:
+        case Msg::CrusadesGetTerritoryHistory: case Msg::CrusadesGetReplayChunk:
+        case Msg::CrusadesGetMatchmaking: case Msg::CrusadesSearchBattle:
+        case Msg::CrusadesCancelSearch: case Msg::CrusadesIssueBattle:
+        case Msg::CrusadesGetAllegiance: case Msg::CrusadesSetAllegiance:
+            if(!allowCampaignWork(c,f))return;
+            break;
+        default: break;
+    }
     if(auto* room=roomOf(c); room && !room->campaignBattleId.empty() && room->running &&
         (f.kind==Msg::CrusadesBattleResult || f.kind==Msg::GameStarting || f.kind==Msg::TickBundle || f.kind==Msg::MissionOutcome ||
          f.kind==Msg::CrusadesCampaignList || f.kind==Msg::CrusadesCampaignSnapshot || f.kind==Msg::CrusadesPlayerStatus ||
@@ -2820,15 +2943,25 @@ int Server::run() {
 
         // Accept new connections.
         if (pfds[0].revents & POLLIN) {
-            for (;;) {
+            for (unsigned accepted=0;accepted<32;++accepted) {
                 int fd = int(accept(listenFd_, nullptr, nullptr));
                 if (fd < 0) break;
+                const auto address=peerAddress(fd);
+                size_t pending=0,fromAddress=0;
+                for(const auto& [id,peer]:clients_) {
+                    (void)id;
+                    pending+=peer->state==Client::Handshake || peer->state==Client::Auth;
+                    fromAddress+=peer->peer==address;
+                }
+                if(clients_.size()>=kMaxClients || pending>=kMaxPendingLogins || fromAddress>=kMaxClientsPerAddress) {
+                    sockClose(fd);continue;
+                }
                 setupSocket(fd);
                 auto c = std::make_unique<Client>();
                 c->id = nextClientId_++;
                 c->conn = Conn(fd);
-                c->peer = peerAddress(fd);
-                c->lastRecvMs = nowMs();
+                c->peer = address;
+                c->connectedMs = c->lastRecvMs = nowMs();
                 clients_[c->id] = std::move(c);
             }
         }
@@ -2842,7 +2975,11 @@ int Server::run() {
             if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
                 if (!c.conn.recv()) { dead.push_back(id); continue; }
                 Frame fr;
-                while (c.conn.poll(fr)) { onFrame(c, fr); if (!c.conn.ok()) break; }
+                unsigned frames=0;
+                while (c.conn.poll(fr)) {
+                    if(++frames>1024) {c.conn.fail("message flood");break;}
+                    onFrame(c, fr); if (!c.conn.ok()) break;
+                }
                 // A clean close is only final once its trailing frames are drained
                 // above -- the last LeaveGame usually arrives in the same segment.
                 if (c.conn.peerClosed()) c.conn.fail("peer closed");
@@ -2989,7 +3126,20 @@ int Server::run() {
         }
         // Flush all pending writes (bundles just queued) + keepalive + timeouts.
         now = nowMs();
+        size_t queued=0;
+        std::vector<std::pair<size_t,uint32_t>> backlogs;
+        for(const auto& [id,c]:clients_) {
+            const auto bytes=c->conn.txPending();
+            if(bytes>kMaxClientTxBytes) {c->conn.fail("send backlog exceeded");dead.push_back(id);}
+            else {queued+=bytes;backlogs.emplace_back(bytes,id);}
+        }
+        std::sort(backlogs.rbegin(),backlogs.rend());
+        for(const auto& [bytes,id]:backlogs) {
+            if(queued<=kMaxServerTxBytes)break;
+            clients_.at(id)->conn.fail("server send backlog exceeded");dead.push_back(id);queued-=bytes;
+        }
         for (auto& [id, c] : clients_) {
+            if(!c->conn.ok()) {dead.push_back(id);continue;}
             c->mapSend.pump(c->conn);
             if (!c->conn.flushWrite()) { dead.push_back(id); continue; }
             if (c->state != Client::Handshake && now - c->lastRecvMs > kPingIdleMs &&
@@ -2998,6 +3148,8 @@ int Server::run() {
             }
             // Spectators (in a game, no seat) get a far longer grace than seated players.
             bool spectator = c->state == Client::InGame && c->slot < 0;
+            if((c->state==Client::Handshake || c->state==Client::Auth) && now-c->connectedMs>kLoginDeadlineMs)
+                dead.push_back(id);
             if (now - c->lastRecvMs > (spectator ? kSpectatorTimeoutMs : kTimeoutMs))
                 dead.push_back(id);
         }

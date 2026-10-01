@@ -6,11 +6,23 @@
 #include <limits>
 #include "net/crypto.h"
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace tak::srv::crusades {
 namespace {
 constexpr int kApplicationId = 0x54414b43; // TAKC
-constexpr int kSchemaVersion = 8;
+constexpr int kSchemaVersion = 9;
 constexpr size_t kMaxPayload = 16 * 1024 * 1024;
 
 const std::vector<std::string>& schemaStatements() {
@@ -92,6 +104,15 @@ const std::vector<std::string>& territoryHistorySchemaStatements() {
         "CREATE INDEX territory_battle_history_page ON territory_battle_history(campaign_id,territory,recorded_unix DESC,battle_id DESC)",
         "CREATE TRIGGER territory_battle_history_no_update BEFORE UPDATE ON territory_battle_history BEGIN SELECT RAISE(ABORT,'immutable territory battle history'); END",
         "CREATE TRIGGER territory_battle_history_no_delete BEFORE DELETE ON territory_battle_history BEGIN SELECT RAISE(ABORT,'immutable territory battle history'); END",
+    };
+    return statements;
+}
+const std::vector<std::string>& adminSchemaStatements() {
+    static const std::vector<std::string> statements{
+        "CREATE TABLE admin_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,campaign_id TEXT NOT NULL REFERENCES campaigns(id),action TEXT NOT NULL CHECK(action IN ('start','start-authored','reset','reset-authored','cancel-battle','recover-battle')),actor TEXT NOT NULL,reason TEXT NOT NULL,battle_id TEXT REFERENCES issued_battles(id),expected_revision INTEGER NOT NULL CHECK(expected_revision>=-1),before_revision INTEGER NOT NULL CHECK(before_revision>=-1),after_revision INTEGER NOT NULL CHECK(after_revision>=0),recorded_unix INTEGER NOT NULL CHECK(recorded_unix>=0),before_status INTEGER CHECK(before_status IN (0,1)),after_status INTEGER CHECK(after_status=2),FOREIGN KEY(campaign_id,after_revision) REFERENCES campaign_events(campaign_id,revision))",
+        "CREATE INDEX admin_events_campaign ON admin_events(campaign_id,sequence)",
+        "CREATE TRIGGER admin_events_no_update BEFORE UPDATE ON admin_events BEGIN SELECT RAISE(ABORT,'immutable admin event'); END",
+        "CREATE TRIGGER admin_events_no_delete BEFORE DELETE ON admin_events BEGIN SELECT RAISE(ABORT,'immutable admin event'); END",
     };
     return statements;
 }
@@ -319,6 +340,7 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
             if (version >= 6) expected.insert(expected.end(), readIndexSchemaStatements().begin(), readIndexSchemaStatements().end());
             if (version >= 7) expected.insert(expected.end(), participationSchemaStatements().begin(), participationSchemaStatements().end());
             if (version >= 8) expected.insert(expected.end(), territoryHistorySchemaStatements().begin(), territoryHistorySchemaStatements().end());
+            if (version >= 9) expected.insert(expected.end(), adminSchemaStatements().begin(), adminSchemaStatements().end());
             std::sort(actual.begin(), actual.end());
             std::sort(expected.begin(), expected.end());
             if (actual != expected) throw std::runtime_error("unsupported or damaged campaign database schema");
@@ -385,6 +407,11 @@ CampaignStore::CampaignStore(const std::filesystem::path& path, StoreOptions opt
         if(scalar(db,"SELECT count(*) FROM territory_battle_history")!=scalar(db,"SELECT count(*) FROM verified_match_results"))
             throw std::runtime_error("orphaned verified result cannot migrate territory history");
         exec(db,"PRAGMA user_version=8");
+    }
+    if (version < 9) {
+        // No audit identities or reasons can be inferred for old mutations.
+        for (const auto& sql : adminSchemaStatements()) exec(db, sql.c_str());
+        exec(db, "PRAGMA user_version=9");
     }
     Statement policies(db, "SELECT policy_id FROM campaign_rules");
     while (policies.row()) (void)permittedPolicy(policies.bytes(0), impl_->options);
@@ -980,11 +1007,11 @@ HistoryPage CampaignStore::territoryHistory(const std::string& campaignId,Territ
     transaction.finish();return page;
 }
 
-std::optional<StoredRulesDecision> CampaignStore::rulesDecision(const std::string& id) const {
-    Transaction transaction(impl_->db, false);
-    const auto current = battle(id);
-    const auto campaign = load(current.campaignId);
-    Statement query(impl_->db,"SELECT policy_id,before_revision,after_revision,disposition,evidence,reason,snapshot FROM rule_decisions WHERE battle_id=?");
+namespace {
+std::optional<StoredRulesDecision> readRulesDecision(sqlite3* db, const CampaignStore& store, const std::string& id) {
+    const auto current = store.battle(id);
+    const auto campaign = store.load(current.campaignId);
+    Statement query(db,"SELECT policy_id,before_revision,after_revision,disposition,evidence,reason,snapshot FROM rule_decisions WHERE battle_id=?");
     query.text(1,id);
     std::optional<StoredRulesDecision> result;
     if (query.row()) {
@@ -994,14 +1021,14 @@ std::optional<StoredRulesDecision> CampaignStore::rulesDecision(const std::strin
         result=StoredRulesDecision{RulesDecision{query.bytes(0),static_cast<RulesEvidence>(evidence),static_cast<RulesDisposition>(disposition),query.bytes(5),decode(query.bytes(6),campaign.definition),after!=before},before,after};
         if (current.policyId != policyIdentifier(campaign.rules) || after > campaign.revision)
             throw std::runtime_error("rules decision campaign binding mismatch");
-        Statement states(impl_->db,"SELECT snapshot,battle_id FROM campaign_events WHERE campaign_id=? AND revision=?");
+        Statement states(db,"SELECT snapshot,battle_id FROM campaign_events WHERE campaign_id=? AND revision=?");
         states.text(1,current.campaignId); states.integer(2,after);
         if (!states.row() || states.bytes(0)!=query.bytes(6) || (after!=before && states.bytes(1)!=id))
             throw std::runtime_error("rules decision state history mismatch");
-        Statement prior(impl_->db,"SELECT snapshot FROM campaign_events WHERE campaign_id=? AND revision=?");
+        Statement prior(db,"SELECT snapshot FROM campaign_events WHERE campaign_id=? AND revision=?");
         prior.text(1,current.campaignId); prior.integer(2,before);
         if (!prior.row()) throw std::runtime_error("rules decision missing prior state");
-        Statement verified(impl_->db,"SELECT payload FROM verified_match_results WHERE battle_id=?"); verified.text(1,id);
+        Statement verified(db,"SELECT payload FROM verified_match_results WHERE battle_id=?"); verified.text(1,id);
         if (!verified.row()) throw std::runtime_error("rules decision missing verified result");
         const auto match=decodeResult(verified.bytes(0),current);
         if (current.status != (eligibleOutcome(match.outcome) ? BattleStatus::Completed : BattleStatus::Cancelled))
@@ -1019,7 +1046,387 @@ std::optional<StoredRulesDecision> CampaignStore::rulesDecision(const std::strin
             expected.evidence!=result->decision.evidence || encode(expected.nextState)!=query.bytes(6))
             throw std::runtime_error("stored rules decision does not match policy");
     }
+    return result;
+}
+} // namespace
+
+std::optional<StoredRulesDecision> CampaignStore::rulesDecision(const std::string& id) const {
+    Transaction transaction(impl_->db, false);
+    auto result = readRulesDecision(impl_->db, *this, id);
     transaction.finish(); return result;
+}
+
+namespace {
+void validateAdmin(const AdminRequest& request) {
+    validateAccountId(request.actor);
+    requireText(request.reason, "administrative reason");
+    if (request.reason.size() > 512 || request.expectedRevision < -1 || request.unixTime < 0 ||
+        std::all_of(request.reason.begin(), request.reason.end(), [](unsigned char c) { return c <= ' '; }))
+        throw std::runtime_error("invalid administrative request");
+}
+void adminAudit(sqlite3* db, const std::string& campaignId, const std::string& action,
+        const AdminRequest& request, int64_t before, int64_t after,
+        const std::optional<std::string>& battleId = {}, const std::optional<BattleStatus>& beforeStatus = {}) {
+    Statement clock(db, "SELECT max(recorded_unix) FROM admin_events WHERE campaign_id=?");
+    clock.text(1, campaignId);
+    if (clock.row() && sqlite3_column_type(clock.value, 0) != SQLITE_NULL && request.unixTime < clock.number(0))
+        throw std::runtime_error("administrative timestamp moved backwards");
+    Statement event(db, "INSERT INTO admin_events(campaign_id,action,actor,reason,battle_id,expected_revision,before_revision,after_revision,recorded_unix,before_status,after_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+    event.text(1, campaignId); event.text(2, action); event.text(3, request.actor); event.text(4, request.reason);
+    if (battleId) event.text(5, *battleId);
+    event.integer(6, request.expectedRevision); event.integer(7, before); event.integer(8, after); event.integer(9, request.unixTime);
+    if (beforeStatus) { event.integer(10, static_cast<int>(*beforeStatus)); event.integer(11, static_cast<int>(BattleStatus::Cancelled)); }
+    event.done();
+}
+AdminEvent decodeAdmin(const Statement& query) {
+    AdminEvent event{query.number(0), query.bytes(1), query.bytes(2), query.bytes(3), query.bytes(4), {},
+                     query.number(6), query.number(7), query.number(8), query.number(9), {}, {}};
+    if (sqlite3_column_type(query.value, 5) != SQLITE_NULL) event.battleId = query.bytes(5);
+    if (sqlite3_column_type(query.value, 10) != SQLITE_NULL) event.beforeStatus = static_cast<BattleStatus>(query.number(10));
+    if (sqlite3_column_type(query.value, 11) != SQLITE_NULL) event.afterStatus = static_cast<BattleStatus>(query.number(11));
+    validateAdmin({event.actor, event.reason, event.expectedRevision, event.recordedUnix});
+    const bool start = event.action == "start" || event.action == "start-authored";
+    const bool reset = event.action == "reset" || event.action == "reset-authored";
+    const bool cancel = event.action == "cancel-battle" || event.action == "recover-battle";
+    if (event.sequence <= 0 || event.expectedRevision != event.beforeRevision ||
+        (!start && !reset && !cancel) ||
+        (start && (event.beforeRevision != -1 || event.afterRevision != 0)) ||
+        (reset && (event.beforeRevision < 0 || event.beforeRevision == std::numeric_limits<int64_t>::max() || event.afterRevision != event.beforeRevision + 1)) ||
+        (cancel && (event.beforeRevision < 0 || event.afterRevision != event.beforeRevision)) ||
+        (cancel != event.battleId.has_value()) || (cancel != event.beforeStatus.has_value()) || (cancel != event.afterStatus.has_value()) ||
+        (cancel && ((*event.beforeStatus != BattleStatus::Issued && *event.beforeStatus != BattleStatus::Started) || *event.afterStatus != BattleStatus::Cancelled)) ||
+        (event.action == "recover-battle" && event.actor != "takserver"))
+        throw std::runtime_error("invalid administrative audit event");
+    return event;
+}
+void cancelForAdmin(sqlite3* db, const IssuedBattle& current, const AdminRequest& request, const std::string& action) {
+    if ((current.status != BattleStatus::Issued && current.status != BattleStatus::Started) || request.unixTime < current.changedUnix)
+        throw std::runtime_error("battle cannot be administratively cancelled");
+    Statement result(db, "SELECT 1 FROM verified_match_results WHERE battle_id=?"); result.text(1, current.id);
+    if (result.row()) throw std::runtime_error("verified result cannot be administratively cancelled");
+    transitionBattle(db, current.id, BattleStatus::Cancelled, request.unixTime);
+    adminAudit(db, current.campaignId, action, request, request.expectedRevision, request.expectedRevision, current.id, current.status);
+}
+} // namespace
+
+void CampaignStore::adminStart(const CampaignDefinition& definition, const std::optional<CampaignState>& initialState,
+        const AdminRequest& request, const RulesPolicy& rules) {
+    validateAdmin(request);
+    if (request.expectedRevision != -1) throw std::runtime_error("new campaign requires expected revision -1");
+    const auto state = initialState ? *initialState : makeInitialState(definition);
+    validateState(definition, state);
+    const auto text = definitionText(definition); (void)loadDefinitionText(text);
+    const auto policyId = policyIdentifier(rules); (void)permittedPolicy(policyId, impl_->options);
+    Transaction transaction(impl_->db);
+    Statement campaign(impl_->db, "INSERT INTO campaigns(id,definition,revision) VALUES(?,?,0)");
+    campaign.text(1, definition.id()); campaign.text(2, text); campaign.done();
+    Statement policy(impl_->db, "INSERT INTO campaign_rules VALUES(?,?)"); policy.text(1, definition.id()); policy.text(2, policyId); policy.done();
+    impl_->event(definition.id(), 0, state, "admin start: " + request.reason, {});
+    adminAudit(impl_->db, definition.id(), initialState ? "start-authored" : "start", request, -1, 0);
+    impl_->finish(transaction);
+}
+
+int64_t CampaignStore::adminReset(const std::string& campaignId, const std::optional<CampaignState>& authoredState,
+        const AdminRequest& request) {
+    validateAdmin(request);
+    Transaction transaction(impl_->db);
+    const auto current = load(campaignId);
+    if (current.revision != request.expectedRevision) throw std::runtime_error("administrative campaign revision conflict");
+    if (current.revision == std::numeric_limits<int64_t>::max()) throw std::runtime_error("campaign revision exhausted");
+    Statement active(impl_->db, "SELECT 1 FROM issued_battles b LEFT JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision WHERE b.campaign_id=? AND (e.status IN (0,1) OR e.status IS NULL) LIMIT 1");
+    active.text(1, campaignId);
+    if (active.row()) throw std::runtime_error("cancel outstanding battles explicitly before resetting campaign");
+    const auto state = authoredState ? *authoredState : makeInitialState(current.definition);
+    validateState(current.definition, state);
+    const int64_t revision = current.revision + 1;
+    impl_->event(campaignId, revision, state, "admin reset: " + request.reason, {});
+    Statement update(impl_->db, "UPDATE campaigns SET revision=? WHERE id=?"); update.integer(1, revision); update.text(2, campaignId); update.done();
+    adminAudit(impl_->db, campaignId, authoredState ? "reset-authored" : "reset", request, current.revision, revision);
+    impl_->finish(transaction); return revision;
+}
+
+IssuedBattle CampaignStore::adminCancelBattle(const std::string& id, BattleStatus expectedStatus, const AdminRequest& request) {
+    validateAdmin(request);
+    Transaction transaction(impl_->db);
+    const auto current = battle(id);
+    if (campaignRevision(current.campaignId) != request.expectedRevision) throw std::runtime_error("administrative campaign revision conflict");
+    if (current.status != expectedStatus) throw std::runtime_error("administrative battle status conflict");
+    cancelForAdmin(impl_->db, current, request, "cancel-battle");
+    const auto result = battle(id);
+    impl_->finish(transaction); return result;
+}
+
+size_t CampaignStore::recoverInterruptedBattles(int64_t now) {
+    if (now < 0) throw std::runtime_error("invalid battle recovery time");
+    Transaction transaction(impl_->db);
+    Statement pending(impl_->db, "SELECT b.id FROM issued_battles b LEFT JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision WHERE e.status IN (0,1) OR e.status IS NULL ORDER BY b.id");
+    size_t recovered = 0;
+    while (pending.row()) {
+        const auto current = battle(pending.bytes(0));
+        const AdminRequest request{"takserver", "server restart: previous battle runtime unavailable", campaignRevision(current.campaignId), now};
+        cancelForAdmin(impl_->db, current, request, "recover-battle"); ++recovered;
+    }
+    if (recovered) impl_->finish(transaction); else transaction.finish();
+    return recovered;
+}
+
+CampaignEventPage CampaignStore::events(const std::string& campaignId, int64_t afterRevision, size_t limit) const {
+    if (afterRevision < -1 || limit == 0 || limit > 64) throw std::runtime_error("invalid campaign event page");
+    Transaction transaction(impl_->db, false);
+    const auto campaign = load(campaignId);
+    Statement query(impl_->db, "SELECT revision,reason,battle_id,snapshot FROM campaign_events WHERE campaign_id=? AND revision>? ORDER BY revision LIMIT ?");
+    query.text(1, campaignId); query.integer(2, afterRevision); query.integer(3, static_cast<int64_t>(limit + 1));
+    CampaignEventPage page;
+    while (query.row()) {
+        if (page.entries.size() == limit) { page.truncated = true; break; }
+        if (query.number(0) != afterRevision + 1 + static_cast<int64_t>(page.entries.size())) throw std::runtime_error("campaign history revision gap");
+        std::optional<std::string> battleId;
+        if (sqlite3_column_type(query.value, 2) != SQLITE_NULL) battleId = query.bytes(2);
+        page.entries.push_back({query.number(0), query.bytes(1), battleId, decode(query.bytes(3), campaign.definition)});
+    }
+    transaction.finish(); return page;
+}
+
+AdminEventPage CampaignStore::adminHistory(const std::string& campaignId, int64_t afterSequence, size_t limit) const {
+    if (afterSequence < 0 || limit == 0 || limit > 64) throw std::runtime_error("invalid administrative audit page");
+    Transaction transaction(impl_->db, false);
+    (void)load(campaignId);
+    Statement query(impl_->db, "SELECT sequence,campaign_id,action,actor,reason,battle_id,expected_revision,before_revision,after_revision,recorded_unix,before_status,after_status FROM admin_events WHERE campaign_id=? AND sequence>? ORDER BY sequence LIMIT ?");
+    query.text(1, campaignId); query.integer(2, afterSequence); query.integer(3, static_cast<int64_t>(limit + 1));
+    AdminEventPage page;
+    while (query.row()) {
+        if (page.entries.size() == limit) { page.truncated = true; break; }
+        page.entries.push_back(decodeAdmin(query));
+    }
+    transaction.finish(); return page;
+}
+
+StoreHealth CampaignStore::health(size_t limit) const {
+    if (limit == 0 || limit > 100000) throw std::runtime_error("invalid health inspection limit");
+    StoreHealth health;
+    const auto issue = [&](const std::string& message) {
+        health.healthy = false;
+        if (health.issues.size() < 64) health.issues.push_back(message.substr(0, 512));
+    };
+    Transaction transaction(impl_->db, false);
+    try {
+        health.schemaVersion = static_cast<int>(scalar(impl_->db, "PRAGMA user_version"));
+        if (health.schemaVersion != kSchemaVersion || scalar(impl_->db, "PRAGMA application_id") != kApplicationId)
+            issue("database identity/version mismatch");
+        std::vector<std::string> actual, expected;
+        Statement schema(impl_->db, "SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'");
+        while (schema.row()) actual.push_back(schema.bytes(0));
+        for (const auto* group : {&schemaStatements(), &allegianceSchemaStatements(), &battleSchemaStatements(),
+             &resultSchemaStatements(), &rulesSchemaStatements(), &readIndexSchemaStatements(),
+             &participationSchemaStatements(), &territoryHistorySchemaStatements(), &adminSchemaStatements()})
+            expected.insert(expected.end(), group->begin(), group->end());
+        std::sort(actual.begin(), actual.end()); std::sort(expected.begin(), expected.end());
+        if (actual != expected) issue("database schema mismatch");
+        Statement integrity(impl_->db, "PRAGMA integrity_check(64)");
+        bool sawIntegrity = false;
+        while (integrity.row()) { sawIntegrity = true; if (integrity.bytes(0) != "ok") issue("SQLite integrity: " + integrity.bytes(0)); }
+        if (!sawIntegrity) issue("SQLite integrity check returned no result");
+        Statement foreignKeys(impl_->db, "PRAGMA foreign_key_check");
+        for (size_t count = 0; count < 64 && foreignKeys.row(); ++count) issue("SQLite foreign key violation: " + foreignKeys.bytes(0));
+        health.campaigns = scalar(impl_->db, "SELECT count(*) FROM campaigns");
+        health.events = scalar(impl_->db, "SELECT count(*) FROM campaign_events");
+        health.memberships = scalar(impl_->db, "SELECT count(*) FROM campaign_participants");
+        health.battles = scalar(impl_->db, "SELECT count(*) FROM issued_battles");
+        health.results = scalar(impl_->db, "SELECT count(*) FROM verified_match_results");
+        health.adminEvents = scalar(impl_->db, "SELECT count(*) FROM admin_events");
+        Statement statuses(impl_->db, "SELECT e.status,count(*) FROM issued_battles b JOIN battle_status_events e ON e.battle_id=b.id AND e.revision=b.revision GROUP BY e.status");
+        while (statuses.row()) {
+            if (statuses.number(0) < 0 || statuses.number(0) > 4) issue("invalid current battle status");
+            else health.battleStatuses[static_cast<size_t>(statuses.number(0))] = statuses.number(1);
+        }
+        // The global row budget bounds all decoding and the report. SQL
+        // aggregate/integrity work still visits the complete SQLite snapshot.
+        const auto scan = [&](const char* sql, const char* category, const auto& inspect) {
+            Statement rows(impl_->db, sql);
+            rows.integer(1, static_cast<int64_t>(limit - health.checkedRows + 1));
+            while (rows.row()) {
+                if (health.checkedRows == limit) { health.complete = false; break; }
+                ++health.checkedRows;
+                try { inspect(rows); } catch (const std::runtime_error& error) { issue(std::string(category) + ": " + error.what()); }
+            }
+        };
+        scan("SELECT id FROM campaigns ORDER BY id LIMIT ?", "campaign", [&](const Statement& row) {
+            const auto current = load(row.bytes(0));
+            Statement revisions(impl_->db, "SELECT count(*),min(revision),max(revision) FROM campaign_events WHERE campaign_id=?");
+            revisions.text(1, row.bytes(0)); revisions.row();
+            if (revisions.number(0) - 1 != current.revision || revisions.number(1) != 0 || revisions.number(2) != current.revision)
+                throw std::runtime_error("history/current revision mismatch");
+        });
+        scan("SELECT campaign_id,snapshot,reason FROM campaign_events ORDER BY campaign_id,revision LIMIT ?", "campaign event", [&](const Statement& row) {
+            const auto current = load(row.bytes(0)); (void)decode(row.bytes(1), current.definition); requireText(row.bytes(2), "event reason");
+        });
+        scan("SELECT campaign_id,account_id,revision FROM campaign_participants ORDER BY campaign_id,account_id LIMIT ?", "membership", [&](const Statement& row) {
+            validateAccountId(row.bytes(1));
+            if (!readAllegiance(impl_->db, row.bytes(0), row.bytes(1))) throw std::runtime_error("missing allegiance");
+            Statement revisions(impl_->db, "SELECT count(*),min(revision),max(revision) FROM allegiance_events WHERE campaign_id=? AND account_id=?");
+            revisions.text(1, row.bytes(0)); revisions.text(2, row.bytes(1)); revisions.row();
+            if (revisions.number(0) - 1 != row.number(2) || revisions.number(1) != 0 || revisions.number(2) != row.number(2))
+                throw std::runtime_error("allegiance history/current revision mismatch");
+        });
+        scan("SELECT account_id,revision,alliance,joined_unix,changed_unix FROM allegiance_events ORDER BY campaign_id,account_id,revision LIMIT ?", "allegiance event", [&](const Statement& row) {
+            validateAccountId(row.bytes(0));
+            if (row.number(1) < 0 || (row.number(2) != 1 && row.number(2) != 2) || row.number(3) < 0 || row.number(4) < row.number(3))
+                throw std::runtime_error("invalid allegiance history");
+        });
+        scan("SELECT id,revision FROM issued_battles ORDER BY id LIMIT ?", "battle", [&](const Statement& row) {
+            const auto current = battle(row.bytes(0)); const auto campaign = load(current.campaignId);
+            if (!campaign.definition.find(current.territory) || current.campaignRevision > campaign.revision || policyIdentifier(campaign.rules) != current.policyId)
+                throw std::runtime_error("campaign/territory/policy binding mismatch");
+            Statement lifecycle(impl_->db, "SELECT revision,status,changed_unix FROM battle_status_events WHERE battle_id=? ORDER BY revision LIMIT 4");
+            lifecycle.text(1, current.id);
+            int64_t nextRevision = 0, previousTime = current.createdUnix; BattleStatus previous = BattleStatus::Issued;
+            while (lifecycle.row()) {
+                const auto status = static_cast<BattleStatus>(lifecycle.number(1));
+                if (lifecycle.number(0) != nextRevision || lifecycle.number(2) < previousTime ||
+                    (nextRevision == 0 && (status != BattleStatus::Issued || lifecycle.number(2) != current.createdUnix)) ||
+                    (nextRevision > 0 && !((previous == BattleStatus::Issued && (status == BattleStatus::Started || status == BattleStatus::Cancelled || status == BattleStatus::Expired)) ||
+                      (previous == BattleStatus::Started && (status == BattleStatus::Cancelled || status == BattleStatus::Completed)))))
+                    throw std::runtime_error("invalid battle lifecycle history");
+                previous = status; previousTime = lifecycle.number(2); ++nextRevision;
+            }
+            if (nextRevision == 0 || nextRevision > 3 || nextRevision - 1 != row.number(1) || previous != current.status || previousTime != current.changedUnix)
+                throw std::runtime_error("battle history/current revision mismatch");
+            Statement participants(impl_->db, "SELECT account_id,campaign_id,created_unix FROM battle_participants WHERE battle_id=? ORDER BY account_id"); participants.text(1, current.id);
+            size_t index = 0;
+            while (participants.row()) {
+                if (index >= current.context.participants.size() || participants.bytes(0) != current.context.participants[index++] ||
+                    participants.bytes(1) != current.campaignId || participants.number(2) != current.createdUnix)
+                    throw std::runtime_error("participant projection mismatch");
+            }
+            if (index != current.context.participants.size()) throw std::runtime_error("missing battle participant projection");
+            const auto result = readVerifiedResult(impl_->db, current);
+            if (!result && current.status == BattleStatus::Completed) throw std::runtime_error("completed battle missing verified result");
+            Statement history(impl_->db, "SELECT campaign_id,territory,recorded_unix FROM territory_battle_history WHERE battle_id=?"); history.text(1, current.id);
+            const bool found = history.row();
+            if (found != result.has_value() || (found && (history.bytes(0) != current.campaignId || history.number(1) != current.territory || history.number(2) != current.changedUnix)))
+                throw std::runtime_error("verified territory history projection mismatch");
+            (void)readRulesDecision(impl_->db, *this, current.id);
+        });
+        scan("SELECT sequence,campaign_id,action,actor,reason,battle_id,expected_revision,before_revision,after_revision,recorded_unix,before_status,after_status FROM admin_events ORDER BY sequence LIMIT ?", "admin audit", [&](const Statement& row) {
+            const auto audit = decodeAdmin(row);
+            Statement priorClock(impl_->db, "SELECT max(recorded_unix) FROM admin_events WHERE campaign_id=? AND sequence<?");
+            priorClock.text(1, audit.campaignId); priorClock.integer(2, audit.sequence); priorClock.row();
+            if (sqlite3_column_type(priorClock.value, 0) != SQLITE_NULL && priorClock.number(0) > audit.recordedUnix)
+                throw std::runtime_error("audit timestamp moved backwards");
+            if (audit.battleId) {
+                const auto current = battle(*audit.battleId);
+                Statement cancellation(impl_->db, "SELECT 1 FROM battle_status_events e JOIN battle_status_events p ON p.battle_id=e.battle_id AND p.revision=e.revision-1 WHERE e.battle_id=? AND e.status=2 AND e.changed_unix=? AND p.status=?");
+                cancellation.text(1, *audit.battleId); cancellation.integer(2, audit.recordedUnix); cancellation.integer(3, static_cast<int>(*audit.beforeStatus));
+                Statement duplicate(impl_->db, "SELECT count(*) FROM admin_events WHERE battle_id=?"); duplicate.text(1, *audit.battleId); duplicate.row();
+                if (current.campaignId != audit.campaignId || current.status != BattleStatus::Cancelled || !cancellation.row() ||
+                    readVerifiedResult(impl_->db, current) || duplicate.number(0) != 1)
+                    throw std::runtime_error("cancellation audit/lifecycle mismatch");
+            } else {
+                const auto current = load(audit.campaignId);
+                Statement event(impl_->db, "SELECT reason,snapshot FROM campaign_events WHERE campaign_id=? AND revision=?");
+                event.text(1, audit.campaignId); event.integer(2, audit.afterRevision);
+                const bool start = audit.action == "start" || audit.action == "start-authored";
+                if (!event.row() || event.bytes(0) != (start ? "admin start: " : "admin reset: ") + audit.reason)
+                    throw std::runtime_error("administrative campaign event mismatch");
+                if ((audit.action == "start" || audit.action == "reset") && event.bytes(1) != encode(makeInitialState(current.definition)))
+                    throw std::runtime_error("unknown-state operation manufactured territory values");
+            }
+        });
+        if (!health.complete) issue("semantic inspection incomplete: increase row limit");
+    } catch (const std::runtime_error& error) { health.complete = false; issue(error.what()); }
+    transaction.finish(); return health;
+}
+
+void CampaignStore::backupTo(const std::filesystem::path& destination) const {
+    const auto utf8 = destination.u8string();
+    if (utf8.empty() || utf8.find('\0') != decltype(utf8)::npos) throw std::runtime_error("invalid backup destination");
+    namespace fs = std::filesystem;
+    const auto canonicalDestination = fs::weakly_canonical(fs::absolute(destination));
+    const auto samePath = [](const fs::path& a, const fs::path& b) {
+#ifdef _WIN32
+        return CompareStringOrdinal(a.c_str(), static_cast<int>(a.native().size()), b.c_str(), static_cast<int>(b.native().size()), TRUE) == CSTR_EQUAL;
+#else
+        return a == b;
+#endif
+    };
+    if (const char* filename = sqlite3_db_filename(impl_->db, "main"); filename && *filename) {
+        const auto source = fs::weakly_canonical(fs::path(reinterpret_cast<const char8_t*>(filename)));
+        if (samePath(canonicalDestination, source)) throw std::runtime_error("backup destination aliases source database");
+        for (const char* suffix : {"-journal", "-wal", "-shm", ".service-lock"}) {
+            auto companion = source; companion += suffix;
+            if (samePath(canonicalDestination, companion)) throw std::runtime_error("backup destination is a source database companion");
+        }
+    }
+    // SQLite may create these files during the copy. Refuse existing companion
+    // files (including symlinks), instead of recovering or removing them.
+    for (const char* suffix : {"-journal", "-wal", "-shm", ".service-lock"}) {
+        auto companion = destination; companion += suffix;
+        if (fs::symlink_status(companion).type() != fs::file_type::not_found)
+            throw std::runtime_error("backup destination has an existing database companion");
+    }
+    // Exclusive OS creation also rejects dangling symlinks and closes the
+    // exists()/create() race. The reservation stays open until SQLite closes.
+#ifdef _WIN32
+    const auto reserved = CreateFileW(destination.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                     nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (reserved == INVALID_HANDLE_VALUE) throw std::runtime_error("backup destination must be a new writable file");
+#else
+    const int reserved = ::open(destination.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (reserved < 0) throw std::runtime_error("backup destination must be a new writable file");
+#endif
+    struct Destination {
+        const std::filesystem::path& path;
+        sqlite3* db = nullptr;
+        bool complete = false;
+#ifdef _WIN32
+        HANDLE reservation;
+#else
+        int reservation;
+#endif
+        ~Destination() {
+            if (db) sqlite3_close(db);
+#ifdef _WIN32
+            CloseHandle(reservation);
+#else
+            ::close(reservation);
+#endif
+            if (!complete) { std::error_code error; std::filesystem::remove(path, error); }
+        }
+    } target{destination, nullptr, false, reserved};
+    if (sqlite3_open_v2(reinterpret_cast<const char*>(utf8.c_str()), &target.db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK)
+        fail(target.db, "open campaign backup");
+    exec(target.db, "PRAGMA synchronous=EXTRA"); exec(target.db, "PRAGMA journal_mode=DELETE");
+    sqlite3_backup* backup = sqlite3_backup_init(target.db, "main", impl_->db, "main");
+    if (!backup) fail(target.db, "initialize campaign backup");
+    int status = SQLITE_OK;
+    // A held service lease excludes the server. Bound retries for other
+    // unexpected SQLite connections while allowing a consistent online copy.
+    unsigned retries = 0;
+    do {
+        status = sqlite3_backup_step(backup, 256);
+        if (status == SQLITE_BUSY || status == SQLITE_LOCKED) { if (++retries > 100) break; sqlite3_sleep(10); }
+    } while (status == SQLITE_OK || status == SQLITE_BUSY || status == SQLITE_LOCKED);
+    const int finished = sqlite3_backup_finish(backup);
+    if (status != SQLITE_DONE || finished != SQLITE_OK) fail(target.db, "copy campaign backup");
+    {
+        Statement integrity(target.db, "PRAGMA integrity_check(1)");
+        if (!integrity.row() || integrity.bytes(0) != "ok") throw std::runtime_error("backup integrity check failed");
+        Statement foreignKeys(target.db, "PRAGMA foreign_key_check");
+        if (foreignKeys.row()) throw std::runtime_error("backup contains foreign key violations");
+    }
+    if (sqlite3_close(target.db) != SQLITE_OK) fail(target.db, "close campaign backup");
+    target.db = nullptr;
+    {
+        // Reopen independently, checking the exact schema and the same bounded
+        // semantic checks used by the offline health command. Large archives
+        // remain backuppable; an incomplete scan alone does not reject a copy.
+        CampaignStore restored(destination, StoreOptions{{}, impl_->options.allowFixtureRules});
+        const auto report = restored.health(100000);
+        for (const auto& problem : report.issues)
+            if (problem != "semantic inspection incomplete: increase row limit")
+                throw std::runtime_error("backup validation: " + problem);
+    }
+    target.complete = true;
 }
 
 } // namespace tak::srv::crusades

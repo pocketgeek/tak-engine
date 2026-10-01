@@ -22,13 +22,15 @@ bool canonicalAccount(const std::string& account) {
     return account.size()>=3&&account.size()<=20&&alnum(account.front())&&
         std::all_of(account.begin(),account.end(),[&](char c){return alnum(c)||c=='_'||c=='.'||c=='-';});
 }
-wire::Snapshot snapshot(CampaignStore& store,const wire::SnapshotRequest& request,const ActivityResolver& activity) {
-    const auto campaign=store.load(request.campaignId);
-    wire::Snapshot out;out.requestId=request.requestId;out.campaignId=campaign.definition.id();
-    out.displayName=campaign.definition.displayName();out.revision=static_cast<uint64_t>(campaign.revision);
-    out.rulesPolicy=policyIdentifier(campaign.rules);
-    for(const auto& [id,definition]:campaign.definition.territories()) {
-        const auto& state=campaign.state.territories.at(id);
+wire::Snapshot snapshot(const CampaignDefinition& campaign,const CampaignState& current,const RulesPolicy& rules,
+    uint32_t requestId,uint64_t revision,const ActivityResolver& activity) {
+    if(campaign.territories().size()>wire::kMaxTerritories)
+        throw wire::DecodeError(wire::ErrorCode::TooLarge,"too many campaign territories");
+    wire::Snapshot out;out.requestId=requestId;out.campaignId=campaign.id();
+    out.displayName=campaign.displayName();out.revision=revision;
+    out.rulesPolicy=policyIdentifier(rules);
+    for(const auto& [id,definition]:campaign.territories()) {
+        const auto& state=current.territories.at(id);
         wire::Territory t;t.id=id;t.displayName=definition.displayName;t.nativeFaction=definition.nativeFaction;
         t.terrain=definition.terrain;t.mapIdentifier=definition.mapIdentifier;t.neighbors=definition.neighbors;
         if(state.owner) t.owner=static_cast<wire::Owner>(static_cast<unsigned>(*state.owner)+1);
@@ -44,6 +46,11 @@ wire::Snapshot snapshot(CampaignStore& store,const wire::SnapshotRequest& reques
 bool participant(const IssuedBattle& battle,const std::string& account) {
     return std::find(battle.context.participants.begin(),battle.context.participants.end(),account)!=battle.context.participants.end();
 }
+}
+void validateCampaignNetworkState(const CampaignDefinition& definition,const CampaignState& state,const RulesPolicy& rules) {
+    validateState(definition,state);
+    (void)wire::encode(wire::Response{snapshot(definition,state,rules,0,0,
+        [](const std::string&,uint32_t){return std::optional<wire::BattleActivity>{{0,0}};})});
 }
 ReadResponse campaignReadError(uint32_t id,wire::ErrorCode code) {
     const char* reason="campaign request unavailable";
@@ -72,7 +79,9 @@ ReadResponse campaignReadResponse(CampaignStore* store,const std::string& accoun
         }
         if(const auto* r=std::get_if<wire::SnapshotRequest>(&request)) {
             if(!store->hasCampaign(r->campaignId))return campaignReadError(id,wire::ErrorCode::NotFound);
-            return pack(snapshot(*store,*r,activity));
+            const auto campaign=store->load(r->campaignId);
+            return pack(snapshot(campaign.definition,campaign.state,campaign.rules,r->requestId,
+                static_cast<uint64_t>(campaign.revision),activity));
         }
         if(const auto* r=std::get_if<wire::PlayerStatusRequest>(&request)) {
             if(!store->hasCampaign(r->campaignId))return campaignReadError(id,wire::ErrorCode::NotFound);

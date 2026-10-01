@@ -205,6 +205,7 @@ void participationMigration(const fs::path& path){
         raw.sql("INSERT INTO battle_status_events VALUES('legacy-overlap',0,0,100)");
         raw.sql("INSERT INTO issued_battle_rules VALUES('legacy-overlap','historical-darien-v1')");
         raw.sql("INSERT INTO battle_participants SELECT 'legacy-overlap',campaign_id,account_id,created_unix FROM battle_participants");
+        raw.sql("DROP TABLE admin_events");
         raw.sql("DROP TABLE territory_battle_history");
         raw.sql("DROP INDEX battle_participants_global_account");raw.sql("PRAGMA user_version=6");
     }
@@ -218,7 +219,7 @@ void participationMigration(const fs::path& path){
     migrated.cancelBattle("legacy-overlap",110);
     migrated.startBattle(id,migrated.battle(id).launchToken,"legacy-room",context(),111);
     check(migrated.activeBattleForAccount("alice",500)->id==id,"resolved migrated offer could not retain Started participation");
-    {Raw raw(path);check(raw.count("PRAGMA user_version")==8&&raw.count("SELECT count(*) FROM battle_participants")==4,"schema8 index migration changed history");}
+    {Raw raw(path);check(raw.count("PRAGMA user_version")==9&&raw.count("SELECT count(*) FROM battle_participants")==4,"schema8 index migration changed history");}
 }
 // Build exact older schemas by retaining their original, unchanged SQL objects.
 // Data is written before removing only the later milestone's unused objects.
@@ -251,7 +252,7 @@ void migration(const fs::path& root){
             check(enrolled && enrolled->alliance==c::Alliance::Terror && enrolled->revision==1 && enrolled->joinedUnix==1 && enrolled->changedUnix==2,"v2 participant and revision preserved");
             check(migrated.allegianceHistory("synthetic","alice").size()==2,"v2 allegiance audit preserved");}
         else check(!migrated.allegiance("synthetic","alice"),"v1 migration invents no allegiance");
-        {Raw raw(path);check(raw.count("PRAGMA user_version")==8,"current schema version8 installed");}
+        {Raw raw(path);check(raw.count("PRAGMA user_version")==9,"current schema version9 installed");}
     }
 }
 } // namespace

@@ -5,7 +5,7 @@ integration.
 It is separate from the historical Boneyards protocol and from tactical command
 bundles. Completed September 30, 2026. Milestones 9–11 subsequently added activity,
 matchmaking and retained history/replays. The current network protocol is **211**,
-campaign payload version **4**, and storage schema **8**; the numbered extension
+campaign payload version **4**, and storage schema **9**; the numbered extension
 sections below preserve the earlier introduction versions.
 
 ## Messages and authority
@@ -46,10 +46,10 @@ Retained replay pulls have a separate 64-per-second quota and bounded 64 KiB
 chunks, as described in the M11 contract.
 
 Authenticated battle participants receive lifecycle notifications for issuance,
-start, cancellation, expiry and durable result completion. A restarted server
-can report an old orphan `Started` record, but its room ID is zero; this reports
-a durable historical record and does not offer live reattachment or reconstruct
-a lost referee. No room token or launch capability is exposed.
+start, cancellation, expiry and durable result completion. Since M13, startup
+cancels interrupted Issued and Started records with system audit events before
+admitting clients. It retains the records without restoring lost referees or
+inventing results. No room token or launch capability is exposed.
 
 M8 schema version 6 added an indexed participant-to-battle lookup for bounded own
 history reads. Migration preserves prior records and policy bindings. This
@@ -176,9 +176,20 @@ battle reservations. See [the matchmaking contract and live checks](campaign-mat
 ## M11 history and replay extension
 
 M11 introduced the current network version 211 and campaign payload 4, appending
-authenticated territory-history pages and bounded retained replay chunks. Current storage schema is 8. Completed
+authenticated territory-history pages and bounded retained replay chunks. M11 introduced storage schema 8; M13 adds administrative auditing in schema 9. Completed
 archives are available to enrolled members of their campaign, while active battle
 status remains participant-only. [The history contract](campaign-history.md)
 records permissions, retention, digest verification and real server/viewer gates.
 Protocol-210 format-9 replays retain narrow tactical compatibility under 211;
 this does not grant network-handshake compatibility to older clients.
+
+## Milestone 13 hardening
+
+Protocol 211 and campaign payload 4 remain unchanged. Shared account/address/global
+work limits supplement the original per-connection quotas, with bounded limiter
+state, connection admission and output queues. Authentication payloads reject
+trailing bytes; login has an absolute deadline and resume capabilities rotate.
+Server startup and admin start validate complete snapshots against the same
+wire encoder, including activity headroom, before admitting unservable definitions.
+See [operations and validation](campaign-operations.md) for exact limits,
+restart recovery, backup restoration and transport-security boundaries.

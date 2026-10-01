@@ -185,7 +185,7 @@ void migrations(const fs::path& root){
             if(version>=4)check(page.entries[0].battle.id==verified&&page.entries[0].result.replayId=="old-replay"&&page.entries[0].recordedUnix==110,"migration lost verified result metadata");
             if(version>=3)check(migrated.battle(unplayed).status==c::BattleStatus::Cancelled&&!migrated.verifiedResult(unplayed),"migration manufactured unplayed result");
         }
-        {Raw raw(path);check(raw.count("PRAGMA user_version")==8,"migration did not publish schema8");}
+        {Raw raw(path);check(raw.count("PRAGMA user_version")==9,"migration did not publish schema9");}
     }
     const auto orphanPath=root/"orphaned-result.sqlite";
     {c::CampaignStore store(orphanPath);seed(store);const auto b=started(store,"orphan-room");store.recordVerifiedResult(b.id,"orphan-room",context(),result("orphan-replay"),110);}

@@ -369,6 +369,11 @@ definition. The `crusades_import` tool can create an unowned, unmapped definitio
 from your installed `Darien.def`; battle-map assignments require server authoring.
 See the [strategic interface and setup guide](docs/research/darien-crusades/campaign-ui.md)
 and [server battle setup](docs/research/darien-crusades/campaign-battles.md).
+Packages include `crusades_admin` for offline inspection, health checks, backup,
+start/reset and safe battle cancellation. See the
+[server operations guide](docs/research/darien-crusades/campaign-operations.md)
+for migration and tested restoration. Interrupted campaign battles are cancelled
+with an audit on server restart; their history remains, without invented results.
 The [matchmaking guide](docs/research/darien-crusades/campaign-matchmaking.md)
 describes the modern policy and its verification. The [history and replay guide](docs/research/darien-crusades/campaign-history.md) explains archive access and retention.
 The [historical validation audit](docs/darien-crusades-reconstruction.md) separates

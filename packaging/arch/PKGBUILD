@@ -23,6 +23,7 @@ options=('!debug')
 package() {
   install -Dm755 "$startdir/../../build/takclient" "$pkgdir/usr/bin/takclient"
   install -Dm755 "$startdir/../../build/takserver" "$pkgdir/usr/bin/takserver"
+  install -Dm755 "$startdir/../../build/crusades_admin" "$pkgdir/usr/bin/crusades_admin"
   install -Dm755 "$startdir/../../build/cartographer" "$pkgdir/usr/bin/cartographer"
   install -Dm644 "$startdir/../../res/linux/tak-cartographer.desktop" "$pkgdir/usr/share/applications/tak-cartographer.desktop"
   install -Dm644 "$startdir/../../res/icons/cartographer.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/tak-cartographer.png"

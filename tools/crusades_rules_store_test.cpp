@@ -41,7 +41,7 @@ void fixture(const fs::path& p){bool fail=false;std::string id;const c::RulesPol
 }
 void gates(){c::CampaignStore s(":memory:");rejects([&]{seed(s,{c::RulesMode::Fixture,2});},"default permits fixture");rejects([&]{seed(s,{c::RulesMode::Modern,3});},"reserved modern policy accepted");check(!s.hasCampaign("test"),"rejected policy left campaign");}
 void migration(const fs::path& p){std::string id;{c::CampaignStore s(p);seed(s);id=started(s,"old").id;s.recordVerifiedResult(id,"old",context(),result(),12);}
- {Raw r(p);for(const auto* name:{"territory_battle_history","battle_participants","campaign_rules","issued_battle_rules","rule_decisions"})r.sql(std::string("DROP TABLE ")+name);r.sql("PRAGMA user_version=4");}
+ {Raw r(p);for(const auto* name:{"admin_events","territory_battle_history","battle_participants","campaign_rules","issued_battle_rules","rule_decisions"})r.sql(std::string("DROP TABLE ")+name);r.sql("PRAGMA user_version=4");}
  rejects([&]{c::CampaignStore s(p,c::StoreOptions{[]{throw std::runtime_error("migration rollback");}});},"migration hook ignored");{Raw r(p);check(r.count("PRAGMA user_version")==4,"migration rollback advanced version");}
  {c::CampaignStore s(p);check(c::policyIdentifier(s.load("test").rules)=="historical-darien-v1"&&s.battle(id).policyId=="historical-darien-v1","migration policy not historical");check(s.verifiedResult(id).has_value()&&!s.rulesDecision(id)&&s.load("test").revision==0,"legacy result retroactively applied");}
 }

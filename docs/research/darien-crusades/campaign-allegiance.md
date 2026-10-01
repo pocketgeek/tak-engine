@@ -94,7 +94,7 @@ decision records in schema version 5. [Milestone 8](campaign-network.md) adds an
 indexed battle-participant projection in schema version 6.
 [Milestone 10](campaign-matchmaking.md) adds the account-wide reservation index
 in schema version 7. [Milestone 11](campaign-history.md) adds the immutable
-verified territory-history projection in the current schema version 8.
+verified territory-history projection introduced in schema version 8.
 Opening supported earlier versions upgrades atomically and backfills history
 from existing verified results without generating new results or rules decisions.
 
@@ -107,7 +107,7 @@ Triggers prevent allegiance-event updates/deletions and participant identity
 rewrites. Opening a supported version-1 database validates its exact old schema,
 then, in the M4 implementation, created the new tables/triggers and published
 version 2 in one transaction. Current opening includes the later tables and
-publishes version 8 in the same atomic migration.
+publishes version 9 in the same atomic migration.
 It creates no inferred participants and does not rewrite old definitions,
 snapshots, history, binary result payloads or duplicate-result identities.
 Interrupted migration rolls back the schema additions and version together.
@@ -189,3 +189,11 @@ Validation on 2026-09-30:
 cmake --build build --target crusades_allegiance_test
 ctest --test-dir build -R '^crusades_allegiance$' --output-on-failure
 ```
+
+## Milestone 13 operations
+
+The current store schema is **9**, adding immutable administrative events.
+[Public-server operations](campaign-operations.md) describes transactional
+migrations from versions 1–8, audited start/reset/cancellation, interrupted-battle
+recovery, offline inspection and tested backup restoration. These are modern
+service policies; historical territory rules remain unchanged.

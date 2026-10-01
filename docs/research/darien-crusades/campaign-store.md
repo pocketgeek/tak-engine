@@ -80,7 +80,7 @@ the projection, in the same transaction as the schema version update. Failed
 migrations leave the prior schema and records intact. [Milestone 10](campaign-matchmaking.md)
 adds the account-wide reservation index in schema version 7.
 [Milestone 11](campaign-history.md) adds the immutable verified
-`territory_battle_history` projection in the current schema version 8. Migration
+`territory_battle_history` projection introduced in schema version 8. Migration
 backfills that projection from existing verified results without manufacturing
 results or rules decisions. Supported earlier versions upgrade atomically;
 no results are reapplied. The three tables below describe the original
@@ -208,3 +208,11 @@ No account, gameplay, network or simulation integration is required to exercise
 this persistence library. SQLite's source archive is pinned in
 [`cmake/SQLite.cmake`](../../../cmake/SQLite.cmake); build/offline instructions are
 in the [development guide](../../development.md).
+
+## Milestone 13 operations
+
+The current store schema is **9**, adding immutable administrative events.
+[Public-server operations](campaign-operations.md) describes transactional
+migrations from versions 1–8, audited start/reset/cancellation, interrupted-battle
+recovery, offline inspection and tested backup restoration. These are modern
+service policies; historical territory rules remain unchanged.

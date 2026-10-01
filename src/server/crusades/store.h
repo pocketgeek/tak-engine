@@ -2,6 +2,7 @@
 
 #include "server/crusades/campaign.h"
 #include "server/crusades/rules.h"
+#include <array>
 #include <memory>
 #include <stdexcept>
 
@@ -129,6 +130,36 @@ struct StoreOptions {
     bool allowFixtureRules = false;
 };
 
+// Trusted offline administration. The caller holds the service lease; these
+// APIs do not expose an administrative network protocol or authenticate actors.
+struct AdminRequest {
+    std::string actor, reason;
+    int64_t expectedRevision, unixTime;
+};
+struct AdminEvent {
+    int64_t sequence;
+    std::string campaignId, action, actor, reason;
+    std::optional<std::string> battleId;
+    int64_t expectedRevision, beforeRevision, afterRevision, recordedUnix;
+    std::optional<BattleStatus> beforeStatus, afterStatus;
+};
+struct AdminEventPage {
+    std::vector<AdminEvent> entries;
+    bool truncated = false;
+};
+struct CampaignEventPage {
+    std::vector<CampaignEvent> entries;
+    bool truncated = false;
+};
+struct StoreHealth {
+    int schemaVersion = 0;
+    int64_t campaigns = 0, events = 0, memberships = 0, battles = 0, results = 0, adminEvents = 0;
+    std::array<int64_t, 5> battleStatuses{};
+    size_t checkedRows = 0;
+    bool complete = true, healthy = true;
+    std::vector<std::string> issues;
+};
+
 // Independent campaign database, never the account credential file. SQLite's
 // :memory: path uses the same schema/transactions as persistent stores.
 // One object is used by one thread at a time; separate connections serialize
@@ -221,6 +252,35 @@ public:
     HistoryPage territoryHistory(const std::string& campaignId, TerritoryId territory,
         const std::optional<HistoryCursor>& after = {}, size_t limit = 32) const;
     std::optional<StoredRulesDecision> rulesDecision(const std::string& battleId) const;
+
+    // Start requires expectedRevision=-1 and a new ID. Reset appends a revision
+    // preserving all definitions, memberships and historical results. Missing
+    // authored state means unknown owner/map/metrics, never invented zeros.
+    // Reset refuses every Issued/Started battle, including orphaned offers.
+    void adminStart(const CampaignDefinition& definition, const std::optional<CampaignState>& initialState,
+                    const AdminRequest& request, const RulesPolicy& rules = {});
+    int64_t adminReset(const std::string& campaignId, const std::optional<CampaignState>& authoredState,
+                       const AdminRequest& request);
+    // Guards current campaign revision and battle status, not the revision at
+    // issuance. Orphaned Started battles can therefore be cancelled explicitly.
+    // Never changes or manufactures a verified result; terminal repeats fail.
+    IssuedBattle adminCancelBattle(const std::string& battleId, BattleStatus expectedStatus,
+                                  const AdminRequest& request);
+    // Called only at service startup while holding its exclusive lease. No old
+    // referee/room survives process restart. Append system cancellation audits
+    // atomically; never infer outcomes or release a stored result reservation.
+    size_t recoverInterruptedBattles(int64_t now);
+    CampaignEventPage events(const std::string& campaignId, int64_t afterRevision = -1,
+                             size_t limit = 64) const;
+    AdminEventPage adminHistory(const std::string& campaignId, int64_t afterSequence = 0,
+                               size_t limit = 64) const;
+    // Aggregate counts plus SQLite integrity/foreign-key and bounded semantic
+    // decode checks in one read snapshot. Incomplete checks are not healthy.
+    // At most 64 issues (512 bytes each); limit is 1..100000 inspected rows.
+    StoreHealth health(size_t limit = 4096) const;
+    // SQLite online-backup snapshot to an exclusively created new file, with
+    // full durability settings. An existing file/symlink is never overwritten.
+    void backupTo(const std::filesystem::path& destination) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

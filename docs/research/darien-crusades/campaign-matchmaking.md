@@ -74,9 +74,10 @@ configuration cannot override the issued context. Cancelling an unplayed room
 records its terminal battle status and releases participation without changing
 territory ownership, recon metrics or campaign revision.
 
-A Started battle left by a server crash retains its durable participation
-reservation. Recovery of interrupted referees remains outside this milestone;
-restart does not silently release a battle that may already have started.
+M10 originally retained reservations after a server crash. Since
+[M13](campaign-operations.md), startup cancels interrupted Issued and Started
+battles with immutable system audit events and releases their reservations.
+The old records remain; no running referee or verified outcome is fabricated.
 
 Persisted historical rule policy remains unchanged. An actual tactical victory
 can be recorded with its verified replay while unknown historical capture rules

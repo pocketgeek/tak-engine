@@ -93,8 +93,9 @@ database persistence fails, the server retains its frozen result and retries.
 A database I/O failure alone does not downgrade an otherwise verified victory;
 only failed eligibility or integrity
 checks remove credit eligibility. Hard process death still
-leaves an old Started battle auditable but not reattached automatically; M6 does
-not add crash recovery of a running referee. Old M5 terminal records migrate
+does not restore a running referee. Since [M13](campaign-operations.md), startup
+cancels interrupted battles with a system audit while retaining their history;
+no verified result or territory credit is invented. Old M5 terminal records migrate
 without fabricated verified results.
 
 M6 migrated versions 1, 2 and 3 transactionally to version 4, preserving definitions,
@@ -104,7 +105,7 @@ adds policy/decision tables in schema version 5. [M8](campaign-network.md) adds
 an indexed participant projection in schema version 6.
 [M10](campaign-matchmaking.md) adds the account-wide reservation index in
 schema version 7. [M11](campaign-history.md) adds the immutable verified
-territory-history projection in the current schema version 8. Migration
+territory-history projection introduced in schema version 8. Migration
 backfills that projection from existing verified results; it does not manufacture
 results or rules decisions. Supported earlier versions upgrade atomically and
 old results are not retroactively scored.
@@ -139,3 +140,11 @@ skipped because the toolchain headers are unavailable locally.
 Source: `src/server/crusades/store.{h,cpp}`, `src/server/server.cpp`.
 Historical boundaries: [campaign rules evidence](campaign-rules-evidence.md),
 [battle contract](battle-contract.md), [report transport](report-transport.md).
+
+## Milestone 13 operations
+
+The current store schema is **9**, adding immutable administrative events.
+[Public-server operations](campaign-operations.md) describes transactional
+migrations from versions 1–8, audited start/reset/cancellation, interrupted-battle
+recovery, offline inspection and tested backup restoration. These are modern
+service policies; historical territory rules remain unchanged.

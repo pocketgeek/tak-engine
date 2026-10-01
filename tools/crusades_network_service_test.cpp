@@ -25,6 +25,25 @@ namespace n=tak::net;
 w::Response unpack(const c::ReadResponse& r){w::ResponseKind k=w::ResponseKind::Error;switch(r.kind){case n::Msg::CrusadesCampaignList:k=w::ResponseKind::List;break;case n::Msg::CrusadesCampaignSnapshot:k=w::ResponseKind::Snapshot;break;case n::Msg::CrusadesPlayerStatus:k=w::ResponseKind::PlayerStatus;break;case n::Msg::CrusadesBattleStatus:k=w::ResponseKind::BattleStatus;break;case n::Msg::CrusadesTerritoryHistory:k=w::ResponseKind::TerritoryHistory;break;default:break;}return w::decodeResponse(k,r.payload.b);}
 w::Response query(c::CampaignStore* s,const std::string& account,const w::Request& request,const c::RoomResolver& resolver={},const c::ReplayResolver& replays={}){n::Msg m=n::Msg::CrusadesListCampaigns;switch(w::kindOf(request)){case w::RequestKind::List:break;case w::RequestKind::Snapshot:m=n::Msg::CrusadesGetSnapshot;break;case w::RequestKind::PlayerStatus:m=n::Msg::CrusadesGetPlayerStatus;break;case w::RequestKind::BattleStatus:m=n::Msg::CrusadesGetBattleStatus;break;case w::RequestKind::TerritoryHistory:m=n::Msg::CrusadesGetTerritoryHistory;break;case w::RequestKind::ReplayChunk:case w::RequestKind::Matchmaking:case w::RequestKind::MatchSearch:case w::RequestKind::MatchCancel:throw std::runtime_error("matchmaking is owned by the live server service");}return unpack(c::handleCampaignRead(s,account,m,w::encode(request),resolver,{},replays));}
 void expectError(const w::Response& r,w::ErrorCode code){check(std::holds_alternative<w::Error>(r)&&std::get<w::Error>(r).code==code,"wrong typed error");}
+void authoredWireBounds(){
+ auto make=[](const std::string& field){return c::loadDefinitionText("campaign 1 \"test\" \"Test\"\nterritory 1 \"One\"\n"+field);};
+ const auto valid=make("map 1 \"one.ota\"\n");auto state=c::makeInitialState(valid);
+ c::validateCampaignNetworkState(valid,state);check(!state.territories.at(1).owner&&!state.territories.at(1).assignedMap,"validation invented campaign state");
+ const auto identifier=c::loadDefinitionText("campaign 1 \""+std::string(129,'x')+"\" \"Test\"\nterritory 1 \"One\"\n");
+ rejects([&]{c::validateCampaignNetworkState(identifier,c::makeInitialState(identifier));},"unaddressable campaign ID accepted");
+ for(const auto& field:std::vector<std::string>{"native 1 \""+std::string(1025,'x')+"\"\n","terrain 1 \""+std::string(1025,'x')+"\"\n","map 1 \""+std::string(4097,'x')+"\"\n"}) {
+  const auto definition=make(field);rejects([&]{c::validateCampaignNetworkState(definition,c::makeInitialState(definition));},"unservable authored field accepted");
+ }
+ state.territories.at(1).assignedMap=std::string(4097,'x');rejects([&]{c::validateCampaignNetworkState(valid,state);},"unservable assigned map accepted");
+ state.territories.at(1).assignedMap=std::string("\xc0\xaf");rejects([&]{c::validateCampaignNetworkState(valid,state);},"invalid runtime UTF-8 accepted");
+ std::string crowded="campaign 1 \"crowded\" \"Crowded\"\n";
+ for(unsigned id=1;id<=234;++id)crowded+="territory "+std::to_string(id)+" \""+std::string(1024,'x')+"\"\n";
+ const auto nearLimit=c::loadDefinitionText(crowded);const auto initial=c::makeInitialState(nearLimit);
+ c::CampaignStore store(":memory:");store.create(nearLimit,initial,"legacy authored state");
+ check(c::campaignReadResponse(&store,"alice",w::SnapshotRequest{1,"crowded",0}).kind==n::Msg::CrusadesCampaignSnapshot,"near-limit snapshot without live activity should fit");
+ rejects([&]{c::validateCampaignNetworkState(nearLimit,initial);},"runtime activity grew snapshot beyond wire cap");
+ check(store.load("crowded").revision==0&&store.history("crowded").size()==1,"authored validation mutated store");
+}
 void authAndWire(){c::CampaignStore s(":memory:");seed(s);for(const w::Request& r:std::vector<w::Request>{w::ListRequest{1,"",64},w::SnapshotRequest{2,"test",0},w::PlayerStatusRequest{3,"test"},w::BattleStatusRequest{4,"unknown"}}){expectError(query(&s,"",r),w::ErrorCode::AuthenticationRequired);expectError(query(nullptr,"alice",r),w::ErrorCode::Disabled);expectError(query(&s,"Alice",r),w::ErrorCode::AuthenticationRequired);}
  auto bytes=w::encode(w::Request{w::SnapshotRequest{17,"test",0}});bytes[0]=99;expectError(unpack(c::handleCampaignRead(&s,"alice",n::Msg::CrusadesGetSnapshot,bytes)),w::ErrorCode::UnsupportedVersion);bytes=w::encode(w::Request{w::SnapshotRequest{17,"test",0}});bytes.push_back(42);expectError(unpack(c::handleCampaignRead(&s,"alice",n::Msg::CrusadesGetSnapshot,bytes)),w::ErrorCode::Malformed);
  expectError(unpack(c::handleCampaignRead(&s,"alice",n::Msg::CrusadesCampaignSnapshot,{})),w::ErrorCode::Malformed);expectError(query(&s,"alice",w::SnapshotRequest{1,"missing",0}),w::ErrorCode::NotFound);check(s.load("test").revision==0&&s.history("test").size()==1,"reads mutated campaign");}
@@ -36,13 +55,13 @@ void lifecycle(const fs::path& path){std::string id;{c::CampaignStore s(path);se
  own=std::get<w::PlayerStatus>(query(&s,"alice",w::PlayerStatusRequest{6,"test"}));check(own.battles.size()==32&&own.battlesTruncated,"own history not bounded/truncated");check(s.battle(own.battles.front().id).createdUnix==134,"own battles not newest first");check(s.ownBattleIds("test","carol").ids.empty(),"projection leaked outsider");rejects([&]{s.ownBattleIds("test","alice",33);},"unbounded own history accepted");}
  {c::CampaignStore s(path);auto status=std::get<w::BattleStatus>(query(&s,"alice",w::BattleStatusRequest{1,id}));check(status.result&&status.status==w::BattlePhase::Completed&&status.roomId==0,"restarted status lost durable result");}
  // Simulate valid schema5 and exercise projection migration/rollback.
- {Raw r(path);r.sql("DROP TABLE territory_battle_history");r.sql("DROP TABLE battle_participants");r.sql("PRAGMA user_version=5");}
+ {Raw r(path);r.sql("DROP TABLE admin_events");r.sql("DROP TABLE territory_battle_history");r.sql("DROP TABLE battle_participants");r.sql("PRAGMA user_version=5");}
  rejects([&]{c::CampaignStore s(path,c::StoreOptions{[]{throw std::runtime_error("migration interrupted");}});},"projection migration rollback hook ignored");{Raw r(path);check(r.count("PRAGMA user_version")==5&&r.count("SELECT count(*) FROM sqlite_master WHERE name='battle_participants'")==0,"migration rollback partial");}
  {c::CampaignStore s(path);check(s.ownBattleIds("test","alice").ids.size()==32&&s.ownBattleIds("test","alice").truncated,"migration lost indexed own history");check(s.verifiedResult(id).has_value(),"migration lost result");}
  {Raw r(path);check(r.count("SELECT count(*) FROM battle_participants")==72,"migration projection count wrong");rejects([&]{r.sql("DELETE FROM battle_participants");},"projection mutable");
  sqlite3_stmt* q=nullptr;check(sqlite3_prepare_v2(r.db,"EXPLAIN QUERY PLAN SELECT battle_id FROM battle_participants WHERE campaign_id='test' AND account_id='alice' ORDER BY created_unix DESC,battle_id DESC LIMIT 33",-1,&q,nullptr)==SQLITE_OK,"query plan prepare");check(sqlite3_step(q)==SQLITE_ROW,"query plan row");std::string plan=reinterpret_cast<const char*>(sqlite3_column_text(q,3));sqlite3_finalize(q);check(plan.find("COVERING INDEX battle_participants_account")!=std::string::npos,"own history query not indexed");
  // A damaged prior-version roster must not produce a partial projection.
- r.sql("DROP TABLE territory_battle_history");r.sql("DROP TABLE battle_participants");r.sql("PRAGMA user_version=5");
+ r.sql("DROP TABLE admin_events");r.sql("DROP TABLE territory_battle_history");r.sql("DROP TABLE battle_participants");r.sql("PRAGMA user_version=5");
  check(sqlite3_prepare_v2(r.db,"SELECT sql FROM sqlite_master WHERE name='issued_battle_identity_no_update'",-1,&q,nullptr)==SQLITE_OK,"read trigger");check(sqlite3_step(q)==SQLITE_ROW,"trigger row");std::string trigger=reinterpret_cast<const char*>(sqlite3_column_text(q,0));sqlite3_finalize(q);
  r.sql("DROP TRIGGER issued_battle_identity_no_update");r.sql("UPDATE issued_battles SET context=x'00'");r.sql(trigger);
  }
@@ -94,4 +113,4 @@ void territoryHistory(){
  check(store.load("test").revision==0&&store.history("test").size()==1,"history service mutated territory state");
 }
 }
-int main(){auto root=fs::temp_directory_path()/("tak-network-service-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));struct Cleanup{fs::path p;~Cleanup(){std::error_code e;fs::remove_all(p,e);}}cleanup{root};try{fs::create_directories(root);authAndWire();snapshots();paging();lifecycle(root/"campaign.sqlite");territoryHistory();std::cout<<"PASS: "<<checks<<" campaign service checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
+int main(){auto root=fs::temp_directory_path()/("tak-network-service-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));struct Cleanup{fs::path p;~Cleanup(){std::error_code e;fs::remove_all(p,e);}}cleanup{root};try{fs::create_directories(root);authoredWireBounds();authAndWire();snapshots();paging();lifecycle(root/"campaign.sqlite");territoryHistory();std::cout<<"PASS: "<<checks<<" campaign service checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

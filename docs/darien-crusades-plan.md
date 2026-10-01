@@ -996,6 +996,18 @@ Provide:
 - Unsupported protocol versions fail safely.
 - Administrative operations are auditable.
 
+**Completed 2026-09-30.** All Release and Debug targets rebuilt; full sweeps
+passed **153/153 Release** and **161/161 Debug** tests. Instrumented
+administration/store/SQLite passed 161 ASan/UBSan/leak checks.
+
+Implementation and operational evidence:
+[public-server operations](research/darien-crusades/campaign-operations.md).
+The modern service adds schema-9 administrative auditing, offline packaged
+`crusades_admin`, exclusive process ownership, bounded network work and audited
+interrupted-battle cancellation. Backup restoration is tested by starting a
+new authenticated service from the copied archive. Historical rules and retail
+pathfinding remain unchanged.
+
 ---
 
 # Optional future milestone — Modern Crusades mode

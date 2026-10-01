@@ -128,10 +128,13 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import takclient takserver cartographer cartographer_document_test cartographer_validation_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
+          cmake --build build --target crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test crusades_servicelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test
 
       - name: Crusades model and durable store
         run: |
+          ./build/crusades_admin_test
+          ./build/crusades_servicelease_test
+          python3 tools/crusades_admin_cli_test.py build/crusades_admin
           ./build/crusades_campaign_test
           ./build/crusades_store_test
           ./build/crusades_allegiance_test
@@ -172,8 +175,8 @@ jobs:
       # fully static binary could not resolve a host or open a window.
       - name: Verify fully static (only libc/libm linked)
         run: |
-          ldd build/takclient build/takserver build/cartographer || true
-          leaked=$(ldd build/takclient build/takserver build/cartographer \
+          ldd build/takclient build/takserver build/cartographer build/crusades_admin || true
+          leaked=$(ldd build/takclient build/takserver build/cartographer build/crusades_admin \
             | awk '/=>/{print $1}' | sort -u \
             | grep -vE '^(libc|libm|libdl|libpthread|librt)\.so|^linux-vdso|^/lib64/ld-' || true)
           if [ -n "$leaked" ]; then
@@ -215,10 +218,10 @@ jobs:
         run: |
           export CC=gcc-12 CXX=g++-12
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build-debug --target takclient takserver cartographer
+          cmake --build build-debug --target takclient takserver cartographer crusades_admin
           mkdir -p dist-linux-debug
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt dist-linux-debug/
-          cp build-debug/takclient build-debug/takserver build-debug/cartographer dist-linux-debug/
+          cp build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin dist-linux-debug/
           tar -C dist-linux-debug -czf dist/tak-engine-linux-x64-debug.tar.gz .
 
       - name: Upload CI artifact
