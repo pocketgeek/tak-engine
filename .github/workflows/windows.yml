@@ -100,7 +100,11 @@ jobs:
           path: third_party/ffmpeg-bink
           key: ffmpeg-bink-windows-${{ matrix.arch }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
       - name: Build static FFmpeg (Bink)
-        run: ./tools/build-ffmpeg-bink.sh
+        run: |
+          if ! ./tools/build-ffmpeg-bink.sh; then
+            test ! -f third_party/ffmpeg-bink/src/ffbuild/config.log || tail -180 third_party/ffmpeg-bink/src/ffbuild/config.log
+            exit 1
+          fi
 
       - name: Configure + build
         # links MSYS2's static libSDL2.a/libjpeg.a/libz.a (SDL2::SDL2-static

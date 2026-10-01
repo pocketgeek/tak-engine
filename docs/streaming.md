@@ -31,8 +31,13 @@ Hardware H.264 and HEVC backends:
 | Platform | Hardware backends |
 | --- | --- |
 | Linux | NVIDIA NVENC; Intel/AMD VA-API |
-| Windows | NVIDIA NVENC; AMD AMF; Intel Quick Sync |
+| Windows x64 | NVIDIA NVENC; AMD AMF; Intel Quick Sync |
 | macOS | Apple VideoToolbox |
+
+Windows ARM64 builds include x264 CPU encoding. The pinned FFmpeg version does
+not support NVENC on Windows ARM64, and Qualcomm hardware encoding is not
+implemented. AMF and Quick Sync are compiled in but require a compatible native
+driver; their availability on Windows ARM64 has not been validated.
 
 A working GPU driver with the selected codec and resolution support is required for hardware
 encoding. The panel reports the encoder actually opened, connection state,

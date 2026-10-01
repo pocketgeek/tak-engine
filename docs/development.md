@@ -96,7 +96,9 @@ frameworks. CI checks these dependency boundaries for release packages.
   instead of `build-static-deps.sh`. The Windows workflow runs natively on
   `windows-11-arm`, checks executable architecture and static dependency imports,
   and produces Release and Debug portable ZIPs. ARM64 ZIPs are uploaded on future
-  release tags; the NSIS installer remains x64 only.
+  release tags; the NSIS installer remains x64 only. The pinned FFmpeg version
+  excludes NVENC on Windows ARM64; x264 CPU streaming remains available. Qualcomm
+  hardware encoding is not implemented.
 - **macOS ARM64:** install Xcode Command Line Tools, then
   `brew install cmake ninja pkg-config`. Run both dependency scripts and the
   source-build commands above, adding `-DCMAKE_FIND_FRAMEWORK=LAST` at configure

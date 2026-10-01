@@ -35,7 +35,14 @@ platform="${TARGET_OS:-$(uname -s)}"
 stream_args=()
 case "$platform" in
   Darwin|darwin) stream_args+=(--enable-securetransport --enable-videotoolbox --enable-encoder=h264_videotoolbox,hevc_videotoolbox) ;;
-  MINGW*|MSYS*|mingw32) stream_args+=(--enable-schannel --enable-d3d11va --enable-dxva2 --enable-nvenc --enable-ffnvcodec --enable-amf --enable-libvpl --enable-encoder=h264_nvenc,h264_amf,h264_qsv,hevc_nvenc,hevc_amf,hevc_qsv) ;;
+  MINGW*|MSYS*|mingw32)
+    stream_args+=(--enable-schannel --enable-d3d11va --enable-dxva2 --enable-amf --enable-libvpl --enable-encoder=h264_amf,h264_qsv,hevc_amf,hevc_qsv)
+    # FFmpeg 7.1 supports Windows NVENC only on x86; its configure script
+    # explicitly disables ffnvcodec on Windows ARM64.
+    if [ "${TARGET_ARCH:-}" != aarch64 ]; then
+      stream_args+=(--enable-nvenc --enable-ffnvcodec --enable-encoder=h264_nvenc,hevc_nvenc)
+    fi
+    ;;
   *) stream_args+=(--enable-openssl --enable-nvenc --enable-ffnvcodec --enable-vaapi --enable-encoder=h264_nvenc,h264_vaapi,hevc_nvenc,hevc_vaapi) ;;
 esac
 cd "$SRC"

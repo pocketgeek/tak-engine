@@ -20,6 +20,11 @@ if [ ! -f "$PREFIX/lib/libx264.a" ]; then
    git checkout --detach FETCH_HEAD
    args=()
    [ -n "${CROSS_PREFIX:-}" ] && args+=("--cross-prefix=$CROSS_PREFIX" "--host=${CROSS_PREFIX%-}")
+   # MSYS2's shell runs as x64 even on Windows ARM64. config.guess would
+   # therefore select x86 code/flags for the native CLANGARM64 compiler.
+   if [ -z "${CROSS_PREFIX:-}" ] && [ "${TARGET_OS:-}" = mingw32 ] && [ -n "${TARGET_ARCH:-}" ]; then
+     args+=("--host=$TARGET_ARCH-w64-mingw32")
+   fi
    ./configure --prefix="$PREFIX" --enable-static --enable-pic --disable-cli --disable-opencl --disable-asm ${args[@]+"${args[@]}"}
    make -j"$JOBS"
    make install-lib-static)
