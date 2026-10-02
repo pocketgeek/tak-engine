@@ -145,7 +145,7 @@ jobs:
           slackpkg -batch=on -default_answer=y update
           slackpkg -batch=on -default_answer=y install \
             gcc gcc-g++ binutils flex dcron make ninja cmake git curl ca-certificates perl python3 \
-            pkg-config nasm glibc kernel-headers zlib libffi libmpc isl libarchive \
+            pkg-config nasm glibc kernel-headers zlib libffi libmpc isl libarchive sqlite icu4c \
             libxml2 nghttp2 cyrus-sasl brotli guile gc \
             alsa-lib pulseaudio pipewire dbus libX11 libXext libXcursor libXi \
             libXrandr libXfixes libXScrnSaver libxkbcommon wayland wayland-protocols \

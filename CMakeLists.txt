@@ -68,6 +68,7 @@ endif()
 
 find_package(ZLIB REQUIRED)
 find_package(JPEG REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(tak-crypto STATIC src/net/crypto.cpp)
 target_include_directories(tak-crypto PUBLIC src)
@@ -108,7 +109,7 @@ add_library(tak-formats
   src/terrain/terrain.cpp
 )
 target_include_directories(tak-formats PUBLIC src)
-target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG tak-crypto)
+target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG tak-crypto Threads::Threads)
 
 add_library(tak-crusades-map STATIC src/client/crusadesmap.cpp)
 target_link_libraries(tak-crusades-map PUBLIC tak-formats)
@@ -632,7 +633,7 @@ add_library(tak_tls STATIC src/net/tls.cpp)
 target_include_directories(tak_tls PUBLIC src PRIVATE "${TAK_FFMPEG_PREFIX}/include")
 target_include_directories(tak-formats PRIVATE "${TAK_FFMPEG_PREFIX}/include")
 target_link_libraries(tak_tls PUBLIC "${TAK_FFMPEG_PREFIX}/lib/libssl.a"
-  "${TAK_FFMPEG_PREFIX}/lib/libcrypto.a" ${CMAKE_DL_LIBS})
+  "${TAK_FFMPEG_PREFIX}/lib/libcrypto.a" ${CMAKE_DL_LIBS} Threads::Threads)
 if(WIN32)
   target_link_libraries(tak_tls PUBLIC crypt32 ws2_32 bcrypt advapi32 user32 gdi32)
 elseif(APPLE)
