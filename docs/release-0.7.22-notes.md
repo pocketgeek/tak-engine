@@ -19,6 +19,8 @@
   settings, with [step-by-step instructions](public-server.md). Set your own
   hostname and review configuration before enabling the service.
 - Continue clearing build sites containing multiple reclaimable obstructions.
+- Use clear directional arrows in the map-sort headers and remove the Darien
+  Crusades button from the multiplayer browser for now.
 - Sign and timestamp Windows Release/Debug executables before packaging, then
   sign the completed installer. Verify signatures before publishing. ARM64
   outputs are signed on a Windows x64 runner through Azure/GitHub OIDC.

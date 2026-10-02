@@ -275,8 +275,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || true
+          # Reuse an existing draft instead of creating a second release record.
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "TAK Engine $GITHUB_REF_NAME" --generate-notes --verify-tag || \
+              gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
           gh release upload "$GITHUB_REF_NAME" \
             "takclient-$VERSION-macos-${{ matrix.arch }}.zip" takclient-macos-${{ matrix.arch }}-debug.zip \
             "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg" \

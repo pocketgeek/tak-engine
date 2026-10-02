@@ -127,6 +127,9 @@ git push origin vX.Y.Z
 Tags matching `v*` trigger package builds and GitHub Release uploads. Check every
 platform job and the complete asset set, then update the release notes; workflows
 can create/publish the release with generated notes during upload.
+To collect packages privately, create a draft release for the pushed tag before
+the upload steps run. Upload workflows reuse that draft; publish it only after
+the platform checks, Windows signing and complete asset verification pass.
 
 ## Developer launch modes
 

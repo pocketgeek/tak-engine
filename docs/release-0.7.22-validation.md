@@ -20,9 +20,38 @@ Protocol **213**, replay format **10**, campaign payload **4**, database schema 
   tests passed. The ACME multi-source fixture passes using IPv4/IPv6 loopback,
   without contacting a public certificate authority.
 
-Full release-preparation suite results and tagged CI/package verification will
-be recorded here as the release completes. No public-server deployment is part
-of this release operation.
+## Release checks
+
+- Full local GCC Release suite: **169/169** CTests passed.
+- Full local GCC Debug suite: **177/177** CTests passed.
+- All pre-tag platform checks passed at release commit
+  `28ae364194ef55141529d2a2812855702b542cc0`:
+  [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/37043817354),
+  [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/37043817219),
+  [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/37043817074).
+- Tagged checks passed for all seven Linux distributions and both native
+  architectures of Windows and macOS:
+  [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/37045311518),
+  [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/37045311506),
+  [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/37045311526).
+- Windows Azure OIDC signing succeeded. CI signed and verified all 16 shipped
+  Release/Debug executables before ZIP/NSIS packaging, then signed and verified
+  the installer, including authenticated timestamps.
+- All **19 assets** were downloaded and their SHA-256 digests checked. ZIP CRCs,
+  executable architectures, embedded PE signatures and macOS app versions passed
+  inspection. Debian, RPM and Arch packages contain the systemd service and
+  configuration templates; the Linux Debug tarball passed archive listing.
+- Local Release and Debug client/server binaries were rebuilt with the clean
+  **v0.7.22** stamp and report version 0.7.22.
+- Platform uploads initially created separate release records alongside the
+  staging draft. Their assets were consolidated and hashes rechecked before
+  redundant drafts were removed. The Linux/macOS upload scripts now check for
+  an existing release first; mocked existing-draft, first-create, concurrent-create
+  and failure cases passed. This follow-up changes release automation/docs only,
+  not the tagged engine or signed artifacts.
+
+Release: [v0.7.22](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.22).
+No public-server deployment was performed.
 
 ## Limits
 

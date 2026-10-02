@@ -355,9 +355,10 @@ Debug builds also support direct playback:
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
 compatible engine behavior and game data. Version 0.7.22 uses protocol
-**213** and replay format **10**. Format-9 recordings from protocol 212 remain
-compatible because this update does not change the tactical simulation. Use
-matching builds for all clients and the server; other protocol versions are rejected.
+**213** and replay format **10**. Format-9 recordings from protocol 212 can still
+be loaded, but simulation fixes can change playback results; use the matching
+engine build when checking an older recording. Use matching builds for all clients
+and the server; other multiplayer protocol versions are rejected.
 
 ## Overrides
 
