@@ -1201,7 +1201,8 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 if(UNIX AND NOT APPLE)
   # Ship the service without enabling it. ACME is an opt-in, edited drop-in.
   install(FILES packaging/systemd/takserver.service DESTINATION lib/systemd/system)
-  install(FILES packaging/systemd/takserver-acme.conf packaging/systemd/README.md
+  install(FILES packaging/systemd/takserver-acme.conf packaging/systemd/takserver-settings.conf
+                packaging/systemd/README.md
           DESTINATION share/doc/tak-engine/systemd)
   install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt DESTINATION share/licenses/tak-engine)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)

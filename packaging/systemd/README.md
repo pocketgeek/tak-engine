@@ -41,8 +41,8 @@ You do **not** need to download or copy a service unit from the source repositor
    ```
 
    Replace **`YOUR.SERVER.NAME`** after `--acme-domain` with your actual hostname
-   (for example, `tak.example.org`), without `https://` or a port. Check that
-   `--data` points to `/srv/tak-data`. Keep the empty `LoadCredential=` and
+   (for example, `tak.example.org`), without `https://` or a port. The data path defaults to `/srv/tak-data`; use the settings template below to
+   change it. Keep the empty `LoadCredential=` and
    `ExecStart=` lines; they replace the default manual-certificate configuration.
    Using `--acme-agree-tos` accepts the CA subscriber agreement.
 
@@ -67,6 +67,24 @@ You do **not** need to download or copy a service unit from the source repositor
    Wait for certificate issuance to finish and the TLS game listener to start.
    Players then enter just your hostname in the multiplayer connection screen.
    Press Ctrl+C to leave the log viewer; this does not stop the server.
+
+**Optional: change server defaults.** Copy and edit the settings template:
+
+```sh
+sudo mkdir -p /etc/systemd/system/takserver.service.d
+sudo cp -i /usr/share/doc/tak-engine/systemd/takserver-settings.conf \
+  /etc/systemd/system/takserver.service.d/settings.conf
+sudoedit /etc/systemd/system/takserver.service.d/settings.conf
+sudo systemctl daemon-reload
+sudo systemctl restart takserver
+```
+
+The template lists the default paths, port, game/account limits, storage budgets
+and systemd resource limits. Change individual values such as
+`Environment="TAK_SERVER_MAX_RUNNING_GAMES=8"` without rewriting the startup
+command. It works with both certificate modes. Restart between matches, since
+it disconnects active games. For examples and existing-installation migration,
+see [changing server defaults](https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#changing-server-defaults).
 
 The server renews its certificate automatically and opens port 80 only during
 validation. Local configuration stays in `/etc/systemd/system/takserver.service.d/`;

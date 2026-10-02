@@ -204,6 +204,7 @@ Linux packages include these files:
 | --- | --- |
 | `/usr/lib/systemd/system/takserver.service` | Packaged service unit |
 | `/usr/share/doc/tak-engine/systemd/takserver-acme.conf` | Optional ACME override template |
+| `/usr/share/doc/tak-engine/systemd/takserver-settings.conf` | Optional server settings and resource limits |
 | `/usr/share/doc/tak-engine/systemd/README.md` | Installed setup notes |
 
 Installing the package does **not** start or enable the server. The ACME template
@@ -260,14 +261,30 @@ then looks like this:
 [Service]
 LoadCredential=
 ExecStart=
-ExecStart=/usr/bin/takserver --data /srv/tak-data --accounts /var/lib/takserver/accounts.conf --map-cache-dir /var/lib/takserver/maps --replaydir /var/lib/takserver/replays --acme-domain tak.example.org --acme-agree-tos --acme-state /var/lib/takserver/acme
+ExecStart=/usr/bin/takserver \
+    --data ${TAK_SERVER_DATA} \
+    --accounts ${TAK_SERVER_ACCOUNTS} \
+    --map-cache-dir ${TAK_SERVER_MAP_CACHE} \
+    --replaydir ${TAK_SERVER_REPLAYS} \
+    --port ${TAK_SERVER_PORT} \
+    --max-games ${TAK_SERVER_MAX_GAMES} \
+    --max-running-games ${TAK_SERVER_MAX_RUNNING_GAMES} \
+    --max-accounts ${TAK_SERVER_MAX_ACCOUNTS} \
+    --map-memory-mib ${TAK_SERVER_MAP_MEMORY_MIB} \
+    --map-storage-mib ${TAK_SERVER_MAP_STORAGE_MIB} \
+    --replay-memory-mib ${TAK_SERVER_REPLAY_MEMORY_MIB} \
+    --replay-storage-mib ${TAK_SERVER_REPLAY_STORAGE_MIB} \
+    --acme-domain tak.example.org \
+    --acme-agree-tos \
+    --acme-state /var/lib/takserver/acme \
+    $TAK_SERVER_EXTRA_ARGS
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 ```
 
 The empty `LoadCredential=` and `ExecStart=` entries remove the base unit's manual
-TLS configuration before supplying the ACME command. Keep them. Check `--data`
-and the executable path if you installed elsewhere. `--acme-agree-tos` records
+TLS configuration before supplying the ACME command. Keep them. Use the settings drop-in below to change the data path or limits. Check the
+executable path if you installed elsewhere. `--acme-agree-tos` records
 your acceptance of the CA subscriber agreement.
 
 Point the hostname's A/AAAA records at the server, allow inbound TCP **80** and
@@ -316,6 +333,82 @@ game-data mismatch can mean the `--data` directory is missing, inaccessible or
 contains different base files. Confirm that path exists outside the hidden home
 directories. For ACME failures, check the hostname, DNS records, firewall and
 whether another process owns port 80.
+
+### Changing server defaults
+
+The packaged `takserver-settings.conf` works with either manual TLS or the current
+ACME template. You can change paths, port, game/account limits, storage budgets
+and systemd resource limits without rewriting `ExecStart`.
+
+1. Copy the settings template and open your local copy:
+
+   ```sh
+   sudo mkdir -p /etc/systemd/system/takserver.service.d
+   sudo cp -i /usr/share/doc/tak-engine/systemd/takserver-settings.conf \
+     /etc/systemd/system/takserver.service.d/settings.conf
+   sudoedit /etc/systemd/system/takserver.service.d/settings.conf
+   ```
+
+   Keep an existing `settings.conf` rather than overwriting your settings. The
+   template starts with the defaults listed under [resource controls](#resource-controls).
+
+2. Change the values you need. For example, these entries allow up to 32 rooms,
+   eight running games and 20,000 accounts, with a 16 GiB process memory ceiling:
+
+   ```ini
+   [Service]
+   Environment="TAK_SERVER_MAX_GAMES=32"
+   Environment="TAK_SERVER_MAX_RUNNING_GAMES=8"
+   Environment="TAK_SERVER_MAX_ACCOUNTS=20000"
+   MemoryMax=16G
+   ```
+
+   The full template also includes `TAK_SERVER_PORT`, `TAK_SERVER_DATA`,
+   `TAK_SERVER_ACCOUNTS`, `TAK_SERVER_MAP_CACHE`, `TAK_SERVER_REPLAYS`,
+   `TAK_SERVER_MAP_MEMORY_MIB`, `TAK_SERVER_MAP_STORAGE_MIB`,
+   `TAK_SERVER_REPLAY_MEMORY_MIB`, and `TAK_SERVER_REPLAY_STORAGE_MIB`.
+   Game-count limits must be 1–64; account and budget limits must be positive.
+   Memory/storage budgets are in MiB. Changing `MemoryMax` alone does not change
+   the application's limits. If changing the game port, update your firewall and
+   tell players to enter `hostname:port`.
+
+   Keep writable paths under `/var/lib/takserver`; the sandbox makes most other
+   locations read-only and hides home directories. Data paths may contain spaces:
+   keep each complete `Environment="NAME=value"` assignment quoted as shown.
+
+   To allow only existing accounts, change the template's empty extra-arguments
+   entry to:
+
+   ```ini
+   Environment="TAK_SERVER_EXTRA_ARGS=--closed-registration"
+   ```
+
+   Set it back to `Environment="TAK_SERVER_EXTRA_ARGS="` to allow registration.
+   Extra flags are split into arguments by systemd, not run through a shell.
+   Do not put passwords or private keys in environment settings. TLS/ACME choices
+   remain in the base unit or `acme.conf`; do not duplicate those options here.
+
+3. Apply and inspect the configuration:
+
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemd-analyze verify takserver.service
+   sudo systemctl restart takserver
+   sudo systemctl cat takserver
+   sudo systemctl show takserver -p Environment -p MemoryMax -p TasksMax -p LimitNOFILE
+   sudo journalctl -u takserver -n 50 --no-pager
+   ```
+
+   Restarting disconnects active games, so apply changes between matches.
+   The variables are expanded by systemd into normal command-line arguments;
+   this does not add environment-variable handling to the Release server.
+
+**Upgrading an existing setup:** an older `acme.conf` or a full service copy under
+`/etc/systemd/system/takserver.service` may contain a hard-coded `ExecStart`.
+Environment settings will not change that command. Use `systemctl cat takserver`
+to inspect it, then merge the current packaged template's variable-based command
+into your local configuration, preserving your hostname and custom settings.
+Do not overwrite an existing ACME file with `YOUR.SERVER.NAME` still in it.
 
 ### Source installations and older packages
 
