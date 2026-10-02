@@ -1213,8 +1213,8 @@ target_link_libraries(cobtool PRIVATE tak-formats)
 
 # --- Packaging: native .deb + .rpm via CPack (Linux) --------------------------
 # One source of truth for both package families. Build, then from the build dir:
-#   cpack -G DEB   -> tak-engine-<version>-amd64.deb   (sudo apt install ./tak-engine-*-amd64.deb)
-#   cpack -G RPM   -> tak-engine-<version>-x86_64.rpm  (sudo dnf install ./tak-engine-*-x86_64.rpm)
+#   cpack -G DEB   -> tak-engine-<version>-{amd64,arm64}.deb
+#   cpack -G RPM   -> tak-engine-<version>-{x86_64,aarch64}.rpm
 # Every build bakes SDL2/jpeg/zlib and the Bink FFmpeg in, so SHLIBDEPS/AUTOREQ below
 # auto-detect only the C runtime.
 # SDL2 still dlopens its X11/Wayland/audio backends, which every desktop that can run the

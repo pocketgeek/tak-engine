@@ -1,13 +1,10 @@
 name: Linux packages
 run-name: Linux packages · ${{ github.ref_name }}
 
-# Builds native per-distro Linux packages: .debs for Ubuntu 22.04/24.04/26.04 + Debian 12/13, an .rpm for
-# Fedora 44, and a pacman .pkg.tar.zst for Arch -- each compiled INSIDE that
-# distro's container so glibc and package metadata match the target. SDL2/jpeg/
-# zlib and the Bink FFmpeg are statically linked (built from source;
-# +), so the packages are otherwise
-# self-contained. Every leg uploads a CI artifact; the release job attaches them
-# all to the GitHub Release on a tag.
+# Native x64/ARM64 packages for Ubuntu, Debian, Fedora and openSUSE Leap;
+# x64 packages for Arch and Slackware. Each builds in its target distro container.
+# SDL2/jpeg/zlib and FFmpeg/TLS are static; OS graphics/audio drivers remain external.
+# Main builds upload CI artifacts; version tags also attach them to the release.
 
 # Runs on every push to main AS WELL AS on a version tag. It used to be tag-only,
 # to keep per-commit CI fast -- and that is how a std::atomic_ref that Apple's libc++
@@ -171,6 +168,7 @@ jobs:
           tar -C /opt -xzf /tmp/cmake.tar.gz
           ln -sf /opt/cmake-3.28.6-linux-${{ matrix.cpu }}/bin/cmake /usr/local/bin/cmake
           ln -sf /opt/cmake-3.28.6-linux-${{ matrix.cpu }}/bin/cpack /usr/local/bin/cpack
+          ln -sf /opt/cmake-3.28.6-linux-${{ matrix.cpu }}/bin/ctest /usr/local/bin/ctest
           cmake --version
 
       # Static Bink/streaming FFmpeg + static zlib/libjpeg/SDL2 (see the tools/
