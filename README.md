@@ -751,13 +751,20 @@ Use **Options** to adjust audio, anti-aliasing, filtering, shadows, health bars,
 UI scale, cursor size, and camera behavior. **Smooth GUI Art** requires a restart;
 **Smooth Movies** smooths the menu clips as they play.
 
+**Terrain AA** (Off/2x/4x) and **Model AA** (Off/2x/4x/8x/16x) are independent
+stepped sliders. HUD, menus, text and the cursor stay at native resolution.
+Settings apply immediately; an **ACTIVE** suffix reports a lower effective level
+when renderer capabilities or texture-memory limits require it. Older AA settings
+migrate to the same level on both sliders. See [antialiasing](docs/antialiasing.md)
+for pass assignments, resource limits and measured performance tradeoffs.
+
 The shadow option controls unit, scenery, and projectile shadows. Shadows follow
 animated poses, including swaying trees; shading baked into terrain artwork
 remains visible. Accelerated renderers use cached shadow silhouettes and tiles,
 with fallbacks where needed. Animated boat shadows are an intentional enhancement
 over retail Glide, controlled by the same Shadows option.
 
-At distant zoom, tiny stationary units can use cached body images; moving,
+At distant zoom with Model AA off, tiny stationary units can use cached body images; moving,
 selected, and special-effect units retain their full geometry. Wide-map rendering
 also reuses fog geometry and combines fog cells over flat terrain. See the
 [distant rendering measurements](docs/distant-rendering-performance.md) for

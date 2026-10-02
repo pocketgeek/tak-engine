@@ -194,7 +194,7 @@
         sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
         if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }
         else sl("MAX FPS     (VSYNC)");
-        sl(std::string("ANTI-ALIAS  ") + (settings_ && settings_->antiAlias ? "2X" : "OFF"));
+        sl("TERRAIN AA  "+std::to_string(terrainAA_.effective)+"X / MODEL AA  "+std::to_string(modelAA_.effective)+"X");
         sl(std::string("BILINEAR    ") + (settings_ && settings_->bilinear ? "ON" : "OFF"));
         // GPU texture memory: the self-calibrating cap, and this run's peak usage/pages.
         size_t gpuPeak = 0, sysPeak = 0;

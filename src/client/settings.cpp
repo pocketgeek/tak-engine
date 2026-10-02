@@ -1,4 +1,5 @@
 #include "client/settings.h"
+#include "client/selectiveaa.h"
 
 #include <SDL.h>
 
@@ -35,6 +36,7 @@ Settings loadSettings() {
     std::ifstream in(path);
     if (!in) return s;
 
+    int legacyAA=0;bool terrainSeen=false,modelSeen=false;
     std::string line;
     while (std::getline(in, line)) {
         auto hash = line.find('#');
@@ -66,7 +68,9 @@ Settings loadSettings() {
         else if (key == "vsync")           s.vsync = asBool();
         else if (key == "maxFps")          s.maxFps = asInt(30, 480);
         else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
-        else if (key == "antiAlias")       { int a = asInt(0, 4); s.antiAlias = (a >= 4) ? 4 : (a >= 2) ? 2 : 0; }
+        else if (key == "antiAlias") legacyAA=aaStep(asInt(0,4),4);
+        else if (key == "terrainAA") {s.terrainAA=aaStep(asInt(0,4),4);terrainSeen=true;}
+        else if (key == "modelAA") {s.modelAA=aaStep(asInt(0,16));modelSeen=true;}
         else if (key == "buildBarAlign")   s.buildBarAlign = asInt(0, 2);
         // 4.0, matching the slider and GameView. This still said 2.0 when the slider
         // went to 400%, so 300-400% survived until the next restart and then silently
@@ -133,6 +137,8 @@ Settings loadSettings() {
             for (int i = 0; i < n; ++i) s.campaignCompleted[id].insert(i);
         }
     }
+    if(!terrainSeen)s.terrainAA=legacyAA;
+    if(!modelSeen)s.modelAA=legacyAA;
     return s;
 }
 
@@ -146,7 +152,8 @@ bool saveSettings(const Settings& s) {
     o << "vsync = " << (s.vsync ? 1 : 0) << "\n";
     o << "maxFps = " << s.maxFps << "\n";
     o << "uiScale = " << s.uiScale << "\n";
-    o << "antiAlias = " << s.antiAlias << "\n";
+    o << "terrainAA = " << s.terrainAA << "\n";
+    o << "modelAA = " << s.modelAA << "\n";
     o << "buildBarAlign = " << s.buildBarAlign << "\n";
     o << "buildBarScale = " << s.buildBarScale << "\n";
     o << "bilinear = " << (s.bilinear ? 1 : 0) << "\n";

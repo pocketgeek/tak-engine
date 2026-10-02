@@ -115,10 +115,14 @@
         int mvw = mapViewW(winW);
         SDL_Rect worldClip{0, 0, mvw, winH};
         SDL_RenderSetClipRect(ren_, &worldClip);
+        terrainAA_.configure(ren_,winW,winH,settings_?settings_->terrainAA:0,true);
+        modelAA_.configure(ren_,winW,winH,settings_?settings_->modelAA:0,false);
+        terrainAA_.report("terrain");modelAA_.report("models");
+        if(settings_){settings_->terrainAAEffective=terrainAA_.effective;settings_->modelAAEffective=modelAA_.effective;}
         mapView_.setUnderlay(miniTex_);   // low-res gap filler (null until the overview bakes)
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
-            mapView_.draw(mvw, winH);
+            terrainAA_.render(ren_,{0,0,float(mvw),float(winH)},[&]{mapView_.draw(mvw,winH);});
             profTerrainMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                               (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
@@ -297,7 +301,8 @@
                 !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel && !(u.type && u.type->ghost) &&
                 !selSet_.contains(u.id);
         }
-        distantModelCache_.prepare(ren_,distantModelItems_,SDL_GetTicks64());
+        if(settings_ && settings_->modelAA) {for(auto& item:distantModelItems_)item.texture=nullptr;}
+        else distantModelCache_.prepare(ren_,distantModelItems_,SDL_GetTicks64());
         static uint64_t distantLogAt=0;
         if(tak::devFlag("TAK_DISTANT_STATS") && SDL_GetTicks64()-distantLogAt>=1000) {
             distantLogAt=SDL_GetTicks64();
@@ -952,9 +957,17 @@
             } else if (op.u) {
                 drawUnit(*op.u);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
-                bodySubmit_.draw(ren_,op.tex,
-                    std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
-                    !tak::devFlag("TAK_BODY_SDL_SUBMIT"));
+                size_t end=opi+1;
+                while(end<drawOps_.size() && end!=airShadowOp_ && !drawOps_[end].f && !drawOps_[end].u && drawOps_[end].count>0 && drawOps_[end].tex)++end;
+                const auto& last=drawOps_[end-1];
+                const auto vertices=std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(last.start+last.count-op.start));
+                modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(vertices):SDL_FRect{},[&]{
+                    for(size_t i=opi;i<end;++i) {
+                        const auto& part=drawOps_[i];
+                        bodySubmit_.draw(ren_,part.tex,{bodyVerts_.data()+part.start,size_t(part.count)},!tak::devFlag("TAK_BODY_SDL_SUBMIT"));
+                    }
+                });
+                opi=end-1;
             }
         }
         // Fallback drain: if the air layer produced no draw ops at all (every flyer
@@ -2207,6 +2220,7 @@
         mapView_.invalidateRenderTargets();
         fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
         fogMeshValid_ = false;
+        terrainAA_.clear();modelAA_.clear();
         distantModelCache_.clear();
         for(auto& geometry:geomPool_)geometry.geometryKey.clear();
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
@@ -2275,6 +2289,7 @@
         kill(panelTex_);
         kill(botTex_);
         kill(mapPreviewTex_);
+        terrainAA_.clear();modelAA_.clear();
         distantModelCache_.clear();
         distantModelItems_.clear();
         hudFont_.destroyGlyphs();
@@ -2920,6 +2935,7 @@
         // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
         // per texture (usually 1 per unit). The veterancy/conjure colour tint was
         // already baked into the vertices on the worker pool.
+        modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(g.verts):SDL_FRect{},[&]{
         int off = 0;
         for (const auto& r : g.runs) {
             // A null run texture (an atlas page that failed to allocate under
@@ -2927,10 +2943,10 @@
             // SDL_RenderGeometry(nullptr,..) paints the raw vertex colours as a
             // solid white shape. Invisible-until-retry beats a white flash.
             if (r.first)
-                SDL_RenderGeometry(ren_, r.first, g.verts.data() + off, r.second,
-                                   nullptr, 0);
+                SDL_RenderGeometry(ren_,r.first,g.verts.data()+off,r.second,nullptr,0);
             off += r.second;
         }
+        });
 
         constructionParticles(true);
 
@@ -2951,8 +2967,7 @@
                 triBatch_.push_back(v);
             }
             if (!triBatch_.empty())
-                SDL_RenderGeometry(ren_, nullptr, triBatch_.data(),
-                                   int(triBatch_.size()), nullptr, 0);
+                modelAA_.geometry(ren_,nullptr,triBatch_.data(),int(triBatch_.size()));
             if (hadClip) SDL_RenderSetClipRect(ren_, &prevClip);
             else SDL_RenderSetClipRect(ren_, nullptr);
         }
@@ -4097,8 +4112,8 @@
                     vertex.position.x=vertex.position.x*zm+sx;
                     vertex.position.y=vertex.position.y*zm+sy;
                 }
-                SDL_RenderGeometry(ren_,triangle.tex,triangle.v,3,nullptr,0);
             }
+            drawModelTriangles();
         }
         SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
         for(const auto& glow:explosionGlows_) {

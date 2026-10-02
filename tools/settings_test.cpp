@@ -48,8 +48,9 @@ int main() {
     flips("vsync",           [](Settings& s) { s.vsync = !s.vsync; });
     flips("maxFps",          [](Settings& s) { s.maxFps += 17; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
-    flips("antiAlias",       [](Settings& s) { s.antiAlias = s.antiAlias ? 0 : 2; });
-    flips("antiAlias(4x)",   [](Settings& s) { s.antiAlias = 4; });
+    flips("terrainAA",       [](Settings& s) { s.terrainAA = s.terrainAA ? 0 : 2; });
+    flips("modelAA", [](Settings& s) {s.modelAA=16;});
+    flips("terrainAA(4x)",   [](Settings& s) { s.terrainAA = 4; });
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
     flips("buildBarScale",   [](Settings& s) { s.buildBarScale += 0.25f; });
     flips("bilinear",        [](Settings& s) { s.bilinear = !s.bilinear; });

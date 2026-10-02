@@ -720,8 +720,6 @@ int main(int argc, char** argv) {
     // Campaign chaining: a Next/Retry from the result screen re-enters the game
     // directly (skipping the menu) with this mission, movie + briefing and all.
     std::string pendingCampaign, pendingCampaignId;
-    SDL_Texture* aaTex = nullptr;   // whole-frame supersampling target (Options AA); reused
-    int aaW = 0, aaH = 0;
     tak::MenuMusic menuMusic;   // persists across menu -> lobby so the track doesn't restart
     menuMusic.setVolume(settings.masterVol, settings.bgmVol);
     // TAK_SHOT_RESULT=<png> [TAK_SHOT_RESULT_SIDE=0..4] [TAK_SHOT_RESULT_LOSE=1]:
@@ -1392,8 +1390,6 @@ int main(int argc, char** argv) {
         }
         if (targetsReset || windowResized) {
             windowTarget();
-            if (aaTex) gpuvram::destroy(aaTex);
-            aaTex = nullptr; aaW = aaH = 0;
             if (targetsReset) {
                 if (gameView) gameView->invalidateRenderTargets();
                 if (mapView) mapView->invalidateRenderTargets();
@@ -1468,96 +1464,10 @@ int main(int argc, char** argv) {
         if (gameView && dt > 0) gameView->setFps(1.0f / dt);
         int w, h;
         SDL_GetRendererOutputSize(ren, &w, &h);
-        // Whole-frame supersampling AA (Options): render the game to an oversized
-        // target with SDL_RenderSetScale, then downscale it onto the window with
-        // linear filtering. The scale only affects OUTPUT pixels -- framing, fixed-px
-        // HUD and input all stay in 1x logical space, so nothing else has to change.
-        // VRAM-safe: the target is allocated once and reused; if it can't be created
-        // (VRAM pressure) we just fall back to no AA this frame. Baking runs at 1x
-        // BEFORE the scale is set (the lazy atlas bakes reset the scale themselves
-        // too, see their SetRenderTarget sites).
-        float aaS = (settings.antiAlias == 4) ? 2.0f : (settings.antiAlias == 2) ? 1.4142f : 1.0f;
-        // Cap the supersample target a safe margin below the GPU's texture/render
-        // limit. A render target AT the max texture size misbehaves (renders/samples
-        // short, then gets stretched to the window -- squeezing everything leftward,
-        // the AA pointer drift). SDL can't report the true render limit and a readback
-        // probe proved unreliable, so just stay 1/8 below the reported/assumed max. At
-        // the very widest windows this trims 4X's supersample a touch -- imperceptible.
-        static int aaMaxDim = 0;
-        if (aaMaxDim == 0) {
-            SDL_RendererInfo ri;
-            int mx = (SDL_GetRendererInfo(ren, &ri) == 0)
-                         ? std::min(ri.max_texture_width, ri.max_texture_height) : 0;
-            if (mx <= 0 || mx > 16384) mx = 16384;
-            aaMaxDim = mx - mx / 8;
-            std::fprintf(stderr, "AA: max supersample dim %d (GPU reports %d)\n", aaMaxDim, mx);
-        }
-        if (aaS > 1.0f && w > 0 && h > 0)
-            aaS = std::min(aaS, std::min(float(aaMaxDim) / w, float(aaMaxDim) / h));
-        // VRAM-cap integration: the AA supersample target is a big optional texture
-        // (up to ~230 MiB at 4K). Under memory pressure drop it entirely and release it;
-        // otherwise step the scale down until the target fits the remaining budget.
-        // Supersampling is for a GPU. On the SOFTWARE rasteriser the target is a
-        // CPU-side surface and every pixel of it is rasterised by hand: measured at
-        // 614-1154 ms per frame with 4X against ~3 ms with it off, a ~200x penalty for
-        // smoothing nobody can see at one frame per second. It also CRASHES -- SDL's
-        // software blitter runs off the end of a surface when a render target is
-        // switched mid-frame with a supersample target bound (SIGSEGV in SDL_BlitCopy
-        // via SW_RunCommandQueue, reproduced reliably at 4X and never with AA off).
-        // Neither reason needs the other: do not supersample without acceleration.
-        if (!renAccelerated) { aaS = 1.0f; if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; } }
-        if (gpuvram::blocked()) { aaS = 1.0f; if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; } }
-        while (aaS > 1.0f && w > 0 && h > 0 &&
-               gpuvram::bytes() - (aaTex ? size_t(aaW) * size_t(aaH) * 4 : 0) +
-                   size_t(w * aaS) * size_t(h * aaS) * 4 > gpuvram::cap())
-            aaS = (aaS > 1.5f) ? 1.4142f : 1.0f;   // 2x -> 1.41x -> off
-        bool aaOn = false;
-        if (gameView && aaS > 1.0f && !gameView->inLobbyPhase()) {
-            int tw = int(w * aaS), th = int(h * aaS);
-            if (!aaTex || aaW != tw || aaH != th) {
-                if (aaTex) gpuvram::destroy(aaTex);
-                aaTex = gpuvram::create(ren, SDL_PIXELFORMAT_RGBA8888,
-                                          SDL_TEXTUREACCESS_TARGET, tw, th);
-                if (aaTex) { SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear); aaW = tw; aaH = th; }
-                else { aaW = aaH = 0; gpuvram::noteFail(); std::fprintf(stderr, "AA: %dx%d target alloc failed; AA off\n", tw, th); }
-            }
-            if (aaTex) aaOn = true;
-        }
-        // One-line diagnostic whenever the AA level changes, so it's clear on real
-        // hardware whether supersampling actually engaged (or fell back on alloc).
-        static int aaLoggedLevel = -99;
-        if (gameView && !gameView->inLobbyPhase() && settings.antiAlias != aaLoggedLevel) {
-            aaLoggedLevel = settings.antiAlias;
-            if (settings.antiAlias == 0)
-                std::fprintf(stderr, "AA: off\n");
-            else if (aaOn)
-                std::fprintf(stderr, "AA: %dX active -- %dx%d supersample target\n",
-                             settings.antiAlias, int(w * aaS), int(h * aaS));
-            else if (!renAccelerated)
-                std::fprintf(stderr, "AA: %dX requested but OFF -- no accelerated renderer "
-                                     "(supersampling a software rasteriser is ~200x slower)\n",
-                             settings.antiAlias);
-            else
-                std::fprintf(stderr, "AA: %dX requested but INACTIVE (alloc failed?): %s\n",
-                             settings.antiAlias, SDL_GetError());
-        }
-        // Create textures before the render pass (mid-pass creation glitches
-        // the whole frame on some backends). Prepare/bake at 1x, then set the scale.
+        // World passes own independent AA; the window and UI remain native.
         if (mapView) mapView->ensureChunks(w, h);
         if (gameView) gameView->prepare(w, h);
         windowTarget();
-        if (aaOn) {
-            if (SDL_SetRenderTarget(ren, aaTex) == 0) {
-                SDL_RenderSetScale(ren, aaS, aaS);
-                SDL_RenderSetViewport(ren, nullptr);
-                SDL_RenderSetClipRect(ren, nullptr);
-            } else {
-                std::fprintf(stderr, "AA: target bind failed; rendering directly: %s\n", SDL_GetError());
-                windowTarget();
-                gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0;
-                gpuvram::noteFail(); aaOn = false;
-            }
-        }
         SDL_SetRenderDrawColor(ren, 18, 18, 26, 255);
         SDL_RenderClear(ren);
         // Optional per-phase profiler (TAK_PROF=1): prints where each frame's
@@ -1627,18 +1537,6 @@ int main(int argc, char** argv) {
             // to the sprite auto-tuner, so a GPU-bound full-model crowd triggers it.
         }
         double t4 = prof ? pnow() : 0;
-        if (aaOn) {   // downscale the supersampled frame onto the window
-            windowTarget();
-            SDL_SetTextureScaleMode(aaTex, SDL_ScaleModeLinear);   // ensure a smooth downscale
-            // Blit to an EXPLICIT full-drawable rect. A nullptr dst resolves to the
-            // renderer's logical size, which on some backends (Wayland) is smaller
-            // than the real drawable -- squeezing the frame leftward so the cursor
-            // drifts. Use the actual output size so it fills the whole window.
-            int bw = 0, bh = 0;
-            SDL_GetRendererOutputSize(ren, &bw, &bh);
-            SDL_Rect dst{0, 0, bw, bh};
-            SDL_RenderCopy(ren, aaTex, nullptr, &dst);
-        }
         // Custom animated mouse cursor, drawn last so it sits above the HUD (and above
         // the AA-resolved scene) at native resolution. Only in-game; the asset viewers
         // keep the OS arrow.
@@ -2091,14 +1989,9 @@ int main(int argc, char** argv) {
     // sizing above). Leaving it on the persistent window makes the returned menu's
     // surface re-negotiation-prone on Wayland (see the Options click-death bug).
     SDL_SetWindowMinimumSize(win, 0, 0);
-    // Free the (large) AA supersample target on the way back to the menu -- a benchmark
-    // at 4K leaves a multi-hundred-MB texture allocated on a VRAM-tight GPU, which can
-    // stall the menu's present. It's rebuilt on demand when the next game needs AA.
-    if (aaTex) { gpuvram::destroy(aaTex); aaTex = nullptr; aaW = aaH = 0; }
     if (quitApp || (!fromMenu && pendingCampaign.empty())) break;
     }  // ---- end outer session loop ----
 
-    if (aaTex) gpuvram::destroy(aaTex);
     menuMusic.stop();
     menuMusic.setAudioTap(nullptr,nullptr);
     streamingOwner.reset();

@@ -50,6 +50,7 @@
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/aascalereset.h"   // RAII 1:1 render-scale guard (extracted leaf)
 #include "client/distantmodels.h"
+#include "client/selectiveaa.h"
 #include "client/featureindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
@@ -1154,24 +1155,11 @@ private:
             ax=(x-mapView_.offX())*zm;
             ay=(z-float(y>>1)+float(heightRef_)*0.5f-mapView_.offY())*zm;
         }
-        triBatch_.clear();
-        SDL_Texture* cur = nullptr;
-        auto flush = [&] {
-            if (!triBatch_.empty())
-                SDL_RenderGeometry(ren_, cur, triBatch_.data(),
-                                   int(triBatch_.size()), nullptr, 0);
-            triBatch_.clear();
-        };
-        for (auto& t : tris_) {
-            if (t.tex != cur) { flush(); cur = t.tex; }
-            for (int i = 0; i < 3; ++i) {
-                SDL_Vertex v = t.v[i];
-                v.position.x = v.position.x * zm + ax;
-                v.position.y = v.position.y * zm + ay;
-                triBatch_.push_back(v);
-            }
+        for (auto& t : tris_) for (auto& v : t.v) {
+            v.position.x = v.position.x * zm + ax;
+            v.position.y = v.position.y * zm + ay;
         }
-        flush();
+        drawModelTriangles();
     }
 
     void drawGhostAt(const tak::sim::UnitType* type, float x, float z,
@@ -1187,36 +1175,51 @@ private:
         // The ghost lifts onto the relief exactly like the finished unit/building will.
         float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
         float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
-        // Batch by texture (flush on change), like a live unit.
-        triBatch_.clear();
-        SDL_Texture* cur = nullptr;
-        auto flush = [&] {
-            if (!triBatch_.empty())
-                SDL_RenderGeometry(ren_, cur, triBatch_.data(),
-                                   int(triBatch_.size()), nullptr, 0);
-            triBatch_.clear();
-        };
-        for (auto& t : tris_) {
-            if (t.tex != cur) { flush(); cur = t.tex; }
-            for (int i = 0; i < 3; ++i) {
-                SDL_Vertex v = t.v[i];
-                v.position.x = v.position.x * zm + ax;
-                v.position.y = v.position.y * zm + ay;
-                if (invalid) {
-                    // Can't build here: wash the ghost red instead of the box.
-                    v.color.a = 150;
-                    v.color.r = Uint8(std::min(255, int(v.color.r * 0.6f) + 110));
-                    v.color.g = Uint8(v.color.g * 0.30f);
-                    v.color.b = Uint8(v.color.b * 0.30f);
-                } else {
-                    v.color.a = 130;
-                    v.color.r = Uint8(v.color.r * 0.55f);   // shift toward blue
-                    v.color.g = Uint8(v.color.g * 0.8f);
-                }
-                triBatch_.push_back(v);
+        for (auto& t : tris_) for (auto& v : t.v) {
+            v.position.x = v.position.x * zm + ax;
+            v.position.y = v.position.y * zm + ay;
+            if (invalid) {
+                // Can't build here: wash the ghost red instead of the box.
+                v.color.a = 150;
+                v.color.r = Uint8(std::min(255, int(v.color.r * 0.6f) + 110));
+                v.color.g = Uint8(v.color.g * 0.30f);
+                v.color.b = Uint8(v.color.b * 0.30f);
+            } else {
+                v.color.a = 130;
+                v.color.r = Uint8(v.color.r * 0.55f);
+                v.color.g = Uint8(v.color.g * 0.8f);
             }
         }
-        flush();
+        drawModelTriangles();
+    }
+
+    // Already projected, depth-sorted model triangles. Keep texture runs inside
+    // one AA resolve so neighboring faces share coverage at their common edges.
+    void drawModelTriangles() {
+        if (tris_.empty()) return;
+        SDL_FRect bounds{};
+        if (modelAA_.effective) {
+            bool first=true;
+            for (const auto& triangle : tris_) {
+                auto b=tak::SelectiveAA::bounds({triangle.v,3});
+                if(first){bounds=b;first=false;}else {
+                    float right=std::max(bounds.x+bounds.w,b.x+b.w),bottom=std::max(bounds.y+bounds.h,b.y+b.h);
+                    bounds.x=std::min(bounds.x,b.x);bounds.y=std::min(bounds.y,b.y);bounds.w=right-bounds.x;bounds.h=bottom-bounds.y;
+                }
+            }
+        }
+        modelAA_.render(ren_,bounds,[&]{
+            triBatch_.clear();SDL_Texture* cur=nullptr;
+            auto flush=[&]{
+                if(!triBatch_.empty())SDL_RenderGeometry(ren_,cur,triBatch_.data(),int(triBatch_.size()),nullptr,0);
+                triBatch_.clear();
+            };
+            for(const auto& t:tris_) {
+                if(t.tex!=cur){flush();cur=t.tex;}
+                triBatch_.insert(triBatch_.end(),std::begin(t.v),std::end(t.v));
+            }
+            flush();
+        });
     }
 
     // Per-unit screen-space geometry, built in parallel each frame (the expensive
@@ -1253,6 +1256,7 @@ private:
     tak::GeometrySubmit fogSubmit_;
     tak::FogUpload fogUpload_;
     uint64_t fogMeshRevision_=0;
+    tak::SelectiveAA terrainAA_,modelAA_;
     tak::DistantModels distantModelCache_;
     std::vector<tak::DistantModels::Item> distantModelItems_;
     std::vector<SDL_Vertex> shadowCompositeBatch_;
