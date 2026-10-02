@@ -148,6 +148,8 @@ jobs:
             libXrandr libXfixes libXScrnSaver libxkbcommon wayland wayland-protocols \
             libdecor mesa libxcb xorgproto libXrender libXau libXdmcp libglvnd eudev
           update-ca-certificates
+          # Minimal Slackware lacks the usual OpenSSL certificate rehash hook.
+          openssl rehash /etc/ssl/certs
           gcc --version
           g++ --version
           git --version
