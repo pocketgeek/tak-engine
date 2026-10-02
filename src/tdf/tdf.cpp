@@ -27,18 +27,28 @@ struct Parser {
     const std::string& origin;
     size_t pos = 0;
     int line = 1;
+    ParseLimits limits;
+    ParseUsage local{};
+    ParseUsage& usage() {return limits.usage?*limits.usage:local;}
+    [[noreturn]] void limit(const char* reason) const {throw ParseLimitError(origin+": "+reason);}
+    void charge(size_t bytes) {
+        auto& memory=usage().memory;
+        if(memory>limits.memory || bytes>limits.memory-memory)limit("parsed memory limit exceeded");
+        memory+=bytes;
+    }
+    void section() {
+        if(++usage().sections>limits.sections || ++usage().nodes>limits.nodes)limit("section/node limit exceeded");
+        charge(sizeof(Node)*3+256);
+    }
 
-    void addChild(Node& node,const std::string& key,Node child) {
+    void addChild(Node& node,std::map<std::string,size_t>& latest,const std::string& key,Node child) {
         auto previous=node.children.find(key);
         if(previous==node.children.end())node.childOrder.push_back(key);
         else {
-            for(auto entry=node.childEntries.rbegin();entry!=node.childEntries.rend();++entry)
-                if(entry->name==key) {
-                    entry->previous=int(node.previousChildren.size());
-                    node.previousChildren.push_back(std::move(previous->second));
-                    break;
-                }
+            node.childEntries.at(latest.at(key)).previous=int(node.previousChildren.size());
+            node.previousChildren.push_back(std::move(previous->second));
         }
+        latest[key]=node.childEntries.size();
         node.childEntries.push_back({key,-1});
         node.children[key]=std::move(child);
     }
@@ -50,6 +60,7 @@ struct Parser {
     int peek() { return pos < text.size() ? uint8_t(text[pos]) : -1; }
 
     void advance() {
+        if((pos&4095)==0 && limits.stop.stop_requested())limit("parsing cancelled");
         if (text[pos] == '\n') ++line;
         ++pos;
     }
@@ -75,6 +86,7 @@ struct Parser {
 
     // Parse the body between { and } into `node`.
     void parseBody(Node& node, int depth) {
+        std::map<std::string,size_t> latest;
         if (depth > 32) fail("sections nested too deep");
         skipWs();
         if (peek() != '{') fail("expected '{'");
@@ -90,7 +102,7 @@ struct Parser {
                 skipWs();
                 Node child;
                 parseBody(child, depth + 1);
-                addChild(node,key,std::move(child));
+                addChild(node,latest,key,std::move(child));
             } else if (c == ';') {
                 advance();  // stray semicolon
             } else {
@@ -100,9 +112,11 @@ struct Parser {
     }
 
     std::string parseSectionName() {
+        section();
         advance();  // '['
         std::string name;
         while (pos < text.size() && text[pos] != ']') {
+            charge(8);
             name += text[pos];
             advance();
         }
@@ -112,8 +126,11 @@ struct Parser {
     }
 
     void parseAssignment(Node& node) {
+        if(++usage().nodes>limits.nodes)limit("node limit exceeded");
+        charge(256);
         std::string key;
         while (pos < text.size() && text[pos] != '=' && text[pos] != '\n') {
+            charge(4);
             key += text[pos];
             advance();
         }
@@ -127,6 +144,7 @@ struct Parser {
         while (pos < text.size() && text[pos] != '\n') {
             if (text[pos] == '/' && pos + 1 < text.size() && text[pos + 1] == '/') break;
             if (text[pos] == '}' && !trim(value).empty()) break;
+            charge(4);
             value += text[pos];
             advance();
         }
@@ -137,6 +155,7 @@ struct Parser {
 
     Node parseTop() {
         Node root;
+        std::map<std::string,size_t> latest;
         while (true) {
             skipWs();
             int c = peek();
@@ -146,7 +165,7 @@ struct Parser {
             std::string key = lower(name);
             Node child;
             parseBody(child, 0);
-            addChild(root,key,std::move(child));
+            addChild(root,latest,key,std::move(child));
         }
     }
 };
@@ -185,8 +204,8 @@ std::vector<std::pair<std::string_view,const Node*>> Node::orderedChildren() con
     return result;
 }
 
-Node parseText(const std::string& text, const std::string& originName) {
-    Parser p{text, originName};
+Node parseText(const std::string& text, const std::string& originName, ParseLimits limits) {
+    Parser p{text, originName, 0, 1, limits};
     return p.parseTop();
 }
 

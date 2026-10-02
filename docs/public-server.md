@@ -84,11 +84,18 @@ key, certificate chain and retry state. A process lease prevents two servers fro
 managing the same directory. A directory is tied to its hostname and CA; use
 separate directories for different hosts and staging.
 
-Initial issuance must succeed before the game listener starts. Subsequent starts
-reuse a valid saved certificate. Renewal runs in a background worker with bounded
+Initial issuance and renewal run in a background worker. Until a certificate is
+available, the game listener refuses connections; it never falls back to plaintext.
+Subsequent starts reuse a valid saved certificate. Transient initial failures and
+persisted backoffs leave the service running, so the packaged systemd restart
+limit cannot prevent eventual recovery. Shutdown interrupts retry waits promptly;
+do not delete retry state to bypass a CA backoff. The worker uses bounded
 requests, nonce retries, persistent exponential backoff and CA `Retry-After`
 handling. It renews when about one-third of certificate lifetime remains (half
 for certificates shorter than ten days), without assuming a fixed 90-day lifetime.
+The temporary HTTP-01 listener allows 32 connections globally and four per
+normalized source address (IPv4 and IPv4-mapped IPv6 share a limit). Its three-second
+deadline and 8 KiB request limit also apply to incomplete requests.
 ACME Renewal Information (ARI) scheduling is not yet implemented. A successful
 renewal atomically saves the certificate/key bundle and switches new connections
 to it; existing games keep their established TLS sessions. Renewal failures keep
@@ -171,7 +178,34 @@ allocation (32 per IP and 128 globally per second). Upload reads apply
 backpressure at 4 MiB/s per connection and 16 MiB/s globally; fast legitimate
 senders are paced rather than disconnected.
 
-All player-command batches are checked before enqueueing: invalid command
+Map and override validation uses one background worker and at most two waiting
+jobs. Admission reserves twice the advertised package size for canonical and
+extracted bytes, including jobs whose sender disconnects. Cached file sizes are
+checked before allocation and must match the offer; uploaded lengths and final
+admission are checked again. On a cache miss, even an installed map is requested
+from the host instead of rebuilding it on the network loop. This can add a first-use
+upload but preserves the existing protocol. Validation results are discarded after
+the host leaves, changes rooms or changes the relevant settings.
+
+TDF parsing preserves case-insensitive, last-definition lookup and duplicate
+section order, using an index instead of scanning earlier entries. Limits are
+65,536 sections, 262,144 nodes (sections plus assignments), depth 32, and a
+conservative 64 MiB allocation-accounting allowance. Map feature definitions share
+these limits across the package and have an additional 8 MiB source-text limit.
+Oversized custom content is rejected. The map-memory setting is a package admission
+budget, not a total process RSS limit: the single worker also uses bounded parser,
+geometry and cache-writing scratch memory. Keep systemd's MemoryMax above the
+package budget plus simulation and validation working memory.
+
+Commands have one-second byte and count budgets: 4 MiB/65,536 commands per connection
+and account (source address for unauthenticated private clients), and
+32 MiB/524,288 commands globally. These exceed normal client command credits,
+including large battles at 4x speed. Exhaustion applies receive backpressure;
+batches that do not fit the 512-command queue are dropped whole before decoding.
+Overflow summaries are limited to one per connection per five seconds and four
+per second globally. Accepted batches are parsed once, with no partial enqueue.
+
+All admitted player-command batches are checked before enqueueing: invalid command
 types, truncated/trailing data, non-finite coordinates and coordinates outside
 the simulation’s signed 16.16 range are rejected. Spectators cannot submit
 player commands. Production count requests are limited to the client’s maximum
@@ -324,9 +358,11 @@ If the service was already running when you changed its configuration, run
 restart an already active service. `sudo systemctl cat takserver` shows the unit
 and its drop-ins, which is useful for checking the effective command and hostname.
 
-Wait for the TLS listener startup message before connecting. With ACME, initial
-certificate issuance happens first. Players then enter just the configured
-hostname in the multiplayer connection screen.
+For first-time ACME setup, wait for `ACME: certificate installed` before connecting.
+The listener can be running while issuance or a persisted backoff is still pending;
+it refuses game connections until a certificate is available. A valid saved
+certificate is usable immediately. Players enter just the configured hostname
+in the multiplayer connection screen.
 
 If a connection is rejected, inspect the journal for the actual reason. A retail
 game-data mismatch can mean the `--data` directory is missing, inaccessible or
@@ -467,3 +503,24 @@ not implemented. Keep OpenSSL and operating-system trust stores updated.
 Implementation references: [OpenSSL hostname verification](https://docs.openssl.org/3.6/man3/SSL_set1_host/),
 [OpenSSL protocol minimum](https://docs.openssl.org/master/man3/SSL_CTX_set_min_proto_version/),
 and [systemd execution sandbox](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml).
+
+### Focused untrusted-input regressions
+
+Run the parser, worker, command, package and local server tests with:
+
+```sh
+ctest --test-dir build --output-on-failure -R '^(tdf_limits|validationworker|server_commands|server_command_flood|map_transfer|map_transfer_data|override_packs|override_transfer|server_public|acme)$'
+```
+
+Data-backed tests require CMake's `TAK_TEST_DATA` to point to a retail installation.
+The additional local HTTPS ACME fixture requires Python `cryptography` (test-only):
+
+```sh
+python3 tools/acme_recovery_test.py --driver build/acme_test_driver --tls-tool build/tls_test
+```
+
+It deliberately waits through the real initial CA backoff, then verifies successful
+issuance without restarting and recovery from a future persisted deadline. It uses
+only loopback endpoints and temporary keys; it does not contact Let's Encrypt.
+The C++ ACME test also covers long persisted backoff, prompt shutdown, strict paths
+and challenge availability while another source holds incomplete connections.

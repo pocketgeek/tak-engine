@@ -13,6 +13,8 @@ struct AcmeOptions {
     uint16_t challengePort=80; // production CLI always uses 80; test harness may override
 };
 // Owns account state, the temporary HTTP-01 listener and a renewal worker.
+// Initial issuance and renewal retry in the background, respecting persisted backoff.
+// context() is null until initial issuance succeeds: callers must refuse connections.
 // Context snapshots are immutable; existing connections survive replacement.
 class AcmeCertificates {
 public:

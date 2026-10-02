@@ -282,6 +282,16 @@ add_executable(unit_gift_test tools/unit_gift_test.cpp)
 target_link_libraries(unit_gift_test PRIVATE tak-formats)
 add_executable(cmdflow_test tools/cmdflow_test.cpp)
 add_executable(conn_test tools/conn_test.cpp)
+add_executable(validationworker_test tools/validationworker_test.cpp)
+target_link_libraries(validationworker_test PRIVATE tak-formats)
+add_test(NAME validationworker COMMAND validationworker_test)
+set_tests_properties(validationworker PROPERTIES TIMEOUT 10)
+
+add_executable(tdf_limits_test tools/tdf_limits_test.cpp)
+target_link_libraries(tdf_limits_test PRIVATE tak-formats)
+add_test(NAME tdf_limits COMMAND tdf_limits_test)
+set_tests_properties(tdf_limits PROPERTIES TIMEOUT 10)
+
 add_executable(server_commands_test tools/server_commands_test.cpp)
 add_executable(server_address_test tools/server_address_test.cpp)
 target_include_directories(server_address_test PRIVATE src)
@@ -1136,9 +1146,13 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --admin "$<TARGET_FILE:crusades_admin>")
     set_tests_properties(crusades_hardening_network PROPERTIES TIMEOUT 180)
+    add_test(NAME server_command_flood COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_command_flood_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_command_flood PROPERTIES TIMEOUT 60)
     add_test(NAME server_public COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>")
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>" --map-tool "$<TARGET_FILE:map_transfer_test>")
     set_tests_properties(server_public PROPERTIES TIMEOUT 120)
     add_test(NAME crusades_auth_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_auth_network_test.py"

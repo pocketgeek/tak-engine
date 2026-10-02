@@ -64,7 +64,8 @@ You do **not** need to download or copy a service unit from the source repositor
    sudo journalctl -u takserver -f
    ```
 
-   Wait for certificate issuance to finish and the TLS game listener to start.
+   For first-time ACME setup, wait for `ACME: certificate installed` before connecting.
+   A listening service can still be waiting for issuance or a persisted retry deadline.
    Players then enter just your hostname in the multiplayer connection screen.
    Press Ctrl+C to leave the log viewer; this does not stop the server.
 

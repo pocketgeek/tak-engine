@@ -20,7 +20,7 @@ def server(binary, data, root, *options):
         s.bind(('127.0.0.1',0));port=s.getsockname()[1]
     with (root/'log').open('w') as log:
         p=subprocess.Popen([str(binary),'--local','--data',str(data),'--port',str(port),
-            '--accounts',str(root/'accounts'),*options],stdout=log,stderr=log)
+            '--accounts',str(root/'accounts'),'--map-cache-dir',str(root/'maps'),*options],stdout=log,stderr=log)
         try:
             deadline=time.monotonic()+40
             while time.monotonic()<deadline:
@@ -44,8 +44,8 @@ def login(port, fingerprint, name, context=None):
 def options(stress=0,benchmark=0):
     return bytes([0,1,0,10,0])+struct.pack('<I',2000)+bytes([0,stress,0,benchmark,0,0])
 
-def create(p,stress=0,benchmark=0,mission=''):
-    p.send('CreateGame',auth.field('test')+auth.field('')+auth.field('missing-test-map')+
+def create(p,stress=0,benchmark=0,mission='',map_id='missing-test-map'):
+    p.send('CreateGame',auth.field('test')+auth.field('')+auth.field(map_id)+
         auth.field(mission)+options(stress,benchmark)+bytes([8,0,0]))
 
 def room(p):
@@ -53,7 +53,7 @@ def room(p):
     return p.receive('LobbyState').num('<I')
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--server',type=Path,required=True);ap.add_argument('--data',type=Path,required=True);ap.add_argument('--tls-tool',type=Path,required=True);a=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--server',type=Path,required=True);ap.add_argument('--data',type=Path,required=True);ap.add_argument('--tls-tool',type=Path,required=True);ap.add_argument('--map-tool',type=Path,required=True);a=ap.parse_args()
     with tempfile.TemporaryDirectory(prefix='tak-public-') as tmp:
         root=Path(tmp)
         subprocess.run([str(a.tls_tool.resolve()),"--fixtures",str(root)],check=True)
@@ -69,6 +69,13 @@ def main():
                 assert b'disabled' in p.receive('Reject').field()
                 p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field('0'*64)+struct.pack('<I',1<<20))
                 error=p.receive('MapError');assert error.num('<I')==rid;assert b'budget' in error.field()
+                # Cache admission uses actual bytes, not a forged smaller offer.
+                cache=root/'maps'/'MapCache'/('0'*64+'.takmap')
+                cache.parent.mkdir(parents=True,exist_ok=True);cache.write_bytes(bytes(600000))
+                p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field('0'*64)+struct.pack('<I',1000))
+                error=p.receive('MapError');assert error.num('<I')==rid
+                assert b'mismatch' in error.field() and cache.exists()
+                cache.unlink()
                 # A smaller offer is admitted; mere offers reserve aggregate memory.
                 p.send('MapOffer',struct.pack('<I',rid)+auth.field('missing-test-map')+auth.field('0'*64)+struct.pack('<I',1000))
                 assert p.receive('MapRequest').num('<I')==rid
@@ -76,6 +83,30 @@ def main():
                 p.send('LeaveGame');p.send('Ping');p.receive('Pong')
                 create(q);room(q) # capacity and upload reservation released on leave
                 assert process.poll() is None
+        stock=root/'stock.takmap'
+        subprocess.run([str(a.map_tool.resolve()),'--export-package',str(a.data.resolve()),str(stock)],check=True)
+        digest=hashlib.sha256(stock.read_bytes()).hexdigest()
+        assert stock.stat().st_size>1000
+        with server(a.server.resolve(),a.data.resolve(),root,'--map-memory-mib','1') as (port,h,process):
+            with contextlib.closing(login(port,h,'Alice')) as p:
+                create(p,map_id='Ulasem Arena');rid=room(p)
+                # Installed map with the correct hash but a forged smaller size:
+                # cache miss must request bounded upload, never build/accept local.
+                p.send('MapOffer',struct.pack('<I',rid)+auth.field('Ulasem Arena')+auth.field(digest)+struct.pack('<I',1000))
+                assert p.receive('MapRequest').num('<I')==rid
+                p.send('MapChunk',struct.pack('<II',rid,0)+bytes(1001))
+                error=p.receive('MapError');assert error.num('<I')==rid
+                assert b'chunk' in error.field()
+                p.send('LeaveGame');p.send('Ping');p.receive('Pong')
+                create(p);rid=room(p)
+                full=bytearray(options());full[2]=2
+                p.send('SetGameOptions',full)
+                cache=root/'maps'/'OverrideCache'/('1'*64+'.takoverrides')
+                cache.parent.mkdir(parents=True,exist_ok=True);cache.write_bytes(bytes(600000))
+                p.send('OverrideOffer',struct.pack('<I',rid)+auth.field('overrides')+auth.field('1'*64)+struct.pack('<I',1000))
+                error=p.receive('OverrideError');assert error.num('<I')==rid
+                assert b'mismatch' in error.field() and cache.exists()
+                p.send('Ping');p.receive('Pong');assert process.poll() is None
         with server(a.server.resolve(),a.data.resolve(),root,'--closed-registration') as (port,h,process):
             with contextlib.closing(login(port,h,'Alice')) as p:
                 p.send('ListGames');assert p.receive('GameList').num('<I')==0

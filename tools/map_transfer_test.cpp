@@ -154,6 +154,10 @@ static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) 
 }
 
 int main(int argc, char** argv) try {
+    if(argc==4 && std::string(argv[1])=="--export-package") {
+        auto data=hpi::mountRetailRoot(argv[2],hpi::OverridePolicy::None);
+        write(argv[3],net::maps::build(data,"Ulasem Arena")->bytes);return 0;
+    }
     if(argc==5 && std::string(argv[1])=="--solo-network")return soloNetwork(uint16_t(std::stoi(argv[2])),argv[3],argv[4]);
     if (argc >= 5 && std::string(argv[1]) == "--network") {
         const auto port = uint16_t(std::stoi(argv[2]));
@@ -373,6 +377,22 @@ int main(int argc, char** argv) try {
     hpi::Vfs source; source.setMapFiles(files);
     auto p = net::maps::build(source,"test");
     check(p->digest == net::maps::build(source,"TEST")->digest, "unstable map fingerprint");
+    {
+        // A resource that will ultimately be rejected as unreferenced must not
+        // get an unlimited parser budget before the reference check.
+        auto hostile=*p->files;
+        std::string text;for(int i=0;i<70000;++i)text+="[x]{}\n";
+        hostile["features/unreferenced.tdf"]={text.begin(),text.end()};
+        net::Writer encoded;encoded.u32(2);encoded.str(p->mapPath);encoded.u32(uint32_t(hostile.size()));
+        for(const auto& [name,data]:hostile) {
+            encoded.str(name);encoded.u32(uint32_t(data.size()));
+            encoded.b.insert(encoded.b.end(),data.begin(),data.end());
+        }
+        rejects([&]{net::maps::decode(encoded.b,"");},"unreferenced adversarial TDF accepted");
+        std::stop_source cancelled;cancelled.request_stop();
+        rejects([&]{net::maps::decode(p->bytes,p->digest,cancelled.get_token());},"cancelled map decoded");
+    }
+
     check(!net::maps::authoredScenario(*p),"ordinary CRT map became a solo scenario");
     {
         auto authoredFiles=std::make_shared<hpi::Vfs::Files>(*p->files);
@@ -415,6 +435,9 @@ int main(int argc, char** argv) try {
     net::maps::saveCache(root,*p);
     net::maps::saveCache(root,*p,1); // an existing download needs no additional quota
 
+    rejects([&]{net::maps::loadCache(root,p->digest,p->bytes.size()-1);},"actual cache size escaped budget");
+    rejects([&]{net::maps::loadCache(root,p->digest,net::maps::kMaxBytes,p->bytes.size()-1);},"cache advertised mismatch accepted");
+    check(std::filesystem::exists(root/"MapCache"/(p->digest+".takmap")),"admission removed valid cache");
     const auto cached = net::maps::loadCache(root,p->digest);
     check(cached && *cached->files == *p->files, "cache companion roundtrip");
     hpi::Vfs catalog; catalog.refreshMapCache(root);

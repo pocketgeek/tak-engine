@@ -32,7 +32,8 @@ std::shared_ptr<Package> build(const std::filesystem::path& root,const std::vect
 void saveCache(const std::filesystem::path& root,const Package& package,uint64_t quota) {
     if(!maps::validDigest(package.digest))throw std::runtime_error("invalid override cache key");
     auto dir=root/"OverrideCache",path=dir/(package.digest+".takoverrides");
-    if(loadCache(root,package.digest))return;
+    // The caller already verified these bytes. Avoid decoding another full
+    // package merely to check whether a cache entry can be reused.
     if(std::filesystem::exists(path))std::filesystem::remove(path);
     tak::storageRoom(quota?tak::storageUsage(dir):0,package.bytes.size(),quota);
     std::filesystem::create_directories(dir);
@@ -40,8 +41,12 @@ void saveCache(const std::filesystem::path& root,const Package& package,uint64_t
     try {std::ofstream out(tmp,std::ios::binary);out.write(reinterpret_cast<const char*>(package.bytes.data()),std::streamsize(package.bytes.size()));out.close();if(!out)throw std::runtime_error("cannot save override cache");std::filesystem::rename(tmp,path);}
     catch(...){std::error_code ec;std::filesystem::remove(tmp,ec);throw;}
 }
-std::shared_ptr<Package> loadCache(const std::filesystem::path& root,const std::string& digest) {
+std::shared_ptr<Package> loadCache(const std::filesystem::path& root,const std::string& digest,size_t maxBytes,size_t expected) {
     if(!maps::validDigest(digest))return {};
-    try {auto path=root/"OverrideCache"/(digest+".takoverrides");auto n=std::filesystem::file_size(path);if(!n || n>maps::kMaxBytes)return {};std::vector<uint8_t> b(n);std::ifstream in(path,std::ios::binary);in.read(reinterpret_cast<char*>(b.data()),std::streamsize(n));if(!in)return {};return decode(std::move(b),digest);}catch(const std::exception&){return {};}
+    auto path=root/"OverrideCache"/(digest+".takoverrides");
+    std::error_code ec;auto n=std::filesystem::file_size(path,ec);
+    if(ec || !n || n>maps::kMaxBytes)return {};
+    if(n>maxBytes || (expected && n!=expected))throw std::runtime_error("cached override size/budget mismatch");
+    try {std::vector<uint8_t> b(n);std::ifstream in(path,std::ios::binary);in.read(reinterpret_cast<char*>(b.data()),std::streamsize(n));if(!in)return {};return decode(std::move(b),digest);}catch(const std::exception&){return {};}
 }
 }

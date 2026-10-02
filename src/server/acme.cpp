@@ -231,17 +231,18 @@ public:
         const int fd=listener_.fd;
         worker_=std::thread([this,fd,path="/.well-known/acme-challenge/"+token,authorization=std::move(authorization)] {
             const Stop stop{&stopping_};
-            struct Peer {int fd;std::string input,output;size_t sent=0;Clock::time_point deadline;};
+            struct Peer {int fd;std::string source,input,output;size_t sent=0;Clock::time_point deadline;};
             std::vector<Peer> peers;
             while(!stop.stop_requested()) {
                 for(unsigned count=0;count<32;++count) {
                     int client=int(::accept(fd,nullptr,nullptr));if(client<0)break;
-                    if(peers.size()>=32) {tak::net::sockClose(client);continue;}
+                    const auto source=tak::net::peerAddress(client);
+                    if(peers.size()>=32 || std::count_if(peers.begin(),peers.end(),[&](const Peer& peer){return peer.source==source;})>=4) {tak::net::sockClose(client);continue;}
                     tak::net::sockSetNonBlock(client);
 #ifdef SO_NOSIGPIPE
                     int one=1;setsockopt(client,SOL_SOCKET,SO_NOSIGPIPE,&one,sizeof one);
 #endif
-                    peers.push_back({client,{},{},0,Clock::now()+std::chrono::seconds(3)});
+                    peers.push_back({client,source,{},{},0,Clock::now()+std::chrono::seconds(3)});
                 }
                 for(auto it=peers.begin();it!=peers.end();) {
                     bool close=Clock::now()>=it->deadline;char bytes[2048];
@@ -443,10 +444,8 @@ struct AcmeCertificates::Impl {
             try {renewAt=renewalTime(bundle,options.domain);std::atomic_store(&current,tak::net::TlsContext::serverPem(bundle,bundle));}
             catch(const std::exception& e) {std::fprintf(stderr,"ACME: stored certificate unavailable: %s\n",e.what());}
         }
-        if(!std::atomic_load(&current)) {
-            require(std::time(nullptr)>=nextAttempt,"issuance backoff active; check earlier error and retry later");
-            try {issue({});}catch(const std::exception& e) {recordFailure(e);throw;}
-        }
+        // Initial issuance uses the same persistent, interruptible retry loop as
+        // renewal. A CA backoff must not become a systemd restart storm.
         worker=std::thread([this] {
             const Stop stop{&stopping};
             while(!stop.stop_requested()) {

@@ -7,6 +7,8 @@
 #include "net/conn.h"
 #include "server/acme_internal.h"
 #include "server/acme.h"
+#include <ctime>
+#include <thread>
 #include <chrono>
 #include <cstdio>
 #include <stdexcept>
@@ -25,13 +27,17 @@ uint16_t unusedPort() {
     check(bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof addr)==0,"bind");
     socklen_t n=sizeof addr;check(getsockname(fd,reinterpret_cast<sockaddr*>(&addr),&n)==0,"getsockname");sockClose(fd);return ntohs(addr.sin_port);
 }
-int connectTo(uint16_t port) {
+int connectTo(uint16_t port,const char* source=nullptr) {
     int fd=int(socket(AF_INET,SOCK_STREAM,0));check(fd>=0,"socket");
+    if(source) {
+        sockaddr_in local{};local.sin_family=AF_INET;local.sin_addr.s_addr=htonl(0x7f000002);
+        check(bind(fd,reinterpret_cast<sockaddr*>(&local),sizeof local)==0,"bind source");
+    }
     sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);addr.sin_port=htons(port);
     if(connect(fd,reinterpret_cast<sockaddr*>(&addr),sizeof addr)) {sockClose(fd);return -1;}return fd;
 }
 std::string request(uint16_t port,const std::string& text) {
-    int fd=connectTo(port);check(fd>=0,"connect responder");
+    int fd=connectTo(port,"127.0.0.2");check(fd>=0,"connect responder");
     check(send(fd,text.data(),int(text.size()),MSG_NOSIGNAL)==int(text.size()),"send request");
     sockSetNonBlock(fd);std::string response;char bytes[2048];
     auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(4);
@@ -57,8 +63,8 @@ int main() {
             for(const char* path:{"/","/../current.pem","/.well-known/acme-challenge/wrong"})
                 check(request(port,std::string("GET ")+path+" HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"),"unknown path");
             check(request(port,"POST /.well-known/acme-challenge/"+token+" HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"),"unexpected method");
-            std::vector<int> slow;for(int i=0;i<16;++i)slow.push_back(connectTo(port));
-            check(request(port,"GET / HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"),"slow peers block validation");
+            std::vector<int> slow;for(int i=0;i<40;++i)slow.push_back(connectTo(port));
+            check(request(port,"GET /.well-known/acme-challenge/"+token+" HTTP/1.1\r\n\r\n").ends_with(auth),"one source blocked another source's challenge");
             for(int fd:slow)if(fd>=0)sockClose(fd);
             bool rejected=false;try {Challenge duplicate(port,token,auth);}catch(const std::exception&) {rejected=true;}
             check(rejected,"occupied challenge port accepted");
@@ -100,6 +106,22 @@ int main() {
                 check(rejected,"shared state lease not enforced");
                 check(!std::filesystem::exists(root/"account.pem"),"offline startup contacted CA");
             }
+            std::filesystem::remove(root/"current.pem");
+            // Local closed port: a transient CA failure records backoff but does
+            // not terminate the service. No public CA or DNS is contacted.
+            options.directory="https://localhost:"+std::to_string(unusedPort())+"/dir";
+            std::filesystem::remove(root/"identity.json");
+            {
+                tak::srv::AcmeCertificates failed(options);
+                auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+                while(!std::filesystem::exists(root/"retry.json") && std::chrono::steady_clock::now()<deadline)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                check(std::filesystem::exists(root/"retry.json") && !failed.context(),"transient failure did not persist retry");
+            }
+            {std::ofstream retry(root/"retry.json");retry<<"{\"next\":"<<(std::time(nullptr)+7200)<<",\"failures\":2}";}
+            auto began=std::chrono::steady_clock::now();
+            {tak::srv::AcmeCertificates waiting(options);check(!waiting.context(),"backoff served plaintext context");}
+            check(std::chrono::steady_clock::now()-began<std::chrono::seconds(1),"persisted backoff blocked startup/shutdown");
             std::filesystem::remove_all(root);
         }catch(...) {std::filesystem::remove_all(root);throw;}
         std::puts("ACME responder, saved state and configuration checks passed");return 0;

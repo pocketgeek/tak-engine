@@ -35,6 +35,11 @@ int main() {
             check(!tak::srv::validPlayerCommands(batch(c)),"unsafe production count");
         }
     }
+    std::vector<Command> parsed;
+    c=Command{};
+    Writer large;large.u32(512);
+    for(int i=0;i<512;++i){c.unitId=i;large.cmd(c);}
+    check(tak::srv::parsePlayerCommands(large.b,parsed) && parsed.size()==512 && parsed.back().unitId==511,"large batch decoded once in order");
     c=Command{};
     c.kind=Cmd::Move;auto bytes=batch(c);
     for(size_t n=0;n<bytes.size();++n)

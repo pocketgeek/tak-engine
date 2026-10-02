@@ -7,6 +7,9 @@ int main(int argc,char** argv) {
     try {
         tak::srv::AcmeOptions options;options.state=argv[1];options.domain=argv[2];options.directory=argv[3];options.challengePort=uint16_t(std::stoi(argv[4]));options.agreeTerms=true;
         tak::srv::AcmeCertificates certificates(options);
+        const auto startup=std::chrono::steady_clock::now()+std::chrono::seconds(90);
+        while(!certificates.context() && std::chrono::steady_clock::now()<startup)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if(!certificates.context())return 1;
         std::printf("certificate ready\n");std::fflush(stdout);
         auto previous=certificates.context();

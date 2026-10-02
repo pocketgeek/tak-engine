@@ -17,6 +17,8 @@
 #include "server/commands.h"
 #include "server/acme.h"
 #include "server/roomworker.h"
+#include "server/validationworker.h"
+#include <stop_token>
 #include "server/roomtick.h"
 #include "net/crusades.h"
 #include "tnt/mapgen.h"
@@ -236,7 +238,9 @@ struct Client {
     // too, so the cursor catches up to the present by itself; until it does,
     // this client is skipped by the live TickBundle broadcast so the stream
     // cannot go out of order.
-    WorkBudget lobbyWork,uploadWork;
+    WorkBudget lobbyWork,uploadWork,commandBytes,commandCount;
+    uint64_t commandLogAt=0, validationId=0;
+    std::optional<Frame> deferredMapOffer;
     uint64_t mapReceiveStarted=0,mapReceiveProgress=0;
     bool replaying = false;
     size_t replayPos = 0;        // next index into Room::log to send
@@ -344,6 +348,7 @@ struct Room {
 
 class Server {
 public:
+    ~Server() {for(auto& job:validations_)job.stop.request_stop();}
     void setReplayDir(const std::string& d) { replayDir_ = d; }
     // Pin every game's RNG seed (--seed). Games are otherwise seeded randomly, which
     // is what makes "Random Start Locations" actually random -- but it also makes a
@@ -444,11 +449,23 @@ private:
     std::unique_ptr<tak::srv::crusades::CampaignServiceLease> campaignLease_;
     std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
     SharedWorkBudget acceptKeys_,lobbyWorkKeys_;
-    WorkBudget acceptWork_;
+    WorkBudget acceptWork_,commandBytes_,commandCount_,commandLogs_;
+    SharedWorkBudget commandByteKeys_,commandCountKeys_;
     WorkBudget lobbyGlobalWork_, uploadGlobalWork_, accountWriteWork_;
     bool allowLobbyWork(Client& c,const Frame& f);
-    bool canRead(const Client& c,uint64_t now) const {return (!c.mapReceive.size && !c.overrideReceive.size) || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64));}
+    bool canRead(const Client& c,uint64_t now) const {return c.commandBytes.available(now,4u<<20) && commandBytes_.available(now,32u<<20) && ((!c.mapReceive.size && !c.overrideReceive.size) || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64)));}
     size_t mapMemory() const;
+    struct Validation {
+        uint64_t id; uint32_t client,room,size; bool overrides,cache;
+        std::string digest,map;
+        std::stop_source stop;
+        std::future<std::shared_ptr<tak::net::maps::Package>> result;
+    };
+    std::vector<Validation> validations_;
+    uint64_t nextValidation_=1;
+    tak::srv::ValidationWorker validationWorker_;
+    void validatePackage(Client& c,Room& room,bool overrides,bool cache);
+    void finishValidations();
     SharedWorkBudget campaignWorkKeys_, campaignReplayKeys_;
     SharedWorkBudget loginWorkKeys_{tak::srv::LoginThrottle::kForgetMs};
     WorkBudget campaignGlobalWork_, campaignGlobalReplay_, loginGlobalWork_;
@@ -1976,6 +1993,7 @@ void Server::leaveRoom(Client& c, const char* reason) {
         auto it = std::find(sp.begin(), sp.end(), c.id);
         if (it != sp.end()) {
             sp.erase(it);
+            c.validationId=0;c.deferredMapOffer.reset();
             c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
             std::fprintf(stderr, "client %u stopped spectating game %u (%s)\n", c.id, r->id, reason);
             return;
@@ -1993,6 +2011,7 @@ void Server::leaveRoom(Client& c, const char* reason) {
     }
     uint32_t rid = r->id;
     bool wasHost = (r->hostId == c.id);
+    c.validationId=0;c.deferredMapOffer.reset();
     c.state = Client::Lobby; c.roomId = 0; c.slot = -1; c.loaded = false;
     // If the host left in the lobby, pass host to the next human (or dissolve).
     if (!r->running && wasHost) {
@@ -2017,8 +2036,74 @@ bool Server::mapsReady(const Room& r) const {
         if (peer->roomId == r.id && peer->mapReadyRoom != r.id) return false;
     return true;
 }
+void Server::validatePackage(Client& c,Room& room,bool overrides,bool cache) {
+    if(validations_.size()>=3)throw std::runtime_error("map validation capacity reached; retry later");
+    auto& receive=overrides?c.overrideReceive:c.mapReceive;
+    if(!receive.size || mapMemory()>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
+    Validation job{nextValidation_++,c.id,room.id,receive.size,overrides,cache,receive.digest,room.mapId,{}, {}};
+    const auto token=job.stop.get_token();
+    const auto root=std::filesystem::u8path(mapRoot_);
+    const auto digest=job.digest;const auto size=job.size;const auto quota=limits_.mapDisk;
+    job.result=validationWorker_.submit([root,digest,size,quota,overrides,cache,token,bytes=std::move(receive.bytes)]() mutable {
+        if(token.stop_requested())throw std::runtime_error("map validation cancelled");
+        std::shared_ptr<tak::net::maps::Package> package;
+        if(cache)package=overrides?tak::net::overrides::loadCache(root,digest,size,size):tak::net::maps::loadCache(root,digest,size,size,token);
+        else {
+            if(bytes.size()!=size)throw std::runtime_error("uploaded package size mismatch");
+            package=overrides?tak::net::overrides::decode(std::move(bytes),digest):tak::net::maps::decode(std::move(bytes),digest,token);
+        }
+        if(token.stop_requested())throw std::runtime_error("map validation cancelled");
+        if(package && !cache) {
+            if(overrides)tak::net::overrides::saveCache(root,*package,quota);
+            else tak::net::maps::saveCache(root,*package,quota);
+        }
+        return package;
+    });
+    c.validationId=job.id;receive={};
+    validations_.push_back(std::move(job));
+}
+void Server::finishValidations() {
+    for(auto it=validations_.begin();it!=validations_.end();) {
+        auto peer=clients_.find(it->client);auto room=rooms_.find(it->room);
+        const bool valid=peer!=clients_.end() && room!=rooms_.end() &&
+            peer->second->validationId==it->id && peer->second->roomId==it->room &&
+            room->second.hostId==it->client && !room->second.running && room->second.mapId==it->map &&
+            (!it->overrides || room->second.opts.overridePolicy==2);
+        if(!valid)it->stop.request_stop();
+        if(it->result.wait_for(std::chrono::seconds(0))!=std::future_status::ready) {++it;continue;}
+        auto job=std::move(*it);it=validations_.erase(it);
+        try {
+            auto package=job.result.get();
+            if(!valid)continue;
+            auto& c=*peer->second;auto& r=room->second;c.validationId=0;
+            if(!package && job.cache) {
+                if(uint64_t(mapMemory())+uint64_t(job.size)*2>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
+                auto& receive=job.overrides?c.overrideReceive:c.mapReceive;
+                receive.begin(job.room,job.size,job.digest);
+                if(job.overrides)c.overrideStarted=c.overrideProgress=nowMs();
+                else c.mapReceiveStarted=c.mapReceiveProgress=nowMs();
+                Writer request;request.u32(job.room);c.conn.send(job.overrides?Msg::OverrideRequest:Msg::MapRequest,request);
+                continue;
+            }
+            if(!package || package->bytes.size()!=job.size || uint64_t(mapMemory())+uint64_t(package->bytes.size())*2>limits_.mapMemory)
+                throw std::runtime_error("package size/budget mismatch");
+            if(job.overrides) {
+                r.overridePackage=std::move(package);broadcastLobby(r);
+            } else acceptMap(r,std::move(package));
+        } catch(const std::exception& e) {
+            if(valid) {
+                auto& c=*peer->second;c.validationId=0;
+                Writer error;error.u32(job.room);error.str(e.what());c.conn.send(job.overrides?Msg::OverrideError:Msg::MapError,error);
+            }
+        }
+    }
+    for(auto& [id,peer]:clients_)if(!peer->validationId && !peer->overrideReceive.size && peer->deferredMapOffer) {
+        auto frame=std::move(*peer->deferredMapOffer);peer->deferredMapOffer.reset();
+        mapMsg(*peer,frame);
+    }
+}
 void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> package) {
-    tak::net::maps::saveCache(std::filesystem::u8path(mapRoot_),*package,limits_.mapDisk);
+    if(uint64_t(mapMemory())+uint64_t(package->bytes.size())*2>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
     room.mapPackage = std::move(package);
     std::fprintf(stderr, "game %u: map verified %s (%zu bytes)\n", room.id,
                  room.mapPackage->digest.c_str(), room.mapPackage->bytes.size());
@@ -2030,26 +2115,21 @@ void Server::overrideMsg(Client& c,const Frame& f) {
     Room* room=roomOf(c);if(!room || !room->mission.empty() || !room->campaignBattleId.empty())return;
     try {
         Reader rd(f.payload.data(),f.payload.size());
-        auto accept=[&](std::shared_ptr<tak::net::overrides::Package> package){
-            tak::net::overrides::saveCache(std::filesystem::u8path(mapRoot_),*package,limits_.mapDisk);
-            room->overridePackage=std::move(package);c.overrideReceive={};broadcastLobby(*room);
-        };
         if(f.kind==Msg::OverrideOffer){
-            if(room->running || room->hostId!=c.id || room->opts.overridePolicy!=2 || c.overrideReceive.size)return;
+            if(room->running || room->hostId!=c.id || room->opts.overridePolicy!=2 || c.overrideReceive.size || c.validationId)return;
             const auto id=rd.u32();const auto label=rd.str(),digest=rd.str();const auto count=rd.u32();
             if(!rd.ok || rd.p!=rd.end || id!=room->id || label!="overrides")throw std::runtime_error("invalid override offer");
             if(count>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(count)*2>limits_.mapMemory)throw std::runtime_error("server override memory budget reached");
             c.overrideReceive.begin(id,count,digest);c.overrideStarted=c.overrideProgress=nowMs();
             room->overrideData.reset();room->overridePackage.reset();
             room->mapVfs.reset();room->mapPackage.reset();
-            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};}
+            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};peer->validationId=0;peer->deferredMapOffer.reset();}
             for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->overrideReady.clear();peer->overrideOffered.clear();peer->overrideSend={};if(pid!=c.id)peer->overrideReceive={};}
             broadcastLobby(*room);
-            if(auto cached=tak::net::overrides::loadCache(std::filesystem::u8path(mapRoot_),digest)){if(cached->bytes.size()!=count)throw std::runtime_error("override size mismatch");accept(std::move(cached));return;}
-            Writer request;request.u32(id);c.conn.send(Msg::OverrideRequest,request);
+            validatePackage(c,*room,true,true);
         }else if(f.kind==Msg::OverrideChunk){
             if(room->running || room->hostId!=c.id || room->opts.overridePolicy!=2)return;
-            c.overrideProgress=nowMs();if(c.overrideReceive.append(rd))accept(tak::net::overrides::decode(std::move(c.overrideReceive.bytes),c.overrideReceive.digest));
+            c.overrideProgress=nowMs();if(c.overrideReceive.append(rd))validatePackage(c,*room,true,false);
         }else if(f.kind==Msg::OverrideRequest){
             auto id=rd.u32();auto digest=rd.str();
             if(!rd.ok || rd.p!=rd.end || id!=room->id || !room->overridePackage || digest!=room->overridePackage->digest || c.overrideSend.package)return;
@@ -2063,7 +2143,7 @@ void Server::overrideMsg(Client& c,const Frame& f) {
             auto id=rd.u32();auto why=rd.str();if(rd.ok && rd.p==rd.end && id==room->id && why.size()<=512){c.overrideReady.clear();c.overrideSend={};c.overrideReceive={};}
         }
     }catch(const std::exception& e){
-        c.overrideReceive={};c.overrideSend={};c.overrideReady.clear();
+        c.validationId=0;c.overrideReceive={};c.overrideSend={};c.overrideReady.clear();
         Writer error;error.u32(room->id);error.str(e.what());c.conn.send(Msg::OverrideError,error);
     }
 }
@@ -2079,27 +2159,26 @@ void Server::mapMsg(Client& c, const Frame& f) {
             if (!rd.ok || rd.p != rd.end || id != room->id || name != room->mapId ||
                 !room->mission.empty() || tak::mapgen::isGeneratedMapId(name))
                 throw std::runtime_error("invalid map offer");
+            // Clients pipeline their map offer behind override chunks. Hold one
+            // bounded offer until the asynchronous override validation finishes.
+            if(c.validationId || c.overrideReceive.size) {
+                if(f.payload.size()>2048)throw std::runtime_error("map offer too large");
+                c.deferredMapOffer=f;return;
+            }
             // Reserve the advertised upload, not only bytes received so far.
             // Decoding keeps both the canonical package and extracted files.
             if(size>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(size)*2>limits_.mapMemory)
                 throw std::runtime_error("server map memory budget reached");
             c.mapReceive.begin(id, size, hash);
             c.mapReceiveStarted=c.mapReceiveProgress=nowMs();
-            if (auto cached = tak::net::maps::loadCache(std::filesystem::u8path(mapRoot_), hash)) {
-                c.mapReceive = {}; acceptMap(*room, std::move(cached)); return;
-            }
-            try {
-                auto local = tak::net::maps::build(roomData(*room).vfs, name);
-                if (local->digest == hash) { c.mapReceive = {}; acceptMap(*room, std::move(local)); return; }
-            } catch (const std::exception&) {}
-            std::fprintf(stderr, "game %u: requesting missing/different map from host (%u bytes)\n", room->id, size);
-            Writer request; request.u32(room->id); c.conn.send(Msg::MapRequest, request);
+            // Installed maps follow the same content-addressed upload path on
+            // a cache miss; never rebuild arbitrary maps on the network thread.
+            validatePackage(c,*room,false,true);
         } else if (f.kind == Msg::MapChunk) {
             if (room->running || room->hostId != c.id || room->mapPackage) return;
             c.mapReceiveProgress=nowMs();
             if (c.mapReceive.append(rd)) {
-                auto package = tak::net::maps::decode(std::move(c.mapReceive.bytes), c.mapReceive.digest);
-                c.mapReceive = {}; acceptMap(*room, std::move(package));
+                validatePackage(c,*room,false,false);
             }
         } else if (f.kind == Msg::MapRequest) {
             auto id = rd.u32();
@@ -2114,13 +2193,13 @@ void Server::mapMsg(Client& c, const Frame& f) {
         } else if (f.kind == Msg::MapError) {
             auto id = rd.u32(); auto why = rd.str();
             if (rd.ok && rd.p==rd.end && why.size()<=512 && id == room->id) {
-                c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
+                c.validationId=0;c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
                 Writer chat; chat.str("SERVER"); chat.str(c.name + ": " + why);
                 broadcastRoom(*room, Msg::Chat, chat);
             }
         }
     } catch (const std::exception& e) {
-        c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
+        c.validationId=0;c.mapReadyRoom = 0; c.mapReceive = {}; c.mapSend = {};
         Writer error; error.u32(room->id); error.str(e.what()); c.conn.send(Msg::MapError, error);
     }
 }
@@ -2451,7 +2530,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 if(o.overridePolicy!=r->opts.overridePolicy){
                     r->overrideData.reset();r->overridePackage.reset();
                     r->mapVfs.reset();r->mapPackage.reset();
-                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};}
+                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};peer->validationId=0;peer->deferredMapOffer.reset();}
                     for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->overrideReady.clear();peer->overrideOffered.clear();peer->overrideSend={};peer->overrideReceive={};}
                 }
                 r->opts = o;
@@ -2530,28 +2609,36 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (!r->running) return;
             if (c.slot < 0) { c.conn.fail("spectators cannot issue commands"); return; }
             if (!r->campaignBattleId.empty() && (r->campaignResult || r->campaignFault)) return;
-            // Validate the entire batch before enqueuing any part of it. Ordinary
-            // matches have the same untrusted input boundary as campaigns.
-            if (!tak::srv::validPlayerCommands(f.payload)) {
+            Reader header(f.payload.data(),f.payload.size());
+            const auto count=header.u32();
+            if(!header.ok || count>f.payload.size()/35) {c.conn.fail("invalid player command count");return;}
+            const auto now=nowMs();
+            const auto key=c.account.empty()?"ip:"+c.peer:"user:"+tak::auth::foldUsername(c.account);
+            const bool allowed=header.ok &&
+                c.commandBytes.take(now,4u<<20,unsigned(f.payload.size())) &&
+                commandByteKeys_.take(key,now,4u<<20,unsigned(f.payload.size())) &&
+                commandBytes_.take(now,32u<<20,unsigned(f.payload.size())) &&
+                c.commandCount.take(now,65536,count) &&
+                commandCountKeys_.take(key,now,65536,count) &&
+                commandCount_.take(now,524288,count);
+            if(!allowed || count>kCmdQueueMax-c.cmdQueue.size()) {
+                if(!allowed) {c.commandBytes.window=now;c.commandBytes.used=4u<<20;}
+                c.cmdDropped+=count;
+                if(now-c.commandLogAt>=5000 && commandLogs_.take(now,4)) {
+                    c.commandLogAt=now;
+                    std::fprintf(stderr,"client %u: command budget/queue exceeded; dropped %llu commands total\n",c.id,(unsigned long long)c.cmdDropped);
+                }
+                break;
+            }
+            std::vector<Command> parsed;
+            if (!tak::srv::parsePlayerCommands(f.payload,parsed)) {
                 if (!r->campaignBattleId.empty())
                     r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
                 c.conn.fail("invalid player commands");
                 return;
             }
-            Reader rd(f.payload.data(), f.payload.size());
-            uint32_t n = rd.u32();
-            for (uint32_t i = 0; i < n && rd.ok; ++i) {
-                Command cmd = rd.cmd();
-                if (!rd.ok) break;
-                cmd.player = uint8_t(c.slot);   // server stamps ownership
-                if (c.cmdQueue.size() >= kCmdQueueMax) {
-                    if (++c.cmdDropped % 64 == 1)
-                        std::fprintf(stderr, "client %u: command queue full (%zu), "
-                                             "dropped %llu so far\n",
-                                     c.id, c.cmdQueue.size(),
-                                     (unsigned long long)c.cmdDropped);
-                    continue;
-                }
+            for(auto& cmd:parsed) {
+                cmd.player=uint8_t(c.slot);
                 c.cmdQueue.push_back(cmd);
             }
             break;
@@ -2882,6 +2969,7 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
 
 size_t Server::mapMemory() const {
     size_t used=0;
+    for(const auto& job:validations_)used+=size_t(job.size)*2;
     for(const auto& [id,peer]:clients_)used+=(size_t(peer->mapReceive.size)+peer->overrideReceive.size)*2;
     for(const auto& [id,room]:rooms_)if(room.mapPackage)used+=room.mapPackage->bytes.size()*2;
     for(const auto& [id,room]:rooms_)if(room.overridePackage)used+=room.overridePackage->bytes.size()*2;
@@ -2963,7 +3051,7 @@ int Server::run() {
     // Build id on its own line: the harness greps it to refuse a server built from
     // different source than the client, which otherwise looks exactly like a desync.
     std::fprintf(stderr, "takserver: build %s\n", tak::kBuildId);
-    std::fprintf(stderr,"takserver: transport %s\n",tlsContext_?"TLS (plaintext rejected)":"UNENCRYPTED TCP");
+    std::fprintf(stderr,"takserver: transport %s\n",acme_?"TLS (ACME; connections wait for certificate)":tlsContext_?"TLS (plaintext rejected)":"UNENCRYPTED TCP");
     if (requireAuth_)
         std::fprintf(stderr, "takserver: accounts required -- %zu in %s\n",
                      accounts_.size(), accounts_.path().c_str());
@@ -2977,6 +3065,7 @@ int Server::run() {
     std::vector<pollfd> pfds;
     std::vector<uint32_t> ids;
     for (;;) {
+        finishValidations();
         for(auto& [id,room]:rooms_) {(void)id;finishTick(room);}
         // Build the pollfd set: listen + every client (POLLOUT when it has pending writes).
         pfds.clear();
@@ -2993,7 +3082,7 @@ int Server::run() {
         }
         // Timeout = time until the soonest running room's next tick (or 1s idle).
         uint64_t now = nowMs();
-        uint64_t soonest = now + 1000;
+        uint64_t soonest = now + (validations_.empty()?1000:10);
         // Only rooms ELIGIBLE to tick may pull the poll deadline in. A paused room
         // is skipped by the tick loop below but its nextTickMs still slides into
         // the past, so counting it here pinned the timeout at 0 and span the
@@ -3041,6 +3130,8 @@ int Server::run() {
                 if(clients_.size()>=kMaxClients || pending>=kMaxPendingLogins || fromAddress>=kMaxClientsPerAddress) {
                     sockClose(fd);continue;
                 }
+                // Never silently accept plaintext while initial ACME issuance waits.
+                if(acme_ && !acme_->context()) {sockClose(fd);continue;}
                 setupSocket(fd);
                 auto c = std::make_unique<Client>();
                 c->id = nextClientId_++;
@@ -3071,7 +3162,7 @@ int Server::run() {
                         std::fprintf(stderr,"client request failed: %s\n",e.what());
                         c.conn.fail("invalid client request");
                     }
-                    if (!c.conn.ok()) break;
+                    if (!c.conn.ok() || !canRead(c,nowMs())) break;
                 }
                 // A clean close is only final once its trailing frames are drained
                 // above -- the last LeaveGame usually arrives in the same segment.

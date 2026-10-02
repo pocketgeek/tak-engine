@@ -44,16 +44,21 @@ std::set<std::string> companionPaths(const std::string& path) {
 // Follow feature burn/death chains as well as their sprites and palettes. A
 // feature file may define several names, so include dependencies of every
 // definition it brings into the room, not only the initially placed feature.
-std::set<std::string> featureResources(const tnt::Map& map, const hpi::Vfs& vfs) {
+std::set<std::string> featureResources(const tnt::Map& map, const hpi::Vfs& vfs, std::stop_token stop = {}) {
     std::map<std::string, tdf::Node> definitions;
+    size_t featureBytes=0;
+    tdf::ParseUsage usage;
     std::map<std::string, std::string> owner;
     for (const auto& path : vfs.list("features")) {
         if (!path.ends_with(".tdf")) continue;
         tdf::Node parsed;
         try {
             const auto data = vfs.read(path);
-            parsed = tdf::parseText(std::string(data.begin(), data.end()), path);
-        } catch (const std::exception&) { continue; } // Match the feature loader's handling of unrelated bad defs.
+            featureBytes+=data.size();
+            if(featureBytes>(8u<<20) || stop.stop_requested())throw tdf::ParseLimitError("feature parsing budget exceeded/cancelled");
+            parsed = tdf::parseText(std::string(data.begin(), data.end()), path, {65536,262144,64u<<20,stop,&usage});
+        } catch (const tdf::ParseLimitError&) {throw;}
+        catch (const std::exception&) { continue; } // Match the feature loader's handling of unrelated bad defs.
         const auto key = hpi::MountSet::key(path);
         for (const auto& name : parsed.childOrder) owner[hpi::MountSet::key(name)] = key;
         definitions.emplace(key, std::move(parsed));
@@ -198,7 +203,8 @@ std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {
     }
     return buildUncached(vfs, path);
 }
-std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& digest) {
+std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& digest, std::stop_token stop) {
+    if(stop.stop_requested())throw std::runtime_error("map validation cancelled");
     if (bytes.empty() || bytes.size() > kMaxBytes) throw std::runtime_error("invalid map package size");
     const auto actual = hash(bytes);
     if (!digest.empty() && actual != digest) throw std::runtime_error("map checksum mismatch");
@@ -212,6 +218,7 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
     const auto count = r.u32();
     if (count < 1 || count > 32768) throw std::runtime_error("invalid map file count");
     for (uint32_t i = 0; i < count; ++i) {
+        if(stop.stop_requested())throw std::runtime_error("map validation cancelled");
         auto name = r.str(); const auto size = r.u32();
         const bool terrain = name.size() == 20 && name.starts_with("terrain/") && name.ends_with(".jpg") &&
             name.substr(8,8).find_first_not_of("0123456789abcdef") == std::string::npos;
@@ -236,7 +243,7 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
         if (files->count(companion)) required.insert(companion);
     for (auto key : map.tileKeys) required.insert(tilePath(key));
     hpi::Vfs view; view.setMapFiles(files);
-    const auto features = featureResources(map, view);
+    const auto features = featureResources(map, view, stop);
     required.insert(features.begin(), features.end());
     if (required.size() != files->size()) throw std::runtime_error("unreferenced map resources");
     for (const auto& name : required) if (!files->count(name)) throw std::runtime_error("missing map resource: " + name);
@@ -283,17 +290,18 @@ void saveCache(const std::filesystem::path& root, const Package& p,uint64_t quot
     if(needCanonical)writeAtomic(canonical,p.bytes);
     if(needArchive)writeAtomic(archive,packed);
 }
-std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std::string& digest) {
+std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std::string& digest, size_t maxBytes, size_t expected, std::stop_token stop) {
     if (!validDigest(digest)) return {};
     const auto path = root / "MapCache" / (digest + ".takmap");
+    std::error_code ec; auto size = std::filesystem::file_size(path, ec);
+    if (ec || !size || size > kMaxBytes) return {};
+    if(size>maxBytes || (expected && size!=expected))throw std::runtime_error("cached map size/budget mismatch");
     try {
-        std::error_code ec; auto size = std::filesystem::file_size(path, ec);
-        if (ec || !size || size > kMaxBytes) return {};
         std::vector<uint8_t> bytes(size); std::ifstream in(path, std::ios::binary);
         in.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size));
         if (!in) return {};
-        return decode(std::move(bytes), digest);
-    } catch (const std::exception&) { std::error_code ec; std::filesystem::remove(path, ec); return {}; }
+        return decode(std::move(bytes), digest, stop);
+    } catch (const std::exception&) { if(stop.stop_requested())return {}; std::error_code ec; std::filesystem::remove(path, ec); return {}; }
 }
 std::filesystem::path saveGenerated(const std::filesystem::path& root, const hpi::Vfs& vfs, const std::string& recipe,uint64_t quota) {
     if (!mapgen::isGeneratedMapId(recipe)) return {};

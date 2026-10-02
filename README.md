@@ -351,7 +351,8 @@ You do **not** need to download or copy a service unit from the source repositor
    sudo journalctl -u takserver -f
    ```
 
-   Wait for certificate issuance to finish and the TLS game listener to start.
+   For first-time ACME setup, wait for `ACME: certificate installed` before connecting.
+   A listening service can still be waiting for issuance or a persisted retry deadline.
    Players then enter just your hostname in the multiplayer connection screen.
    Press Ctrl+C to leave the log viewer; this does not stop the server.
 
@@ -376,6 +377,11 @@ see [changing server defaults](docs/public-server.md#changing-server-defaults).
 The server renews its certificate automatically and opens port 80 only during
 validation. Local configuration stays in `/etc/systemd/system/takserver.service.d/`;
 accounts, maps, replays and certificate state live under `/var/lib/takserver`.
+Server package validation runs off the network loop with bounded admission and work
+limits; ACME retries initial issuance automatically while refusing game connections
+until its certificate is ready. See the [resource controls](docs/public-server.md#resource-controls)
+for custom-content limits and flood protection.
+
 See [public-server deployment](docs/public-server.md#linux-service-setup) for
 manual certificates, troubleshooting, service limits and upgrades. Setup notes
 are also installed at `/usr/share/doc/tak-engine/systemd/README.md`.

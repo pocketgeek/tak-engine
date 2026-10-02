@@ -24,6 +24,8 @@ int main(){
   net::Writer bad;bad.u32(0x31564f54);bad.u32(0);bad.u32(1);bad.str("../escape");bad.bytes(std::vector<uint8_t>{1});auto hash=crypto::toHex(crypto::sha256(bad.b.data(),bad.b.size()));
   rejects([&]{net::overrides::decode(bad.b,hash);},"reject network path traversal");
   net::overrides::saveCache(root,*p);auto cached=net::overrides::loadCache(root,p->digest);check(cached&&*cached->files==*p->files,"verified cache round trip");
+  rejects([&]{net::overrides::loadCache(root,p->digest,p->bytes.size()-1);},"override actual budget");
+  rejects([&]{net::overrides::loadCache(root,p->digest,net::maps::kMaxBytes,p->bytes.size()-1);},"override advertised size");
   put("OverrideCache/"+p->digest+".takoverrides","corrupt");
   check(!net::overrides::loadCache(root,p->digest),"corrupt cache rejected");
   net::overrides::saveCache(root,*p);check(bool(net::overrides::loadCache(root,p->digest)),"corrupt cache repaired");
