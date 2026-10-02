@@ -18,7 +18,7 @@
 #include "server/acme.h"
 #include "server/roomworker.h"
 #include "server/validationworker.h"
-#include <stop_token>
+#include "util/stoptoken.h"
 #include "server/roomtick.h"
 #include "net/crusades.h"
 #include "tnt/mapgen.h"
@@ -458,7 +458,7 @@ private:
     struct Validation {
         uint64_t id; uint32_t client,room,size; bool overrides,cache;
         std::string digest,map;
-        std::stop_source stop;
+        tak::StopSource stop;
         std::future<std::shared_ptr<tak::net::maps::Package>> result;
     };
     std::vector<Validation> validations_;

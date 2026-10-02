@@ -2,7 +2,7 @@
 
 #include <filesystem>
 #include <map>
-#include <stop_token>
+#include "util/stoptoken.h"
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -37,7 +37,7 @@ struct ParseUsage {size_t sections=0,nodes=0,memory=0;};
 struct ParseLimitError:std::runtime_error {using std::runtime_error::runtime_error;};
 struct ParseLimits {
     size_t sections = 65536, nodes = 262144, memory = 64u << 20;
-    std::stop_token stop;
+    tak::StopToken stop;
     ParseUsage* usage=nullptr;
 };
 // Parse a TDF file or an in-memory buffer. Throws on malformed input.

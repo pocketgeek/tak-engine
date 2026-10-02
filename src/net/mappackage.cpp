@@ -44,7 +44,7 @@ std::set<std::string> companionPaths(const std::string& path) {
 // Follow feature burn/death chains as well as their sprites and palettes. A
 // feature file may define several names, so include dependencies of every
 // definition it brings into the room, not only the initially placed feature.
-std::set<std::string> featureResources(const tnt::Map& map, const hpi::Vfs& vfs, std::stop_token stop = {}) {
+std::set<std::string> featureResources(const tnt::Map& map, const hpi::Vfs& vfs, tak::StopToken stop = {}) {
     std::map<std::string, tdf::Node> definitions;
     size_t featureBytes=0;
     tdf::ParseUsage usage;
@@ -203,7 +203,7 @@ std::shared_ptr<Package> build(const hpi::Vfs& vfs, const std::string& mapId) {
     }
     return buildUncached(vfs, path);
 }
-std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& digest, std::stop_token stop) {
+std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& digest, tak::StopToken stop) {
     if(stop.stop_requested())throw std::runtime_error("map validation cancelled");
     if (bytes.empty() || bytes.size() > kMaxBytes) throw std::runtime_error("invalid map package size");
     const auto actual = hash(bytes);
@@ -290,7 +290,7 @@ void saveCache(const std::filesystem::path& root, const Package& p,uint64_t quot
     if(needCanonical)writeAtomic(canonical,p.bytes);
     if(needArchive)writeAtomic(archive,packed);
 }
-std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std::string& digest, size_t maxBytes, size_t expected, std::stop_token stop) {
+std::shared_ptr<Package> loadCache(const std::filesystem::path& root, const std::string& digest, size_t maxBytes, size_t expected, tak::StopToken stop) {
     if (!validDigest(digest)) return {};
     const auto path = root / "MapCache" / (digest + ".takmap");
     std::error_code ec; auto size = std::filesystem::file_size(path, ec);

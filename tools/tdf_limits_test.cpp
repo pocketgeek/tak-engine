@@ -20,7 +20,7 @@ int main() try {
     ParseUsage usage;
     parseText("[a]{}","shared",{1,20,100000,{},&usage});
     rejects([&]{parseText("[b]{}","shared",{1,20,100000,{},&usage});});
-    std::stop_source stop;stop.request_stop();
+    tak::StopSource stop;stop.request_stop();
     rejects([&]{parseText("[a]{}","cancel",{10,20,100000,stop.get_token()});});
     auto strings=parseText("// comment\n[TEXT]{\na=French; sentence;\nb=};\n}");
     check(strings.child("text")->valueOr("a","")=="French; sentence" && strings.child("text")->valueOr("b","")=="}","retail string syntax");

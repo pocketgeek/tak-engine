@@ -164,6 +164,9 @@ jobs:
           ./build/cartographer_document_test
           ./build/cartographer_validation_test
 
+      - name: AA and validation regressions
+        run: ctest --test-dir build -R '^(selective_aa|tdf_limits|validationworker)$' --output-on-failure
+
       - name: Streaming encode test
         run: |
           ./build/stream_test

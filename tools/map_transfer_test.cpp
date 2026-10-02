@@ -389,7 +389,7 @@ int main(int argc, char** argv) try {
             encoded.b.insert(encoded.b.end(),data.begin(),data.end());
         }
         rejects([&]{net::maps::decode(encoded.b,"");},"unreferenced adversarial TDF accepted");
-        std::stop_source cancelled;cancelled.request_stop();
+        tak::StopSource cancelled;cancelled.request_stop();
         rejects([&]{net::maps::decode(p->bytes,p->digest,cancelled.get_token());},"cancelled map decoded");
     }
 

@@ -186,6 +186,9 @@ admission are checked again. On a cache miss, even an installed map is requested
 from the host instead of rebuilding it on the network loop. This can add a first-use
 upload but preserves the existing protocol. Validation results are discarded after
 the host leaves, changes rooms or changes the relevant settings.
+Cancellation uses a shared atomic flag whose lifetime is independent of the
+connection, including on the macOS 14 SDK; workers never dereference a departed
+client to check cancellation.
 
 TDF parsing preserves case-insensitive, last-definition lookup and duplicate
 section order, using an index instead of scanning earlier entries. Limits are
