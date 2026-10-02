@@ -16,7 +16,21 @@ struct Peer {
  int listener=-1;uint16_t port=0;net::Conn conn;std::deque<net::Frame> pending;
  Peer(){std::string error;listener=net::listenOn(0,error,true);if(listener<0)throw std::runtime_error(error);sockaddr_storage address{};socklen_t n=sizeof address;if(getsockname(listener,reinterpret_cast<sockaddr*>(&address),&n))throw std::runtime_error("getsockname");port=address.ss_family==AF_INET?ntohs(reinterpret_cast<sockaddr_in*>(&address)->sin_port):ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port);}
  ~Peer(){if(listener>=0)net::sockClose(listener);}
- void acceptClient(){sockaddr_storage address{};socklen_t n=sizeof address;int fd=int(accept(listener,reinterpret_cast<sockaddr*>(&address),&n));check(fd>=0,"accept");net::setupSocket(fd);conn=net::Conn(fd);}
+ void acceptClient(){
+  // A completed client connect can precede server-side readiness on macOS.
+  // The listener is nonblocking; wait for delivery, not a scheduler coincidence.
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+  while(std::chrono::steady_clock::now()<deadline){
+   sockaddr_storage address{};socklen_t n=sizeof address;
+   int fd=int(accept(listener,reinterpret_cast<sockaddr*>(&address),&n));
+   if(fd>=0){net::setupSocket(fd);conn=net::Conn(fd);return;}
+   const int error=net::sockErr();
+   if(!net::sockWouldBlock(error)&&!net::sockInterrupted(error))
+    throw std::runtime_error("accept: "+net::sockErrStr(error));
+   std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  throw std::runtime_error("timed out accepting client connection");
+ }
  net::Frame receive(net::MpClient& client){if(!pending.empty()){auto f=std::move(pending.front());pending.pop_front();return f;}for(int i=0;i<2000;++i){client.poll();if(!conn.recv())throw std::runtime_error("peer receive");net::Frame f;if(conn.poll(f)){if(f.kind==net::Msg::Ping){conn.send(net::Msg::Pong);conn.flushWrite();continue;}return f;}std::this_thread::sleep_for(std::chrono::milliseconds(1));}throw std::runtime_error("timed out receiving client request");}
  // A Pong behind the response proves the client processed it. Four 1ms polls
  // were not a delivery guarantee under parallel sweep load (especially replay chunks).
