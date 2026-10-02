@@ -299,8 +299,8 @@ packages with `apt install ./…deb`, `dnf install ./…rpm`, or `pacman -U ./�
 using administrator privileges. Linux packages include the client, dedicated
 server, Cartographer map editor, and the offline `crusades_admin` tool.
 
-Linux packages also include `takserver.service` and an ACME template. They do
-not start the server automatically. Follow [Linux server setup](#linux-server-setup)
+DEB, RPM, and Arch packages also include `takserver.service` and an ACME
+template. They do not start the server automatically. Follow [Linux server setup](#linux-server-setup)
 below to configure the packaged service and obtain its certificate.
 
 Game libraries are bundled; your system still provides windowing, audio, and
