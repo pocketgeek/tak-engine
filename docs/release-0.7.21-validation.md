@@ -18,10 +18,23 @@ Protocol **213**, replay format **10**, campaign payload **4**, database schema 
 
 ## Remote and release checks
 
-Remote multiplayer, local Pebble ACME integration and release-package verification
-are in progress. Results will be recorded here before declaring release complete.
-Remote tests use isolated optimized test servers on `tak.pgnet.us` and
-`vpn3.pgnet.us`; public server processes and installed override files are not changed.
+- Remote sweep: **37 scenarios** across `tak.pgnet.us` and `vpn3.pgnet.us`,
+  including stress, live orders, late joins, spectators and impaired networks.
+  The first run completed 35 scenarios; two slow-link lobby failures exposed
+  repeated pending join requests. After fixing that bug, both failed scenarios
+  and a two-client baseline passed a targeted rerun, with no simulation desyncs.
+- Deliberately planted desync and mismatched Loaded-hash checks were detected.
+  Full override packs were uploaded and verified by the remote server.
+- Remote servers used isolated optimized binaries. Public server processes and
+  installed override files were unchanged; test processes and network shaping
+  were cleaned up.
+- Clang ASan/LSan override network integration passed host upload, peer download,
+  cosmetic isolation, gameplay loading and 90 lockstep ticks.
+- Local Pebble ACME integration passed issuance, certificate/account reuse,
+  background renewal, failed-renewal retention, persistent backoff and listener
+  cleanup.
+- Native platform CI and published-package verification are pending; their final
+  results will be recorded after release artifacts are available.
 
 ## Screenshots and documentation
 
