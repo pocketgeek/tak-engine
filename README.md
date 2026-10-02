@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.21-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.22-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -47,7 +47,27 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.21
+## New in 0.7.22
+
+- **Independent antialiasing:** Terrain AA (Off/2x/4x) and Model AA
+  (Off/2x/4x/8x/16x), with native-resolution UI, preserved scenery ordering,
+  remembered settings, and reported capability/memory fallbacks. See the
+  [quality and performance comparison](docs/antialiasing.md).
+- **Server hardening:** bounded map parsing and background validation, actual-size
+  memory admission, command-processing budgets, automatic ACME retry recovery,
+  and per-source HTTP challenge connection limits.
+- **Linux service setup:** packaged systemd service and editable configuration
+  templates, with [step-by-step hosting instructions](docs/public-server.md).
+- **Build-site clearing:** builders continue through multiple reclaimable
+  obstructions before starting construction.
+- **Windows release signing:** shipped executables and the completed installer
+  are signed and timestamp-verified before publication.
+
+Protocol **213** and replay format **10** are unchanged. No new dynamic
+runtime dependencies. See the [release notes](docs/release-0.7.22-notes.md)
+and [validation report](docs/release-0.7.22-validation.md).
+
+### Previously in 0.7.21
 
 - **Selectable override packs:** put each pack in its own `overrides/<pack>/`
   folder, then select multiple packs in the lobby. Choices are remembered.
@@ -250,7 +270,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.21** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.22** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -729,7 +749,7 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.21 uses protocol 213**, including shared override-pack transfer
+Version **0.7.22 uses protocol 213**, including shared override-pack transfer
 and Darien Crusades campaign messages. Update clients and servers together;
 earlier clients cannot join these matches. Protocol-212 format-9 recordings
 remain playable; older incompatible recordings need their original engine.
@@ -887,7 +907,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.21 uses protocol **213**; update server and clients together.
+Version 0.7.22 uses protocol **213**; update server and clients together.
 
 
 ## License
