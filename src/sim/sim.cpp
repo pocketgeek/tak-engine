@@ -1544,6 +1544,11 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.controller = tmpl.controller;
             o.park = tmpl.park;
             o.buildType = tmpl.buildType;
+            // Work orders remain jobs when a route replaces their approach.
+            // Otherwise the new final waypoint becomes an ordinary move and
+            // reclaim completion can consume the next queued obstacle instead.
+            o.reclaimFeat = tmpl.reclaimFeat;
+            o.repairTarget = tmpl.repairTarget;
             o.buildRectangle = tmpl.buildRectangle;
             o.buildX = tmpl.buildX; o.buildZ = tmpl.buildZ;
         }
@@ -6091,9 +6096,10 @@ void World::tickReclaim(Unit& b, float dt) {
         // The job is over. Retire its order; the next one (which may be another
         // reclaim) simply becomes current.
         stopWorkAnimation(b);
+        if (!b.orders.empty() && b.orders[currentLeg(b.orders)].reclaimFeat == b.reclaimId)
+            dropLeg(b);
         b.reclaimId = 0;
         b.reclaimEffectDelay = 0;
-        if (!b.orders.empty() && b.orders.front().reclaimFeat) b.orders.erase(b.orders.begin());
     };
     if (b.reclaimId < 0) {
         // Ordered corpse reclaim: walk to the body/wreck and consume it. Yields
@@ -6152,7 +6158,12 @@ void World::tickReclaim(Unit& b, float dt) {
     startWorkAnimation(b,f.x,f.z);
     // Never the RECLAIM order itself -- that entry IS the job, and it is what
     // holds the queue back until the feature is gone (advance() retires it).
-    if (b.orders.empty() || !b.orders.front().reclaimFeat) dropLeg(b);
+    cancelPath(b);
+    if (!b.orders.empty()) {
+        const size_t end = currentLeg(b.orders);
+        if (b.orders[end].reclaimFeat == b.reclaimId)
+            b.orders.erase(b.orders.begin(), b.orders.begin() + long(end));
+    }
     b.speed = Fixed();
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));   // face the feature
     // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.

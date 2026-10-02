@@ -46,7 +46,7 @@ enter `tcp://hostname` (and an optional `:port`). Bare menu hostnames always use
 TLS, with no plaintext fallback. Automatically launched single-player servers
 keep their private loopback connection. Debug command-line harness connections
 retain their explicit transport behavior. Old clients cannot connect to a TLS
-listener. The gameplay protocol remains 212.
+listener. The current gameplay protocol is 213; update clients and servers together.
 
 The login exchange alone is not session encryption. Do not expose the old
 plaintext port alongside TLS as a compatibility fallback.
@@ -97,7 +97,10 @@ be rejected by clients, so administrators must monitor renewal failures.
 
 On Linux, the listener needs permission to bind port 80. The optional
 [systemd ACME drop-in](../packaging/systemd/takserver-acme.conf) grants only
-`CAP_NET_BIND_SERVICE` while retaining the main service sandbox. Copy it to
+`CAP_NET_BIND_SERVICE` while retaining the main service sandbox. Linux packages
+install the service in `/usr/lib/systemd/system/takserver.service` and the template
+plus setup notes in `/usr/share/doc/tak-engine/systemd/`. Neither the service nor
+ACME is enabled automatically. Copy the `takserver-acme.conf` template to
 `/etc/systemd/system/takserver.service.d/acme.conf`, replace its hostname, and
 review the paths before restarting. It replaces the manual certificate options
 and credential entry. Do not run the game server as root just to bind port 80.
@@ -193,32 +196,159 @@ ones. It can be enabled after inviting the initial community. Keep the account
 file private and back it up together with any Crusades database and replay
 archive. Do not use game-account passwords on unrelated services.
 
-## Linux service isolation
+## Linux service setup
 
-[packaging/systemd/takserver.service](../packaging/systemd/takserver.service)
-is an opt-in template; packages do not enable a public server automatically.
-It uses a dynamic unprivileged user, private state directory, read-only system
-and home isolation, no capabilities, restricted system calls and address
-families, no executable writable memory, bounded logs, and process limits.
-The TLS key is passed through systemd credentials rather than made world-readable.
+Linux packages include these files:
 
-1. Install retail data under `/srv/tak-data`, readable by the service. Keep it
-   owned by an administrator. The service writes maps under its state directory.
-2. Install a valid certificate chain at `/etc/takserver/fullchain.pem` and its
-   private key at `/etc/takserver/private.pem`. Keep the key readable only by root;
-   systemd supplies its private copy to the service.
-3. Install the template in `/etc/systemd/system/takserver.service`; review paths,
-   the 8 GiB process memory limit and the game limits for the host.
-4. Run `systemd-analyze verify /etc/systemd/system/takserver.service`, then
-   `systemctl daemon-reload` and `systemctl enable --now takserver`.
-5. Allow only the intended TCP game port (7677 by default). Keep SSH/admin access
-   separately restricted. Watch `journalctl -u takserver` for quota and certificate
-   problems. Use a filesystem quota for the state directory and backups; the
-   application does not cap the Crusades database or the system journal's total size.
+| File | Purpose |
+| --- | --- |
+| `/usr/lib/systemd/system/takserver.service` | Packaged service unit |
+| `/usr/share/doc/tak-engine/systemd/takserver-acme.conf` | Optional ACME override template |
+| `/usr/share/doc/tak-engine/systemd/README.md` | Installed setup notes |
+
+Installing the package does **not** start or enable the server. The ACME template
+is also inactive until copied into the service's override directory and edited.
+Choose either built-in ACME or an existing certificate below before starting.
+
+For a packaged installation, the unit is already installed: **do not copy another
+unit into `/etc/systemd/system/`**. Follow the numbered steps below. Keep custom
+settings in `/etc/systemd/system/takserver.service.d/` so package upgrades can
+update the vendor unit without replacing your configuration. A concise
+[packaged ACME walkthrough](../README.md#linux-server-setup) is also in the README.
+
+### 1. Install the retail data
+
+The default service expects retail files in `/srv/tak-data`. Replace the source
+path in this example with your actual retail installation directory:
+
+```sh
+sudo mkdir -p /srv/tak-data
+sudo cp -a /path/to/retail-install/. /srv/tak-data/
+sudo chown -R root:root /srv/tak-data
+sudo chmod -R a+rX /srv/tak-data
+```
+
+The directory must contain the actual game archives and other retail data, not
+just an empty folder. Use matching base game files on the server and clients.
+The service has `ProtectHome=yes`: data under `/home` is hidden, even if it is
+world-readable. A symlink from `/srv/tak-data` into `/home` does not bypass that
+sandbox. Copy the data outside `/home` as shown above.
+
+Systemd creates and manages `/var/lib/takserver` for writable accounts, downloaded
+maps, replays and ACME state. You do not need to create a permanent `takserver`
+user or make that state directory world-writable.
+
+### 2. Choose a certificate mode
+
+**Built-in Let's Encrypt:** copy the supplied template and edit it:
+
+```sh
+sudo mkdir -p /etc/systemd/system/takserver.service.d
+sudo cp -i /usr/share/doc/tak-engine/systemd/takserver-acme.conf \
+  /etc/systemd/system/takserver.service.d/acme.conf
+sudoedit /etc/systemd/system/takserver.service.d/acme.conf
+```
+
+If `acme.conf` already exists, keep your existing file and edit it instead of
+overwriting it. The `cp -i` command prompts before replacing a file.
+
+**Replace `YOUR.SERVER.NAME` with your real public DNS hostname**, such as
+`tak.example.org`, without a URL scheme or port number. The complete drop-in
+then looks like this:
+
+```ini
+[Service]
+LoadCredential=
+ExecStart=
+ExecStart=/usr/bin/takserver --data /srv/tak-data --accounts /var/lib/takserver/accounts.conf --map-cache-dir /var/lib/takserver/maps --replaydir /var/lib/takserver/replays --acme-domain tak.example.org --acme-agree-tos --acme-state /var/lib/takserver/acme
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+```
+
+The empty `LoadCredential=` and `ExecStart=` entries remove the base unit's manual
+TLS configuration before supplying the ACME command. Keep them. Check `--data`
+and the executable path if you installed elsewhere. `--acme-agree-tos` records
+your acceptance of the CA subscriber agreement.
+
+Point the hostname's A/AAAA records at the server, allow inbound TCP **80** and
+**7677**, and allow outbound HTTPS **443**. Port 80 must be available for issuance
+and renewal; takserver listens there only during validation. Certificates and
+keys are managed under `/var/lib/takserver/acme`. You do not need manual
+`/etc/takserver` certificate files in this mode. See
+[built-in certificate handling](#built-in-lets-encrypt-certificates) for renewal
+and port-conflict behavior.
+
+**Existing certificate:** leave the ACME drop-in uninstalled. Install your
+certificate chain and private key at the paths used by the base unit:
+
+```sh
+sudo install -d -m 755 /etc/takserver
+sudo install -m 644 /path/to/fullchain.pem /etc/takserver/fullchain.pem
+sudo install -m 600 /path/to/private.pem /etc/takserver/private.pem
+```
+
+The certificate must cover the hostname players enter. Systemd reads the
+root-only key and passes it privately to the dynamic service user. Allow inbound
+TCP **7677**; takserver does not use port 80 in this mode. Renew the certificate
+externally and restart the service after replacing its files.
+
+### 3. Start and check the service
+
+```sh
+sudo systemctl daemon-reload
+sudo systemd-analyze verify takserver.service
+sudo systemctl enable --now takserver
+sudo systemctl status takserver --no-pager
+sudo journalctl -u takserver -f
+```
+
+If the service was already running when you changed its configuration, run
+`sudo systemctl restart takserver` after `daemon-reload`; `enable --now` does not
+restart an already active service. `sudo systemctl cat takserver` shows the unit
+and its drop-ins, which is useful for checking the effective command and hostname.
+
+Wait for the TLS listener startup message before connecting. With ACME, initial
+certificate issuance happens first. Players then enter just the configured
+hostname in the multiplayer connection screen.
+
+If a connection is rejected, inspect the journal for the actual reason. A retail
+game-data mismatch can mean the `--data` directory is missing, inaccessible or
+contains different base files. Confirm that path exists outside the hidden home
+directories. For ACME failures, check the hostname, DNS records, firewall and
+whether another process owns port 80.
+
+### Source installations and older packages
+
+If installing from source, or using an older package without these files, use
+[the service unit](../packaging/systemd/takserver.service) and
+[ACME template](../packaging/systemd/takserver-acme.conf) from this checkout.
+From the checkout root, install the service with:
+
+```sh
+sudo install -m 644 packaging/systemd/takserver.service /etc/systemd/system/takserver.service
+```
+
+A unit in `/etc/systemd/system/` takes precedence over the packaged unit. For
+packaged installations, keep custom settings in drop-ins rather than copying or
+editing the vendor unit.
+
+### Service isolation and maintenance
+
+The unit uses a dynamic unprivileged user, private state directory, read-only
+system and home isolation, restricted system calls and address families, no
+executable writable memory, bounded logs, and process limits. The base unit has
+no capabilities; the ACME override grants only `CAP_NET_BIND_SERVICE`. Review the
+8 GiB process memory limit and the [game limits](#resource-controls) for your host.
+Do not run takserver as root to make certificate issuance work.
+
+Keep SSH/admin access separately restricted. Back up private state and monitor
+certificate and quota errors. Use filesystem quotas if needed; application
+limits do not cap the Crusades database or the system journal's total size.
+Package updates replace the vendor unit and template, not your edited drop-in.
 
 On Windows/macOS, use a dedicated standard service account, restrict data/key
-permissions, and expose only the game port. The supplied systemd sandbox is
-Linux-specific; it is not installed or claimed to apply on those platforms.
+permissions, and expose the game port plus port 80 when using ACME. The supplied
+systemd service and sandbox are Linux-specific.
 
 ## Validation and remaining limits
 

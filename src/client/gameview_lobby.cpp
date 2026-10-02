@@ -114,9 +114,6 @@ std::string mapDisplayName(const std::string& id) {
         lbBtn(x + w - 200, y - 6, 95, 26, "REFRESH", true, [this] { mp_->listGames(); });
         lbBtn(x + w - 100, y - 6, 100, 26, "CREATE", true,
               [this] { lobbyScreen_ = LobbyScreen::Create; });
-        if (!singlePlayer_) lbBtn(x + 110, y - 6, 220, 26, "DARIEN CRUSADES",
-            mp_->auth() == tak::net::MpClient::Auth::Ok || mp_->auth() == tak::net::MpClient::Auth::Created,
-            [this] { openCrusades(); });
         y += 34;
         // column header
         blockText("NAME", x + 8, y, 1.6f, {130, 135, 150, 255});
@@ -498,10 +495,19 @@ std::string mapDisplayName(const std::string& id) {
                 SDL_SetRenderDrawColor(ren_, active ? 56 : 34, active ? 74 : 38, active ? 96 : 50, 255);
                 SDL_RenderFillRectF(ren_, &b);
                 SDL_SetRenderDrawColor(ren_, 90, 100, 130, 255); SDL_RenderDrawRectF(ren_, &b);
-                std::string lbl = keys[k];
-                if (active) lbl += mapSortDir_ > 0 ? " ^" : " v";
-                blockText(lbl, bx + 6, sy + 5, 1.5f,
-                          active ? SDL_Color{215, 230, 245, 255} : SDL_Color{170, 178, 195, 255});
+                const SDL_Color color = active ? SDL_Color{215, 230, 245, 255}
+                                               : SDL_Color{170, 178, 195, 255};
+                blockText(keys[k], bx + 6, sy + 5, 1.5f, color);
+                if (active) {
+                    const float ax = bx + bw - 10, ay = sy + bh / 2;
+                    const float direction = mapSortDir_ > 0 ? -1.0f : 1.0f;
+                    const SDL_Vertex arrow[] = {
+                        {{ax, ay + direction * 3}, color, {}},
+                        {{ax - 4, ay - direction * 3}, color, {}},
+                        {{ax + 4, ay - direction * 3}, color, {}}
+                    };
+                    SDL_RenderGeometry(ren_, nullptr, arrow, 3, nullptr, 0);
+                }
                 lobbyHots_.push_back({b, [this, k](int) {
                     if (mapSort_ == k) mapSortDir_ = -mapSortDir_;   // toggle direction
                     else { mapSort_ = k; mapSortDir_ = 1; }

@@ -21,6 +21,9 @@ optdepends=('libx11: X11 video backend'
 options=('!debug')
 
 package() {
+  install -Dm644 "$startdir/../systemd/takserver.service" "$pkgdir/usr/lib/systemd/system/takserver.service"
+  install -Dm644 "$startdir/../systemd/takserver-acme.conf" "$pkgdir/usr/share/doc/$pkgname/systemd/takserver-acme.conf"
+  install -Dm644 "$startdir/../systemd/README.md" "$pkgdir/usr/share/doc/$pkgname/systemd/README.md"
   install -Dm755 "$startdir/../../build/takclient" "$pkgdir/usr/bin/takclient"
   install -Dm755 "$startdir/../../build/takserver" "$pkgdir/usr/bin/takserver"
   install -Dm755 "$startdir/../../build/crusades_admin" "$pkgdir/usr/bin/crusades_admin"

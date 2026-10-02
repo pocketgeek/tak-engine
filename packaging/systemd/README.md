@@ -1,0 +1,75 @@
+# Running takserver with systemd
+
+These steps use the installed Linux package and built-in Let's Encrypt support.
+You do **not** need to download or copy a service unit from the source repository.
+
+1. **Choose a hostname and configure networking.** Point a hostname you control
+   (for example, `tak.example.org`) at the server. Allow inbound TCP **80** for
+   certificate validation and **7677** for the game, plus outbound HTTPS **443**.
+   If you publish an IPv6 address, it must reach this server too. Another service
+   must not occupy port 80 when takserver validates its certificate.
+
+2. **Copy your retail game data.** Replace `/path/to/retail-install` below with
+   the actual directory containing your game's archives and maps:
+
+   ```sh
+   sudo mkdir -p /srv/tak-data
+   sudo cp -a /path/to/retail-install/. /srv/tak-data/
+   sudo chown -R root:root /srv/tak-data
+   sudo chmod -R a+rX /srv/tak-data
+   ```
+
+   The service cannot read `/home` because of its sandbox. Do not use a symlink
+   back into your home directory. Clients need matching base game data.
+
+3. **Install the ACME override template.** For a first-time setup:
+
+   ```sh
+   sudo mkdir -p /etc/systemd/system/takserver.service.d
+   sudo cp -i /usr/share/doc/tak-engine/systemd/takserver-acme.conf \
+     /etc/systemd/system/takserver.service.d/acme.conf
+   ```
+
+   If you already have `acme.conf`, keep it and edit it instead of overwriting
+   your configuration. The packaged unit is already installed at
+   `/usr/lib/systemd/system/takserver.service`.
+
+4. **Set your hostname before starting.** Open the copied override:
+
+   ```sh
+   sudoedit /etc/systemd/system/takserver.service.d/acme.conf
+   ```
+
+   Replace **`YOUR.SERVER.NAME`** after `--acme-domain` with your actual hostname
+   (for example, `tak.example.org`), without `https://` or a port. Check that
+   `--data` points to `/srv/tak-data`. Keep the empty `LoadCredential=` and
+   `ExecStart=` lines; they replace the default manual-certificate configuration.
+   Using `--acme-agree-tos` accepts the CA subscriber agreement.
+
+5. **Enable and start the service.**
+
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemd-analyze verify takserver.service
+   sudo systemctl enable --now takserver
+   ```
+
+   If it was already running, also run `sudo systemctl restart takserver` to
+   apply your changes. Systemd creates the private state directory automatically.
+
+6. **Check startup, then connect.**
+
+   ```sh
+   sudo systemctl status takserver --no-pager
+   sudo journalctl -u takserver -f
+   ```
+
+   Wait for certificate issuance to finish and the TLS game listener to start.
+   Players then enter just your hostname in the multiplayer connection screen.
+   Press Ctrl+C to leave the log viewer; this does not stop the server.
+
+The server renews its certificate automatically and opens port 80 only during
+validation. Local configuration stays in `/etc/systemd/system/takserver.service.d/`;
+accounts, maps, replays and certificate state live under `/var/lib/takserver`.
+For manual certificates and troubleshooting, see the public-server guide:
+https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#linux-service-setup
