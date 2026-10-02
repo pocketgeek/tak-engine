@@ -120,6 +120,10 @@ jobs:
       - name: Install build deps (zypper)
         if: matrix.family == 'suse'
         run: |
+          # The image defaults to HTTP mirrors; use authenticated HTTPS in CI.
+          sed -i 's|http://cdn.opensuse.org|https://cdn.opensuse.org|g' \
+            /usr/share/zypp/local/service/openSUSE/repo/*.xml /etc/zypp/repos.d/*.repo
+          zypper --non-interactive refresh
           zypper --non-interactive install --no-recommends \
             cmake ninja gcc-c++ git make perl python3 patch rpm-build pkgconf-pkg-config \
             file curl ca-certificates tar gzip zstd xz \
@@ -135,8 +139,8 @@ jobs:
           set -eu
           mirror=https://mirrors.slackware.com/slackware/slackware64-15.0/
           printf '%s\n' "$mirror" > /etc/slackpkg/mirrors
-          sed -i 's|^WGETFLAGS=.*|WGETFLAGS="--ca-directory=/run/host-ca"|' /etc/slackpkg/slackpkg.conf
-          wget --ca-directory=/run/host-ca -O /tmp/slackware-key "${mirror}GPG-KEY"
+          sed -i 's|^WGETFLAGS=.*|WGETFLAGS="--ca-certificate=/run/host-ca/ca-certificates.crt"|' /etc/slackpkg/slackpkg.conf
+          wget --ca-certificate=/run/host-ca/ca-certificates.crt -O /tmp/slackware-key "${mirror}GPG-KEY"
           gpg --import /tmp/slackware-key
           slackpkg -batch=on -default_answer=y update
           slackpkg -batch=on -default_answer=y install \
