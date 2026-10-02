@@ -109,7 +109,7 @@ frameworks. CI checks these dependency boundaries for release packages.
   are published starting with version 0.7.19, as well as CI artifacts.
   See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
 - **Linux x64 and ARM64:** native CI runners build Ubuntu 22.04/24.04/26.04,
-  Debian 12/13, and Fedora 44 containers for each architecture. Arch's official
+  Debian 12/13, Fedora 44, and openSUSE Leap 16.0 containers for each architecture. Arch's official
   container builds x64 only. Choose the package matching both your distribution
   and architecture (`amd64`/`arm64` for DEB, `x86_64`/`aarch64` for RPM).
   ARM64 uses GitHub's [native ARM runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
@@ -119,6 +119,13 @@ frameworks. CI checks these dependency boundaries for release packages.
   architecture's Debug tarball. ARM64 artifacts are available from CI and will
   be attached to releases after 0.7.22. This does not cover 32-bit ARM or certify
   graphical performance on individual ARM boards.
+- **Slackware64 15.0:** CI builds inside the Slackware 15.0 container referenced by
+  [SlackDocs](https://docs.slackware.com/howtos:misc:slackware_docker_image), using
+  its native toolchain and libraries. `packaging/slackware/package.sh` stages
+  CMake's install tree and creates a `.txz` with Slackware's `makepkg`; CI installs
+  it and checks client/server startup. The package includes no active systemd unit
+  because Slackware uses BSD-style init. Launch the server directly or configure
+  local startup yourself. No daemon starts during installation.
 
 The platform workflows build Release and selected Debug artifacts on every
 `main` push. The determinism workflow runs for relevant source changes; Windows

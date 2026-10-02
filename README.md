@@ -288,6 +288,11 @@ Native **Linux ARM64** packages are also built by [Linux CI](https://github.com/
 for Ubuntu 22.04/24.04/26.04, Debian 12/13 (`arm64.deb`), and Fedora 44
 (`aarch64.rpm`), plus an ARM64 Debug tarball. Download these from a successful
 workflow run; they will join tagged releases after 0.7.22. Arch packages remain x64.
+CI also builds **openSUSE Leap 16.0** RPMs for x64 and ARM64, and a native
+**Slackware64 15.0** `.txz` package. These will join releases after 0.7.22;
+install with `sudo zypper install ./tak-engine-…rpm` or
+`sudo upgradepkg --install-new ./tak-engine-…txz`, respectively. Slackware does
+not use systemd; run `takserver` directly with the documented command-line options.
 
 Release filenames also include the project name and version. Install Linux
 packages with `apt install ./…deb`, `dnf install ./…rpm`, or `pacman -U ./…pkg.tar.zst`
