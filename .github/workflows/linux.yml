@@ -29,23 +29,40 @@ permissions:
 jobs:
   package:
     name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # debug=true on the OLDEST glibc leg: its unhardened debug tarball runs
-          # everywhere. cmake_dl: ubuntu 22.04 ships cmake 3.22 (< our 3.24 min);
-          # cxx12: its default g++ is 11, too old for our C++20.
-          - { name: 'Ubuntu 22.04 (.deb)', image: 'ubuntu:22.04', family: deb,
-              tag: ubuntu22.04, debug: true, cmake_dl: true, cxx12: true }
-          - { name: 'Ubuntu 24.04 (.deb)', image: 'ubuntu:24.04', family: deb, tag: ubuntu24.04 }
-          - { name: 'Ubuntu 26.04 (.deb)', image: 'ubuntu:26.04', family: deb, tag: ubuntu26.04 }
-          - { name: 'Debian 12 (.deb)',    image: 'debian:12',    family: deb, tag: debian12 }
-          - { name: 'Debian 13 (.deb)',    image: 'debian:13',    family: deb, tag: debian13 }
-          - { name: 'Fedora 44 (.rpm)',    image: 'fedora:44',    family: rpm, tag: fedora44 }
-          - { name: 'Arch (.pkg.tar.zst)', image: 'archlinux:latest', family: arch, tag: arch }
+          # Native runners and containers; Arch provides only an x64 image.
+          # Debug binaries use the oldest glibc for each architecture.
+          - { name: 'Ubuntu 22.04 x64', image: 'ubuntu:22.04', family: deb,
+              tag: ubuntu22.04, arch: x64, cpu: x86_64, runner: ubuntu-24.04, debug: true, cmake_dl: true, cxx12: true }
+          - { name: 'Ubuntu 24.04 x64', image: 'ubuntu:24.04', family: deb,
+              tag: ubuntu24.04, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'Ubuntu 26.04 x64', image: 'ubuntu:26.04', family: deb,
+              tag: ubuntu26.04, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'Debian 12 x64', image: 'debian:12', family: deb,
+              tag: debian12, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'Debian 13 x64', image: 'debian:13', family: deb,
+              tag: debian13, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'Fedora 44 x64', image: 'fedora:44', family: rpm,
+              tag: fedora44, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'Arch x64', image: 'archlinux:latest', family: arch,
+              tag: arch, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'Ubuntu 22.04 arm64', image: 'ubuntu:22.04', family: deb,
+              tag: ubuntu22.04, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm, debug: true, cmake_dl: true, cxx12: true }
+          - { name: 'Ubuntu 24.04 arm64', image: 'ubuntu:24.04', family: deb,
+              tag: ubuntu24.04, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
+          - { name: 'Ubuntu 26.04 arm64', image: 'ubuntu:26.04', family: deb,
+              tag: ubuntu26.04, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
+          - { name: 'Debian 12 arm64', image: 'debian:12', family: deb,
+              tag: debian12, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
+          - { name: 'Debian 13 arm64', image: 'debian:13', family: deb,
+              tag: debian13, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
+          - { name: 'Fedora 44 arm64', image: 'fedora:44', family: rpm,
+              tag: fedora44, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
     steps:
       # Deps FIRST (before checkout: the checkout action needs nothing from us,
       # but the containers lack git/curl until this runs).
@@ -59,12 +76,13 @@ jobs:
           # SDL2 with its X11/Wayland/audio drivers (the libs themselves are
           # built from source below).
           apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ git make perl python3 patch dpkg-dev nasm pkg-config file \
+            cmake ninja-build g++ git make perl python3 patch dpkg-dev pkg-config file \
             curl ca-certificates xz-utils \
             libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev \
             libxss-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
             libgl1-mesa-dev libegl1-mesa-dev
+          if [ "${{ matrix.arch }}" = "x64" ]; then apt-get install -y nasm; fi
           if [ "${{ matrix.cxx12 }}" = "true" ]; then apt-get install -y g++-12; fi
       - name: Install build deps (dnf)
         if: matrix.family == 'rpm'
@@ -72,13 +90,14 @@ jobs:
           # libstdc++-static: Fedora splits libstdc++.a out, and without it the
           # -static-libstdc++ probe in CMakeLists fails and the binary keeps a
           # libstdc++.so.6 dependency -- which is exactly what the static gate rejects.
-          dnf -y install cmake ninja-build gcc-c++ git make perl-core python3 patch rpm-build nasm pkgconf \
+          dnf -y install cmake ninja-build gcc-c++ git make perl-core python3 patch rpm-build pkgconf \
             libstdc++-static \
             tar gzip zstd xz \
             alsa-lib-devel pulseaudio-libs-devel pipewire-devel dbus-devel \
             libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel \
             libXfixes-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel \
             wayland-protocols-devel libdecor-devel mesa-libGL-devel mesa-libEGL-devel
+          if [ "${{ matrix.arch }}" = "x64" ]; then dnf -y install nasm; fi
       - name: Install build deps (pacman)
         if: matrix.family == 'arch'
         run: |
@@ -90,16 +109,19 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      - name: Verify native runner architecture
+        run: test "$(uname -m)" = "${{ matrix.cpu }}"
+
       # Ubuntu 22.04 ships CMake 3.22; our minimum is 3.24. Drop in the official
-      # binary tarball (x86_64) ahead of it on PATH.
+      # native binary tarball ahead of it on PATH.
       - name: Newer CMake (ubuntu 22.04)
         if: matrix.cmake_dl == true
         run: |
           curl -fsSL -o /tmp/cmake.tar.gz \
-            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-x86_64.tar.gz
+            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-linux-${{ matrix.cpu }}.tar.gz
           tar -C /opt -xzf /tmp/cmake.tar.gz
-          ln -sf /opt/cmake-3.28.6-linux-x86_64/bin/cmake /usr/local/bin/cmake
-          ln -sf /opt/cmake-3.28.6-linux-x86_64/bin/cpack /usr/local/bin/cpack
+          ln -sf /opt/cmake-3.28.6-linux-${{ matrix.cpu }}/bin/cmake /usr/local/bin/cmake
+          ln -sf /opt/cmake-3.28.6-linux-${{ matrix.cpu }}/bin/cpack /usr/local/bin/cpack
           cmake --version
 
       # Static Bink/streaming FFmpeg + static zlib/libjpeg/SDL2 (see the tools/
@@ -108,15 +130,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-${{ matrix.tag }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
-          restore-keys: ffmpeg-bink-${{ matrix.tag }}-n7.1.1-stream-v2-
+          key: ffmpeg-bink-${{ matrix.tag }}-${{ matrix.arch }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch') }}
+          restore-keys: ffmpeg-bink-${{ matrix.tag }}-${{ matrix.arch }}-n7.1.1-stream-v2-
       - name: Build static FFmpeg (Bink)
         run: ./tools/build-ffmpeg-bink.sh
       - name: Cache static deps (zlib/libjpeg/SDL2)
         uses: actions/cache@v4
         with:
           path: third_party/static-deps
-          key: static-deps-${{ matrix.tag }}-zlib1.3.1-jpeg3.0.4-sdl2.32.10
+          key: static-deps-${{ matrix.tag }}-${{ matrix.arch }}-zlib1.3.1-jpeg3.0.4-sdl2.32.10
       - name: Build static deps (zlib/libjpeg/SDL2)
         run: ./tools/build-static-deps.sh
 
@@ -198,16 +220,26 @@ jobs:
           fi
           echo "OK: only libc/libm linked -- as static as a Linux build can usefully be"
 
+      - name: Verify native executables
+        run: |
+          python3 tools/check-linux-architecture.py ${{ matrix.arch }} build/takclient build/takserver build/cartographer build/crusades_admin
+          ./build/takclient --version
+          ./build/takserver --version
+
       - name: Package (.deb)
         if: matrix.family == 'deb'
         run: |
           (cd build && cpack -G DEB)
+          expected=amd64
+          if [ "${{ matrix.arch }}" = "arm64" ]; then expected=arm64; fi
+          test "$(dpkg-deb -f build/tak-engine-*.deb Architecture)" = "$expected"
           dpkg-deb -I build/tak-engine-*.deb   # show control + auto deps
           mkdir -p dist && cp build/tak-engine-*.deb dist/
       - name: Package (.rpm)
         if: matrix.family == 'rpm'
         run: |
           (cd build && cpack -G RPM)
+          test "$(rpm -qp --qf '%{ARCH}' build/tak-engine-*.rpm)" = "${{ matrix.cpu }}"
           rpm -qp --requires build/tak-engine-*.rpm
           mkdir -p dist && cp build/tak-engine-*.rpm dist/
       - name: Package (.pkg.tar.zst)
@@ -231,15 +263,16 @@ jobs:
           export CC=gcc-12 CXX=g++-12
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-debug --target takclient takserver cartographer crusades_admin
+          python3 tools/check-linux-architecture.py ${{ matrix.arch }} build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin
           mkdir -p dist-linux-debug
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt dist-linux-debug/
           cp build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin dist-linux-debug/
-          tar -C dist-linux-debug -czf dist/tak-engine-linux-x64-debug.tar.gz .
+          tar -C dist-linux-debug -czf dist/tak-engine-linux-${{ matrix.arch }}-debug.tar.gz .
 
       - name: Upload CI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tak-engine-${{ matrix.tag }}
+          name: tak-engine-${{ matrix.tag }}-${{ matrix.arch }}
           path: dist/*
 
   release:

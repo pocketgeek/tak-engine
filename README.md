@@ -284,6 +284,11 @@ Choose the package for your system:
 | Fedora 44 | `fedora44-x86_64.rpm` |
 | Arch Linux | `x86_64.pkg.tar.zst` |
 
+Native **Linux ARM64** packages are also built by [Linux CI](https://github.com/pocketgeek/tak-engine/actions/workflows/linux.yml)
+for Ubuntu 22.04/24.04/26.04, Debian 12/13 (`arm64.deb`), and Fedora 44
+(`aarch64.rpm`), plus an ARM64 Debug tarball. Download these from a successful
+workflow run; they will join tagged releases after 0.7.22. Arch packages remain x64.
+
 Release filenames also include the project name and version. Install Linux
 packages with `apt install ./…deb`, `dnf install ./…rpm`, or `pacman -U ./…pkg.tar.zst`
 using administrator privileges. Linux packages include the client, dedicated

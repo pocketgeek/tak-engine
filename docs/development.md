@@ -108,8 +108,17 @@ frameworks. CI checks these dependency boundaries for release packages.
   use `MACOSX_DEPLOYMENT_TARGET=14.0` for matching source builds. Intel packages
   are published starting with version 0.7.19, as well as CI artifacts.
   See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
-- **Linux x64:** CI packages Ubuntu 22.04/24.04/26.04, Debian 12/13,
-  Fedora 44, and Arch; use the package matching your distribution.
+- **Linux x64 and ARM64:** native CI runners build Ubuntu 22.04/24.04/26.04,
+  Debian 12/13, and Fedora 44 containers for each architecture. Arch's official
+  container builds x64 only. Choose the package matching both your distribution
+  and architecture (`amd64`/`arm64` for DEB, `x86_64`/`aarch64` for RPM).
+  ARM64 uses GitHub's [native ARM runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
+  not emulation. Dependencies and caches are isolated by distro and architecture;
+  both architectures run the same package-workflow regression tests, ELF checks,
+  package metadata checks, and static-link gate. Ubuntu 22.04 supplies each
+  architecture's Debug tarball. ARM64 artifacts are available from CI and will
+  be attached to releases after 0.7.22. This does not cover 32-bit ARM or certify
+  graphical performance on individual ARM boards.
 
 The platform workflows build Release and selected Debug artifacts on every
 `main` push. The determinism workflow runs for relevant source changes; Windows
