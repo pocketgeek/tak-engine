@@ -1,7 +1,6 @@
 # README screenshots
 
-Captured on 2026-10-01 from the **0.7.21** release-preparation build,
-release-preparation sources. All thirteen views were freshly rendered and visually
+Captured on 2026-10-01 from the **0.7.21** release-preparation build. All thirteen views were freshly rendered and visually
 inspected. Game/menu images are actual engine output at 1600 × 1000, encoded as
 JPEG at quality 90 with full chroma resolution. Editor images retain their
 native 921 × 691 PNG resolution. No units, effects or UI were added afterward.

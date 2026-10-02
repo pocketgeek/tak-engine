@@ -33,8 +33,23 @@ Protocol **213**, replay format **10**, campaign payload **4**, database schema 
 - Local Pebble ACME integration passed issuance, certificate/account reuse,
   background renewal, failed-renewal retention, persistent backoff and listener
   cleanup.
-- Native platform CI and published-package verification are pending; their final
-  results will be recorded after release artifacts are available.
+- Native tagged CI passed: [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/36945693691),
+  [Windows x64/ARM64](https://github.com/pocketgeek/tak-engine/actions/runs/36945693683),
+  and [macOS Intel/Apple Silicon](https://github.com/pocketgeek/tak-engine/actions/runs/36945693759).
+  The [determinism CI](https://github.com/pocketgeek/tak-engine/actions/runs/36945113886)
+  also passed.
+- All **19 published assets** were downloaded and their SHA-256 digests checked.
+  ZIP validation checked executable architectures, licenses, Windows GUI subsystem,
+  macOS bundle versions/icons/deployment targets and external library references.
+  Ubuntu package validation checked metadata, launchers, dependencies, and executed
+  the client/server version commands. No new non-system dynamic dependencies were found.
+- A pre-tag macOS run exposed a nonblocking `accept()` race in the campaign client
+  test. A test-only follow-up on main waits for socket readiness with a deadline;
+  it passed 20 consecutive local runs and [both native macOS runners](https://github.com/pocketgeek/tak-engine/actions/runs/36945915294).
+  The tagged platform runs all passed; release engine sources were unchanged.
+- Published [v0.7.21](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.21)
+  at `4dd97036b90c9032ce66f7fe6189d081559dbaff`. Local Release, optimized Debug and
+  Debug binaries were rebuilt with the `v0.7.21` build stamp.
 
 ## Screenshots and documentation
 
