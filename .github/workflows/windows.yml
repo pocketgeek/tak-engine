@@ -20,12 +20,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # attach assets to the release (tag builds)
+  contents: read
 
 jobs:
   build:
     name: Windows ${{ matrix.arch }} (${{ matrix.msystem }})
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write   # unsigned fork tag releases; official tags publish only in sign-release
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +63,16 @@ jobs:
         shell: msys2 {0}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Validate release packaging scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem packaging/windows/*.ps1 | ForEach-Object {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$parseErrors) > $null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -202,17 +214,20 @@ jobs:
       - name: Project version
         run: echo "VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | awk '{print $2}')" >> "$GITHUB_ENV"
 
-      - name: Bundle static executables + zip
+      - name: Stage static executables
         run: |
           mkdir -p dist-win
           cp build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe dist-win/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt dist-win/
-          (cd dist-win && zip -r "../takclient-$VERSION-windows-${{ matrix.arch }}.zip" .)
+
+      - name: ZIP unsigned CI build
+        if: github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v')
+        run: (cd dist-win && zip -r "../takclient-$VERSION-windows-${{ matrix.arch }}.zip" .)
 
       # Proper installer (NSIS via CPack): installs into Program Files\TAK Engine
       # with Start-menu shortcuts + an uninstaller. Same static binaries as the zip.
       - name: Build installer (NSIS)
-        if: matrix.arch == 'x64'
+        if: matrix.arch == 'x64' && (github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v'))
         run: |
           (cd build && cpack -G NSIS)
           ls -l build/tak-engine-*-setup.exe
@@ -224,7 +239,7 @@ jobs:
           path: dist-win/
 
       - name: Upload CI artifact (installer)
-        if: matrix.arch == 'x64'
+        if: matrix.arch == 'x64' && (github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v'))
         uses: actions/upload-artifact@v7
         with:
           name: tak-engine-windows-${{ matrix.arch }}-setup
@@ -249,12 +264,15 @@ jobs:
             fi
           done
 
-      - name: Bundle static executables + zip (debug)
+      - name: Stage static executables (debug)
         run: |
           mkdir -p dist-win-debug
           cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe dist-win-debug/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt ACME-LICENSES.txt dist-win-debug/
-          (cd dist-win-debug && zip -r ../takclient-windows-${{ matrix.arch }}-debug.zip .)
+
+      - name: ZIP unsigned CI build (debug)
+        if: github.repository != 'pocketgeek/tak-engine' || !startsWith(github.ref, 'refs/tags/v')
+        run: (cd dist-win-debug && zip -r ../takclient-windows-${{ matrix.arch }}-debug.zip .)
 
       - name: Upload CI artifact (debug)
         uses: actions/upload-artifact@v7
@@ -274,8 +292,8 @@ jobs:
           fi
           ./build/sim_driver_equiv_test.exe
 
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Attach unsigned fork release
+        if: github.repository != 'pocketgeek/tak-engine' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh   # gh is on the Windows PATH, not inside msys2
         env:
           GH_TOKEN: ${{ github.token }}
@@ -290,3 +308,133 @@ jobs:
           }
           gh release upload $env:GITHUB_REF_NAME @files `
             --repo $env:GITHUB_REPOSITORY --clobber
+
+  # Only this job can publish official Windows assets. It waits for BOTH native
+  # builds and their tests, then signs ARM64 files on a supported x64 runner.
+  sign-release:
+    name: Sign and publish Windows release
+    needs: build
+    if: github.repository == 'pocketgeek/tak-engine' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-2022
+    environment: windows-signing
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: takclient-windows-*
+          path: unsigned-payloads
+
+      - name: Validate release inputs and signing configuration
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+        run: |
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID',
+                              'AZURE_SIGNING_ACCOUNT_NAME', 'AZURE_SIGNING_CERTIFICATE_PROFILE_NAME',
+                              'AZURE_SIGNING_ENDPOINT')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "Missing windows-signing configuration: $name"
+            }
+          }
+          ./packaging/windows/package-release.ps1 -PayloadRoot unsigned-payloads -ValidateOnly
+
+      - name: Azure login (GitHub OIDC)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign all shipped Release and Debug executables
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\unsigned-payloads
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+
+      - name: Install NSIS
+        run: |
+          choco install nsis --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          "${env:ProgramFiles(x86)}\NSIS" >> $env:GITHUB_PATH
+
+      - name: Verify signatures and timestamps, then package ZIPs and NSIS
+        run: ./packaging/windows/package-release.ps1 -PayloadRoot unsigned-payloads
+
+      - name: Sign completed installer
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\windows-release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+
+      - name: Verify completed installer signature and timestamp
+        run: ./packaging/windows/verify-signatures.ps1 -Path windows-release -ExpectedCount 1
+
+      - name: Upload signed packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: tak-engine-windows-signed
+          path: windows-release/*
+          if-no-files-found: error
+
+      - name: Publish verified signed packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @(Get-ChildItem windows-release -File)
+          if ($files.Count -ne 5) { throw 'Expected four ZIPs and one signed installer' }
+          gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY `
+              --title "TAK Engine $env:GITHUB_REF_NAME" --generate-notes --verify-tag
+            # Other platform jobs may create the release concurrently.
+            if ($LASTEXITCODE -ne 0) {
+              gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot find or create release' }
+            }
+          }
+          gh release upload $env:GITHUB_REF_NAME @($files.FullName) `
+            --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Signed release upload failed' }
