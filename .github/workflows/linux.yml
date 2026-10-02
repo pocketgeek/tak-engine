@@ -165,7 +165,9 @@ jobs:
           ./build/cartographer_validation_test
 
       - name: AA and validation regressions
-        run: ctest --test-dir build -R '^(selective_aa|tdf_limits|validationworker)$' --output-on-failure
+        run: |
+          cmake --build build --target selective_aa_test tdf_limits_test validationworker_test
+          ctest --test-dir build -R '^(selective_aa|tdf_limits|validationworker)$' --output-on-failure
 
       - name: Streaming encode test
         run: |

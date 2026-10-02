@@ -27,17 +27,31 @@ uint16_t unusedPort() {
     check(bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof addr)==0,"bind");
     socklen_t n=sizeof addr;check(getsockname(fd,reinterpret_cast<sockaddr*>(&addr),&n)==0,"getsockname");sockClose(fd);return ntohs(addr.sin_port);
 }
-int connectTo(uint16_t port,const char* source=nullptr) {
+int connectTo(uint16_t port,bool independentSource=false) {
+    // ::1 is a separate local source from the flood's 127.0.0.1. Unlike
+    // 127.0.0.2, it needs no administrator-created loopback alias on macOS.
+    if(independentSource) {
+        int fd=int(socket(AF_INET6,SOCK_STREAM,0));
+        if(fd>=0) {
+            sockaddr_in6 addr{};addr.sin6_family=AF_INET6;
+            addr.sin6_addr=in6addr_loopback;addr.sin6_port=htons(port);
+            if(connect(fd,reinterpret_cast<sockaddr*>(&addr),sizeof addr)==0)return fd;
+            sockClose(fd);
+        }
+    }
     int fd=int(socket(AF_INET,SOCK_STREAM,0));check(fd>=0,"socket");
-    if(source) {
+    if(independentSource) {
+        // Retain the IPv4-only fixture on hosts without IPv6 loopback.
         sockaddr_in local{};local.sin_family=AF_INET;local.sin_addr.s_addr=htonl(0x7f000002);
-        check(bind(fd,reinterpret_cast<sockaddr*>(&local),sizeof local)==0,"bind source");
+        if(bind(fd,reinterpret_cast<sockaddr*>(&local),sizeof local)!=0) {
+            sockClose(fd);throw std::runtime_error("need IPv6 loopback or 127.0.0.2 for independent source test");
+        }
     }
     sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);addr.sin_port=htons(port);
     if(connect(fd,reinterpret_cast<sockaddr*>(&addr),sizeof addr)) {sockClose(fd);return -1;}return fd;
 }
 std::string request(uint16_t port,const std::string& text) {
-    int fd=connectTo(port,"127.0.0.2");check(fd>=0,"connect responder");
+    int fd=connectTo(port,true);check(fd>=0,"connect responder");
     check(send(fd,text.data(),int(text.size()),MSG_NOSIGNAL)==int(text.size()),"send request");
     sockSetNonBlock(fd);std::string response;char bytes[2048];
     auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(4);
