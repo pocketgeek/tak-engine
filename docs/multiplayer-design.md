@@ -546,3 +546,34 @@ Each lands independently, keeps single-player green, and is verifiable.
   the suspicion rule, not a mass drop.
 - The existing `--shot`/`--time` smoke harness keeps covering the offline
   path.
+
+### Per-game simulation isolation
+
+Each running room lazily starts its own persistent simulation worker. The main
+network thread freezes commands and events for one tick, then polls for its
+completion without waiting for other rooms. There is at most one tick in flight
+per room. Completed bundles, replay history, checksums, and campaign results are
+published by the network thread; workers never touch sockets or shared room
+metadata. Command ordering and the wire protocol are unchanged.
+
+The running-room limit bounds the number of simulation workers. When multiple
+games run, each simulation uses serial internal jobs to avoid nested worker
+oversubscription. A slow tick no longer holds up the network loop or another
+room's ticks, although games still compete for CPU and memory bandwidth. Map
+startup and replay file writes remain synchronous work on the main thread.
+
+The `room_worker` regression checks independent progress with a blocked worker,
+serial/worker/client checksum equivalence, replay-budget rejection, and worker
+exception recovery. It runs without networking or retail assets.
+
+### Per-room override packs
+
+Protocol 213 adds OverrideOffer/Request/Chunk/Ready/Error alongside map transfer.
+The host selects named immediate subfolders of `overrides/`; root-level files
+are excluded. Full selections are merged in alphabetical order into a bounded,
+SHA-256-addressed package. Server and peers verify it before room readiness.
+Each Full room owns its own VFS and registries, leaving other rooms unchanged.
+Cosmetic local selections exclude all gameplay, feature-definition and AI files.
+Selections persist separately for hosts and guests. Off suppresses both lists
+and local files. Replay format 10 records the shared package digest and loads
+it from `OverrideCache/`; format 9 / protocol 212 remains readable.

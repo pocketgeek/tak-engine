@@ -68,7 +68,7 @@ def verify_replay(root, identity, digest, fingerprint):
     replay = auth.Reader(files[0].read_bytes())
     assert replay.data[:4] == b'TAKR'
     replay.pos = 4
-    assert replay.num('<I') == 9
+    assert replay.num('<I') == 10
     assert replay.num('<I') == auth.VERSION
     replay.field()  # map
     assert replay.num('<B') == 1  # Crusades Balance
@@ -76,6 +76,7 @@ def verify_replay(root, identity, digest, fingerprint):
     replay.field(); replay.field()  # mission, engine version
     assert replay.num('<Q') == fingerprint
     replay.num('<B'); replay.field()  # sight, map digest
+    assert replay.field() == b""  # campaigns do not load override packs
     slot_count = replay.num('<B')
     replay.pos += 5 * slot_count
     count = replay.num('<I')

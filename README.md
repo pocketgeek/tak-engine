@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.20-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.21-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -27,12 +27,15 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
     <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
   </tr>
   <tr>
+    <td colspan="2"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with remembered override-pack selections and read-only match settings"></a><br><sub>Lobby settings and selectable override packs</sub></td>
+  </tr>
+  <tr>
     <td width="50%"><a href="docs/img/streaming.jpg"><img src="docs/img/streaming.jpg" alt="YouTube streaming panel with Max 3840 and 60 FPS selected"></a><br><sub>Built-in YouTube streaming</sub></td>
     <td width="50%"><a href="docs/img/results.jpg"><img src="docs/img/results.jpg" alt="Post-game statistics with faction emblems and player colors"></a><br><sub>Post-game statistics (sample data)</sub></td>
   </tr>
 </table>
 
-<sub>Captured from the 0.7.19 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.21 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -44,32 +47,34 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## Current development: public-server hardening
+## New in 0.7.21
 
-Native TLS protects multiplayer connections without adding dynamic dependencies.
-Public listeners require a certificate by default; players enter just the server
-name (for example, `tak.pgnet.us`). TLS and port 7677 are selected automatically.
-Account, game, upload, map-storage and replay budgets limit abuse, and
-an optional Linux service template isolates server state from retail data.
-Built-in Let’s Encrypt support (`--acme-domain` and `--acme-agree-tos`) obtains
-and renews certificates, opening port 80 only for HTTP validation.
-See [public-server deployment and limitations](docs/public-server.md).
-These changes are newer than the 0.7.20 release; update client and server together.
+- **Selectable override packs:** put each pack in its own `overrides/<pack>/`
+  folder, then select multiple packs in the lobby. Choices are remembered.
+  Cosmetic mode filters gameplay files; Full host packs transfer automatically
+  to the server and players. Files directly in `overrides/` never load.
+- **Clearer lobby:** all game-create rules are shown as read-only information,
+  including Crusades balance, monarch expendability, and generated-map settings.
+  Choose Off/Cosmetic/Full when creating the game; select packs in the lobby.
+- **Independent game workers:** each running match has its own simulation worker,
+  so one busy match does not run its simulation on the shared network thread.
+- **Public-server hardening:** verified TLS, authenticated accounts, command and
+  upload limits, storage budgets, and an optional Linux service sandbox. Players
+  can enter just a server name; TLS and port 7677 are selected automatically.
+  Built-in Let’s Encrypt support opens port 80 only during HTTP validation.
 
-## New in 0.7.20
+Version **0.7.21 uses protocol 213**; update clients and servers together.
+Replay format 10 records the shared override package. Protocol-212 format-9
+recordings remain compatible with this simulation. No new dynamic dependencies
+or retail assets are shipped. See the [release notes](docs/release-0.7.21-notes.md),
+[validation report](docs/release-0.7.21-validation.md), and
+[public-server deployment guide](docs/public-server.md).
 
-Naval AI now plans coastal production for Aramon's War Galleys, Veruna and Creon
-shipyards, and Zhon's aquatic creatures in both balance modes. Creon shipyards
-can use their open build pads, launch checks include a way out of the yard, and
-small fleets no longer wait for an oversized land-army wave. Taros uses its
-amphibious units and flyers; it has no buildable skirmish ships.
+### Previously in 0.7.20
+
+Naval AI improvements cover all five factions in both balance modes, including
+coastal production, usable shipyard launch routes, and smaller fleet deployment.
 See the [naval AI audit](docs/naval-ai-2026-10-01.md).
-
-Version 0.7.20 uses **protocol 212** for the production correction. Update
-clients and servers together; recordings from protocol 211 and earlier need
-their original compatible engine. No new dependencies are added.
-See the [release notes](docs/release-0.7.20-notes.md) and
-[validation report](docs/release-0.7.20-validation.md).
 
 ### Previously in 0.7.19
 
@@ -245,7 +250,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.20** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.21** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -294,7 +299,8 @@ takclient --data /path/to/tak_install
 
 Release builds otherwise use the menus; `--version` prints the installed
 version. Custom maps belong in the installation's `Maps/` folder, and custom
-content belongs in `overrides/`. Unknown archives dropped into the installation
+content belongs in named pack subfolders of `overrides/` (files directly in that
+folder are never loaded). Unknown archives dropped into the installation
 root are not loaded. See the [game-data guide](docs/user-guide.md#game-data)
 for layout, archive precedence, and troubleshooting a rejected folder.
 
@@ -617,10 +623,10 @@ through 250, 500, 1,000, and 2,000. The lobby displays this value without allowi
 it to change.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.20 uses protocol 212**, including the naval production correction
+Version **0.7.21 uses protocol 213**, including shared override-pack transfer
 and Darien Crusades campaign messages. Update clients and servers together;
-0.7.19 and earlier cannot join these matches. Incompatible clients and recordings
-are rejected; older recordings require their original compatible engine.
+earlier clients cannot join these matches. Protocol-212 format-9 recordings
+remain playable; older incompatible recordings need their original engine.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 
@@ -754,6 +760,22 @@ and server remain in sync.
 Bug reports are most useful with the engine version, platform, map, balance
 setting, steps to reproduce, and a replay or screenshot where relevant.
 Do not attach retail game archives or executables.
+
+### Selectable override packs
+
+Place each pack under `<data>/overrides/<pack name>/`, containing loose game
+files or HPI/UFO/KMP archives. Files directly in `overrides/` never load.
+Choose Off/Cosmetic/Full on the game-create screen. The skirmish/multiplayer
+lobby displays the mode and supports multiple checked packs; Off hides the list.
+Pack choices are remembered.
+Alphabetically later pack names win file conflicts.
+
+Guests select their own cosmetic packs separately. Full host packs transfer
+automatically to the server and all players, with checksum verification before
+start. Downloads stay in `OverrideCache/`; they do not replace installed files.
+Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
+Version 0.7.21 uses protocol **213**; update server and clients together.
+
 
 ## License
 

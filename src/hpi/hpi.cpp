@@ -634,6 +634,7 @@ std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path, bool s
         auto found = mapFiles_->find(kp);
         if (found != mapFiles_->end()) return found->second;
     }
+    if (overrideFiles_) { auto found=overrideFiles_->find(kp); if(found!=overrideFiles_->end()) return found->second; }
     for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
         if ((skipMapResources || mapFiles_) && it->mapResources) continue;
         if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
@@ -659,6 +660,7 @@ bool Vfs::has(const std::string& path, bool skipMapResources) const {
     skipMapResources = skipMapResources || skipMaps_;
     const std::string kp = MountSet::key(path);
     if (mapFiles_ && !skipMapResources && mapFiles_->count(kp)) return true;
+    if (overrideFiles_ && overrideFiles_->count(kp)) return true;
     for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
         if ((skipMapResources || mapFiles_) && it->mapResources) continue;
         if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
@@ -707,6 +709,8 @@ std::vector<std::string> Vfs::list(const std::string& prefix, bool skipMapResour
             if (archive.archive->find(tak::vpath::replaceExtension(archive.path,".ota"))) out[ota] = ota;
         }
     }
+    if (overrideFiles_) for (const auto& [p, bytes] : *overrideFiles_)
+        if (kp.empty() || p == kp || p.starts_with(kp.back() == '/' ? kp : kp + '/')) out[p] = p;
     if (mapFiles_ && !skipMapResources) for (const auto& [p, bytes] : *mapFiles_)
         if (kp.empty() || p == kp || p.starts_with(kp.back() == '/' ? kp : kp + '/')) out[p] = p;
     std::vector<std::string> paths;
@@ -944,7 +948,46 @@ std::string rootManifest(const std::filesystem::path& root) {
     return buf;
 }
 
-Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides) {
+namespace {
+std::filesystem::path overrideDirectory(const std::filesystem::path& root) {
+    std::error_code ec;
+    for(const auto& entry:std::filesystem::directory_iterator(root,ec))
+        if(MountSet::key(utf8(entry.path().filename()))=="overrides" && entry.is_directory(ec) && !entry.is_symlink(ec))return entry.path();
+    return {};
+}
+}
+std::vector<std::string> overridePacks(const std::filesystem::path& root) {
+    std::vector<std::string> result;auto dir=overrideDirectory(root);if(dir.empty())return result;
+    std::error_code ec;
+    for(const auto& entry:std::filesystem::directory_iterator(dir,ec)) {
+        const auto name=utf8(entry.path().filename());
+        if(entry.is_directory(ec) && !entry.is_symlink(ec) && !name.empty() && name[0]!='.' && name.size()<=128)result.push_back(name);
+    }
+    std::sort(result.begin(),result.end());return result;
+}
+Vfs::Files overrideFiles(const std::filesystem::path& root,OverridePolicy policy,const std::vector<std::string>& selected) {
+    Vfs::Files files;if(policy==OverridePolicy::None)return files;
+    if(selected.size()>64)throw std::runtime_error("too many override packs");
+    const auto available=overridePacks(root);auto names=selected;std::sort(names.begin(),names.end());
+    if(std::adjacent_find(names.begin(),names.end())!=names.end())throw std::runtime_error("duplicate override pack");
+    const auto dir=overrideDirectory(root);size_t total=0;
+    for(const auto& name:names) {
+        if(!std::binary_search(available.begin(),available.end(),name))throw std::runtime_error("override pack not found: "+name);
+        MountConfig cfg{true,{".hpi",".ufo",".kmp"},{},{}};
+        // Feature definitions contain simulation keys; cosmetic packs must never
+        // replace them, even though their art fields also affect presentation.
+        if(policy==OverridePolicy::Cosmetic)cfg.keep=[](const std::string& p){const auto k=MountSet::key(p);return !affectsGameplay(p) && !k.starts_with("features/") && !k.starts_with("ai/");};
+        MountSet mount(dir/std::filesystem::u8path(name),std::move(cfg));
+        for(const auto& path:mount.list("")) {
+            auto bytes=mount.read(path);total+=bytes.size();
+            if(total>(256u<<20) || files.size()>=65536)throw std::runtime_error("override selection too large");
+            files[MountSet::key(path)]=std::move(bytes);
+        }
+    }
+    return files;
+}
+
+Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides, const std::vector<std::string>& packs) {
     namespace fs = std::filesystem;
     Vfs vfs;
     // Case-fold the retail subdir names (they ship capitalised: Maps/ Music/
@@ -1004,17 +1047,8 @@ Vfs mountRetailRoot(const std::filesystem::path& root, OverridePolicy overrides)
         };
         vfs.addLayer(MountSet(maps, std::move(cfg)), "", true);
     }
-    // Highest precedence: user overrides (loose files OR archives), filtered by
-    // the multiplayer policy. Cosmetic drops any gameplay-affecting override so
-    // it cannot diverge between peers; Full mounts everything.
-    if (overrides != OverridePolicy::None) {
-        if (fs::path ov = findSub("overrides"); !ov.empty()) {
-            MountConfig cfg{true, {".hpi", ".ufo", ".kmp"}, {}, {}};
-            if (overrides == OverridePolicy::Cosmetic)
-                cfg.keep = [](const std::string& p) { return !affectsGameplay(p); };
-            vfs.addLayer(MountSet(ov, std::move(cfg)), "");
-        }
-    }
+    if (overrides != OverridePolicy::None && !packs.empty())
+        vfs.setOverrideFiles(std::make_shared<const Vfs::Files>(overrideFiles(root, overrides, packs)));
     vfs.refreshMapCache(root);
     return vfs;
 }

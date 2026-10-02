@@ -359,6 +359,11 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
         throw std::runtime_error(rf.error.empty() ? "cannot read that replay" : rf.error);
     const auto rpol = tak::hpi::OverridePolicy(rf.overridePolicy <= 2 ? rf.overridePolicy : 2);
     auto rvfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot), rpol);
+    if(!rf.overrideDigest.empty()) {
+        auto pack=tak::net::overrides::loadCache(dataRoot,rf.overrideDigest);
+        if(!pack)throw std::runtime_error("the verified override packs for this replay are missing");
+        rvfs.setOverrideFiles(pack->files);
+    }
     std::string mapPath;
     if (!rf.mapDigest.empty()) {
         auto package = tak::net::maps::loadCache(dataRoot, rf.mapDigest);
@@ -927,6 +932,7 @@ int main(int argc, char** argv) {
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
         mp->setMapRoot(std::filesystem::u8path(dataRoot));
+        mp->setHostOverridePacks(settings.hostOverridePacks);
         if (playerName.empty()) playerName = settings.playerName;
         if (playerName.empty()) playerName = "player";
         // Hello carries the PURE-RETAIL gameplay fingerprint (no overrides), so the

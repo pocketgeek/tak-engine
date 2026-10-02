@@ -70,7 +70,7 @@ def migrate_fixture_to_protocol(root, identity, digest, protocol):
     original_bytes = original.read_bytes()
     recording = bytearray(original_bytes)
     assert recording[:4] == b'TAKR'
-    assert struct.unpack_from('<II', recording, 4) == (9, auth.VERSION)
+    assert struct.unpack_from('<II', recording, 4) == (10, auth.VERSION)
     struct.pack_into('<I', recording, 8, protocol)
     replacement_digest = hashlib.sha256(recording).hexdigest()
     with contextlib.closing(sqlite3.connect(root / 'campaign.sqlite')) as db:
@@ -159,7 +159,7 @@ def run(server, client, data, root):
         # A simulation correction changes replay results even if the command
         # layout is unchanged. Older recordings must remain listed in history
         # without offering playback using the new simulation.
-        migrate_fixture_to_protocol(root, identity, digest, auth.VERSION-1)
+        migrate_fixture_to_protocol(root, identity, digest, auth.VERSION-2)
         before = snapshot_db(root)
         watch(client, observer_data, root, port, 'history-incompatible-replay', False)
         assert snapshot_db(root) == before, 'incompatible replay changed durable history'

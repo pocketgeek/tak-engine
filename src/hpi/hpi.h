@@ -190,7 +190,7 @@ private:
 // exposed under a virtual path prefix, resolved highest-precedence-first. This is
 // how a retail install directory is presented to the loaders as one namespace:
 //
-//   overrides/   (loose + *.hpi/*.ufo/*.kmp)         <- wins everything
+//   overrides/<selected pack>/ (loose + archives)   <- selected packs only
 //   Maps/        (*.kmp single-map HPIs + loose)     -> kmap/<name>.*
 //   <root>/      (*.hpi only, no loose)              -> the base game + expansions
 //   Boneyards/Metagame/ (five allowlisted campaign presentation files only)
@@ -204,6 +204,7 @@ public:
     Vfs() = default;
     // A room-local view: no downloaded resource can affect another running room.
     explicit Vfs(const Vfs* base, bool skipMapResources = false) : base_(base), skipMaps_(skipMapResources) {}
+    void setOverrideFiles(std::shared_ptr<const Files> files) { overrideFiles_ = std::move(files); }
     void setMapFiles(std::shared_ptr<const Files> files) { mapFiles_ = std::move(files); }
     // Downloaded maps are discoverable but their resources remain archive-local.
     void refreshMapCache(const std::filesystem::path& root);
@@ -225,7 +226,7 @@ private:
     bool skipMaps_ = false;
     struct CachedMap { std::shared_ptr<Archive> archive; std::string path; };
     std::map<std::string, CachedMap> cachedMaps_;
-    std::shared_ptr<const Files> mapFiles_;
+    std::shared_ptr<const Files> mapFiles_, overrideFiles_;
     struct Layer { MountSet ms; std::string prefix; bool mapResources = false; };   // prefix keyed, "" or trailing '/'
     std::vector<Layer> layers_;                          // back = highest precedence
 };
@@ -250,7 +251,12 @@ uint64_t gameplayHash(const Vfs& vfs);
 
 // Build the runtime VFS for a retail install root (see the layer diagram above).
 Vfs mountRetailRoot(const std::filesystem::path& root,
-                    OverridePolicy overrides = OverridePolicy::Full);
+                    OverridePolicy overrides = OverridePolicy::Full,
+                    const std::vector<std::string>& packs = {});
+// Only immediate, real subdirectories are packs; root files are never mounted.
+std::vector<std::string> overridePacks(const std::filesystem::path& root);
+Vfs::Files overrideFiles(const std::filesystem::path& root, OverridePolicy policy,
+                         const std::vector<std::string>& packs);
 
 // The canonical root HPI archives of a TA:Kingdoms install (base game + Iron Plague +
 // the official map packs), lowercased. mountRetailRoot mounts ONLY these from the root;

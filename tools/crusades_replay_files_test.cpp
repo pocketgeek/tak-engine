@@ -49,7 +49,7 @@ void validAndChunks(const fs::path& root){
     for(uint32_t protocol:{n::kNetVersion}){
         Sample sample;const auto bytes=recording(sample.header,protocol);const auto path=save(root,sample,bytes);
         const auto metadata=files.inspect(sample.battle,sample.result);
-        check(metadata&&metadata->digest==sample.result.replayDigest&&metadata->totalBytes==bytes.size()&&metadata->format==9&&metadata->protocolVersion==protocol,"compatible replay metadata rejected");
+        check(metadata&&metadata->digest==sample.result.replayDigest&&metadata->totalBytes==bytes.size()&&metadata->format==n::kReplayFormat&&metadata->protocolVersion==protocol,"compatible replay metadata rejected");
         check(metadata->mapDigest==sample.battle.context.mapDigest&&metadata->gameplayFingerprint==sample.result.gameplayFingerprint,"metadata lost gameplay identity");
         w::Bytes downloaded;uint64_t offset=0;
         while(offset<bytes.size()){

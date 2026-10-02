@@ -1,9 +1,9 @@
 # Public server deployment
 
-The development server includes native TLS, authentication, resource admission
+The server includes native TLS, authentication, resource admission
 limits and an optional Linux service sandbox. These reduce risk; they do not
 constitute an independent security audit or protection against a volumetric DDoS.
-The released 0.7.20 binaries predate these changes.
+These features ship in 0.7.21; 0.7.20 binaries predate them.
 
 ## Encrypted connections
 

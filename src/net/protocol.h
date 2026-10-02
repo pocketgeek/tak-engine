@@ -17,7 +17,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 212;      // 212: scripted production pads check open yard occupancy
+constexpr uint32_t kNetVersion = 213;      // 213: selected override pack transfer and verification
+                                           // 212: scripted production pads check open yard occupancy
                                            // 211: completed campaign history and replay transfers
                                            // 210: campaign territory rendezvous matchmaking
                                            // 209: campaign live territory activity
@@ -314,6 +315,7 @@ enum class Msg : uint8_t {
     CrusadesTerritoryHistory,    // S->C: verified metadata, opaque replay availability
     CrusadesGetReplayChunk,      // C->S: battle ID + bounded offset/limit
     CrusadesReplayChunk,         // S->C: request-bound immutable replay bytes
+    OverrideOffer, OverrideRequest, OverrideChunk, OverrideReady, OverrideError,
 
 
 };

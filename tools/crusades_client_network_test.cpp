@@ -7,17 +7,33 @@
 #include <filesystem>
 #include <stdexcept>
 #include <thread>
+#include <deque>
 using namespace tak;
 namespace {
 int checks=0;
 void check(bool value,const char* why){++checks;if(!value)throw std::runtime_error(why);}
 struct Peer {
- int listener=-1;uint16_t port=0;net::Conn conn;
+ int listener=-1;uint16_t port=0;net::Conn conn;std::deque<net::Frame> pending;
  Peer(){std::string error;listener=net::listenOn(0,error,true);if(listener<0)throw std::runtime_error(error);sockaddr_storage address{};socklen_t n=sizeof address;if(getsockname(listener,reinterpret_cast<sockaddr*>(&address),&n))throw std::runtime_error("getsockname");port=address.ss_family==AF_INET?ntohs(reinterpret_cast<sockaddr_in*>(&address)->sin_port):ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port);}
  ~Peer(){if(listener>=0)net::sockClose(listener);}
  void acceptClient(){sockaddr_storage address{};socklen_t n=sizeof address;int fd=int(accept(listener,reinterpret_cast<sockaddr*>(&address),&n));check(fd>=0,"accept");net::setupSocket(fd);conn=net::Conn(fd);}
- net::Frame receive(net::MpClient& client){for(int i=0;i<2000;++i){client.poll();if(!conn.recv())throw std::runtime_error("peer receive");net::Frame f;if(conn.poll(f)){if(f.kind==net::Msg::Ping){conn.send(net::Msg::Pong);conn.flushWrite();continue;}return f;}std::this_thread::sleep_for(std::chrono::milliseconds(1));}throw std::runtime_error("timed out receiving client request");}
- void send(net::Msg kind,const net::Writer& w,net::MpClient& client){conn.send(kind,w);check(conn.flushWrite(),"peer send");for(int i=0;i<4;++i){client.poll();std::this_thread::sleep_for(std::chrono::milliseconds(1));}}
+ net::Frame receive(net::MpClient& client){if(!pending.empty()){auto f=std::move(pending.front());pending.pop_front();return f;}for(int i=0;i<2000;++i){client.poll();if(!conn.recv())throw std::runtime_error("peer receive");net::Frame f;if(conn.poll(f)){if(f.kind==net::Msg::Ping){conn.send(net::Msg::Pong);conn.flushWrite();continue;}return f;}std::this_thread::sleep_for(std::chrono::milliseconds(1));}throw std::runtime_error("timed out receiving client request");}
+ // A Pong behind the response proves the client processed it. Four 1ms polls
+ // were not a delivery guarantee under parallel sweep load (especially replay chunks).
+ void send(net::Msg kind,const net::Writer& w,net::MpClient& client){
+  conn.send(kind,w);conn.send(net::Msg::Ping);
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+  while(std::chrono::steady_clock::now()<deadline){
+   check(conn.flushWrite(),"peer send");client.poll();check(conn.recv(),"peer acknowledgement receive");
+   net::Frame f;while(conn.poll(f)){
+    if(f.kind==net::Msg::Pong)return;
+    if(f.kind==net::Msg::Ping){conn.send(net::Msg::Pong);continue;}
+    pending.push_back(std::move(f));
+   }
+   std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  throw std::runtime_error("timed out waiting for client to process response");
+ }
  void login(net::MpClient& client){client.setLogin("alice","test-password");check(client.connect("127.0.0.1",port,"Alice"),"connect");acceptClient();check(receive(client).kind==net::Msg::Hello,"hello");send(net::Msg::AuthRequired,{},client);auto begin=receive(client);check(begin.kind==net::Msg::AuthBegin,"auth begin");net::Reader rd(begin.payload.data(),begin.payload.size());auto user=rd.str();auto nonce=rd.bytes();std::vector<uint8_t> salt(16,3),serverNonce(32,7);auto keys=auth::deriveKeys("test-password",salt.data(),salt.size(),1000);net::Writer challenge;challenge.u8(0);challenge.bytes(salt);challenge.u32(1000);challenge.bytes(serverNonce);send(net::Msg::AuthChallenge,challenge,client);auto proof=receive(client);check(proof.kind==net::Msg::AuthProof,"auth proof");auto transcript=auth::authMessage(user,nonce,serverNonce,salt,1000);auto signature=auth::serverSignature(keys.serverKey,transcript);net::Writer answer;answer.u8(uint8_t(net::AuthStatus::Ok));answer.bytes(signature.data(),signature.size());answer.str("");send(net::Msg::AuthResult,answer,client);net::Writer welcome;welcome.u32(1);welcome.str("Alice");send(net::Msg::Welcome,welcome,client);check(client.auth()==net::MpClient::Auth::Ok&&client.state()==net::MpClient::State::Lobby,"authenticated lobby");}
 };
 }
@@ -197,7 +213,7 @@ void run(){
  reply(peer,client,net::Msg::CrusadesCampaignSnapshot,snapshot(refreshId,1));check(client.campaignReplica().find("test")->revision==3,"stale refresh replaced state");
  net::Writer malformed;malformed.b=cw::encode(cw::Response{snapshot(0,4)});malformed.b.pop_back();peer.send(net::Msg::CrusadesCampaignSnapshot,malformed,client);check(client.campaignReplica().find("test")->revision==3&&client.campaignError()->code==cw::ErrorCode::Malformed,"malformed snapshot published");
  for(int i=0;i<4;++i){client.poll();}
- check(peer.conn.recv(),"read after malformed");net::Frame extra;check(!peer.conn.poll(extra),"runaway stale/malformed refresh");
+ check(peer.conn.recv(),"read after malformed");net::Frame extra;check(peer.pending.empty()&&!peer.conn.poll(extra),"runaway stale/malformed refresh");
  const auto explicitId=client.getCampaignSnapshot("test");request(peer.receive(client),net::Msg::CrusadesGetSnapshot,cw::RequestKind::Snapshot);reply(peer,client,net::Msg::CrusadesCampaignSnapshot,snapshot(explicitId,4));check(client.campaignReplica().find("test")->revision==4,"explicit recovery failed");
  net::Writer invitation;invitation.u8(0);invitation.str("test");invitation.str("issued:test");invitation.u32(7);invitation.str(std::string(300,'m'));invitation.u64(999);invitation.str("");peer.send(net::Msg::CrusadesBattleResult,invitation,client);
  const auto battleId=request(peer.receive(client),net::Msg::CrusadesGetBattleStatus,cw::RequestKind::BattleStatus);check(client.campaignInvitation()&&client.campaignInvitation()->roomId==7,"legacy invitation not exposed");

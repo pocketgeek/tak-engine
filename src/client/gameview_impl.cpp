@@ -3639,9 +3639,27 @@
 
     void GameView::remountPolicy(uint8_t p) {
         auto pol = tak::hpi::OverridePolicy(p <= 2 ? p : 2);
-        if (pol == policy_ || installRoot_.empty()) return;
+        if (installRoot_.empty()) return;
         policy_ = pol;
-        vfs_ = tak::hpi::mountRetailRoot(std::filesystem::u8path(installRoot_), pol);
+        if(mp_) {
+            const bool host=mp_->room().hostId==mp_->myClientId();
+            const auto localPolicy=pol==tak::hpi::OverridePolicy::None
+                ? tak::hpi::OverridePolicy::None : tak::hpi::OverridePolicy::Cosmetic;
+            const auto local=host?mp_->hostOverridePacks():settings_?settings_->cosmeticOverridePacks:std::vector<std::string>{};
+            vfs_=mp_->overrideVfs(localPolicy,local);
+        } else vfs_ = tak::hpi::mountRetailRoot(std::filesystem::u8path(installRoot_), pol,settings_?settings_->hostOverridePacks:std::vector<std::string>{});
+        // Lobby choices are applied before match setup; discard art/audio cached
+        // while the lobby still used the previous data set.
+        destroyGpuTextures();anims_.clear();cobCache_.clear();visuals_.clear();
+        atlasRect_.clear();atlasLaidOut_=false;modelTextureAnimations_.clear();animatedTex_.clear();
+        hitBoxes_.clear();ringBoxes_.clear();kingdomPals_.clear();
+        featureDefs_.clear();featurePals_.clear();cursorsInit_=false;
+        loadTextures();loadOrderButtons();
+        try {hudFont_=Font(ren_,vfs_,"fonts/bodfontbody.gaf");bigFont_=Font(ren_,vfs_,"fonts/font48.gaf");
+            statFont_=Font(ren_,vfs_,"fonts/b_times new roman (100b).gaf");
+            scoreboardFont_=Font(ren_,vfs_,"fonts/ig_times new roman (100).gaf");scoreboardFont_.setLetterSpacing(0);
+        }catch(const std::exception& e){std::fprintf(stderr,"override font load: %s\n",e.what());}
+        sounds_.reload(vfs_);soundClasses_.load(vfs_);musicMode_=0;
         registry_ = tak::sim::TypeRegistry{};
         tak::sim::setupRegistry(registry_, vfs_, crusades_);
     }

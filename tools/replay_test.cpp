@@ -33,6 +33,7 @@ static ReplayHeader sample() {
     ReplayHeader h;
     h.mapId = "Inner Circle";
     h.mapDigest = std::string(64, 'a');
+    h.overrideDigest = std::string(64, 'b');
     h.mission = "camp03";
     h.engineVersion = "9.9.9";
     h.crusades = 1;
@@ -73,6 +74,7 @@ int main() {
         check(proto == kNetVersion, "protocol version survives", std::to_string(proto));
         check(out.mapId == in.mapId, "mapId");
         check(out.mapDigest == in.mapDigest, "verified map copy survives recording");
+        check(out.overrideDigest == in.overrideDigest, "verified override copy survives recording");
         check(out.mission == in.mission, "mission (a campaign replay is not a skirmish)");
         check(out.engineVersion == in.engineVersion, "engine version");
         check(out.seed == in.seed, "seed (was recorded, then discarded by the loader)");
@@ -101,12 +103,13 @@ int main() {
 
     std::printf("the loader refuses what it cannot replay:\n");
     check(supportedReplayProtocol(9, kNetVersion), "current simulation protocol remains replayable");
+    check(supportedReplayProtocol(9, 212), "previous simulation protocol remains replayable");
     check(!supportedReplayProtocol(9, 210), "protocol 210 predates the naval production correction");
     check(!supportedReplayProtocol(9, 211), "protocol 211 predates the naval production correction");
     check(!supportedReplayProtocol(9, 209), "older simulation protocol is refused");
     check(!supportedReplayProtocol(9, kNetVersion+1), "future protocol is refused");
     check(!supportedReplayProtocol(8, 210), "compatibility exception requires format 9");
-    check(!supportedReplayProtocol(10, kNetVersion), "unsupported format is refused even with current protocol");
+    check(!supportedReplayProtocol(kReplayFormat+1, kNetVersion), "unsupported format is refused even with current protocol");
     {
         // A format from the future. The old loader read it anyway, interpreting
         // whatever bytes happened to follow.

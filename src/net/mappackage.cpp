@@ -256,12 +256,12 @@ bool Receiver::append(Reader& r) {
         throw std::runtime_error("invalid map chunk");
     bytes.insert(bytes.end(), r.p, r.end); return complete();
 }
-void Sender::pump(Conn& conn) {
+void Sender::pump(Conn& conn, Msg kind) {
     while (package && conn.txPending() < 2 * kChunkBytes) {
         auto n = std::min(kChunkBytes, package->bytes.size() - offset);
         Writer w; w.u32(room); w.u32(uint32_t(offset));
         w.b.insert(w.b.end(), package->bytes.begin() + offset, package->bytes.begin() + offset + n);
-        conn.send(Msg::MapChunk, w); offset += n;
+        conn.send(kind, w); offset += n;
         if (offset == package->bytes.size()) { package.reset(); offset = 0; }
     }
 }

@@ -92,6 +92,8 @@ int main() {
     flips("gameCreate.mapSortDir", [](Settings& s) { ++s.gameCreate.mapSortDir; });
     flips("gameCreate.name", [](Settings& s) { s.gameCreate.name = "test"; });
     flips("gameCreate.generator", [](Settings& s) { s.gameCreate.generator = "test"; });
+    flips("hostOverridePacks", [](Settings& s){s.hostOverridePacks={"Pack A"};});
+    flips("cosmeticOverridePacks", [](Settings& s){s.cosmeticOverridePacks={"Pack B"};});
     flips("lastMap",         [](Settings& s) { s.lastMap = "Inner Circle"; });
     flips("dataDir",         [](Settings& s) { s.dataDir = "/somewhere/else"; });
     flips("dataManifest",    [](Settings& s) { s.dataManifest = "deadbeef"; });

@@ -77,6 +77,13 @@ bool CursorSet::load(SDL_Renderer* ren, const hpi::Vfs& vfs, const Settings* set
         seqs = gaf::load(gafBytes, pal, -1, "anims/cursors.gaf");
     } catch (...) { return false; }
 
+    // A lobby pack change replaces the existing cursor set rather than
+    // appending another copy of every animation.
+    releaseHardware();
+    for (auto& frames : anims_) {
+        for (auto& f : frames) if (f.tex) gpuvram::destroy(f.tex);
+        frames.clear();
+    }
     std::unordered_map<std::string, const gaf::Sequence*> byName;
     for (auto& s : seqs) byName[lower(s.name)] = &s;
 

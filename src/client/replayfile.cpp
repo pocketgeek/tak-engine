@@ -44,6 +44,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     }
     out.mapId = h.mapId;
     out.mapDigest = h.mapDigest;
+    out.overrideDigest = h.overrideDigest;
     out.mission = h.mission;
     out.crusades = h.crusades != 0;
     out.overridePolicy = h.overridePolicy;
@@ -134,6 +135,7 @@ std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,
     // Header shared with the server writer and the loader -- see net/replayhdr.h.
     tak::net::ReplayHeader h;
     h.mapId = room.mapId;
+    if (mp.overridePackage()) h.overrideDigest=mp.overridePackage()->digest;
     if (mp.mapPackage()) h.mapDigest = mp.mapPackage()->digest;
     h.mission = room.mission;
     h.engineVersion = tak::kVersion;

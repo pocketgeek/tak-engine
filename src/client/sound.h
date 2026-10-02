@@ -58,6 +58,13 @@ public:
         if (dev_) SDL_UnlockAudioDevice(dev_);
     }
 
+    void reload(const tak::hpi::Vfs& vfs) {
+        releaseOutput();
+        for(auto& channel:channels_)channel=Channel{};
+        index_.clear();cache_.clear();peaks_.clear();playlist_.clear();music_.clear();
+        musicPos_=musicTrack_=0;musicDone_=false;
+        init(vfs);
+    }
     void init(const tak::hpi::Vfs& vfs) {
         vfs_ = &vfs;
         // Index the sounds/ namespace by stem (user overrides already win via the
@@ -670,6 +677,7 @@ private:
 class SoundClasses {
 public:
     void load(const tak::hpi::Vfs& vfs) {
+        classes_.clear();
         try {
             for (const std::string& path : vfs.list("gamedata/soundclasses")) {
                 if (tak::vpath::extension(path) != ".tdf") continue;

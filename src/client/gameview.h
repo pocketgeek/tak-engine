@@ -2174,6 +2174,9 @@ private:
     int mapPreviewW_ = 0, mapPreviewH_ = 0;
     std::string mapPreviewDims_;       // "W x H" cell size, shown under the preview
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
+    std::vector<std::string> availableOverridePacks_;
+    bool overridePacksScanned_=false;
+    size_t overridePage_=0;
     uint8_t createOverride_ = 1;   // create-dialog override tier (default cosmetic)
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)

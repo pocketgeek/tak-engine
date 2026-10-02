@@ -81,6 +81,7 @@ struct Settings {
         std::string name = "game", generator;
         friend bool operator==(const GameCreate&, const GameCreate&) = default;
     } gameCreate;
+    std::vector<std::string> hostOverridePacks, cosmeticOverridePacks;
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
     // Servers that connected successfully (most recent first, capped at 8). The
     // menu's CONNECT dropdown lists these under the default server.
@@ -132,6 +133,7 @@ struct Settings {
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.accountName == b.accountName
+            && a.hostOverridePacks == b.hostOverridePacks && a.cosmeticOverridePacks == b.cosmeticOverridePacks
             && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
@@ -170,6 +172,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.accountName = cur.accountName;
     d.lastMap = cur.lastMap;
     d.gameCreate = cur.gameCreate;
+    d.hostOverridePacks=cur.hostOverridePacks;d.cosmeticOverridePacks=cur.cosmeticOverridePacks;
     d.hotkeys = cur.hotkeys;                      // reset from the Hotkeys screen
     d.dataDir = cur.dataDir;
     d.dataManifest = cur.dataManifest;

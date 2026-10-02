@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(tak-engine VERSION 0.7.20 LANGUAGES CXX)
+project(tak-engine VERSION 0.7.21 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -100,6 +100,7 @@ add_library(tak-formats
   src/net/conn.cpp
   src/net/client.cpp
   src/net/mappackage.cpp
+  src/net/overridepackage.cpp
   src/net/auth.cpp
   src/util/png.cpp
   src/util/appicon.cpp
@@ -287,6 +288,15 @@ target_include_directories(server_address_test PRIVATE src)
 add_test(NAME server_address COMMAND server_address_test)
 target_link_libraries(server_commands_test PRIVATE tak-formats)
 add_test(NAME server_commands COMMAND server_commands_test)
+add_executable(override_transfer_test tools/override_transfer_test.cpp)
+target_link_libraries(override_transfer_test PRIVATE tak-formats)
+add_executable(override_packs_test tools/override_packs_test.cpp)
+target_link_libraries(override_packs_test PRIVATE tak-formats)
+add_test(NAME override_packs COMMAND override_packs_test)
+add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.cpp src/ai/ai.cpp)
+target_link_libraries(room_worker_test PRIVATE tak-formats)
+add_test(NAME room_worker COMMAND room_worker_test)
+set_tests_properties(room_worker PROPERTIES TIMEOUT 30)
 add_executable(featgen_test tools/featgen_test.cpp)
 add_executable(transport_test tools/transport_test.cpp)
 add_executable(production_test tools/production_test.cpp)
@@ -716,6 +726,11 @@ if(TAK_BUILD_CLIENT)
     else()
       set(_tak_sdl2 SDL2::SDL2)
     endif()
+    if(UNIX AND NOT APPLE)
+      add_executable(override_settings_test tools/override_settings_test.cpp src/client/settings.cpp)
+      target_link_libraries(override_settings_test PRIVATE tak-formats ${_tak_sdl2})
+      add_test(NAME override_settings COMMAND override_settings_test)
+    endif()
     add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp src/client/font.cpp)
     target_compile_definitions(crusades_ui_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map ${_tak_sdl2})
@@ -1106,7 +1121,7 @@ add_test(NAME acme COMMAND acme_test)
 set_tests_properties(acme PROPERTIES TIMEOUT 30)
 add_executable(acme_test_driver tools/acme_test_driver.cpp)
 target_link_libraries(acme_test_driver PRIVATE tak-acme)
-add_executable(takserver src/server/server.cpp src/server/accounts.cpp src/ai/ai.cpp)
+add_executable(takserver src/server/server.cpp src/server/accounts.cpp src/server/roomtick.cpp src/ai/ai.cpp)
 target_link_libraries(takserver PRIVATE tak-acme tak-formats tak-crusades-allegiance tak-crusades-network tak-crusades-servicelease)
 if(APPLE)
   target_link_libraries(takserver PRIVATE "-framework CoreFoundation")
@@ -1114,6 +1129,9 @@ endif()
 if(TAK_TEST_DATA)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
+    add_test(NAME override_transfer COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/override_transfer_test.py"
+      --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:override_transfer_test>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(override_transfer PROPERTIES TIMEOUT 150)
     add_test(NAME crusades_hardening_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --admin "$<TARGET_FILE:crusades_admin>")

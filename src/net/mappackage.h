@@ -39,7 +39,7 @@ struct Sender {
     uint32_t room = 0;
     size_t offset = 0;
     std::shared_ptr<const Package> package;
-    void pump(Conn& conn);
+    void pump(Conn& conn, Msg kind=Msg::MapChunk);
 };
 // Content-addressed cache; never extract network paths into the filesystem.
 void saveCache(const std::filesystem::path& root, const Package& package,uint64_t quota=0);

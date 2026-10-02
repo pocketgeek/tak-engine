@@ -54,6 +54,14 @@ Settings loadSettings() {
         auto asFloat = [&](float lo, float hi) { return clampv(float(std::atof(val.c_str())), lo, hi); };
         auto asBool  = [&] { return val == "1" || val == "true" || val == "on"; };
 
+        if(key=="overrides.hostPack" || key=="overrides.cosmeticPack") {
+            std::string name;bool valid=val.size()%2==0 && val.size()<=256;
+            auto digit=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};
+            for(size_t i=0;valid && i<val.size();i+=2){int a=digit(val[i]),b=digit(val[i+1]);if(a<0 || b<0)valid=false;else name+=char(a*16+b);}
+            auto& names=key=="overrides.hostPack"?s.hostOverridePacks:s.cosmeticOverridePacks;
+            if(valid && !name.empty() && name.find_first_of("/\\\r\n") == name.npos && name.find('\0')==name.npos && names.size()<64 && std::find(names.begin(),names.end(),name)==names.end())names.push_back(name);
+            continue;
+        }
         if      (key == "fullscreen")      s.fullscreen = asBool();
         else if (key == "vsync")           s.vsync = asBool();
         else if (key == "maxFps")          s.maxFps = asInt(30, 480);
@@ -174,6 +182,12 @@ bool saveSettings(const Settings& s) {
     o << "gameCreate.mapSortDir = " << s.gameCreate.mapSortDir << "\n";
     o << "gameCreate.name = " << s.gameCreate.name << "\n";
     o << "gameCreate.generator = " << s.gameCreate.generator << "\n";
+    auto writePacks=[&](const char* key,const std::vector<std::string>& names){
+        static constexpr char hex[]="0123456789abcdef";
+        for(const auto& name:names){o<<key<<" = ";for(unsigned char c:name)o<<hex[c>>4]<<hex[c&15];o<<"\n";}
+    };
+    writePacks("overrides.hostPack",s.hostOverridePacks);
+    writePacks("overrides.cosmeticPack",s.cosmeticOverridePacks);
     o << "lastMap = " << s.lastMap << "\n";
     if (!s.knownServers.empty()) {
         o << "knownServers = ";

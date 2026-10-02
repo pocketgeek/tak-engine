@@ -20,22 +20,23 @@ archives and folders in place:
                      english, the supported Iron Plague and official packs…)
   Maps/              downloadable maps as *.kmp (each an HPI) + loose maps
   Music/             track*.wav soundtrack
-  overrides/         YOUR overrides -- loose files or *.hpi/*.ufo/*.kmp, highest priority
+  overrides/<pack>/  selectable packs -- loose files or *.hpi/*.ufo/*.kmp
 ```
 
 Only the **canonical** retail archives in the install root are read — the base
 game, the recognized Iron Plague archives, and the official map/rocket packs;
 any other `*.hpi` dropped in the root (and all loose files there) is ignored. Maps
-come from `maps.hpi` and the `Maps/*.kmp`, music from `Music/`, and anything in
-`overrides/` wins over everything. A small **authenticity manifest** of those root
+come from `maps.hpi` and the `Maps/*.kmp`, and music from `Music/`.
+Selected override packs replace retail files. A small **authenticity manifest** of those root
 archives is recorded with the folder and recomputed each launch; a moved or
 unreadable install re-opens the folder picker.
 
 **Archive precedence.** Within a mounted layer, loose files win over archive
 entries; among archives, the entry with the newest stored date wins, with ties
-keeping the earlier-mounted copy. Layers then determine priority: overrides
-outrank Maps, which outrank the recognized root archives and loose music.
-Unknown root archives are not mounted; place custom content in `overrides/`.
+keeping the earlier-mounted copy. Layers then determine priority: selected overrides outrank installed Maps,
+which outrank the recognized root archives and loose music. Verified map-package
+resources for the current match take precedence over these layers.
+Unknown root archives are not mounted; place custom content in a named subfolder of `overrides/`.
 Archives in `Maps/` contribute maps and cosmetics, not replacement unit/build
 rosters. `hpitool where <dir> <path>` helps inspect archive resolution, and
 `hpitool merge` can produce a flat tree for tooling.
@@ -202,9 +203,8 @@ are separate.
 `--aiside`, `--server`, `--overrides {none,cosmetic,full}`, `--crusades`, `--cheat`,
 `--demo`, `--mission`, `--campaign`, `--maxfps`, `--novsync`, the `--mp*` headless
 harness, …) plus the `TAK_*` diagnostic env vars. Debug `--help` lists the main modes and common flags; the argument parser in
-[src/client/main.cpp](../src/client/main.cpp) includes additional harness options. `--overrides` defaults to `full` (a release build always mounts `full`):
-`none` = pure retail, `cosmetic` = only art/sound/music, `full` = everything including
-gameplay data.
+[src/client/main.cpp](../src/client/main.cpp) includes additional harness options. The lobby controls override policy and pack selection; no packs load implicitly.
+`--overrides` selects a policy for debug paths, but does not select packs.
 
 The legacy `game <stem> --mission` spelling now launches through the same campaign
 server path as `--campaign <stem>`; it no longer uses a separate mission interpreter.
@@ -354,27 +354,36 @@ Debug builds also support direct playback:
 
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
-compatible engine behavior and game data. Released **0.7.13 uses protocol 198**;
-0.7.14 uses **200** for authored construction restrictions, neutral
-ownership, stats and scenario outcomes. Use matching builds for all clients and
-the server. Different-protocol peers and replays are rejected.
+compatible engine behavior and game data. Version 0.7.21 uses protocol
+**213** and replay format **10**. Format-9 recordings from protocol 212 remain
+compatible because this update does not change the tactical simulation. Use
+matching builds for all clients and the server; other protocol versions are rejected.
 
 ## Overrides
 
-Anything in the install's `overrides/` folder -- loose files or `*.hpi`/`*.ufo`/`*.kmp`
-archives -- overrides the shipped data, exactly like the original game. For
-example a `overrides/click.hpi` holding `sounds/*.wav` replaces the faction
-order-acknowledgement tones. Overrides are classified as **cosmetic** (textures,
-sprites, sound, music, fonts, GUI) or **gameplay** (unit/weapon/side/
-build/feature data, maps, COB scripts and 3DO models). Scripts and model origins
-control factory production and must agree across peers. A release build always mounts **`full`** (everything);
-a debug build can restrict it with `--overrides {none,cosmetic,full}` (`cosmetic`
-mounts only the art/sound tier). Presentation-only overrides can differ between
-players. Feature files contain
-both art and simulation fields: changing simulation fields can change the
-fingerprint even under the cosmetic tier. Keep gameplay overrides identical
-between peers, including scripts and models; the current fingerprint does not
-cover every simulation input.
+Put each override pack in its own immediate subfolder of `<data>/overrides/`.
+For example, `overrides/New Sounds/sounds/click.wav`, or an HPI/UFO/KMP archive
+inside `overrides/New Sounds/`. **Files directly in `overrides/` are never loaded.**
+
+On the game-create screen, the host chooses **Off**, **Cosmetic**, or **Full**.
+The lobby displays that mode as information and lets players check any number
+of packs (up to 64). Off hides the list and loads
+none. Selections are remembered between sessions, including while Off. Packs load
+in alphabetical folder-name order; later names win when files overlap.
+
+Cosmetic allows textures, sprites, sounds, music, fonts and GUI art. Gameplay
+files, including unit/weapon/build definitions, feature definitions, maps, COB
+scripts and 3DO models, require Full. Multiplayer guests can select their own
+local cosmetic packs separately; their gameplay files are ignored. The host's
+Off setting disables local overrides too. Campaigns use the retail data.
+
+In Full mode, the host's selected packs are bundled and automatically sent to
+the server and other players. Everyone verifies the same package before the
+match can start. Transfers are limited to 256 MiB and 65,536 files; downloads
+are stored by checksum in `OverrideCache/`, without extracting arbitrary paths.
+These shared files apply only to that room. Local cosmetic packs can customize
+presentation on top of the shared package. Replays record the package checksum
+and require the matching cached package.
 
 ## Map editor
 

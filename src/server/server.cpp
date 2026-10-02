@@ -1,6 +1,6 @@
 // takserver: the central multiplayer server (docs/multiplayer-design.md, M3).
 //
-// A single-threaded poll loop hosts a lobby and any number of games. Each game
+// A network poll loop hosts the lobby; each running game has its own worker. Each game
 // is a server-sequenced deterministic lockstep: clients send commands, the
 // server buckets them per tick, closes one tick every 1/30 s, and broadcasts a
 // TickBundle to every client in the game. Clients advance their sims in step.
@@ -13,8 +13,11 @@
 // server is a pure relay and clients cross-check hashes among themselves (M3).
 
 #include "net/mappackage.h"
+#include "net/overridepackage.h"
 #include "server/commands.h"
 #include "server/acme.h"
+#include "server/roomworker.h"
+#include "server/roomtick.h"
 #include "net/crusades.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
@@ -199,6 +202,10 @@ struct Client {
     WorkBudget campaignWork, campaignReplayWork;
     uint64_t campaignLimitedWindow = 0;
     bool campaignLimitNotified = false;
+    tak::net::maps::Receiver overrideReceive;
+    tak::net::maps::Sender overrideSend;
+    std::string overrideReady,overrideOffered;
+    uint64_t overrideStarted=0,overrideProgress=0;
     tak::net::maps::Receiver mapReceive;
     tak::net::maps::Sender mapSend;
 
@@ -239,7 +246,18 @@ struct Client {
 // so the disconnect budget sweep and the rejoin-resume path both ignore it.
 static constexpr int kPauseByRequest = -2;
 
+using tak::srv::TickResult;
+
+    struct DataSet {
+        tak::hpi::Vfs vfs;
+        tak::sim::TypeRegistry reg, regCb;
+        bool haveCb = false;
+        uint64_t hash = 0;
+        bool built = false;
+    };
+
 struct Room {
+    std::unique_ptr<DataSet> overrideData; // outlives the referee and room VFS
     uint32_t id = 0;
     std::string name, password, mapId;
     std::shared_ptr<tak::net::maps::Package> mapPackage;
@@ -308,6 +326,13 @@ struct Room {
     int pausePlayer = -1;                       // which dropped player paused it
     uint64_t pauseStartMs = 0;                  // when the current pause began
     uint64_t pauseBudgetMs[kMaxSlots] = {};     // remaining pause budget per player
+    std::shared_ptr<tak::net::overrides::Package> overridePackage;
+    std::future<TickResult> tickJob;
+    std::array<bool,kMaxSlots> defeated{}; // last completed tick; safe during a worker tick
+    std::string simulationError;
+    // Last member: join on shutdown before destroying the World/AI it owns.
+    // Normal room teardown waits for readiness without blocking the network loop.
+    std::unique_ptr<tak::srv::RoomWorker> worker;
     Room() { for (int i = 0; i < kMaxSlots; ++i) slotClient[i] = -1; }
     int capacity() const { return cap; }
     int usedSlots() const {
@@ -315,68 +340,6 @@ struct Room {
         for (int i = 0; i < kMaxSlots; ++i) if (slots[i].type == 1 || slots[i].type == 2) ++n;
         return n;
     }
-};
-
-// A tiny persistent worker pool: `run(count, fn)` invokes fn(0..count-1) across the
-// workers PLUS the calling thread, and blocks until all have finished. Used to tick
-// several independent games in parallel (each fn(i) drives one room's referee sim).
-// Persistent so the frequent per-tick dispatch never pays thread-creation churn.
-class WorkerPool {
-public:
-    explicit WorkerPool(unsigned workers) {
-        for (unsigned i = 0; i < workers; ++i)
-            threads_.emplace_back([this] { workerLoop(); });
-    }
-    ~WorkerPool() {
-        { std::lock_guard<std::mutex> lk(m_); stop_ = true; ++gen_; }
-        cvStart_.notify_all();
-        for (auto& t : threads_) t.join();
-    }
-    void run(size_t count, const std::function<void(size_t)>& fn) {
-        if (count == 0) return;
-        if (threads_.empty()) { for (size_t i = 0; i < count; ++i) fn(i); return; }
-        {
-            std::lock_guard<std::mutex> lk(m_);
-            fn_ = &fn; count_ = count; cursor_.store(0); finished_ = 0; ++gen_;
-        }
-        cvStart_.notify_all();
-        drain();                                   // the caller participates too
-        // Wait until every WORKER has left drain() (not merely until the last item
-        // finished): only then is it safe for the next run() to reset the cursor.
-        std::unique_lock<std::mutex> lk(m_);
-        cvDone_.wait(lk, [this] { return finished_ == threads_.size(); });
-        fn_ = nullptr;
-    }
-private:
-    void drain() {
-        for (;;) {
-            size_t i = cursor_.fetch_add(1, std::memory_order_relaxed);
-            if (i >= count_) break;
-            (*fn_)(i);
-        }
-    }
-    void workerLoop() {
-        uint64_t seen = 0;
-        for (;;) {
-            std::unique_lock<std::mutex> lk(m_);
-            cvStart_.wait(lk, [this, seen] { return stop_ || gen_ != seen; });
-            if (stop_) return;
-            seen = gen_;
-            lk.unlock();
-            drain();
-            std::lock_guard<std::mutex> lk2(m_);
-            if (++finished_ == threads_.size()) cvDone_.notify_all();
-        }
-    }
-    std::vector<std::thread> threads_;
-    std::mutex m_;
-    std::condition_variable cvStart_, cvDone_;
-    const std::function<void(size_t)>* fn_ = nullptr;
-    size_t count_ = 0;
-    std::atomic<size_t> cursor_{0};
-    size_t finished_ = 0;
-    uint64_t gen_ = 0;
-    bool stop_ = false;
 };
 
 class Server {
@@ -484,7 +447,7 @@ private:
     WorkBudget acceptWork_;
     WorkBudget lobbyGlobalWork_, uploadGlobalWork_, accountWriteWork_;
     bool allowLobbyWork(Client& c,const Frame& f);
-    bool canRead(const Client& c,uint64_t now) const {return !c.mapReceive.size || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64));}
+    bool canRead(const Client& c,uint64_t now) const {return (!c.mapReceive.size && !c.overrideReceive.size) || (c.uploadWork.available(now,4096,64) && uploadGlobalWork_.available(now,16384,64));}
     size_t mapMemory() const;
     SharedWorkBudget campaignWorkKeys_, campaignReplayKeys_;
     SharedWorkBudget loginWorkKeys_{tak::srv::LoginThrottle::kForgetMs};
@@ -525,14 +488,7 @@ private:
     tak::srv::LoginThrottle throttle_;
     // A mounted data set at one override tier: the VFS, its base + Crusades
     // registries, and the gameplay-data fingerprint peers are held to.
-    struct DataSet {
-        tak::hpi::Vfs vfs;
-        tak::sim::TypeRegistry reg, regCb;
-        bool haveCb = false;
-        uint64_t hash = 0;
-        bool built = false;
-    };
-    DataSet retail_, full_;            // none/cosmetic use retail_; full uses full_
+    DataSet retail_;                   // shared immutable retail data; Full is room-local
     bool haveCb_ = false;
     tak::ai::Profile aiProfile_;
     // Per-mission build profiles (ai/<name>.txt), cached by name -- a Controller
@@ -583,29 +539,12 @@ private:
         ds.hash = tak::hpi::gameplayHash(ds.vfs);
         ds.built = true;
     }
-    // The data set a game runs under, by its override policy (0/1 = retail, 2 = full).
-    DataSet& dataFor(uint8_t policy) {
-        DataSet& ds = (policy == 2) ? full_ : retail_;
-        if (!ds.built) buildDataSet(ds, policy == 2 ? tak::hpi::OverridePolicy::Full
-                                                    : tak::hpi::OverridePolicy::None);
-        return ds;
-    }
-    const tak::sim::TypeRegistry& registryFor(bool crusades, uint8_t policy) {
-        DataSet& ds = dataFor(policy);
-        return (crusades && ds.haveCb) ? ds.regCb : ds.reg;
-    }
     std::string replayDir_;
     uint32_t fixedSeed_ = 0;           // --seed: 0 = roll one per game
     int listenFd_ = -1;
     uint32_t nextClientId_ = 1, nextRoomId_ = 1;
     std::unordered_map<uint32_t, std::unique_ptr<Client>> clients_;
     std::map<uint32_t, Room> rooms_;
-    // Worker pool for ticking several concurrent games in parallel (one referee sim
-    // per thread). Sized a little under the core count; idle when only one game runs.
-    WorkerPool tickPool_{[] {
-        unsigned h = std::thread::hardware_concurrency();
-        return std::min(h > 1 ? h - 1 : 1u, 7u);
-    }()};
 
     void onFrame(Client& c, const Frame& f);
     void handshake(Client& c, const Frame& f);
@@ -647,7 +586,10 @@ private:
     void dropPendingCommands(Client& c, Room& r);   // both disconnect paths
     void leaveRoom(Client& c, const char* reason);
     void tryStart(Client& c);
-    void closeTick(Room& r);
+    void overrideMsg(Client& c,const Frame& f);
+    DataSet& roomData(Room& r) {return r.overrideData ? *r.overrideData : retail_;}
+    void closeTick(Room& r, bool multipleGames);
+    void finishTick(Room& r);
     bool canAdvance(const Room& r) const;   // false = wait for a lagging player (flow control)
     void checkHashes(Room& r, uint32_t tick);
     void dropClient(uint32_t id, const char* reason);
@@ -700,6 +642,7 @@ Writer Server::replayBytes(Room& r) {
     // compare its own hashes against what actually happened.
     tak::net::ReplayHeader h;
     h.mapId = r.mapId;
+    if (r.overridePackage) h.overrideDigest=r.overridePackage->digest;
     if (r.mapPackage) h.mapDigest = r.mapPackage->digest;
     h.mission = r.mission;
     h.engineVersion = tak::kVersion;
@@ -713,7 +656,7 @@ Writer Server::replayBytes(Room& r) {
     h.randomStarts = r.opts.randomStarts;
     h.benchmark = uint8_t(r.opts.benchmark);
     h.seed = r.seed;
-    h.dataHash = dataFor(r.opts.overridePolicy).hash;
+    h.dataHash = roomData(r).hash;
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = r.startSlots[i];   // start config, not the forfeited end state
         h.slotType[i] = s.type;
@@ -1130,7 +1073,7 @@ std::pair<std::string,std::string> Server::saveCampaignReplay(Room& r) {
 void Server::finalizeCampaign(Room& r,bool abandoning) {
     namespace campaign=tak::srv::crusades;
     using Outcome=campaign::ResultOutcome;
-    if(r.campaignBattleId.empty() || !r.running || r.campaignResultRecorded)return;
+    if(r.campaignBattleId.empty() || !r.running || r.campaignResultRecorded || r.tickJob.valid())return;
     if(!r.campaignResult) {
         std::optional<Outcome> reason=r.campaignFault;
         int winner=-1;
@@ -1149,7 +1092,7 @@ void Server::finalizeCampaign(Room& r,bool abandoning) {
         if(!reason)return;
         campaign::VerifiedMatchResult result;
         result.outcome=*reason;result.finalTick=r.log.size();result.finalStateHash=r.ref?r.ref->stateHash():0;
-        result.gameplayFingerprint=dataFor(r.opts.overridePolicy).hash;result.engineBuild=tak::kBuildId;
+        result.gameplayFingerprint=roomData(r).hash;result.engineBuild=tak::kBuildId;
         if(*reason==Outcome::Victory || *reason==Outcome::Resignation)result.winners.push_back(r.campaignAccounts[winner]);
         static const char* factions[]={"aramon","taros","veruna","zhon","creon"};
         for(int i=0;i<2;++i) {
@@ -1728,6 +1671,13 @@ void Server::broadcastLobby(Room& r) {
         }
     }
 
+    if(r.opts.overridePolicy==2 && r.overridePackage)for(auto& [id,peer]:clients_) {
+        if(peer->roomId==r.id && peer->overrideOffered!=r.overridePackage->digest){
+            peer->conn.send(Msg::OverrideOffer,tak::net::maps::offer(r.id,"overrides",*r.overridePackage));
+            peer->overrideOffered=r.overridePackage->digest;
+        }
+    }
+
 }
 
 void Server::broadcastRoom(Room& r, Msg kind, const Writer& w, uint32_t exceptClient) {
@@ -1760,7 +1710,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             Reader r(f.payload.data(), f.payload.size());
             std::string name = r.str(), pass = r.str(), mapId = r.str(), mission = r.str();
             GameOptions o; o.crusades = r.u8(); o.forfeitSelfDestruct = r.u8();
-            o.overridePolicy = r.u8();
+            o.overridePolicy = std::min<uint8_t>(r.u8(),2);
+            if(!mission.empty())o.overridePolicy=0;
             o.speed = r.u8(); o.speedUnlock = r.u8();
             if (o.speed < 1) o.speed = 10;
             o.unitCap = clampUnitCap(uint16_t(r.u32()));
@@ -1912,6 +1863,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 c.mapReadyRoom = 0; c.mapOfferedRoom = room.id;
                 c.conn.send(Msg::MapOffer, tak::net::maps::offer(room.id, room.mapId, *room.mapPackage));
             }
+            if(room.overridePackage)c.conn.send(Msg::OverrideOffer,tak::net::maps::offer(room.id,"overrides",*room.overridePackage));
             c.conn.send(Msg::GameStarting, w);
             c.replaying = true; c.replayPos = 0;   // streamed below, paced by txPending()
             // Unpause if this was the player we were waiting on.
@@ -1957,6 +1909,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 c.mapReadyRoom = 0; c.mapOfferedRoom = room.id;
                 c.conn.send(Msg::MapOffer, tak::net::maps::offer(room.id, room.mapId, *room.mapPackage));
             }
+            if(room.overridePackage)c.conn.send(Msg::OverrideOffer,tak::net::maps::offer(room.id,"overrides",*room.overridePackage));
             c.conn.send(Msg::GameStarting, w);
             c.replaying = true; c.replayPos = 0;   // streamed below, paced by txPending()
             std::fprintf(stderr, "game %u: client %u SPECTATING (replaying %zu ticks)\n",
@@ -1986,6 +1939,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
 // slot-preserving branch of dropClient, which is exactly the rejoin path this is
 // meant to protect. The fix ran everywhere except where it was needed.
 void Server::dropPendingCommands(Client& c, Room& r) {
+    c.overrideSend={};c.overrideReceive={};c.overrideReady.clear();c.overrideOffered.clear();
     c.mapSend = {}; c.mapReceive = {}; c.mapReadyRoom = c.mapOfferedRoom = 0;
     c.cmdQueue.clear();
     c.cmdDropped = 0;
@@ -2053,6 +2007,10 @@ void Server::leaveRoom(Client& c, const char* reason) {
 }
 
 bool Server::mapsReady(const Room& r) const {
+    if(r.opts.overridePolicy==2){
+        if(!r.overridePackage)return false;
+        for(const auto& [id,peer]:clients_)if(peer->roomId==r.id && peer->overrideReady!=r.overridePackage->digest)return false;
+    }
     if (!r.mission.empty() || tak::mapgen::isGeneratedMapId(r.mapId)) return true;
     if (!r.mapPackage) return false;
     for (const auto& [id, peer] : clients_)
@@ -2064,10 +2022,52 @@ void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> pack
     room.mapPackage = std::move(package);
     std::fprintf(stderr, "game %u: map verified %s (%zu bytes)\n", room.id,
                  room.mapPackage->digest.c_str(), room.mapPackage->bytes.size());
-    room.mapVfs = std::make_unique<tak::hpi::Vfs>(&dataFor(room.opts.overridePolicy).vfs);
+    room.mapVfs = std::make_unique<tak::hpi::Vfs>(&roomData(room).vfs);
     room.mapVfs->setMapFiles(room.mapPackage->files);
     broadcastLobby(room);
 }
+void Server::overrideMsg(Client& c,const Frame& f) {
+    Room* room=roomOf(c);if(!room || !room->mission.empty() || !room->campaignBattleId.empty())return;
+    try {
+        Reader rd(f.payload.data(),f.payload.size());
+        auto accept=[&](std::shared_ptr<tak::net::overrides::Package> package){
+            tak::net::overrides::saveCache(std::filesystem::u8path(mapRoot_),*package,limits_.mapDisk);
+            room->overridePackage=std::move(package);c.overrideReceive={};broadcastLobby(*room);
+        };
+        if(f.kind==Msg::OverrideOffer){
+            if(room->running || room->hostId!=c.id || room->opts.overridePolicy!=2 || c.overrideReceive.size)return;
+            const auto id=rd.u32();const auto label=rd.str(),digest=rd.str();const auto count=rd.u32();
+            if(!rd.ok || rd.p!=rd.end || id!=room->id || label!="overrides")throw std::runtime_error("invalid override offer");
+            if(count>tak::net::maps::kMaxBytes || uint64_t(mapMemory())+uint64_t(count)*2>limits_.mapMemory)throw std::runtime_error("server override memory budget reached");
+            c.overrideReceive.begin(id,count,digest);c.overrideStarted=c.overrideProgress=nowMs();
+            room->overrideData.reset();room->overridePackage.reset();
+            room->mapVfs.reset();room->mapPackage.reset();
+            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};}
+            for(auto& [pid,peer]:clients_)if(peer->roomId==id){peer->overrideReady.clear();peer->overrideOffered.clear();peer->overrideSend={};if(pid!=c.id)peer->overrideReceive={};}
+            broadcastLobby(*room);
+            if(auto cached=tak::net::overrides::loadCache(std::filesystem::u8path(mapRoot_),digest)){if(cached->bytes.size()!=count)throw std::runtime_error("override size mismatch");accept(std::move(cached));return;}
+            Writer request;request.u32(id);c.conn.send(Msg::OverrideRequest,request);
+        }else if(f.kind==Msg::OverrideChunk){
+            if(room->running || room->hostId!=c.id || room->opts.overridePolicy!=2)return;
+            c.overrideProgress=nowMs();if(c.overrideReceive.append(rd))accept(tak::net::overrides::decode(std::move(c.overrideReceive.bytes),c.overrideReceive.digest));
+        }else if(f.kind==Msg::OverrideRequest){
+            auto id=rd.u32();auto digest=rd.str();
+            if(!rd.ok || rd.p!=rd.end || id!=room->id || !room->overridePackage || digest!=room->overridePackage->digest || c.overrideSend.package)return;
+            c.overrideSend={id,0,room->overridePackage};
+        }else if(f.kind==Msg::OverrideReady){
+            auto id=rd.u32();auto digest=rd.str();
+            if(!rd.ok || rd.p!=rd.end || id!=room->id)throw std::runtime_error("override verification failed");
+            if(!room->overridePackage || digest!=room->overridePackage->digest)return;
+            c.overrideReady=digest;if(!room->running)broadcastLobby(*room);
+        }else if(f.kind==Msg::OverrideError){
+            auto id=rd.u32();auto why=rd.str();if(rd.ok && rd.p==rd.end && id==room->id && why.size()<=512){c.overrideReady.clear();c.overrideSend={};c.overrideReceive={};}
+        }
+    }catch(const std::exception& e){
+        c.overrideReceive={};c.overrideSend={};c.overrideReady.clear();
+        Writer error;error.u32(room->id);error.str(e.what());c.conn.send(Msg::OverrideError,error);
+    }
+}
+
 void Server::mapMsg(Client& c, const Frame& f) {
     Room* room = roomOf(c); if (!room) return;
     if(!room->campaignBattleId.empty() && (f.kind==Msg::MapOffer || f.kind==Msg::MapChunk))return;
@@ -2089,7 +2089,7 @@ void Server::mapMsg(Client& c, const Frame& f) {
                 c.mapReceive = {}; acceptMap(*room, std::move(cached)); return;
             }
             try {
-                auto local = tak::net::maps::build(dataFor(room->opts.overridePolicy).vfs, name);
+                auto local = tak::net::maps::build(roomData(*room).vfs, name);
                 if (local->digest == hash) { c.mapReceive = {}; acceptMap(*room, std::move(local)); return; }
             } catch (const std::exception&) {}
             std::fprintf(stderr, "game %u: requesting missing/different map from host (%u bytes)\n", room->id, size);
@@ -2107,8 +2107,8 @@ void Server::mapMsg(Client& c, const Frame& f) {
             c.mapSend = {room->id, 0, room->mapPackage};
         } else if (f.kind == Msg::MapReady) {
             auto id = rd.u32(); auto hash = rd.str();
-            if (!rd.ok || id != room->id || !room->mapPackage || hash != room->mapPackage->digest)
-                throw std::runtime_error("map verification failed");
+            if (!rd.ok || id != room->id)throw std::runtime_error("map verification failed");
+            if(!room->mapPackage || hash!=room->mapPackage->digest)return;
             c.mapReadyRoom = room->id;
             if (!room->running) broadcastLobby(*room);
         } else if (f.kind == Msg::MapError) {
@@ -2158,7 +2158,18 @@ void Server::tryStart(Client& c) {
     // Failing here used to leave r->ref null and the game carried on as a relay --
     // silently giving up the canonical hash and, for a mission, the strategic AI.
     // A game that cannot be refereed does not start; the host is told why.
-    DataSet& dataSet = dataFor(r->opts.overridePolicy);
+    if(r->opts.overridePolicy==2 && !r->overrideData) {
+        if(!r->overridePackage){sendReject(c,"waiting for override packs");return;}
+        try {
+            auto ds=std::make_unique<DataSet>();ds->vfs=tak::hpi::Vfs(&retail_.vfs);
+            ds->vfs.setOverrideFiles(r->overridePackage->files);
+            tak::sim::setupRegistry(ds->reg,ds->vfs,false);
+            if(retail_.haveCb){tak::sim::setupRegistry(ds->regCb,ds->vfs,true);ds->haveCb=true;}
+            ds->hash=tak::hpi::gameplayHash(ds->vfs);ds->built=true;r->overrideData=std::move(ds);
+            if(r->mapPackage){r->mapVfs=std::make_unique<tak::hpi::Vfs>(&r->overrideData->vfs);r->mapVfs->setMapFiles(r->mapPackage->files);}
+        }catch(const std::exception& e){sendReject(c,std::string("cannot load override packs: ")+e.what());return;}
+    }
+    DataSet& dataSet = roomData(*r);
     const bool wantMission = !r->mission.empty();
     std::string mapResolved = wantMission ? std::string()
                                           : r->mapPackage ? r->mapPackage->mapPath
@@ -2196,7 +2207,7 @@ void Server::tryStart(Client& c) {
     // failure refuses the start).
     const std::string& mapPath = mapResolved;
     {
-        r->reg = &registryFor(r->opts.crusades != 0, r->opts.overridePolicy);
+        r->reg = r->opts.crusades && dataSet.haveCb ? &dataSet.regCb : &dataSet.reg;
         r->ref = std::make_unique<tak::sim::World>();
         r->ref->setVisPlayer(-1);   // headless referee: no fog pass
         if (isMission) {
@@ -2337,6 +2348,7 @@ void Server::tryStart(Client& c) {
         it->second->conn.send(Msg::GameStarting, w);
         it->second->loaded = true;
     }
+    for(int i=0;i<std::min(kMaxSlots,r->ref->numPlayers());++i)r->defeated[size_t(i)]=r->ref->player(i).defeated;
     std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
 }
 
@@ -2435,7 +2447,13 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 // The unit limit is fixed when the room is created.
                 o.unitCap = r->opts.unitCap;
                 // Lobby: adopt the remaining options and rebroadcast the slot table.
-                o.overridePolicy = r->opts.overridePolicy;
+                o.overridePolicy = std::min<uint8_t>(o.overridePolicy,2);
+                if(o.overridePolicy!=r->opts.overridePolicy){
+                    r->overrideData.reset();r->overridePackage.reset();
+                    r->mapVfs.reset();r->mapPackage.reset();
+                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->mapReadyRoom=peer->mapOfferedRoom=0;peer->mapSend={};peer->mapReceive={};}
+                    for(auto& [id,peer]:clients_)if(peer->roomId==r->id){peer->overrideReady.clear();peer->overrideOffered.clear();peer->overrideSend={};peer->overrideReceive={};}
+                }
                 r->opts = o;
                 broadcastLobby(*r);
             } else if (r->opts.speedUnlock && r->opts.speed != o.speed) {
@@ -2456,14 +2474,14 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             uint64_t clientHash = rd.u64();
             if(!r->campaignBattleId.empty()) {
-                if(!rd.ok || rd.p!=rd.end || !clientHash || clientHash!=dataFor(r->opts.overridePolicy).hash || c.slot<0 || c.slot>=2) {
+                if(!rd.ok || rd.p!=rd.end || !clientHash || clientHash!=roomData(*r).hash || c.slot<0 || c.slot>=2) {
                     r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
                     c.conn.fail("invalid campaign gameplay fingerprint");return;
                 }
                 r->campaignLoaded[c.slot]=true;
             }
             if (rd.ok && clientHash != 0) {
-                uint64_t want = dataFor(r->opts.overridePolicy).hash;
+                uint64_t want = roomData(*r).hash;
                 if (clientHash != want) {
                     char msg[176];
                     std::snprintf(msg, sizeof msg,
@@ -2657,7 +2675,7 @@ bool Server::canAdvance(const Room& r) const {
     for (int i = 0; i < kMaxSlots; ++i) {
         if (r.slots[i].type != 1 || r.slotClient[i] < 0) continue;
         // An eliminated client must never pace the surviving players.
-        if (r.ref && i < r.ref->numPlayers() && r.ref->player(i).defeated) continue;
+        if (r.defeated[size_t(i)]) continue;
         auto it = clients_.find(uint32_t(r.slotClient[i]));
         if (it == clients_.end() || !it->second->loaded) continue;
         anyHuman = true;
@@ -2675,7 +2693,8 @@ bool Server::canAdvance(const Room& r) const {
     return true;   // no live consumers at all
 }
 
-void Server::closeTick(Room& r) {
+void Server::closeTick(Room& r, bool multipleGames) {
+    if(r.tickJob.valid())return;
     // All humans must have loaded before the first tick.
     if (r.tick == 0) {
         for (int i = 0; i < kMaxSlots; ++i)
@@ -2704,87 +2723,53 @@ void Server::closeTick(Room& r) {
             c.cmdQueue.pop_front();
         }
     }
-    // Server-hosted AI: each controller observes the referee world (state after
-    // tick-1) and appends its orders to this tick's bundle, exactly like a client.
-    // A running room always has a referee -- tryStart refuses to start a game it
-    // cannot referee -- so this is unconditional.
-    {
-        static const bool kAiPhase = std::getenv("TAK_AIPHASE") != nullptr;
-        auto _a0 = std::chrono::steady_clock::now();
-        for (auto& ctl : r.ai)
-            ctl.tick(*r.ref, r.tick, [&r](const Command& c) { r.pending.push_back(c); });
-        if (kAiPhase) {
-            double ms = std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - _a0).count();
-            static double thr = std::getenv("TAK_AIPHASE_MS")
-                                    ? atof(std::getenv("TAK_AIPHASE_MS")) : 8.0;
-            if (ms > thr)
-                std::fprintf(stderr, "AIPHASE tick=%u ai=%.1fms controllers=%zu\n",
-                             r.tick, ms, r.ai.size());
-        }
+    tak::srv::TickInput input;
+    input.tick=r.tick;input.roomId=r.id;input.multipleGames=multipleGames;
+    input.commands=std::exchange(r.pending,{});input.events=std::exchange(r.pendingEvents,{});
+    input.replayBudget=limits_.replayMemory-std::min<uint64_t>(limits_.replayMemory,r.logBytes);
+    if (auto it=r.pendingAt.find(r.tick);it!=r.pendingAt.end()) {
+        input.scheduled=std::move(it->second);r.pendingAt.erase(it);
     }
+    if(!r.worker)r.worker=std::make_unique<tak::srv::RoomWorker>();
+    // Frozen inputs become committed at submission. New commands/events stay on
+    // main for the following tick, including leaves or reconnects during this job.
+    r.tickJob=r.worker->submit([ref=r.ref.get(),ai=&r.ai,reg=r.reg,input=std::move(input)]() mutable {
+        return tak::srv::simulateRoomTick(*ref,*reg,*ai,std::move(input));
+    });
+}
 
-    // Server input delay: client commands scheduled for THIS tick (received
-    // srvDelay ticks ago) join the bundle now.
-    if (auto it = r.pendingAt.find(r.tick); it != r.pendingAt.end()) {
-        for (auto& c : it->second) r.pending.push_back(c);
-        r.pendingAt.erase(it);
-    }
-    Writer w;
-    w.u32(r.tick);
-    // Deterministic order: sort by player, stable within a player (arrival order).
-    std::stable_sort(r.pending.begin(), r.pending.end(),
-                     [](const Command& a, const Command& b) { return a.player < b.player; });
-    w.u32(uint32_t(r.pending.size()));
-    for (const auto& cmd : r.pending) w.cmd(cmd);
-    w.u32(uint32_t(r.pendingEvents.size()));
-    for (const auto& e : r.pendingEvents) { w.u8(uint8_t(e.kind)); w.u8(e.player); }
-    if(w.b.size()+2*sizeof(std::vector<uint8_t>)>limits_.replayMemory-r.logBytes) {
-        r.resourceLimited=true;
+void Server::finishTick(Room& r) {
+    if(!r.tickJob.valid() || r.tickJob.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;
+    TickResult result;
+    try {result=r.tickJob.get();}
+    catch(const std::exception& e) {r.simulationError=e.what();}
+    catch(...) {r.simulationError="unknown simulation failure";}
+    if(!r.simulationError.empty() || result.resourceLimited) {
+        r.resourceLimited=result.resourceLimited;
         if(!r.campaignBattleId.empty())r.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
+        if(!r.simulationError.empty())std::fprintf(stderr,"game %u simulation failed: %s\n",r.id,r.simulationError.c_str());
         return;
     }
-    broadcastRoom(r, Msg::TickBundle, w);
+    // Publish one completed tick atomically from the network thread. A reconnect
+    // sees either the old replay boundary or this complete bundle, never half a tick.
+    Writer w;w.b=std::move(result.bundle);
+    broadcastRoom(r,Msg::TickBundle,w);
     r.logBytes+=w.b.size()+2*sizeof(std::vector<uint8_t>);
-    r.log.push_back(std::move(w.b));   // keep the full bundle log for reconnect/replay
-                                       // (moved: broadcastRoom already copied it out)
-
-    // Advance the referee sim by this same bundle, then record its canonical hash --
-    // but only at the ticks clients actually REPORT (kHashPeriod): hashing every
-    // tick burned ~8ms/s per 2000-unit room on hashes that were never read.
-    {
-        for (const auto& cmd : r.pending) tak::sim::applyCommand(*r.ref, *r.reg, cmd);
-        for (const auto& e : r.pendingEvents) tak::sim::applyEvent(*r.ref, e);
-        r.ref->tick(1.0f / kServerHz);
-        if (r.tick % uint32_t(kHashPeriod) == 0) {
-            const uint64_t h = r.ref->stateHash();
-            r.refHash[r.tick] = h;
-            // Keep a coarser, UNPRUNED copy for the replay file (see Room::replayChecks).
-            // One every 10 hash periods -- fine enough to bracket a divergence, cheap
-            // enough to carry for a whole game.
-            if (!replayDir_.empty() && (r.tick / uint32_t(kHashPeriod)) % 10 == 0)
-                r.replayChecks.emplace_back(r.tick, h);
-        }
-        // bound the ring
-        while (r.refHash.size() > 300) r.refHash.erase(r.refHash.begin());
-        // Campaign win/lose: the referee's mission runner is authoritative -- announce
-        // the result once (the clients reach the same outcome in their own sims, but
-        // this drives the end-of-mission UI and covers all-spectator missions).
-        if (!r.missionOutcomeSent) {
-            if (int oc = r.ref->missionOutcome()) {
-                r.missionOutcomeSent = int8_t(oc);
-                Writer mw; mw.u8(uint8_t(int8_t(oc)));
-                broadcastRoom(r, Msg::MissionOutcome, mw);
-                std::fprintf(stderr, "game %u mission %s: %s\n", r.id, r.mission.c_str(),
-                             oc > 0 ? "VICTORY" : "DEFEAT");
-            }
-        }
+    r.log.push_back(std::move(w.b));
+    r.defeated=result.defeated;
+    if(result.hash) {
+        r.refHash[r.tick]=*result.hash;
+        if(!replayDir_.empty() && (r.tick/uint32_t(kHashPeriod))%10==0)
+            r.replayChecks.emplace_back(r.tick,*result.hash);
+        while(r.refHash.size()>300)r.refHash.erase(r.refHash.begin());
     }
-    r.pending.clear();
-    r.pendingEvents.clear();
-    r.tick++;
-    // Cadence scales with game speed (dt per tick stays 1/kServerHz): 10 = 1.0x.
-    r.nextTickMs += uint64_t(10000 / (kServerHz * std::max<int>(1, int(r.opts.speed))));
+    if(!r.missionOutcomeSent && result.missionOutcome) {
+        r.missionOutcomeSent=int8_t(result.missionOutcome);
+        Writer mw;mw.u8(uint8_t(r.missionOutcomeSent));broadcastRoom(r,Msg::MissionOutcome,mw);
+        std::fprintf(stderr,"game %u mission %s: %s\n",r.id,r.mission.c_str(),result.missionOutcome>0?"VICTORY":"DEFEAT");
+    }
+    ++r.tick;
+    r.nextTickMs+=uint64_t(10000/(kServerHz*std::max<int>(1,int(r.opts.speed))));
 }
 
 void Server::dropClient(uint32_t id, const char* reason) {
@@ -2794,8 +2779,7 @@ void Server::dropClient(uint32_t id, const char* reason) {
     Room* r = c.roomId ? roomOf(c) : nullptr;
     // Defeated players normally disconnect from the result screen. Their
     // departure must not pause the surviving players for reconnect grace.
-    const bool defeated = r && r->ref && c.slot >= 0 && c.slot < r->ref->numPlayers() &&
-                          r->ref->player(c.slot).defeated;
+    const bool defeated = r && c.slot >= 0 && c.slot < kMaxSlots && r->defeated[size_t(c.slot)];
     if (r && r->running && c.slot >= 0 && c.slot < kMaxSlots &&
         r->slots[c.slot].type == 1 && !defeated) {
         // A disconnect from a running game HOLDS the slot: the player may rejoin
@@ -2872,9 +2856,10 @@ bool Server::allowCampaignWork(Client& c,const Frame& f) {
 bool Server::allowLobbyWork(Client& c,const Frame& f) {
     unsigned cost=1;
     switch(f.kind) {
-        case Msg::MapChunk:return true; // upload reads are paced before recv(), not discarded
-        case Msg::CreateGame: case Msg::StartGame: case Msg::MapOffer: cost=16;break;
+        case Msg::OverrideChunk: case Msg::MapChunk:return true; // upload reads are paced before recv(), not discarded
+        case Msg::CreateGame: case Msg::StartGame: case Msg::OverrideOffer: case Msg::MapOffer: cost=16;break;
         case Msg::ListGames: case Msg::JoinGame: case Msg::Spectate:
+        case Msg::OverrideRequest: case Msg::OverrideReady: case Msg::OverrideError:
         case Msg::Chat: case Msg::MapRequest: case Msg::MapReady: case Msg::MapError:
         case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::SetGameOptions:
         case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause: break;
@@ -2897,8 +2882,9 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
 
 size_t Server::mapMemory() const {
     size_t used=0;
-    for(const auto& [id,peer]:clients_)used+=size_t(peer->mapReceive.size)*2;
+    for(const auto& [id,peer]:clients_)used+=(size_t(peer->mapReceive.size)+peer->overrideReceive.size)*2;
     for(const auto& [id,room]:rooms_)if(room.mapPackage)used+=room.mapPackage->bytes.size()*2;
+    for(const auto& [id,room]:rooms_)if(room.overridePackage)used+=room.overridePackage->bytes.size()*2;
     return used;
 }
 
@@ -2955,6 +2941,7 @@ void Server::onFrame(Client& c, const Frame& f) {
         }
         return;
     }
+    if(c.state==Client::InGame && f.kind>=Msg::OverrideOffer && f.kind<=Msg::OverrideError){overrideMsg(c,f);return;}
     if (c.state == Client::InGame && (f.kind == Msg::MapOffer || f.kind == Msg::MapRequest ||
         f.kind == Msg::MapChunk || f.kind == Msg::MapReady || f.kind == Msg::MapError)) {
         mapMsg(c, f); return;
@@ -2990,6 +2977,7 @@ int Server::run() {
     std::vector<pollfd> pfds;
     std::vector<uint32_t> ids;
     for (;;) {
+        for(auto& [id,room]:rooms_) {(void)id;finishTick(room);}
         // Build the pollfd set: listen + every client (POLLOUT when it has pending writes).
         pfds.clear();
         ids.clear();
@@ -3013,6 +3001,7 @@ int Server::run() {
         // pause has no expiry, so that is indefinite.
         for (auto& [rid, r] : rooms_) {
             (void)rid;
+            if(r.tickJob.valid()) {soonest=std::min(soonest,now+2);continue;}
             if(r.campaignResult || r.campaignFault) {
                 if(r.campaignResult && !r.campaignResultRecorded && r.campaignResultDue>now)
                     soonest=std::min(soonest,r.campaignResultDue);
@@ -3026,13 +3015,14 @@ int Server::run() {
         // deadline in.
         for (const auto& [id, c] : clients_) {
             if (c->conn.bufferedInput() && canRead(*c,now))soonest=now;
-            if ((c->replaying || c->mapSend.package || c->mapReceive.size) && now + 10 < soonest) soonest = now + 10;
+            if ((c->replaying || c->mapSend.package || c->mapReceive.size || c->overrideSend.package || c->overrideReceive.size) && now + 10 < soonest) soonest = now + 10;
         }
         int timeout = int(soonest > now ? soonest - now : 0);
 
         int n = TAK_POLL(pfds.data(), (unsigned)pfds.size(), timeout);
         if (n < 0) { if (sockInterrupted(sockErr())) continue; break; }
 
+        for(auto& [id,room]:rooms_) {(void)id;finishTick(room);}
         throttle_.expire(now);   // forget hosts that have long since behaved
 
         // Accept new connections.
@@ -3069,7 +3059,7 @@ int Server::run() {
             Client& c = *it->second;
             if(!canRead(c,now) && (pfds[i].revents & (POLLHUP|POLLERR))) {dead.push_back(id);continue;}
             if (((pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) || c.conn.bufferedInput()) && canRead(c,now)) {
-                const bool uploading=c.mapReceive.size!=0;
+                const bool uploading=c.mapReceive.size!=0 || c.overrideReceive.size!=0;
                 if(uploading) {c.uploadWork.take(now,4096,64);uploadGlobalWork_.take(now,16384,64);}
                 if (!c.conn.recv(uploading?65536:1u<<20)) { dead.push_back(id); continue; }
                 Frame fr;
@@ -3132,12 +3122,12 @@ int Server::run() {
         // replay, then erase.
         std::vector<std::pair<uint32_t, const char*>> doneRooms;
         for (auto& [rid, r] : rooms_) {
-            if (!r.running) continue;
-            if(r.resourceLimited) {
+            if (!r.running || r.tickJob.valid()) continue;
+            if(r.resourceLimited || !r.simulationError.empty()) {
                 for(auto& [cid,peer]:clients_)if(peer->roomId==rid) {
-                    sendReject(*peer,"game replay memory limit reached");peer->conn.fail("game resource limit");
+                    sendReject(*peer,r.resourceLimited?"game replay memory limit reached":"game simulation failed");peer->conn.fail("game stopped");
                 }
-                if(r.campaignBattleId.empty()) {doneRooms.push_back({rid,"replay memory limit"});continue;}
+                if(r.campaignBattleId.empty()) {doneRooms.push_back({rid,r.resourceLimited?"replay memory limit":"simulation failure"});continue;}
             }
             if(!r.campaignBattleId.empty()) {
                 finalizeCampaign(r,!roomOccupied(r) || !roomActive(r));
@@ -3161,60 +3151,24 @@ int Server::run() {
             std::fprintf(stderr, "game %u ended (%s)\n", rid, why);
             rooms_.erase(rid);
         }
-        // Close ticks for running, unpaused rooms whose deadline passed -- but never
-        // get more than kMaxLeadTicks ahead of the slowest seated player (flow control):
-        // if one is behind, hold and rebase the clock so we resume without a burst.
-        //
-        // Games are INDEPENDENT: each closeTick touches only its own Room + referee
-        // World (per-room nav/flow/AI) and broadcasts to its own clients (a client is
-        // in exactly one room, so the client sets are disjoint). clients_/rooms_ are
-        // only READ here (the main thread mutates them before/after, never during),
-        // so several games can tick in parallel. The referee reads the shared registry
-        // read-only. With >=2 games due we hand one per worker; flow prefetch then
-        // stays on-thread (the parallelism is already at the game level). A lone game
-        // ticks inline and keeps its intra-tick flow pool. Byte-identical either way.
-        // Rooms tick before sockets are serviced again, so in principle one heavy room
-        // delays everyone's networking. Measured with a heavy (stress, ~3800 units) room
-        // and a light one on the same server: worst socket-service gap 20 ms with two
-        // rooms, against 33 ms with a single room -- BETTER with two, because the tick
-        // deadlines interleave and the poll wakes more often. The per-room tick is well
-        // inside the 33 ms period and rooms tick in parallel, so the batch join is not a
-        // bottleneck at this scale. Revisit if a single room's tick ever approaches the
-        // period; then the join really would gate everyone.
-        now = nowMs();
-        std::vector<Room*> due;
-        for (auto& [rid, r] : rooms_)
-            if (r.running && !r.paused && !r.campaignResult && !r.campaignFault && !r.resourceLimited && r.nextTickMs <= now) due.push_back(&r);
-        auto tickRoom = [&](Room& r) {
-            // Heavy games can take longer than their nominal tick interval.
-            // Bound catch-up work between socket polls: advancing the entire
-            // lead window in one burst otherwise withholds bundles/keepalives
-            // long enough for connected clients to time out.
-            const uint64_t batchStart = nowMs();
-            while (r.nextTickMs <= now) {
-                // Pace to the slowest. Back off a few ms rather than rebasing to
-                // `now`: an immediate deadline makes the poll above return at
-                // once, so the server would spin until the laggard acked.
-                if (!canAdvance(r)) { r.nextTickMs = now + kFlowRetryMs; break; }
-                try {closeTick(r);}
-                catch(const std::exception& e) {
-                    if(r.campaignBattleId.empty())throw;
-                    r.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
-                    std::fprintf(stderr,"campaign referee failed: %s\n",e.what());break;
-                }
-                if(!r.campaignBattleId.empty() && (r.ref->winningTeam()>=0 ||
-                    (r.ref->numPlayers()>=2 && r.ref->player(0).defeated && r.ref->player(1).defeated)))break;
-                if (r.resourceLimited || nowMs() - batchStart >= 8) break;
-            }
-        };
-        bool parallel = due.size() >= 2;
-        for (Room* rp : due) if (rp->ref) rp->ref->setSerialThreads(parallel);
-        if (parallel)
-            tickPool_.run(due.size(), [&](size_t i) { tickRoom(*due[i]); });
-        else
-            for (Room* rp : due) tickRoom(*rp);
-        // Shared SQLite state is accessed only after every tick worker joined.
+        // No global batch join: slow rooms keep their own worker busy while
+        // networking and other rooms continue. Only one tick per room is in flight.
         for(auto& [id,room]:rooms_) {(void)id;if(!room.campaignBattleId.empty() && room.running)finalizeCampaign(room);}
+        now=nowMs();
+        size_t running=0;for(const auto& [id,room]:rooms_) {(void)id;running+=room.running;}
+        for(auto& [id,room]:rooms_) {
+            (void)id;
+            if(!room.running || room.paused || room.tickJob.valid() || room.campaignResult ||
+               room.campaignFault || room.resourceLimited || !room.simulationError.empty() ||
+               !roomOccupied(room) || !roomActive(room) || room.nextTickMs>now)continue;
+            if(!canAdvance(room)) {room.nextTickMs=now+kFlowRetryMs;continue;}
+            try {closeTick(room,running>1);}
+            catch(const std::exception& e) {
+                room.simulationError=e.what();
+                if(!room.campaignBattleId.empty())room.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
+                std::fprintf(stderr,"game %u tick submission failed: %s\n",id,e.what());
+            }
+        }
         // Feed catch-up streams. A client resuming or spectating takes its
         // history from the room log a chunk at a time, only topping up when its
         // write buffer has drained, so a long game cannot put its whole replay
@@ -3252,6 +3206,10 @@ int Server::run() {
             if(c->mapReceive.size && (now-c->mapReceiveProgress>30000 || now-c->mapReceiveStarted>300000)) {
                 c->mapReceive={};c->conn.fail("map upload deadline exceeded");dead.push_back(id);continue;
             }
+            if(c->overrideReceive.size && (now-c->overrideProgress>30000 || now-c->overrideStarted>300000)){
+                c->overrideReceive={};c->conn.fail("override upload deadline exceeded");dead.push_back(id);continue;
+            }
+            c->overrideSend.pump(c->conn,Msg::OverrideChunk);
             c->mapSend.pump(c->conn);
             if (!c->conn.flushWrite()) { dead.push_back(id); continue; }
             if (c->state != Client::Handshake && now - c->lastRecvMs > kPingIdleMs &&

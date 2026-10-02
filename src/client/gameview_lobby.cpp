@@ -420,10 +420,6 @@ std::string mapDisplayName(const std::string& id) {
                                              : "SPECTATE (WATCH AIS): OFF", true,
                   [this](int) { spSpectate_ = !spSpectate_; }); y += 30;
         }
-        // Override tier for the game: NONE (pure retail) / COSMETIC (art & sound
-        // may differ) / FULL (gameplay overrides allowed but every player must
-        // have the same ones). The host's own launch tier caps it (you can't offer
-        // FULL if you didn't mount your gameplay overrides).
         // Fog of war: a room rule, so it is picked here and not only after the
         // room exists. Display-only (never hashed) -- every peer applies the same
         // rule, so it stays fair. The room displays this choice as information.
@@ -440,7 +436,7 @@ std::string mapDisplayName(const std::string& id) {
         lbCycle(x, y, 240, 26, std::string("START LOCATIONS: ") +
               (createRandomStarts_ ? "RANDOM" : "FIXED"), true,
               [this](int) { createRandomStarts_ = !createRandomStarts_; }); y += 30;
-        static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
+        static const char* kTier[] = {"OFF", "COSMETIC", "FULL"};
         lbCycle(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this](int direction) { createOverride_ = uint8_t((createOverride_ + direction + 3) % 3); }); y += 44;
         // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
@@ -450,6 +446,7 @@ std::string mapDisplayName(const std::string& id) {
         lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty() && genPreviewError_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
             o.overridePolicy = createOverride_;
+            if(settings_)mp_->setHostOverridePacks(settings_->hostOverridePacks);
             o.doubleSight = createDoubleSight_ ? 1 : 0;
             o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
             o.unitCap = createUnitCap_;
@@ -678,13 +675,44 @@ std::string mapDisplayName(const std::string& id) {
         const bool campaign = mp_->campaignRoom();
         float x = 40, y = 78;
         blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
-        blockText(std::string("MAP  ") + mapDisplayName(room.mapId), x + winW - 320, y + 4, 1.8f, {180, 185, 195, 255});
-        // Override tier for this game (joiners adopt it; FULL needs matching gameplay files).
-        static const char* kTier[] = {"NONE", "COSMETIC", "FULL"};
-        blockText(std::string("OVERRIDES  ") + kTier[room.opts.overridePolicy & 3],
-                  x + winW - 320, y + 22, 1.5f, {150, 175, 150, 255});
+        blockText(std::string("MAP  ") + mapDisplayName(room.mapId), x, y - 24, 1.8f, {180, 185, 195, 255});
         y += 34;
         bool host = (room.hostId == mp_->myClientId());
+        float overrideBottom=112;
+        if(!campaign && room.mission.empty()) {
+            if(!overridePacksScanned_){availableOverridePacks_=tak::hpi::overridePacks(std::filesystem::u8path(installRoot_));overridePacksScanned_=true;}
+            static const char* tiers[]={"OFF","COSMETIC","FULL"};
+            const auto tier=std::min<uint8_t>(room.opts.overridePolicy,2);
+            blockText(std::string("OVERRIDES: ")+tiers[tier],
+                      winW-296.0f,87,1.6f,{205,210,225,255});
+            if(tier) {
+                auto selected=host?mp_->hostOverridePacks():settings_?settings_->cosmeticOverridePacks:std::vector<std::string>{};
+                auto names=availableOverridePacks_;for(const auto& n:selected)if(std::find(names.begin(),names.end(),n)==names.end())names.push_back(n);
+                std::sort(names.begin(),names.end());
+                const size_t pages=std::max<size_t>(1,(names.size()+4)/5);overridePage_=std::min(overridePage_,pages-1);
+                float py=112;blockText(host?"SELECT PACKS":"COSMETIC FILES ONLY",winW-296.0f,py,1.4f,{180,190,205,255});py+=22;
+                if(names.empty()){blockText("NO PACK SUBFOLDERS",winW-296.0f,py,1.3f,{150,155,165,255});py+=24;}
+                for(size_t i=overridePage_*5;i<std::min(names.size(),overridePage_*5+5);++i){
+                    const auto name=names[i];const bool enabled=std::find(selected.begin(),selected.end(),name)!=selected.end();
+                    std::string label=name;if(label.size()>26)label=label.substr(0,23)+"...";
+                    lbBtn(winW-300.0f,py,280,23,label,!mp_->overrideBusy(),[this,host,name,enabled]{
+                        auto selection=host?mp_->hostOverridePacks():settings_?settings_->cosmeticOverridePacks:std::vector<std::string>{};
+                        if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()<64)selection.push_back(name);
+                        if(host){mp_->setHostOverridePacks(selection);if(settings_)settings_->hostOverridePacks=selection;}
+                        else if(settings_)settings_->cosmeticOverridePacks=selection;
+                        if(settings_)saveSettings(*settings_);
+                    });
+                    SDL_FRect checkBox{winW-291.0f,py+6,11,11};
+                    SDL_SetRenderDrawColor(ren_,190,205,220,255);
+                    SDL_RenderDrawRectF(ren_,&checkBox);
+                    if(enabled){checkBox.x+=3;checkBox.y+=3;checkBox.w-=6;checkBox.h-=6;SDL_RenderFillRectF(ren_,&checkBox);}
+                    py+=25;
+                }
+                if(pages>1){lbCycle(winW-300.0f,py,280,23,"PACK PAGE "+std::to_string(overridePage_+1)+" / "+std::to_string(pages),true,[this,pages](int d){overridePage_=(overridePage_+pages+d)%pages;});py+=25;}
+                if(room.opts.overridePolicy==2){auto status=mp_->overrideStatus();if(status.size()>34)status=status.substr(0,31)+"...";blockText(status,winW-296.0f,py+3,1.2f,{205,190,135,255});py+=23;}
+                overrideBottom=py+8;
+            }
+        }
         // SP spectate ("watch the AIs"): the instant the host lands in the room, fill
         // every open capacity slot with an AI -- each on its own team/colour and a
         // RANDOM race -- so the watcher gets a full free-for-all with no hand-seating.
@@ -702,7 +730,7 @@ std::string mapDisplayName(const std::string& id) {
         for (int i = 0; i < tak::net::kMaxSlots; ++i) {
             const auto& s = room.slots[i];
             bool mine = (i == room.mySlot);
-            SDL_FRect row{x, y, winW - 320.0f, 30};
+            SDL_FRect row{x, y, winW - 360.0f, 30};
             SDL_SetRenderDrawColor(ren_, mine ? 40 : 26, mine ? 48 : 30, mine ? 66 : 40, 255);
             SDL_RenderFillRectF(ren_, &row);
             char sn[8]; std::snprintf(sn, sizeof sn, "%d", i + 1);
@@ -801,7 +829,8 @@ std::string mapDisplayName(const std::string& id) {
             authoredLobby_=mp_->mapPackage() && tak::net::maps::authoredScenario(*mp_->mapPackage());
         }
         const bool authored=!room.opts.stressTest && !room.opts.benchmark && mp_->mapPackage() && authoredLobby_;
-        bool canStart = host && startValid(room,authored) && room.mapsReady;
+        bool canStart = host && startValid(room,authored) && room.mapsReady && !mp_->overridePending() &&
+            (room.opts.overridePolicy!=2 || bool(mp_->overridePackage()));
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
@@ -811,45 +840,62 @@ std::string mapDisplayName(const std::string& id) {
             else lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
             spSpectate_ = false;
             mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
-        if (!room.mapsReady) blockText(mp_->mapStatus().empty() ? "WAITING FOR MAP VERIFICATION" : mp_->mapStatus(),
-            bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
-        // The game starts at normal speed; the host can allow it to be changed
-        // in-game, and the host's -/+ keys then re-cadence the match live.
-        y += 40;
-        blockText(std::string("ALLOW SPEED CHANGE IN-GAME: ") + (room.opts.speedUnlock ? "ON" : "OFF"),
-                  x, y + 6, 2.0f, {205, 210, 225, 255});
-        // Unit limit is selected at creation; the room only displays it.
-        y += 34;
-        char cb[40]; std::snprintf(cb, sizeof cb, "UNIT CAP  %d", int(room.opts.unitCap));
-        blockText(cb, x, y + 6, 2.0f, {205, 210, 225, 255});
-        if (room.mission.empty()) {
-            blockText(room.opts.doubleSight ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF",
-                      x + 330, y + 6, 1.6f, {205, 210, 225, 255});
+        // Room readiness also includes override packs and other players. A
+        // completed local map is not progress to display while packs change;
+        // their status is already shown beside the pack list.
+        const auto& mapStatus = mp_->mapStatus();
+        if (!room.mapsReady && !mp_->overridePending() && !mp_->overrideBusy() &&
+            mapStatus != "MAP READY" && mapStatus != "MAP VERIFIED")
+            blockText(mapStatus.empty() ? "WAITING FOR MAP VERIFICATION" : mapStatus,
+                bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
+        // Creation settings are read-only here and come from the room, not
+        // this client's saved preferences. Keep every rule visible with 8 slots.
+        y += 44;
+        const SDL_Color infoColor{205,210,225,255};
+        auto info = [&](int row, int column, const std::string& label) {
+            blockText(label,x+column*300.0f,y+row*22.0f,1.6f,infoColor);
+        };
+        auto onOff = [](bool value) { return value ? "ON" : "OFF"; };
+        info(0,0,std::string("CRUSADES: ")+onOff(room.opts.crusades));
+        info(0,1,std::string("DOUBLE SIGHT/RADAR: ")+onOff(room.opts.doubleSight));
+        info(1,0,"UNIT CAP: "+std::to_string(room.opts.unitCap));
+        info(1,1,std::string("MONARCH EXPENDABLE: ")+onOff(room.opts.monarchExpendable));
+        info(2,0,std::string("ALLOW SPEED CHANGE: ")+onOff(room.opts.speedUnlock));
+        static const char* fogNames[]={"NOT EXPLORED","EXPLORED","FULL VISION"};
+        info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
+        info(3,0,std::string("START LOCATIONS: ")+(room.opts.randomStarts?"RANDOM":"FIXED"));
+        if(singlePlayer_)
+            info(3,1,std::string("SPECTATE (WATCH AIS): ")+onOff(mp_->isSpectator()));
+        else if(!campaign) {
+            const auto& games=mp_->games();
+            const auto game=std::find_if(games.begin(),games.end(),[&](const auto& g){return g.id==room.id;});
+            // Show whether access is protected, never the password itself.
+            if(game!=games.end() || host)
+                info(3,1,std::string("PASSWORD: ")+((game!=games.end()?game->passworded:!createPass_.empty())?"SET":"NONE"));
         }
-        // Rules chosen when creating the game are informational in the lobby.
-        // Fog of war: NOT EXPLORED starts hidden; EXPLORED starts mapped.
-        // Both keep seen terrain dimmed after sight is lost;
-        // FULL VISION removes fog entirely (whole map + every unit, all players).
-        y += 34;
-        {
-            static const char* kFogName[3] = {"NOT EXPLORED", "EXPLORED", "FULL VISION"};
-            std::string fb = std::string("FOG OF WAR: ") +
-                             kFogName[std::min<int>(room.opts.fogExplored, 2)];
-            blockText(fb, x, y + 6, 2.0f, {205, 210, 225, 255});
-        }
-        y += 34;
-        {
-            // Retail's "Random Start Locations" room option: shuffle which map start
-            // each slot gets, so spawns can't be memorised on a familiar map.
-            std::string rb = std::string("START LOCATIONS: ") +
-                             (room.opts.randomStarts ? "RANDOM" : "FIXED");
-            blockText(rb, x, y + 6, 2.0f, {205, 210, 225, 255});
+        if(tak::mapgen::isGeneratedMapId(room.mapId)) {
+            try {
+                const auto gp=tak::mapgen::decodeMapId(room.mapId);
+                const auto level=[](uint8_t v){return v==0?"NONE":v<86?"LOW":v<171?"MED":"HIGH";};
+                static const char* mapTypes[]={"ARAMON","TAROS","VERUNA","ZHON","CREON"};
+                const std::string shape=std::string("MAP TYPE: ")+mapTypes[gp.mapType%tak::mapgen::kMapTypes]+
+                    "  LAYOUT: "+tak::mapgen::layoutName(gp.layout)+"  SIZE: "+
+                    std::to_string(gp.widthCells/32)+" X "+std::to_string(gp.heightCells/32)+
+                    "  PLAYERS: "+std::to_string(gp.players);
+                const std::string terrain=std::string("FORESTS: ")+level(gp.treeDensity)+
+                    "  ROCKS: "+level(gp.rockDensity)+"  MANA: "+level(gp.manaDensity)+
+                    "  WATER: "+(gp.layout==tak::mapgen::Islands?"AUTO":level(gp.waterDensity))+
+                    "  HILLS: "+level(gp.reliefDensity);
+                blockText(shape,x,y+90,1.1f,infoColor);
+                blockText(terrain,x,y+104,1.1f,infoColor);
+                blockText("MAP SEED: "+std::to_string(gp.seed),x,y+118,1.1f,infoColor);
+            } catch(const std::exception&) {} // Invalid map IDs cannot start.
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
         if (!singlePlayer_) {
-            float chx = winW - 300.0f, chy = 78, chw = 280;
+            float chx = winW - 300.0f, chy = overrideBottom, chw = 280;
             SDL_SetRenderDrawColor(ren_, 22, 24, 32, 255);
-            SDL_FRect cp{chx, chy, chw, winH - 150.0f}; SDL_RenderFillRectF(ren_, &cp);
+            SDL_FRect cp{chx, chy, chw, std::max(50.0f,winH - chy - 72.0f)}; SDL_RenderFillRectF(ren_, &cp);
             blockText("CHAT", chx + 8, chy + 6, 1.8f, {160, 165, 180, 255});
             float ly = chy + cp.h - 20;
             for (auto it = chatLog_.rbegin(); it != chatLog_.rend() && ly > chy + 26; ++it) {

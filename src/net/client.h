@@ -19,6 +19,7 @@
 #include "net/crusades.h"
 #include "net/crypto.h"
 #include "net/mappackage.h"
+#include "net/overridepackage.h"
 #include "net/conn.h"
 #include "net/protocol.h"
 #include "net/replayhdr.h"
@@ -54,6 +55,13 @@ public:
 
     void setMapRoot(const std::filesystem::path& root) { mapRoot_ = root; }
     const std::shared_ptr<maps::Package>& mapPackage() const { return mapPackage_; }
+    void setHostOverridePacks(std::vector<std::string> names);
+    const std::vector<std::string>& hostOverridePacks() const { return hostOverridePacks_; }
+    const std::shared_ptr<overrides::Package>& overridePackage() const {return overridePackage_;}
+    const std::string& overrideStatus() const {return overrideStatus_;}
+    bool overridePending() const {return overridePendingAt_!=0;}
+    bool overrideBusy() const {return overrideSend_.package || overrideReceive_.size;}
+    hpi::Vfs overrideVfs(hpi::OverridePolicy localPolicy,const std::vector<std::string>& localPacks) const;
     const std::string& mapStatus() const { return mapStatus_; }
     bool connect(const std::string& host, uint16_t port, const std::string& name);
     void disconnect(const std::string& reason = "bye");
@@ -276,6 +284,17 @@ private:
     void send(Msg kind, const Writer& w) { conn_.send(kind, w); }
     void send(Msg kind) { conn_.send(kind); }
 
+    void overrideFrame(const Frame& f);
+    void offerOverrides();
+    void acceptOverrides(std::shared_ptr<overrides::Package> package,uint32_t room);
+    std::vector<std::string> hostOverridePacks_;
+    std::shared_ptr<overrides::Package> overridePackage_;
+    maps::Receiver overrideReceive_;
+    maps::Sender overrideSend_;
+    bool roomRequestPending_=false;
+    uint32_t overrideOfferedRoom_=0,overrideReadyRoom_=0;
+    uint64_t overridePendingAt_=0;
+    std::string overrideStatus_;
     void mapFrame(const Frame& f);
     void acceptMap(std::shared_ptr<maps::Package> package, uint32_t room);
     std::filesystem::path mapRoot_;

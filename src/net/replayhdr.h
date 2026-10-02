@@ -33,22 +33,18 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 9;   // 9: verified map package digest
+inline constexpr uint32_t kReplayFormat = 10;   // 10: verified override package digest
 
-// Protocol 211 only adds strategic history/replay transfer messages. Its
-// tactical commands, tick bundles and replay layout remain those of 210.
-// Keep this deliberately narrow: a later simulation/protocol change must be
-// reviewed rather than silently accepting all older recordings.
+// 213 changes pack transport only; 212's tactical simulation is unchanged.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
     if (format < 1 || format > kReplayFormat) return false;
     if (protocol == kNetVersion) return true;
-    return format == 9 && (kNetVersion == 210 || kNetVersion == 211) &&
-           (protocol == 210 || protocol == 211);
+    return kNetVersion == 213 && format == 9 && protocol == 212;
 }
 
 struct ReplayHeader {
     std::string mapId;
-    std::string mapDigest;
+    std::string mapDigest, overrideDigest;
     std::string mission;          // campaign mission stem ("" = skirmish)
     std::string engineVersion;    // tak::kVersion of the build that recorded it
     uint8_t crusades = 0, forfeitSelfDestruct = 0;
@@ -92,6 +88,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     w.u64(h.dataHash);
     w.u8(h.doubleSight);
     w.str(h.mapDigest);
+    w.str(h.overrideDigest);
     w.u8(uint8_t(kMaxSlots));
     for (int i = 0; i < kMaxSlots; ++i) {
         w.u8(h.slotType[i]);
@@ -128,6 +125,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
     }
     h.doubleSight = fmt >= 8 ? r.u8() : 0;
     h.mapDigest = fmt >= 9 ? r.str() : "";
+    h.overrideDigest = fmt >= 10 ? r.str() : "";
     const uint8_t nslots = r.u8();
     if (!r.ok || nslots > kMaxSlots) return false;
     for (int i = 0; i < nslots; ++i) {

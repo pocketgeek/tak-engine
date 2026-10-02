@@ -1,18 +1,19 @@
 # README screenshots
 
-Captured on 2026-10-01 from the **0.7.19** release-preparation build,
-engine source `c0bd879`. All twelve views were freshly rendered and visually
+Captured on 2026-10-01 from the **0.7.21** release-preparation build,
+release-preparation sources. All thirteen views were freshly rendered and visually
 inspected. Game/menu images are actual engine output at 1600 × 1000, encoded as
 JPEG at quality 90 with full chroma resolution. Editor images retain their
 native 921 × 691 PNG resolution. No units, effects or UI were added afterward.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.7.19 |
+| `title.jpg` | Title menu showing version 0.7.21 |
 | `army.jpg` | Part of the Aramon army in the 16,000-unit local patrol fixture on Ulasem Arena, one simulated second in, 0.9× zoom; fog disabled; no AI or combat |
 | `gameplay.jpg` | Aramon base in the local development demo on Ulasem Arena, one simulated second in; camera follows the selected barracks at 2× zoom |
 | `naval.jpg` | Development naval demo on Cairbray Coast Landing, eight simulated seconds in; ships on water |
 | `lobby.jpg` | Skirmish creation with Ulasem Arena preview and Allow Speed Change; live local-server connection |
+| `room.jpg` | Live local-server skirmish lobby with three Normal AIs, remembered example pack selections, and read-only rules; example pack folders are empty UI fixtures |
 | `campaign.jpg` | Book of Darien campaign picker with a fresh progress profile |
 | `crusades.jpg` | Live authenticated local Darien Crusades server; imported 313-territory definition with Torcairn selected, no authored battle maps or inferred ownership |
 | `streaming.jpg` | Streaming setup with Max 3840 / 60 FPS defaults; no key or live broadcast |
@@ -38,8 +39,7 @@ units-browser harness sends Tab events and waits for background artwork; the
 F6 model-inspector capture uses the editor workflow test after asynchronous
 model and texture loading.
 
-Only image encoding changed after capture. Static views freshly rerendered
-identically to their previous images: `lobby.jpg`, `campaign.jpg`, `crusades.jpg`, `results.jpg`, `cartographer.png`.
+Only image encoding changed after capture. Some static views may remain pixel-identical despite being freshly captured.
 When refreshing the gallery, rerender and inspect every view, update these notes
 and README captions, and keep retail archives, extracted assets and temporary
 capture files out of Git.

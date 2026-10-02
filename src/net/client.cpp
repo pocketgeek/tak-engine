@@ -28,6 +28,8 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     auth_ = Auth::None; account_.clear(); pend_ = PendingAuth{};
     deriveDone_.store(false, std::memory_order_relaxed);
     conn_ = Conn{}; err_.clear();
+    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideOfferedRoom_=overrideReadyRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
+    room_=RoomView{};roomRequestPending_=false;
     name_ = name;
     if (!conn_.connect(host, port)) { err_ = conn_.error(); state_ = State::Done; return false; }
     state_ = State::Connecting;
@@ -94,8 +96,12 @@ bool MpClient::poll() {
         clearCampaignCache();
         return false;
     }
+    if(overridePendingAt_ && nowMs()>=overridePendingAt_ && !overrideBusy() && state_==State::InRoom && room_.opts.overridePolicy==2)
+        offerOverrides();
+    overrideSend_.pump(conn_,Msg::OverrideChunk);
     mapSend_.pump(conn_);
-    if (startRequested_ && state_ == State::InRoom && room_.mapsReady) {
+    if (startRequested_ && !overridePendingAt_ && state_ == State::InRoom && room_.mapsReady &&
+        (room_.opts.overridePolicy!=2 || (overridePackage_ && overrideReadyRoom_==room_.id))) {
         send(Msg::StartGame); startRequested_ = false;
     }
     pumpDerive();          // the login's PBKDF2 finished on its worker: send the proof
@@ -749,6 +755,7 @@ void MpClient::onFrame(const Frame& f) {
         case Msg::AuthChallenge: onAuthChallenge(r); break;
         case Msg::AuthResult: onAuthResult(r); break;
         case Msg::Reject:
+            roomRequestPending_=false;
             err_ = r.str();
             state_ = State::Done;
             break;
@@ -776,6 +783,7 @@ void MpClient::onFrame(const Frame& f) {
         }
         case Msg::JoinResult: {
             uint8_t ok = r.u8(); uint8_t slot = r.u8(); r.str();
+            if(!ok)roomRequestPending_=false;
             if (ok) {
                 // 0xFF = the host created the game as a slot-less spectator.
                 room_.mySlot = (slot == 0xFF) ? -1 : int(slot);
@@ -784,12 +792,19 @@ void MpClient::onFrame(const Frame& f) {
             }
             break;
         }
+        case Msg::OverrideOffer: case Msg::OverrideRequest: case Msg::OverrideChunk: case Msg::OverrideError:
+            overrideFrame(f); break;
         case Msg::MapOffer: case Msg::MapRequest: case Msg::MapChunk: case Msg::MapError:
             mapFrame(f); break;
         case Msg::LobbyState: {
+            roomRequestPending_=false;
+            const auto oldPolicy=room_.opts.overridePolicy;
             int keep = room_.mySlot;
             readSlots(r, room_);
             room_.mySlot = keep;
+            if(oldPolicy!=room_.opts.overridePolicy && room_.hostId==myId_){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
+            if(room_.opts.overridePolicy!=2){overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideOfferedRoom_=overrideReadyRoom_=0;overrideStatus_.clear();overridePendingAt_=0;}
+            else if(room_.hostId==myId_ && overrideOfferedRoom_!=room_.id)offerOverrides();
             gameSpeed_ = room_.opts.speed;
             if (state_ == State::Lobby) state_ = State::InRoom;
             if (!room_.mission.empty() || mapgen::isGeneratedMapId(room_.mapId)) {
@@ -797,7 +812,7 @@ void MpClient::onFrame(const Frame& f) {
             } else if (room_.hostId == myId_ && mapOfferedRoom_ != room_.id) {
                 try {
                     if (!mapPackage_) mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
-                        hpi::OverridePolicy(std::min<uint8_t>(room_.opts.overridePolicy, 2))), room_.mapId);
+                        (room_.opts.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_), room_.mapId);
                     send(Msg::MapOffer, maps::offer(room_.id, room_.mapId, *mapPackage_));
                     mapOfferedRoom_ = room_.id; mapStatus_ = "CHECKING MAP WITH SERVER";
                 } catch (const std::exception& e) {
@@ -815,8 +830,9 @@ void MpClient::onFrame(const Frame& f) {
             break;
         }
         case Msg::GameStarting: {
+            roomRequestPending_=false;
             RoomView check; Reader header(f.payload.data(), f.payload.size()); readSlots(header, check);
-            if (header.ok && check.mission.empty() && !mapgen::isGeneratedMapId(check.mapId) && mapReadyRoom_ != check.id) {
+            if (header.ok && ((check.opts.overridePolicy==2 && overrideReadyRoom_!=check.id) || (check.mission.empty() && !mapgen::isGeneratedMapId(check.mapId) && mapReadyRoom_ != check.id))) {
                 pendingMapStart_ = f; return;
             }
             int keep = room_.mySlot;
@@ -825,7 +841,7 @@ void MpClient::onFrame(const Frame& f) {
             if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
                 try {
                     const auto data = hpi::mountRetailRoot(mapRoot_,
-                        hpi::OverridePolicy(std::min<uint8_t>(room_.opts.overridePolicy, 2)));
+                        (room_.opts.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_);
                     maps::saveGenerated(mapRoot_, data, room_.mapId);
                 } catch (const std::exception& e) {
                     mapStatus_ = std::string("MAP SAVE FAILED: ") + e.what();
@@ -916,13 +932,15 @@ void MpClient::listGames() { send(Msg::ListGames); }
 void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
                           bool spectate, bool priv, const std::string& mission) {
+    if(roomRequestPending_)return;
+    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideReadyRoom_=overrideOfferedRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
     mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
     mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset();
     mapStatus_ = "CHECKING MAP";
     if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
         try {
             mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
-                hpi::OverridePolicy(std::min<uint8_t>(o.overridePolicy, 2))), mapId);
+                (o.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_), mapId);
         } catch (const std::exception& e) { err_ = mapStatus_ = e.what(); return; }
     }
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
@@ -932,16 +950,21 @@ void MpClient::createGame(const std::string& name, const std::string& password,
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     w.u8(priv ? 1 : 0);       // private (single-player): not in the public game list
+    roomRequestPending_=true;
     send(Msg::CreateGame, w);
 }
 
 void MpClient::joinGame(uint32_t id, const std::string& password) {
+    if(roomRequestPending_)return;
+    roomRequestPending_=true;
     Writer w; w.u32(id); w.str(password);
     send(Msg::JoinGame, w);
 }
 
 void MpClient::leaveGame() {
+    roomRequestPending_=false;
     send(Msg::LeaveGame);
+    overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideReadyRoom_=overrideOfferedRoom_=0;overrideStatus_.clear();overridePendingAt_=0;
     mapPackage_.reset(); mapReceive_ = {}; mapSend_ = {};
     mapReadyRoom_ = mapOfferedRoom_ = 0; startRequested_ = false; pendingMapStart_.reset(); mapStatus_.clear();
     room_ = RoomView{};
@@ -977,12 +1000,16 @@ void MpClient::startGame() { startRequested_ = true; }
 void MpClient::reportLoaded(uint64_t dataHash) { Writer w; w.u64(dataHash); send(Msg::Loaded, w); }
 
 void MpClient::rejoin(uint32_t gameId, uint64_t token) {
+    if(roomRequestPending_)return;
+    roomRequestPending_=true;
     expectingRejoin_ = true;
     Writer w; w.u32(gameId); w.u64(token);
     send(Msg::Rejoin, w);
 }
 
 void MpClient::spectate(uint32_t gameId, const std::string& password) {
+    if(roomRequestPending_)return;
+    roomRequestPending_=true;
     expectingSpectate_ = true;
     Writer w; w.u32(gameId); w.str(password);
     send(Msg::Spectate, w);
@@ -1040,7 +1067,7 @@ void MpClient::mapFrame(const Frame& f) {
             if (auto cached = maps::loadCache(mapRoot_, digest)) { acceptMap(std::move(cached), id); return; }
             try {
                 auto local = maps::build(hpi::mountRetailRoot(mapRoot_,
-                    hpi::OverridePolicy(std::min<uint8_t>(room_.opts.overridePolicy, 2))), mapId);
+                    (room_.opts.overridePolicy==2?hpi::OverridePolicy::Full:hpi::OverridePolicy::None), hostOverridePacks_), mapId);
                 if (local->digest == digest) { acceptMap(std::move(local), id); return; }
             } catch (const std::exception&) {} // Missing/different map: request the host's copy.
             Writer request; request.u32(id); send(Msg::MapRequest, request);
@@ -1066,5 +1093,63 @@ void MpClient::mapFrame(const Frame& f) {
         Writer w; w.u32(mapReceive_.room ? mapReceive_.room : room_.id); w.str(mapStatus_);
         send(Msg::MapError, w); mapReceive_ = {}; mapSend_ = {}; err_ = mapStatus_;
     }
+}
+}
+
+namespace tak::net {
+void MpClient::setHostOverridePacks(std::vector<std::string> names) {
+    std::sort(names.begin(),names.end());if(names==hostOverridePacks_)return;
+    if(overrideBusy())return;
+    hostOverridePacks_=std::move(names);overrideOfferedRoom_=0;
+    if(state_==State::InRoom && room_.hostId==myId_ && room_.opts.overridePolicy==2) {
+        // Coalesce checkbox clicks into one transfer once selection settles.
+        overridePendingAt_=nowMs()+500;overrideOfferedRoom_=room_.id;
+        room_.mapsReady=false;overrideStatus_="APPLYING PACK SELECTION";
+    }
+}
+void MpClient::offerOverrides() {
+    overridePendingAt_=0;room_.mapsReady=false;
+    overrideOfferedRoom_=room_.id;overrideReadyRoom_=0;mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;
+    try {overridePackage_=overrides::build(mapRoot_,hostOverridePacks_);
+        send(Msg::OverrideOffer,maps::offer(room_.id,"overrides",*overridePackage_));overrideStatus_="VERIFYING OVERRIDE PACKS";
+    }catch(const std::exception& e){overridePackage_.reset();overrideStatus_=std::string("OVERRIDES: ")+e.what();}
+}
+hpi::Vfs MpClient::overrideVfs(hpi::OverridePolicy policy,const std::vector<std::string>& local) const {
+    auto vfs=hpi::mountRetailRoot(mapRoot_,hpi::OverridePolicy::None);
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    if(room_.opts.overridePolicy==2){if(!overridePackage_)throw std::runtime_error("override packs not verified");*files=*overridePackage_->files;}
+    if(policy!=hpi::OverridePolicy::None && room_.opts.overridePolicy!=0) {
+        // Remember unavailable selections, but a removed local cosmetic pack
+        // must not prevent joining a game.
+        const auto available=hpi::overridePacks(mapRoot_);
+        auto present=local;
+        std::erase_if(present,[&](const auto& name){return !std::binary_search(available.begin(),available.end(),name);});
+        for(auto& [path,bytes]:hpi::overrideFiles(mapRoot_,hpi::OverridePolicy::Cosmetic,present))(*files)[path]=std::move(bytes);
+    }
+    vfs.setOverrideFiles(std::move(files));return vfs;
+}
+void MpClient::acceptOverrides(std::shared_ptr<overrides::Package> package,uint32_t room) {
+    overrides::saveCache(mapRoot_,*package);overridePackage_=std::move(package);overrideReceive_={};overrideReadyRoom_=room;
+    overrideStatus_="OVERRIDE PACKS VERIFIED";
+    Writer w;w.u32(room);w.str(overridePackage_->digest);send(Msg::OverrideReady,w);
+    if(pendingMapStart_){auto start=std::move(*pendingMapStart_);pendingMapStart_.reset();onFrame(start);}
+}
+void MpClient::overrideFrame(const Frame& f) {
+    try {
+        Reader r(f.payload.data(),f.payload.size());
+        if(f.kind==Msg::OverrideOffer){
+            auto id=r.u32();auto label=r.str(),digest=r.str();auto size=r.u32();
+            if(!r.ok || r.p!=r.end || !id || label!="overrides" || (room_.id && id!=room_.id))throw std::runtime_error("invalid override offer");
+            overrideReceive_.begin(id,size,digest);overrideReadyRoom_=0;
+            if(overridePackage_ && overridePackage_->digest==digest && overridePackage_->bytes.size()==size){acceptOverrides(overridePackage_,id);return;}
+            if(auto cached=overrides::loadCache(mapRoot_,digest)){if(cached->bytes.size()!=size)throw std::runtime_error("override size mismatch");acceptOverrides(std::move(cached),id);return;}
+            Writer w;w.u32(id);w.str(digest);send(Msg::OverrideRequest,w);overrideStatus_="DOWNLOADING OVERRIDE PACKS";
+        }else if(f.kind==Msg::OverrideRequest){
+            auto id=r.u32();if(!r.ok || r.p!=r.end || id!=room_.id || room_.hostId!=myId_ || !overridePackage_ || overrideSend_.package)throw std::runtime_error("invalid override upload request");
+            overrideSend_={id,0,overridePackage_};overrideStatus_="UPLOADING OVERRIDE PACKS";
+        }else if(f.kind==Msg::OverrideChunk){
+            if(overrideReceive_.append(r)){auto id=overrideReceive_.room;acceptOverrides(overrides::decode(std::move(overrideReceive_.bytes),overrideReceive_.digest),id);}
+        }else if(f.kind==Msg::OverrideError){auto id=r.u32();auto why=r.str();if(r.ok && id==room_.id){overrideStatus_="OVERRIDES: "+why;overrideReceive_={};overrideSend_={};overrideReadyRoom_=0;}}
+    }catch(const std::exception& e){overrideStatus_=std::string("OVERRIDES: ")+e.what();overrideReceive_={};overrideSend_={};overrideReadyRoom_=0;Writer w;w.u32(room_.id);w.str(overrideStatus_);send(Msg::OverrideError,w);}
 }
 }
