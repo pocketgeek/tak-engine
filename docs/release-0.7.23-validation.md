@@ -2,8 +2,9 @@
 
 Protocol **221**, replay format **11**, campaign payload **4**, database schema **9**.
 
-Local and remote release sweeps are complete. Tagged package and signing
-results will be recorded here before publication.
+[Version 0.7.23](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.23)
+was published on 2026-10-04 after the checks below. The tag points to
+`337c33f8db97310208165492b2784536570f1117`.
 
 ## Scope and compatibility
 
@@ -84,6 +85,38 @@ The engine changes in `a13839a0cd74190340dd47d0513c2db8170c55e3` passed
 and [both Windows architectures](https://github.com/pocketgeek/tak-engine/actions/runs/37183045470).
 Signing is intentionally skipped on ordinary main builds and is a separate tag
 release gate.
+
+## Tagged CI and packages
+
+The exact tag passed all four workflows:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/37185976281).
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/37185962102): all 16 native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/37185962117): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/37185962104): x64 and ARM64, including native determinism checks.
+
+Redundant main-branch platform builds for this documentation/harness-only
+follow-up were cancelled in favor of the same commit's tagged builds. The
+preceding engine commit's main builds passed as listed above.
+
+All **29 assets** were downloaded and checked against GitHub's SHA-256 digests
+and byte sizes before publication: ten DEBs, four RPMs, one Arch package, one
+Slackware TXZ, two Linux Debug archives, eight ZIPs, two DMGs and one Windows
+installer. ZIP CRC checks passed. Linux ELF and Windows PE architectures were
+checked from their payloads; macOS ZIP Mach-O architectures and app versions
+were checked. Systemd-equipped Linux packages contain the service and both
+ACME/settings templates. Slackware and plain Debug archives do not install
+systemd integration. DMGs were hash-checked, not mounted locally.
+
+Windows CI signed all **16 shipped executables** before ZIP/NSIS packaging,
+then signed the completed installer. Native verification confirmed trusted
+signatures and timestamps at both stages. Local inspection also confirmed
+embedded certificate tables in every Windows executable and installer.
+
+All targets were rebuilt locally in Release, Debug, optimized Debug, Clang
+Debug and AddressSanitizer configurations from the clean tag. Client/server
+version output reports **0.7.23 (build v0.7.23)**. The final post-tag commit
+updates this validation report only; no engine source differs from the tag.
 
 ## Screenshots
 
