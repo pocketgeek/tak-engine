@@ -70,7 +70,7 @@ def migrate_fixture_to_protocol(root, identity, digest, protocol):
     original_bytes = original.read_bytes()
     recording = bytearray(original_bytes)
     assert recording[:4] == b'TAKR'
-    assert struct.unpack_from('<II', recording, 4) == (10, auth.VERSION)
+    assert struct.unpack_from('<II', recording, 4) == (11, auth.VERSION)
     struct.pack_into('<I', recording, 8, protocol)
     replacement_digest = hashlib.sha256(recording).hexdigest()
     with contextlib.closing(sqlite3.connect(root / 'campaign.sqlite')) as db:

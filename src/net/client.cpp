@@ -707,6 +707,9 @@ static void readSlots(Reader& r, RoomView& v) {
     v.opts.benchmark = r.u8();
     v.opts.randomStarts = r.u8();
     v.opts.doubleSight = r.u8();
+    const auto pathMode = r.u8();
+    if (pathMode > uint8_t(sim::PathfindingMode::Flowfield)) r.ok = false;
+    v.opts.pathfindingMode = sim::PathfindingMode(pathMode);
     v.hostId = r.u32();
     v.mapsReady = r.u8() != 0;
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -800,7 +803,10 @@ void MpClient::onFrame(const Frame& f) {
             roomRequestPending_=false;
             const auto oldPolicy=room_.opts.overridePolicy;
             int keep = room_.mySlot;
-            readSlots(r, room_);
+            RoomView incoming;
+            readSlots(r, incoming);
+            if (!r.ok) break;
+            room_ = std::move(incoming);
             room_.mySlot = keep;
             if(oldPolicy!=room_.opts.overridePolicy && room_.hostId==myId_){mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;}
             if(room_.opts.overridePolicy!=2){overridePackage_.reset();overrideReceive_={};overrideSend_={};overrideOfferedRoom_=overrideReadyRoom_=0;overrideStatus_.clear();overridePendingAt_=0;}
@@ -836,7 +842,10 @@ void MpClient::onFrame(const Frame& f) {
                 pendingMapStart_ = f; return;
             }
             int keep = room_.mySlot;
-            readSlots(r, room_);
+            RoomView incoming;
+            readSlots(r, incoming);
+            if (!r.ok) break;
+            room_ = std::move(incoming);
             gameSpeed_ = room_.opts.speed;
             if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
                 try {
@@ -946,7 +955,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
     w.u8(o.crusades); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
-    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts); w.u8(o.doubleSight);
+    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts); w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     w.u8(priv ? 1 : 0);       // private (single-player): not in the public game list
@@ -981,7 +990,7 @@ void MpClient::setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
 void MpClient::setGameOptions(const GameOptions& o) {
     Writer w; w.u8(o.crusades); w.u8(o.forfeitSelfDestruct);
     w.u8(o.overridePolicy); w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
-    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts); w.u8(o.doubleSight);
+    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts); w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
     send(Msg::SetGameOptions, w);
 }
 

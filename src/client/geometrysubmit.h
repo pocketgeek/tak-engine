@@ -41,7 +41,9 @@ public:
         SDL_RendererInfo info{};
         if(SDL_GetRendererInfo(renderer,&info)!=0 || !info.name || std::strcmp(info.name,"opengl"))return normal();
         float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
-        if((sx!=1 && sx!=2) || (sy!=1 && sy!=2))return normal();
+        // Exact integer AA scales share the same projection setup, including
+        // compact 16x model targets. Fractional sampling retains the SDL path.
+        if((sx!=1 && sx!=2 && sx!=4) || (sy!=1 && sy!=2 && sy!=4))return normal();
         const auto context=SDL_GL_GetCurrentContext();
         if(!checked_ || context!=context_) { clear();checked_=true;context_=context;available_=load(); }
         if(!available_)return normal();

@@ -1,20 +1,37 @@
 # Random map generation
 
-New recipes use generator version 4. The map ID still carries the seed and
-parameters in `~gen1~` followed by hexadecimal bytes; the first two payload bytes
-are the generator version. Versions 1–3 keep their original generation algorithms and size limits.
-Protocol 193 introduced version-3 generation and verified map-transfer support;
-Protocol 203 introduced version-4 recipes. The current checkout uses protocol 204
-for retail damage-table corrections; map recipes and pathfinding rules are unchanged.
+New recipes use generator version 7 and protocol 218. The map ID carries the
+seed, optional title and parameters in `~gen1~` followed by hexadecimal bytes;
+the first two payload bytes identify the generator version. Versions 1–6 retain
+their original terrain rules. Version 6 adds themed layouts and excludes relief
+pieces whose ground surface does not match the biome. Version 7 extends maze
+corridors to all four edges, removing the continuous enclosing wall. Clients and servers must
+be updated together.
 
 ## Layout and placement
 
 - **Mainland:** noise-shaped coasts with connected starting areas and broad,
   reserved ground routes toward the interior.
-- **Lakes:** inland water with dry map edges and connected starting areas.
+- **Lakes:** plentiful water and connected starting areas; water can reach map edges.
 - **Islands:** separated home islands, connected sea lanes, and open water for
   naval construction and ship departure. Travel between islands needs boats or
   aircraft. Water allocation is automatic.
+- **Taros Maze:** seeded branching corridors between retail cliff walls. Home
+  clearings join the maze; this is a traversable battlefield, not a puzzle with
+  exactly one route. Water and standalone hill controls are automatic.
+- **Veruna Ports:** coastal settlements around a shared deep-water basin, with
+  land routes around its perimeter. Every start has a validated harbor suitable
+  for a Sea Fort and ship departure. Water allocation is automatic. These are
+  terrain harbors, not prebuilt forts or decorative dock structures.
+- **Aramon Riverlands:** branching waterways with reserved land crossings.
+  Water allocation is automatic; crossings can divide navigable river reaches.
+- **Zhon Clearings:** dense jungle stands surrounding home clearings and reserved
+  army paths. The forest slider still controls the amount of added vegetation.
+- **Creon Highlands:** broad authored hillsides and high ground around connected
+  lowland routes. Highland Amount controls coverage; water is disabled.
+
+In the game setup screen each biome offers its own themed fourth layout.
+Cartographer lists the themed layouts by faction; selecting one sets its biome.
 
 The menu offers square sizes 8, 12, 16, 20, 24, 32, 40, 48, 56, and 64. It skips sizes that cannot
 support the selected layout/player count:
@@ -24,6 +41,7 @@ support the selected layout/player count:
 | Mainland | 8×8 minimum | 12×12 minimum |
 | Lakes | 12×12 minimum | 16×16 minimum |
 | Islands | 16×16 minimum | 24×24 minimum |
+| Themed layouts | 16×16 minimum | 24×24 minimum |
 
 The API also accepts rectangular dimensions in 32-cell section multiples, with
 per-axis space requirements. One map-size unit is 32 simulation cells.
@@ -53,7 +71,15 @@ surrounding elevation; their artwork and heights are copied together. Unsafe
 or unavailable relief pieces are omitted, never replaced with invisible raised
 ground. Available pieces and free space limit hill variety, particularly on
 small islands with large reserved home areas. This does not attempt to assemble
-every retail cliff, plateau, town, or mountain kit.
+every retail cliff, plateau, town, or mountain kit. Maze and Highlands explicitly
+assemble compatible Taros cliff and Creon hillside sections with their matching
+high-ground fills. Those extra section assets participate in the data hash.
+
+The version-6 relief audit excludes Veruna grass-covered Breaker pieces from
+sandy terrain and Taros cobblestone-edged unique23/25/27 pieces from bare low
+ground. They require transitions which this placement path does not assemble.
+The compatible relief families in all five worlds were visually inspected;
+height checks alone cannot establish texture compatibility.
 
 Each mana spot has ruins from its terrain theme. When the usual ring position
 conflicts with construction space or an approach, arcs move outward to a clear
@@ -67,7 +93,8 @@ scatter rather than removing authored features from those sections.
 
 Water amount is a noise intensity, not a requested coverage percentage. Its zero
 endpoint is dry on Mainland/Lakes; the preview reports measured coverage.
-Islands show automatic water allocation instead of an ineffective slider.
+Islands and themed fixed-water layouts show automatic water allocation instead
+of an ineffective slider.
 The extra-mana slider does not remove the three guaranteed home deposits.
 
 Generated terrain ignores terrain replacements bundled with unrelated downloaded
@@ -146,3 +173,16 @@ remain selectable, with a short fingerprint in the name to distinguish versions.
 - A live 64×64 generated-map network test reached 300 matching ticks on host,
   peer, referee, and late spectator (`b471a5694f12d9e5`). Host, peer, and server
   each saved the generated map for later selection.
+
+New v5 recipes allow Lakes water to reach map edges; v1–v4 recipes retain their
+original generation rules. Optional map names travel in the recipe (protocol 214),
+are limited to 24 ASCII letters/digits/spaces/hyphens/underscores, and are used
+for the saved map title and filename. The filename retains a recipe hash to avoid
+collisions. Named maps also include a 16-digit recipe hash in their internal
+map name and browser entry, so duplicate titles stay independently selectable.
+Earlier named archives are repaired when that recipe is saved again. Slider previews regenerate on release, not during dragging.
+
+The focused `mapgen_themes` test exercises all five themes, 2–8 players and
+three seeds (including maximum scenery density), checking deterministic output
+and terrain/resource reachability. `mapgen_ports` produces two of every Sea Fort
+ship in both balance modes on the new Ports layout.

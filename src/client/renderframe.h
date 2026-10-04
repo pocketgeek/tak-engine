@@ -24,13 +24,18 @@ struct RenderOrder {
     int targetId=0,reclaimFeat=0,repairTarget=0;
     uint32_t issuedTick=0;
     bool load=false,unload=false,attackMove=false,patrol=false,guard=false,goal=false;
-    bool reclaimArea=false,buildRectangle=false;
+    bool reclaimArea=false,buildRectangle=false,manaBuildArea=false;
     RenderOrder()=default;
     RenderOrder(const tak::sim::Order& o)
         :x(o.x),z(o.z),clickX(o.clickX),clickZ(o.clickZ),buildX(o.buildX),buildZ(o.buildZ),
          buildType(o.buildType),targetId(o.targetId),reclaimFeat(o.reclaimFeat),repairTarget(o.repairTarget),
          issuedTick(o.issuedTick),load(o.load),unload(o.unload),attackMove(o.attackMove),patrol(o.patrol),
-         guard(o.guard),goal(o.goal),reclaimArea(bool(o.reclaimArea)),buildRectangle(bool(o.buildRectangle)) {}
+         guard(o.guard),goal(o.goal),reclaimArea(bool(o.reclaimArea)),buildRectangle(bool(o.buildRectangle)) {
+        if (o.manaBuildArea) {
+            manaBuildArea=true;buildType=o.manaBuildArea->type;
+            buildX=o.manaBuildArea->maxX;buildZ=o.manaBuildArea->maxZ;
+        }
+    }
 };
 
 // Per-tick render SNAPSHOT of a sim Unit (sim/render decouple -- see
@@ -177,7 +182,7 @@ struct UnitR {
     bool corpseStatue = false;                 // petrified/frozen: the body stays UPRIGHT,
                                                // unlike a normal corpse which lies flat
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
-    bool disco = false, headbang = false;      // cached world_.disco/headbangActive(player)
+    bool disco = false, headbang = false;      // cached world_.disco/headbangTarget(player)
     bool alliedToLocal = false;                // cached alliedToLocal(player)
     std::string scenarioName;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
@@ -216,7 +221,8 @@ struct PlayerR {
     int built = 0, losses = 0;      // end-of-game scoreboard counters
     float defeatedAt = -1;          // world clock at elimination (-1 = still in)
     bool defeated = false, godSummoned = false;
-    float discoLeft = 0, headbangLeft = 0;
+    uint64_t emoteSequence = 0;
+    bool emoteDisco = false;
 };
 
 // A complete per-tick render snapshot -- everything the render/HUD reads from the sim.

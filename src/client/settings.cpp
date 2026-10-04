@@ -1,5 +1,4 @@
 #include "client/settings.h"
-#include "client/selectiveaa.h"
 
 #include <SDL.h>
 
@@ -30,13 +29,15 @@ std::string settingsPath() {
 }
 
 Settings loadSettings() {
+    // AA, bilinear, smoothArt and videoDeblock stay off. Their obsolete keys
+    // are intentionally ignored, including legacy antiAlias.
+    // Renderer support remains.
     Settings s;   // defaults
     std::string path = settingsPath();
     if (path.empty()) return s;
     std::ifstream in(path);
     if (!in) return s;
 
-    int legacyAA=0;bool terrainSeen=false,modelSeen=false;
     std::string line;
     while (std::getline(in, line)) {
         auto hash = line.find('#');
@@ -67,20 +68,15 @@ Settings loadSettings() {
         if      (key == "fullscreen")      s.fullscreen = asBool();
         else if (key == "vsync")           s.vsync = asBool();
         else if (key == "maxFps")          s.maxFps = asInt(30, 480);
+        else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.75f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
-        else if (key == "antiAlias") legacyAA=aaStep(asInt(0,4),4);
-        else if (key == "terrainAA") {s.terrainAA=aaStep(asInt(0,4),4);terrainSeen=true;}
-        else if (key == "modelAA") {s.modelAA=aaStep(asInt(0,16));modelSeen=true;}
         else if (key == "buildBarAlign")   s.buildBarAlign = asInt(0, 2);
         // 4.0, matching the slider and GameView. This still said 2.0 when the slider
         // went to 400%, so 300-400% survived until the next restart and then silently
         // snapped back to 200%.
         else if (key == "buildBarScale")   s.buildBarScale = asFloat(0.75f, 4.0f);
-        else if (key == "bilinear")        s.bilinear = asBool();
         else if (key == "treeSway")        s.treeSway = asBool();
         else if (key == "unitShadows")     s.unitShadows = asBool();
-        else if (key == "smoothArt")       s.smoothArt = asBool();
-        else if (key == "videoDeblock")    s.videoDeblock = asBool();
         else if (key == "healthBars")      s.healthBars = asInt(0, 2);
         else if (key == "statsPanel")      s.statsPanel = asBool();
         else if (key == "masterVol")       s.masterVol = asInt(0, 256);
@@ -96,6 +92,8 @@ Settings loadSettings() {
         else if (key == "accountName")     s.accountName = val;
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
+        else if (key == "gameCreate.pathfindingMode")
+            s.gameCreate.pathfindingMode = val == "1" ? sim::PathfindingMode::Flowfield : sim::PathfindingMode::Retail;
         else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
         else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
         else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
@@ -137,8 +135,6 @@ Settings loadSettings() {
             for (int i = 0; i < n; ++i) s.campaignCompleted[id].insert(i);
         }
     }
-    if(!terrainSeen)s.terrainAA=legacyAA;
-    if(!modelSeen)s.modelAA=legacyAA;
     return s;
 }
 
@@ -151,16 +147,12 @@ bool saveSettings(const Settings& s) {
     o << "fullscreen = " << (s.fullscreen ? 1 : 0) << "\n";
     o << "vsync = " << (s.vsync ? 1 : 0) << "\n";
     o << "maxFps = " << s.maxFps << "\n";
+    o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
-    o << "terrainAA = " << s.terrainAA << "\n";
-    o << "modelAA = " << s.modelAA << "\n";
     o << "buildBarAlign = " << s.buildBarAlign << "\n";
     o << "buildBarScale = " << s.buildBarScale << "\n";
-    o << "bilinear = " << (s.bilinear ? 1 : 0) << "\n";
     o << "treeSway = " << (s.treeSway ? 1 : 0) << "\n";
     o << "unitShadows = " << (s.unitShadows ? 1 : 0) << "\n";
-    o << "smoothArt = " << (s.smoothArt ? 1 : 0) << "\n";
-    o << "videoDeblock = " << (s.videoDeblock ? 1 : 0) << "\n";
     o << "healthBars = " << s.healthBars << "\n";
     o << "statsPanel = " << (s.statsPanel ? 1 : 0) << "\n";
     o << "masterVol = " << s.masterVol << "\n";
@@ -177,6 +169,7 @@ bool saveSettings(const Settings& s) {
     o << "accountName = " << s.accountName << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
+    o << "gameCreate.pathfindingMode = " << int(s.gameCreate.pathfindingMode) << "\n";
     o << "gameCreate.doubleSight = " << s.gameCreate.doubleSight << "\n";
     o << "gameCreate.speedUnlock = " << s.gameCreate.speedUnlock << "\n";
     o << "gameCreate.monarchExpendable = " << s.gameCreate.monarchExpendable << "\n";

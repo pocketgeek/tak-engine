@@ -1,12 +1,12 @@
 #pragma once
 
 // User-adjustable Options, persisted to a per-user config file. These are ALL
-// local display / input / audio preferences -- none of them feed the deterministic
-// sim (World::stateHash) or the net GameOptions, so they may differ per client and
-// change live. Keep it that way: never include this from src/sim, src/net, or
-// src/server. (Net-synced, hashed choices -- game speed, unit cap, crusades, FFA --
-// live in GameOptions/MatchConfig, not here.)
+// local display / input / audio preferences, plus defaults for creating a game.
+// GameCreate only seeds a new room: the authoritative rules live in
+// GameOptions/MatchConfig and never read these preferences during a match.
+// Never include this header from src/sim, src/net, or src/server.
 
+#include "sim/pathmode.h"
 #include <map>
 #include <set>
 #include <string>
@@ -22,13 +22,16 @@ struct Settings {
     bool  fullscreen = true;       // borderless-desktop fullscreen (default on)
     bool  vsync      = true;
     int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
+    float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.75..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
+    // Retained renderer controls: fixed off in the application, not loaded/saved
+    // or exposed in Options. The same policy applies to bilinear, videoDeblock, smoothArt.
     int terrainAA=0, modelAA=0; // pixel sample counts, independently resolved
     int terrainAAEffective=-1, modelAAEffective=-1; // runtime only; not preferences
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
     bool  bilinear   = false;      // smooth (bilinear) terrain + feature scaling, like retail's option
-    bool  treeSway   = true;       // trees sway in the wind (beyond-retail nicety; display-only)
+    bool  treeSway   = true;       // animated tree and shadow sway; default on
     bool  videoDeblock = false;    // deblock the Bink clips before upload. They are
                                    // 640x360 and get stretched ~12x on a wide display,
                                    // which magnifies every 8x8 compression seam into a
@@ -65,7 +68,7 @@ struct Settings {
     float edgeScrollSpeed = 1.0f;  // edge-scroll rate;       0.25..4.0
     bool  edgeScroll      = true;  // pan when the cursor is at a screen edge
     int   cursorScale     = 1;     // custom mouse-cursor size multiplier; 1..8 (1 = retail size)
-    bool  hardwareCursor  = false; // OS-tracked cursor: stays smooth when the game hitches
+    bool  hardwareCursor  = true; // OS-tracked cursor: stays smooth when the game hitches
     bool  smoothMotion    = true;  // interpolate unit motion between 30Hz sim ticks (glide, not step)
 
     // ---- misc ----
@@ -77,6 +80,7 @@ struct Settings {
         bool crusades = false, doubleSight = false, speedUnlock = false;
         bool monarchExpendable = false, randomStarts = false;
         bool generated = false;
+        sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
         int unitCap = 2000, fog = 1, overrides = 1;
         int mapSort = 0, mapSortDir = 1;
         std::string name = "game", generator;
@@ -123,7 +127,7 @@ struct Settings {
     friend bool operator==(const Settings& a, const Settings& b) {
         for (int i = 0; i < 8; ++i) if (a.chanGain[i] != b.chanGain[i]) return false;
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
-            && a.uiScale == b.uiScale && a.terrainAA == b.terrainAA && a.modelAA == b.modelAA
+            && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.terrainAA == b.terrainAA && a.modelAA == b.modelAA
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
             && a.bilinear == b.bilinear && a.treeSway == b.treeSway
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt

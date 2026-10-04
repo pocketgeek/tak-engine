@@ -669,6 +669,7 @@ Writer Server::replayBytes(Room& r) {
     h.unitCap = r.opts.unitCap;
     h.monarchExpendable = r.opts.monarchExpendable;
     h.doubleSight = r.opts.doubleSight;
+    h.pathfindingMode = r.opts.pathfindingMode;
     h.stressTest = r.opts.stressTest;
     h.randomStarts = r.opts.randomStarts;
     h.benchmark = uint8_t(r.opts.benchmark);
@@ -985,7 +986,7 @@ tak::srv::crusades::BattleContext Server::campaignContext(const Room& r, bool re
     const auto& o=r.opts;
     rules.u8(o.crusades);rules.u8(o.forfeitSelfDestruct);rules.u8(o.overridePolicy);
     rules.u8(o.speed);rules.u8(o.speedUnlock);rules.u32(o.unitCap);rules.u8(o.monarchExpendable);
-    rules.u8(o.stressTest);rules.u8(o.fogExplored);rules.u8(o.benchmark);rules.u8(o.randomStarts);rules.u8(o.doubleSight);
+    rules.u8(o.stressTest);rules.u8(o.fogExplored);rules.u8(o.benchmark);rules.u8(o.randomStarts);rules.u8(o.doubleSight);rules.u8(uint8_t(o.pathfindingMode));
     for (int i=0;i<kMaxSlots;++i) {
         const auto& slot=r.running ? r.startSlots[i] : r.slots[i];
         rules.u8(slot.type);rules.u8(slot.faction);rules.u8(slot.color);rules.u8(slot.team);rules.u8(slot.aiLevel);
@@ -1657,7 +1658,7 @@ void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
     w.u8(r.opts.overridePolicy);
     w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap); w.u8(r.opts.monarchExpendable);
     w.u8(r.opts.stressTest); w.u8(r.opts.fogExplored); w.u8(r.opts.benchmark);
-    w.u8(r.opts.randomStarts); w.u8(r.opts.doubleSight);
+    w.u8(r.opts.randomStarts); w.u8(r.opts.doubleSight); w.u8(uint8_t(r.opts.pathfindingMode));
     w.u32(r.hostId);
     w.u8(mapsReady(r) ? 1 : 0);
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -1742,6 +1743,9 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.benchmark = r.u8();
             o.randomStarts = r.u8() ? 1 : 0;
             o.doubleSight = r.u8() ? 1 : 0;
+            const auto pathMode = r.u8();
+            if (pathMode > uint8_t(tak::sim::PathfindingMode::Flowfield)) { sendReject(c,"invalid pathfinding mode"); return; }
+            o.pathfindingMode = mission.empty() ? tak::sim::PathfindingMode(pathMode) : tak::sim::PathfindingMode::Retail;
             if (!mission.empty()) o.doubleSight = 0;
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
@@ -1750,7 +1754,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
                 sendReject(c,"public servers do not accept benchmark, stress or campaign mission requests");return;
             }
-            o.speed=std::clamp<uint8_t>(o.speed,1,40);
+            o.speed=std::clamp<uint8_t>(o.speed,1,kMaxGameSpeed);
             if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
             room.id = nextRoomId_++;
@@ -2344,6 +2348,7 @@ void Server::tryStart(Client& c) {
             cfg.unitCap = r->opts.unitCap;
             cfg.monarchExpendable = r->opts.monarchExpendable != 0;
             cfg.doubleSight = r->opts.doubleSight != 0;
+            cfg.pathfindingMode = r->opts.pathfindingMode;
             cfg.stressTest = r->opts.stressTest != 0;
             cfg.benchmark = r->opts.benchmark;
             cfg.randomStarts = r->opts.randomStarts != 0;
@@ -2517,11 +2522,15 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.benchmark = rd.u8();
             o.randomStarts = rd.u8() ? 1 : 0;
             o.doubleSight = rd.u8() ? 1 : 0;
+            const auto pathMode = rd.u8();
+            if (pathMode > uint8_t(tak::sim::PathfindingMode::Flowfield)) { sendReject(c,"invalid pathfinding mode"); return; }
+            // Creation-only: lobby updates cannot change the selected pathfinder.
+            o.pathfindingMode = r->opts.pathfindingMode;
             if (!r->mission.empty()) o.doubleSight = 0;
             if (!rd.ok || rd.p!=rd.end) return;
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark)) {sendReject(c,"public benchmark/stress requests disabled");return;}
             if (o.speed < 1) o.speed = 1;
-            if (o.speed > 40) o.speed = 40;   // clamp 0.1x .. 4.0x
+            if (o.speed > kMaxGameSpeed) o.speed = kMaxGameSpeed;   // clamp 0.1x .. 8.0x
             if (!r->running) {
                 // The unit limit is fixed when the room is created.
                 o.unitCap = r->opts.unitCap;

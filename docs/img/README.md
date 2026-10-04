@@ -1,18 +1,18 @@
 # README screenshots
 
-Captured on 2026-10-01 from the **0.7.21** release-preparation build. All thirteen views were freshly rendered and visually
+Captured on 2026-10-04 from the **0.7.23** release-preparation build. All thirteen views were freshly rendered and visually
 inspected. Game/menu images are actual engine output at 1600 × 1000, encoded as
 JPEG at quality 90 with full chroma resolution. Editor images retain their
 native 921 × 691 PNG resolution. No units, effects or UI were added afterward.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.7.21 |
+| `title.jpg` | Title menu showing version 0.7.23 |
 | `army.jpg` | Part of the Aramon army in the 16,000-unit local patrol fixture on Ulasem Arena, one simulated second in, 0.9× zoom; fog disabled; no AI or combat |
 | `gameplay.jpg` | Aramon base in the local development demo on Ulasem Arena, one simulated second in; camera follows the selected barracks at 2× zoom |
 | `naval.jpg` | Development naval demo on Cairbray Coast Landing, eight simulated seconds in; ships on water |
-| `lobby.jpg` | Skirmish creation with Ulasem Arena preview and Allow Speed Change; live local-server connection |
-| `room.jpg` | Live local-server skirmish lobby with three Normal AIs, remembered example pack selections, and read-only rules; example pack folders are empty UI fixtures |
+| `lobby.jpg` | Skirmish creation with Ulasem Arena preview, Retail/Flowfield choice and Allow Speed Change; live local-server connection |
+| `room.jpg` | Live local-server skirmish lobby with three Normal AIs, remembered example pack selections, and read-only rules with Flowfield selected; example pack folders are empty UI fixtures |
 | `campaign.jpg` | Book of Darien campaign picker with a fresh progress profile |
 | `crusades.jpg` | Live authenticated local Darien Crusades server; imported 313-territory definition with Torcairn selected, no authored battle maps or inferred ownership |
 | `streaming.jpg` | Streaming setup with Max 3840 / 60 FPS defaults; no key or live broadcast |
@@ -20,8 +20,8 @@ native 921 × 691 PNG resolution. No units, effects or UI were added afterward.
 | `results.jpg` | Results layout with faction/player-color emblems and the built-in five-player sample-statistics fixture, not a completed match |
 
 Captures use isolated SDL preference directories (`XDG_DATA_HOME` and
-`XDG_CONFIG_HOME`), windowed settings, smooth GUI art, bilinear filtering,
-shadows and 4× game anti-aliasing. Gameplay statistics are hidden. Screenshot
+`XDG_CONFIG_HOME`), windowed settings, shadows and the application defaults for graphics: AA,
+bilinear filtering, smooth GUI art and smooth movies are off. Tree sway is on. Gameplay statistics are hidden. Screenshot
 timing is not a performance measurement; the 16,000 count describes the whole
 army fixture, rather than the visible unit count.
 

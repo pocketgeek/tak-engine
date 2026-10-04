@@ -54,8 +54,8 @@ def issue(peer, opponent='Bob', territory=1, status=0):
 def lobby(r):
     room = r.num('<I')
     name, map_id, mission = r.field(), r.field(), r.field()
-    options = r.data[r.pos:r.pos + 15]
-    r.pos += 15
+    options = r.data[r.pos:r.pos + 16]
+    r.pos += 16
     host, ready = r.num('<I'), r.num('<B')
     slots = []
     for _ in range(MAX_SLOTS):
@@ -161,7 +161,7 @@ def run(binary, data):
             bob.send('LeaveGame')
             auth.request(bob)
             # Ordinary room creation cannot manufacture an issued battle binding.
-            ordinary_options = bytes([0, 0, 0, 10, 0]) + struct.pack('<I', 2000) + bytes([0, 0, 1, 0, 0, 0])
+            ordinary_options = bytes([0, 0, 0, 10, 0]) + struct.pack('<I', 2000) + bytes([0, 0, 1, 0, 0, 0, 0])
             other.send('CreateGame', auth.field('ordinary') + auth.field('') + auth.field('Frey River Plain') + auth.field('') + ordinary_options + bytes([2, 0, 0]))
             assert other.receive('JoinResult').num('<B') == 1
             other.send('LeaveGame')

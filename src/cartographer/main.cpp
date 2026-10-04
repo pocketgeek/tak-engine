@@ -728,7 +728,9 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
     tak::mapgen::Params generatorParams;
     bool regeneratingCurrent=false;
     std::array<std::string,4> generatorDraft;
-    const std::vector<std::string> generatorLayouts={tak::mapgen::layoutName(0),tak::mapgen::layoutName(1),tak::mapgen::layoutName(2)};
+    std::vector<std::string> generatorLayouts;
+    const std::vector<std::string> oldGeneratorLayouts={tak::mapgen::layoutName(0),tak::mapgen::layoutName(1),tak::mapgen::layoutName(2)};
+    for(uint8_t i=0;i<tak::mapgen::kLayouts;++i)generatorLayouts.push_back(tak::mapgen::layoutName(i));
     const std::vector<std::string> legacyGeneratorLayouts={tak::mapgen::layoutName(0)};
     const char* mLabel[kMaxFields] = {};
     std::string mTitle,modalError;
@@ -783,7 +785,7 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const auto fields=cart::generatorFields(generatorParams);
             const char* labels[]={"SEED (REPRODUCIBLE)","PLAYERS (2-8)","LAYOUT","TREES (0-255)","ROCKS (0-255)","MANA (0-255)","WATER INTENSITY (0-255)","RELIEF (0-255)"};
             for(int i=0;i<8;++i) {mf[i]=fields[i];mLabel[i]=labels[i];mfNumeric[i]=i!=2;}
-            mfChoices[2]=generatorParams.formatVer<3?&legacyGeneratorLayouts:&generatorLayouts;
+            mfChoices[2]=generatorParams.formatVer<3?&legacyGeneratorLayouts:generatorParams.formatVer<6?&oldGeneratorLayouts:&generatorLayouts;
             if(generatorParams.formatVer<3)mLabel[2]="LAYOUT (LEGACY RECIPE)";
             mLabel[8]="WIDTH (1-64 UNITS)";mf[8]=generatorDraft[1];mfNumeric[8]=true;
             mLabel[9]="HEIGHT (1-64 UNITS)";mf[9]=generatorDraft[2];mfNumeric[9]=true;
@@ -904,6 +906,8 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
             const char* worlds[]={"aramon","taros","veruna","zhon","creon"};
             for(uint8_t i=0;i<5;++i)if(wld==worlds[i])params.mapType=i;
             params=tak::mapgen::sanitize(params);
+            wld=worlds[params.mapType];
+            generatorDraft[3]=wld;
             generatorParams=params;
             generatingName=nm;generatingWorld=wld;cancelGeneration=quitAfterGeneration=false;
             // The busy modal prevents VFS replacement until this read-only job ends.

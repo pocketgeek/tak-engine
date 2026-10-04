@@ -42,7 +42,8 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default
 // rather than cheating its economy -- so all three respect the same rules the human
 // does. See paramsFor().
 // Ordered weakest -> strongest; the value is the wire aiLevel (SlotInfo.aiLevel).
-// Passive builds a defensive home force and never sends attacks. Absurd = Hard with a mana-income
+// Passive (displayed as Defensive) builds a home force and intercepts nearby
+// threats, without scouting or attacking enemy bases. Absurd = Hard with a mana-income
 // cheat (see incomeMultFor). Renumbering is versioned by kNetVersion.
 enum class Difficulty : uint8_t {
     Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4
@@ -70,7 +71,7 @@ struct DiffParams {
     int  producersPerThink;// how many idle producers act each think (economy/APM pace)
     int  limitScale;       // percent applied to the profile's unit limits (100 = as shipped)
     bool scout;            // send an early lone scout toward an enemy start
-    bool attack;           // commit attack waves at all (Passive never does -- defends only)
+    bool attack;           // commit offensive waves (Defensive only intercepts local threats)
     int  raidSize;         // fighters peeled off for a small harassing raid while the main
                            // army musters (0 = no raiding; gated on `scout` difficulties)
 };
@@ -167,6 +168,7 @@ private:
     int terrainWeight(const tak::sim::World&, const tak::sim::Unit&,
                       const tak::sim::UnitType*, int weight) const;
     void sendWaves(const tak::sim::World&, uint32_t simTick, const CommandSink&);
+    void sendDefenders(const tak::sim::World&, const CommandSink&);
     // The initial base anchor stays fixed as expansion adds remote buildings.
     // The Monarch and defensive AI use it to remain near home.
     std::pair<float, float> homeOf(const tak::sim::World&) const;
@@ -190,6 +192,13 @@ private:
     DiffParams dp_;
     std::vector<std::pair<float, float>> enemyStarts_;
     std::optional<std::pair<float,float>> home_;
+    struct DefenseResponse {
+        float homeX, homeZ, goalX, goalZ;
+        bool returning = false;
+    };
+    // Server-local assignments, not simulation state. Commands still use the
+    // ordinary sequencer and movement controllers on every peer.
+    std::unordered_map<int, DefenseResponse> defenders_;
     mutable std::unordered_map<const tak::sim::UnitType*,std::vector<std::pair<float,float>>> navalOffsets_;
     int raidersSincePush_ = 0;
     bool scouted_ = false;        // one-shot early scout sent

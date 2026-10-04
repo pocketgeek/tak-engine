@@ -287,6 +287,27 @@ def run():
     assert read32(p.uc, shot + 0xD8) & 2
     print(f"Arapult shell environment impact: native unit damages={by_id} (same-owner unit 4 is included); feature-dispatch=1; effect-create=1; releases=3; retired=0x{read32(p.uc, shot + 0xD8):x}")
 
+    # Direct impact resolves any footprint tail to the head before damage.
+    # In particular a zero-AOE bolt/flame cannot disappear into the outer
+    # cells of a large tree just because its center is outside the radius.
+    for size in (2, 5):
+        for aoe in (0, 160):
+            p, (_, shot, _, _), tail = make_probe(476, aoe, 1.0)
+            cells = HEAP + 8 * 0x10000
+            for z in range(size):
+                for x in range(size):
+                    if not x and not z:
+                        continue
+                    cell = cells + ((16 + z) * GRID + 16 + x) * 14
+                    p.uc.mem_write(cell + 8, struct.pack("<HBB", 0xFFFE, z, x))
+            position = (256 + (size - 1) * 16) * 65536
+            p.uc.mem_write(shot + 4, struct.pack("<3i", position, 10 * 65536, position))
+            _, error = p.call(0x529C10, (shot, 0, 1, 1, 0))
+            assert error is None, error
+            hits = [row[1] for row in tail if row[0] == "feature-dispatch"]
+            assert len(hits) == 1 and hits[0][1:3] == (16, 16), (size, aoe, hits)
+    print("Feature footprint tails: 2x2/5x5 direct impacts resolve to head exactly once, with and without splash")
+
     p, (_, shot, units, stride), area_native = make_probe(
         1250, 100, 0.1, effect=True, native_mutation=True,
         units=((256, 256, 1), (281, 256, 1), (308, 256, 1), (260, 256, 0)))

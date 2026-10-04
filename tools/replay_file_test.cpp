@@ -11,10 +11,13 @@ using namespace tak::net;
 namespace {
 int checks=0;
 void check(bool ok,const char* message){++checks;if(!ok)throw std::runtime_error(message);}
-Writer recording(uint32_t protocol=kNetVersion,const Command& command=Command{},uint8_t event=0,bool innerTrailing=false){
+Writer recording(uint32_t protocol=kNetVersion,const Command& command=Command{},uint8_t event=0,bool innerTrailing=false,
+                 tak::sim::PathfindingMode mode=tak::sim::PathfindingMode::Retail){
  Writer file;ReplayHeader header;header.mapId="Synthetic map";header.unitCap=2000;
+ header.pathfindingMode=mode;
  header.slotType[0]=header.slotType[1]=1;header.slotFaction[1]=1;header.slotTeam[1]=1;
  writeReplayHeader(file,header);for(int i=0;i<4;++i)file.b[8+i]=uint8_t(protocol>>(8*i));
+ if(protocol==219){file.b.erase(file.b.end()-kMaxSlots*5-2);file.b[4]=10;}
  Writer bundle;bundle.u32(0);bundle.u32(1);bundle.cmd(command);bundle.u32(event?1:0);
  if(event){bundle.u8(event);bundle.u8(0);}if(innerTrailing)bundle.u8(99);
  file.u32(1);file.u32(uint32_t(bundle.b.size()));file.b.insert(file.b.end(),bundle.b.begin(),bundle.b.end());
@@ -25,8 +28,20 @@ void run(){
  std::filesystem::create_directories(root);struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code ec;std::filesystem::remove_all(p,ec);}}cleanup{root};
  const auto path=root/std::filesystem::u8path("replay-\xc3\xa9.takrep");
  const auto utf=path.u8string();const std::string name(utf.begin(),utf.end());
- auto load=[&](const Writer& value){std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(value.b.data()),std::streamsize(value.b.size()));out.close();ReplayFile replay;return loadReplayFile(name,replay);};
+ auto load=[&](const Writer& value,ReplayFile* decoded=nullptr){std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(value.b.data()),std::streamsize(value.b.size()));out.close();ReplayFile replay;const bool ok=loadReplayFile(name,replay);if(ok && decoded)*decoded=std::move(replay);return ok;};
  check(load(recording()),"current simulation recording refused");
+ ReplayFile decoded;
+ check(load(recording(220,Command{},0,false,tak::sim::PathfindingMode::Flowfield),&decoded) &&
+       !decoded.cfg.patrolRepairs && decoded.cfg.pathfindingMode==tak::sim::PathfindingMode::Flowfield,
+       "protocol 220 playback changed its pathfinder or automatic patrol behavior");
+ check(load(recording(219),&decoded) && !decoded.cfg.patrolRepairs &&
+       decoded.cfg.pathfindingMode==tak::sim::PathfindingMode::Retail,"protocol 219 patrol migration failed");
+ Command area;area.kind=Cmd::BuildManaArea;area.unitId=1;area.x=100;area.z=200;area.x2=800;area.z2=900;
+ std::snprintf(area.type,sizeof area.type,"aralode");
+ check(load(recording(kNetVersion,area),&decoded) && decoded.cfg.patrolRepairs &&
+       decoded.bundles.size()==1 && decoded.bundles.front().cmds.front().x2==800 &&
+       decoded.bundles.front().cmds.front().z2==900,"current lodestone area replay lost its endpoints or patrol policy");
+ check(!load(recording(220,area)),"legacy replay accepted a new area command");
  check(!load(recording(210)),"recording predating naval production correction accepted");
  check(!load(recording(211)),"protocol 211 recording accepted by changed simulation");
  check(!load(recording(209)),"older simulation recording accepted");

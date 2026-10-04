@@ -33,13 +33,13 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 10;   // 10: verified override package digest
+inline constexpr uint32_t kReplayFormat = 11;   // 11: independent pathfinding mode
 
-// 213 changes pack transport only; 212's tactical simulation is unchanged.
+// Existing 219/220 recordings have no area-build commands and retain their pathfinder.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
     if (format < 1 || format > kReplayFormat) return false;
     if (protocol == kNetVersion) return true;
-    return kNetVersion == 213 && format == 9 && protocol == 212;
+    return (format == 11 && protocol == 220) || (format == 10 && protocol == 219);
 }
 
 struct ReplayHeader {
@@ -51,6 +51,7 @@ struct ReplayHeader {
     uint8_t overridePolicy = 1;
     uint32_t unitCap = 0;
     uint8_t monarchExpendable = 0, stressTest = 0, randomStarts = 0;
+    sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
     uint8_t doubleSight = 0;
     uint8_t benchmark = 0;        // benchmark intensity (0 = off)
     uint32_t seed = 0;
@@ -89,6 +90,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     w.u8(h.doubleSight);
     w.str(h.mapDigest);
     w.str(h.overrideDigest);
+    w.u8(uint8_t(h.pathfindingMode));
     w.u8(uint8_t(kMaxSlots));
     for (int i = 0; i < kMaxSlots; ++i) {
         w.u8(h.slotType[i]);
@@ -126,6 +128,9 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
     h.doubleSight = fmt >= 8 ? r.u8() : 0;
     h.mapDigest = fmt >= 9 ? r.str() : "";
     h.overrideDigest = fmt >= 10 ? r.str() : "";
+    const auto pathMode = fmt >= 11 ? r.u8() : 0;
+    if (pathMode > uint8_t(sim::PathfindingMode::Flowfield)) return false;
+    h.pathfindingMode = h.mission.empty() ? sim::PathfindingMode(pathMode) : sim::PathfindingMode::Retail;
     const uint8_t nslots = r.u8();
     if (!r.ok || nslots > kMaxSlots) return false;
     for (int i = 0; i < nslots; ++i) {

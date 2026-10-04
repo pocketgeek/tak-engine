@@ -508,13 +508,30 @@ int main(int argc, char** argv) try {
     check(net::maps::build(legacy,"test")->files->size()==2,"map without companions rejected");
     if (argc == 2) {
         auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
-        mapgen::Params params; params.waterDensity=0;
+        mapgen::Params params; params.waterDensity=0; params.name="My Lake";
         auto recipe=mapgen::encodeMapId(params);
         auto output=net::maps::saveGenerated(root,vfs,recipe);
+        check(output.filename().string().starts_with("Generated-My Lake-"),"named map filename");
+        // Simulate the original named archive, then verify saving repairs it.
+        std::vector<hpi::PackFile> oldFiles;
+        {
+            hpi::Archive archive(output);
+            for (const auto& entry:archive.entries()) if (!entry.isDirectory) {
+                auto oldPath=entry.path;
+                const auto prefix="kmap/My Lake-"+crypto::toHex(crypto::sha256(recipe)).substr(0,16);
+                if (oldPath.starts_with(prefix)) oldPath.replace(0,prefix.size(),"kmap/My Lake");
+                oldFiles.push_back({oldPath,archive.read(entry)});
+            }
+        }
+        const auto oldBytes=hpi::pack(oldFiles);
+        { std::ofstream out(output,std::ios::binary|std::ios::trunc);
+          out.write(reinterpret_cast<const char*>(oldBytes.data()),oldBytes.size()); }
+        check(net::maps::saveGenerated(root,vfs,recipe)==output,"legacy named repair changed filename");
+        check(hpi::Archive(output).find("kmap/My Lake-"+crypto::toHex(crypto::sha256(recipe)).substr(0,16)+".tnt")!=nullptr,"legacy named archive not repaired");
         hpi::Vfs saved(&vfs); saved.addLayer(hpi::MountSet(root/"Maps",{false,{".kmp"},{},{}}));
         const auto maps=hpi::listMaps(saved);
         std::string path;
-        for (const auto& [name,pth]:maps) if(name.starts_with("Generated-")) path=pth;
+        for (const auto& [name,pth]:maps) if(name=="My Lake-"+crypto::toHex(crypto::sha256(recipe)).substr(0,16)) path=pth;
         check(!path.empty(),"saved generated map absent from browser");
         auto generated=mapgen::generate(params,vfs);
         auto loaded=tnt::Map::load(saved.read(path));
@@ -524,6 +541,33 @@ int main(int argc, char** argv) try {
         for(size_t i=0;i<starts.size();++i) check(starts[i].first==generated.starts[i].first*16 && starts[i].second==generated.starts[i].second*16,"saved start location");
         const auto time=std::filesystem::last_write_time(output);
         check(net::maps::saveGenerated(root,vfs,recipe)==output && std::filesystem::last_write_time(output)==time,"duplicate generated save");
+        // Same title, different recipe: neither VFS path nor browser selection
+        // may mask the other map (including case-insensitive title collisions).
+        for (int i=0;i<2;++i) {
+            auto other=params; other.seed+=i+1;
+            if (i) other.name="my lake";
+            const auto otherRecipe=mapgen::encodeMapId(other);
+            const auto otherOutput=net::maps::saveGenerated(root,vfs,otherRecipe);
+            check(otherOutput!=output,"duplicate title overwrote archive");
+            hpi::Vfs both(&vfs); both.addLayer(hpi::MountSet(root/"Maps",{false,{".kmp"},{},{}}));
+            const auto entries=hpi::listMaps(both);
+            const auto otherName=other.name+"-"+crypto::toHex(crypto::sha256(otherRecipe)).substr(0,16);
+            int found=0;
+            for (const auto& [title,pth]:entries) {
+                if (pth==path) {
+                    ++found;
+                    check(both.read(pth)==generated.map.save(),"original duplicate title changed geometry");
+                }
+                if (title==otherName) {
+                    ++found;
+                    check(hpi::findMap(both,title)==pth,"duplicate title cannot be selected");
+                    check(both.read(pth)==mapgen::generate(other,vfs).map.save(),"duplicate title loaded wrong geometry");
+                    check(net::maps::build(both,title)->mapPath==hpi::MountSet::key(pth),"duplicate title package resolved wrong map");
+                }
+            }
+            check(found==2,"duplicate titles not independently listed");
+        }
+
     }
     std::cout << "map transfer: package identity, isolation, cache, chunks, and validation passed\n";
     return 0;

@@ -904,6 +904,14 @@ int main(int argc, char** argv) {
         menuMusic.stop();   // the loaded-world briefing uses the game's music
     }
 
+    // Present before synchronous local-server/data/lobby setup, not after the
+    // first lobby draw discovers and parses the entire map catalogue.
+    std::unique_ptr<tak::LoadScreen> lobbyLoading;
+    if (fromMenu && menuInteractive && campaignStem.empty() && !benchmarkLaunch) {
+        lobbyLoading=std::make_unique<tak::LoadScreen>(ren,vfs,"Single Player",&settings);
+        lobbyLoading->step("Starting single-player",5);
+    }
+
     if (mode == "game" && serverHost.empty() && !mpHeadless && !localHarness) {
         // Single-player: auto-launch a private local server and play a 1-v-AI game
         // on it (the AI runs server-side). Not visible to other players.
@@ -938,6 +946,7 @@ int main(int argc, char** argv) {
         // and its gameplay overrides are agreed later, at load. The install is
         // immutable while the game runs, so the fingerprint (a mount + a read of
         // every gameplay file) is computed once and reused across menu->Play loops.
+        if (lobbyLoading) lobbyLoading->step("Checking game data",20);
         static uint64_t retailHash = 0;
         if (!dataRoot.empty()) {
             if (!retailHash)
@@ -955,10 +964,17 @@ int main(int argc, char** argv) {
             playerName = loginUser;   // the account IS the multiplayer identity
         }
         tak::crypto::wipe(loginPass);
+        if (lobbyLoading) lobbyLoading->step("Connecting to local server",35);
+        uint64_t lobbyProgressAt=SDL_GetTicks64();
         bool ok = false;
         for (int attempt = 0; attempt < (gLocalServerUp ? 200 : 1) && !ok; ++attempt) {
             ok = mp->connect(serverHost, uint16_t(serverPort), playerName);
-            if (!ok && gLocalServerUp) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (!ok && gLocalServerUp) {
+                if (lobbyLoading && SDL_GetTicks64()-lobbyProgressAt>=100) {
+                    lobbyLoading->step("Waiting for local server",35);lobbyProgressAt=SDL_GetTicks64();
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
         }
         if (!ok) {
             std::fprintf(stderr, "server: %s\n", mp->error().c_str());
@@ -985,6 +1001,9 @@ int main(int argc, char** argv) {
             const uint64_t deadline = SDL_GetTicks64() + 30000;
             while (!mp->handshakeSettled() && SDL_GetTicks64() < deadline) {
                 if (!mp->poll()) break;
+                if (lobbyLoading && SDL_GetTicks64()-lobbyProgressAt>=100) {
+                    lobbyLoading->step("Connecting to local server",40);lobbyProgressAt=SDL_GetTicks64();
+                }
                 SDL_PumpEvents();          // keep the window responsive while we wait
                 SDL_Delay(5);
             }
@@ -1090,6 +1109,7 @@ int main(int argc, char** argv) {
             // later, so it constructs "bare" (no single-player 2-monarch spawn).
             // When looping back to the menu, keep this function's vfs alive for the
             // next session (+ its findMap); hand the game its own fresh mount.
+            if (lobbyLoading) lobbyLoading->step("Preparing game setup",50);
             gameView = std::make_unique<GameView>(ren,
                                                   // Campaign result/progression and the next
                                                   // session still need the front-end catalog.
@@ -1139,6 +1159,11 @@ int main(int argc, char** argv) {
                     gameView->setBenchmark(benchmarkLevel);
                 }
                 if (const char* rp = tak::devEnv("TAK_RESUME")) gameView->setResumePath(rp);
+            }
+            if (lobbyLoading) {
+                gameView->prepareLobbyMaps(*lobbyLoading);
+                lobbyLoading->step("Ready",100);
+                lobbyLoading.reset();
             }
             // Normal windows keep the widest build-icon row visible. An explicit
             // --winsize is also used by retail-comparison captures, where clipping

@@ -140,7 +140,9 @@
             if (SDL_GetModState() & KMOD_CTRL) clearSquad();
             else if (unitInfoType_) unitInfoType_ = nullptr;   // close Unit Info first
             else if (outcome_ != 0) { menuRequested_ = true; }
-            else if (placing_ || pendingCmd_) { placing_ = nullptr; pendingCmd_ = 0; }
+            else if (placing_ || pendingCmd_) {
+                placing_ = nullptr; pendingCmd_ = 0;buildDrag_=manaBuildDrag_=false;
+            }
             else if (!selection_.empty()) selection_.clear();
             else exitMenu_ = true;
         } else if (e.type == SDL_KEYDOWN && e.key.repeat &&
@@ -226,7 +228,11 @@
             // the elevated cell drawn under the cursor, not the low cell behind.
             float wx, wz;
             pickWorld(float(e.button.x), float(e.button.y), wx, wz);
-            if (SDL_GetModState() & KMOD_SHIFT) {
+            if (placing_->onMana) {
+                manaBuildDrag_=true;buildDrag_=false;
+                bdX0_=wx;bdZ0_=wz;bdSx0_=float(e.button.x);bdSy0_=float(e.button.y);
+                bdQueue_=(SDL_GetModState() & KMOD_SHIFT)!=0;
+            } else if (SDL_GetModState() & KMOD_SHIFT) {
                 // Shift: begin a drag — a whole line of these gets queued on
                 // release (a single shift-click is just a zero-length line).
                 buildDrag_ = true;
@@ -253,6 +259,25 @@
                 }
             }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
+                   manaBuildDrag_) {
+            manaBuildDrag_=false;
+            float wx,wz;pickWorld(float(e.button.x),float(e.button.y),wx,wz);
+            const bool box=std::abs(float(e.button.x)-bdSx0_)>=6 ||
+                std::abs(float(e.button.y)-bdSy0_)>=6;
+            if (box) {
+                placeManaBuildBox(bdX0_,bdZ0_,wx,wz,bdQueue_);
+                if (!bdQueue_) placing_=nullptr;
+            } else if (placing_ && !selection_.empty()) {
+                std::vector<int> clearing;
+                if (canPlaceLocked(placing_,wx,wz) || clearableAt(placing_,wx,wz,clearing)) {
+                    tak::net::Command c;c.kind=tak::net::Cmd::Build;
+                    c.unitId=selectedBuilder() ? selectedBuilder()->id : selection_.front();
+                    c.x=wx;c.z=wz;c.queue=bdQueue_;
+                    std::snprintf(c.type,sizeof c.type,"%s",placing_->id.c_str());issue(c);
+                    if (!bdQueue_) placing_=nullptr;
+                }
+            }
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
                    buildDrag_) {
             buildDrag_ = false;
             float ewx, ewz;
@@ -273,7 +298,7 @@
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT &&
                    placing_) {
             placing_ = nullptr;
-            buildDrag_ = false;
+            buildDrag_ = manaBuildDrag_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    !spectating_) {   // a spectator watches only -- no unit selection
             dragging_ = true;
@@ -483,6 +508,15 @@
         float frac = (my - mapListRect_.y) / mapListRect_.h;   // 0..1 down the box
         mapScroll_ = int(std::lround(frac * mapTotalRows_ - mapVisRows_ * 0.5f));
         clampMapScroll();
+    }
+
+    void GameView::placeManaBuildBox(float x0,float z0,float x1,float z1,bool queue) {
+        if (!placing_ || !placing_->onMana || selection_.empty()) return;
+        const auto* builder=selectedBuilder();
+        if (!builder) return;
+        tak::net::Command c;c.kind=tak::net::Cmd::BuildManaArea;
+        c.unitId=builder->id;c.x=x0;c.z=z0;c.x2=x1;c.z2=z1;c.queue=queue;
+        std::snprintf(c.type,sizeof c.type,"%s",placing_->id.c_str());issue(c);
     }
 
     void GameView::placeBuildLine(float x0, float z0, float x1, float z1) {

@@ -19,8 +19,8 @@ enum class Cmd : uint8_t {
                    // (Train also carries a count in targetId; 0 => 1)
     Assist,        // unitId (a mobile builder) resumes/assists conjuring the
                    // existing construction site targetId (revives a decaying one)
-    Disco,         // cosmetic emote: player's monarchs dance for 10s (Shift+D).
-                   // Synced via lockstep so all peers see it; affects no sim state.
+    Disco,         // cosmetic emote: unitId dances for 10s (Shift+D); 0 = living monarch.
+                   // queue=0 starts a real-time emote; queue=1 appends selection targets.
     Reclaim,       // mobile builder unitId reclaims feature targetId for mana
     Stance,        // set unitId's combat stance to targetId (0=offensive/1=defensive/
                    // 2=passive) -- gates auto-acquire and chase leash
@@ -28,13 +28,14 @@ enum class Cmd : uint8_t {
     SetActive,     // onOffable unitId: targetId != 0 powers on, 0 powers down
     Repair,        // mobile builder unitId repairs damaged friendly targetId (restores
                    // HP at its build rate, draining mana)
-    Headbang,      // cosmetic emote: player's monarchs headbang to metal 10s (Shift+H)
+    Headbang,      // cosmetic emote: unitId headbangs 10s (Shift+H); 0 = living monarch.
     SetSquad,      // assign unitId to a control squad: targetId = 0 none, +N group N,
                    // -N formation N (N=1..10). A unit is in exactly one squad; formations
                    // move at their slowest member's speed and their stragglers rejoin.
     ReclaimArea,   // persistent area clear: x/z through x2/z2, chooses each next target in sim
     GiveUnit,      // unitId = owned eligible unit, targetId = allied recipient player
     ShareMana,     // targetId = allied recipient, queue = enabled; no unit required
+    BuildManaArea, // mobile builder: lodestones in x/z through x2/z2, exploring as needed
 };
 
 struct Command {

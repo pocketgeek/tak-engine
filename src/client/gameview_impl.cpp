@@ -25,11 +25,11 @@
         for (int p = 0; p < 8 && p < world_.numPlayers(); ++p) {
             bool on = frameDiscoActive(p);
             if (on) {
-                // Centroid of this player's (visible) dancing monarchs.
+                // Centroid of this player's visible dancing units.
                 float cx = 0, cz = 0; int n = 0;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
-                    if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
+                    if (u.player != p || !u.alive() || !dancing(u)) continue;
                     if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
                     cx += u.x; cz += u.z; ++n;
                 }
@@ -50,7 +50,7 @@
                 float cx = 0, cz = 0; int n = 0;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
-                    if (u.player != p || !u.alive() || !isMonarchType(u.type)) continue;
+                    if (u.player != p || !u.alive() || !headbanging(u)) continue;
                     if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
                     cx += u.x; cz += u.z; ++n;
                 }
@@ -1971,8 +1971,8 @@
             // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
             // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
             s.justBuilt = u.justBuilt;
-            s.disco = world_.discoActive(u.player);
-            s.headbang = world_.headbangActive(u.player);
+            s.disco = u.alive() && world_.discoTarget(u.player, u.id);
+            s.headbang = u.alive() && world_.headbangTarget(u.player, u.id);
             s.alliedToLocal = alliedToLocal(u.player);
             // Pose: prev comes from the previously-published frame's curr for this SAME unit
             // (id live last tick + matching type). Interpolate alive units between ticks;
@@ -2022,8 +2022,8 @@
             // sim keeps these in TICKS now; the scoreboard wants seconds.
             r.defeatedAt = pl.defeatedAt < 0 ? -1.0f : float(pl.defeatedAt) / 30.0f;
             r.team = pl.team; r.defeated = pl.defeated; r.godSummoned = pl.godSummoned;
-            r.discoLeft = float(pl.discoLeft) / 30.0f;
-            r.headbangLeft = float(pl.headbangLeft) / 30.0f;
+            r.emoteSequence = pl.emoteSequence;
+            r.emoteDisco = pl.emoteDisco;
         }
         fb.flames=world_.flames();
         fb.projectiles = world_.projectiles();   // sim push_back/erase each tick -> must copy
@@ -3621,11 +3621,11 @@
 
 
     bool GameView::dancing(const UnitR& u) const {
-        return isMonarchType(u.type) && u.disco;
+        return u.disco && u.type && !u.type->isStructure() && frameDiscoActive(u.player);
     }
 
     bool GameView::headbanging(const UnitR& u) const {
-        return isMonarchType(u.type) && u.headbang;
+        return u.headbang && u.type && !u.type->isStructure() && frameHeadbangActive(u.player);
     }
 
     tak::tdf::Node GameView::vtdf(const std::string& p) const {
@@ -4131,7 +4131,7 @@
                     noticeTimer_ = 2; return true;
                 }
                 auto o = mp_->room().opts;
-                int ns = std::clamp(int(mp_->gameSpeed()) + (up ? 5 : -5), 5, 40);
+                int ns = std::clamp(int(mp_->gameSpeed()) + (up ? 5 : -5), 5, tak::net::kMaxGameSpeed);
                 if (ns != o.speed) { o.speed = uint8_t(ns); mp_->setGameOptions(o); }
                 char nb[24]; std::snprintf(nb, sizeof nb, "GAME SPEED %.1fx", ns / 10.0f);
                 notice_ = nb; noticeTimer_ = 2;
@@ -4170,6 +4170,19 @@
                 return true;
             case tak::Act::ToggleCounts: showCounts_ = !showCounts_; return true;
             case tak::Act::UnitInfo: toggleUnitInfo(); return true;
+            case tak::Act::RetailZoom: {
+                // Retail draws the map at native 1:1 scale. Preserve the centre
+                // of the world viewport rather than zooming toward the pointer.
+                const float cx=float(mapViewW(winW_))*0.5f;
+                const float cy=float(winH_-barH())*0.5f;
+                const float oldZoom=std::max(mapView_.zoom(),1e-3f);
+                const float wx=mapView_.offX()+cx/oldZoom;
+                const float wz=mapView_.offY()+cy/oldZoom;
+                mapView_.setZoom(1.0f);
+                mapView_.setOffset(wx-cx,wz-cy);
+                notice_="RETAIL ZOOM";noticeTimer_=2;
+                return true;
+            }
             case tak::Act::FullScreenRadar:
                 // A VIEW action, so it belongs here and not in the order switch
                 // below -- that one returns early when nothing is selected, and
@@ -4206,7 +4219,7 @@
             case tak::Act::Disco:
             case tak::Act::Headbang: {
                 // One emote at a time -- don't even send the command while a disco or
-                // headbang is already running (the sim enforces this too). The busy
+                // headbang is already running on the real-time clock. The busy
                 // notice reflects what you're ACTUALLY doing, not the key you pressed.
                 bool emoting = frameDiscoActive(localPlayer_) || frameHeadbangActive(localPlayer_);
                 if (emoting) {
@@ -4216,7 +4229,14 @@
                 bool disco = hotkeys_.match(int32_t(key), mod) == tak::Act::Disco;
                 tak::net::Command c;
                 c.kind = disco ? tak::net::Cmd::Disco : tak::net::Cmd::Headbang;
-                issue(c);   // routed through lockstep so every peer sees the dance
+                if (selection_.empty()) issue(c); // living monarch fallback
+                else for (int id : selection_) {
+                    const auto* u = frameUnitP(id);
+                    if (!u || !u->alive() || u->player != localPlayer_ || !u->type || u->type->isStructure()) continue;
+                    c.unitId = id;
+                    issue(c); // capture selection through lockstep
+                    c.queue = 1; // further targets belong to the same emote trigger
+                }
                 notice_ = disco ? "DISCO TIME" : "HEADBANG!!";
                 noticeTimer_ = 2;
                 return true;
@@ -4457,6 +4477,7 @@
         switch (lbField_) {
             case 1: return &createName_; case 2: return &createPass_;
             case 3: return &joinPass_; case 4: return &chatDraft_;
+            case 5: return &genParams_.name;
             default: return nullptr;
         }
     }

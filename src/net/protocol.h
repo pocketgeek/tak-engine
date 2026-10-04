@@ -13,11 +13,21 @@
 #include <string>
 #include <vector>
 
+#include "sim/pathmode.h"
+
 #include "net/lockstep.h"   // Command / Cmd (the 35-byte command wire format is reused)
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 213;      // 213: selected override pack transfer and verification
+constexpr uint32_t kNetVersion = 221;      // 221: persistent lodestone-area command
+                                           // 220: authoritative Retail/Flowfield match selection
+                                           // 219: weapon damage and rubble transitions for death-spawned corpses
+                                           // 218: v7 generated mazes with open edges
+                                           // 217: real-time emote triggers; buildings excluded
+                                           // 216: feature-tail impact damage and selected-unit emotes
+                                           // 215: themed v6 generated-map layouts
+                                           // 214: named v5 generated maps with open lake edges
+                                           // 213: selected override pack transfer and verification
                                            // 212: scripted production pads check open yard occupancy
                                            // 211: completed campaign history and replay transfers
                                            // 210: campaign territory rendezvous matchmaking
@@ -353,6 +363,9 @@ struct GameInfo {
     uint32_t uptimeSec = 0;
 };
 
+// Maximum live game speed, in tenths (80 = 8x); shared by UI and server admission.
+inline constexpr int kMaxGameSpeed = 80;
+
 // Per-game settings chosen by the host.
 struct GameOptions {
     uint8_t crusades = 0;
@@ -385,6 +398,7 @@ struct GameOptions {
     // Deterministic -- derived from the match seed, so every peer agrees.
     uint8_t randomStarts = 0;
     uint8_t fogExplored = 1;
+    sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
     uint8_t doubleSight = 0;   // skirmish/MP only; ignored for campaign missions
     // Benchmark INTENSITY: 0=off, 1=Low..6=Extra Absurd -- an all-AI perf run with a spawn ramp
     // (see MatchConfig::benchmark). Deterministic, so it IS part of the hashed sim.

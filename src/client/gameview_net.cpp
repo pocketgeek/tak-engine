@@ -184,6 +184,7 @@
         cfg.unitCap = room.opts.unitCap;
         cfg.monarchExpendable = room.opts.monarchExpendable != 0;
         cfg.doubleSight = room.opts.doubleSight != 0;
+        cfg.pathfindingMode = room.opts.pathfindingMode;
         cfg.stressTest = room.opts.stressTest != 0;
         cfg.benchmark = room.opts.benchmark;
         cfg.randomStarts = room.opts.randomStarts != 0;
@@ -702,7 +703,7 @@ void GameView::autoplayStep() {
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
-            if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, 40));
+            if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxGameSpeed));
             o.stressTest = tak::devFlag("TAK_STRESS") ? 1 : 0;   // headless: spawn ~95% cap per AI
             if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
                 int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
@@ -719,6 +720,7 @@ void GameView::autoplayStep() {
             o.monarchExpendable = tak::devFlag("TAK_MONARCH_EXPENDABLE") ? 1 : 0;
             o.forfeitSelfDestruct = tak::devFlag("TAK_FORFEIT_SELFDESTRUCT") ? 1 : 0;
             o.doubleSight = tak::devFlag("TAK_DOUBLE_SIGHT") ? 1 : 0;
+            o.pathfindingMode = tak::devFlag("TAK_FLOWFIELD") ? tak::sim::PathfindingMode::Flowfield : tak::sim::PathfindingMode::Retail;
             // TAK_FOG=0|1|2 forces the room's fog rule (not explored / explored /
             // full vision) so the setting can be tested end to end without driving
             // the lobby by hand.

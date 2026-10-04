@@ -33,7 +33,7 @@ struct MatchSlot {
     int team = 0;
     float manaMult = 1.0f;   // per-player income multiplier (Absurd AI = 2); Player::manaMult
     bool automaticGates = false;
-    bool defensiveAi = false; // Passive AI defends in place from the moment units spawn
+    bool defensiveAi = false; // Defensive AI uses a non-pursuing default stance from birth
 };
 
 struct MatchConfig {
@@ -48,6 +48,8 @@ struct MatchConfig {
     float startMana = 2800;
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)
     bool monarchExpendable = true;  // false = losing your Monarch loses the game
+    PathfindingMode pathfindingMode = PathfindingMode::Retail;
+    bool patrolRepairs = true; // legacy replays disable the new automatic patrol work
     bool doubleSight = false;       // double authored sight and radar distances (not weapon range)
     bool stressTest = false;        // spawn each player at ~95% of the unit cap in combat
                                     // units at setup (SP all-AI load test)

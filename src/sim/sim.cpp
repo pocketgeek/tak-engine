@@ -1,3 +1,4 @@
+#include "flowmemory.h"
 #include "sim/sim.h"
 #include "sim/retailtransport.h"
 #include "sim/retailanimationqueries.h"
@@ -1001,10 +1002,20 @@ SinCos World::steerGround(Unit& u,RetailSteeringPoint start,RetailSteeringPoint 
     const uint16_t rate=uint16_t(int64_t(uint16_t(u.type->turnRate))*multiplier.v/65536);
     u.heading=u.heading+Bam(std::clamp(diff,-int32_t(rate),int32_t(rate)));
     u.turnReqBam=diff;
+    Fixed effectiveMaximum=maximum*multiplier;
+    if(pathfindingMode_==PathfindingMode::Flowfield && u.groundMovementMode && std::abs(diff)>4096) {
+        // Flow routes can turn through a single legal anchor cell. Budget a
+        // quarter of that 16px cell against the remaining turn each tick; otherwise
+        // slow-turning movers circle outside the corridor indefinitely. Keep
+        // the authored moving turn rate and physical collision, including for
+        // units that cannot pivot in place. Apply terrain scaling only once.
+        const int32_t cap=int32_t(int64_t(4*65536)*rate/std::abs(diff));
+        effectiveMaximum=fxMin(effectiveMaximum,Fixed::raw(std::max(1,cap)));
+    }
     const Fixed delta=retailGroundAcceleration(u.x,u.z,start,end,next,u.heading,u.speed,
-        maximum*multiplier,u.type->accel*multiplier,u.type->brake*multiplier,uint16_t(rate),
+        effectiveMaximum,u.type->accel*multiplier,u.type->brake*multiplier,uint16_t(rate),
         u.groundMovementMode==0 ? &aim : nullptr,u.groundMovementMode==0 ? direction : -1);
-    u.speed=fxMin(retailGroundSpeedCap(maximum*multiplier,u.groundPitch,u.groundSpeedMode),
+    u.speed=fxMin(retailGroundSpeedCap(effectiveMaximum,u.groundPitch,u.groundSpeedMode),
                   fxMax(Fixed(),u.speed+delta));
     return retailGroundStep(u.heading,u.speed);
 }
@@ -1121,8 +1132,10 @@ void World::setMapPlacementFeatures(const std::vector<uint16_t>& raw,
 
 void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
                        const std::vector<uint16_t>* features) {
-    mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();
-    paths_.clear();
+    if(pathfindingMode_==PathfindingMode::Flowfield&&!flow::MemoryPlan::forMap(w,h).supported)
+        throw std::invalid_argument("Flowfield supports maps up to 64x64 within its storage budget");
+    mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
+    paths_.clear();flow_.reset();
     searchGrades_.clear(); activeSearchGrade_=-1;
     // The fog worker reads heights_; never let a reload pull the map out from under it.
     if (visRunning_) { visWorker_.join(); visRunning_ = false; visDone_.store(false); }
@@ -1549,6 +1562,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             // reclaim completion can consume the next queued obstacle instead.
             o.reclaimFeat = tmpl.reclaimFeat;
             o.repairTarget = tmpl.repairTarget;
+            o.patrolRepair = tmpl.patrolRepair;
             o.buildRectangle = tmpl.buildRectangle;
             o.buildX = tmpl.buildX; o.buildZ = tmpl.buildZ;
         }
@@ -1689,7 +1703,7 @@ void World::order(int unitId, float x, float z, bool queue) {
 void World::cancelPath(Unit& u) {
     static const bool kPqLog = std::getenv("TAK_PATHLOG") != nullptr;
     if (kPqLog) std::printf("[pq] t=%u id=%d CANCEL\n", tickCounter_, u.id);
-    paths_.cancel(u.id);
+    if(flow_)flow_->cancel(u.id);else paths_.cancel(u.id);
     // A new destination earns the cheap tracer again. This deliberately does NOT live in
     // requestPath: that is also the once-a-second re-anchor, so clearing there wiped the
     // detour history on every re-ask and the fallback could never accumulate -- the
@@ -1697,12 +1711,13 @@ void World::cancelPath(Unit& u) {
     // not a single number moving.
 }
 
-Order* World::groundMissionOrder(Unit& u) {
+Order* World::groundMissionOrder(Unit& u, bool includeCombatMoves) {
     if (!u.type || u.type->canFly || u.orders.empty()) return nullptr;
-    const auto plain = [](const Order& o) {
-        return !o.targetId && !o.attackMove && !o.patrol && !o.guard && !o.load &&
+    const auto plain = [includeCombatMoves](const Order& o) {
+        return !o.targetId && (includeCombatMoves || (!o.attackMove && !o.patrol)) && !o.guard && !o.load &&
                (!o.unload || o.transportUnloadApproach) &&
-               !o.buildType && !o.reclaimFeat && !o.reclaimArea && !o.repairTarget && !o.wait && !o.waitAttack;
+               !o.buildType && !o.reclaimFeat && !o.reclaimArea && !o.manaBuildArea &&
+               !o.repairTarget && !o.wait && !o.waitAttack;
     };
     if (!plain(u.orders.front())) return nullptr;
     Order& goal = u.orders[currentLeg(u.orders)];
@@ -1710,7 +1725,7 @@ Order* World::groundMissionOrder(Unit& u) {
 }
 
 Order* World::navigationMissionOrder(Unit& u) {
-    if (auto* goal=groundMissionOrder(u)) return goal;
+    if (auto* goal=groundMissionOrder(u,true)) return goal;
     if (!u.type || u.type->canFly || u.orders.empty()) return nullptr;
     auto& goal=u.orders[currentLeg(u.orders)];
     return goal.buildRectangle || goal.load ? &goal : nullptr;
@@ -2041,7 +2056,7 @@ void World::tickGroundMission(Unit& u) {
         }
         RetailMissionState* head() {
             if (u.landing) return &u.landing->mission;
-            if (auto* o = groundMissionOrder(u)) {
+            if (auto* o = groundMissionOrder(u,true)) {
                 if (o->transportUnloadApproach) {
                     if (completeUnloadApproach || abortUnloadApproach ||
                         o->transportUnloadReleasePending || o->transportMission.stage>1)
@@ -2071,8 +2086,14 @@ void World::tickGroundMission(Unit& u) {
             else w.dropLeg(u);
         }
         void rotate(RetailMissionState&) {
-            const Order goal = u.orders[currentLeg(u.orders)];
-            w.dropLeg(u); u.orders.push_back(goal);
+            Order goal = u.orders[currentLeg(u.orders)];
+            w.dropLeg(u);
+            // A patrol owns a point, not the last corner of its previous route.
+            // Re-enter with a fresh controller and segment after every lap.
+            if (goal.missionTarget) { goal.x=goal.missionTarget->first;goal.z=goal.missionTarget->second; }
+            goal.controller=0;goal.navigationExhausted=goal.navigationConsumed=false;
+            goal.hasSegment=false;goal.mission.pending=0;
+            u.orders.push_back(goal);
         }
         void clear() { w.cancelPath(u); u.orders.clear(); u.routeStamp=-1; u.standbyActive=false; u.landing.reset(); }
         int handle(RetailMissionState& m, uint32_t events) {
@@ -2137,31 +2158,50 @@ void World::tickGroundMission(Unit& u) {
             auto& response=goal.groundResponse;
             const RetailGroundPoint position{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
             const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+            const bool boundedFlowFight=w.pathfindingMode_==PathfindingMode::Flowfield &&
+                goal.attackMove && !goal.patrol;
+            if (boundedFlowFight && m.stage==0 && u.routeFailed) {
+                const uint32_t elapsed=w.tickCounter_-uint32_t(u.routeStamp);
+                if (elapsed<30) {
+                    // Keep the Flow-only failed-fight backoff while using the
+                    // native controller lifecycle. Retail cadence is unchanged.
+                    m.sleep(w.tickCounter_,30-elapsed);return 4;
+                }
+            }
+            const auto resetGoal=[&](uint32_t) {
+                w.cancelPath(u);
+                const bool wasActive=!goal.navigationExhausted;
+                goal.controller = ++w.nextMovementController_;
+                m.pending &= ~0x3700u;
+                const bool retain=currentLeg(u.orders)>0 && retainGroundRoute(u,goal);
+                const bool direct=!retain && (!(m.flags&0x10400000u) ||
+                    (!wasActive && (m.flags&0x10000000u)));
+                goal.navigationExhausted=!retain && !direct;
+                if (direct) {
+                    resetGroundSegment(u,goal);
+                    // Erasing corners here would invalidate the dispatcher's
+                    // mission reference before it advances the stage.
+                    replaceController=goal.controller;
+                }
+                // Controller reset also invalidates stamps older than six
+                // ticks, with the executable's unsigned comparison.
+                if (uint32_t(u.routeStamp)<=w.tickCounter_-6u) u.routeStamp=0;
+                // 4e54e0 cancels the old search, then 4e4f50(1) marks
+                // the replacement controller pending. Retaining the stamp
+                // alone loses this request until some later retry happens.
+                w.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+            };
+            // Fight-move and patrol used to bypass the ground mission host.
+            // Partial routes then completed at their last corner and failed
+            // controllers never received the native radius/rotation handling.
+            // Combat acquisition still runs through tickCombat below.
+            if (goal.patrol)
+                return retailGroundPatrol(m,goal.missionRadius,w.tickCounter_,events,
+                    int16_t(u.type->footX),true,[&](int n){return random(n);},
+                    []{},resetGoal,[]{return 0;});
             const int result=retailGroundMove(m,goal.missionRadius,w.tickCounter_,events,
                 int16_t(u.type->footX),u.embarked(),response.mode,uint8_t(u.moveState),[&](int n) { return random(n); },
-                [&](uint32_t) {
-                    w.cancelPath(u);
-                    const bool wasActive=!goal.navigationExhausted;
-                    goal.controller = ++w.nextMovementController_;
-                    m.pending &= ~0x3700u;
-                    const bool retain=currentLeg(u.orders)>0 && retainGroundRoute(u,goal);
-                    const bool direct=!retain && (!(m.flags&0x10400000u) ||
-                        (!wasActive && (m.flags&0x10000000u)));
-                    goal.navigationExhausted=!retain && !direct;
-                    if (direct) {
-                        resetGroundSegment(u,goal);
-                        // Erasing corners here would invalidate the dispatcher's
-                        // mission reference before it advances the stage.
-                        replaceController=goal.controller;
-                    }
-                    // Controller reset also invalidates stamps older than six
-                    // ticks, with the executable's unsigned comparison.
-                    if (uint32_t(u.routeStamp)<=w.tickCounter_-6u) u.routeStamp=0;
-                    // 4e54e0 cancels the old search, then 4e4f50(1) marks
-                    // the replacement controller pending. Retaining the stamp
-                    // alone loses this request until some later retry happens.
-                    w.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
-                },[&] {
+                resetGoal,[&] {
                     // Target scoring and retaliation eligibility still use the
                     // World's combat host; the mission owns when to poll it.
                     int target=w.findTarget(u,true,true);
@@ -2195,6 +2235,7 @@ void World::tickGroundMission(Unit& u) {
                     w.cancelPath(u); u.routeStamp=-1;
                     return true;
                 });
+            if (boundedFlowFight) goal.missionRadius=std::min(256u,goal.missionRadius);
             // Inserting can invalidate m and goal. The dispatcher re-fetches
             // its head after result 4, so all parent updates must precede it.
             if (auxiliary) u.orders.insert(u.orders.begin(),*auxiliary);
@@ -2308,6 +2349,10 @@ bool World::requestPath(Unit& u, float x, float z) {
     const auto* mission = navigationMissionOrder(u);
     auto target = mission && mission->missionTarget ? *mission->missionTarget :
         std::pair{Fixed::fromFloat(x),Fixed::fromFloat(z)};
+    if(pathfindingMode_==PathfindingMode::Flowfield && !u.orders.empty()) {
+        const auto& leg=u.orders[currentLeg(u.orders)];
+        if(leg.groundMission && leg.missionTarget)target=*leg.missionTarget;
+    }
     if (mission && mission->buildRectangle) {
         // A partial route can end away from the build perimeter. Re-query the
         // controller rather than treating that stored endpoint as the goal.
@@ -2325,7 +2370,11 @@ bool World::requestPath(Unit& u, float x, float z) {
     if (from.x == to.x && from.z == to.z) {
         if (kPqLog) std::printf("[pq] t=%u id=%d NEAR-CANCEL to=(%.0f,%.0f)\n",
                                 tickCounter_, u.id, x, z);
-        paths_.cancel(u.id); return false;
+        if(flow_)flow_->cancel(u.id);else paths_.cancel(u.id); return false;
+    }
+    if(pathfindingMode_==PathfindingMode::Flowfield) {
+        if(!flow_)flow_=std::make_unique<FlowNavigator>(*this);
+        return flow_->request(u,target.first,target.second);
     }
     if (kPqLog) std::printf("[pq] t=%u id=%d QUEUED to=(%.0f,%.0f)\n", tickCounter_, u.id, x, z);
     // The 5x budget class is the PLAYER's, not the request's: retail flags player
@@ -3188,7 +3237,7 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
     // BUILDING accept a move order -- it could not go anywhere, but the mover still
     // turned its heading toward the goal, so you could spin a keep by right-clicking.
     if (!u || !u->alive() || !u->type) return;
-    if (u->type->isStructure()) {
+    if (u->type->isStructure() || u->repeatType) {
         Order o{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};
         o.attackMove = true;
         setRally(*u, o, queue);
@@ -3236,17 +3285,18 @@ void World::patrol(int unitId, float x, float z) {
         setRally(*u, a, /*queue=*/true);
         return;
     }
-    u->orders.clear();
-    cancelPath(*u);          // the route for the replaced orders is not this patrol's
-    Order a;
-    a.x = u->x; a.z = u->z; a.patrol = true; a.attackMove = true;
-    Order b;
-    b.x = Fixed::fromFloat(x); b.z = Fixed::fromFloat(z); b.patrol = true; b.attackMove = true;
-    // These are two complete legs, not intermediate points of one route.
-    // Without boundaries, currentLeg selects the return point at our feet.
-    a.goal = b.goal = true;
-    u->orders.push_back(b);
-    u->orders.push_back(a);
+    if (u->type->canFly) {
+        // Flying patrols keep their existing handler and definition flags.
+        u->orders.clear();cancelPath(*u);
+        Order a{u->x,u->z,0},b{Fixed::fromFloat(x),Fixed::fromFloat(z),0};
+        a.goal=a.patrol=a.attackMove=true;
+        b.goal=b.patrol=b.attackMove=true;
+        u->orders.push_back(b);u->orders.push_back(a);
+        return;
+    }
+    const float rx=u->x.toFloat(),rz=u->z.toFloat();
+    patrolTo(unitId,x,z,false);
+    patrolTo(unitId,rx,rz,true);
 }
 
 void World::patrolTo(int unitId, float x, float z, bool queue) {
@@ -3637,7 +3687,8 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     if (primary) hurt(*primary, 1.0f);
     // Features under fire (retail icd 0x529dc0 -> DamageFeature 0x4961a0):
     // every feature head cell within aoe/2 of the impact -- the impact cell
-    // exempt from the radius check, so a no-splash weapon (Fire Breath, aoe 0)
+    // (resolved to its head for footprint tails) exempt from the radius check,
+    // so a no-splash weapon (Fire Breath, aoe 0)
     // still strikes the cell it hits. A firestarter hit on a flamable feature
     // IGNITES it instead of damaging it that hit; everything else accumulates
     // weapon damage, and at the def's `damage` value the feature is destroyed
@@ -3649,32 +3700,77 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // Mind Controls) precisely so a 500px nuke doesn't also level every forest and
     // mana-bearing prop inside it.
     if (!featTypes_.empty() && terW_ > 0 && !w.unitsOnly) {
-        float r = std::max(w.aoe * 0.5f, 8.0f);
-        int icx = int(hx) / 16, icz = int(hz) / 16;
-        int rc = int(r) / 16 + 1;
+        const float r = std::max(w.aoe * 0.5f, 8.0f);
+        const int icx = int(hx) / 16, icz = int(hz) / 16;
+        auto damageFeature = [&](Feature& f) {
+            if (!f.alive || f.type < 0) return;
+            const FeatType& ft = featTypes_[size_t(f.type)];
+            if (ft.indestructible) return;
+            if (w.fireStarter && ft.flamable && !f.burn && ft.hasBurnAnim) {
+                igniteFeature(f);
+                return; // ignition replaces the damage this hit
+            }
+            if (ft.hp <= 0) return;
+            f.dmg += w.damage;
+            if (f.dmg >= ft.hp) swapFeature(f, ft.deadType);
+        };
+        // Dead-unit visuals/reclaim targets live separately from scenery, but
+        // their installed footprints receive the same feature weapon damage.
+        // Look up only the impacted anchors, never scan every corpse per shot.
+        const auto damageCorpse = [&](int anchor, bool direct) {
+            const auto owner=corpseAnchors_.find(anchor);
+            if (owner==corpseAnchors_.end()) return false;
+            auto& footprint=corpseFootprints_.at(owner->second);
+            const auto& ft=featTypes_[size_t(footprint.type)];
+            const float x=float(footprint.x*16+ft.fx*8),z=float(footprint.z*16+ft.fz*8);
+            if (!direct && (x-hx)*(x-hx)+(z-hz)*(z-hz)>r*r) return true;
+            if (ft.indestructible || ft.hp<=0) return true;
+            footprint.damage += w.damage;
+            if (footprint.damage<ft.hp) return true;
+            Unit* corpse=unit(owner->second);
+            const int cx=footprint.x,cz=footprint.z,next=ft.deadType;
+            retireCorpse(*corpse); // remove the body and resurrection/reclaim target
+            if (next>=0) {
+                const auto& rubble=featTypes_[size_t(next)];
+                addFeature(anchor,float(cx*16+rubble.fx*8),float(cz*16+rubble.fz*8),
+                    rubble.energy,std::max(rubble.energy,60.f),rubble.fx,rubble.fz,
+                    rubble.blocking,next);
+            }
+            return true; // never damage the newly installed rubble with this hit
+        };
+        // Native 529c10 resolves a hit on a footprint tail to its feature head
+        // before dispatching damage (4961a0). Save the ID before destruction
+        // changes the map cells, and exclude it from the splash pass below.
+        int directId = -1;
+        if (icx >= 0 && icz >= 0 && icx < terW_ && icz < terH_) {
+            int ax = icx, az = icz;
+            if (!mapPlacementCells_.empty()) {
+                const auto& cell = mapPlacementCells_[size_t(icz) * terW_ + icx];
+                if (cell.feature == 0xfffe) { ax -= cell.backX; az -= cell.backZ; }
+            }
+            if (ax >= 0 && az >= 0) {
+                directId = az * terW_ + ax;
+                if (!damageCorpse(directId,true)) {
+                    const auto it = featureIdx_.find(directId);
+                    if (it != featureIdx_.end()) damageFeature(features_[it->second]);
+                }
+            }
+        }
+        const int rc = int(r) / 16 + 1;
         for (int dz = -rc; dz <= rc; ++dz)
             for (int dx = -rc; dx <= rc; ++dx) {
-                int cx = icx + dx, cz = icz + dz;
+                const int cx = icx + dx, cz = icz + dz;
                 if (cx < 0 || cz < 0 || cx >= terW_ || cz >= terH_) continue;
-                auto it = featureIdx_.find(cz * terW_ + cx);
+                const int id = cz * terW_ + cx;
+                if (id == directId || damageCorpse(id,false)) continue;
+                const auto it = featureIdx_.find(id);
                 if (it == featureIdx_.end()) continue;
                 Feature& f = features_[it->second];
-                if (!f.alive || f.type < 0) continue;
-                if (!(dx == 0 && dz == 0)) {   // impact cell is struck regardless
-                    float fdx = f.x.toFloat() - hx, fdz = f.z.toFloat() - hz;
-                    if (fdx * fdx + fdz * fdz > r * r) continue;
-                }
-                const FeatType& ft = featTypes_[size_t(f.type)];
-                if (ft.indestructible) continue;
-                if (w.fireStarter && ft.flamable && !f.burn && ft.hasBurnAnim) {
-                    igniteFeature(f);
-                    continue;   // ignition replaces the damage this hit
-                }
-                if (ft.hp <= 0) continue;   // no damage value: indestructible-by-damage
-                f.dmg += w.damage;
-                if (f.dmg >= ft.hp) swapFeature(f, ft.deadType);
+                const float fdx = f.x.toFloat() - hx, fdz = f.z.toFloat() - hz;
+                if (fdx * fdx + fdz * fdz <= r * r) damageFeature(f);
             }
     }
+
     if (w.aoe <= 0) return;
     // Splash the surrounding enemies, scaled from full at the centre to `edge`
     // at the rim (so an area weapon actually hits a crowd, per its FBI aoe).
@@ -4356,14 +4452,35 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         dx=(target->x-u.x).toFloat(); dz=(target->z-u.z).toFloat();
         dist=std::sqrt(dx*dx+dz*dz);
     }
+    bool flowTooClose=false;
+    if(pathfindingMode_==PathfindingMode::Flowfield && !u.type->canFly && mayChase && !(sel&&sel->melee)) {
+        const Weapon* approaching=sel?sel:&u.type->weapon;
+        if(allWeapons)approaching=&*std::max_element(u.type->weapons.begin(),u.type->weapons.end(),
+            [](const Weapon& a,const Weapon& b){return a.range<b.range;});
+        flowTooClose=dist<approaching->minRange;
+        if(flowTooClose&&allWeapons)
+            for(const auto& weapon:u.type->weapons)
+                if((weapon.melee&&target->type&&meleeInRange(u.type,target->type,dx,dz)) ||
+                   (!weapon.melee&&dist>=weapon.minRange&&dist<=weapon.range+pad&&
+                    !(weapon.noAir&&target->type&&target->type->canFly))) {flowTooClose=false;break;}
+    }
     if ((sel && sel->melee) ? !adj
-                            : (dist > reach || (!los && mayChase))) {
+                            : (dist > reach || (!los && mayChase) || flowTooClose)) {
         if (hovering) return;
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
         Order& o = u.orders[currentLeg(u.orders)];
         o.x = target->x;
         o.z = target->z;
+        // A distance-only approach can end on the wrong side of terrain.
+        // Ask Flow for a firing position once the installed approach ends;
+        // leave an active detour intact while the unit walks around the wall.
+        const bool flowBlockedShot=pathfindingMode_==PathfindingMode::Flowfield &&
+            needLoS&&!los&&(u.orders.front().goal||o.navigationExhausted);
+        if((flowTooClose||flowBlockedShot) && !pathPending(u.id) && u.repathLeft<=0) {
+            requestPath(u,target->x.toFloat(),target->z.toFloat());
+            u.repathLeft=30;
+        }
         // Refresh the leg's destination, preserving its intermediate waypoints.
         // The shared route service and retry cadence handle chases too.
         return;   // movement handled by the normal move logic
@@ -4669,6 +4786,7 @@ void World::blockCells(int cx, int cz, int w, int h, bool blocked) {
             if (o != (blocked ? 1 : 0)) { o = blocked ? 1 : 0; any = true; }
         }
     if (!any) return;
+    if(flow_)flow_->dirty(x0,z0,x1-x0+1,z1-z0+1);
     // Every grid reads the same overlay, so they all need their clearance redone
     // over the touched band. markDirty is cheap; the DP is lazy.
     const int rw = x1 - x0 + 1, rh = z1 - z0 + 1;
@@ -4713,7 +4831,7 @@ void World::blockFoot(const UnitType& t, float x, float z, bool blocked) {
 }
 
 void World::buildNavClasses(const TypeRegistry& reg) {
-    paths_.clear();
+    paths_.clear();flow_.reset();
     searchGrades_.clear(); activeSearchGrade_=-1;
     navClasses_.clear();
     navIdx_.clear();
@@ -5566,6 +5684,74 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     b->orders.push_back(makeBuildOrder(*b,type,Fixed::fromFloat(x),Fixed::fromFloat(z)));
 }
 
+void World::queueManaBuildArea(int builderId,const UnitType* type,
+                             float x0,float z0,float x1,float z1,bool queue) {
+    Unit* b=unit(builderId);
+    if (!buildAllowed(type) || !type->onMana || !b || !b->alive() || !b->type ||
+        !b->type->isBuilder || b->type->isStructure() || b->underConstruction || b->repeatType ||
+        !std::isfinite(x0) || !std::isfinite(z0) || !std::isfinite(x1) || !std::isfinite(z1)) return;
+    const float limitX=float(std::max(0,hW_-1)*16),limitZ=float(std::max(0,hH_-1)*16);
+    ManaBuildArea area;
+    area.type=type;
+    area.minX=Fixed::fromFloat(std::clamp(std::min(x0,x1),0.0f,limitX));
+    area.maxX=Fixed::fromFloat(std::clamp(std::max(x0,x1),0.0f,limitX));
+    area.minZ=Fixed::fromFloat(std::clamp(std::min(z0,z1),0.0f,limitZ));
+    area.maxZ=Fixed::fromFloat(std::clamp(std::max(z0,z1),0.0f,limitZ));
+    if (!queue) {cancelPath(*b);cancelBuilds(builderId);b->orders.clear();}
+    Order o;
+    o.x=area.minX;o.z=area.minZ;o.goal=true;o.issuedTick=tickCounter_;o.manaBuildArea=area;
+    b->orders.push_back(o);
+}
+
+void World::tickManaBuildArea(Unit& b) {
+    if (b.orders.empty() || !b.orders.front().manaBuildArea) return;
+    auto& area=*b.orders.front().manaBuildArea;
+    const int width=hW_/2,height=hH_/2;
+    for (;area.nextSpot<manaSpots_.size();++area.nextSpot) {
+        const auto [sx,sz]=manaSpots_[area.nextSpot];
+        const Fixed x=Fixed::fromFloat(sx),z=Fixed::fromFloat(sz);
+        if (x<area.minX || x>area.maxX || z<area.minZ || z>area.maxZ) continue;
+        const int cx=x.floorInt()/32,cz=z.floorInt()/32;
+        const bool explored=navigationExplored_.empty() || (cx>=0 && cz>=0 && cx<width && cz<height &&
+            (navigationExplored_[size_t(cz)*width+cx] & (1u<<b.player)));
+        if (!explored) {
+            // A failed/partial exploration move must not repeat forever. Other
+            // deposits remain pending, and all occupancy is checked after scouting.
+            if (area.exploring) {area.exploring=false;continue;}
+            if (!b.type->canFly && !pathExists(b.type,sx,sz,b.x.toFloat(),b.z.toFloat())) continue;
+            area.exploring=true;
+            const Order approach=makeBuildOrder(b,area.type,x,z);
+            const size_t oldSize=b.orders.size();
+            order(b.id,approach.x.toFloat(),approach.z.toFloat(),true);
+            if (b.orders.size()>oldSize) {
+                if (b.type->canFly) {
+                    // An ordinary queued flight move may retire 80..144px
+                    // before its point. Scouting must reach the actual approach
+                    // so that its following area job can see the deposit.
+                    auto& scout=b.orders.back();scout.flightMoveMission=false;
+                    scout.flightGoal=RetailFlightGoal{{scout.x.v,b.flightY.v,scout.z.v}};
+                    if (auto script=unitScripts_.find(b.id);script!=unitScripts_.end() && !script->second.activated) {
+                        script->second.activated=true;notifyUnitScript(b,"Activate");
+                    }
+                    notifyUnitScript(b,"BeginFlight");
+                }
+                std::rotate(b.orders.begin(),b.orders.begin()+oldSize,b.orders.end());
+            }
+            return;
+        }
+        const UnitType* type=area.type;
+        area.exploring=false;++area.nextSpot;
+        const size_t oldSize=b.orders.size();
+        // Reuse normal placement, clearing, construction and upgrade orders.
+        // Move the appended child work ahead of the area and its queued tail.
+        queueBuild(b.id,type,sx,sz,true);
+        if (b.orders.size()>oldSize)
+            std::rotate(b.orders.begin(),b.orders.begin()+oldSize,b.orders.end());
+        return;
+    }
+    b.orders.erase(b.orders.begin());
+}
+
 Order World::makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const {
     const Unit* b=&builder;
     Order o;
@@ -5658,7 +5844,7 @@ void World::cancelBuilds(int builderId) {
     // move/attack/stop cancels queued construction.
     b->orders.erase(std::remove_if(b->orders.begin(), b->orders.end(),
                                    [](const Order& o) {
-                                       return o.buildType != nullptr || o.reclaimFeat != 0 || o.reclaimArea ||
+                                       return o.buildType != nullptr || o.reclaimFeat != 0 || o.reclaimArea || o.manaBuildArea ||
                                               o.repairTarget != 0;
                                    }),
                     b->orders.end());
@@ -5726,6 +5912,7 @@ void World::forgetCorpseAt(int cx,int cz) {
             corpse->corpseUntil=0;
             corpse->corpseBlocks=false;
         }
+        corpseAnchors_.erase(cz*terW_+cx);
         it=corpseFootprints_.erase(it);
         if (type.blocking) blockCells(cx,cz,type.fx,type.fz,false);
     }
@@ -5745,6 +5932,7 @@ bool World::placeCorpse(Unit& corpse,int type) {
     feature.z=Fixed::fromInt(cz*16+definition.fz*8);
     if (!placeMapFeature(feature)) return false;
     corpseFootprints_[corpse.id]={cx,cz,type};
+    corpseAnchors_[cz*terW_+cx]=corpse.id;
     corpse.corpseBlocks=definition.blocking;
     if (definition.blocking) blockCells(cx,cz,definition.fx,definition.fz,true);
     // 512ee0 passes the original position and orientation to 495360.
@@ -5757,6 +5945,7 @@ void World::retireCorpse(Unit& corpse) {
     if (found!=corpseFootprints_.end()) {
         const auto footprint=found->second;
         corpseFootprints_.erase(found);
+        corpseAnchors_.erase(footprint.z*terW_+footprint.x);
         const auto& type=featTypes_.at(size_t(footprint.type));
         removeMapFeature(footprint.x,footprint.z);
         if (type.blocking) blockCells(footprint.x,footprint.z,type.fx,type.fz,false);
@@ -5771,6 +5960,7 @@ void World::removeMapFeature(int cx,int cz) {
     const auto index=mapPlacementCells_[size_t(cz)*hW_+cx].feature;
     if (index>=mapPlacementTypes_.size()) return;
     const auto& type=mapPlacementTypes_[index];
+    if(flow_)flow_->dirty(cx,cz,type.footX,type.footZ);
     forgetCorpseAt(cx,cz);
     retailMapRemove(cx,cz,type,[&](int x,int z)->RetailMapFeatureCell& {
         return mapPlacementCells_.at(size_t(z)*hW_+x);
@@ -5822,6 +6012,7 @@ bool World::placeMapFeature(const Feature& f) {
         });
     // Feature grades can change without changing the legacy obstacle bit (for
     // example, clearable -> indestructible). Refresh the actual search cache.
+    if(placed && flow_)flow_->dirty(cx,cz,f.fx,f.fz);
     if (placed) for (auto& plane:searchGrades_) refreshSearchRect(plane,cx,cz,f.fx,f.fz);
     return placed;
 }
@@ -6201,6 +6392,44 @@ void World::tickReclaim(Unit& b, float dt) {
     }
 }
 
+void World::tickPatrolRepair(Unit& b) {
+    if (!patrolRepairs_ || !b.type || !b.type->isBuilder || !b.type->canMove || b.type->isStructure() ||
+        b.type->workerTime<=0 || b.underConstruction || b.embarked() || b.incapacitated() ||
+        b.buildSiteId || b.repairId || b.reclaimId || b.repeatType || !b.buildQueue.empty() ||
+        hasQueuedWork(b) || b.orders.empty() || !b.orders.front().patrol ||
+        (uint32_t(b.id)+tickCounter_)%30!=0) return;
+    const float radius=std::max(0,sightDistance(*b.type));
+    const float x=b.x.toFloat(),z=b.z.toFloat();
+    float bestDistance=radius*radius;int target=0;
+    forEachNear(x,z,radius,[&](int index) {
+        const auto& t=units_[size_t(index)];
+        if (!t.alive() || !t.type || t.id==b.id || t.underConstruction || t.embarked() ||
+            !allied(b.player,t.player) || t.hp<=Fixed() || t.hp>=Fixed::fromInt(t.type->maxHp)) return;
+        const float dx=t.x.toFloat()-x,dz=t.z.toFloat()-z,d=dx*dx+dz*dz;
+        if (d>bestDistance || (d==bestDistance && target && t.id>target)) return;
+        if (!b.type->canFly && !pathExists(b.type,t.x.toFloat(),t.z.toFloat(),x,z)) return;
+        bestDistance=d;target=t.id;
+    });
+    if (!target) return;
+    // Retain the patrol's canonical point, without its old route corners. The
+    // resumed patrol gets a fresh controller and keeps all following waypoints.
+    const size_t end=currentLeg(b.orders);
+    Order patrol=b.orders[end];
+    if (patrol.missionTarget) {patrol.x=patrol.missionTarget->first;patrol.z=patrol.missionTarget->second;}
+    const uint32_t flags=patrol.mission.flags;
+    patrol.mission={};patrol.mission.flags=flags;patrol.controller=0;
+    patrol.navigationExhausted=patrol.navigationConsumed=false;patrol.hasSegment=false;
+    patrol.flightGoal.reset();
+    cancelPath(b);b.routeStamp=0;
+    b.orders.erase(b.orders.begin(),b.orders.begin()+long(end));b.orders.front()=patrol;
+    const size_t oldSize=b.orders.size();
+    repair(b.id,target,true);
+    if (b.orders.size()>oldSize) {
+        auto& job=b.orders.back();job.patrolRepair=true;job.clickX=b.x;job.clickZ=b.z;
+        std::rotate(b.orders.begin(),b.orders.end()-1,b.orders.end());
+    }
+}
+
 void World::repair(int builderId, int targetId, bool queue) {
     Unit* b = unit(builderId);
     Unit* t = unit(targetId);
@@ -6228,8 +6457,11 @@ void World::tickRepair(Unit& b, float dt) {
     Unit* t = unit(b.repairId);
     auto endRepair = [&] {
         stopWorkAnimation(b);
+        if (!b.orders.empty()) {
+            if (b.orders[currentLeg(b.orders)].patrolRepair) dropLeg(b);
+            else if (b.orders.front().repairTarget) b.orders.erase(b.orders.begin());
+        }
         b.repairId = 0;
-        if (!b.orders.empty() && b.orders.front().repairTarget) b.orders.erase(b.orders.begin());
     };
     if (!b.type) { endRepair(); return; }
     // `t->hp <= Fixed()` is NOT covered by alive(): that reads deadFor, which is only set
@@ -6243,10 +6475,30 @@ void World::tickRepair(Unit& b, float dt) {
     }
     float dx = (t->x - b.x).toFloat(), dz = (t->z - b.z).toFloat();
     float half = 16.0f * float(std::max(t->type->footX, t->type->footZ)) / 2;
+    if (!b.orders.empty()) {
+        const auto& job=b.orders[currentLeg(b.orders)];
+        if (job.patrolRepair) {
+            const float lx=(t->x-job.clickX).toFloat(),lz=(t->z-job.clickZ).toFloat();
+            const float leash=std::max(0,sightDistance(*b.type));
+            if (lx*lx+lz*lz>leash*leash) {endRepair();return;}
+        }
+    }
     float reach = std::max(half + 40.0f,
                            b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
     if (dx * dx + dz * dz > reach * reach) {
         stopWorkAnimation(b);
+        if (!b.orders.empty()) {
+            const size_t end=currentLeg(b.orders);
+            Order job=b.orders[end];
+            // Only automatic patrol detours follow a moving ally. Refresh its
+            // approach at most once per second, keeping the saved patrol tail.
+            if (job.patrolRepair && (uint32_t(b.id)+tickCounter_)%30==0 &&
+                (fxAbs(job.x-t->x)>=Fixed::fromInt(16) || fxAbs(job.z-t->z)>=Fixed::fromInt(16))) {
+                job.x=t->x;job.z=t->z;job.hasSegment=false;job.flightGoal.reset();
+                cancelPath(b);b.routeStamp=0;
+                b.orders.erase(b.orders.begin(),b.orders.begin()+long(end));b.orders.front()=job;
+            }
+        }
         if (b.orders.empty()) order(b.id, t->x.toFloat(), t->z.toFloat(), false);   // (re)walk toward it
         return;
     }
@@ -6254,7 +6506,12 @@ void World::tickRepair(Unit& b, float dt) {
     // (40749b -> 4d4ab0), before facing and before any affordable repair work.
     startWorkAnimation(b,t->x,t->z);
     // ...but never the REPAIR order itself: that entry is the job.
-    if (b.orders.empty() || !b.orders.front().repairTarget) dropLeg(b);
+    if (!b.orders.empty() && b.orders[currentLeg(b.orders)].patrolRepair) {
+        cancelPath(b);
+        const size_t end=currentLeg(b.orders);
+        if (b.orders[end].repairTarget==b.repairId)
+            b.orders.erase(b.orders.begin(),b.orders.begin()+long(end));
+    } else if (b.orders.empty() || !b.orders.front().repairTarget) dropLeg(b);
     b.speed = Fixed();
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped: pivot at turninplacerate, not the moving turn rate.
@@ -6276,28 +6533,34 @@ void World::tickRepair(Unit& b, float dt) {
     if (t->hp >= Fixed::fromFloat(t->type->maxHp)) endRepair();   // mended: on to the next order
 }
 
-void World::startDisco(int player) {
+void World::startEmote(int player, int unitId, bool disco, bool append) {
     if (player < 0 || player >= int(players_.size())) return;
+    const auto* u = unit(unitId);
+    if (!u || !u->alive() || u->player != player || !u->type || u->type->isStructure()) return;
     auto& p = players_[size_t(player)];
-    // One emote at a time: ignore if this player is already dancing OR headbanging
-    // (so you can't stack or restart them). Deterministic across peers.
-    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.discoLeft = 10 * int32_t(kTick);
+    if (!append || !p.emoteSequence || p.emoteDisco != disco) {
+        p.emoteUnits.clear();
+        ++p.emoteSequence;
+        p.emoteDisco = disco;
+    }
+    // Large selections may arrive over several server ticks. They join one
+    // trigger; only the viewer's real-time clock controls its duration.
+    p.emoteUnits.insert(unitId);
 }
 
-bool World::discoActive(int player) const {
+void World::startDisco(int player, int unitId, bool append) { startEmote(player, unitId, true, append); }
+void World::startHeadbang(int player, int unitId, bool append) { startEmote(player, unitId, false, append); }
+
+bool World::discoTarget(int player, int unitId) const {
     return player >= 0 && player < int(players_.size()) &&
-           players_[size_t(player)].discoLeft > 0;
+           players_[size_t(player)].emoteSequence && players_[size_t(player)].emoteDisco &&
+           (!unitId || players_[size_t(player)].emoteUnits.contains(unitId));
 }
 
-void World::startHeadbang(int player) {
-    if (player < 0 || player >= int(players_.size())) return;
-    auto& p = players_[size_t(player)];
-    if (p.discoLeft <= 0 && p.headbangLeft <= 0) p.headbangLeft = 10 * int32_t(kTick);
-}
-
-bool World::headbangActive(int player) const {
+bool World::headbangTarget(int player, int unitId) const {
     return player >= 0 && player < int(players_.size()) &&
-           players_[size_t(player)].headbangLeft > 0;
+           players_[size_t(player)].emoteSequence && !players_[size_t(player)].emoteDisco &&
+           (!unitId || players_[size_t(player)].emoteUnits.contains(unitId));
 }
 
 // Retire the queued build order a builder is sitting on, whatever ended the job
@@ -7275,7 +7538,14 @@ void World::updateNavigationExploration() {
     // Seed private masks before starting workers: each can skip cells already
     // explored without reading another worker's writes.
     for (unsigned k=1;k<workers;++k) explorationScratch_[k-1]=navigationExplored_;
-    auto explore=[&](size_t begin,size_t end,std::vector<uint16_t>& revealed) {
+    // Flow snapshots use authoritative exploration, never local display fog.
+    // Each worker records newly revealed tile/player bits privately; publication
+    // is merged after join and is identical for inline and threaded exploration.
+    std::array<std::array<uint16_t,1024>,4> flowRevealed;
+    const int flowTilesX=(hW_+63)/64,flowTilesZ=(hH_+63)/64;
+    const bool notifyFlow=flow_ && flowTilesX*flowTilesZ<=1024;
+    if(notifyFlow)for(unsigned k=0;k<workers;++k)flowRevealed[k].fill(0);
+    auto explore=[&](size_t begin,size_t end,std::vector<uint16_t>& revealed,unsigned worker) {
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
             if (!u.alive() || !u.type || u.underConstruction || u.embarked()) continue;
@@ -7290,7 +7560,11 @@ void World::updateNavigationExploration() {
             retailUpdateSight(u.sightFootprint,u.x,y,u.z,uint8_t(seaLevel_),true,width,height,uint8_t(u.player),
                 [&](int x,int z){return explorationHeights_[size_t(z)*width+x];},
                 [&](int x,int z,int delta,uint16_t) {
-                    if (delta>0) revealed[size_t(z)*width+x]|=viewers;
+                    if (delta>0) {
+                        auto& cell=revealed[size_t(z)*width+x];
+                        if(notifyFlow)flowRevealed[worker][size_t(z/32)*flowTilesX+x/32]|=uint16_t(viewers&~cell);
+                        cell|=viewers;
+                    }
                 },
                 [&](int x,int z,bool active) {
                     // Exploration only adds bits. Already revealed cells need
@@ -7311,13 +7585,17 @@ void World::updateNavigationExploration() {
     for (unsigned k=1;k<workers;++k) {
         const size_t begin=std::min(units_.size(),size_t(k)*chunk);
         const size_t end=std::min(units_.size(),begin+chunk);
-        threads.emplace_back([&,k,begin,end]{explore(begin,end,explorationScratch_[k-1]);});
+        threads.emplace_back([&,k,begin,end]{explore(begin,end,explorationScratch_[k-1],k);});
     }
-    explore(0,std::min(units_.size(),chunk),navigationExplored_);
+    explore(0,std::min(units_.size(),chunk),navigationExplored_,0);
     for (auto& thread:threads) thread.join();
     for (unsigned k=1;k<workers;++k)
         for (size_t i=0;i<navigationExplored_.size();++i)
             navigationExplored_[i]|=explorationScratch_[k-1][i];
+    if(notifyFlow)for(int tile=0;tile<flowTilesX*flowTilesZ;++tile) {
+        uint16_t viewers=0;for(unsigned k=0;k<workers;++k)viewers|=flowRevealed[k][size_t(tile)];
+        if(viewers)flow_->dirty((tile%flowTilesX)*64,(tile/flowTilesX)*64,64,64,viewers);
+    }
 }
 
 void World::updateVisibility() {
@@ -7566,7 +7844,8 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
         if(!u.alive() || !u.type || u.underConstruction || u.orders.empty())continue;
         const auto& o=u.orders[currentLeg(u.orders)];
         if(o.targetId || o.buildType || o.reclaimFeat || o.repairTarget)continue;
-        const float x=o.x.toFloat(),z=o.z.toFloat();
+        const auto target=o.missionTarget.value_or(std::pair{o.x,o.z});
+        const float x=target.first.toFloat(),z=target.second.toFloat();
         if(std::abs(x-fx)<=256 && std::abs(z-fz)<=256)reserved.emplace_back(x,z);
     }
     for (int r = 0; r <= 12; ++r)
@@ -7575,6 +7854,13 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
                 if (std::max(std::abs(i), std::abs(j)) != r) continue;   // ring only
                 const int nx = cx + i, nz = cz + j;
                 if (!g.fits(nx, nz, foot)) continue;
+                // Centre spacing alone admits points inside a large mobile
+                // producer's rectangle. Those children start overlapping it
+                // and cannot take even their first collision-checked step.
+                const auto bodies=searchBodyRect(nx-t->footX/2,nz-t->footZ/2,t->footX,t->footZ);
+                if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[&](const Unit* body) {
+                    return body && body->id!=departingId;
+                })) continue;
                 const float wx = footprintWaypoint(nx, foot).toFloat(), wz = footprintWaypoint(nz, foot).toFloat();
                 // Ring search may retreat toward the birth position when its
                 // preferred exit is occupied. Keep the destination outside that
@@ -8341,8 +8627,17 @@ void World::tickProduction(Unit& u, float dt) {
                 const Unit* tg = unit(ro.targetId);
                 if (!tg || !tg->alive()) continue;
             }
-            nu->orders.push_back(ro);
-            nu->orders.back().issuedTick = tickCounter_;
+            if (!t->canFly && !ro.targetId) {
+                // Raw rally entries belong to the producer. Give each child
+                // the same point controller/arrival handling as a direct order.
+                // This also preserves the requested point across partial routes.
+                order(id,ro.x.toFloat(),ro.z.toFloat(),true);
+                nu->orders.back().attackMove=ro.attackMove;
+                nu->orders.back().patrol=ro.patrol;
+            } else {
+                nu->orders.push_back(ro);
+                nu->orders.back().issuedTick = tickCounter_;
+            }
         }
     if (Unit* pu = unit(producerId)) {
         pu->justBuilt = id;
@@ -8498,6 +8793,13 @@ void World::deliverSearchRoute(int unitId,const std::vector<PathCell>& route,Fix
 }
 
 void World::tickNavigationMovement(Unit& u,Fixed maximum) {
+    // The rectangle is work metadata, never a movement destination. A rejected
+    // site leaves it at the head until the next deposit is tried next tick.
+    if (!u.orders.empty() && u.orders.front().manaBuildArea) {
+        if (u.type->canFly) tickFlightBody(u);
+        else brakeGround(u);
+        return;
+    }
     // Queued mobile production already advanced its hover controller this tick.
     if (u.type->canFly && u.orders.empty() && u.productionSiteId &&
         u.conjureHoverTarget==u.productionSiteId) return;
@@ -8555,11 +8857,14 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             }
             tickFlightMovement(u); notifyFlightOccupancy(u); return;
         }
+        flow::Traffic::Result flowTraffic;
+        if(pathfindingMode_==PathfindingMode::Flowfield && flow_)
+            flowTraffic=flow_->traffic(u);
         Order* completed = nullptr;
         if (rectangleReached && !(legGoal.mission.pending & 0x100))
             completed = &u.orders[currentLeg(u.orders)];
         else if (auto* goal = navigationMissionOrder(u);goal && !goal->buildRectangle) {
-            if (goal->controller && groundMissionAccepts(u,*goal)) completed = goal;
+            if (goal->controller && (groundMissionAccepts(u,*goal) || flowTraffic.settled)) completed = goal;
         }
         if (completed) {
             // 4e5168..4e5186 detaches satisfied circle, ring and rectangle
@@ -8572,10 +8877,15 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             completed->navigationExhausted=true;
             if (uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
         }
-        const Fixed goalRadius = Fixed::fromInt(std::max(16, std::max(u.type->footX, u.type->footZ) * 8));
-        if (!groundMissionOrder(u) && legGoal.goal && !legGoal.targetId && !legGoal.buildType &&
+        const auto flowArrivalTarget=pathfindingMode_==PathfindingMode::Flowfield&&legGoal.missionTarget
+            ? *legGoal.missionTarget : std::pair{legGoal.x,legGoal.z};
+        const int flowApproachRadius=pathfindingMode_==PathfindingMode::Flowfield &&
+            legGoal.groundMission&&(legGoal.attackMove||legGoal.patrol)
+            ? int(legGoal.missionRadius)+4 : 0;
+        const Fixed goalRadius = Fixed::fromInt(std::max({16, std::max(u.type->footX, u.type->footZ) * 8,flowApproachRadius}));
+        if (!groundMissionOrder(u,true) && legGoal.goal && !legGoal.targetId && !legGoal.buildType &&
             !legGoal.reclaimFeat && !legGoal.repairTarget && !legGoal.load && !legGoal.unload &&
-            fxLen(legGoal.x - u.x, legGoal.z - u.z) < goalRadius) {
+            fxLen(flowArrivalTarget.first - u.x, flowArrivalTarget.second - u.z) < goalRadius) {
             cancelPath(u);
             dropLeg(u);
             u.routeStamp = -1;
@@ -8600,13 +8910,31 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             !u.orders.front().unload &&
             ((!u.orders[currentLeg(u.orders)].load && !u.orders[currentLeg(u.orders)].groundMission && !u.orders[currentLeg(u.orders)].buildRectangle) ||
              u.orders[currentLeg(u.orders)].controller);
-        if (u.routeStamp < 0 && routeable && !paths_.pending(u.id)) {
+        if (u.routeStamp < 0 && routeable && !pathPending(u.id)) {
             const Order& legEnd = u.orders[currentLeg(u.orders)];
             if (!requestPath(u, legEnd.x.toFloat(), legEnd.z.toFloat()))
                 u.routeStamp = int32_t(tickCounter_);   // near-goal: hand the leg
                                                         // to the ladder's timer
         }
-        if (u.routeStamp >= 0 && routeable) {
+        const bool flowRetryReady=!u.routeFailed ||
+            tickCounter_-uint32_t(u.routeStamp)>=30u;
+        if(pathfindingMode_==PathfindingMode::Flowfield && flowRetryReady && flowTraffic.repath && routeable && !pathPending(u.id)) {
+            const auto& goal=u.orders[currentLeg(u.orders)];
+            requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+        }
+        if(pathfindingMode_==PathfindingMode::Flowfield && flowRetryReady && flow_ && routeable && !pathPending(u.id) && flow_->routeBlocked(u)) {
+            auto& goal=u.orders[currentLeg(u.orders)];
+            goal.navigationExhausted=true;
+            requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+        }
+        // Mobile congestion belongs to local traffic. Rebuilding an unchanged
+        // shared route every eight blocked ticks cannot move the blocking body.
+        if(pathfindingMode_==PathfindingMode::Flowfield && flowRetryReady && routeable && !pathPending(u.id) &&
+            u.orders[currentLeg(u.orders)].navigationConsumed) {
+            const auto& goal=u.orders[currentLeg(u.orders)];
+            requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+        }
+        if (pathfindingMode_==PathfindingMode::Retail && u.routeStamp >= 0 && routeable) {
             const int32_t elapsed = int32_t(tickCounter_) - u.routeStamp;
             const uint32_t sc = uint32_t(u.type->halfCellTicks);
             const bool water = u.type->floater && u.type->minWaterDepth > 0;
@@ -8720,7 +9048,9 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // over one pixel, which is exactly what it looked like.)
         float foot = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
         float arrive = o.goal ? std::max(16.0f, foot) : 3.0f;
-        if (!groundMissionOrder(u) && !legGoal.buildRectangle && (u.type->canFly || o.goal) && dist < arrive) {
+        const float arrivalDistance=pathfindingMode_==PathfindingMode::Flowfield&&o.goal&&legGoal.missionTarget
+            ? fxLen(flowArrivalTarget.first-u.x,flowArrivalTarget.second-u.z).toFloat() : dist;
+        if (!groundMissionOrder(u,true) && !legGoal.buildRectangle && (u.type->canFly || o.goal) && arrivalDistance < arrive) {
             if (o.buildType || o.reclaimFeat || o.repairTarget)
                 return;   // the job is claimed above; its order blocks the queue
             if (o.targetId == 0 || !o.goal) {
@@ -8737,7 +9067,22 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // look-ahead point in the current route.
         const RetailSteeringPoint next=!o.goal && u.orders.size()>1
             ? RetailSteeringPoint{u.orders[1].x,u.orders[1].z}:RetailSteeringPoint{o.x,o.z};
-        const auto displacement=steerGround(u,{o.segmentX,o.segmentZ},{o.x,o.z},next,target);
+        if(pathfindingMode_==PathfindingMode::Flowfield && flowTraffic.wait) {
+            brakeGround(u);
+            return;
+        }
+        auto steeringStart=RetailSteeringPoint{o.segmentX,o.segmentZ};
+        auto steeringEnd=RetailSteeringPoint{o.x,o.z};
+        auto steeringNext=next;
+        if(pathfindingMode_==PathfindingMode::Flowfield && flowTraffic.detour) {
+            // Local traffic only changes this tick's steering segment. The
+            // owning mission and queued commands retain their exact targets.
+            steeringStart={u.x,u.z};
+            steeringEnd={footprintWaypoint(flowTraffic.detour->x,u.type->footX),
+                         footprintWaypoint(flowTraffic.detour->z,u.type->footZ)};
+            steeringNext=steeringEnd;
+        }
+        const auto displacement=steerGround(u,steeringStart,steeringEnd,steeringNext,target);
         const Fixed mx=displacement.s,mz=displacement.c;
         commitGroundStep(u,mx,mz);
 
@@ -8827,13 +9172,6 @@ void World::tick(float dt) {
     transportEffects_.clear();
     scriptEmissions_.clear();
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
-    // Cosmetic disco emote countdown (Shift+D). Deterministic across peers but not
-    // hashed -- drives client-side monarch dancing only.
-    for (auto& tm : players_) {
-        if (tm.discoLeft > 0) --tm.discoLeft;
-        if (tm.headbangLeft > 0) --tm.headbangLeft;
-    }
-
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
     for (auto& u : units_) {
@@ -9440,6 +9778,8 @@ void World::tick(float dt) {
         // Retail dispatches each unit's missions immediately before its mover,
         // not all ground missions before every other unit's activity.
         if (u.constructionHolding && u.buildSiteId) continue;
+        tickManaBuildArea(u);
+        tickPatrolRepair(u);
         if (g_phase) {
             const auto start=std::chrono::steady_clock::now();
             tickGroundMission(u);
@@ -9568,8 +9908,10 @@ void World::tick(float dt) {
             u.reclaimId = u.orders.front().reclaimFeat;
             u.reclaimEffectDelay = 0;
         }
-        if (!u.orders.empty() && u.orders.front().repairTarget && u.repairId == 0)
-            u.repairId = u.orders.front().repairTarget;
+        if (!u.orders.empty() && u.repairId == 0) {
+            const auto& leg=u.orders[currentLeg(u.orders)];
+            u.repairId=leg.patrolRepair ? leg.repairTarget : u.orders.front().repairTarget;
+        }
 
         bool groundMovementHandled=false;
         const size_t currentOrder=u.orders.empty()?0:currentLeg(u.orders);
@@ -9653,7 +9995,8 @@ void World::tick(float dt) {
     // Retail updates missions/movers in 51d3e0 before 4f6c70 runs 416430
     // (5263aa, then 526411). Install completed routes only after movement,
     // and admit new searches from the position and occupancy after that step.
-    if (pathService_) paths_.tick(
+    if(pathService_ && pathfindingMode_==PathfindingMode::Flowfield) {if(flow_)flow_->tick();}
+    if (pathService_ && pathfindingMode_==PathfindingMode::Retail) paths_.tick(
         [&](int unitId, int cx, int cz) {
             const Unit* u = unit(unitId);
             if (!u || !u->type) return int(kCellImpassable);
@@ -10191,7 +10534,9 @@ uint64_t World::stateHash() const {
             for (int value : stats) mix(uint32_t(value));
         }
     }
+    if(pathfindingMode_==PathfindingMode::Flowfield) {mix(0x464c4f574649454cull);if(flow_)mix(flow_->checksum());}
     if (doubleSight_) mix(0x44424c5349474854ull);
+    if (patrolRepairs_) mix(0x5054524c52455052ull);
     mix(nextMovementController_);
     mix(navigationExplored_.size());
     mix(uint32_t(restoredNavigationViewer_));
@@ -10283,6 +10628,10 @@ uint64_t World::stateHash() const {
                 mix(uint32_t(a.minX));mix(uint32_t(a.minZ));mix(uint32_t(a.maxX));mix(uint32_t(a.maxZ));
                 mix(a.approached);
             }
+            if (order.patrolRepair) {
+                mix(0x5054524c52455052ull);
+                mix(uint32_t(order.repairTarget));mix(uint32_t(order.clickX.v));mix(uint32_t(order.clickZ.v));
+            }
             if (order.park) {
                 mix(0x5041524bu);const auto& p=*order.park;
                 mix(p.target);mix(p.padding);mix(p.attempts);mix(uint32_t(p.permanent));mix(p.ring.has_value());
@@ -10303,6 +10652,15 @@ uint64_t World::stateHash() const {
             }
             mix(order.groundMission);mix(order.navigationExhausted);mix(order.navigationConsumed);
             mix(order.buildRectangle.has_value());
+            if (order.manaBuildArea) {
+                const auto& area=*order.manaBuildArea;
+                mix(0x4d414e4141524541ull);
+                mix(uint32_t(area.minX.v));mix(uint32_t(area.maxX.v));
+                mix(uint32_t(area.minZ.v));mix(uint32_t(area.maxZ.v));
+                mix(area.nextSpot);mix(area.exploring);
+                mix(area.type->id.size());
+                for (unsigned char c:area.type->id) mix(c);
+            }
             if (u.type && u.type->canFly) {
                 mix(order.landing);
                 mix(order.flightMoveMission);
@@ -10607,7 +10965,7 @@ uint64_t World::stateHash() const {
     mix(fWork);
     mix(corpseFootprints_.size());
     for (const auto& [id,footprint]:corpseFootprints_) {
-        mix(uint32_t(id));mix(uint32_t(footprint.x));mix(uint32_t(footprint.z));mix(uint32_t(footprint.type));
+        mix(uint32_t(id));mix(uint32_t(footprint.x));mix(uint32_t(footprint.z));mix(uint32_t(footprint.type));mix(uint32_t(footprint.damage));
     }
     for (const auto& corpse:units_) if (!corpse.alive() &&
         (corpse.deadFor<kRetiredTicks || corpseFootprints_.contains(corpse.id))) {
@@ -10669,6 +11027,15 @@ World::World() {
         [this](int id,int x,int z,int retry,PathCell start) { return searchGrade(id,x,z,retry,start); },
         [this](int id) { finishSearchGrade(id); }
     });
+}
+void World::setPathfindingMode(PathfindingMode mode) {
+    if(mode!=PathfindingMode::Retail && mode!=PathfindingMode::Flowfield)
+        throw std::invalid_argument("invalid pathfinding mode");
+    if(tickCounter_ && mode!=pathfindingMode_)throw std::logic_error("pathfinding mode is fixed for the match");
+    if(mode==PathfindingMode::Flowfield&&!nav_.empty()&&!flow::MemoryPlan::forMap(nav_.width(),nav_.height()).supported)
+        throw std::invalid_argument("Flowfield supports maps up to 64x64 within its storage budget");
+    if(mode==pathfindingMode_)return;
+    paths_.clear();flow_.reset();pathfindingMode_=mode;
 }
 World::~World() {
     if (visRunning_) visWorker_.join();   // the fog worker outlives nothing

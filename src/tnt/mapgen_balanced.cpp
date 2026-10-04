@@ -14,8 +14,21 @@ const char* layoutName(uint8_t layout) {
     switch (layout) {
         case Lakes: return "Lakes";
         case Islands: return "Islands";
+        case Maze: return "Taros Maze";
+        case Ports: return "Veruna Ports";
+        case Riverlands: return "Aramon Riverlands";
+        case Jungle: return "Zhon Clearings";
+        case Highlands: return "Creon Highlands";
         default: return "Mainland";
     }
+}
+
+uint8_t themedLayout(uint8_t world) {
+    constexpr uint8_t layouts[]={Riverlands,Maze,Ports,Jungle,Highlands};
+    return layouts[world % kMapTypes];
+}
+bool automaticWater(uint8_t layout) {
+    return layout==Islands || layout==Ports || layout==Riverlands || layout==Maze || layout==Highlands;
 }
 
 namespace {
@@ -111,19 +124,34 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     for (const auto s:r.starts) {
         mark(s.first,s.second,43,2); // home economy: terrain is flat; scenery allowed only outside base/routes
         mark(s.first,s.second,14,1);
-        if (p.layout!=Islands) reserveRoute(s,{w/2,h/2},8);
+        if (p.layout!=Islands && p.layout!=Maze && p.layout!=Ports) reserveRoute(s,{w/2,h/2},8);
+    }
+    if (p.layout==Ports) for (size_t i=0;i<r.starts.size();++i) {
+        // Coastal settlements surround a shared basin. Keep the perimeter dry;
+        // radial routes would split the basin into disconnected ponds.
+        const auto a=r.starts[i];
+        reserveRoute(a,{a.first< w/2 ? 48:w-48,a.second},8);
+    }
+    if (p.layout==Ports) {
+        reserveRoute({48,48},{w-48,48},8);reserveRoute({w-48,48},{w-48,h-48},8);
+        reserveRoute({w-48,h-48},{48,h-48},8);reserveRoute({48,h-48},{48,48},8);
     }
     const int islandCols=p.players<=4?2:3;
     const int islandRows=(p.players+islandCols-1)/islandCols;
     const int islandRadius=48+32*std::max(0,(std::min(w/islandCols,h/islandRows)-192)/128);
-    // Coherent low-frequency water; lakes stay inland, mainland may meet the map
-    // edge. Zero means genuinely dry. Amount is an intensity, not a coverage %.
+    // Coherent low-frequency water; legacy lakes stay inland, new lakes may
+    // reach the map edge. Zero means genuinely dry. Amount is an intensity, not a coverage %.
     for (int z=0;z<=sh;++z) for (int x=0;x<=sw;++x) {
         bool water=p.layout==Islands;
-        if (p.layout!=Islands&&p.waterDensity) {
+        if (!automaticWater(p.layout)&&p.waterDensity) {
             const int threshold=p.layout==Lakes ? 75+int(p.waterDensity)*90/255 : 25+int(p.waterDensity)*115/255;
             water=int(fractal(p.seed,x*32,z*32,std::max(w,h)))<threshold;
-            if (p.layout==Lakes&&(x<1||z<1||x>sw-1||z>sh-1)) water=false;
+            if (p.formatVer<5&&p.layout==Lakes&&(x<1||z<1||x>sw-1||z>sh-1)) water=false;
+        }
+        if (p.layout==Ports) water=x>=3 && x<=sw-3 && z>=3 && z<=sh-3;
+        if (p.layout==Riverlands) {
+            const int bend=int(noise(p.seed,x*32,0,w/3)%3)-1;
+            water=std::abs(z-sh/2-bend)<=1 || std::abs(x-sw/2)<=1;
         }
         for (const auto [sx,sz]:r.starts) {
             const int dx=std::abs(x*32-sx),dz=std::abs(z*32-sz);
@@ -219,13 +247,102 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             throw std::runtime_error("Random map needs the retail coastline sections for this world");
         stamp(*piece,x*32,z*32);
     }
+    // Themed uplands use complete authored cliff/hillside pieces, not painted
+    // blockers or height-only walls. A low corner uses the shore kit's wet role.
+    if (p.layout==Maze || p.layout==Highlands) {
+        std::vector<uint8_t> high(wet.size(),1);
+        const auto carve=[&](int x,int z) {
+            for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)
+                if(x+dx>=0&&z+dz>=0&&x+dx<=sw&&z+dz<=sh)
+                    high[size_t(z+dz)*(sw+1)+x+dx]=0;
+        };
+        const auto corridor=[&](Point a,Point b) {
+            reserveRoute({a.first*32,a.second*32},{b.first*32,a.second*32},8);
+            reserveRoute({b.first*32,a.second*32},{b.first*32,b.second*32},8);
+            while(a.first!=b.first) {carve(a.first,a.second);a.first+=a.first<b.first?1:-1;}
+            while(a.second!=b.second) {carve(a.first,a.second);a.second+=a.second<b.second?1:-1;}
+            carve(a.first,a.second);
+        };
+        if(p.layout==Maze) {
+            // Seeded depth-first maze on a coarse lattice. Wide corridors admit
+            // armies; home clearings connect to the nearest maze node.
+            const int cols=(sw-6)/4+1,rows=(sh-6)/4+1;
+            std::vector<uint8_t> seen(size_t(cols)*rows);
+            std::vector<Point> stack{{0,0}};seen[0]=1;
+            uint64_t rng=p.seed^0x4d415a45ULL;
+            while(!stack.empty()) {
+                auto [x,z]=stack.back(); std::vector<Point> next;
+                for(auto [dx,dz]:std::array<Point,4>{{{1,0},{0,1},{-1,0},{0,-1}}})
+                    if(x+dx>=0&&z+dz>=0&&x+dx<cols&&z+dz<rows&&!seen[size_t(z+dz)*cols+x+dx]) next.emplace_back(x+dx,z+dz);
+                if(next.empty()) {stack.pop_back();continue;}
+                auto n=next[splitmix(rng)%next.size()];seen[size_t(n.second)*cols+n.first]=1;
+                corridor({3+4*x,3+4*z},{3+4*n.first,3+4*n.second});stack.push_back(n);
+            }
+            // Extend edge corridors to the boundary rather than enclosing the
+            // entire battlefield in an unbroken cliff wall. Keep old recipes stable.
+            if(p.formatVer>=7) {
+                for(int x=0;x<cols;++x) {
+                    corridor({3+4*x,3},{3+4*x,0});
+                    corridor({3+4*x,3+4*(rows-1)},{3+4*x,sh});
+                }
+                for(int z=0;z<rows;++z) {
+                    corridor({3,3+4*z},{0,3+4*z});
+                    corridor({3+4*(cols-1),3+4*z},{sw,3+4*z});
+                }
+            }
+            for(auto [x,z]:r.starts) corridor({x/32,z/32},
+                {3+4*std::clamp((x/32-1)/4,0,cols-1),3+4*std::clamp((z/32-1)/4,0,rows-1)});
+        } else {
+            for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x)
+                high[size_t(z)*(sw+1)+x]=p.reliefDensity && fractal(p.seed^0x48494748,x*32,z*32,std::max(w,h))<80+int(p.reliefDensity)*100/255;
+        }
+        for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
+            for(auto [sx,sz]:r.starts) if(std::abs(x*32-sx)<=48&&std::abs(z*32-sz)<=48) high[size_t(z)*(sw+1)+x]=0;
+            if(p.layout==Highlands) for(int dz=-24;dz<=24;dz+=8)for(int dx=-24;dx<=24;dx+=8) {
+                const int nx=x*32+dx,nz=z*32+dz;
+                if(nx>=0&&nz>=0&&nx<w&&nz<h&&(reserved[size_t(nz)*w+nx]&1)) high[size_t(z)*(sw+1)+x]=0;
+            }
+        }
+        const auto highCase=[&](int x,int z) {const size_t i=size_t(z)*(sw+1)+x;
+            return high[i]|(high[i+1]<<1)|(high[i+sw+1]<<2)|(high[i+sw+2]<<3);};
+        bool clean=false;while(!clean) {clean=true;
+            for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {const int c=highCase(x,z);
+                if(c==6||c==9) {high[size_t(z)*(sw+1)+x+(c==6)]=0;clean=false;}}
+        }
+        const bool maze=p.layout==Maze;
+        const char* creonNames[]={"n","s","e","w","nw","ne","se","sw","n_w","n_e","s_w","s_e"};
+        const auto* top=load(maze?"Sections/Taros/High Flats/high_ground.TNT":"sections/creon/flatties/highland512.tnt");
+        if(!top||top->width!=32||top->height!=32) throw std::runtime_error("Themed map needs retail high-ground sections");
+        for(int z=0;z<sh;++z)for(int x=0;x<sw;++x) {
+            const int c=highCase(x,z);
+            if(c==0) continue;
+            const tnt::Map* piece=top;
+            if(c!=15) {
+                const int role=kCaseRole[15-c];
+                const std::string path=maze?std::string("Sections/Taros/Low to High Cliffs/")+kShoreKit[Taros].name[role]+"01.TNT":
+                    std::string("sections/creon/hillsides/")+creonNames[role]+"01.tnt";
+                piece=load(path);
+            }
+            if(!piece||piece->width!=32||piece->height!=32) throw std::runtime_error("Themed map needs retail cliff/hillside sections");
+            stamp(*piece,x*32,z*32);
+        }
+    }
     // Authored relief: copy artwork AND its matching heights. Only self-contained
     // low-ground patches with near-level edges are admitted. No invisible mesas.
     std::vector<const tnt::Map*> hills;
-    if(p.reliefDensity) {
+    if(p.reliefDensity && p.layout!=Maze && p.layout!=Highlands) {
         auto paths=vfs.list(kReliefDir[p.mapType]);std::sort(paths.begin(),paths.end());
         for(const auto& path:paths) {
-            if(!hpi::MountSet::key(path).ends_with(".tnt"))continue;
+            const auto key=hpi::MountSet::key(path);
+            if(!key.ends_with(".tnt"))continue;
+            if(p.formatVer>=6) {
+                // Audited retail surface families: matching height alone does
+                // not make Veruna grass breakers fit sand, or Taros cobbles fit
+                // low ground. These kits have no surrounding transition here.
+                if(p.mapType==Veruna && key.find("/breaker")!=std::string::npos)continue;
+                if(p.mapType==Taros && (key.ends_with("/unique23.tnt") ||
+                    key.ends_with("/unique25.tnt") || key.ends_with("/unique27.tnt")))continue;
+            }
             const auto* piece=load(path);if(!piece||piece->width>64||piece->height>64)continue;
             bool good=true;int high=land;
             for(int z=0;z<piece->height;++z)for(int x=0;x<piece->width;++x) {
@@ -394,7 +511,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         const size_t i=size_t(z)*w+x;
         if(reserved[i]&1||claim[i]||!reachable[i])continue;
         const uint64_t roll=splitmix(featureRng);
-        const int forest=int(noise(p.seed^0x715921,x,z,24));
+        const int forest=int(noise(p.seed^0x715921,x,z,24)) + (p.layout==Jungle?60:0);
         const int rocks=int(noise(p.seed^0x359742,x,z,18));
         const char* name=nullptr;
         if(forest>125&&int(roll%10000)<int(p.treeDensity)*(forest-110)*4/160)
@@ -424,7 +541,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         if(p.layout!=Islands)for(const auto target:r.starts)
             if(d[size_t(target.second)*w+target.first]<0)throw std::runtime_error("Random map scenery blocks an army route");
     }
-    if(p.layout==Islands) {
+    if(p.layout==Islands || p.layout==Ports) {
         sim::NavGrid::Limits shipLimits;shipLimits.minWaterDepth=15;
         sim::NavGrid ships(m.heights,w,h,m.seaLevel,shipLimits);ships.setObstacles(&obstacles);
         std::vector<int> waterDistances;
@@ -443,7 +560,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                 if(!waterDistances.empty()&&waterDistances[size_t(z)*w+x]<0)continue;
                 best={x,z};bestDistance=d;
             }
-            if(best.first<0||bestDistance>(islandRadius+96)*(islandRadius+96))throw std::runtime_error("Random island has no usable connected harbor: start="+std::to_string(s.first)+","+std::to_string(s.second)+" best="+std::to_string(best.first)+","+std::to_string(best.second)+" d2="+std::to_string(bestDistance));
+            if(best.first<0||bestDistance>(p.layout==Ports?std::max(w,h)*std::max(w,h):(islandRadius+96)*(islandRadius+96)))throw std::runtime_error("Random island has no usable connected harbor: start="+std::to_string(s.first)+","+std::to_string(s.second)+" best="+std::to_string(best.first)+","+std::to_string(best.second)+" d2="+std::to_string(bestDistance));
             if(waterDistances.empty())waterDistances=distances(ships,best,8);
             r.harbors.push_back(best);
         }

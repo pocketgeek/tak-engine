@@ -1,4 +1,5 @@
 #pragma once
+#include "client/emotetiming.h"
 #include "client/retailmodellighting.h"
 
 // GameView -- the in-world game client: rendering, input, the retail HUD, fog,
@@ -433,6 +434,8 @@ public:
     // faction playlist once the match starts. Called every frame; only (re)starts the
     // playlist on a state change so it doesn't restart the current track.
     int musicMode_ = 0;   // 0 = none yet, 1 = lobby, 2 = in-game
+    tak::EmoteTiming emoteTiming_[8];
+    uint64_t emoteNowMs_ = 0; // captured once per rendered frame, safe for geometry workers
     bool discoWas_[8] = {};       // per-player disco state, to fire the track once on start
     bool headbangWas_[8] = {};    // ...and the headbang state
 
@@ -455,6 +458,7 @@ public:
     // the Create screen (the browser is empty by design) and mark it single-player
     // (labels change, no password / no game browser).
     void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
+    void prepareLobbyMaps(tak::LoadScreen& progress) { buildMapList(&progress); }
     void openCrusades(uint32_t territory = 0);
     uint32_t crusadesSelectedTerritory() const;
     std::string takeCrusadesReplayPath();
@@ -800,9 +804,9 @@ public:
     tak::MonarchAlert monarchAlert_;
     std::deque<tak::sim::World::SoundReq> missionSoundQueue_;
     int frameWinningTeam() const { return front().winningTeam; }
-    // world_.discoActive/headbangActive(p) == players_[p].{disco,headbang}Left > 0.
-    bool frameDiscoActive(int p) const { return framePlayer(p).discoLeft > 0; }
-    bool frameHeadbangActive(int p) const { return framePlayer(p).headbangLeft > 0; }
+    bool frameDiscoActive(int p) const { return p>=0 && p<8 && emoteTiming_[p].active(emoteNowMs_) && framePlayer(p).emoteDisco; }
+    bool frameHeadbangActive(int p) const { return p>=0 && p<8 && emoteTiming_[p].active(emoteNowMs_) && !framePlayer(p).emoteDisco; }
+    float emoteSeconds(int p) const { return p>=0 && p<8 ? emoteTiming_[p].seconds(emoteNowMs_) : 0.f; }
     // Count this type in the builder's snapshotted production queue.
     int frameQueuedCount(int builderId, const tak::sim::UnitType* type) const;
 
@@ -1208,10 +1212,13 @@ private:
                 }
             }
         }
-        modelAA_.render(ren_,bounds,[&]{
+        modelAA_.render(ren_,bounds,[&](SDL_FPoint offset,SDL_Rect tile){
             triBatch_.clear();SDL_Texture* cur=nullptr;
             auto flush=[&]{
-                if(!triBatch_.empty())SDL_RenderGeometry(ren_,cur,triBatch_.data(),int(triBatch_.size()),nullptr,0);
+                if(!triBatch_.empty()) {
+                    const auto vertices=modelAA_.translated(triBatch_,offset,tile);
+                    if(!vertices.empty())SDL_RenderGeometry(ren_,cur,vertices.data(),int(vertices.size()),nullptr,0);
+                }
                 triBatch_.clear();
             };
             for(const auto& t:tris_) {
@@ -1521,7 +1528,7 @@ private:
     // No SDL calls and only reads shared state (models/textures/heightmap/anim), so
     // it is safe to run for many units at once on the worker pool. drawUnit() then
     // just submits g.runs. `scratch` is a reusable per-thread triangle buffer.
-    // A monarch (the five hero units) -- the only thing that disco-dances.
+    // A monarch (the five hero units).
     static bool isMonarchType(const tak::sim::UnitType* t) {
         if (!t) return false;
         for (int i = 0; i < 5; ++i) if (t->id == tak::sim::kMonarchs[i]) return true;
@@ -1536,9 +1543,9 @@ private:
         auto cl = [](float v) { return Uint8(std::clamp(v, 0.0f, 1.0f) * 255.0f); };
         return SDL_Color{cl(r), cl(g), cl(b), 255};
     }
-    // Is this unit currently disco-dancing (a monarch whose player hit Shift+D)?
+    // Is this unit a captured target of the active Shift+D emote?
     bool dancing(const UnitR& u) const;
-    // ...or headbanging to heavy metal (a monarch whose player hit Shift+H)?
+    // ...or of the active Shift+H headbang emote?
     bool headbanging(const UnitR& u) const;
 
     // The projected silhouette for one unit, into g.shadowVerts. Split out because
@@ -2028,7 +2035,10 @@ private:
     std::unordered_set<int> selSet_;   // rebuilt each draw for O(1) membership
     bool dragging_ = false;
     bool buildDrag_ = false;          // shift-drag placing a line of buildings
+    bool manaBuildDrag_ = false;      // plain left-drag places lodestones in a box
     float bdX0_ = 0, bdZ0_ = 0;       // build-drag start (world)
+    float bdSx0_ = 0, bdSy0_ = 0;
+    bool bdQueue_ = false;
     bool reclaimDrag_ = false;        // right-drag box: a builder clears the area
     float rdX0_ = 0, rdZ0_ = 0;       // reclaim-drag start (world)
     float rdSx0_ = 0, rdSy0_ = 0;     // reclaim-drag start (screen; click-vs-drag test)
@@ -2129,6 +2139,7 @@ private:
     std::string createName_ = "game", createPass_, joinPass_, chatDraft_;
     bool createCrusades_ = false;
     bool createDoubleSight_ = false;
+    tak::sim::PathfindingMode createPathfindingMode_ = tak::sim::PathfindingMode::Retail;
     bool createSpeedUnlock_ = false;
     uint16_t createUnitCap_ = tak::net::GameOptions{}.unitCap;
 #ifndef NDEBUG
@@ -2283,10 +2294,10 @@ private:
     static bool isStructure(const tak::sim::UnitType* t) { return !t || t->maxVel <= tak::sim::Fixed(); }
     // Retail Glide skips both `noshadow` and `floater` types (KINGDOMS.icd
     // 0x4ec8d8 / 0x4ecac6). We deliberately allow floating units to cast the
-    // same animated silhouettes as land units. The explicit noShadow flag and
-    // the global Shadows option still apply; this is a presentation-only addition.
+    // same animated silhouettes as land units. Lodestones also deliberately cast
+    // shadows despite authored exclusions. The global Shadows option still applies.
     static bool castsShadow(const tak::sim::UnitType* t) {
-        return t && !t->noShadow;
+        return t && (!t->noShadow || (t->onMana && isStructure(t)));
     }
     // EVERY unit that casts at all casts a projected silhouette -- there is no
     // second kind of shadow in the Glide renderer we target. The shadow is emitted
@@ -3156,7 +3167,7 @@ private:
     // Build the picker's map list once: names + paths from the VFS, enriched with
     // each map's player count and size read from its .ota GlobalHeader (a small text
     // file -- numplayers + "size = W x H" -- so no TNT decompression per map).
-    void buildMapList();
+    void buildMapList(tak::LoadScreen* progress = nullptr);
 
     // Sort the map list by the active key (name / players / size), tie-broken by name,
     // in the chosen direction.
@@ -3231,6 +3242,7 @@ private:
 
     // Queue a whole line of the current building from a shift-drag.
     void placeBuildLine(float x0, float z0, float x1, float z1);
+    void placeManaBuildBox(float x0,float z0,float x1,float z1,bool queue);
 
     void drawGhost();
 

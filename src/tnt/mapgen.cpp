@@ -26,12 +26,26 @@ std::vector<std::string> assetPaths(const hpi::Vfs& vfs) {
     for (const auto* prefix : kReliefDir)
         for (const auto& path : vfs.list(prefix))
             if (hpi::MountSet::key(path).ends_with(".tnt")) paths.push_back(path);
+    for (const auto* prefix : {"Sections/Taros/Low to High Cliffs/", "Sections/Taros/High Flats/",
+                               "sections/creon/hillsides/", "sections/creon/flatties/"})
+        for (const auto& path : vfs.list(prefix))
+            if (hpi::MountSet::key(path).ends_with(".tnt")) paths.push_back(path);
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
     return paths;
 }
 
 Params sanitize(Params p) {
+    std::string name;
+    if (p.formatVer >= 5) for (unsigned char c : p.name) {
+        if (name.size() == 24) break;
+        // Safe both as an archive path and as an unquoted OTA value.
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == ' ' || c == '-' || c == '_') name += char(c);
+    }
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    const auto first = name.find_first_not_of(' ');
+    p.name = first == std::string::npos ? std::string{} : name.substr(first);
     if (p.mapType >= kMapTypes) p.mapType = Aramon;
     // Section multiples: new recipes support 64x64; legacy seeds keep their cap.
     auto fix = [p](uint16_t v) -> uint16_t {
@@ -42,9 +56,12 @@ Params sanitize(Params p) {
     p.heightCells = fix(p.heightCells);
     p.players = uint8_t(std::clamp<int>(p.players, 2, 8));
     if (p.formatVer >= 3) {
-        p.layout = std::min<uint8_t>(p.layout, Islands);
+        p.layout = std::min<uint8_t>(p.layout, p.formatVer >= 6 ? kLayouts-1 : Islands);
+        if (p.layout >= Maze) for (uint8_t world=0;world<kMapTypes;++world)
+            if (themedLayout(world)==p.layout) p.mapType=world;
         const int minimum = p.layout == Lakes ? (p.players > 4 ? 512 : 384) : (p.players > 4 ? 384 : 256);
         int minW = minimum, minH = minimum;
+        if (p.layout >= Maze) minW = minH = p.players > 4 ? 768 : 512;
         if (p.layout == Islands) {
             const int cols = p.players <= 4 ? 2 : 3;
             const int rows = (p.players + cols - 1) / cols;
@@ -455,12 +472,13 @@ std::string encodeMapId(const Params& pin) {
     b.push_back(char(p.waterDensity));
     b.push_back(char(p.reliefDensity));
     if (p.formatVer >= 3) b.push_back(char(p.layout));
+    if (p.formatVer >= 5) b += p.name;
     return std::string(kMagic) + toHex(b);
 }
 
 Params decodeMapId(const std::string& id) {
     Params p;
-    if (!isGeneratedMapId(id)) return p;
+    if (!isGeneratedMapId(id) || id.size() > 98 || (id.size() - 6) % 2) return p;
     // De-hex the payload.
     std::string raw;
     for (size_t i = 6; i + 1 < id.size(); i += 2) {
@@ -472,7 +490,9 @@ Params decodeMapId(const std::string& id) {
     auto u16 = [&](size_t o) -> uint16_t { return uint16_t(u8(o) | (u8(o + 1) << 8)); };
     if (raw.size() >= 19) {
         p.formatVer = u16(0);
-        if (p.formatVer > 4 || (p.formatVer >= 3 && raw.size() != 22)) return Params{};
+        if (p.formatVer > 7 || (p.formatVer >= 3 && p.formatVer <= 4 && raw.size() != 22) ||
+            (p.formatVer >= 5 && (raw.size() < 22 || raw.size() > 46))) return Params{};
+        if (p.formatVer >= 5) p.name = raw.substr(22);
         if (p.formatVer >= 3) p.layout = u8(21);
         uint64_t s = 0; for (int i = 0; i < 8; ++i) s |= uint64_t(u8(2 + i)) << (8 * i);
         p.seed = s;
@@ -498,6 +518,7 @@ Params decodeMapId(const std::string& id) {
 
 std::string friendlyLabel(const Params& pin) {
     Params p = sanitize(pin);
+    if (!p.name.empty()) return p.name;
     static const char* kNames[kMapTypes] = {"Aramon", "Taros", "Veruna", "Zhon", "Creon"};
     int u = p.widthCells / 32, v = p.heightCells / 32;
     // ASCII only: the lobby draws this with the 5x7 block font, which has no glyph

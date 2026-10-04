@@ -5,7 +5,7 @@
 // client and the server referee build the BYTE-IDENTICAL map from the same seed --
 // the generated terrain/features feed the hashed lockstep sim, so it must agree on
 // every peer. The parameters ride inside the mapId string ("~gen1~<hex>"), which the
-// lobby threads to every peer. Protocol 203 supports v4 recipes and verified map sharing.
+// lobby threads to every peer. Protocol 218 supports v7 open-edge maze recipes.
 
 #include "tnt/tnt.h"
 
@@ -22,12 +22,15 @@ namespace tak::mapgen {
 // Matches matchsetup faction ids: 0=aramon 1=taros 2=veruna 3=zhon 4=creon.
 enum MapType : uint8_t { Aramon = 0, Taros = 1, Veruna = 2, Zhon = 3, Creon = 4, kMapTypes };
 
-enum Layout : uint8_t { Mainland = 0, Lakes = 1, Islands = 2 };
+enum Layout : uint8_t { Mainland = 0, Lakes = 1, Islands = 2, Maze, Ports, Riverlands, Jungle, Highlands, kLayouts };
 const char* layoutName(uint8_t layout);
+uint8_t themedLayout(uint8_t world);
+bool automaticWater(uint8_t layout);
 
 struct Params {
-    uint16_t formatVer = 4;          // Older recipes retain their original terrain/features
+    uint16_t formatVer = 7;          // Older recipes retain their original terrain/features
     uint64_t seed = 1;
+    std::string name;               // v5: optional ASCII map title, up to 24 characters
     uint8_t  mapType = Aramon;
     uint16_t widthCells = 256, heightCells = 256;   // multiples of 32, clamped
     uint8_t  players = 2;            // 2..8

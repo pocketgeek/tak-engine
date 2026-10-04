@@ -101,9 +101,38 @@ int main() {
               std::to_string(out.slotAiLevel[4]));
     }
 
+    std::printf("pathfinding mode and legacy migration:\n");
+    for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Flowfield}) {
+        auto in = sample(); in.mission.clear(); in.pathfindingMode = mode;
+        Writer w; writeReplayHeader(w, in);
+        const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 2;
+        ReplayHeader out; uint32_t fmt=0, proto=0;
+        Reader r(w.b.data()+4,w.b.size()-4);
+        check(readReplayHeader(r,out,fmt,proto) && out.pathfindingMode==mode,
+              "explicit skirmish pathfinder survives recording");
+        w.b[modeAt] = 2;
+        Reader invalid(w.b.data()+4,w.b.size()-4);
+        check(!readReplayHeader(invalid,out,fmt,proto), "unknown pathfinder is refused");
+        w.b.erase(w.b.begin()+modeAt); w.b[4]=10; w.b[8]=219;
+        Reader old(w.b.data()+4,w.b.size()-4);
+        out.pathfindingMode=tak::sim::PathfindingMode::Flowfield;
+        check(readReplayHeader(old,out,fmt,proto) && out.pathfindingMode==tak::sim::PathfindingMode::Retail &&
+              supportedReplayProtocol(fmt,proto), "format 10 migrates to Retail");
+    }
+    {
+        auto in=sample(); in.pathfindingMode=tak::sim::PathfindingMode::Flowfield;
+        Writer w; writeReplayHeader(w,in);
+        Reader r(w.b.data()+4,w.b.size()-4); ReplayHeader out; uint32_t fmt=0,proto=0;
+        check(readReplayHeader(r,out,fmt,proto) && out.pathfindingMode==tak::sim::PathfindingMode::Retail,
+              "campaign playback always uses Retail");
+    }
+
     std::printf("the loader refuses what it cannot replay:\n");
     check(supportedReplayProtocol(9, kNetVersion), "current simulation protocol remains replayable");
-    check(supportedReplayProtocol(9, 212), "previous simulation protocol remains replayable");
+    check(supportedReplayProtocol(10, 219), "previous Retail simulation protocol remains replayable");
+    check(supportedReplayProtocol(11, 220), "pre-area Retail and Flowfield replays remain supported");
+    check(!supportedReplayProtocol(11, 219), "old protocol cannot claim a flow-capable format");
+    check(!supportedReplayProtocol(9, 212), "older simulation protocol is refused");
     check(!supportedReplayProtocol(9, 210), "protocol 210 predates the naval production correction");
     check(!supportedReplayProtocol(9, 211), "protocol 211 predates the naval production correction");
     check(!supportedReplayProtocol(9, 209), "older simulation protocol is refused");

@@ -239,41 +239,21 @@ void OptionsScreen::build(int channels) {
     slider("MAX FPS", 30, 240, [&] { return float(s_.maxFps); },
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
 
-    // GRAPHICS: how the scene is rendered (quality / performance trade-offs).
+    // GRAPHICS: shadows and tree sway remain configurable; AA/filtering are off.
     section("GRAPHICS");
-    auto aaSlider=[&](const char* label,int& preference,int& effective,int steps) {
-        slider(label,0,float(steps),[&preference]{return preference>=16?4.f:preference>=8?3.f:preference>=4?2.f:preference>=2?1.f:0.f;},
-            [&preference,steps](float v){int step=std::clamp(int(v+.5f),0,steps);preference=step?1<<step:0;},
-            [&effective](float v){int step=int(v+.5f);int wanted=step?1<<step:0;
-                std::string text=wanted?std::to_string(wanted)+"X":"OFF";
-                if(effective>=0 && effective!=wanted)text+=" (ACTIVE "+(effective?std::to_string(effective)+"X":std::string("OFF"))+")";
-                return text;});
-    };
-    aaSlider("TERRAIN AA",s_.terrainAA,s_.terrainAAEffective,2);
-    aaSlider("MODEL AA",s_.modelAA,s_.modelAAEffective,4);
-    // Retail's video option: smooth terrain + feature scaling (off = crisp pixels).
-    toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
-           [&](float v) { s_.bilinear = v > 0.5f; });
     // Projected unit shadows. Retail's Glide path casts these, so ON is the faithful
     // setting -- but it is the largest single cost in a crowded frame (measured ~3.2ms
     // of a ~12ms draw at ~1180 visible units), which is worth a switch on a slow machine.
     toggle("SHADOWS", [&] { return s_.unitShadows ? 1.0f : 0.0f; },
            [&](float v) { s_.unitShadows = v > 0.5f; });
-    // Edge-directed 2x upscale of the static art, done when it is BUILT -- so it costs
-    // load time and VRAM and nothing per frame. Art already loaded keeps whatever it was
-    // built with, hence the caption.
-    toggle("SMOOTH GUI ART (RESTART)", [&] { return s_.smoothArt ? 1.0f : 0.0f; },
-           [&](float v) { s_.smoothArt = v > 0.5f; });
-    // Deblock the Bink clips. Unlike the art option this is a PER-FRAME filter, but the
-    // clips are 640x360 at 15 fps so it is ~0.3 ms against a 66 ms budget, and it takes
-    // effect on the next clip rather than needing a restart.
-    toggle("SMOOTH MOVIES", [&] { return s_.videoDeblock ? 1.0f : 0.0f; },
-           [&](float v) { s_.videoDeblock = v > 0.5f; });
+
     toggle("TREES SWAY IN WIND", [&] { return s_.treeSway ? 1.0f : 0.0f; },
            [&](float v) { s_.treeSway = v > 0.5f; });
 
     // INTERFACE: on-screen HUD -- its size, and the game overlays.
     section("INTERFACE");
+    slider("F4 SCORECARD SCALE", 0.75f, 2.0f, [&] { return s_.scorecardScale; },
+           [&](float v) { s_.scorecardScale = v; }, [](float v) { return pctOf(v, 1); });
     slider("UI SCALE", 0.75f, 2.0f, [&] { return s_.uiScale; },
            [&](float v) { s_.uiScale = v; }, [](float v) { return pctOf(v, 1); });
     slider("HEALTH BARS", 0, 2, [&] { return float(s_.healthBars); },

@@ -41,7 +41,7 @@ void syntheticMaps() {
             }
     }
     tak::hpi::Vfs vfs;vfs.addLayer(tak::hpi::MountSet(root));
-    for(int version : {3,4}) for(int players=2;players<=8;++players) {
+    for(int version : {3,4,5}) for(int players=2;players<=8;++players) {
         tak::mapgen::Params p;p.players=players;p.seed=0xfedcba9876543210ULL;
         p.formatVer=version; // Keep the previous recipe golden stable.
         p.waterDensity=p.reliefDensity=0;p.treeDensity=p.rockDensity=p.manaDensity=255;
@@ -78,7 +78,7 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
     check(r.starts.size()==p.players,"wrong start count");
     check(m.features.size()==m.heights.size()&&m.heights.size()==size_t(m.width)*m.height,"wrong cell planes");
     check(m.tileKeys.size()==size_t(m.width/2)*(m.height/2),"wrong tile plane");
-    check(p.waterDensity||p.layout==tak::mapgen::Islands||r.waterPercent==0,"zero water produced water");
+    check(p.waterDensity||tak::mapgen::automaticWater(p.layout)||r.waterPercent==0,"zero water produced water");
     check(p.layout!=tak::mapgen::Lakes||!p.waterDensity||r.waterPercent>0,"lake layout has no water");
     check(p.reliefDensity||r.reliefPatches==0,"zero relief produced hills");
     for(size_t i=0;i<r.starts.size();++i) {
@@ -121,13 +121,13 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
         check(ruins,"mana spot has no surrounding ruins");
     }
     check(mana>=p.players*3&&mana%p.players==0,"unequal resource rounds");
-    check(p.layout!=tak::mapgen::Islands||r.harbors.size()==p.players,"missing island harbors");
+    check((p.layout!=tak::mapgen::Islands&&p.layout!=tak::mapgen::Ports)||r.harbors.size()==p.players,"missing island harbors");
 }
 }
 int main(int argc,char** argv) {
     try {
         using namespace tak::mapgen;
-        for(int version:{1,2,3,4})for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
+        for(int version:{1,2,3,4,5,6,7})for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
             Params p;p.formatVer=version;p.layout=layout;p.players=players;p.seed=0xfedcba9876543210ULL;
             p.widthCells=768;p.heightCells=640;
             const auto id=encodeMapId(p);const auto d=decodeMapId(id);const auto expected=sanitize(p);
@@ -137,17 +137,34 @@ int main(int argc,char** argv) {
         }
         // A high-bit seed, invalid input and legacy identifiers must not wrap
         // dimensions or allow a new layout to reinterpret an old seed.
+        for(int layout=Maze;layout<kLayouts;++layout) {
+            Params p;p.layout=layout;p.name="Themed";
+            const auto d=decodeMapId(encodeMapId(p));
+            check(d.layout==layout && themedLayout(d.mapType)==layout,"theme codec/world mismatch");
+            p.formatVer=5;check(sanitize(p).layout<=Islands,"legacy recipe accepts new layout");
+        }
         Params invalid;invalid.widthCells=0;invalid.heightCells=65535;invalid.players=255;invalid.layout=255;
         auto sane=sanitize(invalid);check(sane.players==8&&sane.widthCells>=384&&sane.heightCells==2048,"sanitize bounds");
+        Params named; named.name = "  My Lake-7_  ";
+        check(decodeMapId(encodeMapId(named)).name == "My Lake-7_", "map name round trip");
+        check(friendlyLabel(named) == "My Lake-7_", "map name display");
+        named.name = "../bad;[name]\\test";
+        check(sanitize(named).name == "badnametest", "unsafe map name");
+        named.name = std::string(100, 'a');
+        check(decodeMapId(encodeMapId(named)).name.size() == 24, "map name length");
+        named.formatVer = 4;
+        check(decodeMapId(encodeMapId(named)).name.empty(), "legacy recipe gained name");
         syntheticMaps();
         if(argc<2){std::puts("mapgen codec/bounds passed (retail sweep takes a data path)");return 0;}
         const auto vfs=tak::hpi::mountRetailRoot(argv[1]);
-        if(argc>2&&std::string(argv[2])=="--naval") {
+        if(argc>2&&(std::string(argv[2])=="--naval"||std::string(argv[2])=="--ports")) {
             for(bool crusades:{false,true}) {
                 tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
                 const auto* fort=registry.find("verasy");check(fort,"Sea Fort definition");
                 for(int world=0;world<5;++world) {
-                    Params p;p.mapType=world;p.layout=Islands;p.players=2;
+                    const bool ports=std::string(argv[2])=="--ports";
+                    if(ports && world!=Veruna)continue;
+                    Params p;p.mapType=world;p.layout=ports?Ports:Islands;p.players=2;
                     const auto generated=generate(p,vfs);
                     for(const auto& name:registry.buildable("verasy")) {
                         const auto* ship=registry.find(name);check(ship,"ship definition");
@@ -181,6 +198,59 @@ int main(int argc,char** argv) {
                 std::printf("large map world=%d layout=%d hash=%016llx %.2fs\n",world,layout,
                     (unsigned long long)hash(r),std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count());
                 std::fflush(stdout);
+            }
+            return 0;
+        }
+        // Never place grass/cobbles relief directly into another ground family.
+        for(int world:{int(Taros),int(Veruna)}) {
+            std::vector<uint32_t> incompatible;
+            for(const auto& path:vfs.list(world==Taros?"sections/taros/low specials":"sections/veruna/low specials")) {
+                const auto key=tak::hpi::MountSet::key(path);
+                if(!(key.ends_with(".tnt") && ((world==Veruna && key.find("/breaker")!=std::string::npos) ||
+                    key.ends_with("/unique23.tnt")||key.ends_with("/unique25.tnt")||key.ends_with("/unique27.tnt"))))continue;
+                auto piece=tak::tnt::Map::load(vfs.read(path));
+                incompatible.push_back(piece.tileKeys[piece.tileKeys.size()/2]);
+            }
+            Params p;p.mapType=world;p.widthCells=p.heightCells=768;p.reliefDensity=255;p.waterDensity=0;
+            const auto r=generate(p,vfs);verify(p,r);
+            for(auto key:r.map.tileKeys) check(std::find(incompatible.begin(),incompatible.end(),key)==incompatible.end(),"incompatible relief surface used");
+        }
+        // New lakes may meet the edge; old recipes retain their dry rim.
+        int edgeWet = 0;
+        for (int seed = 1; seed <= 5; ++seed) for (int version : {4,5}) {
+            Params p; p.layout=Lakes; p.waterDensity=255; p.seed=seed; p.formatVer=version;
+            const auto r=generate(p,vfs); verify(p,r);
+            int wet=0; const auto& m=r.map;
+            for (int x=0;x<m.width;++x) wet += m.heights[x]<m.seaLevel || m.heights[size_t(m.height-1)*m.width+x]<m.seaLevel;
+            for (int z=0;z<m.height;++z) wet += m.heights[size_t(z)*m.width]<m.seaLevel || m.heights[size_t(z)*m.width+m.width-1]<m.seaLevel;
+            if (version==4) check(wet==0,"legacy lake rim changed");
+            else edgeWet += wet;
+        }
+        check(edgeWet>0,"new lakes still have a guaranteed dry rim");
+        if(argc>2&&std::string(argv[2])=="--themes") {
+            Params legacyMaze;legacyMaze.layout=Maze;legacyMaze.formatVer=6;
+            const auto oldMaze=generate(legacyMaze,vfs);
+            check(oldMaze.map.heights[96]>=200,"legacy maze perimeter changed");
+            check(hash(oldMaze)==hash(generate(decodeMapId(encodeMapId(legacyMaze)),vfs)),
+                  "legacy maze recipe roundtrip changed");
+            for(int layout=Maze;layout<kLayouts;++layout)for(int players:{2,3,4,5,6,7,8})for(int seed=1;seed<=3;++seed) {
+                Params p;p.layout=layout;p.players=players;p.seed=seed;
+                if(seed==2)p.treeDensity=p.rockDensity=p.manaDensity=p.reliefDensity=0;
+                if(seed==3)p.treeDensity=p.rockDensity=p.manaDensity=p.reliefDensity=255;
+                p=sanitize(p);
+                const auto r=generate(p,vfs);verify(p,r);
+                check(hash(r)==hash(generate(decodeMapId(encodeMapId(p)),vfs)),"themed recipe not deterministic");
+                if(layout==Maze||(layout==Highlands&&p.reliefDensity)) check(*std::max_element(r.map.heights.begin(),r.map.heights.end())>200,"themed uplands absent");
+                if(layout==Maze) {
+                    const auto& m=r.map;
+                    const auto low=[&](int x,int z){return m.heights[size_t(z)*m.width+x]<200;};
+                    for(int x=96;x<=m.width-96;x+=128)
+                        check(low(x,0)&&low(x,m.height-1),"maze north/south exits blocked");
+                    for(int z=96;z<=m.height-96;z+=128)
+                        check(low(0,z)&&low(m.width-1,z),"maze west/east exits blocked");
+                }
+                if(layout==Ports||layout==Riverlands) check(r.waterPercent>0,"themed waterways absent");
+                std::printf("theme=%s players=%d seed=%d water=%d harbors=%zu passed\n",layoutName(layout),players,seed,r.waterPercent,r.harbors.size());std::fflush(stdout);
             }
             return 0;
         }

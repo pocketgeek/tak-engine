@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.22-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.23-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -35,7 +35,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.21 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.23 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -47,11 +47,44 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.22
+## New in 0.7.23
+
+- **Optional Flowfield pathfinding:** choose Retail or experimental Flowfield when
+  creating skirmish and multiplayer games. Shared terrain preparation and route
+  workers have bounded work and memory. Campaigns keep Retail; its search
+  implementation is unchanged. Maze traffic, group arrivals, factory exits,
+  fight-move and patrol orders have expanded regression coverage.
+- **Builder automation:** drag a lodestone placement box to build across eligible
+  mana spots, exploring first when needed. Patrolling builders repair nearby
+  damaged allies and then resume their route. Defensive AI intercepts spotted
+  attackers near its base without sending offensive raids.
+- **Map generation:** remembered map names with distinct recipe identifiers,
+  preview updates on slider release, open lake and maze edges, faction layouts,
+  connected Veruna harbors, and improved terrain transitions.
+- **Presentation and controls:** independent F4 scorecard scale and team grouping,
+  Shift+Z retail zoom, speeds up to 8×, real-time selected-unit emotes,
+  offscreen sound fading, lodestone shadows, and corrected destructive scenery
+  and wreck behavior. Single-player startup shows loading progress.
+- **Graphics defaults:** filtering, smooth GUI/movies and AA are fixed off while
+  their engine support remains. Trees sway by default and remain configurable;
+  fullscreen, VSync, shadows, statistics, hardware cursor and smooth motion
+  default on.
+- **Linux packages:** native ARM64 packages alongside x64 for Ubuntu, Debian,
+  Fedora and openSUSE Leap, plus Slackware64 15.0 and Arch x64 packages.
+
+Version **0.7.23 uses protocol 221 and replay format 11**. Update clients and
+servers together. Protocol-220/format-11 and protocol-219/format-10 recordings
+remain supported with their original patrol behavior; older recordings require
+an older engine. No new dynamic runtime dependencies or retail assets are
+shipped. See the [release notes](docs/release-0.7.23-notes.md) and
+[validation report](docs/release-0.7.23-validation.md).
+
+### Previously in 0.7.22
 
 - **Independent antialiasing:** Terrain AA (Off/2x/4x) and Model AA
   (Off/2x/4x/8x/16x), with native-resolution UI, preserved scenery ordering,
-  remembered settings, and reported capability/memory fallbacks. See the
+  remembered settings, and reported capability/memory fallbacks in that release.
+  AA is now fixed off; renderer support is retained. See the
   [quality and performance comparison](docs/antialiasing.md).
 - **Server hardening:** bounded map parsing and background validation, actual-size
   memory admission, command-processing budgets, automatic ACME retry recovery,
@@ -270,7 +303,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.22** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.23** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -287,9 +320,9 @@ Choose the package for your system:
 Native **Linux ARM64** packages are also built by [Linux CI](https://github.com/pocketgeek/tak-engine/actions/workflows/linux.yml)
 for Ubuntu 22.04/24.04/26.04, Debian 12/13 (`arm64.deb`), and Fedora 44
 (`aarch64.rpm`), plus an ARM64 Debug tarball. Download these from a successful
-workflow run; they will join tagged releases after 0.7.22. Arch packages remain x64.
+workflow run and version 0.7.23 releases. Arch packages remain x64.
 CI also builds **openSUSE Leap 16.0** RPMs for x64 and ARM64, and a native
-**Slackware64 15.0** `.txz` package. These will join releases after 0.7.22;
+**Slackware64 15.0** `.txz` package in version 0.7.23 releases;
 install with `sudo zypper install ./tak-engine-…rpm` or
 `sudo upgradepkg --install-new ./tak-engine-…txz`, respectively. Slackware does
 not use systemd; run `takserver` directly with the documented command-line options.
@@ -513,7 +546,7 @@ enemy units outside current sight remain untargetable.
 
 | AI | What to expect |
 | --- | --- |
-| Defensive | Keeps growing its army and defenses at home as mana allows; sends no attacks |
+| Defensive | Keeps building at home; sends its army to intercept spotted threats near its base and buildings, then recalls it; sends no offensive raids |
 | Easy | Builds slowly; first attack after four minutes, then waves of at most eight units at least two minutes apart |
 | Normal | Sends probing raids while saving a larger attacking force |
 | Hard | Keeps expanding income and production, spending on raids and larger attack waves |
@@ -522,6 +555,21 @@ enemy units outside current sight remain untargetable.
 Choose **Generate Random Map** under the map preview to configure a Mainland,
 Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.
 The available sizes depend on the layout and player count.
+Drag a density slider to choose its value; the preview regenerates once you
+release it. New Lakes maps can reach the map edge, without a forced land border.
+Enter an optional **Map Name** (up to 24 letters, digits, spaces, hyphens or
+underscores). It becomes the saved map's browser name and part of its filename;
+a short recipe hash also appears in the saved map list, so maps with the same
+title remain individually selectable. Blank names use the automatic description.
+The name and generator choices are remembered. Host, clients and server save
+the same named map when the game starts. Older recipes retain their terrain.
+Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
+**Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
+fourth choice; changing Type while themed switches to that biome's layout.
+Ports guarantees connected deep-water harbor sites; the land themes retain
+connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
+New maze corridors open onto all four map edges instead of enclosing the map in walls.
+Version 0.7.23 uses protocol **221**: update clients and servers together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -661,17 +709,18 @@ builders, but units they produce inherit their squad.
 | **T** | Toggle camera tracking of the selection |
 | **Tab** | Toggle the full-screen map; press again to return |
 | **F1** | Toggle unit information; **Enter** or **Esc** also closes the dialog |
-| **F4** | Toggle player names, kills, losses, and score |
+| **F4** | Toggle player names, kills, losses, and score; team numbers appear and rows group by team when any team has multiple players |
 | **F9** | YouTube streaming setup / status |
 | **O**, with no units selected | Toggle campaign objectives when available |
 | **Pause** | Pause / resume the game or replay |
+| **Shift+Z** | Reset to retail’s native 1:1 zoom, keeping the same view center |
 | **+** / **−** (also **=** and keypad **+/−**) | Change game / replay speed |
 | **Enter** (also keypad Enter) | Open chat; press again to send; **Esc** cancels |
 | **Esc** | Close unit information, cancel placement / an armed order, clear selection, then open the game menu as applicable |
-| **Shift+D** | Monarch disco emote |
-| **Shift+H** | Monarch headbang emote |
+| **Shift+D** | Selected mobile units disco for 10 real seconds; with no selection, living monarch |
+| **Shift+H** | Selected mobile units headbang for 10 real seconds; with no selection, living monarch |
 
-Live game speed ranges from 0.5× to 4×. Only the host can change it, and the
+Live game speed ranges from 0.5× to 8× in 0.5× steps. Only the host can change it, and the
 game creation screen’s **Allow speed change** option must be enabled (the lobby
 only displays it). Chat is available in live networked games (single-player also uses a local server), not replay playback.
 
@@ -692,6 +741,7 @@ only displays it). Chat is available in live networked games (single-player also
 | **Shift** / **Ctrl+Shift** + build-icon click | Add or remove five / ten queued units |
 | **Ctrl+left-click** a build icon | Start infinite production; toggle it at stationary producers |
 | **Left-click** while placing | Place the construction site |
+| **Left-drag** while placing a lodestone | Build on eligible mana spots in the box; **Shift** appends the area job |
 | **Shift+left-click / drag** while placing | Queue a site / a line of sites |
 | **Right-click / Esc** while placing | Cancel placement |
 | **Right-drag** with a reclaim-capable mobile builder | Reclaim an area; **Shift** appends the sweep |
@@ -700,6 +750,18 @@ Mobile builders use build icons to arm placement instead of ordinary factory
 queues. A reclaim-capable builder automatically clears trees, rocks, and other
 reclaimable obstacles from a valid site before construction starts. Terrain,
 other units, and unreclaimable obstacles can still prevent placement.
+
+For basic or Divine lodestones, choose the build icon and left-drag a box over
+the map. The builder explores unseen deposits, then builds on each eligible
+spot in map order, clearing reclaimable obstacles when it can. Occupied or
+unreachable spots are skipped; Divine lodestones can upgrade your faction's
+completed basic lodestones. **Shift** queues the area behind existing orders;
+**Stop** cancels it.
+
+Patrolling mobile builders automatically repair nearby damaged allied units and
+buildings, spending mana at their ordinary repair rate. They resume the same
+patrol afterward and do not follow an ally that leaves the repair area. They
+leave unfinished construction to explicit build or assist orders.
 
 To upgrade a lodestone, choose your faction's advanced version and place it on
 your completed basic lodestone's mana spot. Its larger footprint must fit. The
@@ -718,7 +780,8 @@ for construction and reclaim details.
 Choose a server through the multiplayer menu, sign in, then create or join a
 game. An unused account name is registered on first sign-in. Players connect
 to the server; only the server needs an incoming network port available.
-Single-player starts its own private server automatically.
+Single-player starts its own private server automatically. A loading screen shows
+startup stages and map-list progress before opening game setup.
 
 Multiplayer automatically verifies and transfers missing or differing maps before play.
 Downloaded maps remain available in the map picker; generated maps are saved on every
@@ -756,13 +819,25 @@ See [unit gifting](docs/unit-gifting.md) for eligibility details and the
 
 Choose the per-player unit limit on the game-creation screen: the button cycles
 through 250, 500, 1,000, and 2,000. The lobby displays this value without allowing
-it to change.
+it to change. **Pathfinding** also belongs to game creation: choose **Retail**
+(the default) or **Flowfield** for skirmish and multiplayer. Left- or right-click
+cycles the choice; the lobby shows the host's choice as read-only information.
+Campaigns retain Retail pathfinding regardless of the saved create preference.
+Flowfield is experimental. It shares prepared terrain tiles, prepares large tile
+jobs in parallel, and delivers detailed routes as their required connectivity
+becomes ready. Bounded caches avoid allocating the worst-case 512 MiB limit up
+front; measured Flowfield storage was about 48–92 MiB in the latest flat and
+maze tests. Giant maps with many players and movement classes can still incur
+long waits. Better route throughput does not guarantee lower simulation cost.
+See [implementation, limits and measurements](docs/pathfinding-port.md).
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.22 uses protocol 213**, including shared override-pack transfer
-and Darien Crusades campaign messages. Update clients and servers together;
-earlier clients cannot join these matches. Protocol-212 format-9 recordings
-remain playable; older incompatible recordings need their original engine.
+Version **0.7.23 uses protocol 221**, including authoritative pathfinding
+selection, shared override-pack transfer, and Darien Crusades campaign messages.
+Update clients and servers together; earlier clients cannot join these matches.
+Protocol-220 format-11 and protocol-219 format-10 recordings remain playable
+with their original pathfinder and patrol behavior;
+older incompatible recordings need their original engine.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 
@@ -777,22 +852,30 @@ Set **Options → Player Name** and click **Save** to choose your name for new
 local and unauthenticated multiplayer games. Account-based multiplayer uses
 your login name.
 
-Use **Options** to adjust audio, anti-aliasing, filtering, shadows, health bars,
-UI scale, cursor size, and camera behavior. **Smooth GUI Art** requires a restart;
-**Smooth Movies** smooths the menu clips as they play.
+Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
+and camera behavior. **F4 Scorecard Scale** independently adjusts the player
+scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
+and Smooth Motion default to **on**; saved choices still apply.
+Bilinear Filtering, Smooth GUI Art, Smooth Movies, Terrain AA and Model AA are fixed **off** and have no settings controls.
+Existing values for these disabled options (including legacy `antiAlias`) in
+`settings.ini` are ignored and are omitted when settings are saved. The engine's
+rendering support is retained; see [antialiasing](docs/antialiasing.md) for the
+implementation and historical measurements. **Trees Sway in Wind** is selectable,
+defaults to **on**, and remembers your choice.
 
-**Terrain AA** (Off/2x/4x) and **Model AA** (Off/2x/4x/8x/16x) are independent
-stepped sliders. HUD, menus, text and the cursor stay at native resolution.
-Settings apply immediately; an **ACTIVE** suffix reports a lower effective level
-when renderer capabilities or texture-memory limits require it. Older AA settings
-migrate to the same level on both sliders. See [antialiasing](docs/antialiasing.md)
-for pass assignments, resource limits and measured performance tradeoffs.
+World sounds stay at full volume inside the camera view and fade with distance
+outside it, becoming silent one shorter viewport dimension beyond the nearest
+edge. Moving or zooming the camera updates playing sounds too. This is an
+intentional improvement over retail's fixed offscreen volume; UI sounds, global
+alerts and background music are unaffected.
 
 The shadow option controls unit, scenery, and projectile shadows. Shadows follow
 animated poses, including swaying trees; shading baked into terrain artwork
 remains visible. Accelerated renderers use cached shadow silhouettes and tiles,
 with fallbacks where needed. Animated boat shadows are an intentional enhancement
-over retail Glide, controlled by the same Shadows option.
+over retail Glide, controlled by the same Shadows option. All basic and divine
+lodestones also cast shadows from their visible model pieces, intentionally
+overriding retail scripts that suppress their shadows.
 
 At distant zoom with Model AA off, tiny stationary units can use cached body images; moving,
 selected, and special-effect units retain their full geometry. Wide-map rendering
@@ -805,7 +888,7 @@ wreck. Buildings also use the authored palette shading and per-piece shadow
 flags observed in retail Glide.
 
 Game-create choices are remembered between sessions: balance, sight/radar, unit
-cap, monarch rule, speed changes, fog, start locations, overrides,
+cap, pathfinding, monarch rule, speed changes, fog, start locations, overrides,
 game name, map selection/sorting, and random-map settings (including the seed).
 Spectate starts off for each skirmish setup. Game passwords are not saved.
 
@@ -917,7 +1000,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.22 uses protocol **213**; update server and clients together.
+Version 0.7.23 uses protocol **221**; update server and clients together.
 
 
 ## License

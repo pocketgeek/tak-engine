@@ -152,8 +152,9 @@ jobs:
       - name: Build + run
         run: |
           cmake -B build -G Ninja
-          cmake --build build --target pathsearch_test authtest cmdflow_test unit_gift_test
+          cmake --build build --target pathsearch_test authtest cmdflow_test unit_gift_test flowfield_test flow_matchsetup_test flow_snapshot_test flow_memory_test movement_orders_test builder_automation_test
           ./build/pathsearch_test
           ./build/authtest
           ./build/cmdflow_test
           ./build/unit_gift_test
+          ctest --test-dir build -R '^(flowfield|flow_matchsetup|flow_snapshot|flow_memory|movement_orders|builder_automation)$' --output-on-failure

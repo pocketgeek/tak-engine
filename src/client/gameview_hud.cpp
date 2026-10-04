@@ -579,7 +579,8 @@ namespace {
             // centre it rather than stretching to fill: retail's corner box is
             // square while ours already honours the map's shape, and stretching a
             // 2:1 map to a 16:9 viewport would distort every distance on it.
-            float vw = float(mapViewW(winW)), vh = float(winH) - barH();
+            // Spectators have no bottom HUD: use the entire available height.
+            float vw = float(mapViewW(winW)), vh = float(winH) - (spectating_ ? 0 : barH());
             float w = vw, h = vw * aspect;
             if (h > vh) { h = vh; w = vh / aspect; }
             return {(vw - w) * 0.5f, (vh - h) * 0.5f, w, h};
@@ -798,7 +799,7 @@ namespace {
         // map's aspect inside, which would leave the terrain peeking through the
         // letterbox margins and read as a window rather than a map.
         SDL_FRect frame = fsRadar_
-            ? SDL_FRect{0, 0, float(mapViewW(winW)), float(winH) - barH()}
+            ? SDL_FRect{0, 0, float(mapViewW(winW)), float(winH) - (spectating_ ? 0 : barH())}
             : SDL_FRect{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
         SDL_SetRenderDrawColor(ren_, 30, 30, 40, 255);
         SDL_RenderFillRectF(ren_, &frame);
@@ -1586,11 +1587,18 @@ namespace {
         if (gui_.gadgets.empty()) return false;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float barTop = float(winH - barH());
-        // Chrome: InfoPanel stretched across the width, EndCap at the left.
+        // Repeat the InfoPanel at its original aspect ratio, scaled to the bar
+        // height. The renderer clips the last tile at the window's right edge.
         int bi = guiIdx("BottomBar");
-        if (bi >= 0 && !guiTex_[bi].empty() && guiTex_[bi][0]) {
-            SDL_FRect r{0, barTop, float(winW), float(barH())};
-            SDL_RenderCopyF(ren_, guiTex_[bi][0], nullptr, &r);
+        SDL_Texture* chrome = bi >= 0 && !guiTex_[bi].empty() ? guiTex_[bi][0] : nullptr;
+        int chromeW = 0, chromeH = 0;
+        if (chrome && SDL_QueryTexture(chrome, nullptr, nullptr, &chromeW, &chromeH) == 0 &&
+            chromeW > 0 && chromeH > 0 && barH() > 0) {
+            const float tileW = float(chromeW) * float(barH()) / float(chromeH);
+            for (float x = 0; x < float(winW); x += tileW) {
+                SDL_FRect r{x, barTop, tileW, float(barH())};
+                SDL_RenderCopyF(ren_, chrome, nullptr, &r);
+            }
         } else {
             SDL_SetRenderDrawColor(ren_, 42, 38, 34, 255);
             SDL_FRect bar{0, barTop, float(winW), float(barH())};
@@ -1795,12 +1803,28 @@ namespace {
             ++cnt[up->player];
             if (sides[up->player].empty()) sides[up->player] = up->type->side;
         }
+        std::vector<int> rows;
+        bool showTeams = false;
+        for (int p = 0; p < np; ++p) {
+            if (framePlayer(p).built == 0 && cnt[p] == 0) continue;
+            for (int q : rows)
+                if (framePlayer(p).team == framePlayer(q).team) showTeams = true;
+            rows.push_back(p);
+        }
+        if (showTeams) std::stable_sort(rows.begin(), rows.end(), [&](int a, int b) {
+            return framePlayer(a).team < framePlayer(b).team;
+        });
         // Retail's compact F4 table: white serif text, faction/colour emblems,
         // translucent player rows, and Name / Kills / Losses / Score columns.
-        const float scale = std::min(uiScale_ * 0.5f, std::max(0.25f, (winW - 24.0f) / 460.0f));
-        const float x = 12, top = 12, rowH = 32 * scale;
+        // Independent saved scale; shrink only when the complete table cannot fit.
+        const float requestedScale = (settings_ ? settings_->scorecardScale : 1.0f) * kHudBase;
+        const float scale = std::max(0.1f, std::min({requestedScale, float(winW) / (484.0f + (showTeams ? 64.0f : 0.0f)),
+            float(std::max(1, winH_ - barH())) / (24.0f + 32.0f * (np + 1))}));
+        const float x = 12 * scale, top = 12 * scale, rowH = 32 * scale;
         const float nameW = 190 * scale, numberW = 90 * scale;
-        const float width = nameW + 3 * numberW;
+        const float teamW = showTeams ? 64 * scale : 0;
+        const float numbersX = x + nameW + teamW;
+        const float width = nameW + teamW + 3 * numberW;
         float fontScale = 1, fontTop = 0, fontH = 7;
         if (scoreboardFont_.ok()) scoreboardFont_.vbounds("Ag0123456789", 1, fontTop, fontH);
         fontScale = 20 * scale / std::max(1.0f, fontH);
@@ -1821,14 +1845,14 @@ namespace {
         };
         const SDL_Color white{245,245,245,255};
         text("Name", x, top, nameW, false, white);
-        text("Kills", x + nameW, top, numberW, true, white);
-        text("Losses", x + nameW + numberW, top, numberW, true, white);
-        text("Score", x + nameW + 2 * numberW, top, numberW, true, white);
+        if (showTeams) text("Team", x + nameW, top, teamW, true, white);
+        text("Kills", numbersX, top, numberW, true, white);
+        text("Losses", numbersX + numberW, top, numberW, true, white);
+        text("Score", numbersX + 2 * numberW, top, numberW, true, white);
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         float y = top + rowH;
-        for (int t = 0; t < np; ++t) {
+        for (int t : rows) {
             const auto& player = framePlayer(t);
-            if (player.built == 0 && cnt[t] == 0) continue;
             SDL_FRect row{x, y, width, rowH};
             SDL_SetRenderDrawColor(ren_, 0, 0, 0, 110);
             SDL_RenderFillRectF(ren_, &row);
@@ -1858,9 +1882,10 @@ namespace {
                 SDL_RenderFillRectF(ren_, &emblem);
             }
             text(name, x + 36 * scale, y, nameW - 42 * scale, false, color);
-            text(std::to_string(player.kills), x + nameW, y, numberW, true, color);
-            text(std::to_string(player.losses), x + nameW + numberW, y, numberW, true, color);
-            text(std::to_string(player.score), x + nameW + 2 * numberW, y, numberW, true, color);
+            if (showTeams) text(std::to_string(player.team + 1), x + nameW, y, teamW, true, color);
+            text(std::to_string(player.kills), numbersX, y, numberW, true, color);
+            text(std::to_string(player.losses), numbersX + numberW, y, numberW, true, color);
+            text(std::to_string(player.score), numbersX + 2 * numberW, y, numberW, true, color);
             y += rowH;
         }
     }

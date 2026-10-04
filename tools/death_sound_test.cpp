@@ -73,6 +73,48 @@ int main(int argc,char** argv) {
         for(int i=0;i<130;++i)check(SoundBankTestAccess::sample(bank)==320,
                                    "looping voices wrap and remain protected from eviction");
     }
+    {
+        // Test the actual PCM output, including camera movement after playback
+        // begins. Mono isolates attenuation from left/right speaker panning.
+        SoundBank bank;if(!SoundBankTestAccess::prepare(bank))return 2;
+        bank.setListener(0,0,100,50);
+        bank.playWorld("cry",100,0,4);
+        check(SoundBankTestAccess::sample(bank)==200,"on-screen edge retains full volume");
+        bank.setListener(-25,0,100,50);
+        check(SoundBankTestAccess::sample(bank)==112,"offscreen sound fades continuously from nearest edge");
+        bank.setListener(-50,0,100,50);
+        check(SoundBankTestAccess::sample(bank)==50,"sound halfway through fade has quarter amplitude");
+        bank.setListener(-100,0,100,50);
+        check(SoundBankTestAccess::sample(bank)==0,"distant ongoing sound becomes silent");
+        bank.setListener(0,0,200,100);
+        check(SoundBankTestAccess::sample(bank)==200,"zooming out restores on-screen volume");
+    }
+    for(const auto point : {std::pair{150.f,0.f},std::pair{-150.f,0.f},
+                           std::pair{0.f,100.f},std::pair{0.f,-100.f},std::pair{130.f,90.f}}) {
+        SoundBank bank;if(!SoundBankTestAccess::prepare(bank))return 2;
+        bank.setListener(0,0,100,50);bank.playWorld("cry",point.first,point.second,4);
+        check(SoundBankTestAccess::sample(bank)==50,"initial attenuation treats all edges and corner distance consistently");
+    }
+    {
+        SoundBank bank;if(!SoundBankTestAccess::prepare(bank))return 2;
+        bank.setListener(0,0,100,50);
+        for(int i=0;i<32;++i)bank.playWorld("quiet",0,0,3);
+        bank.playWorld("cry",10000,0,7);
+        check(SoundBankTestAccess::sample(bank)==320,"inaudible remote sound cannot evict an audible voice");
+    }
+    {
+        SoundBank bank;if(!SoundBankTestAccess::prepare(bank))return 2;
+        bank.setListener(0,0,100,50);bank.play("cry");
+        bank.setListener(10000,10000,100,50);
+        check(SoundBankTestAccess::sample(bank)==200,"nonpositional alerts and UI do not attenuate with the camera");
+    }
+    {
+        SoundBank bank;if(!SoundBankTestAccess::prepare(bank))return 2;
+        bank.setListener(0,0,100,50);bank.playAt("cry",0,0,true,200,0,1,1,3,true);
+        for(int i=0;i<130;++i)check(SoundBankTestAccess::sample(bank)==0,"inaudible loop keeps its clock silently");
+        bank.setListener(200,0,100,50);
+        check(SoundBankTestAccess::sample(bank)==200,"loop becomes audible when camera reaches its source");
+    }
     check(!tak::retailUnitSoundAudible(4,false,true),"hidden positional death cry is suppressed");
     check(tak::retailUnitSoundAudible(7,false,false),"global authored sound bypasses visibility");
     check(!tak::retailUnitSoundAudible(1,true,false),"unselected chatter is suppressed");

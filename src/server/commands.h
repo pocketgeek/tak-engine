@@ -16,7 +16,7 @@ inline bool parsePlayerCommands(const std::vector<uint8_t>& payload, std::vector
     parsed.reserve(count);
     for (uint32_t i=0;i<count && reader.ok;++i) {
         const auto c=reader.cmd();
-        if (uint8_t(c.kind)>uint8_t(tak::net::Cmd::ShareMana) ||
+        if (uint8_t(c.kind)>uint8_t(tak::net::Cmd::BuildManaArea) ||
             !coordinate(c.x) || !coordinate(c.z) ||
             !coordinate(c.x2) || !coordinate(c.z2)) return false;
         // Ctrl+Shift requests ten units, the largest client production batch.

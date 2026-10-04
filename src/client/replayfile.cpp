@@ -53,6 +53,8 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     out.cfg.unitCap = uint16_t(h.unitCap);
     out.cfg.monarchExpendable = h.monarchExpendable != 0;
     out.cfg.doubleSight = h.mission.empty() && h.doubleSight != 0;
+    out.cfg.pathfindingMode = h.mission.empty() ? h.pathfindingMode : tak::sim::PathfindingMode::Retail;
+    out.cfg.patrolRepairs = proto >= 221;
     out.cfg.stressTest = h.stressTest != 0;
     out.cfg.randomStarts = h.randomStarts != 0;
     out.cfg.benchmark = h.benchmark;
@@ -94,7 +96,8 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
         if (uint64_t(nc) * 35 > uint64_t(br.end - br.p)) return false;
         for (uint32_t i = 0; i < nc && br.ok; ++i) {
             const auto cmd=br.cmd();
-            if (uint8_t(cmd.kind)>uint8_t(tak::net::Cmd::ShareMana) || cmd.player>=tak::net::kMaxSlots ||
+            const auto maxKind=proto>=221 ? tak::net::Cmd::BuildManaArea : tak::net::Cmd::ShareMana;
+            if (uint8_t(cmd.kind)>uint8_t(maxKind) || cmd.player>=tak::net::kMaxSlots ||
                 !std::isfinite(cmd.x) || !std::isfinite(cmd.z) || !std::isfinite(cmd.x2) || !std::isfinite(cmd.z2)) return false;
             bd.cmds.push_back(cmd);
         }
@@ -145,6 +148,7 @@ std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,
     h.unitCap = room.opts.unitCap;
     h.monarchExpendable = room.opts.monarchExpendable;
     h.doubleSight = room.opts.doubleSight;
+    h.pathfindingMode = room.opts.pathfindingMode;
     h.stressTest = room.opts.stressTest;
     h.randomStarts = room.opts.randomStarts;
     h.benchmark = uint8_t(room.opts.benchmark);

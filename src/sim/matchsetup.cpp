@@ -2,6 +2,7 @@
 #include "sim/matchsetup.h"
 
 #include "sim/detmath.h"
+#include "sim/flowmemory.h"
 #include "gaf/featureburntiming.h"
 #include "sim/footprint.h"
 #include <algorithm>
@@ -41,7 +42,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     const auto* producer=world.unit(c.unitId);
     const bool repeatingMobile = producer && producer->type &&
         !producer->type->isStructure() && producer->repeatType;
-    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana) return;
+    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
@@ -86,6 +87,16 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::Build:
             if (owns(c.unitId)) world.queueBuild(c.unitId, reg.find(c.type), c.x, c.z, c.queue);
             break;
+        case Cmd::BuildManaArea:
+            if (owns(c.unitId)) {
+                const auto* b=world.unit(c.unitId);
+                const auto* type=reg.find(c.type);
+                const auto& menu=reg.buildable(b->type ? b->type->id : "");
+                if (b->type && type && (!b->type->builderLimited ||
+                    std::find(menu.begin(),menu.end(),type->id)!=menu.end()))
+                    world.queueManaBuildArea(c.unitId,type,c.x,c.z,c.x2,c.z2,c.queue!=0);
+            }
+            break;
         case Cmd::Assist:
             // Resume/assist an existing conjure: allowed only if the builder can
             // actually build the site's type (authoritative check, same as the UI).
@@ -120,11 +131,23 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             if (owns(c.unitId)) world.destroy(c.unitId);
             break;
         case Cmd::Disco:
-            world.startDisco(int(c.player));   // cosmetic; no ownership needed
+        case Cmd::Headbang: {
+            bool append = c.queue != 0;
+            auto emote = [&](int id) {
+                if (c.kind == Cmd::Disco) world.startDisco(int(c.player), id, append);
+                else world.startHeadbang(int(c.player), id, append);
+                append = true;
+            };
+            if (c.unitId != 0) emote(c.unitId); // World checks ownership and life
+            else { // Empty selection: living monarch only.
+                for (const auto& u : world.units()) {
+                    if (!u.alive() || u.player != int(c.player) || !u.type) continue;
+                    if (std::find(std::begin(kMonarchs), std::end(kMonarchs), u.type->id) != std::end(kMonarchs))
+                        emote(u.id);
+                }
+            }
             break;
-        case Cmd::Headbang:
-            world.startHeadbang(int(c.player));   // cosmetic; no ownership needed
-            break;
+        }
         case Cmd::Reclaim:
             if (owns(c.unitId)) { redirect(); world.reclaim(c.unitId, c.targetId, c.queue); }
             break;
@@ -379,11 +402,11 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
                 int fx = di->second.fx, fz = di->second.fz;
                 world.blockCells(cx, cz, fx, fz, true);
             }
-            // Reclaimable obstacle features (trees/rocks/houses) enter the sim so a
-            // mobile builder can clear them for mana -- and flamable ones so dragonfire
-            // can burn them (World::tickBurning). The id is derived from the cell, so
-            // every peer records the identical feature.
-            if ((di->second.reclaimable || di->second.flamable) && !di->second.mana) {
+            // Track anything that can be reclaimed, burned OR damaged. Some
+            // authored walls have hit points but permit neither reclaim nor fire.
+            // Their damage state still belongs in every peer's simulation.
+            const bool destructible = di->second.hp > 0 && !di->second.indestructible;
+            if ((di->second.reclaimable || di->second.flamable || destructible) && !di->second.mana) {
                 float work = std::max(di->second.energy, 60.0f);   // rocks (energy 0) still take a beat
                 world.addFeature(cz * map.width + cx, x, z, di->second.energy, work,
                                  di->second.fx, di->second.fz, di->second.blocking != 0,
@@ -516,6 +539,15 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     } else {
         map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
     }
+    // Validate the incoming pair before replacing terrain. A reused World may
+    // still carry the previous replay's mode/dimensions: neither may constrain
+    // the new match (large Retail -> small Flowfield, or the reverse).
+    if(cfg.pathfindingMode!=PathfindingMode::Retail && cfg.pathfindingMode!=PathfindingMode::Flowfield)
+        throw std::invalid_argument("invalid pathfinding mode");
+    if(cfg.pathfindingMode==PathfindingMode::Flowfield &&
+       !flow::MemoryPlan::forMap(map.width,map.height).supported)
+        throw std::invalid_argument("Flowfield supports maps up to 64x64 within its storage budget");
+    world.setPathfindingMode(PathfindingMode::Retail);
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     world.setNoSeaLevelTrigger(noSeaLevelTrigger);
     // One nav grid per distinct movement-limit tuple, as retail bakes one per class.
@@ -524,6 +556,8 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     // Retail's background pathfinder. Every match gets it; see
     // docs/retail-engine.md for what it is and what it still cannot do.
     world.setPathService(true);
+    world.setPathfindingMode(cfg.pathfindingMode);
+    world.setPatrolRepairs(cfg.patrolRepairs);
     // Route delivery timing affects steering and RNG order. Use retail's
     // default work budget (0x41617b), not the former performance shortcut.
     world.setPathBudget(kPathBudgetDefault);

@@ -1,3 +1,4 @@
+#include "client/emotetiming.h"
 #include "cob/retailvm.h"
 #include "cob/retailpieces.h"
 #include "cob/retailstate.h"
@@ -21,6 +22,11 @@ struct RetailReplayProbe {
     static void hit(World& world,const Weapon& weapon,float x,float z,int from,int target) {
         world.applyHit(weapon,x,z,0,from,world.unit(target));
     }
+    static bool corpse(World& world,int id,int type) {
+        auto& unit=*world.unit(id);unit.hp={};unit.deadFor=120;unit.corpseUntil=1000;
+        return world.placeCorpse(unit,type);
+    }
+    static void retire(World& world,int id) {world.retireCorpse(*world.unit(id));}
     static const auto& scriptStatics(const World& world,int id) { return world.unitScripts_.at(id).state.vm.statics; }
     static void emitScript(World& world,int id) {world.notifyUnitScript(*world.unit(id),"Emit");}
     static void repairTick(World& world,int id) {world.tickRepair(*world.unit(id),1.f/30);}
@@ -114,6 +120,70 @@ struct Host {
 };
 
 int main(int argc,char** argv) {
+    if (argc==3 && std::string(argv[1])=="--features") {
+        using namespace tak::sim;
+        auto vfs=tak::hpi::mountRetailRoot(argv[2],tak::hpi::OverridePolicy::None);
+        std::map<std::string,tak::tdf::Node> defs;
+        int spacing=4;
+        for(const auto& path:vfs.list("features")) {
+            if(!path.ends_with(".tdf"))continue;
+            const auto bytes=vfs.read(path);
+            const auto root=tak::tdf::parseText(std::string(bytes.begin(),bytes.end()),path);
+            for(const auto& name:root.childOrder) {
+                std::string key=name;std::transform(key.begin(),key.end(),key.begin(),::tolower);
+                const auto& node=root.children.at(name);defs[key]=node;
+                spacing=std::max(spacing,4+int(std::max(node.numberOr("footprintx",1),node.numberOr("footprintz",1))));
+            }
+        }
+        tak::tnt::Map map;std::vector<std::string> names;
+        for(const auto& [name,node]:defs) {
+            std::string category=node.valueOr("category","");
+            std::transform(category.begin(),category.end(),category.begin(),::tolower);
+            if(node.numberOr("damage",0)>0 && category!="mana") names.push_back(name);
+        }
+        if(names.empty())throw std::runtime_error("no authored scenery definitions found");
+        constexpr int columns=32;
+        map.width=columns*spacing+32;map.height=int((names.size()+columns-1)/columns)*spacing+32;
+        map.heights.assign(size_t(map.width)*map.height,10);
+        map.features.assign(map.heights.size(),0xffff);map.featureNames=names;
+        std::vector<int> ids;
+        for(size_t i=0;i<names.size();++i) {
+            const int x=16+int(i%columns)*spacing,z=16+int(i/columns)*spacing;
+            ids.push_back(z*map.width+x);map.features[ids.back()]=uint16_t(i);
+        }
+        World world;world.setVisPlayer(-1);world.setTerrain(map.heights,map.width,map.height,0);
+        registerMapFeatures(world,map,vfs);
+        int destructible=0,protectedCount=0,damageOnly=0;
+        for(size_t i=0;i<names.size();++i) {
+            const auto& node=defs.at(names[i]);const int id=ids[i];
+            const auto* f=world.feature(id);
+            const bool protectedFeature=node.numberOr("indestructible",0)!=0;
+            if(!f && !protectedFeature)throw std::runtime_error("untracked destructible: "+names[i]);
+            const int fx=int(node.numberOr("footprintx",1)),fz=int(node.numberOr("footprintz",1));
+            const float x=float((id%map.width+fx-1)*16+8),z=float((id/map.width+fz-1)*16+8);
+            const int hp=int(node.numberOr("damage",0));Weapon shot;shot.damage=hp;
+            const auto generation=world.featGeneration();
+            RetailReplayProbe::hit(world,shot,x,z,0,0);
+            if(protectedFeature) {
+                ++protectedCount;
+                if(world.featGeneration()!=generation || (f && f->dmg))
+                    throw std::runtime_error("indestructible scenery took damage: "+names[i]);
+            } else {
+                ++destructible;
+                if(!node.numberOr("reclaimable",0) && !node.numberOr("flamable",0))++damageOnly;
+                if(world.featGeneration()==generation)throw std::runtime_error("outer hit did not destroy: "+names[i]);
+                std::string dead=node.valueOr("featuredead","");
+                std::transform(dead.begin(),dead.end(),dead.begin(),::tolower);
+                if(dead.empty() || !defs.contains(dead)) {
+                    if(f->alive)throw std::runtime_error("destroyed feature still alive: "+names[i]);
+                } else if(f->type<0 || world.featureTypes()[f->type].name!=dead)
+                    throw std::runtime_error("wrong destruction stage: "+names[i]);
+            }
+        }
+        std::cout<<"PASS: "<<destructible<<" authored destructible scenery types ("<<damageOnly
+                 <<" damage-only), "<<protectedCount<<" indestructible types; outer-footprint hits and destruction stages\n";
+        return 0;
+    }
     if (argc==5 && std::string(argv[1])=="--gate-timeline") {
         using namespace tak::sim;
         auto vfs=tak::hpi::mountRetailRoot(argv[2],tak::hpi::OverridePolicy::None);
@@ -396,6 +466,66 @@ int main(int argc,char** argv) {
     {
         using namespace tak::sim;
         auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
+        {
+            UnitType monarch, soldier, building;monarch.id="zonhunt";
+            monarch.maxHp=soldier.maxHp=building.maxHp=100;
+            monarch.maxVel=soldier.maxVel=Fixed::fromInt(1);
+            building.maxVel={};building.canMove=true; // authored Keep flag does not make it mobile
+            World emotes;emotes.setVisPlayer(-1);TypeRegistry registry;
+            const int king=emotes.spawn(&monarch,100,100,0,0);
+            const int a=emotes.spawn(&soldier,200,100,0,0), b=emotes.spawn(&soldier,300,100,0,0);
+            const int enemy=emotes.spawn(&soldier,400,100,0,1);
+            const int keep=emotes.spawn(&building,500,100,0,0);
+            tak::net::Command cmd;cmd.kind=tak::net::Cmd::Disco;
+            const auto hash=emotes.stateHash();
+            cmd.unitId=enemy;applyCommand(emotes,registry,cmd);
+            cmd.unitId=keep;applyCommand(emotes,registry,cmd);
+            require(!emotes.discoTarget(0),"emotes reject foreign units and stationary buildings even with canmove=1");
+            emotes.unit(a)->repeatType=&soldier;
+            cmd.unitId=a;applyCommand(emotes,registry,cmd);
+            cmd.queue=1;cmd.unitId=b;applyCommand(emotes,registry,cmd);
+            emotes.unit(a)->repeatType=nullptr;
+            require(emotes.discoTarget(0,a) && emotes.discoTarget(0,b) && !emotes.discoTarget(0,king),
+                "disco snapshots selected mobile units without adding the monarch");
+            require(emotes.stateHash()==hash,"emote targets and triggers do not alter gameplay hash");
+            const auto sequence=emotes.player(0).emoteSequence;
+            emotes.tick(1.f/30.f);
+            cmd.unitId=king;applyCommand(emotes,registry,cmd);
+            require(emotes.discoTarget(0,king) && emotes.player(0).emoteSequence==sequence,
+                "selection targets split across server ticks keep the same real-time trigger");
+            for(int tick=0;tick<2400;++tick) emotes.tick(1.f/30.f);
+            require(emotes.player(0).emoteSequence==sequence && emotes.discoTarget(0,a),
+                "eight-times-speed simulation ticks cannot expire the viewer's emote");
+            cmd.queue=0;cmd.kind=tak::net::Cmd::Headbang;cmd.unitId=0;applyCommand(emotes,registry,cmd);
+            require(emotes.headbangTarget(0,king) && !emotes.headbangTarget(0,a) && !emotes.headbangTarget(0,b),
+                "empty selection falls back to living monarch only");
+            const auto second=emotes.player(0).emoteSequence;
+            emotes.unit(king)->hp={};emotes.tick(1.f/30.f);
+            cmd.kind=tak::net::Cmd::Disco;applyCommand(emotes,registry,cmd);
+            cmd.unitId=king;applyCommand(emotes,registry,cmd);
+            require(emotes.player(0).emoteSequence==second,"dead monarch and dead selection cannot trigger an emote");
+            cmd.kind=tak::net::Cmd::Headbang;cmd.unitId=a;applyCommand(emotes,registry,cmd);
+            cmd.queue=1;cmd.unitId=b;applyCommand(emotes,registry,cmd);
+            cmd.unitId=keep;applyCommand(emotes,registry,cmd);
+            require(emotes.headbangTarget(0,a) && emotes.headbangTarget(0,b) && !emotes.headbangTarget(0,keep),
+                "headbang includes selected mobile units but excludes buildings");
+            for(int speed : {0,1,4,8}) {
+                tak::EmoteTiming timing;
+                require(timing.observe(1,1000),"new emote starts the real-time track");
+                const auto trigger=emotes.player(0).emoteSequence;
+                uint64_t ticks=0;
+                for(uint64_t elapsed=0;elapsed<=12000;elapsed+=250) {
+                    const auto simulatedTicks=elapsed*uint64_t(speed)*30/1000;
+                    while(ticks<simulatedTicks) {emotes.tick(1.f/30.f);++ticks;}
+                    require(emotes.player(0).emoteSequence==trigger,"simulation speed cannot advance the emote trigger");
+                    require(!timing.observe(1,1000+elapsed),"repeated snapshots and late selection batches do not restart music");
+                    require(timing.active(1000+elapsed)==(elapsed<10000),"emote lasts exactly ten real seconds at every speed and pause");
+                    require(timing.seconds(1000+elapsed)==float(elapsed)/1000.f,"animation phase follows real time");
+                }
+                require(timing.observe(2,14000) && timing.active(14000) && timing.seconds(14000)==0,
+                    "a subsequent emote resets animation and music together");
+            }
+        }
         auto file=std::make_shared<tak::cob::File>();
         file->pieces={"root","muzzle"};file->scripts={{"Emit",0}};
         file->code={0x10021001,257,0x1000f000,1,
@@ -563,6 +693,134 @@ int main(int argc,char** argv) {
         }
         std::cout<<"PASS: native storm waiting/start/active/end timeline and owner-death gates\n";
         {
+            // Damageable is independent of reclaimable and flamable: authored
+            // walls must enter the simulation even if builders cannot clear them.
+            tak::hpi::Vfs vfs;auto files=std::make_shared<tak::hpi::Vfs::Files>();
+            const std::string text=R"(
+                [Wall] {
+                    footprintx=4;
+                    footprintz=4;
+                    blocking=1;
+                    damage=1200;
+                    featuredead=Rubble;
+                }
+                [Rubble] {
+                    footprintx=1;
+                    footprintz=1;
+                    blocking=0;
+                    indestructible=1;
+                }
+            )";
+            (*files)["features/wall.tdf"]={text.begin(),text.end()};vfs.setMapFiles(files);
+            tak::tnt::Map map;map.width=map.height=64;map.heights.assign(64*64,10);
+            map.features.assign(64*64,0xffff);map.featureNames={"Wall"};
+            const int id=20*64+20;map.features[id]=0;
+            World walls;walls.setTerrain(map.heights,64,64,0);registerMapFeatures(walls,map,vfs);
+            require(walls.feature(id) && !walls.featureReclaimable(*walls.feature(id)),
+                "non-reclaimable nonflammable wall is tracked for damage, not reclaim");
+            UnitType builder;builder.isBuilder=builder.canMove=builder.canReclaim=true;
+            builder.maxHp=100;builder.maxVel=Fixed::fromInt(1);
+            const int worker=walls.spawn(&builder,280,280,0,0);
+            walls.reclaim(worker,id,false);
+            require(walls.unit(worker)->orders.empty(),"registering damage-only scenery does not enable reclaim orders");
+            Weapon shot;shot.damage=600;
+            RetailReplayProbe::hit(walls,shot,376,376,worker,0);
+            require(walls.feature(id)->dmg==600,"nonflammable wall takes ordinary tail-cell damage");
+            RetailReplayProbe::hit(walls,shot,376,376,worker,0);
+            require(!walls.feature(id)->blocks && walls.featureTypes()[walls.feature(id)->type].name=="rubble",
+                "damage-only wall changes to its authored nonblocking wreck stage");
+        }
+        // Death-spawned wrecks retain unit-owned visuals, but weapon hits must
+        // damage their feature footprint and leave the authored neutral rubble.
+        for(bool splash:{false,true}) for(bool permanent:{false,true}) {
+            World wrecks;wrecks.setVisPlayer(-1);
+            wrecks.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
+            wrecks.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+            FeatType body;body.name="keep-wreck";body.fx=body.fz=5;body.hp=1000;
+            body.blocking=true;body.reclaimable=true;body.deadType=1;body.indestructible=permanent;
+            FeatType rubble;rubble.name="rubble";rubble.fx=rubble.fz=1;rubble.hp=100;
+            wrecks.setFeatureTypes({body,rubble});
+            UnitType keep;keep.id="keep";keep.maxHp=100;keep.footX=keep.footZ=5;
+            wrecks.mapCorpse(&keep,0);
+            const int dead=wrecks.spawn(&keep,360,360,0,0);
+            require(RetailReplayProbe::corpse(wrecks,dead,0),"install dead building footprint");
+            const int anchor=20*64+20;
+            Weapon shot;shot.damage=500;shot.aoe=splash?200:0;
+            // Direct outer footprint hit, or splash whose impact is outside it.
+            const float x=splash?420.f:392.f,z=392.f;
+            const auto before=wrecks.stateHash();
+            shot.unitsOnly=true;RetailReplayProbe::hit(wrecks,shot,x,z,0,0);
+            require(wrecks.stateHash()==before,"unit-only weapons do not damage wreckage");
+            shot.unitsOnly=false;RetailReplayProbe::hit(wrecks,shot,x,z,0,0);
+            require(wrecks.unit(dead)->corpseUntil>0,"partial damage preserves corpse/reclaim target");
+            require((wrecks.stateHash()!=before)==!permanent,"corpse damage is hashed and indestructibility respected");
+            RetailReplayProbe::hit(wrecks,shot,x,z,0,0);
+            if(permanent) {
+                require(wrecks.unit(dead)->corpseUntil>0,"indestructible corpse survives lethal hits");
+                continue;
+            }
+            require(wrecks.unit(dead)->corpseUntil==0,"destroyed wreck cannot be resurrected/reclaimed as original unit");
+            require(wrecks.feature(anchor) && wrecks.feature(anchor)->alive &&
+                    wrecks.feature(anchor)->type==1 && wrecks.feature(anchor)->dmg==0,
+                    "authored smaller rubble replaces wreck without taking same hit twice");
+            RetailReplayProbe::retire(wrecks,dead);
+            require(wrecks.feature(anchor)->alive,"retiring old corpse cannot delete replacement rubble");
+            shot.aoe=0;RetailReplayProbe::hit(wrecks,shot,328,328,0,0);
+            require(!wrecks.feature(anchor)->alive,"replacement rubble can also be destroyed");
+            // Reuse the anchor after reclaim/expiry and ensure no stale corpse hit index.
+            const int second=wrecks.spawn(&keep,360,360,0,0);
+            require(RetailReplayProbe::corpse(wrecks,second,0),"reuse destroyed corpse anchor");
+            RetailReplayProbe::retire(wrecks,second);
+            RetailReplayProbe::hit(wrecks,shot,392,392,0,0);
+            require(wrecks.unit(second)->corpseUntil==0,"retired corpse anchor no longer receives damage");
+        }
+        {
+            World bodies;bodies.setVisPlayer(-1);
+            bodies.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
+            bodies.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+            FeatType body;body.name="archer-corpse";body.fx=body.fz=2;body.hp=440;
+            body.blocking=false;body.reclaimable=true;body.resurrectable=true;
+            bodies.setFeatureTypes({body});
+            UnitType archer;archer.maxHp=100;archer.footX=archer.footZ=2;
+            const int dead=bodies.spawn(&archer,352,352,0,0);
+            require(RetailReplayProbe::corpse(bodies,dead,0),"install nonblocking mobile corpse");
+            Weapon shot;shot.damage=440;
+            RetailReplayProbe::hit(bodies,shot,360,360,0,0);
+            require(bodies.unit(dead)->corpseUntil==0 && bodies.features().empty(),
+                    "mobile corpse without featuredead is removed without invented rubble");
+        }
+        // A large Taros tree must take a direct hit anywhere in its footprint,
+        // even when neither its anchor nor its center is inside the splash radius.
+        for (int size : {2,5}) for (float aoe : {0.f,160.f}) {
+            World trees;trees.setVisPlayer(-1);
+            trees.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
+            trees.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+            FeatType tree;tree.name="tartree";tree.fx=tree.fz=size;tree.hp=1000;
+            tree.blocking=true;tree.projectileHeight=140;tree.deadType=1;
+            FeatType stump;stump.name="smudge";stump.indestructible=true;
+            trees.setFeatureTypes({tree,stump});
+            const int id=20*64+20;
+            trees.addFeature(id,320+size*8,320+size*8,0,1,size,size,true,0);
+            const float hit=320+(size-1)*16+8;
+            Weapon shot;shot.damage=400;shot.aoe=aoe;
+            shot.unitsOnly=true;RetailReplayProbe::hit(trees,shot,hit,hit,0,0);
+            require(trees.feature(id)->dmg==0,"units-only spells leave footprint tails undamaged");
+            shot.unitsOnly=false;
+            RetailReplayProbe::hit(trees,shot,hit,hit,0,0);
+            require(trees.feature(id)->dmg==400,"direct tail hit damages the tree exactly once, including with splash");
+            RetailReplayProbe::hit(trees,shot,hit,hit,0,0);
+            require(trees.feature(id)->dmg==800,"successive outer-footprint hits accumulate");
+            RetailReplayProbe::hit(trees,shot,hit,hit,0,0);
+            require(trees.feature(id)->type==1 && !trees.feature(id)->blocks,
+                "outer-footprint damage destroys the tree into its nonblocking smudge");
+            UnitType walker;walker.maxHp=100;walker.maxVel=Fixed::fromInt(1);walker.maxWaterDepth=255;
+            require(trees.canPlace(&walker,hit,hit),"destroyed tree releases the outer footprint for movement");
+            RetailReplayProbe::hit(trees,shot,328,328,0,0);
+            require(trees.feature(id)->type==1 && trees.feature(id)->dmg==0,
+                "indestructible nonblocking smudge survives further fire");
+        }
+
+        {
             UnitType shooter;shooter.maxHp=100;
             Weapon arrow;arrow.ballistic=true;arrow.shotModel="araarrow";arrow.projVel=530;
             arrow.range=550;arrow.damage=476;arrow.reload=100;
@@ -596,6 +854,37 @@ int main(int argc,char** argv) {
             require(world.feature(treeId)->dmg==476 && world.unit(target)->hp==Fixed::fromInt(2000),
                 "ballistic arrow stops at the feature top, damages the feature, and never reaches its selected unit target");
         }
+        {
+            UnitType shooter,targetType;shooter.maxHp=100;targetType.maxHp=2000;
+            Weapon arrow;arrow.ballistic=true;arrow.shotModel="araarrow";arrow.projVel=530;
+            arrow.range=550;arrow.damage=476;arrow.reload=100;
+            shooter.weapons={arrow};shooter.weapon=arrow;
+            targetType.footX=targetType.footZ=4;targetType.modelTop=80*65536;
+            targetType.projectileQuad=RetailCollisionQuad{{{-24*65536,-24*65536},{24*65536,-24*65536},
+                {24*65536,24*65536},{-24*65536,24*65536}}};
+            World world;world.setVisPlayer(-1);
+            world.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
+            world.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+            FeatType tree;tree.name="tartree09";tree.fx=tree.fz=5;
+            tree.hp=1000;tree.projectileHeight=140;tree.blocking=true;
+            world.setFeatureTypes({tree});const int treeId=21*64+28;
+            world.addFeature(treeId,488,376,0,1,5,5,true,0);
+            const int from=world.spawn(&shooter,400,400,0,0);
+            const int target=world.spawn(&targetType,600,400,0,1);
+            world.unit(from)->groundY=Fixed::fromInt(30);world.unit(target)->groundY=Fixed::fromInt(10);
+            world.setStance(from,2);world.setStance(target,2);
+            for(int shot=0;shot<4;++shot) {
+                RetailReplayProbe::shoot(world,from,target);
+                for(int tick=0;tick<25;++tick) world.tick(1.f/30.f);
+                if(shot<2) require(world.feature(treeId)->dmg==476*(shot+1),
+                    "real projectile trajectory damages the outer row of a 5x5 tree");
+                if(shot<3) require(world.unit(target)->hp==Fixed::fromInt(2000),
+                    "tree shields the target until destroyed");
+            }
+            require(!world.feature(treeId)->alive && world.unit(target)->hp<Fixed::fromInt(2000),
+                "after destroying a footprint-tail obstruction, subsequent shots reach the unit behind it");
+        }
+
         {
             UnitType shooter;shooter.maxHp=100;
             Weapon cannon;cannon.ballistic=true;cannon.weaponArt="cannbmed";cannon.projVel=530;

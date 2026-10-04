@@ -1,6 +1,13 @@
 # Independent terrain and model antialiasing
 
-Graphics options provide **Terrain AA: Off / 2x / 4x** and
+**Current application policy:** Terrain AA and Model AA are fixed off, along
+with Bilinear Filtering, Smooth GUI Art and Smooth Movies. Their controls have
+been removed, their saved values (including legacy `antiAlias`) are ignored,
+and those keys are no longer written. Renderer implementations and direct
+renderer tests remain available. The design, settings migration and measurements
+below describe the retained implementation before this policy change.
+
+Graphics options previously provided **Terrain AA: Off / 2x / 4x** and
 **Model AA: Off / 2x / 4x / 8x / 16x**. The settings are independent. Samples
 are relative to final drawable pixels: each dimension is rounded up after
 multiplication by `sqrt(samples)`. Thus 16x uses four times the width and height,
@@ -16,9 +23,18 @@ position. Consecutive body geometry runs share a resolve, but bitmap scenery,
 special construction/occlusion draws and the airborne-shadow boundary end a run.
 This is not a final overlay containing every model.
 
-Each target uses the drawable's coordinate grid, avoiding changes in sampling
-phase as models move. Only a padded rectangle enclosing the geometry is cleared
-and resolved; clipping remains the caller's clipping. Projection, animation,
+Terrain uses a drawable-sized target. Models use a reusable target covering at
+most a 1024×1024-native-pixel tile, with a two-pixel filter guard. Larger geometry
+runs are drawn tile by tile and fully resolved before proceeding to the next
+painter-order operation. Triangles outside each padded tile are culled before
+submission. Tile cells are anchored to the screen rather than each geometry
+batch’s bounds. Vertex translation uses an integer supersample-grid origin
+aligned to the intermediate resolve. Moving neighbours therefore do not change
+a stationary face’s texture sampling or downsample phase. A packed-atlas
+regression covers this with interleaved batches at every enabled model AA level.
+Changing the tile size under memory pressure can still produce small silhouette
+coverage differences from SDL’s floating-point rasterization. Only the used part of the target is cleared and
+resolved; clipping remains the caller's clipping. Projection, animation,
 texture selection, team colors, waterline offsets, terrain occlusion and picking
 are unchanged. Distant cached body images are bypassed while Model AA is requested,
 so all models use their current geometry rather than a lower-resolution impostor.
@@ -57,33 +73,56 @@ scale correction.
 
 ## Resource limits and fallback
 
-Each pass has a 256 MiB target limit, including its intermediate. Allocations also
-respect the renderer's maximum texture dimensions (with the existing 7/8 safety
-margin) and the client's shared texture-memory allowance. Terrain allocates first;
-model AA uses the remaining allowance. These are RGBA target byte counts, not a
-measurement of driver allocation overhead or total VRAM consumption.
+Terrain has a 512 MiB target ceiling, further bounded to half the client's
+shared texture-memory cap. Model targets have a 128 MiB ceiling, further bounded
+to one quarter of that cap. Both also respect the currently remaining shared
+allowance. The shared cap still defaults to 1.25 GiB and can tighten after GPU
+allocation failures; it is an application budget, not detected physical VRAM.
+Terrain allocates first. Neither pass exceeds the backend's reported maximum
+texture dimensions; the old arbitrary 7/8 dimension margin is removed.
 
-Unsupported accelerated target/custom-blend/filtering capabilities, texture-size
-limits or allocation failures step down through supported sample levels to Off.
-Software renderers use Off. Bind/resolve failures abandon that pass and draw
-natively. Preferences are retained; the graphics slider shows an ACTIVE suffix
-when the effective level differs, and the log reports requested/effective levels
-and target MiB. A degraded pass retries at most once every three seconds; resize,
-setting changes and reset allow immediate reconfiguration. Successful targets
-are reused without per-frame allocation. Failure of one pass does not enable or
-multiply the other.
+Model AA shrinks its native tile from 1024 to 512, 256, 128 or 64 pixels per
+axis before reducing samples. This makes 16x available on large/wide outputs
+without allocating a four-times-output-width texture. The largest 16x model
+allocation (including its intermediate and guards) is about **80.70 MiB**,
+independent of output dimensions above 1024 pixels per axis. At 4x it is about
+16.16 MiB. Small windows use correspondingly smaller tiles. Under a 1 MiB
+remaining allowance, the model planner still fits 16x using a 64-pixel tile
+(about 0.36 MiB), at the cost of more submissions/resolves. Off allocates no AA
+targets. These are RGBA texture byte counts, not driver overhead or total VRAM;
+the CPU-side translated-vertex scratch buffer is retained and reused separately.
 
-At 1920x1080 the target costs are approximately 15.83 MiB for 2x, 31.64 MiB for
-4x, 79.12 MiB for 8x, and 158.20 MiB for 16x. Add the two independent pass costs.
-At 3840x2160, Model 16x exceeds the per-pass budget and falls back to 4x
-(126.56 MiB); 8x including its intermediate also exceeds the budget. Larger
-outputs may fall back further. Off allocates no AA targets.
+Unsupported accelerated target/custom-blend/filtering capabilities, real
+texture-size limits or allocation failures can still step down to Off. Software
+renderers use Off. Bind/resolve failure draws the unfinished tile and subsequent
+tiles natively, without re-blending tiles already resolved. Preferences remain
+unchanged; the graphics slider reports the effective level. Logs identify the
+specific reason (software renderer, unsupported targets, backend dimensions,
+shared/pass budget, allocation, blending/filtering, or bind/resolve failure),
+plus target memory and model tile dimensions. A degraded pass retries at most
+once every three seconds; resize/settings/reset allow immediate reconfiguration.
+A working degraded target is retained during retry backoff. Successful targets
+are reused, with no per-draw target allocation. One pass never multiplies the
+other's sample count.
+
+At 3840×2160, Terrain 4x needs 126.56 MiB; Model 16x needs about 80.70 MiB,
+for about 207.27 MiB combined instead of a screen-sized model allocation of
+632.81 MiB (which previously exceeded the model budget and fell back to 4x).
+Terrain still uses a full-size target and can fall back at extreme dimensions.
+The model tile planner supports 7680×4320 output at 16x with the same 80.70 MiB
+allocation, including on an 8192-pixel-max-texture backend.
 
 ## Validation
 
 Automated coverage exercises all 15 setting combinations, preference round trips,
 legacy migration and explicit-key precedence, pixel-count scales, texture/memory
-limits, fallback reporting, resize/reset recovery, cleanup and target reuse.
+limits, fallback reporting, resize/reset recovery, cleanup and target reuse. Compact-target tests also compare
+large and memory-constrained small tiles over a 1500×1100 translucent scene,
+including nonzero viewport and clip rectangles, screen-edge coverage and shared
+filter phase across tile boundaries. Interior pixels at all four enabled sample levels must agree within three
+color levels per channel. Different tile sizes can shift a handful of silhouette
+coverage samples: the OpenGL test observed 14 channel differences above three
+levels at 8x, with a maximum of 11, all within one pixel of the silhouette.
 The synthetic renderer test checks interleaved model/scenery painter order,
 translucent blending, edge color, clipping, moving geometry and native one-pixel UI.
 It runs under the software backend in CTest; `selective_aa_test --gpu` additionally
@@ -93,11 +132,15 @@ exercises accelerated targets and writes comparison BMPs to the temporary
 Run the focused tests with:
 
 ```sh
-ctest --test-dir build-dbg -R '^(settings|override_settings|selective_aa|terrain_cache|distant_models)$' --output-on-failure
+ctest --test-dir build-dbg -R '^(settings|override_settings|selective_aa|geometrysubmit|terrain_cache|distant_models)$' --output-on-failure
 SDL_VIDEODRIVER=x11 SDL_RENDER_DRIVER=opengl ./build-dbg/selective_aa_test --gpu
 ```
 
-## Local measurements (2026-10-02)
+## Original full-screen-target measurements (2026-10-02)
+
+These measurements predate compact model targets; they describe the original
+selective-AA implementation for comparison. See the update below for the current
+implementation.
 
 Linux X11/OpenGL, NVIDIA RTX 5070 Laptop GPU (615.71.09), Core Ultra 9 275HX,
 1920x1080 drawable. Both versions used Debug builds, the same retail data,
@@ -173,3 +216,70 @@ corpse, construction animation, translucent asset or combat effect has been
 visually reviewed. They share the covered submission paths; this is not a claim
 of an exhaustive asset-by-asset visual audit. Tiny travelling arrows were not
 isolated in the projectile capture; long-running dense combat remains unmeasured.
+
+
+## Compact-model-target update (2026-10-02)
+
+The current implementation was compared with an executable saved immediately
+before this update, on the same Linux/X11/OpenGL system and Debug configuration.
+The 13-second runs use the same fixture, capture point and 5–12 second frame-time
+sampling window described above. Actual drawable size was 1920×1080. These are
+single-run observations; small differences are within normal run-to-run noise.
+
+| Fixture models | Terrain / Model | Before median / p95 ms | After median / p95 ms | Model target MiB before → after |
+| ---: | --- | ---: | ---: | ---: |
+| 24 | 4 / 4 | 2.40 / 5.54 | 2.38 / 4.57 | 31.64 → 16.16 |
+| 24 | 4 / 16 | 2.59 / 3.42 | 2.48 / 5.61 | 158.20 → 80.70 |
+| 1200 | 4 / 4 | 16.72 / 23.63 | 16.46 / 24.17 | 31.64 → 16.16 |
+| 1200 | 4 / 16 | 17.36 / 22.82 | 16.56 / 22.16 | 158.20 → 80.70 |
+
+At **3840×2160**, requesting Terrain 4x / Model 16x previously produced effective
+4x / 4x with 253.13 MiB of combined AA targets. It now produces effective
+**4x / 16x with 207.27 MiB**. Sparse-scene median / p95 frame time was
+3.60 / 4.57 ms before and 4.10 / 8.50 ms after. This comparison increases actual
+model sample count fourfold; it is not an equal-quality speed comparison. Higher
+quality can still cost frame time even while target memory falls. Very small
+tiles under pressure also increase repeated submissions and resolves.
+
+The final direct OpenGL submission path accepts the exact integer 4× scale used
+by Model 16x, as well as the existing 1× and 2× scales. Fractional scales and
+other backends retain SDL submission. Single-tile model runs use an offset in the
+OpenGL transform to avoid a CPU vertex copy; multi-tile runs cull/translate their
+triangles into reusable scratch storage. No model vertices or rendering state
+are mutated in the simulation.
+
+Current validation includes all 15 independent combinations on software and
+OpenGL, 1,536 accelerated geometry pixel/state comparisons (including 4× scale,
+texturing, transparency, offset, clip and offscreen rendering), and tile-boundary
+comparisons at 2x/4x/8x/16x. Large versus deliberately memory-constrained tiles
+agree internally; small silhouette coverage differences are described above.
+No double-alpha seam or gap was observed. Packed-atlas tests also move batch
+bounds around stationary geometry: all enabled sample levels remain unchanged
+within two channel levels. Before screen-anchoring the tile cells this test
+failed at 2x and 8x. The reported crowded-game flicker at 16x has not been
+reproduced conclusively.
+An 8K model-target allocation test keeps 16x below 81 MiB. The full 8K game view
+was not benchmarked. Sparse/dense and 4K game screenshots were visually inspected.
+
+Timing JSON, logs and captures remain local under `/tmp/tak-aa-compact-benchmark`,
+`/tmp/tak-aa-compact-final` and `/tmp/tak-aa-compact-wide`. The **wide** directory
+contains the confirmed 3840×2160 runs used above. Additional 4x/16x construction,
+projectile and naval captures are under `/tmp/tak-aa-compact-special`; construction
+and naval images were reviewed for body/effect placement, transparency and water
+ordering. These are representative captures, not an exhaustive asset audit.
+All six focused CTests passed in both Release and Debug, and both clients were
+rebuilt. The independent-AA and geometry-submission accelerated tests passed on
+this OpenGL driver; Windows Direct3D and macOS Metal still require native
+platform testing.
+
+### Screen-anchored tile follow-up
+
+A 1,200-unit 1920×1080 Debug/OpenGL check at Terrain 4x / Model 16x
+after anchoring the tile cells measured 18.83 ms median / 24.10 ms p95,
+compared with the earlier compact-target run's 16.56 / 22.16 ms. These are
+single runs, not an isolated timing study. Fixed cells can require additional
+submissions when a small batch straddles a cell boundary. Model target memory
+remained 80.70 MiB and effective model AA remained 16x. This change fixes a
+reproduced sampling instability; it does not claim a speed improvement.
+Follow-up logs and the crowded-scene capture are in
+`/tmp/tak-aa-flicker-benchmark`. Windows and macOS remain untested locally.

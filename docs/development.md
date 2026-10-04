@@ -117,7 +117,7 @@ frameworks. CI checks these dependency boundaries for release packages.
   both architectures run the same package-workflow regression tests, ELF checks,
   package metadata checks, and static-link gate. Ubuntu 22.04 supplies each
   architecture's Debug tarball. ARM64 artifacts are available from CI and will
-  be attached to releases after 0.7.22. This does not cover 32-bit ARM or certify
+  be attached to releases starting with 0.7.23. This does not cover 32-bit ARM or certify
   graphical performance on individual ARM boards.
 - **Slackware64 15.0:** CI builds inside the Slackware 15.0 container referenced by
   [SlackDocs](https://docs.slackware.com/howtos:misc:slackware_docker_image), using

@@ -149,11 +149,15 @@ std::string mapDisplayName(const std::string& id) {
         lbBtn(winW - 140.0f, winH - 40.0f, 120, 30, "BACK", true, [this] { menuRequested_ = true; });
     }
 
-    void GameView::buildMapList() {
+    void GameView::buildMapList(tak::LoadScreen* progress) {
+        if (progress) progress->step("Finding maps",70);
         resetMinimap(); mapView_.quiesce();
         vfs_.refreshMapCache(installRoot_);
         mapList_.clear();
-        for (auto& [name, path] : tak::hpi::listMaps(vfs_)) {
+        const auto maps=tak::hpi::listMaps(vfs_);
+        size_t completed=0;
+        uint64_t lastProgress=0;
+        for (const auto& [name, path] : maps) {
             MapInfo mi; mi.name = name; mi.path = path;
             std::string otaPath = tak::vpath::replaceExtension(path,".ota");
             if (vfs_.has(otaPath)) {
@@ -171,6 +175,12 @@ std::string mapDisplayName(const std::string& id) {
             if (mi.players == 0)   // .ota had no numplayers: count the start positions
                 mi.players = int(tak::sim::parseStartPositions(vfs_, path).size());
             mapList_.push_back(std::move(mi));
+            ++completed;
+            if (progress && (completed==maps.size() || SDL_GetTicks64()-lastProgress>=100)) {
+                progress->step("Reading maps "+std::to_string(completed)+" / "+std::to_string(maps.size()),
+                               70+int(28*completed/maps.size()));
+                lastProgress=SDL_GetTicks64();
+            }
         }
         sortMapList();
     }
@@ -319,7 +329,13 @@ std::string mapDisplayName(const std::string& id) {
         // The menu offers square maps; accommodate the layout's minimum size.
         genParams_.widthCells = genParams_.heightCells =
             std::max(genParams_.widthCells, genParams_.heightCells);
+        auto previous = tak::mapgen::decodeMapId(mpMapId_);
+        previous.name = genParams_.name;
+        const bool reusePreview = mapPreviewFor_ == mapPath_ &&
+            tak::mapgen::isGeneratedMapId(mpMapId_) &&
+            tak::mapgen::encodeMapId(previous) == tak::mapgen::encodeMapId(genParams_);
         mpMapId_ = tak::mapgen::encodeMapId(genParams_);
+        if (reusePreview) mapPreviewFor_ = mpMapId_;
         mapPath_ = mpMapId_;   // generated: the id IS the path (findMap returns it as-is)
     }
 
@@ -335,7 +351,6 @@ std::string mapDisplayName(const std::string& id) {
             case 3: genParams_.waterDensity = v; break;
             default: genParams_.reliefDensity = v; break;
         }
-        applyGenParams();
     }
 
     void GameView::saveCreatePreferences() {
@@ -344,6 +359,7 @@ std::string mapDisplayName(const std::string& id) {
         auto pref = settings_->gameCreate;
         pref.crusades = createCrusades_;
         pref.doubleSight = createDoubleSight_;
+        pref.pathfindingMode = createPathfindingMode_;
         pref.speedUnlock = createSpeedUnlock_;
         pref.monarchExpendable = createMonarchExp_;
         pref.randomStarts = createRandomStarts_;
@@ -365,6 +381,7 @@ std::string mapDisplayName(const std::string& id) {
             const auto& pref = settings_->gameCreate;
             createCrusades_ = pref.crusades;
             createDoubleSight_ = pref.doubleSight;
+            createPathfindingMode_ = pref.pathfindingMode;
             createSpeedUnlock_ = pref.speedUnlock;
             createMonarchExp_ = pref.monarchExpendable;
             createRandomStarts_ = pref.randomStarts;
@@ -383,39 +400,43 @@ std::string mapDisplayName(const std::string& id) {
             }
             createPrefApplied_ = true;
         }
-        float x = 80, y = 90;
+        float x = 80, y = 70;
         blockText(singlePlayer_ ? "SINGLE PLAYER VS AI" : "CREATE GAME", x, y, 2.2f,
-                  {200, 205, 220, 255}); y += 40;
+                  {200, 205, 220, 255}); y += 34;
         // A private single-player game needs no name or password.
         if (!singlePlayer_) {
-            lbField(x, y, 260, "GAME NAME", createName_, 1); y += 46;
-            lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 46;
+            lbField(x, y, 260, "GAME NAME", createName_, 1); y += 44;
+            lbField(x, y, 260, "PASSWORD (optional)", createPass_, 2); y += 44;
         }
-        blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 30;
+        blockText(std::string("MAP: ") + mapDisplayName(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
         lbCycle(x, y, 170, 26, createCrusades_ ? "CRUSADES: ON" : "CRUSADES: OFF", true,
-              [this](int) { createCrusades_ = !createCrusades_; }); y += 30;
+              [this](int) { createCrusades_ = !createCrusades_; }); y += 28;
         lbCycle(x, y, 240, 26, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
-              [this](int) { createDoubleSight_ = !createDoubleSight_; }); y += 30;
+              [this](int) { createDoubleSight_ = !createDoubleSight_; }); y += 28;
+        lbCycle(x, y, 260, 26, createPathfindingMode_ == tak::sim::PathfindingMode::Flowfield
+                  ? "PATHFINDING: FLOWFIELD" : "PATHFINDING: RETAIL", true,
+              [this](int) { createPathfindingMode_ = createPathfindingMode_ == tak::sim::PathfindingMode::Retail
+                  ? tak::sim::PathfindingMode::Flowfield : tak::sim::PathfindingMode::Retail; }); y += 28;
         lbCycle(x,y,240,26,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
             static constexpr uint16_t limits[]={250,500,1000,2000};
             auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
             int index=at==std::end(limits) ? 0 : int(at-std::begin(limits));
             createUnitCap_=limits[(index+direction+4)%4];
-        }); y+=30;
+        }); y+=28;
         // When OFF, losing your Monarch loses the game (retail commander rule); ON
         // makes the Monarch just another unit.
         lbCycle(x, y, 240, 26, createMonarchExp_ ? "MONARCH EXPENDABLE: ON"
                                                : "MONARCH EXPENDABLE: OFF", true,
-              [this](int) { createMonarchExp_ = !createMonarchExp_; }); y += 30;
+              [this](int) { createMonarchExp_ = !createMonarchExp_; }); y += 28;
         lbCycle(x, y, 240, 26, createSpeedUnlock_ ? "ALLOW SPEED CHANGE: ON"
                                               : "ALLOW SPEED CHANGE: OFF", true,
-              [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; }); y += 30;
+              [this](int) { createSpeedUnlock_ = !createSpeedUnlock_; }); y += 28;
         // SP only: spectate mode -- you take no slot and just watch the AIs fight.
         // Seat AIs in the slots below, then START.
         if (singlePlayer_) {
             lbCycle(x, y, 240, 26, spSpectate_ ? "SPECTATE (WATCH AIS): ON"
                                              : "SPECTATE (WATCH AIS): OFF", true,
-                  [this](int) { spSpectate_ = !spSpectate_; }); y += 30;
+                  [this](int) { spSpectate_ = !spSpectate_; }); y += 28;
         }
         // Fog of war: a room rule, so it is picked here and not only after the
         // room exists. Display-only (never hashed) -- every peer applies the same
@@ -425,14 +446,14 @@ std::string mapDisplayName(const std::string& id) {
             lbCycle(x, y, 240, 26,
                   std::string("FOG OF WAR: ") + kFogName[std::min<int>(createFog_, 2)], true,
                   [this](int direction) { createFog_ = uint8_t((createFog_ + direction + 3) % 3); });
-            y += 30;
+            y += 28;
         }
         // Random Start Locations: also a room rule, picked here like fog so it is set
         // before the room exists. FIXED = slot N always takes the map's Nth start
         // (spawns are memorisable); RANDOM = the starts are shuffled for the match.
         lbCycle(x, y, 240, 26, std::string("START LOCATIONS: ") +
               (createRandomStarts_ ? "RANDOM" : "FIXED"), true,
-              [this](int) { createRandomStarts_ = !createRandomStarts_; }); y += 30;
+              [this](int) { createRandomStarts_ = !createRandomStarts_; }); y += 28;
         static const char* kTier[] = {"OFF", "COSMETIC", "FULL"};
         lbCycle(x, y, 240, 26, std::string("OVERRIDES: ") + kTier[createOverride_ & 3], true,
               [this](int direction) { createOverride_ = uint8_t((createOverride_ + direction + 3) % 3); }); y += 44;
@@ -445,6 +466,7 @@ std::string mapDisplayName(const std::string& id) {
             o.overridePolicy = createOverride_;
             if(settings_)mp_->setHostOverridePacks(settings_->hostOverridePacks);
             o.doubleSight = createDoubleSight_ ? 1 : 0;
+            o.pathfindingMode = createPathfindingMode_;
             o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
             o.unitCap = createUnitCap_;
             o.monarchExpendable = createMonarchExp_ ? 1 : 0;
@@ -541,7 +563,15 @@ std::string mapDisplayName(const std::string& id) {
             SDL_Color rc = sel ? SDL_Color{44, 78, 44, 255}
                          : hot ? SDL_Color{40, 46, 62, 255} : SDL_Color{24, 26, 34, 255};
             SDL_SetRenderDrawColor(ren_, rc.r, rc.g, rc.b, 255); SDL_RenderFillRectF(ren_, &row);
-            blockText(nm.size() > size_t(maxCh) ? nm.substr(0, size_t(maxCh)) : nm,
+            std::string label = nm.substr(0, size_t(maxCh));
+            // Keep part of a generated map's recipe suffix visible even when a
+            // long title needs shortening, so duplicate titles can be told apart.
+            if (nm.size() > size_t(maxCh) && maxCh > 9 && nm.size() > 17 &&
+                nm[nm.size()-17] == '-' &&
+                std::all_of(nm.end()-16,nm.end(),[](char c) {
+                    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+                })) label = nm.substr(0,size_t(maxCh-9)) + "~" + nm.substr(nm.size()-8);
+            blockText(label,
                       boxX + 8, row.y + (rowH - 14) / 2, 2.0f,
                       sel ? SDL_Color{200, 240, 200, 255} : SDL_Color{220, 225, 235, 255});
             // Right-aligned player count + size, e.g. "4P 16x16".
@@ -581,11 +611,15 @@ std::string mapDisplayName(const std::string& id) {
         const float kRowH = 24, kGap = 6, kBtnW = 300;
         const float kSliderH = 32;   // label (11) + 7 + bar (14)
         float px = lx, py = hy + 46;   // aligns with the map list's box top
+        lbField(px, py, kBtnW, "MAP NAME (optional)", genParams_.name, 5); py += 44;
         lbCycle(px, py, kBtnW, kRowH, std::string("TYPE:  ") + kTypeName[genParams_.mapType % tak::mapgen::kMapTypes],
               true, [this](int direction) { genParams_.mapType = uint8_t((genParams_.mapType + direction + tak::mapgen::kMapTypes) % tak::mapgen::kMapTypes);
+                             if(genParams_.layout>=tak::mapgen::Maze) genParams_.layout=tak::mapgen::themedLayout(genParams_.mapType);
                              applyGenParams(); }); py += kRowH + kGap;
         lbCycle(px, py, kBtnW, kRowH, std::string("LAYOUT:  ") + tak::mapgen::layoutName(genParams_.layout),
-              true, [this](int direction) { genParams_.layout = uint8_t((genParams_.layout + direction + 3) % 3);
+              true, [this](int direction) { const int index=genParams_.layout>=tak::mapgen::Maze?3:genParams_.layout;
+                             const int next=(index+direction+4)%4;
+                             genParams_.layout=next==3?tak::mapgen::themedLayout(genParams_.mapType):uint8_t(next);
                              applyGenParams(); }); py += kRowH + kGap;
         int curU = genParams_.widthCells / 32;
         char szl[48]; std::snprintf(szl, sizeof szl, "SIZE:  %d x %d", curU, curU);
@@ -630,8 +664,8 @@ std::string mapDisplayName(const std::string& id) {
         slider(0, "FORESTS", genParams_.treeDensity);
         slider(1, "ROCK CLUSTERS", genParams_.rockDensity);
         slider(2, "EXTRA MANA SPOTS", genParams_.manaDensity);
-        slider(3, "WATER AMOUNT", genParams_.waterDensity, genParams_.layout != tak::mapgen::Islands);
-        slider(4, "AUTHORED HILLS", genParams_.reliefDensity);
+        slider(3, "WATER AMOUNT", genParams_.waterDensity, !tak::mapgen::automaticWater(genParams_.layout));
+        slider(4, genParams_.layout==tak::mapgen::Highlands?"HIGHLAND AMOUNT":"AUTHORED HILLS", genParams_.reliefDensity, genParams_.layout!=tak::mapgen::Maze);
         lbBtn(px, py, 140, kRowH, "RE-ROLL SEED", true, [this] {
             genParams_.seed = genParams_.seed * 6364136223846793005ULL + 1442695040888963407ULL;
             applyGenParams();
@@ -665,7 +699,7 @@ std::string mapDisplayName(const std::string& id) {
                 blockText("CHECK RETAIL DATA", pvx, pvy + pvH + 46, 1.4f, {220, 140, 120, 255});
             blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 106, 1.3f, {160, 175, 160, 255});
             blockText("MANA SLIDER: EXTRA SPOTS", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
-            if (genParams_.layout == tak::mapgen::Islands)
+            if (genParams_.layout == tak::mapgen::Islands || genParams_.layout == tak::mapgen::Ports)
                 blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 142, 1.3f, {160, 175, 160, 255});
         }
         // Keep the generator action below the preview and map description.
@@ -680,7 +714,7 @@ std::string mapDisplayName(const std::string& id) {
         const auto& room = mp_->room();
         const bool campaign = mp_->campaignRoom();
         float x = 40, y = 78;
-        blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
+        if (!singlePlayer_) blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
         blockText(std::string("MAP  ") + mapDisplayName(room.mapId), x, y - 24, 1.8f, {180, 185, 195, 255});
         y += 34;
         bool host = (room.hostId == mp_->myClientId());
@@ -859,7 +893,7 @@ std::string mapDisplayName(const std::string& id) {
         y += 44;
         const SDL_Color infoColor{205,210,225,255};
         auto info = [&](int row, int column, const std::string& label) {
-            blockText(label,x+column*300.0f,y+row*22.0f,1.6f,infoColor);
+            blockText(label,x+column*300.0f,y+row*20.0f,1.6f,infoColor);
         };
         auto onOff = [](bool value) { return value ? "ON" : "OFF"; };
         info(0,0,std::string("CRUSADES: ")+onOff(room.opts.crusades));
@@ -870,6 +904,7 @@ std::string mapDisplayName(const std::string& id) {
         static const char* fogNames[]={"NOT EXPLORED","EXPLORED","FULL VISION"};
         info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
         info(3,0,std::string("START LOCATIONS: ")+(room.opts.randomStarts?"RANDOM":"FIXED"));
+        info(4,0,std::string("PATHFINDING: ")+(room.opts.pathfindingMode==tak::sim::PathfindingMode::Flowfield?"FLOWFIELD":"RETAIL"));
         if(singlePlayer_)
             info(3,1,std::string("SPECTATE (WATCH AIS): ")+onOff(mp_->isSpectator()));
         else if(!campaign) {
@@ -890,11 +925,11 @@ std::string mapDisplayName(const std::string& id) {
                     "  PLAYERS: "+std::to_string(gp.players);
                 const std::string terrain=std::string("FORESTS: ")+level(gp.treeDensity)+
                     "  ROCKS: "+level(gp.rockDensity)+"  MANA: "+level(gp.manaDensity)+
-                    "  WATER: "+(gp.layout==tak::mapgen::Islands?"AUTO":level(gp.waterDensity))+
+                    "  WATER: "+(tak::mapgen::automaticWater(gp.layout)?"AUTO":level(gp.waterDensity))+
                     "  HILLS: "+level(gp.reliefDensity);
-                blockText(shape,x,y+90,1.1f,infoColor);
-                blockText(terrain,x,y+104,1.1f,infoColor);
-                blockText("MAP SEED: "+std::to_string(gp.seed),x,y+118,1.1f,infoColor);
+                blockText(shape,x,y+98,1.1f,infoColor);
+                blockText(terrain,x,y+112,1.1f,infoColor);
+                blockText("MAP SEED: "+std::to_string(gp.seed),x,y+126,1.1f,infoColor);
             } catch(const std::exception&) {} // Invalid map IDs cannot start.
         }
         // chat panel on the right (multiplayer only -- there's no one to chat with in SP)
@@ -936,11 +971,17 @@ std::string mapDisplayName(const std::string& id) {
             }
             return;
         }
+        if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+            if (genSlider_ >= 0 || lbField_ == 5) applyGenParams();
+            genSlider_ = -1; mapDrag_ = false;
+            saveCreatePreferences();
+        }
         if (e.type == SDL_MOUSEMOTION) {
             mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
             if (mapDrag_) setMapScrollFromThumb();   // dragging the map scrollbar
             if (genSlider_ >= 0) { float mx, my; lobbyMouse(mx, my); setGenSlider(genSlider_, mx); }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+            if (genSlider_ >= 0) applyGenParams();
             mapDrag_ = false; genSlider_ = -1;
             saveCreatePreferences();
         } else if (e.type == SDL_MOUSEWHEEL) {
@@ -953,7 +994,7 @@ std::string mapDisplayName(const std::string& id) {
                    (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT)) {
             mouseX_ = float(e.button.x); mouseY_ = float(e.button.y);
             const bool forward = e.button.button == SDL_BUTTON_LEFT;
-            if (forward) { lbField_ = 0; SDL_StopTextInput(); }
+            if (forward) { if (lbField_ == 5) applyGenParams(); lbField_ = 0; SDL_StopTextInput(); }
             float mx, my; lobbyMouse(mx, my);
             if (forward && ptIn(mapThumbRect_, mx, my)) { mapDrag_ = true; return; }   // grab the thumb
             for (int gi = 0; gi < 5; ++gi)   // grab a density slider
@@ -967,14 +1008,21 @@ std::string mapDisplayName(const std::string& id) {
                 }
         } else if (e.type == SDL_TEXTINPUT && lbField_) {
             std::string* f = lbFieldBuf();
-            if (f && f->size() < 24) *f += e.text.text;
+            if (f && f->size() < 24) {
+                if (lbField_ == 5) {
+                    for (unsigned char c : std::string(e.text.text))
+                        if (f->size() < 24 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                            (c >= '0' && c <= '9') || c == ' ' || c == '-' || c == '_')) *f += char(c);
+                } else *f += e.text.text;
+            }
             saveCreatePreferences();
         } else if (e.type == SDL_KEYDOWN && lbField_) {
             if (e.key.keysym.sym == SDLK_BACKSPACE) { std::string* f = lbFieldBuf(); if (f && !f->empty()) f->pop_back(); }
             else if (e.key.keysym.sym == SDLK_RETURN) {
                 if (lbField_ == 4 && !chatDraft_.empty()) { mp_->chat(chatDraft_); chatDraft_.clear(); }
+                if (lbField_ == 5) applyGenParams();
                 lbField_ = 0; SDL_StopTextInput();
-            } else if (e.key.keysym.sym == SDLK_ESCAPE) { lbField_ = 0; SDL_StopTextInput(); }
+            } else if (e.key.keysym.sym == SDLK_ESCAPE) { if (lbField_ == 5) applyGenParams(); lbField_ = 0; SDL_StopTextInput(); }
             saveCreatePreferences();
         }
     }

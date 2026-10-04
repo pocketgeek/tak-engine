@@ -577,3 +577,33 @@ Cosmetic local selections exclude all gameplay, feature-definition and AI files.
 Selections persist separately for hosts and guests. Off suppresses both lists
 and local files. Replay format 10 records the shared package digest and loads
 it from `OverrideCache/`; format 9 / protocol 212 remains readable.
+
+
+### Match pathfinding selection
+
+Protocol 220 carries the creation-time `Retail` (default) or `Flowfield` choice
+in game options and every lobby/start/rejoin snapshot. The server validates the
+value, includes it in the authoritative rules digest, and retains it when a
+host sends later option updates. Both clients and the referee apply that choice
+through shared match setup. Campaign missions and Crusades battle rooms remain
+Retail. The lobby reports the selected mode without changing it.
+
+Replay format 11 records the pathfinder. Protocol-220/format-11 and
+protocol-219/format-10 recordings remain supported; other older simulation
+protocols are rejected. Campaign
+playback forces Retail even if a header supplies Flowfield. A debug-only
+`TAK_FLOWFIELD=1` selects Flowfield in the headless multiplayer test harness.
+
+Protocol 221 appends `BuildManaArea` to the command enum. It carries a builder,
+lodestone type, queue flag, and two rectangle corners in 43 bytes, like area
+reclaim; existing commands retain their 35-byte layout. Every peer executes one
+persistent area mission, exploring deposits before trying normal clearing,
+placement, construction, and upgrades. Its cursor and exploration stage are
+hashed, with no per-deposit command list or render-owned decisions. The server
+validates coordinates and command ownership; build-menu restrictions apply.
+
+New matches also enable automatic nearby repairs during builder patrols.
+Replay format 11 is unchanged; playback of protocols 219 and 220 disables that
+new patrol behavior and rejects area-build commands. All live peers and the
+server must use protocol 221. Defensive AI interception is server-local policy;
+its ordinary movement commands are sequenced and recorded as usual.

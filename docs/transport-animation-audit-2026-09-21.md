@@ -11996,3 +11996,59 @@ macOS and determinism CI workflows for that code commit all pass. Ground
 pathfinding remains covered by the existing full sweep. Later commits only update
 this audit. Historical open questions above are superseded by these conclusions;
 this is behavioral verification, not a claim of pixel-identical rendering.
+
+### 2026-10-03: hits on large feature footprints
+
+A generated Taros Maze report exposed projectiles colliding with tree footprint
+cells without damaging the tree. `projectileEnvironment` already followed the
+`0xfffe` tail cell's back offsets, but `applyHit` searched only feature origins
+near the hit. A small-radius hit could miss both the origin and feature center.
+
+Read-only emulation of `KINGDOMS.icd` SHA-256
+`1144a394889811ae6d113f8fe470dac5de0b0a7aae3c9ee063f74b8d20b730db`
+confirms that impact dispatch `0x529c10` resolves the tail to the origin before
+calling feature damage `0x4961a0`. Synthetic 2×2 and 5×5 footprints, struck at
+the far corner with AOE 0 and 160, each dispatch damage exactly once at the
+origin. The existing `tools/re/probe_ballistic_impact_body.py` now asserts these
+cases. Map services and damage callbacks are controlled; the native impact and
+splash scanning execute. This establishes dispatch, not rendered appearance.
+
+The engine now resolves the directly hit footprint before the splash scan and
+excludes that feature from duplicate splash damage, including after a stage
+replacement. Units-only weapons, indestructibility and ignition gates remain.
+`retail_script_test` covers damage accumulation, destruction into a nonblocking
+smudge, freed placement cells, and an actual ballistic trajectory that reaches
+the unit behind a 5×5 tree only after destroying the tree. Network protocol 216
+keeps clients with the older damage behavior out of the same lockstep match.
+
+The follow-up covers all authored scenery, not just Taros trees. Map setup now
+also registers non-mana features with positive damage thresholds that are not
+indestructible, even if they are neither reclaimable nor flammable. Those flags
+still independently control reclaim and ignition. This restores damage to
+walls and other damage-only scenery that was previously absent from the feature
+simulation. The data-backed `scenery_damage` CTest places each authored feature
+in an isolated footprint and checks an outer-cell lethal hit and its named
+replacement (or removal), plus immunity for indestructible features. On the
+local merged retail install it covers 782 destructible types, including 72
+neither-reclaimable-nor-flammable types, and 365 indestructible types. This is
+simulation coverage; it does not visually review every replacement sprite.
+
+### Death-spawned wreckage damage (2026-10-03)
+
+Building wrecks and mobile corpses now receive weapon damage through their
+installed feature footprints, including direct hits on footprint tails and
+nearby splash. Their authored `damage`, `indestructible`, and `featuredead`
+fields govern survival and replacement, just as for preplaced scenery.
+Destroying a corpse removes its old reclaim/resurrection target and navigation
+footprint; a defined successor is installed as ordinary neutral scenery at the
+same anchor. Without a successor, the corpse disappears. The replacement does
+not take damage twice from the hit that created it. Reclaim and decomposition
+also retire the derived hit index, so an old body cannot remove newer rubble.
+
+The index is by feature anchor, avoiding a full corpse scan per weapon impact.
+Accumulated corpse damage is included in the lockstep hash; protocol 219 requires
+matching clients and servers. Focused `retail_script` fixtures cover direct and
+splash damage, partial damage, indestructibility, unit-only weapons, smaller
+rubble transitions, repeated destruction, anchor reuse, and mobile corpses with
+no replacement. Existing death, feature, reclaim and simulation-equivalence
+checks cover the surrounding lifecycle.

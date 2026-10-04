@@ -26,8 +26,8 @@ bool parseGeneratorFields(const GeneratorFields& f,tak::mapgen::Params& p,std::s
     if(!number(0,0,UINT64_MAX,value)) {error="Seed must be an unsigned 64-bit whole number.";return false;}next.seed=value;
     if(!number(1,2,8,value)) {error="Choose 2 to 8 players.";return false;}next.players=uint8_t(value);
     bool layout=false;
-    for(uint8_t i=0;i<=tak::mapgen::Islands;++i)if(f[2]==tak::mapgen::layoutName(i)) {next.layout=i;layout=true;}
-    if(!layout) {error="Choose Mainland, Lakes or Islands.";return false;}
+    for(uint8_t i=0;i<(p.formatVer>=6?tak::mapgen::kLayouts:tak::mapgen::Islands+1);++i)if(f[2]==tak::mapgen::layoutName(i)) {next.layout=i;layout=true;}
+    if(!layout) {error="Choose a layout supported by this recipe version.";return false;}
     uint8_t* density[]={&next.treeDensity,&next.rockDensity,&next.manaDensity,&next.waterDensity,&next.reliefDensity};
     for(size_t i=3;i<f.size();++i) {
         if(!number(i,0,255,value)) {error="Densities must be whole numbers from 0 to 255.";return false;}

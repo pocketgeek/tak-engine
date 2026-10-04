@@ -39,7 +39,7 @@ int main() {
     for(uint64_t revision:{0,1,2}) {
     if(revision==2)for(auto& v:vertices){v.position.x+=1.25f;v.color.r^=127;}
     for(SDL_FPoint offset:{SDL_FPoint{0,0},SDL_FPoint{1.25f,-2.5f}})
-    for(float scale:{1.f,2.f,1.41421356f})for(bool textured:{false,true})
+    for(float scale:{1.f,2.f,4.f,1.41421356f})for(bool textured:{false,true})
     for(bool clipped:{false,true})for(bool offscreen:{false,true})
     for(auto blend:{SDL_BLENDMODE_NONE,SDL_BLENDMODE_BLEND,SDL_BLENDMODE_ADD,SDL_BLENDMODE_MOD})
     for(auto filter:{SDL_ScaleModeNearest,SDL_ScaleModeLinear}) {

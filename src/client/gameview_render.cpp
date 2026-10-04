@@ -25,8 +25,13 @@
         // values via input(), so this is a no-op there.
         winW_ = winW;
         winH_ = winH;
+        emoteNowMs_ = SDL_GetTicks64();
+        for (int p=0;p<8;++p)
+            if (emoteTiming_[p].observe(framePlayer(p).emoteSequence, emoteNowMs_)) {
+                discoWas_[p] = headbangWas_[p] = false;
+            }
         manageMusic();
-        discoSound();     // fire the disco track from a monarch when its player starts dancing
+        discoSound();     // start the real-time disco track for the selected dancers
         headbangSound();  // ...and the metal track on headbang
         // Campaigns use a private server, but its connection/room handshake is
         // an implementation detail. Keep the loading plate up before GameStarting
@@ -122,7 +127,7 @@
         mapView_.setUnderlay(miniTex_);   // low-res gap filler (null until the overview bakes)
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
-            terrainAA_.render(ren_,{0,0,float(mvw),float(winH)},[&]{mapView_.draw(mvw,winH);});
+            terrainAA_.render(ren_,{0,0,float(mvw),float(winH)},[&](SDL_FPoint,SDL_Rect){mapView_.draw(mvw,winH);});
             profTerrainMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                               (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
@@ -961,10 +966,13 @@
                 while(end<drawOps_.size() && end!=airShadowOp_ && !drawOps_[end].f && !drawOps_[end].u && drawOps_[end].count>0 && drawOps_[end].tex)++end;
                 const auto& last=drawOps_[end-1];
                 const auto vertices=std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(last.start+last.count-op.start));
-                modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(vertices):SDL_FRect{},[&]{
+                modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(vertices):SDL_FRect{},[&](SDL_FPoint offset,SDL_Rect tile){
                     for(size_t i=opi;i<end;++i) {
                         const auto& part=drawOps_[i];
-                        bodySubmit_.draw(ren_,part.tex,{bodyVerts_.data()+part.start,size_t(part.count)},!tak::devFlag("TAK_BODY_SDL_SUBMIT"));
+                        const auto source=std::span<const SDL_Vertex>(bodyVerts_.data()+part.start,size_t(part.count));
+                        const bool cull=modelAA_.tileCulling();
+                        const auto verts=cull?modelAA_.translated(source,offset,tile):source;
+                        bodySubmit_.draw(ren_,part.tex,verts,!tak::devFlag("TAK_BODY_SDL_SUBMIT"),0,cull?SDL_FPoint{}:offset);
                     }
                 });
                 opi=end-1;
@@ -990,7 +998,7 @@
             // Every queued build is an order now; the order sits at the builder's
             // working position, so step back to where the site actually goes.
             for (const auto& o : u.orders)
-                if (o.buildType)
+                if (o.buildType && !o.manaBuildArea)
                     drawGhostAt(o.buildType,
                         o.buildRectangle ? o.buildX.toFloat() : o.x.toFloat(),
                         o.buildRectangle ? o.buildZ.toFloat() : o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
@@ -1442,7 +1450,20 @@
             profFogMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                           (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
-        if (buildDrag_ && placing_) {
+        if (manaBuildDrag_ && placing_ && (std::abs(mouseX_-bdSx0_)>=6 || std::abs(mouseY_-bdSy0_)>=6)) {
+            SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
+            SDL_FRect box{std::min(bdSx0_,mouseX_),std::min(bdSy0_,mouseY_),
+                std::abs(mouseX_-bdSx0_),std::abs(mouseY_-bdSy0_)};
+            SDL_SetRenderDrawColor(ren_,100,220,255,40);SDL_RenderFillRectF(ren_,&box);
+            SDL_SetRenderDrawColor(ren_,130,230,255,220);SDL_RenderDrawRectF(ren_,&box);
+            float mx,mz;pickWorld(mouseX_,mouseY_,mx,mz);
+            // The map's deposit list is immutable during play. Preview only
+            // currently visible sites; hidden ones are discovered by the builder.
+            for (const auto& [x,z]:world_.manaSpots())
+                if (x>=std::min(bdX0_,mx) && x<=std::max(bdX0_,mx) &&
+                    z>=std::min(bdZ0_,mz) && z<=std::max(bdZ0_,mz) && (noFog_ || cellVisibleR(x,z)))
+                    drawGhostAt(placing_,x,z,!canPlaceLocked(placing_,x,z));
+        } else if (buildDrag_ && placing_) {
             float mx, mz;
             pickWorld(mouseX_, mouseY_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
@@ -2447,14 +2468,14 @@
         // Retail applies the birth heading to buildings as well as movers.
         // Their scripts can counter-rotate a build pad independently of the body.
         float facing = -ih;
-        // Disco emote: a dancing monarch spins, bobs and hue-cycles. Local wall-time
-        // (animClock_) drives the smooth motion; world_.discoActive() (a synced sim
-        // timer) gates it. Pure client-side eye-candy -- nothing here is hashed.
+        // Disco emote: a dancing unit spins, bobs and hue-cycles using the
+        // same real-time clock as its music and ten-second duration.
+        // The simulation only sequences the trigger and target selection.
         bool disco = dancing(u);
         float discoBob = 0.0f, discoMix = 0.0f;
         SDL_Color discoCol{};
         if (disco) {
-            float t = animClock_;
+            float t = emoteSeconds(u.player);
             facing += t * 6.2831853f;                                // ~1 rev/sec
             discoBob = std::fabs(std::sin(t * 8.0f)) * 11.0f * zm;    // bounce, px
             discoCol = discoHue(t * 0.8f);                           // body tint hue
@@ -2463,7 +2484,7 @@
         // Headbang emote (Shift+H): no spin -- a sharp downward nod synced to the metal
         // beat (~152 BPM), the body whipping side to side and flashing red on each bang.
         if (headbanging(u)) {
-            float ph = animClock_ * 2.533f * 6.2831853f;             // ~152 bangs/min
+            float ph = emoteSeconds(u.player) * 2.533f * 6.2831853f;             // ~152 bangs/min
             float bang = std::pow(std::max(0.0f, std::sin(ph)), 2.0f);
             discoBob = -bang * 16.0f * zm;                           // dip DOWN (nod)
             facing += std::sin(ph) * 0.55f;                          // hair-whip
@@ -2662,6 +2683,9 @@
         // corpsePhase && !corpseStatue is exactly "finished falling, lying on the
         // ground", which is the only case the flat-face artifact arises in.
         const bool corpseCull = u.corpsePhase && !u.corpseStatue;
+        // Deliberate retail deviation: lodestones cast their visible geometry,
+        // including pieces marked DONT_CACHE or RENDER_OFF by the retail scripts.
+        const bool lodestone = u.type && u.type->onMana && isStructure(u.type);
         const float sx = g.ax + kShadowLX * g.alt * zm;
         const float sy = g.ay + (kProjY - kShadowLZ) * g.alt * zm;
         const float cy=std::cos(facing),sn=std::sin(facing);
@@ -2677,7 +2701,9 @@
             const Xform transform=pose ? pose->transform : scriptTransform(parent,object.x,object.y,object.z,piece);
             PieceMeta local;
             if (!cached) { pieceMetaFor(object,isRoot,local);cached=&local; }
-            if (!cached->skip && (pose ? pose->castsShadow : !piece || piece->castsShadow())) {
+            const bool visible = pose ? !pose->hidden : !piece || piece->visible;
+            const bool casts = lodestone ? visible : (pose ? pose->castsShadow : !piece || piece->castsShadow());
+            if (!cached->skip && casts) {
                 for (size_t primitiveIndex=0;primitiveIndex<object.primitives.size();++primitiveIndex) {
                     if (int32_t(primitiveIndex)==object.selectionPrimitive) continue;
                     const auto& primitive=object.primitives[primitiveIndex];
@@ -2848,9 +2874,9 @@
         }
         // Shadows are emitted once by the dedicated ground/air passes. Special
         // body rendering must not composite the same shadow a second time.
-        // Disco dance floor: a pulsing, hue-cycling glow disc under a dancing monarch.
+        // Disco dance floor: a pulsing, hue-cycling glow disc under a dancing unit.
         if (dancing(u)) {
-            float t = animClock_;
+            float t = emoteSeconds(u.player);
             SDL_Color dc = discoHue(t * 0.8f + 0.5f);   // offset from the body tint
             float rad = (float(std::max(u.type->footX, u.type->footZ)) * 12.0f + 22.0f)
                         * (0.85f + 0.15f * std::sin(t * 8.0f)) * zm;   // pulse with the bob
@@ -2875,7 +2901,7 @@
         }
         // Headbang: a red mosh-pit glow that flares on each downbeat.
         if (headbanging(u)) {
-            float ph = animClock_ * 2.533f * 6.2831853f;
+            float ph = emoteSeconds(u.player) * 2.533f * 6.2831853f;
             float bang = std::pow(std::max(0.0f, std::sin(ph)), 2.0f);
             SDL_Color dc{Uint8(150 + 90 * bang), Uint8(20 + 20 * bang), 20, 255};
             float rad = (float(std::max(u.type->footX, u.type->footZ)) * 12.0f + 22.0f)
@@ -2935,15 +2961,17 @@
         // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
         // per texture (usually 1 per unit). The veterancy/conjure colour tint was
         // already baked into the vertices on the worker pool.
-        modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(g.verts):SDL_FRect{},[&]{
+        modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(g.verts):SDL_FRect{},[&](SDL_FPoint offset,SDL_Rect tile){
         int off = 0;
         for (const auto& r : g.runs) {
             // A null run texture (an atlas page that failed to allocate under
             // VRAM pressure -- corpse meshes load mid-game) must be SKIPPED:
             // SDL_RenderGeometry(nullptr,..) paints the raw vertex colours as a
             // solid white shape. Invisible-until-retry beats a white flash.
-            if (r.first)
-                SDL_RenderGeometry(ren_,r.first,g.verts.data()+off,r.second,nullptr,0);
+            if (r.first) {
+                const auto vertices=modelAA_.translated({g.verts.data()+off,size_t(r.second)},offset,tile);
+                if(!vertices.empty())SDL_RenderGeometry(ren_,r.first,vertices.data(),int(vertices.size()),nullptr,0);
+            }
             off += r.second;
         }
         });
@@ -4416,6 +4444,14 @@
                 // Route waypoints between them are the navigator's business, exactly
                 // as retail's order list held goals and not path nodes.
                 if (!o.goal) continue;
+                if (o.manaBuildArea) {
+                    if (shiftHeld) {
+                        SDL_FRect box{(o.x.toFloat()-mapView_.offX())*zm,(o.z.toFloat()-mapView_.offY())*zm,
+                            (o.buildX-o.x).toFloat()*zm,(o.buildZ-o.z).toFloat()*zm};
+                        SDL_SetRenderDrawColor(ren_,130,230,255,180);SDL_RenderDrawRectF(ren_,&box);
+                    }
+                    continue;
+                }
                 const float qx = o.x.toFloat(), qz = o.z.toFloat();
                 const bool line = o.targetId == 0;         // attack orders: marker only
                 if (beads && line) {

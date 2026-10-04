@@ -1,5 +1,436 @@
 # Porting retail's movement layer
 
+## Optional Flowfield mode (2026-10-03)
+
+Retail remains the default; its search worker and scheduler are unchanged. A separate experimental
+World adapter handles Flowfield matches. Create screens now expose a persisted
+Retail/Flowfield choice; lobby displays are informational and campaigns force
+Retail. Protocol 220 makes the choice authoritative. Replay format 11 stores it;
+protocol-219/format-10 recordings migrate to Retail. Protocol 221 adds builder
+automation without changing either search or steering algorithm; older replays
+retain their original patrol behavior.
+
+Implementation:
+
+- `flowfield.h/.cpp`: immutable 64×64-cell tiles, exact within-tile connected
+  components, explicit inter-tile crossings, resumable component routing, and
+  detailed integer-cost integration for only the requested tiles. Diagonal
+  moves cannot cross blocked corners. A goal-box portal bias avoids long
+  L-shaped open-ground routes; the hierarchy prioritizes component hops, so
+  it is not a globally shortest weighted-path guarantee. Controller circles,
+  rings, and construction perimeters use compact goal shapes with budgeted
+  component seeding, rather than copied/truncated lists of goal cells.
+- `flowservice.h/.cpp`: shared destinations, bounded subscriber/destination/
+  field/build-job counts, deterministic logical work quotas and cache eviction,
+  profile invalidation, and a lazily created process-wide four-thread pool shared
+  with tile preparation (`flowworkers.h/.cpp`).
+  Pool queue overflow or inability to create worker threads executes the
+  identical work inline. Each tick joins its
+  predetermined jobs before publishing in deterministic order. Fully seeded
+  destinations can prepare a tile as soon as every component in that tile has
+  its final reverse-BFS distance; unrelated distant components need not finish.
+  Missing components remain pending until exhaustion proves them unreachable. Worker readiness
+  never selects a gameplay result. Retail does not instantiate this service.
+- `flowsnapshot.h/.cpp`: incremental rectangular-footprint sampling with tile-local
+  summed-area tables and dirty halos. World-thread sampling seals at most two
+  raw tiles per snapshot; pure footprint/component jobs run on the shared pool,
+  then join and publish in tile order. Small batches run inline: parallel
+  dispatch needs two unfinished jobs with at least 4,096 work units each.
+  Uniform unexplored interiors share a single immutable cost-64 tile, skipping
+  sampling, summed-area tables and flood-fill. Boundary halos remain exact.
+  Clean/unchanged tiles retain their immutable identity and component graph.
+- `flownavigator.h/.cpp`: World request/cancellation, profile snapshots,
+  bounded route delivery, and controller-identity checks. FIFO admission supports
+  up to 16 profiles (eight on a maximum-size map), with at most two rebuilding
+  snapshots. A separate 1,024-entry LRU retains prepared tiles across eviction.
+  Tile keys include movement costs, support and footprint. Source-tile revisions
+  remain live while profiles are evicted; captured revisions prevent an edit
+  during sampling from publishing a currently valid cache entry. Fully explored
+  halos without owner-specific gate planes may share across players. Partial
+  knowledge and gate permissions keep player-specific keys. Unknown terrain
+  never borrows another player's observed obstacles. New topology gets up to 4,096 ticks for its first result, then
+  a 256-tick lease under contention; failed snapshots release scratch and retry
+  with bounded tick-based backoff. Static travel costs respect road-before-water multipliers and
+  support/waterline classes; animated support bobbing is not baked into fields. Sampling now uses the
+  simulation exploration mask; unknown cells are optimistic. Private worker
+  reveal notifications invalidate the affected profile tiles after joining.
+  Installed routes recheck their next anchor and the next cell on a compressed
+  segment against new field generations. These checks retain raw factory-exit
+  orders and do not mistake corner rounding for a blocked diagonal.
+  Collinear waypoints are compressed without removing any bend or backtrack;
+  the field-sampling budget remains fixed independently of compressed size.
+  If a profile has been evicted, repeated physical refusal still checks the
+  immediate static footprint against the same knowledge-aware sampler. It does
+  not mistake mobile occupancy for a terrain edit or silently lose revalidation.
+- `flowlocal.h/.cpp`: up to eight bounded 64×64 local fallback jobs share 8,192
+  work units per tick when shared profiles or destinations are unavailable.
+  They preserve full footprint legality and retain missions when a local window
+  cannot reach an acceptable endpoint. A local route is published only if its
+  endpoint satisfies the mission area; greedy window-boundary prefixes are not
+  substitutes for global guidance. Faraway goal areas skip local allocation.
+  This prevents fallback routes from undoing maze detours during profile
+  contention. Local failure is not a global unreachable result.
+- `flowtraffic.h/.cpp`: separate transient traffic and same-destination point-move
+  arrival handling. Neighbor inspection is bounded; at most 256 queued units
+  start a strict-footprint local detour per tick in deterministic rotating order.
+  A completed detour reanchors its shared route once. Waiting for detour work
+  does not latch a stale body refusal: ordinary movement keeps retrying through
+  the existing physical collision checks. Attack/build/transport and
+  other interaction missions cannot use generic crowd settling. Narrow static
+  corridors use deterministic yielding, bounded backing-out, and live peer-order
+  validation; an order change releases an obsolete yield even if its owner is
+  stationary in combat.
+  Priority alone never stops a stream: the peer must actually commit to
+  yielding, and the winning unit continues collision-checked following while
+  that peer retreats. Retreat candidates include cardinal exits at diagonal
+  corners and a one-cell fallback when a full stride does not fit. A yielder
+  only parks clear of the winner's live next footprint. These searches retain
+  fixed admission and candidate-count limits. Ordinary mobile avoidance also
+  tries a one-cell escape after full-stride alternatives fail; this matters in
+  packed corners where a whole footprint-width sidestep cannot fit.
+  Parked formations use a collision-checked lateral leg followed by a forward
+  continuation, with each leg receiving its own deadline. Lateral and forward
+  look-ahead are each capped at 16 cells and four lateral candidates per side;
+  narrow terrain falls back to the short escape. This prevents a mover from
+  repeatedly returning to a route corner covered by a stopped friendly body.
+  Landed flyers participate in avoidance just as they do in physical ground
+  collision. The coarse ground occupancy plane omits them, so a bounded body
+  query (128 buckets/256 entries, rotating entry offsets) finds those blockers.
+  Airborne flyers remain excluded.
+  Near the destination, contact with an already settled member of the same
+  group can form a queue where terrain prevents a compact formation. This
+  extra allowance requires nearby static obstruction at the mover or its
+  settled contact, is bounded by actual group population, and never extends
+  the original arrival radius beyond a 64-cell local window. Open-ground
+  settling admits one touching footprint beyond the original area, anchored by
+  a same-destination body inside it. Outside anchors cannot extend that allowance
+  further. Targeted attacks and other interaction missions cannot settle this way.
+  Local detours follow the next installed route waypoint, not the final mission
+  destination. Steering at the final destination can pull a unit back toward
+  the same wall when a maze route must initially travel away from its goal.
+  Destination grouping and arrival still use the original mission target.
+  New local detours require a mobile obstruction: static walls and scenery stay
+  the terrain router's responsibility. A repeatedly blocked mover displaced
+  beside, behind, or beyond its stored segment reanchors from its actual cell. Guard/attack/repair
+  approaches also request another route prefix when a distant raw target is
+  still separated by static terrain.
+- Ground ranged attacks blocked by terrain request actual firing positions,
+  using the same line-of-sight test as combat. Candidate preparation shares a
+  global limit of 64 rays and 8,192 ray/candidate cells per tick. Eight directional
+  samples precede a resumable exhaustive scan in fixed batches of at most 16
+  seeds; a narrow firing gap is not permanently missed by coarse sampling.
+  Firing detours survive route-prefix replacement. Stop, target replacement,
+  profile eviction and topology updates cancel or reset the applicable work.
+  Fight-move and patrol use the existing ground mission controller lifecycle in
+  both modes. The mission retains the clicked point across partial routes;
+  Move_Ground widens failed approach circles by the native footprint-sized step,
+  and Patrol handles failure/arrival by rotating its canonical waypoint. Generic
+  combat acquisition remains responsible for enemies encountered en route.
+  Flowfield fight-move retains its additional 256-pixel arrival-radius cap and
+  30-tick failed-search backoff; these restrictions do not change Retail cadence.
+- Flow-only constrained steering reduces speed while turning more than 22.5
+  degrees near an obstruction. Its per-tick speed budget derives from the
+  authored moving turn rate and four pixels of travel against the remaining
+  turn. This keeps slow-turning units within narrow anchor-cell corridors,
+  including units with no turn-in-place ability. Terrain scaling applies once;
+  headings, collision checks, and the Retail-mode movement path are unchanged.
+- `flowobstacles.h/.cpp`: a shared structure-footprint layer, separate from mobile
+  traffic, with 16,384 stamp-work units per World tick. Yard opening, overlapping
+  structures, destruction, and changes during in-flight stamping are coalesced.
+  Sampling waits for a settled layer. New snapshots retain dirty edits that
+  arrive while their previous generation is being prepared. Structure-table
+  exhaustion defers new admissions while continuing removal work; incomplete
+  admissions cannot publish a snapshot that omits the deferred structures.
+  Closed automatic gate passages can be planned through by their owner only,
+  matching the existing physical automatic-gate policy. An allied owner's gate
+  is not promised to open. Solid gate cells and overlapping nongate structures
+  remain blocked. Permission counts use lazy owner-specific 64×64 tiles, capped
+  at 1,024 tiles (8 MiB payload); additional closed gate permissions remain blocked
+  conservatively, while opening/removing the physical gate still clears its cells.
+  Tiles stay allocated for the World lifetime so permission removal is exact.
+  `gateTiles()` and `gateLimitHits()` expose this admission limit.
+- `flowfield_test`: reference flood-fill connectivity and Dijkstra comparisons,
+  irregular tile boundaries, weighted terrain, blocked corners, immutable edits,
+  resource ceilings, quantum invariance, 16,000 shared subscribers, and identical
+  logical publication with inline/one/four-worker execution.
+
+The initial synthetic 2,048×2,048 open-grid run shared 94 detailed tiles for
+16,000 routes. Reported payload accounting was approximately 16.12 MiB topology,
+8 KiB destination metadata, and 1.84 MiB detailed fields. This is a standalone
+routing experiment, **not** an engine simulation-speed measurement. Scratch,
+allocator overhead, other profiles, collision work, and game state are separate.
+
+Memory reporting includes in-flight snapshot scratch and cache/container payload
+with conservative node allowances. Shared tiles can be counted twice during
+replacement, so this is not allocator-exact RSS. Ordinary World storage, including
+unit/order vectors, is separate. A canonical reservation plan bounds simultaneous
+Flowfield storage under 512 MiB
+per Flowfield World, using ABI-independent charges for old/new topology, graph
+scratch, caches, traffic, requests, gates, and local fallback jobs. A maximum-size
+map reserves about 496.0 MiB for eight profiles, two active rebuilds and the
+1,024-entry eviction cache; this is a ceiling reservation,
+not eager allocation. Unsupported dimensions are rejected. Hard object-count
+limits enforce the reservation; this is not a custom allocator, a process-RSS
+limit, or a guarantee that the operating system can satisfy every allocation.
+
+### Validation and current limits
+
+Release and Debug each pass 47 targeted CTest cases covering Flowfield, Retail
+navigation/motion, production, land/sea combat, clearing/building, transport,
+gates, settings and replay compatibility. The Retail search implementation files
+remain byte-identical to the pre-Flowfield baseline.
+
+The point-order regressions cover failed and 64-corner-clipped route prefixes,
+queued destinations, repeated terrain-detouring patrol laps, combat interruption
+and resumption, and complete 24-unit move/fight-move arrivals in both modes.
+Production output now receives normal ground point controllers for inherited
+rally moves, including fight/patrol flags. Spawn/exit selection checks complete
+body rectangles and reserves original destinations rather than partial route
+endpoints. This prevents outputs from overlapping a large mobile producer or
+repeatedly inheriting a point with no occupied-destination completion handling.
+Eight Flowfield production fixtures cover building/mobile producers with/without
+rallies and compare serial/threaded final hashes. A data-backed fixture additionally
+produces 16 authored Zhon Hunters in each of those four cases on the actual 64×64
+Taros maze recipe, with full navigation knowledge; all outputs complete their
+exit/rally orders. Flying patrol definition flags retain their previous behavior.
+
+Private loopback matches pass base and Crusades balances: repeated 9,000-tick
+Flowfield runs, host/guest/referee/spectator agreement after disconnect/rejoin,
+and repeated Retail runs using a Release server with Debug clients. No public
+server was used. These fixtures verify controller integration and determinism;
+they do not establish that every congested battle or unknown maze is jam-free.
+
+Flowfield fixtures compare serial/threaded World hashes every tick. They cover
+moving attack and guard targets, repair, minimum-range weapons and multiweapon
+selection, blocked-LOS firing positions, occupied fight destinations, pending
+LOS cancellation, fight/patrol around walls, more competing profiles than the
+memory plan admits, evicted-cache edits and knowledge/gate isolation, failed
+snapshot recovery, mixed footprints, opposing traffic, narrow corridors, map
+edges, cancellation, ownership changes, and map/mode replacement. Both balance
+modes pass clearing/building and map-backed Lake Lokken boat transport tests.
+The field/obstacle/snapshot and traffic kernels pass ASan/UBSan; the entire World
+has not been run under sanitizers. Prepared snapshots additionally agree across
+GCC 16 / Clang 22 at O0/O2/O3, including intermediate state, work accounting
+and actual parallel batches (digest `a402db3bcdc550cf`).
+
+The saved 64×64 Taros-maze regression reproduces a single Swordsman looping near
+(8000, 23170) en route from (8448, 24320) to (4864, 16640). The pre-fix test fails
+its 30,000-tick limit; the same unit was observed looping through 90,000 ticks.
+With waypoint-directed mobile avoidance and constrained steering it arrives at
+tick 21,218 with identical serial/threaded checkpoints. A separate normal-discovery
+run arrives at 51,759. The expanded fixture covers the Cannoneer (47,910 ticks),
+Beast Rider (60,122 ticks, identical serial/threaded checkpoints), and an
+unexplored narrow-corner escape with the Beast Rider's authored zero pivot rate.
+The test generates the map from its recipe and uses installed retail assets;
+no map assets are stored in the repository.
+
+A separate manual sweep completed all 13 previously reproduced loops across
+Cannoneer, Beast Rider, Basilisk, and Knight routes on that same map. Some blind
+routes remained very long: the slowest arrived at tick 516,766. This fixes the
+observed permanent steering loops, not the hierarchy's route optimality or
+optimistic exploration behavior. The combined changes also passed the 4,000-unit
+paired-convoy progress fixture (664 pixels mean travel after the short-escape fix), opposing traffic,
+production, and guard/attack/repair checks. The steering correction adds constant
+work per constrained turn and no persistent state or allocations; a new full
+performance benchmark has not been run.
+
+The group-maze regression covers complete arrival for 32 Hunters and 16
+Swordsmen, plus eight Beast Riders discovering the maze, with serial/threaded checkpoints and a bounded
+progress window for every active mover. The previous traffic implementation
+fails the Hunter corner assertion. A separate eight-Beast-Rider endurance run
+completed all eight orders by tick 601,000; the permanent test uses a shorter
+90,000-tick observation window rather than requiring that entire exploration
+run in every test sweep. Together these cases guard against both assumed-yield
+deadlocks and retreat-induced stale route segments.
+
+A separate eight-player regression uses the same giant maze with full terrain
+knowledge and one Swordsman per player. With four profile slots, greedy local
+prefixes left seven of eight movers unfinished at 120,000 ticks, repeatedly
+revisiting the same areas. Restricting local publication to a completed local
+goal allowed all eight to arrive, with serial/threaded checkpoint parity. This
+isolates profile contention from fighting, discovery and large crowds.
+
+The full eight-Absurd-AI, Crusades, double-sight maze probe also exposed packed
+corners, lost static revalidation after profile eviction, and landed flyers
+missing from local avoidance; all have focused regressions. A ground archer
+blocked by an idle landed scout previously remained stuck for 5,000 ticks; it
+now walks around and arrives in 481 ticks. The airborne control arrives in 417
+ticks without that detour, with serial/threaded World hashes matching in both cases. It is not a recording of the user's exact match. It additionally
+exposed the preparation bottleneck addressed by the tile-sharing changes:
+about 43 distinct movement/player profiles competed for four slots and could
+wait several minutes for FIFO admission. Fixed storage/work limits remain in
+place; the per-tick preparation budget stays at 65,536 logical work units,
+now divided among active jobs rather than idle profile metadata. Aggregate
+route-wait diagnostics include true request-issued ages and delivery ages.
+Even with the improvements, heavily contested maze routes can still wait;
+isolated arrival tests do not prove uniformly smooth dense AI play.
+
+The pre-optimization 54,000-tick probe had 1,153 living units across 97 types.
+Of 267 units flagged by a coarse stationary-window diagnostic, 253 had pending
+navigation. The remaining movers had recently refreshed routes or were actively
+attacking; that run did not establish another permanent stale-route lock. These
+counts are diagnostics, not comparable performance scores: gameplay trajectories
+change when units escape, and moving in circles can evade that stationary test.
+
+The authored ground/naval World fixture also produces identical six final hashes
+in Release and Debug. The optimized build additionally passed four private 9,000-tick client/referee repeats
+(base twice, Crusades twice), matching both balance-mode hashes and verifying
+both recorded replays. A host/guest/AI match with abrupt guest disconnect,
+slot resume and spectator history catch-up finished all three clients at tick
+9,000 with identical hashes in each balance mode. No public server was used.
+A separate actual eight-AI giant-maze probe agrees between Release and Debug
+through tick 3,000, including preparation counters and pending ages
+(hash `ff2ea0e7918e525a`); the full 54,000-tick cross-build run was not repeated.
+
+Private loopback tests cover mode validation/propagation, a late spectator,
+repeated base/Crusades games, real disconnect/rejoin, and authoritative replay
+verification. The final base/Crusades repeat runs agree at every common
+checkpoint and their full replays verify. A real reconnect replayed its missing
+904 ticks; aligning the recording to tick 9,000 matched the host exactly (the
+headless client itself drained one extra tick before stopping). Before the final
+waypoint/traffic optimizations, an
+eight-Absurd-AI Crusades match on Ulasem Arena ran 27,000 ticks
+(15 simulated minutes), finishing with 800 living units and no errors; its server
+replay passed all 91 checkpoints through tick 27,004. This is an endurance and
+lockstep check, not a controlled performance measurement. Setup and lobby
+screens were also captured and inspected at 960×540, including an eight-slot
+generated-map room.
+
+During initial Flowfield validation, GCC 16.2.1 and Clang 22.1.8 independently
+compiled all 13 simulation translation units and produced identical complete
+World-test output on Linux x86-64. The later group-corner fixes were checked
+with GCC Release/Debug and serial/threaded World hashes; the full Clang World
+comparison has not been repeated for those fixes.
+Asset/COB/network libraries remained shared GCC builds. Windows, macOS, and ARM
+runtime parity have not been tested for this feature. The deterministic-math
+shim agrees across GCC/Clang at O0/O2/O3 (golden `dcef618cd2e4d558`); the optional
+ARM cross-build legs skipped after toolchain compilation failures.
+
+### Preparation-optimization measurements
+
+Compared with the immediately preceding movement/traffic fixes on the same
+Linux x86-64 Core Ultra 9 275HX, Release binaries pinned to CPUs 8–15. Final
+measurements ran sequentially after builds and heavy tests stopped. These are
+single-run indicators, not repeated statistical estimates. The saved 64×64
+Taros maze uses eight Absurd AIs, Crusades balance and doubled sight. Each AI
+run covers 54,000 ticks; flat 16,000-unit runs cover 1,200 ticks.
+
+| Metric | Previous implementation | Optimized implementation |
+|---|---:|---:|
+| Maze observed pending age, p95 | 10,140 ticks / 338 game seconds | 2,250 ticks / 75 game seconds |
+| Maze maximum observed pending age | 25,800 ticks / 860 seconds | 8,220 ticks / 274 seconds |
+| Maze delivered routes | 8,547 | 24,784 |
+| Maze living units at end | 1,153 | 1,647 |
+| Maze World tick mean / p95 | 1.068 / 1.776 ms | 1.543 / 3.078 ms |
+| Maze snapshot logical work | 3.532 billion | 3.383 billion |
+| Flat 16k mean displacement | 323.4 px | 491.9 px |
+| Flat 16k serial mean / p95 tick | 20.629 / 26.135 ms | 23.707 / 26.927 ms |
+| Flat 16k threaded mean / p95 tick | 21.958 / 28.020 ms | 25.086 / 28.117 ms |
+
+Observed ages sample continuous pending membership every 30 ticks; immediate
+requeues may merge, so these are not exact individual-request latencies. The
+same observer is used for both runs, outside tick timing. The optimized adapter
+also reports exact issued-request ages: final maze pending p95/max were
+2,257/5,137 ticks, and maximum delivery age was 6,525 ticks. Combat and new orders
+change requests and gameplay trajectories, so population/delivery counts are
+not identical controlled workloads.
+
+The optimized maze had 10,551 retained-tile hits and 879,242 direct uniform-tile
+imports, with the cache at its 1,024-entry cap. Only active snapshots share the
+fixed 65,536-work budget. An earlier version splitting it among idle profiles
+used less total work but had longer waits; the final division improved observed
+p95 from 3,720 to 2,250 ticks. Preparation microbenchmarks also found that small
+worker batches were slower, motivating the two-job/4,096-work threshold.
+
+Reduced waiting does **not** imply lower total tick cost: the maze now has 43%
+more living units and much more active movement/combat. Flat 16k movement
+improved 52%, with mean tick cost increasing 15%; every unit moved and all
+requests drained. Serial and threaded runs match progress, delivery counts and
+World hash (`f424ca33ea02ce3b`). Threading was about 6% slower than serial in this
+flat scene. Selective preparation concurrency is useful for sufficiently large
+jobs; it is not a general simulation-speed guarantee.
+
+Estimated Flowfield storage was 47.5 MiB for flat 16k and 91.5 MiB for the final
+maze. Conservative accounting includes retained tiles, simultaneous rebuilds,
+and some shared-payload double counting. Whole-process peak RSS was 255.3 MiB
+(flat serial) and 457.7 MiB (maze), including loaded game data, map/World storage,
+AI and other allocations; those RSS values are **not pathfinding-only memory**.
+The 512 MiB canonical limit is not allocated up front. Long waits still occur
+in the giant contested maze; this work improves preparation throughput rather
+than guaranteeing instant routes or solving every traffic configuration.
+Windows/macOS/ARM performance and full-World sanitizer coverage remain untested.
+
+### Measured tradeoffs
+
+`flow_benchmark DATA UNITS TICKS FLOWFIELD SERIAL [CRUSADES]` runs a synthetic
+flat 64×64 map with up to 16,000 authored swordsmen moving to a shared distant
+destination. Units begin in a tightly packed grid, 128 columns at 32px spacing.
+It measures complete World ticks, including unit scripts, moved-unit count,
+displacement, and flow storage. There are no enemies, AI decisions, or rendering;
+this is not a battle/FPS benchmark. Each run below covers 1,200 ticks (40 simulated
+seconds), including cold field preparation.
+
+These initial implementation measurements precede the maze local-steering fix
+described above. Single runs on Linux x86-64, Intel Core Ultra 9 275HX, Release build, serial World
+execution pinned to CPU 0. Builds and other benchmarks were stopped; concurrent
+multiplayer checks were pinned separately to CPUs 8–15. These are indicative
+measurements, not repeated statistical estimates or cross-platform guarantees.
+
+| Units | Mode | Mean tick ms | p95 ms | Maximum ms | Mean displacement px | Flow storage MiB |
+|---:|---|---:|---:|---:|---:|---:|
+| 1,000 | Retail | 1.458 | 2.812 | 162.133 | 1,345.9 | — |
+| 1,000 | Flowfield | 0.776 | 0.999 | 13.826 | 778.1 | 24.70 |
+| 4,000 | Retail | 3.558 | 5.884 | 163.345 | 1,428.0 | — |
+| 4,000 | Flowfield | 2.605 | 3.466 | 15.241 | 446.2 | 41.52 |
+| 16,000 | Retail | 12.604 | 18.379 | 213.299 | 724.3 | — |
+| 16,000 | Flowfield | 11.525 | 14.755 | 33.744 | 269.5 | 44.60 |
+
+Every unit moved in every run, and Flowfield drained its pending route requests.
+Displacement is Manhattan distance from each unit's initial position, not distance
+travelled along its route. Lower tick cost must not be mistaken for better army
+throughput: in this packed scene, Flowfield moves the group substantially less
+far than Retail. Lossless waypoint compression and ordinary collision retries
+reduced the earlier Flowfield result from 19.09 to 11.53 ms/tick and increased
+its displacement from 69.9 to 269.5px, but do not eliminate that limitation.
+A 4,000-unit regression asserts actual forward progress and serial/threaded
+hash agreement so “every unit moved a little” cannot hide a stalled convoy.
+
+With threaded execution on CPUs 0–3, the 16,000-unit base runs measured
+13.949 ms Retail versus 13.330 ms Flowfield; Crusades measured 13.979 versus
+13.355 ms. Both modes reproduced their serial hashes in the base comparison.
+Thread overhead outweighed the benefit in this particular workload; retaining
+bounded workers is not a claim that more threads always improve performance.
+Flow storage is the reported final live/scratch accounting, not peak process RSS.
+
+Extending the serial 16,000-unit comparison to 3,600 ticks (two simulated minutes)
+shows that the short-run CPU advantage does **not** persist:
+
+| Mode | Mean tick ms | p95 ms | Maximum ms | Mean displacement px |
+|---|---:|---:|---:|---:|
+| Retail | 11.735 | 15.337 | 209.920 | 2,111.3 |
+| Flowfield | 14.896 | 18.367 | 34.372 | 1,410.6 |
+
+Flowfield still bounds the large preparation spikes, and its relative progress
+improves after warmup, but sustained dense traffic remains both slower to move
+and more expensive per tick here. Final Flow storage was 28.67 MiB with no
+pending requests. Retail remains the recommended default; further density-aware
+traffic optimization is a follow-up, not an achieved performance claim.
+
+The hierarchy minimizes component hops, not globally weighted path length.
+Four profile slots and 32 shared destinations use bounded admission and local
+fallback under contention. A 64×64 fallback window cannot guarantee a global
+route; exceptionally fragmented maps can exceed topology limits and remain
+backpressured. Cold profile preparation is incremental; on the synthetic
+maximum-size map,
+the first global fields take roughly 10–13 simulated seconds, while bounded
+local fallback can move units earlier. Initial profile protection is finite
+(4,096 ticks), so unusually expensive preparation can outlast it. These limits
+prevent unbounded work and
+storage; they are not promises that every adversarial map/order set progresses
+at the same rate. Ordinary physical collision and flyer flight rules remain in
+force. Flowfield is experimental and is not guaranteed to be faster in every
+scene.
+
 ## Current status: scoped pathfinding work complete (protocol 179)
 
 The requested scope is retail-compatible surface navigation and valid map

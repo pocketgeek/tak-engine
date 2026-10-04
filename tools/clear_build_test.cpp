@@ -13,13 +13,15 @@ int main(int argc,char** argv) {
     for (bool balance:{false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,balance);
         for (const char* worker:{"araking","zonhunt"})
-        for (bool paths:{false,true})
+        for (int pathMode:{0,1,2})
         for (bool queued:{false,true}) {
+            const bool paths=pathMode!=0;
             const auto* builder=registry.find(worker);
             check(builder!=nullptr,"real builder exists");if (!builder) continue;
             sim::UnitType site;site.id="test_site";site.maxVel=sim::Fixed();site.footX=4;site.footZ=4;
             site.maxHp=100;site.buildTime=20;site.buildCost=10;
             sim::World w;w.setVisPlayer(-1);w.setPathService(paths);
+            if(pathMode==2)w.setPathfindingMode(sim::PathfindingMode::Flowfield);
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int bid=w.spawn(builder,512,624,std::nullopt,0);
             w.player(0).mana=1000;
@@ -68,7 +70,7 @@ int main(int argc,char** argv) {
             check(w.unit(bid)->orders.empty(),"invalid site adds no reclaim orders");
             site.onMana=true;w.setManaSpots({{128,128}});
             check(!w.clearableForPlacement(&site,592,512,clearing,0),"clearing cannot bypass mana-site rules");
-            std::printf("%s balance=%d paths=%d queued=%d hash=%016llx\n",worker,balance,paths,queued,(unsigned long long)w.stateHash());
+            std::printf("%s balance=%d pathMode=%d queued=%d hash=%016llx\n",worker,balance,pathMode,queued,(unsigned long long)w.stateHash());
         }
     }
     return failures?1:0;

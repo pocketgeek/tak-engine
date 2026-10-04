@@ -72,6 +72,14 @@ int main() {
         check(!cart::restoreGeneratorRecipe("","No recipe",restored,generatorError),"missing recipe gives a visible error");
         fields[0]="18446744073709551616";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError) && tak::mapgen::encodeMapId(parsed)==original,"seed overflow leaves settings unchanged");
+        for(int layout=tak::mapgen::Maze;layout<tak::mapgen::kLayouts;++layout) {
+            auto themed=params;themed.formatVer=6;
+            auto themeFields=cart::generatorFields(themed);themeFields[2]=tak::mapgen::layoutName(layout);
+            check(cart::parseGeneratorFields(themeFields,themed,generatorError),"themed editor layout rejected");
+            check(tak::mapgen::sanitize(themed).layout==layout,"themed editor layout lost");
+            themed.formatVer=5;
+            check(!cart::parseGeneratorFields(themeFields,themed,generatorError),"legacy editor accepts new theme");
+        }
         fields=cart::generatorFields(params);fields[3]="256";
         check(!cart::parseGeneratorFields(fields,parsed,generatorError),"density range checked");
         fields=cart::generatorFields(params);fields[1]="3players";

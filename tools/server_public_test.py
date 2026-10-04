@@ -42,7 +42,7 @@ def login(port, fingerprint, name, context=None):
     p.hello(fingerprint);p.login(name,[]);return p
 
 def options(stress=0,benchmark=0):
-    return bytes([0,1,0,10,0])+struct.pack('<I',2000)+bytes([0,stress,0,benchmark,0,0])
+    return bytes([0,1,0,10,0])+struct.pack('<I',2000)+bytes([0,stress,0,benchmark,0,0,0])
 
 def create(p,stress=0,benchmark=0,mission='',map_id='missing-test-map'):
     p.send('CreateGame',auth.field('test')+auth.field('')+auth.field(map_id)+

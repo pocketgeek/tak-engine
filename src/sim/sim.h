@@ -31,6 +31,8 @@
 #include <atomic>
 #include <thread>
 #include "sim/pathsearch.h"
+#include "sim/pathmode.h"
+#include "sim/flownavigator.h"
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
@@ -540,6 +542,13 @@ private:
     std::map<std::string, MoveClass> moveClasses_;   // lowercased name -> limits
 };
 
+struct ManaBuildArea {
+    const UnitType* type = nullptr;
+    Fixed minX,maxX,minZ,maxZ;
+    uint32_t nextSpot = 0;
+    bool exploring = false;
+};
+
 struct Order {
     Fixed x, z;   // goal, in the same fixed-point domain as Unit::x/z
     int targetId = 0;      // nonzero = attack (or board, if load) target
@@ -570,10 +579,12 @@ struct Order {
     // sat there forever. One queue, like everything else.
     int reclaimFeat = 0;
     std::optional<RetailReclaimArea> reclaimArea;
+    std::optional<ManaBuildArea> manaBuildArea;
     // This order is a REPAIR: mend unit `repairTarget`. repairId was a single int,
     // so a second queued repair simply overwrote the first and it was lost. Same
     // shape as the build and reclaim lists, same fix.
     int repairTarget = 0;
+    bool patrolRepair = false; // automatic patrol detour; clickX/Z retain its local anchor
     // This target was picked by auto-acquisition, not asked for by the player.
     // The move standing order gates only AUTO engagement: a Defensive unit told
     // explicitly to attack something across the map still walks over and does it.
@@ -1258,14 +1269,13 @@ struct Player {
     uint8_t manaShareMask = 0xff; // outgoing overflow recipients; alliance still required
     bool  defeated = false;   // no living units; set by the sim's win check
     int32_t defeatedAt = -1;  // TICK when `defeated` first went true (-1 = still in)
-    // Cosmetic "disco" emote (Shift+D): seconds this player's monarchs keep
-    // dancing. Set by a lockstep Cmd::Disco so every peer agrees on the timing,
-    // but it drives client-side eye-candy only and is NOT folded into stateHash
-    // (like vis_).
-    int32_t discoLeft = 0;    // ticks
-    // Cosmetic "headbang" emote (Shift+H): seconds this player's monarchs headbang to
-    // heavy metal. Same deal as discoLeft -- synced by Cmd::Headbang, not hashed.
-    int32_t headbangLeft = 0; // ticks
+    // Cosmetic emotes: sequenced in lockstep, excluded from stateHash.
+    // Targets are captured at command time; subsequent selection changes do not
+    // move an active emote to other units.
+    uint64_t emoteSequence = 0;
+    bool emoteDisco = false;
+    std::unordered_set<int> emoteUnits;
+
 };
 
 // Max simultaneous players/teams (the retail map ceiling is 8 start positions).
@@ -1283,6 +1293,7 @@ struct BenchStage { uint32_t tick = 0; std::vector<BenchSpawn> units; };
 class World {
     // Offline diagnostic importer; not a supported game-save load interface.
     friend struct RetailReplayProbe;
+    friend class FlowNavigator;
 public:
     int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
     // CRT ownership transfer: preserves HP/progress, clears the former owner's commands.
@@ -1307,6 +1318,10 @@ public:
     NavGrid& nav() { return nav_; }
     // Observational pathfinder counters (never hashed) -- for benchmarks.
     const PathService& pathStats() const { return paths_; }
+    void setPathfindingMode(PathfindingMode mode);
+    PathfindingMode pathfindingMode() const { return pathfindingMode_; }
+    FlowNavigator::Stats flowStats() const { return flow_?flow_->stats():FlowNavigator::Stats{}; }
+
 
     // Footprint route score: terrain/parked bodies block, qualifying same-way
     // traffic costs extra, ordinary ground is 6 and roads are 7. Step placement
@@ -1315,7 +1330,7 @@ public:
     int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
 
     // Enable retail's background pathfinder for this world (default off).
-    void setPathService(bool on) { pathService_ = on; if (!on) paths_.clear(); }
+    void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();flow_.reset();} }
     // Path search work units per tick, shared across all pending requests.
     void setPathBudget(int b) { paths_.setBudget(b); }
 
@@ -1367,19 +1382,22 @@ public:
     // Build now if the builder is free, else queue it (shift-click). A
     // non-queued order replaces any pending queue.
     void queueBuild(int builderId, const UnitType* type, float x, float z, bool queue);
+    // Persistent area job: explore and try each mana deposit, without allocating
+    // a potentially map-sized list of commands or changing either pathfinder.
+    void queueManaBuildArea(int builderId,const UnitType* type,
+                           float x0,float z0,float x1,float z1,bool queue);
     // Abandon a builder's queued builds and drop any not-yet-started site.
     void cancelBuilds(int builderId);
     // Latch a mobile builder onto an existing construction site to resume/assist
     // conjuring it (e.g. reviving a decaying site). Resumes at THIS builder's
     // rate from the site's current HP. The caller checks the build tree.
     void assist(int builderId, int siteId, bool queue = false);
-    // Cosmetic emote: make `player`'s monarchs dance for 10s (Cmd::Disco). Not
-    // hashed -- purely for the viewer. discoActive() gates the client animation.
-    void startDisco(int player);
-    bool discoActive(int player) const;
-    // Cosmetic emote: make `player`'s monarchs headbang for 10s (Cmd::Headbang).
-    void startHeadbang(int player);
-    bool headbangActive(int player) const;
+    // Cosmetic emotes. A positive ID targets one owned living unit; callers
+    // resolve empty-selection monarch fallback. ID 0 queries the latest trigger kind. The viewer owns real-time duration.
+    void startDisco(int player, int unitId, bool append = false);
+    bool discoTarget(int player, int unitId = 0) const;
+    void startHeadbang(int player, int unitId, bool append = false);
+    bool headbangTarget(int player, int unitId = 0) const;
     bool canPlace(const UnitType* type, float x, float z, int player = -1) const;
     // Observational whole-map query at cell centers. Returns empty on cancellation.
     // Reuses placementCheck with spatially bounded occupant candidates.
@@ -1464,6 +1482,8 @@ public:
     // the builder's work rate, draining mana proportionally). tickRepair runs it.
     void repair(int builderId, int targetId, bool queue);
     void tickRepair(Unit& b, float dt);
+    void tickPatrolRepair(Unit& b);
+    void setPatrolRepairs(bool enabled) { patrolRepairs_=enabled; }
     // True if (x,z) lies over water (for choosing the water impact effect).
     // Retail (icd 0x509760): a unit is "on road" only when EVERY cell under its
     // footprint carries the road flag (ground units only; checked per tick into
@@ -1548,7 +1568,7 @@ public:
         clearScenarioState();
         scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
-        paths_.clear();
+        paths_.clear();flow_.reset();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         projectiles_.clear();flames_.clear();
@@ -1558,7 +1578,7 @@ public:
         scriptEmissions_.clear();
         features_.clear();
         burnSequence_ = 0;
-        mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();
+        mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
         explorationHeights_.clear();navigationExplored_.clear();
         restoredNavigationViewer_=-1;
         featureIdx_.clear();
@@ -1810,14 +1830,14 @@ public:
     void dropLeg(Unit& u);
     // Does this unit still have construction queued (anywhere in its orders)?
     static bool hasQueuedBuild(const Unit& u) {
-        for (const Order& o : u.orders) if (o.buildType) return true;
+        for (const Order& o : u.orders) if (o.buildType || o.manaBuildArea) return true;
         return false;
     }
     // Any construction OR reclaim still queued -- the "this builder is on a job"
     // test that several places need.
     static bool hasQueuedWork(const Unit& u) {
         for (const Order& o : u.orders)
-            if (o.buildType || o.reclaimFeat || o.reclaimArea || o.repairTarget) return true;
+            if (o.buildType || o.manaBuildArea || o.reclaimFeat || o.reclaimArea || o.repairTarget) return true;
         return false;
     }
     void attackMove(int unitId, float x, float z, bool queue);
@@ -1989,6 +2009,7 @@ private:
     // the feature and advances its reclaim queue.
     void tickReclaim(Unit& b, float dt);
     void tickReclaimArea(Unit& b);
+    void tickManaBuildArea(Unit& b);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
     void tickHealAuras();           // AdjustJoy passive repair aura (1 Hz)
@@ -2156,7 +2177,7 @@ private:
     int occW_ = 0, occH_ = 0;
     RetailCostSearch::Costs searchCosts(const Unit& u) const;
     bool requestPath(Unit& u, float x, float z);   // true iff a search was queued
-    static Order* groundMissionOrder(Unit& u);
+    static Order* groundMissionOrder(Unit& u, bool includeCombatMoves = false);
     static bool groundMissionAccepts(const Unit&,const Order&);
     void tickGroundMission(Unit& u);
     Order* navigationMissionOrder(Unit& u);
@@ -2205,6 +2226,7 @@ private:
     std::vector<uint8_t> vis_;
     int visPlayer_ = 0;
     bool doubleSight_ = false;  // synchronized skirmish/MP rule; campaigns use authored sight
+    bool patrolRepairs_ = true; // protocol 221; legacy playback retains prior patrol behavior
     int visW_ = 0, visH_ = 0;
     // Client-local fog acceleration: the LoS-tested cell set for a (sight, radar,
     // cell) combination is a pure function of the IMMUTABLE heightmap, so it is
@@ -2278,7 +2300,8 @@ private:
     std::vector<Feature> features_;             // reclaimable map features
     std::vector<RetailMapFeatureCell> mapPlacementCells_;
     std::vector<RetailMapFeatureType> mapPlacementTypes_;
-    struct CorpseFootprint { int x=0,z=0,type=-1; };
+    struct CorpseFootprint { int x=0,z=0,type=-1; int32_t damage=0; };
+    std::unordered_map<int,int> corpseAnchors_; // derived anchor -> unit ID, for weapon hits
     std::map<int,CorpseFootprint> corpseFootprints_; // unit id -> installed feature anchor
     std::vector<FeatType> featTypes_;           // per-type burn data (setup-time, static)
     std::unordered_map<const UnitType*, int> corpseType_;   // unit -> corpse FeatType
@@ -2397,6 +2420,7 @@ private:
     std::vector<std::string> buildRestrictions_; // lowercase, sorted, unique
     int unitCap_ = 0;                 // per-player live-unit limit (0 = unlimited)
     int64_t godAppearTick_ = INT64_MAX;
+    void startEmote(int player, int unitId, bool disco, bool append);
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
     uint64_t burnSequence_ = 0;  // display order for active feature burns; not lockstep state
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
@@ -2405,6 +2429,10 @@ private:
     uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
                                  // (deterministic: derived from the live-unit count)
     PathService paths_;          // retail's request queue + budget scheduler
+    PathfindingMode pathfindingMode_=PathfindingMode::Retail;
+    std::unique_ptr<FlowNavigator> flow_; // never instantiated by Retail matches
+    bool pathPending(int id) const {return flow_?flow_->pending(id):paths_.pending(id);}
+
     struct UnitScript {
         cob::RetailScriptState state;
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;

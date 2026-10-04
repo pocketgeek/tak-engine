@@ -54,6 +54,16 @@ builder can assist unfinished construction owned by the same player; a
 `builderlimited` unit must also have that target in its build menu. The cursor
 indicates whether the selected units can perform the action.
 
+Choose a basic or advanced lodestone, then left-drag a rectangle to build on
+eligible mana spots throughout that area. The builder scouts unexplored spots
+before construction and uses its usual clearing and upgrade rules. Occupied or
+unreachable spots are skipped. **Shift** appends the area to its existing queue;
+**Stop** cancels it. A plain click still places one lodestone.
+
+Builders on patrol repair nearby damaged allied units and buildings, paying
+the normal mana cost, then resume their patrol route. They skip unfinished
+construction and stop following a repair target that moves away.
+
 To upgrade a lodestone, select a builder that offers the faction's advanced
 lodestone and place it on your completed basic lodestone's mana spot. This works
 for all five factions, including Creon's Mana Amplifier, with either balance set.
@@ -81,7 +91,7 @@ Skirmish lobbies let you choose a map, faction, colour, teams, and one of five
 
 | Difficulty | Behaviour |
 | --- | --- |
-| **Defensive** | keeps building an army and defenses near home as mana allows, up to the game cap; never sends attacks |
+| **Defensive** | keeps building at home as mana allows; sends its army to intercept spotted nearby attackers, then recalls it; no offensive raids |
 | **Easy** | builds slowly; attacks after four minutes in groups of at most eight, with at least two minutes between waves; no raids |
 | **Normal** | harasses with small **raiding parties** while massing a main army sized to its mana income |
 | **Hard** | continues expanding income and production; spends on raids while saving a heavy force |
@@ -225,7 +235,7 @@ clears).
 | **Minimap orders** | with an order armed (**F**/**M**/**A**/**P**/**G**), click the minimap to issue it at that spot — e.g. **F** then a minimap click = fight-move across the map |
 | **Build queue** | at a training building: left-click **+1**, **Shift** **+5**, **Ctrl+Shift** **+10**; right-click removes the same; **Ctrl**+left starts/toggles infinite production at a stationary producer and also starts it for mobile builders. Each icon shows its queued count. (A builder that *places* things — structures, or a mobile conjurer like a Beast Handler — arms placement instead: click to position.) A mobile builder running infinite production accepts **Move/Patrol** as rally orders for its output; **Shift** appends rally steps. **Stop** clears production and restores normal orders. |
 | **Reclaim** | with a mobile builder (any unit with `canreclaim`, monarchs included) selected, **right-click-drag** a box to clear it — the builder roams the area reclaiming trees, rocks, and buildings for mana (nearest first). Sacred Stones and Standing Stones are left alone. **Shift** appends the sweep to its orders. |
-| **Game** | **Pause** · **+/−** game speed (0.5×–4× in live games, including single-player; only the **host** can change it, with *in-game speed* unlocked in the lobby) · **F4** names/kills/losses/score |
+| **Game** | **Pause** · **+/−** game speed (0.5×–8× in live games, including single-player; only the **host** can change it, with *Allow speed change* enabled at game creation) · **F4** names/kills/losses/score |
 | **Disco** 🪩 | **Shift+D** — your monarchs spin, bob, hue-cycle, and glow on a little dance floor for 10s, to a synthesised disco track that plays positionally from the monarch. Purely cosmetic, but synced over the lockstep so every player sees it. |
 | **Headbang** 🤘 | **Shift+H** — your monarchs headbang to a synthesised heavy-metal track (positional, from the monarch), nodding and flashing red on a mosh-pit glow for 10s. Also cosmetic and lockstep-synced. |
 
@@ -316,7 +326,7 @@ position updates.
   host also sets the **unit cap** — the per-player live-unit limit (250 / 500 /
   1000 / 2000, default 2000; production and new builds stall a player once
   they reach it) — and can **allow in-game speed changes** so the host's **+/−**
-  keys re-cadence the match live (0.5×–4×). Speed only changes how fast ticks
+  keys re-cadence the match live (0.5×–8×). Speed only changes how fast ticks
   happen in wall-clock — the per-tick `dt` is fixed — so the sim stays bit-identical
   and deterministic.
 - **Cross-build determinism.** The sim's trig is routed through a
@@ -354,10 +364,10 @@ Debug builds also support direct playback:
 
 **Pause** and **+/−** control playback; the time bar shows elapsed and total time.
 Replays contain match setup and commands, not the retail assets. They require
-compatible engine behavior and game data. Version 0.7.22 uses protocol
-**213** and replay format **10**. Format-9 recordings from protocol 212 can still
-be loaded, but simulation fixes can change playback results; use the matching
-engine build when checking an older recording. Use matching builds for all clients
+compatible engine behavior and game data. Version 0.7.23 uses protocol
+**221** and replay format **11**. Protocol-220/format-11 and
+protocol-219/format-10 recordings are supported with their recorded pathfinder
+and original patrol behavior. Older recordings need their matching engine. Use matching builds for all clients
 and the server; other multiplayer protocol versions are rejected.
 
 ## Overrides

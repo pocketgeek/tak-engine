@@ -138,7 +138,7 @@ public:
         if (dev_) {
             SDL_LockAudioDevice(dev_);
             for (auto& c : channels_)
-                if (c.positional && c.data && c.pos < c.data->size()) repan(c);
+                if (c.positional && c.data && (c.looping || c.pos < c.data->size())) repan(c);
             SDL_UnlockAudioDevice(dev_);
         }
     }
@@ -393,6 +393,9 @@ public:
     void playAt(const std::string& name, float pan, float depth,
                 bool positional = false, float wx = 0, float wz = 0,
                 float gain = 1.0f, float rate = 1.0f, int priority = 3, bool looping = false) {
+        // Inaudible one-shots must not consume/evict an audible voice or load
+        // their sample. Loops retain their clock so camera movement can reveal them.
+        if (positional && !looping && worldSoundGain(wx,wz) <= 0) return;
         std::string n = name;
         std::transform(n.begin(), n.end(), n.begin(), ::tolower);
         auto it = index_.find(n);
@@ -416,6 +419,7 @@ public:
             auto& c=channels_[size_t(slot)];
             c.data=samples;c.pos=0;c.pan=pan;c.depth=depth;
             c.positional=positional;c.wx=wx;c.wz=wz;c.gain=gain;
+            c.distanceGain=positional ? worldSoundGain(wx,wz) : 1.f;
             c.fpos=0;c.step=uint32_t(std::clamp(rate,0.25f,4.f)*65536.f);
             c.priority=priority;c.started=++soundSequence_;c.looping=looping;
         }
@@ -430,16 +434,29 @@ private:
         float wx = 0, wz = 0;       // world emission point (for positional re-panning)
         bool positional = false;    // true = re-pan every frame from (wx,wz)
         float gain = 1.0f;          // per-sound boost (UI clicks undo the /2 headroom)
+        float distanceGain = 1.f;   // independent of the authored/UI gain
         uint32_t step = 65536;      // 16.16 playback rate (pitch); 65536 = native
         int priority=0;
         uint64_t started=0;
         bool looping=false;
         uint64_t fpos = 0;          // 16.16 fractional read position
     };
+    // Full gain throughout the camera rectangle. Outside, measure the shortest
+    // world-space distance to its edge (including corners), then fade to zero
+    // over one shorter viewport dimension. This intentional retail deviation
+    // keeps distant battles from remaining audible across the entire map.
+    float worldSoundGain(float x,float z) const {
+        const float dx=std::max(0.f,std::abs(x-listenX_)-listenHW_);
+        const float dz=std::max(0.f,std::abs(z-listenZ_)-listenHH_);
+        const float distance=std::sqrt(dx*dx+dz*dz);
+        const float remaining=std::clamp(1.f-distance/(2.f*std::min(listenHW_,listenHH_)),0.f,1.f);
+        return remaining*remaining;
+    }
     // Recompute a channel's pan/depth from its world point and the current listener.
     void repan(Channel& c) {
         c.pan = std::clamp((c.wx - listenX_) / listenHW_, -1.0f, 1.0f);
         c.depth = std::clamp((c.wz - listenZ_) / listenHH_, -1.0f, 1.0f);
+        c.distanceGain = worldSoundGain(c.wx,c.wz);
     }
 
     // Per-output-channel gains for a source at (pan, depth). Equal-power pan
@@ -542,7 +559,7 @@ private:
                     c.fpos%=uint64_t(c.data->size())<<16;
                     c.pos=size_t(c.fpos>>16);
                 }
-                int s = int(float((*c.data)[c.pos]) * c.gain) / 2 * sfxVol_ / 256;
+                int s = int(float((*c.data)[c.pos]) * c.gain * c.distanceGain) / 2 * sfxVol_ / 256;
                 c.fpos += c.step;
                 for (int ci = 0; ci < ch; ++ci)
                     if (g[ci] != 0.0f) add(f, ci, int(s * g[ci]));

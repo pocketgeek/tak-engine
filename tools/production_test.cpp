@@ -30,11 +30,16 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 #include <memory>
 
 using namespace tak::sim;
 
+static bool g_flow = false;
+static void setTestPathfinding(World& world) {
+    if(g_flow)world.setPathfindingMode(PathfindingMode::Flowfield);
+}
 static int g_fail = 0;
 static void check(bool cond, const char* what, const std::string& detail = {}) {
     std::printf("  %-62s %s%s%s\n", what, cond ? "ok" : "FAIL",
@@ -64,7 +69,7 @@ static UnitType soldierType() {
 }
 
 static std::unique_ptr<World> makeWorld(int W, int H) {
-    auto w = std::make_unique<World>();
+    auto w = std::make_unique<World>();setTestPathfinding(*w);
     w->setVisPlayer(-1);                        // headless, like the referee
     w->setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, /*seaLevel=*/20);
     w->setPathService(true);                    // the real router, as in a game
@@ -449,7 +454,7 @@ static void mobileProducerFacesSite() {
 }
 
 static void repairParticles() {
-    World w;w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     UnitType builder;builder.id="repair-worker";builder.maxHp=100;
     builder.isBuilder=builder.canMove=true;builder.buildDist=200;builder.workerTime=10;
@@ -510,10 +515,12 @@ static void defensiveBodyStaysFixed() {
     }
 }
 
-int main() {
+int main(int argc,char** argv) {
+    if(argc==2 && !std::strcmp(argv[1],"--flow"))g_flow=true;
+    else if(argc!=1)return 2;
     std::printf("production_test\n");
     {
-        World world;world.setVisPlayer(-1);world.setPlayerCount(2);
+        World world;setTestPathfinding(world);world.setVisPlayer(-1);world.setPlayerCount(2);
         UnitType limited=soldierType();limited.totalAllowed=1;
         UnitType ordinary=soldierType();ordinary.id="ordinary";
         const int existing=world.spawn(&limited,100,100,0,0);

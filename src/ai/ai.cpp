@@ -40,8 +40,7 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name) {
 
 DiffParams paramsFor(Difficulty d) {
     switch (d) {
-        // Defensive: normal production, but never sends an attack wave -- it only defends
-        // (idle units still auto-fire on anything that walks into range).
+        // Defensive: normal production and local interception, without offensive waves.
         case Difficulty::Passive: return {30, 5, 3, 100, false, false, 0};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable. No raiding.
@@ -831,11 +830,113 @@ std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
     return n ? std::pair{float(sx/n),float(sz/n)} : std::pair{0.0f,0.0f};
 }
 
+void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& sink) {
+    constexpr float kHomeRadius = 900, kSiteRadius = 400;
+    constexpr int kMaxCommands = 256, kMaxThreats = 16;
+    const auto home=homeOf(world);
+    struct Eye { float x,z,r2; };
+    std::vector<Eye> eyes;
+    std::vector<std::pair<float,float>> sites;
+    for (const auto& u:world.units()) {
+        if (!u.alive() || !u.type || u.embarked()) continue;
+        if (world.allied(player_,u.player) && !u.underConstruction) {
+            const float r=std::max(world.sightDistance(*u.type),world.radarDistance(*u.type));
+            eyes.push_back({u.x.toFloat(),u.z.toFloat(),r*r});
+        }
+        if (u.player==player_ && (u.type->isStructure() || u.type->commander ||
+            categoryOf(u.type)==BuildCat::Factory)) sites.emplace_back(u.x.toFloat(),u.z.toFloat());
+    }
+    auto local=[&](float x,float z) {
+        const float dx=x-home.first,dz=z-home.second;
+        if (dx*dx+dz*dz<=kHomeRadius*kHomeRadius) return true;
+        return std::any_of(sites.begin(),sites.end(),[&](const auto& site) {
+            const float sx=x-site.first,sz=z-site.second;
+            return sx*sx+sz*sz<=kSiteRadius*kSiteRadius;
+        });
+    };
+    // Only spotted threats to our territory mobilize the army. Enemy starts and
+    // distant enemies revealed by a scout must never become defensive objectives.
+    std::vector<std::pair<float,int>> threats;
+    for (const auto& e:world.units()) {
+        if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
+            world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
+        if (!e.type->canCapture && e.type->weapon.damage<=0 && !e.type->weapon.mindControl &&
+            std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& weapon) {
+                return weapon.damage>0 || weapon.mindControl;
+            })) continue;
+        const float x=e.x.toFloat(),z=e.z.toFloat();
+        if (!local(x,z) || std::none_of(eyes.begin(),eyes.end(),[&](const Eye& eye) {
+            const float dx=x-eye.x,dz=z-eye.z;return dx*dx+dz*dz<=eye.r2;
+        })) continue;
+        const float dx=x-home.first,dz=z-home.second;
+        threats.emplace_back(dx*dx+dz*dz,e.id);
+    }
+    std::sort(threats.begin(),threats.end());
+    if (threats.size()>kMaxThreats) threats.resize(kMaxThreats);
+    for (auto it=defenders_.begin();it!=defenders_.end();) {
+        const auto* u=world.unit(it->first);
+        if (!u || !u->alive() || u->player!=player_) it=defenders_.erase(it);
+        else ++it;
+    }
+    int issued=0;
+    // World order, rather than unordered-map iteration, keeps command emission
+    // repeatable. Reachability uses the existing cached component queries.
+    for (const auto& u:world.units()) {
+        if (issued==kMaxCommands) break;
+        if (!u.alive() || u.player!=player_ || !u.type || u.type->isStructure() ||
+            u.type->isBuilder || u.type->commander || u.underConstruction || u.embarked() ||
+            u.incapacitated() || u.type->weapon.damage<=0) continue;
+        auto response=defenders_.find(u.id);
+        const bool assigned=response!=defenders_.end();
+        const bool ownsOrder=assigned && std::any_of(u.orders.begin(),u.orders.end(),[&](const auto& order) {
+            if (order.targetId || order.buildType || order.patrol || order.guard || order.load || order.unload)
+                return false;
+            const auto goal=order.missionTarget.value_or(std::pair{order.x,order.z});
+            return std::abs(goal.first.toFloat()-response->second.goalX)<1 &&
+                std::abs(goal.second.toFloat()-response->second.goalZ)<1 &&
+                order.attackMove!=response->second.returning;
+        });
+        if (!waveFree(u) && !ownsOrder) {
+            if (assigned) defenders_.erase(response);
+            continue; // preserve unrelated explicit attacks and working orders
+        }
+        float tx=0,tz=0;
+        bool found=false;
+        for (const auto& threat:threats) {
+            const auto* e=world.unit(threat.second);
+            if (e && reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),
+                e->x.toFloat(),e->z.toFloat(),tx,tz) && local(tx,tz)) {found=true;break;}
+        }
+        if (found) {
+            if (assigned && !response->second.returning) {
+                const float dx=tx-response->second.goalX,dz=tz-response->second.goalZ;
+                const float ux=u.x.toFloat()-tx,uz=u.z.toFloat()-tz;
+                if (dx*dx+dz*dz<96*96 && (ownsOrder ||
+                    (u.orders.empty() && ux*ux+uz*uz<=48*48))) continue;
+            }
+            DefenseResponse next=assigned ? response->second :
+                DefenseResponse{u.x.toFloat(),u.z.toFloat(),tx,tz};
+            next.goalX=tx;next.goalZ=tz;next.returning=false;
+            defenders_[u.id]=next;
+            emit(sink,tak::net::Cmd::AttackMove,u.id,"",tx,tz);++issued;
+        } else if (assigned) {
+            auto& next=response->second;
+            const float dx=u.x.toFloat()-next.homeX,dz=u.z.toFloat()-next.homeZ;
+            if (u.orders.empty() && (next.returning || dx*dx+dz*dz<=48*48)) {
+                defenders_.erase(response);continue;
+            }
+            if (ownsOrder && next.returning) continue;
+            next.goalX=next.homeX;next.goalZ=next.homeZ;next.returning=true;
+            emit(sink,tak::net::Cmd::Move,u.id,"",next.homeX,next.homeZ);++issued;
+        }
+    }
+}
+
 void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
                            const CommandSink& sink) {
     if (diff_ == Difficulty::Easy &&
         (simTick < 4*60*30 || (scouted_ && simTick-lastRaidTick_ < 2*60*30))) return;
-    if (!dp_.attack) return;   // Passive: never marches out; units defend in place.
+    if (!dp_.attack) return;   // Defensive responses run separately below.
     struct Fighter { int id; float x,z; };
     std::vector<Fighter> idle;
     const auto home=homeOf(world);
@@ -1072,8 +1173,9 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                 !u.type->canSetStance || (u.moveState==0 && u.fireState==2)) continue;
             tak::net::Command c; c.kind=tak::net::Cmd::Stance;
             c.player=uint8_t(player_);c.unitId=u.id;c.targetId=1;
-            sink(c); // defend in place; never auto-chase an intruder away from home
+            sink(c); // explicit interception moves; no autonomous long-distance chase
         }
+        sendDefenders(world,sink);
     }
     sendWaves(world, simTick, sink);
 }

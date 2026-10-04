@@ -34,6 +34,127 @@ static std::vector<net::Command> think(ai::Controller& ai,sim::World& w,uint32_t
 static int attacks(const std::vector<net::Command>& cs) {
     return int(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::AttackMove || c.kind==net::Cmd::Attack;}));
 }
+static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                               const sim::UnitType& soldier) {
+    auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
+    base.weapon.damage=0;base.weapons.clear();
+    auto builder=soldier;builder.isBuilder=true;builder.commander=true;
+    for (auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Flowfield}) {
+        sim::World w;terrain(w);w.setPathfindingMode(mode);w.player(0).defensiveAi=true;
+        w.spawn(&base,400,800,0,0);
+        std::vector<int> army;
+        for (int i=0;i<6;++i) army.push_back(w.spawn(&soldier,400,960+float(i)*40,0,0));
+        const int monarch=w.spawn(&builder,450,800,0,0);
+        const int unfinished=w.spawn(&soldier,500,1200,0,0);w.unit(unfinished)->underConstruction=true;
+        const int cargo=w.spawn(&soldier,500,1240,0,0);w.unit(cargo)->inTransport=monarch;
+        const int intruder=w.spawn(&soldier,1100,800,0,1);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        auto cs=think(defensive,w);
+        check(attacks(cs)==6 && std::all_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.kind!=net::Cmd::AttackMove || (c.x==1100 && c.z==800 &&
+                std::find(army.begin(),army.end(),c.unitId)!=army.end());
+        }),"Defensive mobilizes its whole ready army to meet a spotted intruder in both path modes");
+        for (const auto& c:cs) sim::applyCommand(w,registry,c);
+        check(attacks(think(defensive,w,30))==0,"Defensive does not restart an unchanged interception every think");
+        for (int tick=0;tick<90;++tick) w.tick(1.f/30.f);
+        check(std::all_of(army.begin(),army.end(),[&](int id){return w.unit(id)->x.toFloat()>430;}),
+              "Defensive interception commands actually move the army through normal navigation");
+        // A converted enemy must cease being a threat, including while a
+        // defender has an automatic combat order ahead of its movement goal.
+        w.unit(intruder)->player=0; // observe the ownership change after conversion
+        cs=think(defensive,w,120);
+        check(attacks(cs)==0 && std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.kind==net::Cmd::Move && c.x==400 &&
+                std::find(army.begin(),army.end(),c.unitId)!=army.end();
+        })==6,"Defensive recalls responders to their posts when a threat is converted");
+        for (const auto& c:cs) sim::applyCommand(w,registry,c);
+        check(think(defensive,w,150).empty(),"Defensive does not repeatedly reset the return march");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        const int defender=w.spawn(&soldier,400,1000,0,0);
+        const int enemy=w.spawn(&soldier,1100,800,0,1);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        auto cs=think(defensive,w);for(const auto& c:cs)sim::applyCommand(w,registry,c);
+        w.unit(enemy)->x=sim::Fixed::fromInt(3000);
+        cs=think(defensive,w,30);
+        check(attacks(cs)==0 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.unitId==defender && c.kind==net::Cmd::Move && c.x==400 && c.z==1000;
+        }),"Defensive recalls its army instead of following a retreating enemy to its base");
+        for(const auto& c:cs)sim::applyCommand(w,registry,c);
+        w.unit(defender)->orders.clear();w.unit(defender)->x=sim::Fixed::fromInt(500);
+        check(think(defensive,w,60).empty(),"Defensive respects return-order completion, including relaxed crowd arrival");
+    }
+    {
+        sim::World w;terrain(w);auto blindBase=base;blindBase.sight=80;
+        w.spawn(&blindBase,400,800,0,0);w.spawn(&soldier,400,1000,0,0);
+        const int enemy=w.spawn(&soldier,1000,800,0,1);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        check(attacks(think(defensive,w))==0,"Defensive ignores nearby threats hidden by fog");
+        blindBase.radar=700;
+        auto cs=think(defensive,w,30);
+        check(attacks(cs)==1,"Defensive responds to threats spotted by radar");
+        w.unit(enemy)->cloaked=true;
+        check(attacks(think(defensive,w,60))==0,"Defensive does not target a cloaked enemy");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        w.spawn(&soldier,400,1000,0,0);
+        auto scout=soldier;scout.weapon.damage=0;scout.weapons.clear();scout.sight=500;
+        w.spawn(&scout,2500,800,0,0);w.spawn(&soldier,2700,800,0,1);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{2700,800}});
+        check(attacks(think(defensive,w))==0,"Defensive ignores distant visible enemies and known enemy starts");
+        w.player(2).team=w.player(0).team;w.spawn(&soldier,1050,800,0,2);
+        auto unarmed=scout;w.spawn(&unarmed,1000,800,0,1);
+        check(attacks(think(defensive,w,30))==0,"Allies and harmless scouts do not mobilize the defensive army");
+        w.spawn(&base,2500,1200,0,0);w.spawn(&soldier,2700,1200,0,1);
+        check(attacks(think(defensive,w,60))==1,"Defensive also protects owned outlying buildings");
+    }
+    {
+        sim::World w;terrain(w,true);w.spawn(&base,1300,800,0,0);
+        const int ground=w.spawn(&soldier,1300,1000,0,0);
+        auto flyer=soldier;flyer.canFly=true;
+        const int air=w.spawn(&flyer,1300,1200,0,0);
+        w.spawn(&soldier,2624,800,0,1);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        // An outlying building reveals the threat across disconnected land.
+        w.spawn(&base,2624,1200,0,0);
+        const auto cs=think(defensive,w);
+        check(attacks(cs)==1 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.kind==net::Cmd::AttackMove && c.unitId==air;
+        }) && std::none_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.kind==net::Cmd::AttackMove && c.unitId==ground;
+        }),"Defensive sends reachable flyers while keeping stranded ground units home");
+    }
+    {
+        sim::World w;terrain(w,true);w.spawn(&base,1480,800,0,0);
+        auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;boat.weapon.range=240;
+        const int ship=w.spawn(&boat,1800,800,0,0);w.spawn(&soldier,1480,1000,0,1);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        const auto cs=think(defensive,w);
+        check(attacks(cs)==1 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.kind==net::Cmd::AttackMove && c.unitId==ship && c.x>=1536;
+        }),"Defensive ships use a reachable water approach to a threat on shore");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        for(int i=0;i<300;++i)w.spawn(&soldier,400+float(i%10)*32,1000+float(i/10)*32,0,0);
+        w.spawn(&soldier,1100,800,0,1);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        auto cs=think(defensive,w);
+        check(attacks(cs)==256,"Defensive limits interception commands per think for large armies");
+        for(const auto& c:cs)sim::applyCommand(w,registry,c);
+        check(attacks(think(defensive,w,30))==44,"Defensive sends remaining troops without restarting the first wave");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        const int defender=w.spawn(&soldier,400,1000,0,0);
+        const int enemy=w.spawn(&soldier,1100,800,0,1);
+        w.attack(defender,enemy,false);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        check(attacks(think(defensive,w))==0,"Defensive preserves an existing explicit attack order");
+    }
+}
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
     for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
@@ -47,6 +168,7 @@ int main(int argc,char** argv) {
                   "Passive AI orders defensive rather than hold-fire stances");
         }
     }
+    defensiveResponses(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
