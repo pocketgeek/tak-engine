@@ -231,13 +231,13 @@ clears).
 | **Select** | drag = box-select · **Ctrl+A** all your units · **Ctrl+Z** all your units of every type in the current selection · **Ctrl+U** everything on screen · **N** cycle to next unit |
 | **Order** | right-click = move/attack (**Shift** queues and shows selected units’ routes, including production-building rally orders) · **F** fight-move · **M** move · **A** attack · **P** patrol · **G** guard · **S** stop · **Ctrl+Shift+D** toggle self-destruct · **Esc** cancel an armed order |
 | **Groups & formations** | **Ctrl+1–0** assign a group · **Alt+1–0** assign a **formation** · **1–0** select, press again to track · **+Shift** appends when assigning · **Ctrl+Esc** leave. A unit is in one squad at a time, and a number is a group *or* a formation. A **formation** moves at its slowest member's speed and its stragglers rejoin. Each unit shows its squad under it (`3` = group 3, `3F` = formation 3). Recalling a squad skips its builders — a builder rides along only so anything it builds auto-joins the squad. |
-| **Camera** | arrows / middle-drag / **screen-edge** scroll · wheel zoom (toward cursor) · minimap click/drag = move the camera · right-click minimap = move the selection there |
+| **Camera** | arrows / middle-drag / **screen-edge** scroll · wheel zoom (toward cursor) · **Shift+Z** retail 1:1 zoom · minimap click/drag = move the camera · right-click minimap = move the selection there |
 | **Minimap orders** | with an order armed (**F**/**M**/**A**/**P**/**G**), click the minimap to issue it at that spot — e.g. **F** then a minimap click = fight-move across the map |
 | **Build queue** | at a training building: left-click **+1**, **Shift** **+5**, **Ctrl+Shift** **+10**; right-click removes the same; **Ctrl**+left starts/toggles infinite production at a stationary producer and also starts it for mobile builders. Each icon shows its queued count. (A builder that *places* things — structures, or a mobile conjurer like a Beast Handler — arms placement instead: click to position.) A mobile builder running infinite production accepts **Move/Patrol** as rally orders for its output; **Shift** appends rally steps. **Stop** clears production and restores normal orders. |
 | **Reclaim** | with a mobile builder (any unit with `canreclaim`, monarchs included) selected, **right-click-drag** a box to clear it — the builder roams the area reclaiming trees, rocks, and buildings for mana (nearest first). Sacred Stones and Standing Stones are left alone. **Shift** appends the sweep to its orders. |
-| **Game** | **Pause** · **+/−** game speed (0.5×–8× in live games, including single-player; only the **host** can change it, with *Allow speed change* enabled at game creation) · **F4** names/kills/losses/score |
-| **Disco** 🪩 | **Shift+D** — your monarchs spin, bob, hue-cycle, and glow on a little dance floor for 10s, to a synthesised disco track that plays positionally from the monarch. Purely cosmetic, but synced over the lockstep so every player sees it. |
-| **Headbang** 🤘 | **Shift+H** — your monarchs headbang to a synthesised heavy-metal track (positional, from the monarch), nodding and flashing red on a mosh-pit glow for 10s. Also cosmetic and lockstep-synced. |
+| **Game** | **Pause** · **+/−** game speed (0.5×–8× in live games, including single-player; only the **host** can change it, with *Allow speed change* enabled at game creation) · **F4** names/kills/losses/score, with team grouping when allies share a team; its independent scale is in Options |
+| **Disco** 🪩 | **Shift+D** — selected mobile units spin, bob, hue-cycle, and glow for ten real seconds with positional disco music. With nothing selected, the living monarch dances. Buildings do not dance; game speed does not change duration. The trigger and selection are lockstep-synced. |
+| **Headbang** 🤘 | **Shift+H** — selected mobile units headbang to positional heavy-metal music for ten real seconds. With nothing selected, use the living monarch. Buildings do not dance; the trigger and selection are lockstep-synced. |
 
 Units are drawn from their 3D models, with projection work distributed across
 worker threads. Background music plays from the faction soundtrack.
@@ -318,14 +318,20 @@ position updates.
   space; they require naval or air travel between bases. Minimum size increases
   with layout and player count to leave enough room. Sliders control additional
   scenery, not the decorations already painted or placed in retail sections.
-  Existing version-1/version-2 generated-map IDs retain their old layouts;
-  newly generated maps use version 3.
+  Preview regeneration waits until you release a slider. Enter an optional map
+  name; saved map entries include a recipe identifier so duplicate titles remain
+  distinct. Each biome also has a themed layout: Aramon Riverlands, Taros Maze,
+  Veruna Ports, Zhon Clearings or Creon Highlands. Lakes and mazes have open
+  edges; Ports checks connected deep-water harbor sites. Older generated-map
+  recipes retain their terrain; new maps use generator version 7.
   **Monarch Expendable** is the loss
   rule: *off* (the retail commander rule) means losing your Monarch loses you the
   game even if other units survive; *on* makes the Monarch just another unit. The
-  host also sets the **unit cap** — the per-player live-unit limit (250 / 500 /
-  1000 / 2000, default 2000; production and new builds stall a player once
-  they reach it) — and can **allow in-game speed changes** so the host's **+/−**
+  host also selects **Retail** or experimental **Flowfield** pathfinding at
+  creation. The lobby reports the choice; campaigns always use Retail. The
+  **unit cap** is the per-player live-unit limit (250 / 500 / 1000 / 2000,
+  default 2000; production and new builds stall a player once they reach it).
+  The host can **allow in-game speed changes** so the host's **+/−**
   keys re-cadence the match live (0.5×–8×). Speed only changes how fast ticks
   happen in wall-clock — the per-tick `dt` is fixed — so the sim stays bit-identical
   and deterministic.

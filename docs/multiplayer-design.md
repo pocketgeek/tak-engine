@@ -593,6 +593,11 @@ protocol-219/format-10 recordings remain supported; other older simulation
 protocols are rejected. Campaign
 playback forces Retail even if a header supplies Flowfield. A debug-only
 `TAK_FLOWFIELD=1` selects Flowfield in the headless multiplayer test harness.
+For `tools/desync-hunt-remote.sh`, `--minutes` limits simulated match time.
+`TAK_WALL_TIMEOUT=3600` grants each client up to one real hour for a dense
+Flowfield stress run; the default remains simulated seconds plus 300.
+The same tick, completion and hash checks apply. `--only` retains each scenario's
+full-table seed so targeted retries reproduce its original map/start seed.
 
 Protocol 221 appends `BuildManaArea` to the command enum. It carries a builder,
 lodestone type, queue flag, and two rectangle corners in 43 bytes, like area

@@ -60,6 +60,9 @@
 #        [--only NAME[,NAME...]]
 # Set TAK_CLIENT=./build-o2/takclient to use an optimized client with Debug hooks.
 # Set TAK_SERVER=/home/pocket_geek/takserver.sweep170 to test an isolated remote binary.
+# --minutes is simulated time. TAK_WALL_TIMEOUT can set a per-client real-time
+# deadline in seconds (default: simulated seconds + 300). Dense Flowfield stress
+# runs can need a longer deadline without changing their tick or hash checks.
 set -u
 
 # RUN FROM A SNAPSHOT, NOT FROM THE LIVE FILE -- and do it before ANY argument is
@@ -142,6 +145,14 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
+
+if [ -n "${TAK_WALL_TIMEOUT:-}" ]; then
+  if ! [[ "$TAK_WALL_TIMEOUT" =~ ^[1-9][0-9]{0,4}$ ]] ||
+      [ "$TAK_WALL_TIMEOUT" -gt 86400 ]; then
+    echo "TAK_WALL_TIMEOUT needs an integer from 1 to 86400 seconds" >&2
+    exit 2
+  fi
+fi
 
 CLIENT="${TAK_CLIENT:-./build-dbg/takclient}"
 [ -x "$CLIENT" ] || { echo "$CLIENT missing" >&2; exit 2; }
@@ -447,6 +458,14 @@ RUNS=(
 
 SPEED_DEFAULT="TAK_SPEED=40"
 
+# Keep a scenario's seed stable when --only filters the table. Otherwise a failed
+# seed-2021 run becomes seed 2000 on retry and does not reproduce the original.
+declare -A RUN_SEEDS=()
+for _idx in "${!RUNS[@]}"; do
+  _name=${RUNS[$_idx]%%|*}
+  RUN_SEEDS[$_name]=$((2000 + _idx))
+done
+
 # --only name[,name...] keeps just those runs. For working on ONE behaviour (the latency
 # shaping and its teardown, say) without sitting through the other 30-odd runs first.
 #
@@ -491,7 +510,7 @@ run_one() {
   # HUMANS is optional; a 6-field entry means one seated player.
   if [ "$spec" = "$weight" ]; then humans=1; else humans="${spec#*|}"; fi
   case "$humans" in ''|*[!0-9]*) humans=1;; esac
-  local port=$((PORT_BASE + idx)) seed=$((2000 + idx))
+  local port=$((PORT_BASE + idx)) seed=${RUN_SEEDS[$name]}
   # Defined HERE, before anything calls it. It was defined 50 lines further down, so the
   # netem capability probe ran against an undefined function, took the failure branch and
   # silently fell back to the relay -- every "shaped" run was the relay, and netem was
@@ -710,9 +729,10 @@ run_one() {
   [ "$seat" = "watch" ] && seatenv="TAK_MP_WATCH=1 TAK_MP_AIS=8"
 
   local secs=$((MINUTES * 60))
+  local wall_secs=${TAK_WALL_TIMEOUT:-$((secs + 300))}
   # shellcheck disable=SC2086
   env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy $seatenv $SPEED_DEFAULT $envs \
-      timeout -k 30 $((secs + 300)) $CLIENT game "$map" --data "$LDATA" \
+      timeout -k 30 "$wall_secs" $CLIENT game "$map" --data "$LDATA" \
       --server "$thost" --serverport "$tport" --mphost --time "$secs" $flags \
       >"$clog" 2>&1 &
   local hostpid=$!
@@ -725,7 +745,7 @@ run_one() {
     for ((j = 2; j <= humans; j++)); do
       # shellcheck disable=SC2086
       env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy $SPEED_DEFAULT $envs \
-          timeout -k 30 $((secs + 300)) $CLIENT game "$map" --data "$LDATA" \
+          timeout -k 30 "$wall_secs" $CLIENT game "$map" --data "$LDATA" \
           --server "$thost" --serverport "$tport" --mpjoin --time "$secs" $flags \
           >"$OUT/$name.client$j.log" 2>&1 &
       jpids+=($!)
@@ -894,7 +914,8 @@ if [ "$DRYRUN" = "1" ]; then
       if [ "${ASSIGN[$j]}" = "$h" ]; then
         _w=$(cut -d'|' -f6 <<<"${RUNS[$j]}")
         _hn=$(cut -d'|' -f7 <<<"${RUNS[$j]}"); [ -n "$_hn" ] || _hn=1
-        printf -- "     %-18s %-6s %s human(s)\n" "$(cut -d'|' -f1 <<<"${RUNS[$j]}")" "$_w" "$_hn"
+        _name=${RUNS[$j]%%|*}
+        printf -- "     %-18s %-6s %s human(s) seed=%s\n" "$_name" "$_w" "$_hn" "${RUN_SEEDS[$_name]}"
       fi
     done
   done
