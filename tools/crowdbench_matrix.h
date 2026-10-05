@@ -125,8 +125,8 @@ inline Options parse(int argc,char** argv) {
         }
         else throw std::runtime_error("unknown option: "+std::string(key));
     }
-    if(o.mode!="retail"&&o.mode!="retail-plus"&&o.mode!="flowfield"&&o.mode!="cooperative")
-        throw std::runtime_error("mode must be retail, retail-plus, flowfield, or cooperative");
+    if(o.mode!="retail"&&o.mode!="retail-plus"&&o.mode!="flowfield"&&o.mode!="cooperative"&&o.mode!="legion")
+        throw std::runtime_error("mode must be retail, retail-plus, flowfield, cooperative, or legion");
 #ifdef TAK_CROWDBENCH_BASELINE
     if(o.mode=="retail-plus")throw std::runtime_error("Retail+ is unavailable in the frozen baseline");
 #endif
@@ -254,6 +254,15 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
             metric("retail_plus_full_updates",s.fullUpdates);
         }
     }
+    if constexpr(requires {world.legionStats();}) {
+        const auto l=world.legionStats();
+        metric("legion_plane_builds",l.planeBuilds);metric("legion_field_work",l.fieldWork);
+        metric("legion_fields_built",l.fieldsBuilt);metric("legion_field_evictions",l.fieldEvictions);
+        metric("legion_groups",l.groups);metric("legion_registrations",l.registrations);
+        metric("legion_holds",l.holds);metric("legion_slides",l.slides);metric("legion_arrivals",l.arrivals);
+        metric("legion_contact_arrivals",l.contactArrivals);metric("legion_trapped",l.trapped);
+        metric("legion_escapes",l.escapes);metric("legion_bytes",l.bytes);
+    }
     const auto f=world.flowStats();
     metric("flow_snapshot_work",f.snapshotWork);metric("flow_field_work",f.fieldWork);
     metric("flow_local_work",f.localWork);metric("flow_local_deliveries",f.localDeliveries);
@@ -304,7 +313,7 @@ inline int run(const Options& o) {
     const int movingPerPlayer=o.units*o.movingPercent/100,totalMoving=movingPerPlayer*o.players;
     LatencyObserver latency;
     World world;world.setGameSeed(o.seed);world.setVisPlayer(-1);world.setSerialThreads(!o.workers);world.setPathService(true);
-    world.setPathfindingMode(PathfindingMode(o.mode=="retail"?0:o.mode=="flowfield"?1:o.mode=="cooperative"?2:3));
+    world.setPathfindingMode(PathfindingMode(o.mode=="retail"?0:o.mode=="flowfield"?1:o.mode=="cooperative"?2:o.mode=="legion"?4:3));
     world.setPlayerCount(o.players);for(int p=0;p<o.players;++p)world.setTeam(p,0);
     world.setTerrain(std::vector<uint8_t>(size_t(width)*height,100),width,height,64);
     std::vector<Rect> walls;

@@ -102,6 +102,7 @@ add_library(tak-formats
   src/sim/pathsearch.cpp
   src/sim/retailplus.cpp
   src/sim/retailplusnavigator.cpp
+  src/sim/legion.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
@@ -334,6 +335,11 @@ add_executable(crowdbench tools/crowdbench.cpp)
 add_executable(navigation_telemetry_test tools/navigation_telemetry_test.cpp)
 target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
+add_executable(legion_world_test tools/legion_world_test.cpp)
+target_link_libraries(legion_world_test PRIVATE tak-formats)
+foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota determinism)
+  add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
+endforeach()
 add_executable(retail_search_scratch_test tools/retail_search_scratch_test.cpp)
 target_include_directories(retail_search_scratch_test PRIVATE src)
 add_executable(retailplus_traffic_test tools/retailplus_traffic_test.cpp)

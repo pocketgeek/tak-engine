@@ -35,6 +35,7 @@
 #include "sim/flownavigator.h"
 #include "sim/cooperativemovement.h"
 #include "sim/retailplusnavigator.h"
+#include "sim/legion.h"
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
@@ -1303,6 +1304,7 @@ class World {
     friend struct RetailReplayProbe;
     friend class FlowNavigator;
     friend class RetailPlusNavigator;
+    friend class LegionNavigator;
 public:
     int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
     // CRT ownership transfer: preserves HP/progress, clears the former owner's commands.
@@ -1332,6 +1334,8 @@ public:
     FlowNavigator::Stats flowStats() const;
     cooperative::MovementBatch::Stats cooperativeMovementStats() const {return cooperativeMovementStats_;}
     RetailPlusNavigator::Stats retailPlusStats() const {return retailPlus_?retailPlus_->stats():RetailPlusNavigator::Stats{};}
+    LegionNavigator::Stats legionStats() const {return legion_?legion_->stats():LegionNavigator::Stats{};}
+    LegionNavigator* legionNavigator() {return legion_.get();}
 
 
     // Footprint route score: terrain/parked bodies block, qualifying same-way
@@ -1341,7 +1345,7 @@ public:
     int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
 
     // Enable retail's background pathfinder for this world (default off).
-    void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();flow_.reset();retailPlus_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};} }
+    void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};} }
     // Path search work units per tick, shared across all pending requests.
     void setPathBudget(int b) { paths_.setBudget(b); }
     void setPathProfiling(bool enabled) { paths_.setProfiling(enabled); }
@@ -1590,7 +1594,7 @@ public:
         clearScenarioState();
         scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
-        paths_.clear();flow_.reset();retailPlus_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
+        paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         projectiles_.clear();flames_.clear();
@@ -2470,6 +2474,10 @@ private:
     PathService paths_;          // retail's request queue + budget scheduler
     PathfindingMode pathfindingMode_=PathfindingMode::Retail;
     std::unique_ptr<RetailPlusNavigator> retailPlus_;
+    std::unique_ptr<LegionNavigator> legion_; // Legion mode only
+    // Bumped whenever terrain/feature placement legality may change. Derived
+    // planes compare it; never hashed (it is a cache key, not state).
+    uint64_t placementEpoch_=0;
     std::unique_ptr<FlowNavigator> flow_; // never instantiated by Retail matches
     std::unique_ptr<cooperative::MovementBatch> cooperativeMovement_;
     cooperative::MovementBatch::Stats cooperativeMovementStats_;

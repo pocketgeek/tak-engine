@@ -1217,6 +1217,7 @@ bool World::mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) co
 void World::setMapPlacementFeatures(const std::vector<uint16_t>& raw,
                                     std::vector<RetailMapFeatureType> types) {
     mapPlacementTypes_=std::move(types);
+    ++placementEpoch_;
     mapPlacementCells_.assign(size_t(hW_)*hH_,{});
     if (raw.size()!=mapPlacementCells_.size())
         throw std::runtime_error("map placement feature dimensions differ from terrain");
@@ -1246,7 +1247,8 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     if(isSharedPathfinding(pathfindingMode_)&&!navigationMemoryPlan(pathfindingMode_,w,h).supported)
         throw std::invalid_argument("Shared navigation supports maps up to 64x64 within its storage budget");
     mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
-    paths_.clear();flow_.reset();retailPlus_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
+    ++placementEpoch_;
+    paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
     searchGrades_.clear(); activeSearchGrade_=-1;
     // The fog worker reads heights_; never let a reload pull the map out from under it.
     if (visRunning_) { visWorker_.join(); visRunning_ = false; visDone_.store(false); }
@@ -1818,6 +1820,7 @@ void World::cancelPath(Unit& u) {
     if (kPqLog) std::printf("[pq] t=%u id=%d CANCEL\n", tickCounter_, u.id);
     if(flow_)flow_->cancel(u.id);else paths_.cancel(u.id);
     if(retailPlus_)retailPlus_->cancel(u.id);
+    if(legion_)legion_->cancel(u.id);
     // A new destination earns the cheap tracer again. This deliberately does NOT live in
     // requestPath: that is also the once-a-second re-anchor, so clearing there wiped the
     // detour history on every re-ask and the fallback could never accumulate -- the
@@ -2347,7 +2350,8 @@ void World::tickGroundMission(Unit& u) {
             // Retail relaxes the goal radius after failed searches. Retail+
             // waits/retries the same plain Move instead: a blocked army must
             // never "arrive" because repeated failures enlarged its circle.
-            if(w.pathfindingMode_==PathfindingMode::RetailPlus&&w.retailPlus_&&w.retailPlus_->supports(u))
+            if((w.pathfindingMode_==PathfindingMode::RetailPlus&&w.retailPlus_&&w.retailPlus_->supports(u))||
+               (w.legion_&&isLegionPathfinding(w.pathfindingMode_)&&w.legion_->supports(u)))
                 events&=~0x2600u;
             const int result=retailGroundMove(m,goal.missionRadius,w.tickCounter_,events,
                 int16_t(u.type->footX),u.embarked(),response.mode,uint8_t(u.moveState),[&](int n) { return random(n); },
@@ -2499,6 +2503,12 @@ bool World::requestPath(Unit& u, float x, float z) {
     if(pathfindingMode_==PathfindingMode::RetailPlus) {
         if(!retailPlus_)retailPlus_=std::make_unique<RetailPlusNavigator>(*this);
         retailPlus_->registerMove(u);
+    }
+    if(isLegionPathfinding(pathfindingMode_)) {
+        // Legion plans group fields itself; supported legs never queue a
+        // native search. Everything else continues to Retail below.
+        if(!legion_)legion_=std::make_unique<LegionNavigator>(*this);
+        if(legion_->supports(u)) {legion_->registerMove(u);return false;}
     }
     const auto* mission = navigationMissionOrder(u);
     auto target = mission && mission->missionTarget ? *mission->missionTarget :
@@ -4942,6 +4952,7 @@ void World::blockCells(int cx, int cz, int w, int h, bool blocked) {
             if (o != (blocked ? 1 : 0)) { o = blocked ? 1 : 0; any = true; }
         }
     if (!any) return;
+    ++placementEpoch_;
     if(flow_)flow_->dirty(x0,z0,x1-x0+1,z1-z0+1);
     // Every grid reads the same overlay, so they all need their clearance redone
     // over the touched band. markDirty is cheap; the DP is lazy.
@@ -4987,7 +4998,7 @@ void World::blockFoot(const UnitType& t, float x, float z, bool blocked) {
 }
 
 void World::buildNavClasses(const TypeRegistry& reg) {
-    paths_.clear();flow_.reset();retailPlus_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
+    paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
     searchGrades_.clear(); activeSearchGrade_=-1;
     navClasses_.clear();
     navIdx_.clear();
@@ -6123,6 +6134,7 @@ void World::removeMapFeature(int cx,int cz) {
     if (index>=mapPlacementTypes_.size()) return;
     const auto& type=mapPlacementTypes_[index];
     if(flow_)flow_->dirty(cx,cz,type.footX,type.footZ);
+    ++placementEpoch_;
     forgetCorpseAt(cx,cz);
     retailMapRemove(cx,cz,type,[&](int x,int z)->RetailMapFeatureCell& {
         return mapPlacementCells_.at(size_t(z)*hW_+x);
@@ -6161,6 +6173,7 @@ bool World::placeMapFeature(const Feature& f) {
         mapPlacementTypes_.push_back(std::move(type));
     }
     const int cx=footprintOrigin(f.x,f.fx),cz=footprintOrigin(f.z,f.fz);
+    ++placementEpoch_;
     const bool placed=retailMapInstall(hW_,hH_,cx,cz,uint16_t(index),mapPlacementTypes_,[&](int x,int z)->RetailMapFeatureCell& {
             return mapPlacementCells_.at(size_t(z)*hW_+x);
         },[&](int x,int z,uint16_t previous) {
@@ -9034,6 +9047,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             }
             tickFlightMovement(u); notifyFlightOccupancy(u); return;
         }
+        if(legion_&&isLegionPathfinding(pathfindingMode_)&&legion_->supports(u)) {
+            legion_->move(u,maximum);
+            return;
+        }
         flow::Traffic::Result flowTraffic;
         if(isSharedPathfinding(pathfindingMode_) && flow_)
             flowTraffic=flow_->traffic(u);
@@ -9150,7 +9167,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             const auto& goal=u.orders[currentLeg(u.orders)];
             if(!requestPath(u,goal.x.toFloat(),goal.z.toFloat()))u.routeStamp=int32_t(tickCounter_);
         }
-        if (isRetailPathfinding(pathfindingMode_) && !retailPlusMove && u.routeStamp >= 0 && routeable) {
+        if ((isRetailPathfinding(pathfindingMode_)||isLegionPathfinding(pathfindingMode_)) && !retailPlusMove && u.routeStamp >= 0 && routeable) {
             const int32_t elapsed = int32_t(tickCounter_) - u.routeStamp;
             const uint32_t sc = uint32_t(u.type->halfCellTicks);
             const bool water = u.type->floater && u.type->minWaterDepth > 0;
@@ -9322,6 +9339,10 @@ void World::tick(float dt) {
     if (!tickCounter_) updateNavigationExploration();
     ++tickCounter_;
     if(retailPlus_)retailPlus_->tick();
+    if(isLegionPathfinding(pathfindingMode_)&&pathService_) {
+        if(!legion_)legion_=std::make_unique<LegionNavigator>(*this);
+        legion_->tick();
+    }
     // 51b890 runs before unit updates. Active squads publish whether they
     // contain any completed mobile members (50b7a0), dirtying only on change.
     for (auto& player:players_) if (player.retailAi) {
@@ -10251,7 +10272,7 @@ void World::tick(float dt) {
     // (5263aa, then 526411). Install completed routes only after movement,
     // and admit new searches from the position and occupancy after that step.
     if(pathService_ && isSharedPathfinding(pathfindingMode_)) {if(flow_)flow_->tick();}
-    if (pathService_ && isRetailPathfinding(pathfindingMode_)) {
+    if (pathService_ && (isRetailPathfinding(pathfindingMode_)||isLegionPathfinding(pathfindingMode_))) {
       SearchGradeBatch searchBatch(*this);
       paths_.tick(
         [&](int unitId, int cx, int cz) {
@@ -10794,6 +10815,7 @@ uint64_t World::stateHash() const {
     }
     if(isSharedPathfinding(pathfindingMode_)) {mix(pathfindingMode_==PathfindingMode::Cooperative?0x434f4f5045524154ull:0x464c4f574649454cull);if(flow_)mix(flow_->checksum());}
     if(pathfindingMode_==PathfindingMode::RetailPlus) {mix(0x52455441494c2b00ull);if(retailPlus_)mix(retailPlus_->checksum());}
+    if(isLegionPathfinding(pathfindingMode_)) {mix(0x4c4547494f4e0000ull);if(legion_)mix(legion_->checksum());}
     if (doubleSight_) mix(0x44424c5349474854ull);
     if (patrolRepairs_) mix(0x5054524c52455052ull);
     mix(nextMovementController_);
@@ -10945,7 +10967,8 @@ uint64_t World::stateHash() const {
             if(isSharedPathfinding(pathfindingMode_) && order.guard)mix(order.issuedTick);
             if (!order.groundMission && !(u.type && u.type->canFly && (order.patrol || order.flightMoveMission))) continue;
             mix(order.controller);
-            if(isSharedPathfinding(pathfindingMode_)||pathfindingMode_==PathfindingMode::RetailPlus)mix(order.issuedTick);
+            if(isSharedPathfinding(pathfindingMode_)||pathfindingMode_==PathfindingMode::RetailPlus||
+               isLegionPathfinding(pathfindingMode_))mix(order.issuedTick);
             if(pathfindingMode_==PathfindingMode::RetailPlus)mix(order.nativeProductionExit);
             mix(order.missionRadius);
             if(order.productionExit) {
@@ -11301,7 +11324,7 @@ void World::setPathfindingMode(PathfindingMode mode) {
     if(isSharedPathfinding(mode)&&!nav_.empty()&&!navigationMemoryPlan(mode,nav_.width(),nav_.height()).supported)
         throw std::invalid_argument("Shared navigation supports maps up to 64x64 within its storage budget");
     if(mode==pathfindingMode_)return;
-    paths_.clear();flow_.reset();retailPlus_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};pathfindingMode_=mode;
+    paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};pathfindingMode_=mode;
 }
 World::~World() {
     if (visRunning_) visWorker_.join();   // the fog worker outlives nothing
