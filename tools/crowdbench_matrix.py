@@ -24,7 +24,13 @@ SCENARIOS = (
     "mixedfootprints", "exploration", "dynamicobstacle", "rapidreplacement",
     "unreachable", "recovery", "recovery-passive",
 )
-MODES = ("retail", "retail-plus", "flowfield", "cooperative")
+# Requirement-driven acceptance scenarios (tools/crowdbench_acceptance.h). Kept
+# out of SCENARIOS so default matrices and their runtime estimates are unchanged.
+ACCEPTANCE_SCENARIOS = ("jagged", "trapped", "crowdtrap", "singleunit", "groupdetour")
+ALL_SCENARIOS = SCENARIOS + ACCEPTANCE_SCENARIOS
+# The frozen baseline predates Retail+ telemetry parity and has no Legion mode.
+LEGACY_MODES = ("retail", "retail-plus", "flowfield", "cooperative")
+MODES = LEGACY_MODES + ("legion",)
 CASE_KEYS = ("build_role", "mode", "scenario", "units_per_player", "players",
              "moving_percent", "ticks", "seed", "workers", "allocation_counting",
              "path_profiling", "latency_observation")
@@ -177,7 +183,7 @@ def main():
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--reference-binary", type=Path,
                         help="interleave frozen reference cases with the candidate for matched timings")
-    parser.add_argument("--reference-modes", nargs="+", default=list(MODES), choices=MODES)
+    parser.add_argument("--reference-modes", nargs="+", default=list(LEGACY_MODES), choices=MODES)
     parser.add_argument("--source-dir", type=Path,
                         help="exact candidate source checkout used to build --binary")
     parser.add_argument("--reference-source-dir", type=Path,
@@ -190,7 +196,7 @@ def main():
     parser.add_argument("--units", nargs="+", type=int, default=[200, 500, 1000, 2000])
     parser.add_argument("--populations", nargs="+", default=["1:100", "4:25", "8:10", "4:100"],
                         help="players:moving-percent pairs, not total units")
-    parser.add_argument("--scenarios", nargs="+", choices=SCENARIOS, default=["open"])
+    parser.add_argument("--scenarios", nargs="+", choices=ALL_SCENARIOS, default=["open"])
     parser.add_argument("--ticks", type=int, default=1200)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--seeds", nargs="+", type=int, default=[0])

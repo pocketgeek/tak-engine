@@ -340,6 +340,21 @@ target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota determinism)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
+# Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
+# Legion asserts; the other modes run the same checks with --report (comparison
+# evidence, never failing). The Legion assertions stay DISABLED until the Legion
+# sim (src/sim/legion*) is integrated; the coordinator removes that property.
+add_executable(legion_acceptance_test tools/legion_acceptance_test.cpp)
+target_link_libraries(legion_acceptance_test PRIVATE tak-formats)
+foreach(legion_check singleunit group jagged trapped crowdheld)
+  add_test(NAME legion_acceptance_${legion_check}_legion COMMAND legion_acceptance_test legion ${legion_check})
+  set_tests_properties(legion_acceptance_${legion_check}_legion PROPERTIES DISABLED TRUE TIMEOUT 600)
+  foreach(legion_mode retail retail-plus flowfield cooperative)
+    add_test(NAME legion_acceptance_${legion_check}_${legion_mode}
+             COMMAND legion_acceptance_test ${legion_mode} ${legion_check} --report)
+    set_tests_properties(legion_acceptance_${legion_check}_${legion_mode} PROPERTIES TIMEOUT 600)
+  endforeach()
+endforeach()
 add_executable(retail_search_scratch_test tools/retail_search_scratch_test.cpp)
 target_include_directories(retail_search_scratch_test PRIVATE src)
 add_executable(retailplus_traffic_test tools/retailplus_traffic_test.cpp)
