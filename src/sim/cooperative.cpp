@@ -441,6 +441,23 @@ Traffic::Result Traffic::follow(const Context& c,Record& r) {
     if(!reserve(c.id,r,r.origin,at,c.tick+90)) {pending_.insert(c.id);out.wait=true;++totals_.waits;return out;}
     out.detour=at;return out;
 }
+bool Traffic::updateUnblocked(const Context& c) {
+    if(!c.plainMove||c.goalReached||c.blocked>=2||c.obstruction||!c.neighbors.empty()||
+       c.arrivalReachable||c.contactReachable||(c.localDeferred&&*c.localDeferred)||!claims_.empty())return false;
+    const auto it=records_.find(c.id);if(it==records_.end())return false;
+    auto& r=it->second;
+    if(r.identity!=flow::Traffic::Identity{c.controller,c.target,c.missionKind,c.targetId}||
+       r.issued!=c.issuedTick||r.player!=c.player||r.coordination!=coordinationMask(c.player)||
+       r.footX!=c.footX||r.footZ!=c.footZ||
+       r.claim||r.count||r.yielding||r.arrivalRoute||r.passage||arrivals_.nearArrival(c))return false;
+    // These coordinators have independent admission tables. Update arrivals
+    // first so a decline is entirely observational: the adapter may still exit
+    // early on a body-query budget or density fallback without calling update.
+    if(!arrivals_.updateUnblocked(c))return false;
+    beginTick(c.tick);
+    if(r.position!=c.position){r.progress=c.tick;r.position=c.position;r.retryPolicy=0;}
+    r.seen=c.tick;return true;
+}
 Traffic::Result Traffic::update(const Context& c) {
     beginTick(c.tick);
     Record* record=remember(c);if(!record){Result out;out.wait=true;return out;}

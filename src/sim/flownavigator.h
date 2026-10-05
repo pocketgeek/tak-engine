@@ -1,6 +1,7 @@
 #pragma once
 #include "fixed.h"
 #include "flowtraffic.h"
+#include "navigationtelemetry.h"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -33,6 +34,7 @@ public:
     ~FlowNavigator();
     FlowNavigator(const FlowNavigator&)=delete;
     FlowNavigator& operator=(const FlowNavigator&)=delete;
+    void setTelemetry(NavigationTelemetry* observer);
     bool request(Unit& unit,Fixed x,Fixed z);
     bool pending(int unit) const;
     bool routeBlocked(const Unit& unit) const;

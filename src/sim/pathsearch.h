@@ -15,6 +15,7 @@
 #include "retailtrace.h"
 #include "retailgoal.h"
 #include "retailscheduler.h"
+#include "navigationtelemetry.h"
 
 namespace tak::sim {
 
@@ -238,6 +239,11 @@ inline constexpr int kMaxActiveSearches = 1;
 
 class PathService {
   public:
+    void setTelemetry(NavigationTelemetry* observer) {
+        if(observer!=telemetry_&&(telemetryTickActive_||!q_.empty()))
+            throw std::logic_error("telemetry requires an empty request queue outside tick callbacks");
+        telemetry_=observer;
+    }
     void setBudget(int b) { budget_ = b > 0 ? b : kPathBudgetDefault; }
     int budget() const { return budget_; }
     uint64_t workSpent() const { return workSpent_; }      // observational; see workSpent_
@@ -299,11 +305,14 @@ class PathService {
     // the token to its current controller; zero keeps the legacy route-only API.
     struct Notification { int unitId; uint64_t controller; int events; };
     std::vector<Notification> takeNotifications() { return std::exchange(notifications_, {}); }
-    void cancel(int unitId);
+    void cancel(int unitId,NavigationTelemetry::Cancel reason=NavigationTelemetry::Cancel::Explicit);
     bool pending(int unitId) const { return q_.find(unitId) != q_.end(); }
     size_t pendingCount() const { return q_.size(); }
     void clear() {
         retireActive();
+        if(telemetry_)for(const auto& [id,e]:q_) {
+            (void)id;telemetry_->cancelled(e.telemetryToken,NavigationTelemetry::Cancel::Cleared);
+        }
         q_.clear();
         pendingByPlayer_.fill(0);priorityByPlayer_.fill(0);
         notifications_.clear();
@@ -351,6 +360,7 @@ class PathService {
         int goalRadiusSquared = 0;
         std::optional<RetailRectGoal> rectangle; // footprint-origin coordinates
         std::optional<RetailRingGoal> ring;
+        uint64_t telemetryToken=0;
     };
     uint64_t tickNo_ = 0;       // monotonic, integer: tells "already ran this tick" apart
     std::vector<Notification> notifications_;
@@ -363,6 +373,8 @@ class PathService {
     uint64_t requests_ = 0;      // admissions, i.e. how often a route was asked for
     bool profiling_=false;
     Diagnostics diagnostics_;
+    NavigationTelemetry* telemetry_=nullptr;
+    bool telemetryTickActive_=false; // Observer lifetime guard; not simulation state.
 
     int budget_ = kPathBudgetDefault;
     // Requests are looked up by ID only. RetailSearchScheduler owns traversal

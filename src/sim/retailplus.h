@@ -31,6 +31,7 @@ public:
     static uint64_t contactProofCost(Cell from,Cell peer,int footX,int footZ);
     void registerMove(const Context&);
     Result update(const Context&);
+    bool updateUnblocked(const Context&);
     // Immediate local claim and uncompleted slot release. Verified settled
     // records remain contact anchors until the prune callback rejects them.
     void cancel(int id);

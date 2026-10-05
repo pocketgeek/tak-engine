@@ -65,6 +65,9 @@ Traffic::Result Traffic::update(const Context& c) {
     result.followLeader=0;result.settledRally=false;
     return result;
 }
+bool Traffic::updateUnblocked(const Context& c) {
+    return ordinary(c)&&local_.updateUnblocked(c);
+}
 void Traffic::cancel(int id) {local_.cancel(id);local_.cancelUnsettledArrival(id);}
 void Traffic::reset() {local_=cooperative::Traffic{};}
 void Traffic::setAllianceMask(int player,uint16_t mask) {local_.setAllianceMask(player,mask);}

@@ -15,7 +15,8 @@ inline PathfindingMode mode(std::string_view value) {
     if(value=="retail")return PathfindingMode(0);
     if(value=="flowfield")return PathfindingMode(1);
     if(value=="cooperative")return PathfindingMode(2);
-    throw std::runtime_error("mode must be retail, flowfield, or cooperative");
+    if(value=="retail-plus")return PathfindingMode(3);
+    throw std::runtime_error("mode must be retail, retail-plus, flowfield, or cooperative");
 }
 inline UnitType mover(int kind=0,bool boat=false) {
     UnitType type{};type.id=type.name="cooperative-mover-"+std::to_string(kind);

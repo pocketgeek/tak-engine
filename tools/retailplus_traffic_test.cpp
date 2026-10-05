@@ -266,12 +266,46 @@ void proofCosts() {
     check(Traffic::contactProofCost({0,0},{0,0},0,2)==std::numeric_limits<uint64_t>::max(),
           "invalid footprint produced an affordable proof");
 }
+void unblockedEquivalence() {
+    Traffic reference,fast;
+    std::array<Traffic::Context,12> members;
+    for(size_t i=0;i<members.size();++i) {
+        members[i]=context(int(i+1),{100,100+int(i)*4},{1000,100});
+        reference.registerMove(members[i]);fast.registerMove(members[i]);
+    }
+    unsigned shortcuts=0,declines=0;
+    for(uint32_t tick=1;tick<=1000;++tick)for(auto& c:members) {
+        c.tick=tick;
+        if(tick<350||tick>700)++c.position.x;
+        if(tick==120)++c.controller; // Internal retry preserves mission progress.
+        if(tick==240){++c.issuedTick;c.target.z+=100;} // Replacement changes group.
+        if(tick==410){reference.cancel(c.id);fast.cancel(c.id);}
+        if(tick==720){c.blocked=2;c.obstructionFriendly=true;c.obstruction=neighbor(members.back());}
+        if(tick==760){c.blocked=0;c.obstruction.reset();}
+        if(tick==950){c.position=c.target;c.goalReached=true;}
+        auto cheap=c;cheap.free={};cheap.terrainFree={};cheap.arrivalReachable={};cheap.contactReachable={};
+        const auto expected=reference.update(c);
+        Traffic::Result actual;
+        const auto before=fast.checksum();
+        if(fast.updateUnblocked(cheap))++shortcuts;
+        else {
+            check(fast.checksum()==before,"declined shortcut changed state before a deferred adapter query");
+            ++declines;actual=fast.update(c);
+        }
+        check(expected.settled==actual.settled&&expected.detour==actual.detour&&expected.wait==actual.wait&&
+              expected.repath==actual.repath&&expected.arrivalApproach==actual.arrivalApproach&&
+              expected.followLeader==actual.followLeader&&reference.checksum()==fast.checksum(),
+              "unblocked shortcut changed traffic results or per-update state");
+    }
+    check(shortcuts>1000&&declines>100,"equivalence fixture missed fast or retained/arrival paths");
+}
+
 }
 int main() {
     scope();const auto first=retainedRoute(),second=retainedRoute();
     check(first==second,"identical traffic contexts produced different retained state");
     diagonalAndEnclosed();opposingAndLifecycle();strictArrivals();boundedFairWork();deferredLocalQueries();cancelledArrivalSlot();
-    proofCosts();
+    proofCosts();unblockedEquivalence();
     std::printf("PASS Retail+ scope, retained legal routes, strict arrivals, lifecycle and fair bounded work hash=%016llx\n",
         (unsigned long long)first);
 }

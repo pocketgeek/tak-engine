@@ -143,11 +143,9 @@ void Traffic::cancelUnsettled(int id) {
     const auto it=records_.find(id);
     if(it!=records_.end()&&!it->second.settled)erase(it);
 }
-Traffic::Result Traffic::update(const Context& c) {
-    Result out;
-    const auto localDeferred=[&] {return c.localDeferred&&*c.localDeferred;};
-    if(c.tick!=workTick_) {
-        workTick_=c.tick;admitted_.clear();escapeBudget_.tick();
+void Traffic::beginTick(uint32_t tick) {
+    if(tick!=workTick_) {
+        workTick_=tick;admitted_.clear();escapeBudget_.tick();
         auto job=waiting_.upper_bound(workCursor_);
         const size_t count=std::min<size_t>(256,waiting_.size());
         for(size_t n=0;n<count;++n) {
@@ -155,6 +153,30 @@ Traffic::Result Traffic::update(const Context& c) {
             workCursor_=*job;admitted_.insert(*job);job=waiting_.erase(job);
         }
     }
+}
+bool Traffic::updateUnblocked(const Context& c) {
+    if(!c.plainMove||c.goalReached||c.blocked>=2||c.obstruction||!c.neighbors.empty()||
+       c.arrivalReachable||c.contactReachable||(c.localDeferred&&*c.localDeferred))return false;
+    const auto it=records_.find(c.id);if(it==records_.end())return false;
+    auto& r=it->second;
+    if(r.controller!=c.controller||r.group!=Group{c.player,c.target.x,c.target.z,c.targetId}||
+       r.plain!=c.plainMove||r.footX!=c.footX||r.footZ!=c.footZ||r.missionKind!=c.missionKind||
+       r.targetId!=c.targetId||r.issuedTick!=c.issuedTick||
+       r.settled||r.arrivalSlot||r.detour||r.continuation||r.yieldTo||r.escaping||
+       r.bypassSide.x||r.bypassSide.z)return false;
+    beginTick(c.tick);
+    r.seen=c.tick;r.position=c.position;
+    const int64_t spacing=std::max(c.footX,c.footZ)+1;
+    const int64_t distance2=distance(c.position,c.target);
+    if(distance2+spacing*spacing<=r.bestDistance){r.bestDistance=distance2;r.progressTick=c.tick;}
+    r.blockedSince=0;
+    waiting_.erase(c.id);
+    return true;
+}
+Traffic::Result Traffic::update(const Context& c) {
+    Result out;
+    const auto localDeferred=[&] {return c.localDeferred&&*c.localDeferred;};
+    beginTick(c.tick);
     auto& record=remember(c);const Group group=record.group;
     const auto defer=[&] {
         Result result;result.wait=true;

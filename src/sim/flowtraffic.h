@@ -65,6 +65,9 @@ public:
     };
     struct Result {bool settled=false;std::optional<Cell> detour;bool wait=false,repath=false,settledRally=false,arrivalApproach=false;int followLeader=0;};
     Result update(const Context&);
+    // Complete only an ordinary unblocked update with no retained local work.
+    // A declined call leaves all state untouched, including work admission.
+    bool updateUnblocked(const Context&);
     void registerMove(const Context&);
     // Opt-in lifecycle cleanup for an adapter that distinguishes completed
     // contact anchors from cancelled, uncompleted arrival reservations.
@@ -125,6 +128,7 @@ private:
     static void advanceEscape(Record&);
     static void clearEscape(Record&);
     Record& remember(const Context&);
+    void beginTick(uint32_t);
     void releaseSlot(int id,Record&);
     bool reserveSlot(int id,Record&,Cell);
     bool slotFree(int id,const Record&,Cell) const;

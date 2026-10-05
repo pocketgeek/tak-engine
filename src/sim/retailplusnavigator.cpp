@@ -1,8 +1,15 @@
 #include "retailplusnavigator.h"
 #include "sim.h"
 #include "footprint.h"
+#include <chrono>
 
 namespace tak::sim {
+namespace {
+using ProfileClock=std::chrono::steady_clock;
+uint64_t profileElapsed(ProfileClock::time_point begin) {
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(ProfileClock::now()-begin).count());
+}
+}
 struct RetailPlusNavigator::Impl {
     using Cell=flow::Cell;
     World& world;
@@ -10,6 +17,8 @@ struct RetailPlusNavigator::Impl {
     flow::ProofBudget proof;
     flow::ProofBudget bodies{32768};
     uint64_t proofCells=0,bodyEntries=0,bodyDeferrals=0;
+    uint64_t contextNanoseconds=0,setupNanoseconds=0,policyNanoseconds=0,maintenanceNanoseconds=0;
+    uint64_t fastUpdates=0,fullUpdates=0;
     explicit Impl(World& w):world(w) {}
     bool supports(const Unit& u) const {
         if(!u.alive()||u.embarked()||u.underConstruction||!u.type||u.orders.empty())return false;
@@ -23,7 +32,7 @@ struct RetailPlusNavigator::Impl {
     }
     flow::Traffic::Context context(const Unit& u) const {
         flow::Traffic::Context c;
-        if(!supports(u))return c;
+        // All callers have already checked supports, including neighbor lookup.
         const auto& goal=u.orders[World::currentLeg(u.orders)];
         const auto target=goal.missionTarget.value_or(std::pair{goal.x,goal.z});
         c.id=u.id;c.player=u.player;c.controller=goal.controller;
@@ -49,6 +58,8 @@ void RetailPlusNavigator::registerMove(Unit& u) {
 void RetailPlusNavigator::cancel(int id) {impl_->policy.cancel(id);}
 void RetailPlusNavigator::tick() {
     auto& p=*impl_;auto& w=p.world;
+    const bool profile=w.paths_.profiling();
+    const auto start=profile?ProfileClock::now():ProfileClock::time_point{};
     p.proof.tick();p.bodies.tick();
     for(int player=0;player<w.numPlayers();++player) {
         uint16_t mask=0;
@@ -64,12 +75,30 @@ void RetailPlusNavigator::tick() {
         const auto& goal=u->orders[World::currentLeg(u->orders)];
         return goal.controller==controller||(settled&&!goal.controller&&current==at&&(goal.mission.pending&0x500));
     });
+    if(profile)p.maintenanceNanoseconds+=profileElapsed(start);
 }
 
 flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {
     auto& p=*impl_;auto& w=p.world;
+    const bool profile=w.paths_.profiling();
+    const auto start=profile?ProfileClock::now():ProfileClock::time_point{};
     if(!supports(u)) {p.policy.cancel(u.id);return {};}
     auto c=p.context(u);
+    const auto& goal=u.orders[World::currentLeg(u.orders)];
+    if(!goal.controller&&(goal.mission.pending&0x500))p.policy.refreshSettled(u.id,c.position);
+    // Preserve both coordinators' progress, identities, groups and work cursors
+    // before skipping the callback-rich path. Arrival and retained claims always
+    // take the full path; no openness or collision clearance is assumed here.
+    const bool unblocked=p.policy.updateUnblocked(c);
+    if(profile)p.contextNanoseconds+=profileElapsed(start);
+    if(unblocked){if(profile)++p.fastUpdates;return {};}
+    if(profile)++p.fullUpdates;
+    const auto setupStart=profile?ProfileClock::now():ProfileClock::time_point{};
+    // Include early density/deferred exits in setup timing as well.
+    struct SetupProfile {
+        bool enabled;ProfileClock::time_point start;uint64_t& elapsed;
+        ~SetupProfile(){if(enabled)elapsed+=profileElapsed(start);}
+    } setupProfile{profile,setupStart,p.setupNanoseconds};
     bool localDeferred=false,arrivalDeferred=false,queryTooDense=false;
     c.localDeferred=&localDeferred;c.arrivalDeferred=&arrivalDeferred;
     const auto defer=[&] {
@@ -119,8 +148,6 @@ flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {
         }
         return wait();
     };
-    const auto& goal=u.orders[World::currentLeg(u.orders)];
-    if(!goal.controller&&(goal.mission.pending&0x500))p.policy.refreshSettled(u.id,c.position);
     const auto lookup=[&](int id)->std::optional<flow::Traffic::Neighbor> {
         const auto* other=w.unit(id);
         if(!other||!other->type||!other->alive()||other->embarked()||
@@ -249,7 +276,10 @@ flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {
     const auto arrival=[&](flow::Cell at){return proof(at,false);};
     const auto contact=[&](flow::Cell at){return proof(at,true);};
     c.arrivalReachable=std::cref(arrival);c.contactReachable=std::cref(contact);
+    if(profile){p.setupNanoseconds+=profileElapsed(setupStart);setupProfile.enabled=false;}
+    const auto policyStart=profile?ProfileClock::now():ProfileClock::time_point{};
     auto result=p.policy.update(c);
+    if(profile)p.policyNanoseconds+=profileElapsed(policyStart);
     if(queryTooDense)return unavailable();
     if(localDeferred) {
         // Unknown standing/route evidence must also defer the native mission
@@ -268,6 +298,7 @@ uint64_t RetailPlusNavigator::checksum() const {
 }
 RetailPlusNavigator::Stats RetailPlusNavigator::stats() const {
     return {impl_->policy.stats(),impl_->proofCells,sizeof(*this)+sizeof(Impl)-sizeof(impl_->policy)+impl_->policy.bytes(),
-        impl_->bodyEntries,impl_->bodyDeferrals};
+        impl_->bodyEntries,impl_->bodyDeferrals,impl_->contextNanoseconds,impl_->setupNanoseconds,
+        impl_->policyNanoseconds,impl_->maintenanceNanoseconds,impl_->fastUpdates,impl_->fullUpdates};
 }
 }

@@ -60,6 +60,7 @@ struct FlowNavigator::Impl {
         uint32_t firingCursor=0;
         std::array<Cell,16> firingSeeds{};
         bool firingDone=false,firingContinuation=false,passagePending=false;
+        uint64_t telemetryToken=0;
         void resetFiring() {firingState=0;firingCount=0;firingCursor=0;firingDone=false;}
     };
     static_assert(sizeof(Request)<=384,"review canonical request/traffic memory reservation");
@@ -124,6 +125,7 @@ struct FlowNavigator::Impl {
     std::map<uint64_t,Key> admission;
     uint64_t nextAdmission=0;
     Stats counters;
+    NavigationTelemetry* telemetry=nullptr;
     uint64_t nextProfile=0,clock=0;
     int requestCursor=0;
     size_t firingRays=0,firingCells=0;
@@ -237,10 +239,13 @@ struct FlowNavigator::Impl {
             }
         }
     }
-    void cancel(int id) {
+    void cancel(int id,NavigationTelemetry::Cancel reason=NavigationTelemetry::Cancel::Explicit) {
         service.cancel(id);local.erase(id);
         const auto it=requests.find(id);
-        if(it!=requests.end()) {release(it->second);requests.erase(it);}
+        if(it!=requests.end()) {
+            if(telemetry)telemetry->cancelled(it->second.telemetryToken,reason);
+            release(it->second);requests.erase(it);
+        }
     }
     void awaitProfile(const Key& key) {
         if(!waiting.contains(key)) {
@@ -465,6 +470,10 @@ struct FlowNavigator::Impl {
         const uint64_t age=clock-r.issued;
         counters.deliveredAgeMax=std::max(counters.deliveredAgeMax,age);counters.deliveredAgeTotal+=age;
         ++counters.deliveries;
+    }
+    void observeDelivery(Request& r,bool failed,size_t points) {
+        if(telemetry)telemetry->delivered(r.telemetryToken,failed,points);
+        r.telemetryToken=0;
     }
     void begin(Profile& p) {
         const auto& nav=world.navFor(p.type);
@@ -697,6 +706,7 @@ struct FlowNavigator::Impl {
         if(!prepareFiring(r,p,u))return false;
         if(r.firingState==2&&!r.firingCount&&r.firingDone) {
             if(!snapshotFresh){r.passagePending=true;return false;}
+            observeDelivery(r,true,0);
             world.deliverSearchRoute(id,{},r.x,r.z,true,false,false,false);
             delivered(r);++counters.failures;served(p);return true;
         }
@@ -736,6 +746,7 @@ struct FlowNavigator::Impl {
                 if(sample.status==flow::Service::Status::Pending)return false;
                 if(sample.status!=flow::Service::Status::Ready&&sample.status!=flow::Service::Status::Arrived)continue;
                 route.push_back({next.x,next.z});
+                observeDelivery(r,false,route.size());
                 world.deliverSearchRoute(id,route,r.x,r.z,false,false,false,true);
                 if(auto* goal=world.navigationMissionOrder(u);goal&&goal->controller==r.controller)
                     (goal->load||goal->transportUnloadApproach?goal->transportMission:goal->mission).pending|=0x1000;
@@ -747,6 +758,7 @@ struct FlowNavigator::Impl {
                 // With an up-to-date static snapshot and no adjacent legal
                 // anchor there is no physical route out. Mobile occupancy
                 // alone never reaches this branch: it waits for a free exit.
+                observeDelivery(r,true,0);
                 world.deliverSearchRoute(id,{},r.x,r.z,true,false,false,false);
                 if(auto* goal=world.navigationMissionOrder(u);goal&&goal->controller==r.controller)
                     (goal->load||goal->transportUnloadApproach?goal->transportMission:goal->mission).pending|=0x2000;
@@ -828,6 +840,7 @@ struct FlowNavigator::Impl {
         // Never report stale topology as a permanent mission failure.
         if(failed&&(!structuresComplete||!obstacles->settled()||p.builder||std::any_of(p.dirty.begin(),p.dirty.end(),[](bool d){return d;})))return false;
         if(failed&&route.size()==1)route.clear();
+        observeDelivery(r,failed,route.size());
         world.deliverSearchRoute(id,route,r.x,r.z,failed,false,false,r.firingState==2);
         if(auto* goal=world.navigationMissionOrder(u);goal&&goal->controller==r.controller)
             (goal->load||goal->transportUnloadApproach?goal->transportMission:goal->mission).pending|=failed?0x2000:0x1000;
@@ -872,6 +885,7 @@ struct FlowNavigator::Impl {
         }
         std::vector<PathCell> route;route.reserve(it->second->route().size());
         for(Cell c:it->second->route())route.push_back({c.x,c.z});
+        observeDelivery(r,false,route.size());
         world.deliverSearchRoute(id,route,r.x,r.z,false,false,false,true);
         if(auto* goal=world.navigationMissionOrder(u);goal&&goal->controller==r.controller)
             (goal->load||goal->transportUnloadApproach?goal->transportMission:goal->mission).pending|=0x1000;
@@ -922,6 +936,7 @@ struct FlowNavigator::Impl {
             if(it==requests.end())it=requests.begin();
             const int id=it->first;requestCursor=id;auto& r=it->second;auto* u=world.unit(id);
             bool remove=!valid(u,r);
+            if(remove&&telemetry)telemetry->cancelled(r.telemetryToken,NavigationTelemetry::Cancel::Stale);
             if(!remove) {
                 auto* p=profile(r.key,*u);
                 const bool classified=classifyFiring(r,*u);
@@ -937,7 +952,15 @@ struct FlowNavigator::Impl {
     }
 };
 FlowNavigator::FlowNavigator(World& world):impl_(std::make_unique<Impl>(world)) {}
-FlowNavigator::~FlowNavigator()=default;
+FlowNavigator::~FlowNavigator() {
+    if(impl_->telemetry)for(const auto& [id,r]:impl_->requests) {
+        (void)id;impl_->telemetry->cancelled(r.telemetryToken,NavigationTelemetry::Cancel::Cleared);
+    }
+}
+void FlowNavigator::setTelemetry(NavigationTelemetry* observer) {
+    if(observer!=impl_->telemetry&&!impl_->requests.empty())throw std::logic_error("telemetry requires an empty request queue");
+    impl_->telemetry=observer;
+}
 bool FlowNavigator::request(Unit& u,Fixed x,Fixed z) {
     auto& p=*impl_;
     if(!p.memory.supported)return false;
@@ -952,7 +975,7 @@ bool FlowNavigator::request(Unit& u,Fixed x,Fixed z) {
     auto goals=p.goals(u,x,z);
     const auto controller=mission?mission->controller:0;
     if(auto it=p.requests.find(u.id);it!=p.requests.end()&&it->second.key==key&&it->second.x==x&&it->second.z==z&&it->second.controller==controller&&it->second.targetId==(mission?mission->targetId:0)&&it->second.region==goals)return true;
-    p.cancel(u.id);++p.subscribers[key];
+    p.cancel(u.id,NavigationTelemetry::Cancel::Replaced);++p.subscribers[key];
     p.requests[u.id]={key,x,z,controller,u.player,u.type,std::move(goals),false,p.clock,0};
     // The third backend must prove clearance and coordinate passage entry
     // before consuming either a new raw goal or an older installed prefix.
@@ -962,6 +985,7 @@ bool FlowNavigator::request(Unit& u,Fixed x,Fixed z) {
     // when it temporarily leads away from weapon range. Every continuation is
     // still checked against the exact LOS rule before using point seeds.
     p.requests[u.id].firingContinuation=u.routeDetour;
+    p.requests[u.id].telemetryToken=p.telemetry?p.telemetry->requested(u.id):0;
     u.routeStamp=std::bit_cast<int32_t>(p.world.tickCounter_);
     u.routeCrowded=u.routeTraffic=u.routeFailed=u.routeDetour=false;
     if(!u.orders.empty()&&World::currentLeg(u.orders)==0)u.orders.front().navigationExhausted=true;

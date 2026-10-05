@@ -1,0 +1,71 @@
+Test project /home/pocket_geek/TAK/build
+      Start  33: flow_group_commands
+      Start  53: cooperative_movement_orders
+      Start  37: cooperative_group
+ 1/33 Test  #37: cooperative_group ...................   Passed    1.09 sec
+      Start  84: movement_orders
+ 2/33 Test  #53: cooperative_movement_orders .........   Passed    1.31 sec
+      Start 110: flow_admission
+ 3/33 Test  #84: movement_orders .....................   Passed    1.36 sec
+      Start  46: cooperative_progress_turn
+ 4/33 Test  #46: cooperative_progress_turn ...........   Passed    0.26 sec
+      Start  40: cooperative_freshness
+ 5/33 Test  #40: cooperative_freshness ...............   Passed    0.25 sec
+      Start  48: cooperative_progress_corridor-far
+ 6/33 Test  #48: cooperative_progress_corridor-far ...   Passed    0.20 sec
+      Start  45: cooperative_progress_diagonal
+ 7/33 Test  #45: cooperative_progress_diagonal .......   Passed    0.22 sec
+      Start 108: flow_actions
+ 8/33 Test #110: flow_admission ......................   Passed    2.40 sec
+      Start  47: cooperative_progress_corridor
+ 9/33 Test  #47: cooperative_progress_corridor .......   Passed    0.17 sec
+      Start 113: flow_world
+10/33 Test #108: flow_actions ........................   Passed    1.46 sec
+      Start  44: cooperative_progress_east
+11/33 Test  #44: cooperative_progress_east ...........   Passed    0.14 sec
+      Start  68: retailplus_world
+12/33 Test #113: flow_world ..........................   Passed    1.27 sec
+      Start  51: retailplus_production
+13/33 Test  #33: flow_group_commands .................   Passed    5.20 sec
+      Start   7: flowfield
+14/33 Test  #68: retailplus_world ....................   Passed    0.24 sec
+      Start  52: retailplus_transport
+15/33 Test  #51: retailplus_production ...............   Passed    0.10 sec
+      Start  50: cooperative_transport
+16/33 Test  #52: retailplus_transport ................   Passed    0.07 sec
+      Start  49: cooperative_production
+17/33 Test   #7: flowfield ...........................   Passed    0.13 sec
+      Start  43: cooperative_followers
+18/33 Test  #43: cooperative_followers ...............   Passed    0.05 sec
+      Start  38: cooperative_traffic
+19/33 Test  #38: cooperative_traffic .................   Passed    0.03 sec
+      Start  41: cooperative_clearance
+20/33 Test  #41: cooperative_clearance ...............   Passed    0.02 sec
+      Start  66: retail_search_scratch
+21/33 Test  #49: cooperative_production ..............   Passed    0.15 sec
+      Start   4: flow_snapshot
+22/33 Test  #66: retail_search_scratch ...............   Passed    0.02 sec
+      Start  39: cooperative_passages
+23/33 Test  #39: cooperative_passages ................   Passed    0.01 sec
+      Start  42: cooperative_movement
+24/33 Test  #42: cooperative_movement ................   Passed    0.00 sec
+      Start  67: retailplus_traffic
+25/33 Test   #4: flow_snapshot .......................   Passed    0.02 sec
+      Start  35: cooperative_corridor
+26/33 Test  #50: cooperative_transport ...............   Passed    0.21 sec
+      Start  36: cooperative_memory
+27/33 Test  #35: cooperative_corridor ................   Passed    0.01 sec
+      Start   5: flow_memory
+28/33 Test  #36: cooperative_memory ..................   Passed    0.00 sec
+      Start  63: pathsearch
+29/33 Test   #5: flow_memory .........................   Passed    0.00 sec
+      Start  82: replay
+30/33 Test  #82: replay ..............................   Passed    0.00 sec
+      Start 206: navigation_determinism
+31/33 Test  #63: pathsearch ..........................   Passed    0.00 sec
+32/33 Test  #67: retailplus_traffic ..................   Passed    0.15 sec
+33/33 Test #206: navigation_determinism ..............   Passed    1.60 sec
+
+100% tests passed, 0 tests failed out of 33
+
+Total Test time (real) =   7.08 sec

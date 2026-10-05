@@ -1,0 +1,15 @@
+== guard: no direct libm transcendentals in the sim path ==
+OK: no direct libm transcendentals in the sim path.
+
+== golden-hash agreement across builds ==
+  x86_64 g++ -O0: dcef618cd2e4d558  OK
+  x86_64 g++ -O2: dcef618cd2e4d558  OK
+  x86_64 g++ -O3: dcef618cd2e4d558  OK
+  x86_64 clang++ -O0: dcef618cd2e4d558  OK
+  x86_64 clang++ -O2: dcef618cd2e4d558  OK
+  x86_64 clang++ -O3: dcef618cd2e4d558  OK
+  aarch64 g++ -O0: SKIP (build failed -- missing target libc/headers?)
+  aarch64 g++ -O2: SKIP (build failed -- missing target libc/headers?)
+  aarch64 g++ -O3: SKIP (build failed -- missing target libc/headers?)
+
+DETERMINISM OK -- every build agrees on golden dcef618cd2e4d558

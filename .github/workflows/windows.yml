@@ -176,8 +176,8 @@ jobs:
 
       - name: Rendering, navigation and validation regressions
         run: |
-          cmake --build build --target selective_aa_test tdf_limits_test validationworker_test geometry_tiles_test order_trail_test retail_search_scratch_test retailplus_traffic_test retailplus_world_test cooperative_traffic_test cooperative_movement_test cooperative_followers_test flow_group_commands_test replay_test
-          ctest --test-dir build -R '^(selective_aa|tdf_limits|validationworker|geometry_tiles|order_trail|retail_search_scratch|retailplus_traffic|retailplus_world|cooperative_traffic|cooperative_movement|cooperative_followers|flow_group_commands|replay)$' --output-on-failure
+          cmake --build build --target selective_aa_test tdf_limits_test validationworker_test geometry_tiles_test order_trail_test retail_search_scratch_test retailplus_traffic_test retailplus_world_test cooperative_traffic_test cooperative_movement_test cooperative_followers_test cooperative_corridor_test cooperative_passages_test cooperative_freshness_test cooperative_clearance_test cooperative_group_test cooperative_memory_test cooperative_progress_test cooperative_checkpoint_test flow_routing_compare navigation_telemetry_test flow_group_commands_test replay_test
+          ctest --test-dir build -R '^(selective_aa|tdf_limits|validationworker|geometry_tiles|order_trail|retail_search_scratch|retailplus_traffic|retailplus_world|cooperative_traffic|cooperative_movement|cooperative_followers|cooperative_corridor|cooperative_passages|cooperative_freshness|cooperative_clearance|cooperative_group|cooperative_memory|cooperative_progress_.*|navigation_determinism|crowdbench_matrix|flow_routing_compare|navigation_telemetry|flow_group_commands|replay)$' --output-on-failure
 
       - name: Verify fully static (only system DLL imports)
         run: |

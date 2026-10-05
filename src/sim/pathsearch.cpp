@@ -504,7 +504,7 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     // cannot inherit the old controller's search or undelivered events.
     if (auto it = q_.find(unitId); it != q_.end() &&
         (it->second.controller != controller || it->second.player != player))
-        cancel(unitId);
+        cancel(unitId,NavigationTelemetry::Cancel::Replaced);
     // A RE-REQUEST FOR THE SAME SEARCH LETS IT RUN. Everything below restarts the
     // search from scratch (cap = 0), which is right when the question changed and
     // ruinous when it did not: the sim re-asks every kPathRetryTicks (120 ticks, 4s)
@@ -548,6 +548,7 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     auto [entry,inserted]=q_.try_emplace(unitId);
     Entry& e=entry->second;
     if (!inserted) {
+        if(telemetry_)telemetry_->cancelled(e.telemetryToken,NavigationTelemetry::Cancel::Replaced);
         --pendingByPlayer_[size_t(e.player)];
         priorityByPlayer_[size_t(e.player)]-=e.priority;
     }
@@ -570,6 +571,7 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
     e.goalRadiusSquared = goalRadiusSquared;
     e.rectangle = rectangle;
     e.ring = ring;
+    e.telemetryToken=telemetry_?telemetry_->requested(unitId):0;
 }
 
 void PathService::eraseRequest(std::unordered_map<int,Entry>::iterator it) {
@@ -578,10 +580,11 @@ void PathService::eraseRequest(std::unordered_map<int,Entry>::iterator it) {
     q_.erase(it);
 }
 
-void PathService::cancel(int unitId) {
+void PathService::cancel(int unitId,NavigationTelemetry::Cancel reason) {
     std::erase_if(notifications_, [=](const Notification& n) { return n.unitId == unitId; });
     auto it = q_.find(unitId);
     if (it == q_.end()) return;
+    if(telemetry_)telemetry_->cancelled(it->second.telemetryToken,reason);
     if (scheduler_.active==RetailSearchScheduler::Request{
         it->second.player,unitId-poolFirst_[size_t(it->second.player)]}) retireActive();
     // A finish callback may queue other requests and rehash the lookup table.
@@ -594,6 +597,15 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
         uint32_t simulationTick, const std::function<bool(int,uint32_t)>& admit) {
     ++tickNo_;
     if (q_.empty()) return;
+    // Completed entries leave q_ before their delivery callbacks run. Keep the
+    // observer fixed across the whole dispatch, including those outstanding
+    // tokens, and restore the guard if a callback throws or ticks recursively.
+    struct TelemetryTickScope {
+        bool& active;
+        bool previous;
+        explicit TelemetryTickScope(bool& value):active(value),previous(value){active=true;}
+        ~TelemetryTickScope(){active=previous;}
+    } telemetryScope(telemetryTickActive_);
     const uint32_t now=simulationTick ? simulationTick : uint32_t(tickNo_);
     std::array<RetailSearchScheduler::Player,10> players{};
     for (size_t i=0;i<players.size();++i) {
@@ -606,7 +618,7 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
         auto it=q_.find(id);
         return it!=q_.end() && it->second.player==r.player ? it : q_.end();
     };
-    struct Finished { int id; std::vector<PathCell> route; Fixed x,z; bool failed,crowded,traffic,detour; };
+    struct Finished { int id; std::vector<PathCell> route; Fixed x,z; bool failed,crowded,traffic,detour; uint64_t telemetryToken;bool telemetryFailed; };
     std::vector<Finished> finished;
     scheduler_.tick(players,budget_,1,int(now),
         [&](auto r) { return lookup(r)!=q_.end(); },
@@ -693,7 +705,8 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
                 std::vector<PathCell> points;
                 for (auto p:route.points) points.push_back({p.x+e.cellOffset.x,p.z+e.cellOffset.z});
                 finished.push_back({id,std::move(points),e.goalX,e.goalZ,partial,
-                                    (route.flags&1)!=0,(route.flags&2)!=0,(route.flags&8)!=0});
+                                    (route.flags&1)!=0,(route.flags&2)!=0,(route.flags&8)!=0,
+                                    e.telemetryToken,e.notification==0x2000||partial});
                 if (gradeHost_.finish) gradeHost_.finish(id);
                 activeId_=-1;
                 --players[size_t(e.player)].pending;
@@ -704,7 +717,10 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
         });
     // Delivery can cancel or replace other orders. Release the active queue
     // traversal first so callbacks never invalidate its current entry.
-    for (const auto& f:finished) done(f.id,f.route,f.x,f.z,f.failed,f.crowded,f.traffic,f.detour);
+    for (const auto& f:finished) {
+        if(telemetry_)telemetry_->delivered(f.telemetryToken,f.telemetryFailed,f.route.size());
+        done(f.id,f.route,f.x,f.z,f.failed,f.crowded,f.traffic,f.detour);
+    }
 }
 
 }   // namespace tak::sim

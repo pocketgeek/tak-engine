@@ -60,6 +60,26 @@ introduced. The behavior-equivalent search changes reduce CPU spent doing the
 same admitted work; Retail+ separately changes retry/crowd behavior and therefore
 must be judged on physical outcomes as well as its tick cost.
 
+### Unblocked traffic bookkeeping
+
+An ordinary unblocked mover far from arrival can now update its existing traffic
+records without constructing the body-query and arrival-proof callbacks. The
+shortcut requires exact command, player, alliance, footprint and goal identities,
+no retained detour, passage, arrival slot or yielding state, and an empty local
+reservation table. Both coordinators still advance their deterministic work
+cursors, refresh positions and progress, and maintain group membership. A declined
+shortcut leaves all state untouched: the full adapter may subsequently defer on
+its body-query quota without calling the traffic policy. Geometric arrival and
+every retained claim continue through the complete validation path.
+
+The optional `--profile` observations separate context/bookkeeping, callback and
+body-query setup, traffic-policy execution, and per-tick maintenance. These
+clocks never affect movement, work quotas, or checksums. A 2,000-unit open-ground
+diagnostic over 6,000 ticks used the shortcut for 7,715,839 updates and the full
+path for 717,959 updates; both paths retained the reference completion tick 4,384.
+This is workload coverage, not a speedup estimate. Final four-mode timing results
+must use the exact integrated candidate and its recorded baseline.
+
 ## Shared CPU improvements
 
 Two optimizations also apply to unmodified Retail behavior:
@@ -328,3 +348,85 @@ and pass AddressSanitizer/UndefinedBehaviorSanitizer with leak detection. This
 is not a complete cross-platform multiplayer certification. Windows, macOS,
 and native ARM execution were unavailable; the ARM cross-compiler check skipped
 because target headers were missing. No public server was probed or changed.
+
+## Follow-up saturation experiments, 2026-10-05
+
+Current main `86673b4` was inspected before this follow-up; its simulation matches
+reviewed commit `3255400`. Three runs each of the 2,000-unit open and doorway
+fixtures reproduced all physical outcomes and hashes. Median open-ground means
+were 1.458343 ms/tick for Retail and 1.950188 for Retail+, with all 2,000 legally
+arrived at tick 4,384. Median doorway means were 1.442612 and 2.495411 ms/tick.
+Other release-validation clients and desktop processes were running, so these are
+paired, reversed-repeat measurements on a loaded host, not an idle-host
+reproduction of the historical timing numbers above.
+
+The saturated doorway again produced 246 crossings/87 legal arrivals in Retail
+and 85/34 in Retail+. Retail+ performed 161,241 local searches, retained 23,524
+local routes and returned 4,427,079 waits. Native requests were 9,465 versus
+Retail's 19,353. These observations motivated testing whether local detours and
+waiting were interfering with the native body-aware route controller. They do
+not establish that increasing the native request count alone fixes the queue.
+
+Six deterministic policy trials were evaluated with unchanged collision,
+arrival and search-budget rules. Numbers below are crossings/legal arrivals
+at 6,000 ticks. All trial changes were removed.
+
+| Trial | Door 2,000 | Door 200 | Opposing 1,000 arrivals | Replacement 200 arrivals | Reason rejected |
+|---|---:|---:|---:|---:|---|
+| Reference Retail+ | 85/34 | 154/103 | 27 | 160 | Comparison control |
+| Give a progressing same-way native queue 30 ticks before local avoidance | 77/44 | 159/99 | 27 | 160 | Fewer saturated-door crossings and more local searches |
+| Delay completed failed retries eight ticks behind an unchanged moving peer | 103/46 | 159/102 | 21 | 156 | Door gain accompanied by worse opposing and replacement completion |
+| Continue native movement after a completed local failure, if reservations permit | 97/45 | 136/86 | 35 | 156 | Large losses at the smaller doorway and in replacement recovery |
+| Continue native movement during admission waits, if reservations permit | 95/38 | 138/80 | 28 | 150 | Large smaller-door and replacement regressions |
+| Apply the eight-tick retry delay only after 180 stationary ticks | 85/34 | 169/109 | 26 | 160 | No saturated-door movement gain; only 12 searches saved there |
+| Delay moving-peer retries only after a completed search observes an actual terrain refusal | 98/44 | 154/103 | 27 | 160 | Initial gain reversed at a longer horizon and another seed |
+
+The terrain-refusal trial used existing charged terrain queries, without new
+probes, a guessed passage, or an open-terrain assertion. Its initial seed-zero
+gain at 6,000 ticks did not persist: at 12,000 ticks, 2,000-unit doorway crossings
+and arrivals fell from 222/142 to 215/134. At 6,000 ticks, seed 42 fell from 86/48
+to 80/47, while seed 7 improved from 67/42 to 83/44. Smaller seed-42 maze and
+exploration cases also lost some crossings and arrivals. This evidence was
+insufficient to retain a congestion-policy change. Targeted tests did verify the
+mechanism's eight-tick expiry, recovery after terrain opened, command and observed
+peer changes, cancellation, and the distinction between completed, deferred and
+body-only failures; safe retry scheduling alone did not establish better movement.
+
+The [experiment data](retail-plus-rejected-experiments-2026-10-05.json) preserve
+all seven initial scenario/population controls for each trial, the terrain
+trial's additional seeds and longer horizon, binary hashes, and experimental
+source/test patches. Trials also covered 200-unit mazes, opposing traffic
+and recovery without replacing the original order. Timings from these screening
+runs are excluded because builds and diagnostic profiling overlapped. No sampled
+illegal footprint occurred; this does not prove absence of starvation for every
+unfinished member or constitute a continuous collision audit.
+
+Cooperative's passage coordinator was inspected for reuse. Its permits depend on
+fresh footprint-eroded topology, canonical passage endpoints, generation-aware
+invalidation, and bounded background proof progress. Retail+ supplies none of
+those topology proofs. Turning on the open-terrain flag or installing guessed
+passage descriptors would therefore be unsound; neither was done. A future
+passage integration needs those prerequisites and its own measured memory/work
+cost. Existing committed-detour and clearance behavior remains intact.
+
+Only the behavior-equivalent unblocked bookkeeping shortcut is retained from
+this local-policy work. Its regression compares results and checksums after
+12,000 individual updates, including replacements, cancellation, stalls, retained
+routes and arrivals, and verifies that declined shortcuts change no state.
+The final implementation matches 52 frozen-baseline trace files byte for byte:
+Retail and Retail+, 13 scenarios, 600 ticks, two players with 16 units each and
+75% moving. Traffic and World regression tests pass. The 2,000-unit open and door
+runs retain their reference final hashes and outcomes. The standalone traffic
+suite also passes AddressSanitizer/UndefinedBehaviorSanitizer with leak detection.
+Saturated doorway
+throughput remains a weakness; none of the rejected endpoint gains establishes
+a general congestion improvement.
+
+A separate Cooperative adapter prototype called the same bookkeeping-only
+shortcut after refreshing settled members and checking pending passage proofs.
+All 26 trace files matched its frozen control across the same 13 scenarios.
+It was removed because its performance comparison was not completed; no
+Cooperative speedup is claimed or shipped from that prototype.
+
+The stopped investigation and remaining validation work are summarized in
+[navigation comparison, 2026-10-05](navigation-comparison-2026-10-05.md).

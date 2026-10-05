@@ -24,6 +24,9 @@ public:
     // terrain opening, not the count of legal footprint-centre anchors.
     struct Passage {Cell first,last;uint16_t width=0,extentWidth=0;};
     Result update(const Context&);
+    // No terrain claim is inferred: this only skips unused callback setup for
+    // an unblocked member far from arrival, with no active local reservations.
+    bool updateUnblocked(const Context&);
     bool allowFollowerStep(int id,Cell from,Cell to) const;
     void cancel(int id);
     void cancelUnsettledArrival(int id) {arrivals_.cancelUnsettled(id);}

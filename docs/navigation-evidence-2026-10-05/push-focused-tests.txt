@@ -1,0 +1,17 @@
+Test project /home/pocket_geek/TAK/build
+    Start   6: flow_routing_compare
+1/6 Test   #6: flow_routing_compare .............   Passed    0.43 sec
+    Start   8: navigation_telemetry
+2/6 Test   #8: navigation_telemetry .............   Passed    0.17 sec
+    Start  68: retailplus_traffic
+3/6 Test  #68: retailplus_traffic ...............   Passed    0.22 sec
+    Start  69: retailplus_world
+4/6 Test  #69: retailplus_world .................   Passed    0.23 sec
+    Start 207: crowdbench_matrix
+5/6 Test #207: crowdbench_matrix ................   Passed    0.09 sec
+    Start 208: navigation_determinism
+6/6 Test #208: navigation_determinism ...........   Passed    1.52 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Total Test time (real) =   2.67 sec
