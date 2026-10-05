@@ -99,6 +99,11 @@ struct FlowNavigator::Impl {
             visit([&](auto& t){t.prune(count,valid);});
         }
         flow::Traffic::Result update(const Context& c) {return visit([&](auto& t){return t.update(c);});}
+        // Equivalent bookkeeping-only update for an unblocked member far from
+        // its arrival area; false leaves both coordinators untouched.
+        bool updateUnblocked(const Context& c) {
+            return coordinator?coordinator->updateUnblocked(c):original.updateUnblockedFar(c);
+        }
         uint64_t checksum() const {return visit([](const auto& t){return t.checksum();});}
         size_t bytes() const {return visit([](const auto& t){return t.bytes();});}
     } traffic;
@@ -1113,6 +1118,13 @@ flow::Traffic::Result FlowNavigator::traffic(Unit& u) {
     // so a large cohort does not forget members crossing a cell while coasting.
     if(goal.guard||(!goal.controller&&goal.groundMission&&(goal.mission.pending&0x500)))
         p.traffic.refreshSettled(u.id,c.position);
+    // Skip neighbor, obstruction and proof callback setup when traffic has
+    // no local work for this member. The real guards: blocked>=2 declines
+    // (obstruction query), and nearArrival declines (neighbor scan); Flowfield
+    // also declines inside the area-bypass window, where update() would use
+    // the arrival proof. Elsewhere nothing skipped here is consulted, and the
+    // skipped setup itself has no side effects. (Traffic fast-path adapter.)
+    if(p.traffic.updateUnblocked(c))return {};
     const auto trafficIdle=[&](const Unit& other) {
         if(other.orders.empty())return true;
         // A parked escort retains Guard forever. It is still a standing body
