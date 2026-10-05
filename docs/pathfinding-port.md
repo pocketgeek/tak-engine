@@ -5785,3 +5785,265 @@ This remains bounded local avoidance, not a completeness guarantee for every
 possible crowd arrangement. A separate experimental change to clip long
 bypass ingress exposed another stuck fringe unit in this replay and was not
 retained; more general improvements to long bypass routing remain open.
+
+## Shared far-tile fields and routing evaluation (protocol 228, 2026-10-05)
+
+These changes apply to Flowfield and to Cooperative, which uses the same field
+service and traffic coordinator. They do not change Retail or Retail+ hashes;
+Flowfield and Cooperative hashes change, and their determinism goldens were
+refreshed with protocol 228. Unless stated otherwise, figures below come from
+`crowdbench` at 6,000 ticks, 100% moving, averaged over seeds 0, 7 and 42.
+Work counters are deterministic. All tick times were taken on a heavily loaded
+shared host and are exploratory.
+
+### Why many distinct destinations stalled
+
+In the frozen baseline, Flowfield and Cooperative stopped moving at about 1,000
+movers whenever each unit had its own destination, even on open ground. Open
+ground at 1,000 units crossed 1 and 7 units respectively, with no legal
+arrivals; 2,000 units on one player and 500 units on each of four players
+crossed none. Median route request-to-delivery latency at 2,000 units was 2,353
+ticks (Flowfield) and 2,091 (Cooperative), against 71 for Retail. Only
+shared-goal scenarios and rapid replacement, whose units end at home, worked.
+At 200 units every mode worked, so the earlier small-population checks could
+not show this.
+
+Each distinct goal creates its own destination group, and the service caps
+groups at 32, evicting unused groups least recently used first. A delivered
+route stops at the first tile whose detailed field is not built yet. Once the
+route is delivered the group has no users, so other units' new destinations
+evict it before the unit asks again. Each re-request rebuilt the destination
+search plus one more 64×64 field, about 4,400 work units, against a field quota
+of 4,096 per tick: roughly one field per tick for the whole crowd. On open ground
+at 1,000 units, about 5,150 destinations were created, evicted and built, field
+work was 21.8 million (quota saturated), and median latency was about 1,063
+ticks. The limit was detailed-field builds per unique destination, amplified by
+destination churn. It was not admission, profiles or subscribers, and on static
+maps it was not invalidation: there is a single topology publication.
+
+### Sharing far-tile fields
+
+A detailed field for a tile that holds no goal seed depends only on the tile
+content, the exact exit-seed mask (which border cells lead one component hop
+closer), and the goal-box bias used to break ties. `Service` now resolves each
+destination/tile pair to a `FieldId`:
+
+- Goal tiles and their eight neighbouring tiles keep private per-destination
+  fields, exactly as before.
+- Tiles at Chebyshev ring 2 or more from the goal tiles use a shared field keyed
+  by profile, tile, exit mask, and the goal box snapped to the enclosing goal
+  tiles. The field is built from the key alone and holds no destination
+  reference, so evicting the destination that requested it neither pins memory
+  nor cancels the build. Destinations with equal keys receive byte-identical
+  fields; a test checks that a key-built field equals the anchored
+  per-destination field.
+
+The only behavioural difference on far tiles is the tie-break bias, which now
+aims at the goal tiles rather than at the exact goal box. It can only choose
+between equally short hop routes: the component-hop graph is unchanged and every
+step still strictly descends. Walk lengths in tests stay within one tile of the
+per-destination fields. Formation spreading near the goal still depends on the
+neighbour ring staying private.
+
+What stays per destination or per unit: the destination group and its
+component search, the private goal and neighbour-ring fields, the memoised
+`FieldId` per destination and tile, and each unit's route, controller, traffic
+record and arrival handling.
+
+Field ids are ordered by key, never by pointer, and every key is folded into
+`Service::checksum()`. Serial and worker runs agree in the service test and in
+24 of 24 Flowfield and Cooperative checkpoints. No new quota was added: shared
+fields use the same 4,096-unit field quota and builder cap. New work is one memo
+lookup per field sample and, the first time a destination meets a tile, one
+256-cell exit-mask scan. That scan is not charged to the quota; it is the same
+check the field builder already performs for its seeds.
+
+Memory: the per-destination/tile memo is reserved in `MemoryPlan` at 32
+destinations × 1,024 tiles × 192 bytes (6 MiB); 1,024 tiles is the maximum on a
+2,048-cell map. The resident profile count is unchanged for every supported map
+size. Each key carries a 32-byte exit mask. Shared and private fields count
+toward the same 512-field cap and compete for it under the existing eviction
+order.
+
+Crossings/legal arrivals, frozen baseline → current build:
+
+| Scenario | Mode | 200×1 | 1,000×1 | 2,000×1 | 500×4 |
+|---|---|---|---|---|---|
+| open | Flowfield | 200/144 → 200/149 | 1/0 → 1000/274 | 0/0 → 2000/182 | 0/0 → 2000/390 |
+| open | Cooperative | 200/137 → 200/140 | 7/0 → 1000/158 | 0/0 → 1887/109 | 0/0 → 2000/164 |
+| doors | Flowfield | 200/125 → 200/130 | 2/0 → 454/233 | 0/0 → 399/124 | 0/0 → 1085/381 |
+| doors | Cooperative | 200/118 → 200/118 | 3/0 → 401/200 | 0/0 → 379/129 | 0/0 → 1009/342 |
+| bridges | Flowfield | 176/83 → 200/132 | 2/0 → 442/239 | 0/0 → 357/102 | 0/0 → 848/357 |
+| bridges | Cooperative | 200/117 → 200/116 | 2/0 → 401/188 | 0/0 → 380/120 | 0/0 → 1024/363 |
+| maze | Flowfield | 37/10 → 103/48 | 0/0 → 60/8 | 0/0 → 9/0 | 0/0 → 292/42 |
+| maze | Cooperative | 65/30 → 77/40 | 0/0 → 50/3 | 0/0 → 9/0 | 0/0 → 306/68 |
+| opposing columns | Flowfield | 200/135 → 200/141 | 9/0 → 664/169 | 0/0 → 1145/65 | 0/0 → 1336/306 |
+| opposing columns | Cooperative | 200/134 → 200/136 | 15/0 → 616/118 | 0/0 → 1071/67 | 0/0 → 1220/244 |
+
+Median request-to-delivery latency fell from 700–2,500 ticks to 1–30 ticks in
+every case with 1,000 or more units. Requests outstanding at the end fell from
+700–1,870 to 3–70, except on open ground as noted below. Field work moved from
+about 21 million to between 6 and 40 million; it rose only where units now reach
+their goal tiles and build private goal fields. For reference, Retail reached
+1000/1000 on open 1,000×1 and 257/52 on doors 1,000×1, so the shared modes now
+pass more units through doors and bridges than Retail. Tick time rose, typically
+by 3–17 ms at 2,000 units, because the crowd now moves: the added cost is traffic
+and collision, not navigation. The baseline's low tick time came from a frozen
+crowd.
+
+Mixed footprints, shared goal and unreachable at 200 units were identical.
+Rapid replacement changed; see the remaining weak cases below.
+
+**Rejected: sharing the neighbour ring.** Sharing ring-1 tiles as well, with
+16-, 8- and 64-cell boxes, roughly doubled 1,000-unit arrivals (open Flowfield
+274 → 523, open Cooperative 158 → 409, dynamic obstacle Flowfield 271 → 510).
+Every box tried broke existing guards: the Cooperative group bottleneck re-spread
+width fell to 54 cells against a required 64, and in the Flowfield queued-group
+and determinism tests one straggler wandered to the map edge and never settled.
+The straggler was not root-caused, so the patch was parked.
+
+### Reusing shared fields after topology publication
+
+Publishing a new topology used to discard every finished field. A finished
+shared field now survives publication only if the new topology holds the
+identical immutable source tile, compared by pointer, never by ordering. This
+relies on snapshot tile reuse being exact: tiles are immutable, and the tile
+builder returns the previous tile only when its content is unchanged. Lookups
+recompute the exit mask against the new topology, so a route that closed or
+opened anywhere selects a different key. In-progress builders, private fields
+and profile eviction still discard as before.
+
+A cache hit also checks that the stored field's source tile is the tile the
+current topology holds. If not, the stale field is erased and treated as a miss,
+so a missed invalidation rebuilds rather than reusing an older generation's
+field. The check does not fire in any current test or scenario, and there is no
+direct test for it, because forcing a missed invalidation would need a test-only
+hook.
+
+Tests compare walks exactly against a service rebuilt from scratch, for an
+unrelated wall, an interior wall on the route, a remote closure that changes the
+exits, and a remote opening. A disconnection reports Unreachable and an opened
+shortcut is used. Keeping every field regardless of source fails with "entered a
+blocked cell", and failing to erase on invalidation also fails. A further case
+puts two goals on opposite sides of a full-width wall within one goal tile; it
+fails if the exit mask is dropped from the key.
+
+Exploration is the only crowdbench scenario with frequent publications (about
+280–630 per 6,000 ticks; dynamic obstacle has 3 and recovery 2). At the frozen
+baseline, Flowfield exploration with 200 units published 291 topologies and
+discarded 4,353 in-progress builders against 3,432 completed fields.
+Crossings/legal arrivals/field work, sharing without reuse → current build:
+
+| Case | Sharing only | Current |
+|---|---|---|
+| exploration, Flowfield, 200 | 48.7 / 2.7 / 10.4M | 68.7 / 6.7 / 4.2M |
+| exploration, Flowfield, 1,000 | 16.7 / 0 / 15.3M | 36.3 / 0 / 4.6M |
+| exploration, Cooperative, 200 | 54.3 / 10.3 / 8.4M | 57.3 / 13.7 / 3.1M |
+| exploration, Cooperative, 1,000 | 18.3 / 0 / 14.4M | 27.0 / 0 / 4.2M |
+
+The baseline had Flowfield exploration at 3/0 for 200 units and 0/0 for 1,000.
+Reuse improved 10 of 12 seed/mode/size cases; Flowfield 200 seed 0 fell from 66
+to 61 crossings and Cooperative 200 seed 7 from 54 to 51. Dynamic obstacle and
+recovery reuse little, because their changes alter exit masks, and are neutral.
+Exploration at 2,000 units stays at 0/0, as it does for Retail. Coalescing
+exploration publications and a real-game invalidation profile were not done.
+
+### Unblocked traffic fast path (protocol 228)
+
+The traffic adapter shared by Flowfield and Cooperative now takes the same
+bookkeeping-only shortcut as Retail+ for an ordinary unblocked mover far from
+arrival, after settled members are refreshed. Cooperative calls its existing
+`cooperative::Traffic::updateUnblocked`. Flowfield calls
+`flow::Traffic::updateUnblockedFar`, which declines when `nearArrival` holds and
+also inside the arrival-area window (within 528 px and within the arrival radius
+plus 16), where `update()` would use the arrival proof. Members with
+`blocked>=2` decline because the full path would run an obstruction query. Away
+from those cases, the full update reaches the same end state as the shortcut:
+the neighbour scan needs `nearArrival`, the obstruction scan needs
+`blocked>=2`, and the stalled branch iterates an empty neighbour list. Traffic
+records are reached through the id index described in
+[Retail+ pathfinding](retail-plus-pathfinding.md#unblocked-traffic-bookkeeping).
+
+No hash changed in any mode. Per-tick traces were byte-identical across 13
+scenarios in all four modes, and 17 final hashes at 2,000 units matched. A
+traffic test compares the Flowfield shortcut against a full update with every
+proof callback set, through arrival and settling, footprint and order
+replacement, cancellation, controller retry, periodic blocking, coordinator
+reset and out-of-window ids; a sweep over groups of two and three 1×1 members
+fails if the arrival-area decline is removed. It runs in CI as
+`flow_mission_traffic`.
+
+CPU time inside `World::tick`, three rotating repeats on a loaded host, gave
+0.896 of the index-only build for Flowfield open 500×4 (0.747 of the frozen
+baseline with the index included) and 0.99 for Cooperative, which is within
+noise. These runs predate shared far-tile fields: at that point the crowd in
+those scenarios barely moved, so they measure the bookkeeping cost on mostly
+stationary movers, not the current moving crowd. They are exploratory.
+
+### Weighted and portal routing evaluation (rejected)
+
+The hierarchy still ranks routes by component hops, not weighted path length.
+Two weighted alternatives were evaluated and neither is in the simulation.
+
+The first ("weighted component potential") added a component weight per
+topology (centroid octile distance times mean cost, about 4,096 work units per
+tile per build) and a per-destination Dijkstra over components. On the synthetic
+weighted fixture it found the same route as a portal search, cost 3,281,920 →
+225,552, with about a fifth of the portal search's graph work; on the maze it
+gave no gain. In crowdbench, whose terrain has a flat cost, it was mostly
+neutral (for example doors Flowfield 1,000: 465/245 → 475/260; doors 2,000:
+400/128 → 349/92), worse in every exploration case, and cost 25–30% more
+destination work and 20% more snapshot work.
+
+The second was a cached abstract portal graph per topology
+(`tools/flow_portal_graph.h`). Portals sit on each run of passable border
+crossings at a fixed stride; each tile stores exact integer travel costs between
+its portals; edits rebuild only tiles whose content or border portals changed,
+and a test checks the incremental graph against a full rebuild. Two field
+seedings were tried: an upper-bound seeding that matches an exact weighted
+search at stride 1, and a run seeding that is the weighted analogue of the
+current hop seeding. Results, in deterministic work units:
+
+- On the weighted fixture, the bound seeding reproduced the 14.5× cheaper route.
+  The run seeding matched hop routing (3,281,920), because it ranks whole
+  components by their cheapest portal.
+- On crowdbench geometry, single-unit routes without congestion: the run seeding
+  was identical to hop routing everywhere. The bound seeding was 0.2–4.3% longer
+  on open ground, doors and bridges at sparse strides. Its best case was the maze,
+  4.4% shorter at strides 8 and 4.
+- Graph work was 0.2–1.1 million per map at stride 64 and 1.0–9.1 million at
+  stride 4. Destination plus field work rose 22–40% over hop routing at stride
+  64 and 130–420% at stride 4.
+- A cold 1,024² graph needs over 720 ticks of the 8,192-per-tick destination
+  budget before the first weighted route, so a hop fallback would still be
+  required. The added per-destination work would worsen the many-destination
+  starvation described above.
+- The bound seeding writes per-cell values, so it cannot use the shared far-tile
+  fields, which require the exit mask and goal box to describe a tile's seeds
+  completely.
+
+It was rejected for production. The evaluation and its regression tests
+(weighted oracle, deterministic ties and scheduling, footprints, goal regions,
+topology edits, resource caps and quotas) remain in `tools/flow_routing_compare`,
+registered in ctest, with the graph in `tools/flow_portal_graph.h`. If weighted
+terrain such as grades, roads or water becomes a priority, that code is the
+starting point; it would also need a dirty-border-only rescan and a seeding that
+is both coherent and keeps a broad front.
+
+### Remaining weak cases
+
+- **Open ground at 2,000×1 and 500×4 still under-arrives.** Nearly every unit
+  crosses, but legal arrivals are 182 (Flowfield) and 109 (Cooperative) at
+  2,000×1, and 390 and 164 at 500×4. About 1,300–1,550 requests remain
+  outstanding at the end, with p95 latency near 750 ticks. Each unique goal still
+  needs one to three private goal-tile fields, and the 32-destination cap applies.
+- **The maze at 2,000 units is congestion-bound.** Both modes cross 9 units with
+  no arrivals, against Retail's 26. Field work is small (6.8 million) and median
+  latency is 1 tick, so better routing would not help.
+- **Rapid replacement settles more slowly.** Arrivals fell from 177 to 138–140
+  in every seed and both modes. The last order returns units to their start, and
+  in the frozen baseline units barely left before it, so they "arrived" in place
+  (about 175k px total path). Now they travel about 1.05–1.15 million px and must
+  come back; median arrival moved from about 3,190 to 4,400 ticks. It is still a
+  reportable outcome change.
+- Exploration at 2,000 units makes no progress in any mode.
