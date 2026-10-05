@@ -25,6 +25,8 @@ using namespace tak::sim;
 constexpr int window=90;          // W: progress / spin window, ticks
 constexpr int progressPx=16;      // S: net displacement below this over W = no progress
 constexpr int trappedGrace=150;   // G: ticks a trapped unit may still move or turn
+constexpr int minTurnBam=364;       // 2 degrees
+constexpr int64_t minStepRaw=32768; // 1/2 px in Fixed raw units
 constexpr int orth=5,diag=7;      // octile step costs (16 px per 5 units)
 constexpr uint16_t far=0xffff;
 
@@ -200,8 +202,15 @@ inline Step advance(Track& t,int32_t x,int32_t z,int32_t heading) {
     const int32_t sx=t.filled?x-t.xs[prev]:0,sz=t.filled?z-t.zs[prev]:0;
     s.moved=sx||sz;s.turned=a!=0;s.turnAbs=a;
     // A heading reversal: a turn of >= 64 BAM opposite to the previous one.
-    uint8_t hf=0;if(a>=64) {const int sign=dh>0?1:-1;hf=t.lastTurnSign&&sign!=t.lastTurnSign;t.lastTurnSign=sign;}
-    uint8_t tf=0;if(sx||sz) {tf=(t.lastStepX||t.lastStepZ)&&int64_t(sx)*t.lastStepX+int64_t(sz)*t.lastStepZ<0;t.lastStepX=sx;t.lastStepZ=sz;}
+    // Only visible motion counts: a heading reversal is a turn of >= 2 degrees
+    // (364 BAM) opposite to the previous such turn; a travel reversal is a step
+    // of >= 1/2 px whose direction opposes the previous such step. Sub-pixel
+    // collision jitter of a packed crowd is not spinning.
+    uint8_t hf=0;if(a>=minTurnBam) {const int sign=dh>0?1:-1;hf=t.lastTurnSign&&sign!=t.lastTurnSign;t.lastTurnSign=sign;}
+    uint8_t tf=0;
+    if(int64_t(sx)*sx+int64_t(sz)*sz>=minStepRaw*minStepRaw) {
+        tf=(t.lastStepX||t.lastStepZ)&&int64_t(sx)*t.lastStepX+int64_t(sz)*t.lastStepZ<0;t.lastStepX=sx;t.lastStepZ=sz;
+    }
     s.reversed=tf;
     // Retire the slot leaving the window, then record this tick.
     const int slot=t.head;
