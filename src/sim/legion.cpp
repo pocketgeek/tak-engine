@@ -30,7 +30,7 @@ constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member ma
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
 constexpr int kPassCells=6;                    // oncoming-traffic look-ahead (cells)
-constexpr int32_t kOncomingBam=20480;          // heading difference (~112 deg) that counts as oncoming
+constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr std::array<std::array<int,2>,8> kDirections{{
@@ -1001,7 +1001,6 @@ struct LegionNavigator::Impl {
         if(!aax&&!aaz)return false;
         // Travel octant (tan 22.5 ~ 0.414 ~ 2/5).
         const int dx=aax*5>=aaz*2?(ax>0?1:-1):0,dz=aaz*5>=aax*2?(az>0?1:-1):0;
-        const auto wanted=retailHeadingToPort(uint16_t(retailDirection(u.x-aimX,u.z-aimZ).v));
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         bool oncoming=false;
         for(int k=1;k<=kPassCells&&!oncoming;++k)for(int j=0;j<fz&&!oncoming;++j)for(int i=0;i<fx&&!oncoming;++i) {
@@ -1012,8 +1011,15 @@ struct LegionNavigator::Impl {
             const auto peer=members.find(o);
             if(peer==members.end()||peer->second.state==Arrived||peer->second.state==Trapped)continue;
             const Unit* other=w.unit(o);
-            if(!other||other->orders.empty())continue;
-            oncoming=std::abs(retailTurnRequest(other->heading,wanted))>kOncomingBam;
+            if(!other||other->orders.empty()||peer->second.goal<0)continue;
+            // Oncoming by intent, not heading: the other body's way to its
+            // own goal points back at this one by more than ~112 degrees. A
+            // body that has not turned yet (fresh or reversed order) is not
+            // oncoming traffic.
+            const int64_t odx=peer->second.goal%W-footprintOrigin(other->x,other->type->footX);
+            const int64_t odz=peer->second.goal/W-footprintOrigin(other->z,other->type->footZ);
+            const int64_t dot=odx*dx+odz*dz;
+            oncoming=dot<0&&100*dot*dot>kOncomingCos2*(odx*odx+odz*odz)*(dx*dx+dz*dz);
         }
         if(!oncoming) {
             // Committed pass: for a while after moving over, keep to the new
