@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <set>
+#include <tuple>
 #include <vector>
 
 // Legion navigation. See docs/legion-pathfinding.md for the design.
@@ -87,6 +89,7 @@ struct LegionNavigator::Impl {
         int slot=-1;                      // claimed slot index (shared goals)
         int detour=-1;                    // committed side-step cell
         uint32_t detourTicks=0;
+        std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
         std::vector<int> route;           // committed local detour around still bodies
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
     };
@@ -95,6 +98,25 @@ struct LegionNavigator::Impl {
     std::vector<Plane> planes;
     std::map<int,Group> groups;
     std::map<int,Member> members;
+    // Cells claimed by arrival slots of every group sent to one point in one
+    // command (mixed footprints form one group per class but share the area).
+    struct Point {int refs=0;std::set<int> cells;};
+    std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
+    void slotCells(const Member& m,int fx,int fz,bool claim) {
+        auto& cells=points[m.point].cells;
+        const int W=width(),x=m.goal%W,z=m.goal/W;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int c=(z+j)*W+x+i;
+            if(claim)cells.insert(c);else cells.erase(c);
+        }
+    }
+    bool slotFree(const Member& m,int cell,int fx,int fz) const {
+        const auto found=points.find(m.point);
+        if(found==points.end())return true;
+        const int W=width(),x=cell%W,z=cell/W;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)if(found->second.cells.count((z+j)*W+x+i))return false;
+        return true;
+    }
     int nextGroup=1;
     uint64_t structureSignature=0,epoch=0,lastWorldEpoch=~0ull;
     Stats stats;
@@ -273,6 +295,9 @@ struct LegionNavigator::Impl {
     void leave(int id) {
         auto found=members.find(id);
         if(found==members.end())return;
+        if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
+            slotCells(found->second,u->type->footX,u->type->footZ,false);
+        if(auto point=points.find(found->second.point);point!=points.end()&&--point->second.refs<=0)points.erase(point);
         auto group=groups.find(found->second.group);
         if(group!=groups.end()) {
             const auto& m=found->second;
@@ -299,6 +324,7 @@ struct LegionNavigator::Impl {
         const auto [tx,tz]=target(leg);
         const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         Member m;m.controller=leg.controller;m.goal=nearestLegal(p,gx,gz);m.state=Waiting;m.requested=m.goal;
+        m.point={u.player,leg.issuedTick,tx.v,tz.v};++points[m.point].refs;
         if(m.goal<0) {members[u.id]=m;return;}   // trapped on first move
         const int x=m.goal%width(),z=m.goal/width();
         Group* joined=nullptr;
@@ -557,7 +583,9 @@ struct LegionNavigator::Impl {
             if(m.state!=Holding||m.held<20||m.held%20)return;
             auto found=g.slots.find(m.requested);
             if(found==g.slots.end())return;
-            found->second.taken[size_t(m.slot)]=0;m.slot=-1;nearest=true;
+            found->second.taken[size_t(m.slot)]=0;
+            slotCells(m,u.type->footX,u.type->footZ,false);
+            m.slot=-1;nearest=true;
         }
         const auto sharing=g.sharing.find(m.requested);
         if(sharing==g.sharing.end()||sharing->second<2)return;
@@ -575,7 +603,7 @@ struct LegionNavigator::Impl {
         const int64_t ax=seedX-ux,az=seedZ-uz;
         int best=-1;int64_t bestScore=0,bestSide=0;
         for(size_t i=0;i<s.cells.size();++i) {
-            if(s.taken[i])continue;
+            if(s.taken[i]||!slotFree(m,s.cells[i],u.type->footX,u.type->footZ))continue;
             const int64_t cx=s.cells[i]%W,cz=s.cells[i]/W;
             int64_t score,side;
             if(nearest) {score=-((cx-ux)*(cx-ux)+(cz-uz)*(cz-uz));side=0;}
@@ -587,6 +615,7 @@ struct LegionNavigator::Impl {
         }
         if(best<0)return;
         s.taken[size_t(best)]=1;m.slot=best;m.goal=s.cells[size_t(best)];m.lineCell=-1;
+        slotCells(m,u.type->footX,u.type->footZ,true);
     }
     void move(Unit& u,Fixed maximum) {
         auto found=members.find(u.id);
@@ -877,6 +906,8 @@ struct LegionNavigator::Impl {
         const Unit* other=blocker?w.unit(blocker):nullptr;
         const bool opposing=other&&!other->orders.empty()&&
             std::abs(retailTurnRequest(other->heading,u.heading))>16384;
+        // Same-direction queues never side-step: they drain by themselves.
+        // (Purposeful side-steps for them cost opposing-column throughput.)
         if(!opposing)return;
         int dx=nx-ox,dz=nz-oz;
         if(!dx&&!dz)return;
@@ -957,6 +988,11 @@ struct LegionNavigator::Impl {
                 h=mix(h,uint64_t(seed));
                 for(size_t i=0;i<slot.cells.size();++i)h=mix(h,uint64_t(slot.cells[i])<<1|slot.taken[i]);
             }
+        }
+        for(const auto& [key,point]:points) {
+            h=mix(h,uint64_t(std::get<0>(key)));h=mix(h,std::get<1>(key));
+            h=mix(h,uint32_t(std::get<2>(key)));h=mix(h,uint32_t(std::get<3>(key)));h=mix(h,uint64_t(point.refs));
+            for(int c:point.cells)h=mix(h,uint64_t(c));
         }
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
