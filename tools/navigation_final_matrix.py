@@ -43,7 +43,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import crowdbench_matrix as cm  # noqa: E402  (provenance/hardware/sha256 helpers)
 
 SCENARIOS = cm.SCENARIOS
+ALL_SCENARIOS = cm.ALL_SCENARIOS
 MODES = cm.MODES
+# Default: the four modes the frozen baseline can run. Add Legion with --modes.
+DEFAULT_MODES = cm.LEGACY_MODES
 FULL_POPULATIONS = ("200:1:100", "500:1:100", "1000:1:100", "2000:1:100", "500:4:100", "250:8:50")
 LONG_SCENARIOS = ("doors", "maze", "sharedgoal", "opposingcolumns")
 TIMING_SCENARIOS = ("open", "doors", "maze", "opposingcolumns", "sharedgoal", "mixedfootprints",
@@ -53,7 +56,8 @@ TIMING_POPULATIONS = ("200:1:100", "2000:1:100", "500:4:100")
 # checkpoint outcome matrix (23,376 process-seconds) on an i9-275HX running 20
 # pinned processes on cpus 4-23 while other agents loaded the host (load ~40):
 # conservative. An idle P-core should need roughly half. Estimates only.
-COST_PER_MUNIT_TICK = {"retail": 3.2, "retail-plus": 5.1, "flowfield": 2.9, "cooperative": 2.1}
+COST_PER_MUNIT_TICK = {"retail": 3.2, "retail-plus": 5.1, "flowfield": 2.9, "cooperative": 2.1,
+                       "legion": 5.1}  # Legion: uncalibrated, assumed Retail+-like
 DIAGNOSTIC_OVERHEAD = 1.15
 
 # Deterministic outcome fields: identical across repeats of one binary. Also the
@@ -442,7 +446,7 @@ def report(out):
                   "completion", "stalled unit-ticks", "path px", "search work", "deferred local",
                   "lat p50/p95/p99", "out/canc", "allocs/tick"]
         lines += ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
-        groups = sorted({group_key(r) for r in good}, key=lambda k: (SCENARIOS.index(k[0]), k[4], k[2], k[1]))
+        groups = sorted({group_key(r) for r in good}, key=lambda k: (ALL_SCENARIOS.index(k[0]), k[4], k[2], k[1]))
         for key in groups:
             for mode in modes:
                 for role in roles:
@@ -482,7 +486,7 @@ def report(out):
             header.append(f"{roles[1]}/{roles[0]} median")
         lines += ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
         groups = sorted({group_key(r) + (r["seed"],) for r in good},
-                        key=lambda k: (SCENARIOS.index(k[0]), k[4], k[2], k[1], k[5]))
+                        key=lambda k: (ALL_SCENARIOS.index(k[0]), k[4], k[2], k[1], k[5]))
         for key in groups:
             for mode in modes:
                 cells = [key[0], f"{key[1]}×{key[2]}@{key[3]}", str(key[4]), str(key[5]), mode]
@@ -560,13 +564,13 @@ def main():
         p.add_argument("--output", type=Path, required=name == "run")
         p.add_argument("--label", default="")
         p.add_argument("--cpus", default="2-23", help="outcome: pool of cpus, one process each; timing: ONE cpu")
-        p.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
-        p.add_argument("--scenarios", nargs="+", choices=SCENARIOS)
+        p.add_argument("--modes", nargs="+", choices=MODES, default=list(DEFAULT_MODES))
+        p.add_argument("--scenarios", nargs="+", choices=ALL_SCENARIOS)
         p.add_argument("--populations", nargs="+", help="units:players:moving-percent")
         p.add_argument("--seeds", nargs="+", type=int)
         p.add_argument("--ticks", type=int, default=6000)
         p.add_argument("--long-ticks", type=int, help="default 12000 for outcome, 0 (off) for timing")
-        p.add_argument("--long-scenarios", nargs="+", choices=SCENARIOS, default=list(LONG_SCENARIOS))
+        p.add_argument("--long-scenarios", nargs="+", choices=ALL_SCENARIOS, default=list(LONG_SCENARIOS))
         p.add_argument("--long-population", default="2000:1:100")
         p.add_argument("--repeats", type=int)
         p.add_argument("--timeout", type=float, default=3600)

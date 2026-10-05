@@ -12,7 +12,7 @@
 #      simulation, saved, or hashed; the patch is taken from the candidate tree.
 #   3. The CANDIDATE's harness, copied verbatim so both binaries measure with
 #      identical code: tools/crowdbench.cpp, tools/crowdbench_matrix.h,
-#      tools/crowdbench_telemetry.h and src/sim/navigationtelemetry.h.
+#      tools/crowdbench_telemetry.h, tools/crowdbench_acceptance.h and src/sim/navigationtelemetry.h.
 # Built Release with the same compiler and the project's static dependencies,
 # only the crowdbench target, with source paths remapped so the binary does not
 # depend on OUT_DIR. OUT_DIR/baseline-provenance.json records every input hash,
@@ -32,7 +32,7 @@ candidate=${2:-$(cd "$(dirname "$0")/.." && pwd)}
 base=${3:-86673b413a4747e2b19a128777c2223656cd0681}
 candidate=$(cd "$candidate" && pwd)
 patch_file="$candidate/tools/navigation_baseline_telemetry.patch"
-harness=(tools/crowdbench.cpp tools/crowdbench_matrix.h tools/crowdbench_telemetry.h src/sim/navigationtelemetry.h)
+harness=(tools/crowdbench.cpp tools/crowdbench_matrix.h tools/crowdbench_telemetry.h tools/crowdbench_acceptance.h src/sim/navigationtelemetry.h)
 
 if [[ -e "$out/src" ]]; then
   echo "error: $out/src exists; use a fresh OUT_DIR" >&2; exit 1

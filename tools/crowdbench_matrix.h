@@ -4,6 +4,7 @@
 // mutations are outside the timed World::tick. Include in crowdbench.cpp only.
 #include "sim/sim.h"
 #include "crowdbench_telemetry.h"
+#include "crowdbench_acceptance.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -13,6 +14,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -125,13 +127,15 @@ inline Options parse(int argc,char** argv) {
         }
         else throw std::runtime_error("unknown option: "+std::string(key));
     }
-    if(o.mode!="retail"&&o.mode!="retail-plus"&&o.mode!="flowfield"&&o.mode!="cooperative")
-        throw std::runtime_error("mode must be retail, retail-plus, flowfield, or cooperative");
+    if(o.mode!="retail"&&o.mode!="retail-plus"&&o.mode!="flowfield"&&o.mode!="cooperative"&&o.mode!="legion")
+        throw std::runtime_error("mode must be retail, retail-plus, flowfield, cooperative, or legion");
 #ifdef TAK_CROWDBENCH_BASELINE
     if(o.mode=="retail-plus")throw std::runtime_error("Retail+ is unavailable in the frozen baseline");
+    if(o.mode=="legion")throw std::runtime_error("Legion is unavailable in the frozen baseline");
 #endif
     constexpr std::array names{"open","doors","bridges","maze","opposingcolumns","sharedgoal",
-        "mixedfootprints","exploration","dynamicobstacle","rapidreplacement","unreachable","recovery","recovery-passive"};
+        "mixedfootprints","exploration","dynamicobstacle","rapidreplacement","unreachable","recovery","recovery-passive",
+        "jagged","trapped","crowdtrap","singleunit","groupdetour"};
     if(std::find(names.begin(),names.end(),o.scenario)==names.end())throw std::runtime_error("unknown scenario");
     if(o.units<1||o.units>2000||o.players<1||o.players>8||o.movingPercent<0||o.movingPercent>100||o.ticks<1)
         throw std::runtime_error("units: 1..2000 per player; players: 1..8; moving-percent: 0..100; ticks: positive");
@@ -312,24 +316,135 @@ inline void barriers(World& world,int width,int height,const std::vector<Rect>& 
     }
     world.setMapPlacementFeatures(cells,{{"benchmark-wall",1,1,true,true,false,0}});
 }
+// Acceptance scenarios (jagged trapped crowdtrap singleunit groupdetour). The
+// geometry depends only on scenario, units and players, never on the mode.
+struct Spawn {float x=0,z=0,gx=0,gz=0,radius=32;int foot=2,player=0;bool moving=true;};
+struct Layout {
+    int width=0,height=0;std::vector<Rect> walls;std::vector<Spawn> spawns;
+    Rect gate{0,0,0,0};int closeTick=-1,openTick=-1;
+    std::vector<Rect> blocks; // groupdetour obstacle per player (route-side observation)
+};
+inline bool acceptanceScenario(const std::string& name) {
+    return name=="jagged"||name=="trapped"||name=="crowdtrap"||name=="singleunit"||name=="groupdetour";
+}
+inline Layout acceptanceLayout(const Options& o) {
+    Layout l;const int movingPerPlayer=o.units*o.movingPercent/100;
+    auto cell=[&](int x,int z) {l.walls.push_back({x,z,1,1});};
+    if(o.scenario=="singleunit") {
+        // Every unit alone in its own walled tile with a concave cup facing it:
+        // even tiles start in front of the cup, odd tiles start inside it.
+        constexpr int TW=56,TH=40;const int total=o.units*o.players;
+        const int perRow=int(std::ceil(std::sqrt(double(total)))),tileRows=(total+perRow-1)/perRow;
+        l.width=round64(perRow*TW);l.height=round64(tileRows*TH);
+        for(int i=0;i<total;++i) {
+            const int tx=i%perRow*TW,tz=i/perRow*TH,zc=tz+TH/2;
+            l.walls.push_back({tx,tz,TW,1});l.walls.push_back({tx,tz+TH-1,TW,1});
+            l.walls.push_back({tx,tz,1,TH});l.walls.push_back({tx+TW-1,tz,1,TH});
+            l.walls.push_back({tx+32,zc-10,2,22});
+            l.walls.push_back({tx+16,zc-10,18,2});l.walls.push_back({tx+16,zc+10,18,2});
+            Spawn s;s.player=i/o.units;s.moving=i%o.units<movingPerPlayer;
+            s.x=float((tx+(i%2?24:8))*16);s.z=float(zc*16);s.gx=float((tx+TW-8)*16);s.gz=float(zc*16);
+            l.spawns.push_back(s);
+        }
+        return l;
+    }
+    const bool jagged=o.scenario=="jagged",crowdtrap=o.scenario=="crowdtrap";
+    const int stride=jagged?5:3,rows=int(std::ceil(std::sqrt(double(o.units))));
+    const int columns=(o.units+rows-1)/rows;
+    const int laneHeight=std::max(rows*stride+(crowdtrap?24:16),o.scenario=="groupdetour"?64:48);
+    l.width=round64(2*columns*stride+320);l.height=round64(o.players*laneHeight+64);
+    const int middle=l.width/2,left=32,right=l.width-32-columns*stride;
+    for(int p=0;p<=o.players;++p)l.walls.push_back({0,24+p*laneHeight,l.width,2});
+    for(int p=0;p<o.players;++p) {
+        const int low=26+p*laneHeight,high=24+(p+1)*laneHeight,span=high-low,zc=(low+high)/2;
+        const int baseZ=36+p*laneHeight,divider=baseZ+(rows/2)*stride+1;
+        if(jagged) {
+            // Funnel of 2-cell stair steps, a corridor whose faces carry a
+            // triangle staircase, 1-cell teeth and 1-cell notches, then a
+            // staggered field of small plus/L/staircase rocks.
+            const int hw=std::max(11,span/4),c0=middle-24,c1=middle+24;
+            const int depth=zc-hw-low,funnel=(depth+1)/2;
+            auto jag=[](int x) {const int t=x%8<4?x%8:8-x%8;return t+(x%13==0?3:0)-(x%17==5?3:0);};
+            for(int x=c0;x<c1;++x) {
+                const int top=zc-hw+jag(x),bottom=zc+hw-jag(x+3);
+                l.walls.push_back({x,low,1,top-low});l.walls.push_back({x,bottom,1,high-bottom});
+            }
+            for(int i=0;i<funnel;++i) {
+                const int h=std::min(depth,2*(i+1)+(i%2)),g=std::min(depth,2*(funnel-i)+(i%2));
+                l.walls.push_back({c0-funnel+i,low,1,h});l.walls.push_back({c0-funnel+i,high-h,1,h});
+                l.walls.push_back({c1+i,low,1,g});l.walls.push_back({c1+i,high-g,1,g});
+            }
+            const int r0=c1+funnel+6;
+            for(int gx=0;gx<=30;gx+=10)for(int gz=3+(gx/10%2)*5;gz+3<=span-3;gz+=10) {
+                const int x=r0+gx,z=low+gz;
+                switch((gx+gz)%3) {
+                case 0:cell(x+1,z);cell(x,z+1);cell(x+1,z+1);cell(x+2,z+1);cell(x+1,z+2);break;
+                case 1:cell(x,z);cell(x,z+1);cell(x,z+2);cell(x+1,z+2);cell(x+2,z+2);break;
+                default:cell(x,z);cell(x+1,z);cell(x+1,z+1);cell(x+2,z+1);cell(x+2,z+2);break;
+                }
+            }
+        }
+        if(crowdtrap) {
+            // Two sub-lanes, each with a 6-cell door; the lower door is gated.
+            l.walls.push_back({0,divider,l.width,2});
+            const int upper=(low+divider)/2-3,lower=(divider+2+high)/2-3;
+            l.walls.push_back({middle-2,low,4,upper-low});
+            l.walls.push_back({middle-2,upper+6,4,divider-upper-6});
+            l.walls.push_back({middle-2,divider+2,4,lower-divider-2});
+            l.walls.push_back({middle-2,lower+6,4,high-lower-6});
+            if(!p) {l.gate={middle-2,lower,4,6};l.closeTick=std::min(30,std::max(1,o.ticks/3));l.openTick=std::max(2,o.ticks/2);}
+        }
+        if(o.scenario=="groupdetour") {
+            const Rect block{middle-24,low+std::max(6,span*30/100),48,0};
+            Rect b=block;b.h=high-std::max(6,span*15/100)-b.z;
+            l.walls.push_back(b);l.blocks.push_back(b);
+        }
+        int pockets=0;
+        for(int k=0;k<o.units;++k) {
+            const int col=k/rows,row=k%rows,slotX=(columns-1-col)*stride;
+            const int z=baseZ+row*stride+(crowdtrap&&row>=rows/2?4:0);
+            Spawn s;s.player=p;s.moving=k<movingPerPlayer;s.foot=jagged?1+k%4:2;
+            s.x=float((left+slotX)*16);s.z=float(z*16);s.gx=float((right+slotX)*16);s.gz=float(z*16);
+            if(o.scenario=="trapped"&&k%8==7) {
+                // Alternately sealed, or leaking through a gap one cell narrower
+                // than the footprint. Pitch 12 leaves >=4-cell lanes between pockets.
+                const int j=pockets++,f=2+(j%3),perColumn=std::max(1,(span-4)/12);
+                const int px=left+columns*stride+12+(j/perColumn)*12,pz=low+2+(j%perColumn)*12,size=f+4;
+                if(px+size>=right-8)throw std::runtime_error("trapped scenario: pockets do not fit");
+                l.walls.push_back({px,pz,size,1});l.walls.push_back({px,pz+size-1,size,1});
+                l.walls.push_back({px,pz,1,size});
+                if(j%2==0)l.walls.push_back({px+size-1,pz,1,size});
+                else {
+                    const int gap=f-1,gz=pz+1+(f+2-gap)/2;
+                    l.walls.push_back({px+size-1,pz,1,gz-pz});
+                    l.walls.push_back({px+size-1,gz+gap,1,pz+size-gz-gap});
+                }
+                s.foot=f;s.x=float((px+1)*16+(f+2)*8);s.z=float((pz+1)*16+(f+2)*8);
+            }
+            l.spawns.push_back(s);
+        }
+    }
+    return l;
+}
 inline int run(const Options& o) {
     const auto setupStart=Clock::now();
     const bool mixed=o.scenario=="mixedfootprints",shared=mixed||o.scenario=="sharedgoal";
     const bool opposing=o.scenario=="opposingcolumns",exploring=o.scenario=="exploration";
     const int stride=mixed?5:3,rows=int(std::ceil(std::sqrt(double(o.units))));
     const int columns=(o.units+rows-1)/rows,laneHeight=rows*stride+16;
-    const int width=round64(2*columns*stride+320),height=round64(o.players*laneHeight+64);
+    const bool accept=acceptanceScenario(o.scenario);const Layout acc=accept?acceptanceLayout(o):Layout{};
+    const int width=accept?acc.width:round64(2*columns*stride+320),height=accept?acc.height:round64(o.players*laneHeight+64);
     const int middle=width/2,left=32,right=width-32-columns*stride;
     const int movingPerPlayer=o.units*o.movingPercent/100,totalMoving=movingPerPlayer*o.players;
     LatencyObserver latency;
     World world;world.setGameSeed(o.seed);world.setVisPlayer(-1);world.setSerialThreads(!o.workers);world.setPathService(true);
-    world.setPathfindingMode(PathfindingMode(o.mode=="retail"?0:o.mode=="flowfield"?1:o.mode=="cooperative"?2:3));
+    world.setPathfindingMode(PathfindingMode(o.mode=="retail"?0:o.mode=="flowfield"?1:o.mode=="cooperative"?2:o.mode=="legion"?4:3));
     world.setPlayerCount(o.players);for(int p=0;p<o.players;++p)world.setTeam(p,0);
     world.setTerrain(std::vector<uint8_t>(size_t(width)*height,100),width,height,64);
-    std::vector<Rect> walls;
-    const bool lanes=o.scenario=="doors"||o.scenario=="bridges"||o.scenario=="maze"||exploring;
+    std::vector<Rect> walls;if(accept)walls=acc.walls;
+    const bool lanes=!accept&&(o.scenario=="doors"||o.scenario=="bridges"||o.scenario=="maze"||exploring);
     if(lanes)for(int p=0;p<=o.players;++p)walls.push_back({0,24+p*laneHeight,width,2});
-    for(int p=0;p<o.players;++p) {
+    if(!accept)for(int p=0;p<o.players;++p) {
         const int low=26+p*laneHeight,high=24+(p+1)*laneHeight,center=(low+high)/2;
         if(o.scenario=="doors"||o.scenario=="bridges") {
             const int thickness=o.scenario=="doors"?4:64;
@@ -345,7 +460,16 @@ inline int run(const Options& o) {
     barriers(world,width,height,{},walls);
     std::array<UnitType,3> types{mover(2,exploring),mover(3,exploring),mover(4,exploring)};
     std::vector<Member> members;members.reserve(size_t(o.units)*o.players);
-    for(int p=0;p<o.players;++p)for(int k=0;k<o.units;++k) {
+    std::array<UnitType,4> footTypes{mover(1,false),mover(2,false),mover(3,false),mover(4,false)};
+    if(accept)for(const auto& s:acc.spawns) {
+        Member member;member.player=s.player;member.moving=s.moving;member.gx=s.gx;member.gz=s.gz;
+        member.alternateX=s.x;member.alternateZ=s.z;member.radius=s.radius;
+        member.id=world.spawn(&footTypes[size_t(s.foot-1)],s.x,s.z,std::nullopt,s.player);
+        if(member.id<=0)throw std::runtime_error("failed to spawn requested population");
+        const auto& u=*world.unit(member.id);member.initialX=member.previousX=u.x.v;
+        member.initialZ=member.previousZ=u.z.v;members.push_back(member);
+    }
+    if(!accept)for(int p=0;p<o.players;++p)for(int k=0;k<o.units;++k) {
         const int slot=opposing?k/2:k;
         const int col=slot/rows,row=slot%rows,baseZ=36+p*laneHeight;
         // Movers occupy the front columns; inactive bodies do not form an
@@ -393,6 +517,113 @@ inline int run(const Options& o) {
     // allocation. Pausing the global switch is only exact without workers.
     if(o.allocations&&!o.workers)latency.quiet=&crowdbench_allocation::enabled;
     command(0,false);
+    // Acceptance observation (all modes, all scenarios): see crowdbench_acceptance.h.
+    namespace ca=crowdbench_acceptance;
+    ca::Observer observer;ca::Totals totals;std::vector<ca::Track> tracks(members.size());
+    for(auto& t:tracks)t.init();
+    std::vector<int> foots;
+    for(const auto& m:members) {const int f=world.unit(m.id)->type->footX;
+        if(std::find(foots.begin(),foots.end(),f)==foots.end())foots.push_back(f);}
+    std::sort(foots.begin(),foots.end());
+    std::vector<Rect> observedWalls=walls;
+    std::map<std::tuple<int,int,int,int>,std::vector<int32_t>> goalLabels;
+    auto rebuildObserver=[&] {
+        std::vector<ca::Wall> w;for(const auto& r:walls)w.push_back({r.x,r.z,r.w,r.h});
+        observer.reset(width,height,w,foots);goalLabels.clear();observedWalls=walls;
+    };
+    rebuildObserver();
+    auto originOf=[](const Unit& u) {
+        return std::pair{footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ)};
+    };
+    // Static path to the goal disc for this footprint (component membership).
+    auto reachable=[&](const Member& m,const Unit& u) {
+        const int f=u.type->footX;const auto [ox,oz]=originOf(u);
+        const auto& p=observer.prints.at(f);
+        if(!observer.legalAt(p,ox,oz))return true; // not judged: placement keeps origins legal
+        const auto key=std::make_tuple(f,int(m.gx),int(m.gz),int(m.radius));
+        auto it=goalLabels.find(key);
+        if(it==goalLabels.end()) {
+            std::vector<int32_t> labels;
+            observer.goalOrigins(p,int(m.gx),int(m.gz),int(m.radius),[&](int c){labels.push_back(p.label[c]);});
+            std::sort(labels.begin(),labels.end());labels.erase(std::unique(labels.begin(),labels.end()),labels.end());
+            it=goalLabels.emplace(key,std::move(labels)).first;
+        }
+        return std::binary_search(it->second.begin(),it->second.end(),p.label[size_t(oz)*width+ox]);
+    };
+    const bool computeOptimal=o.scenario=="singleunit"||totalMoving<=256;
+    if(computeOptimal)for(size_t i=0;i<members.size();++i)if(members[i].moving) {
+        const auto& u=*world.unit(members[i].id);const auto [ox,oz]=originOf(u);
+        tracks[i].optimal=observer.optimalPx(u.type->footX,ox,oz,int(members[i].gx),int(members[i].gz),int(members[i].radius));
+    }
+    std::vector<size_t> stamped;
+    auto observeAcceptance=[&](int tick) {
+        for(size_t c:stamped)observer.occupancy[c]=0;
+        stamped.clear();
+        for(const auto& m:members) {
+            const auto& u=*world.unit(m.id);if(!u.alive())continue;
+            const auto [ox,oz]=originOf(u);
+            for(int z=oz;z<oz+u.type->footZ;++z)for(int x=ox;x<ox+u.type->footX;++x)
+                if(x>=0&&z>=0&&x<width&&z<height) {const size_t c=size_t(z)*width+x;observer.occupancy[c]=m.id;stamped.push_back(c);}
+        }
+        for(size_t i=0;i<members.size();++i) {
+            const auto& m=members[i];auto& t=tracks[i];const auto& u=*world.unit(m.id);
+            const auto step=ca::advance(t,u.x.v,u.z.v,u.heading.v);
+            if(step.stationary) {totals.headingStationaryBam+=step.turnAbs;totals.travelReversals+=step.reversed;}
+            if(step.spinning) {++t.spinTicks;++totals.spinTicks;}
+            if(!m.moving)continue;
+            const auto [ox,oz]=originOf(u);const int f=u.type->footX;
+            int cls;
+            if(m.near)cls=ca::AtGoal;
+            else if(!reachable(m,u))cls=ca::Trapped;
+            else if(tick-m.commandTick<ca::window)cls=ca::Warmup;
+            else if(!step.stationary)cls=ca::Progressing;
+            else if(const auto* field=observer.direction(f,int(m.gx),int(m.gz),int(m.radius));!field||field->at(ox,oz)==ca::far)cls=ca::Unclassified;
+            else {
+                // Follow the static distance field for foot+2 steps; any other
+                // body on those footprint cells means the crowd holds the unit.
+                const auto& p=observer.prints.at(f);
+                int cx=ox,cz=oz;bool crowd=false;
+                for(int s=0;s<f+2&&!crowd;++s) {
+                    int best=-1;uint16_t bestD=field->at(cx,cz);
+                    observer.forNeighbours(p,cx,cz,[&](int n,int){const uint16_t d=field->at(n%width,n/width);if(d<bestD){bestD=d;best=n;}});
+                    if(best<0)break;
+                    cx=best%width;cz=best/width;
+                    for(int z=cz;z<cz+f;++z)for(int x=cx;x<cx+f;++x) {
+                        const int32_t id=observer.occupancy[size_t(z)*width+x];crowd|=id&&id!=m.id;
+                    }
+                }
+                bool terrain=false;
+                for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)terrain|=!observer.legalAt(p,ox+dx,oz+dz);
+                cls=crowd?ca::CrowdHeld:terrain?ca::TerrainStuck:ca::OpenIdle;
+            }
+            ++totals.classTicks[cls];t.finalClass=cls;
+            t.everTerrainStuck|=cls==ca::TerrainStuck;t.everCrowdHeld|=cls==ca::CrowdHeld;
+            if(cls==ca::CrowdHeld&&step.spinning)++totals.spinCrowdHeld;
+            if(cls==ca::Trapped) {
+                if(t.trappedSince<0)t.trappedSince=tick;
+                t.everTrapped=true;
+                if(step.spinning)++totals.spinTrapped;
+                if(step.moved||step.turned) {
+                    t.settleMax=std::max(t.settleMax,tick-t.trappedSince);
+                    if(tick-t.trappedSince>=ca::trappedGrace) {++totals.trappedMoving;t.movingAfterGrace=true;}
+                }
+            } else t.trappedSince=-1;
+            if(m.near&&t.pathAtGoal<0)t.pathAtGoal=m.path;
+            if(t.side<0&&size_t(m.player)<acc.blocks.size()) {
+                const auto& b=acc.blocks[size_t(m.player)];
+                if(u.x.v>=int32_t(b.x*16)<<16&&u.x.v<int32_t((b.x+b.w)*16)<<16)
+                    t.side=int64_t(u.z.v)*2<(int64_t(b.z*2+b.h)*16<<16)?0:1;
+            }
+        }
+        if(tick%30==0)for(int p=0;p<o.players;++p) {
+            std::vector<int32_t> xs;
+            for(const auto& m:members)if(m.moving&&m.player==p&&!m.near)xs.push_back(world.unit(m.id)->x.v);
+            if(xs.size()<2)continue;
+            std::sort(xs.begin(),xs.end());
+            const double spread=double(xs[(xs.size()-1)*9/10]-xs[(xs.size()-1)/10])/65536;
+            totals.spreadSum+=spread;totals.spreadMax=std::max(totals.spreadMax,spread);++totals.spreadSamples;
+        }
+    };
     profiling(world,o.profile);
     std::ofstream trace,unitTrace,wallTrace;
     // Plotting sidecar: map extent, then every published barrier set in cells.
@@ -459,7 +690,13 @@ inline int run(const Options& o) {
             }
             barriers(world,width,height,walls,next);walls=std::move(next);traceWalls(tick);
         }
+        if(accept&&acc.closeTick>0&&(tick==acc.closeTick||tick==acc.openTick)) {
+            std::vector<Rect> next=acc.walls;if(tick==acc.closeTick)next.push_back(acc.gate);
+            barriers(world,width,height,walls,next);walls=std::move(next);traceWalls(tick);
+        }
         eventMs+=millis(eventStart,Clock::now());
+        if(walls.size()!=observedWalls.size()||!std::equal(walls.begin(),walls.end(),observedWalls.begin(),
+            [](const Rect& a,const Rect& b){return a.x==b.x&&a.z==b.z&&a.w==b.w&&a.h==b.h;}))rebuildObserver();
         crowdbench_allocation::enabled.store(o.allocations,std::memory_order_relaxed);
         const auto begin=Clock::now();world.tick(1.f/30);const auto end=Clock::now();
         crowdbench_allocation::enabled.store(false,std::memory_order_relaxed);
@@ -507,6 +744,7 @@ inline int run(const Options& o) {
         }
         if(arrived==totalMoving&&allAt<0)allAt=tick;
         if(arrived!=totalMoving)allAt=-1;
+        observeAcceptance(tick);
         observeTrace(tick);
     }
     int arrived=0,physical=0,retired=0,crossed=0,illegalFinal=0,alive=0,finalCommand=0;
@@ -569,6 +807,38 @@ inline int run(const Options& o) {
         (unsigned long long)retail.workSpent(),(unsigned long long)retail.requests(),(unsigned long long)retail.completions(),(unsigned long long)retail.failures(),
         (unsigned long long)flow.requests,(unsigned long long)flow.deliveries,(unsigned long long)(flow.snapshotWork+flow.fieldWork+flow.localWork),navigationBytes,peakRss);
     std::printf("\"retail_plus_peak_bytes_sampled\":%zu,",retailPlusPeakBytes);
+    {
+        uint64_t spinning=0,everTerrain=0,everCrowd=0,everTrapped=0,trappedMovers=0,reachableMovers=0,optimalUnits=0;
+        int settleMax=-1;uint64_t finals[ca::ClassCount]{};double ratioSum=0,ratioMax=0;
+        int sides=0,minority=0,sided=0;
+        for(size_t i=0;i<members.size();++i) {
+            const auto& t=tracks[i];spinning+=t.spinTicks>0;
+            if(!members[i].moving)continue;
+            everTerrain+=t.everTerrainStuck;everCrowd+=t.everCrowdHeld;everTrapped+=t.everTrapped;
+            trappedMovers+=t.movingAfterGrace;if(t.everTrapped)settleMax=std::max(settleMax,t.settleMax);
+            if(t.finalClass>=0)++finals[t.finalClass];
+            reachableMovers+=reachable(members[i],*world.unit(members[i].id));
+            if(t.optimal>0&&t.pathAtGoal>=0) {const double r=t.pathAtGoal/t.optimal;++optimalUnits;ratioSum+=r;ratioMax=std::max(ratioMax,r);}
+        }
+        for(int p=0;p<int(acc.blocks.size());++p) {
+            int count[2]{};
+            for(size_t i=0;i<members.size();++i)if(members[i].player==p&&tracks[i].side>=0)++count[tracks[i].side];
+            sides+=(count[0]>0)+(count[1]>0);minority+=std::min(count[0],count[1]);sided+=count[0]+count[1];
+        }
+        std::printf("\"acceptance_window_ticks\":%d,\"acceptance_progress_px\":%d,\"acceptance_trapped_grace_ticks\":%d,",ca::window,ca::progressPx,ca::trappedGrace);
+        std::printf("\"units_spinning\":%llu,\"spin_unit_ticks\":%llu,\"heading_change_while_stationary_deg\":%.3f,\"travel_reversals_while_stationary\":%llu,\"spin_while_trapped_unit_ticks\":%llu,\"spin_while_crowd_held_unit_ticks\":%llu,",
+            (unsigned long long)spinning,(unsigned long long)totals.spinTicks,totals.headingStationaryBam*360.0/65536,(unsigned long long)totals.travelReversals,
+            (unsigned long long)totals.spinTrapped,(unsigned long long)totals.spinCrowdHeld);
+        for(int c=0;c<ca::ClassCount;++c)std::printf("\"class_%s_unit_ticks\":%llu,\"final_%s\":%llu,",ca::className(c),(unsigned long long)totals.classTicks[c],ca::className(c),(unsigned long long)finals[c]);
+        std::printf("\"units_ever_terrain_stuck\":%llu,\"units_ever_crowd_held\":%llu,\"units_ever_trapped\":%llu,\"static_reachable_movers\":%llu,",
+            (unsigned long long)everTerrain,(unsigned long long)everCrowd,(unsigned long long)everTrapped,(unsigned long long)reachableMovers);
+        std::printf("\"trapped_moving_unit_ticks\":%llu,\"trapped_units_moving_after_grace\":%llu,\"trapped_settle_ticks_max\":%d,",
+            (unsigned long long)totals.trappedMoving,(unsigned long long)trappedMovers,settleMax);
+        std::printf("\"path_optimality_units\":%llu,\"path_optimality_ratio_mean\":%.6f,\"path_optimality_ratio_max\":%.6f,",
+            (unsigned long long)optimalUnits,optimalUnits?ratioSum/optimalUnits:-1.0,optimalUnits?ratioMax:-1.0);
+        std::printf("\"group_sides_taken\":%d,\"group_minority_side_fraction\":%.6f,\"group_progress_spread_px_mean\":%.3f,\"group_progress_spread_px_max\":%.3f,",
+            sides,sided?double(minority)/sided:0.0,totals.spreadSamples?totals.spreadSum/totals.spreadSamples:0.0,totals.spreadMax);
+    }
     printBuild();
     printDiagnostics(world,o.profile);
     std::printf("\"allocation_counting\":%s,\"tick_cpp_allocation_calls\":%llu,\"tick_cpp_allocation_requested_bytes\":%llu,\"hash\":\"%016llx\"}\n",
@@ -577,8 +847,9 @@ inline int run(const Options& o) {
 }
 inline int main(int argc,char** argv) {
     if(argc==2&&std::string_view(argv[1])=="--help") {
-        std::puts("crowdbench [legacy-scenario...]\ncrowdbench --mode retail|retail-plus|flowfield|cooperative --units N --players N --moving-percent N --ticks N --scenario NAME [--seed N] [--workers] [--allocations] [--profile] [--latency] [--trace PATH]\n"
+        std::puts("crowdbench [legacy-scenario...]\ncrowdbench --mode retail|retail-plus|flowfield|cooperative|legion --units N --players N --moving-percent N --ticks N --scenario NAME [--seed N] [--workers] [--allocations] [--profile] [--latency] [--trace PATH]\n"
             "Scenarios: open doors bridges maze opposingcolumns sharedgoal mixedfootprints exploration dynamicobstacle rapidreplacement unreachable recovery recovery-passive\n"
+            "Acceptance scenarios: jagged trapped crowdtrap singleunit groupdetour (see tools/crowdbench_acceptance.h for metric definitions)\n"
             "units is per player; movement percentage rounds down per player. Default execution is serial.\n"
             "arrived_settled requires live, empty orders, zero speed, legal footprint, authored goal area and 30 unchanged ticks.\n"
             "Latency percentiles are censored (-1) if that fraction has not reached the event. Initial segment availability is not search delivery; pending clear can include a failed or cancelled search.\n"
