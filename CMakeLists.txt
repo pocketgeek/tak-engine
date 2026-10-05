@@ -345,13 +345,12 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
 endforeach()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; the other modes run the same checks with --report (comparison
-# evidence, never failing). The Legion assertions stay DISABLED until the Legion
-# sim (src/sim/legion*) is integrated; the coordinator removes that property.
+# evidence, never failing).
 add_executable(legion_acceptance_test tools/legion_acceptance_test.cpp)
 target_link_libraries(legion_acceptance_test PRIVATE tak-formats)
 foreach(legion_check singleunit group jagged trapped crowdheld)
   add_test(NAME legion_acceptance_${legion_check}_legion COMMAND legion_acceptance_test legion ${legion_check})
-  set_tests_properties(legion_acceptance_${legion_check}_legion PROPERTIES DISABLED TRUE TIMEOUT 600)
+  set_tests_properties(legion_acceptance_${legion_check}_legion PROPERTIES TIMEOUT 600)
   foreach(legion_mode retail retail-plus flowfield cooperative)
     add_test(NAME legion_acceptance_${legion_check}_${legion_mode}
              COMMAND legion_acceptance_test ${legion_mode} ${legion_check} --report)

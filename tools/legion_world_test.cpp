@@ -46,6 +46,10 @@ struct Fixture {
         cells[size_t(z)*width+x]=0;world.blockCells(x,z,1,1,true);
     }
     void rect(int x,int z,int w,int h) {for(int j=0;j<h;++j)for(int i=0;i<w;++i)wall(x+i,z+j);}
+    void open(int x,int z,int w,int h) {
+        for(int j=0;j<h;++j)for(int i=0;i<w;++i)cells[size_t(z+j)*width+x+i]=0xffff;
+        world.blockCells(x,z,w,h,false);
+    }
     void publish() {world.setMapPlacementFeatures(cells,{{"legion-wall",1,1,true,true,false,0}});}
     int spawn(const UnitType& t,int cx,int cz,int player=0) {
         const int id=world.spawn(&t,float(cx*16),float(cz*16),std::nullopt,player);
@@ -165,6 +169,7 @@ void groupreuse() {
     for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
     const auto e=f.world.legionStats();
     printLeft(f,ids);
+    std::printf("  detours=%llu cells=%llu holds=%llu\n",(unsigned long long)f.world.legionStats().detours,(unsigned long long)f.world.legionStats().detourCells,(unsigned long long)f.world.legionStats().holds);
     std::printf("groupreuse arrived=%d fields=%llu work=%llu\n",arrived,(unsigned long long)e.fieldsBuilt,(unsigned long long)e.fieldWork);
     check(arrived==int(ids.size()),"group did not pass the door");
     check(e.fieldsBuilt<=2,"field rebuilt per member");
@@ -218,24 +223,51 @@ void jagged() {
 }
 
 void trapped() {
-    Fixture f(64,64);
-    f.rect(10,10,12,1);f.rect(10,21,12,1);f.rect(10,10,1,12);f.rect(21,10,1,12);   // closed pocket
-    f.publish();
-    const auto type=mover(2);
-    const int inside=f.spawn(type,15,15),outside=f.spawn(type,40,15);
-    f.start();
-    f.world.order(inside,50*16,50*16,false);f.world.order(outside,50*16,50*16,false);
-    Motion motion;
-    int clearedAt=-1;
-    for(int t=0;t<600;++t) {
-        f.world.tick(1.f/30);motion.observe(f.world,{inside});
-        if(clearedAt<0&&f.world.unit(inside)->orders.empty())clearedAt=t;
+    // A sealed pocket: the body inside stops at once and never moves, turns
+    // or rocks; its order waits out the grace period, then retires.
+    {
+        Fixture f(64,64);
+        f.rect(10,10,12,1);f.rect(10,21,12,1);f.rect(10,10,1,12);f.rect(21,10,1,12);
+        f.publish();
+        const auto type=mover(2);
+        const int inside=f.spawn(type,15,15),outside=f.spawn(type,40,15);
+        f.start();
+        f.world.order(inside,50*16,50*16,false);f.world.order(outside,50*16,50*16,false);
+        Motion motion;
+        int clearedAt=-1;uint64_t moved=0;
+        int32_t x=f.world.unit(inside)->x.v,z=f.world.unit(inside)->z.v;
+        for(int t=0;t<9200;++t) {
+            f.world.tick(1.f/30);motion.observe(f.world,{inside});
+            const auto& u=*f.world.unit(inside);
+            moved+=u.x.v!=x||u.z.v!=z;x=u.x.v;z=u.z.v;
+            if(clearedAt<0&&u.orders.empty())clearedAt=t;
+        }
+        std::printf("trapped cleared_at=%d moved_ticks=%llu spins=%llu reversals=%llu\n",clearedAt,
+            (unsigned long long)moved,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+        check(moved==0,"trapped unit moved");
+        check(clearedAt>=8950&&clearedAt<=9060,"trapped order not retired after the grace period");
+        check(motion.spins==0&&motion.reversals==0,"trapped unit turned or rocked");
+        check(f.world.legionStats().trapped>=1,"trapped classification not recorded");
+        check(f.world.unit(outside)->orders.empty(),"free unit did not arrive");
     }
-    std::printf("trapped cleared_at=%d spins=%llu reversals=%llu\n",clearedAt,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
-    check(clearedAt>=0&&clearedAt<30,"trapped unit did not stop and retire its order");
-    check(motion.spins==0&&motion.reversals==0,"trapped unit moved back and forth");
-    check(f.world.legionStats().trapped>=1,"trapped classification not recorded");
-    check(f.world.unit(outside)->orders.empty(),"free unit did not arrive");
+    // The same pocket opens before the grace period ends: the held order
+    // resumes and the unit arrives (change-driven wake-up, no polling).
+    {
+        Fixture f(64,64);
+        f.rect(10,10,12,1);f.rect(10,21,12,1);f.rect(10,10,1,12);f.rect(21,10,1,12);
+        f.publish();
+        const int inside=f.spawn(mover(2),15,15);
+        f.start();
+        f.world.order(inside,50*16,50*16,false);
+        for(int t=0;t<300;++t)f.world.tick(1.f/30);
+        check(!f.world.unit(inside)->orders.empty(),"trapped order retired too early");
+        f.open(21,14,1,4);f.publish();
+        for(int t=0;t<1500;++t)f.world.tick(1.f/30);
+        std::printf("trapped reopened arrived=%d\n",int(f.world.unit(inside)->orders.empty()));
+        check(f.world.unit(inside)->orders.empty(),"unit did not resume after the pocket opened");
+        const auto& u=*f.world.unit(inside);
+        check(std::abs(u.x.toFloat()-800)<20&&std::abs(u.z.toFloat()-800)<20,"resumed unit did not reach its goal");
+    }
 }
 
 void crowdhold() {
@@ -297,7 +329,7 @@ void unreachable() {
     f.start();
     for(int id:ids)f.world.order(id,80*16,30*16,false);
     Motion motion;
-    for(int t=0;t<300;++t) {f.world.tick(1.f/30);motion.observe(f.world,ids);}
+    for(int t=0;t<9100;++t) {f.world.tick(1.f/30);motion.observe(f.world,ids);}
     int cleared=0;for(int id:ids)cleared+=f.world.unit(id)->orders.empty();
     std::printf("unreachable cleared=%d spins=%llu\n",cleared,(unsigned long long)motion.spins);
     check(cleared==int(ids.size()),"unreachable orders not retired");

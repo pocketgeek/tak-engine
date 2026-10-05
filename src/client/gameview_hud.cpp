@@ -238,6 +238,9 @@ namespace {
             } else {
                 voice(selection_.front(), "move");
                 const bool sharedPaths=tak::sim::isSharedPathfinding(world_.pathfindingMode());
+                // Legion packs one shared destination into arrival slots for the
+                // ground movers it plans; boats/hover keep Retail offsets.
+                const bool legion=tak::sim::isLegionPathfinding(world_.pathfindingMode());
                 const bool retailPlus=world_.pathfindingMode()==tak::sim::PathfindingMode::RetailPlus;
                 tak::sim::Order plainMove;plainMove.goal=plainMove.groundMission=true;
                 float cx = 0, cz = 0;
@@ -256,6 +259,7 @@ namespace {
                     // bypassing shared arrivals and wasting destination fields.
                     // Flying units retain their independent flight controller.
                     const bool shared=u->type && ((sharedPaths&&!u->type->canFly)||
+                        (legion&&!u->type->canFly&&u->type->domain==tak::sim::UnitType::Domain::Ground)||
                         (retailPlus&&tak::sim::retailplus::Traffic::supports(*u->type,plainMove)));
                     c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
                     c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);

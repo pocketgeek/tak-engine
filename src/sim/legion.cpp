@@ -24,6 +24,7 @@ constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
 constexpr uint64_t kFieldQuota=4'000'000;      // relaxations per tick, all fields
 constexpr size_t kMaxFields=48,kMaxPlanes=24;
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
+constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
 constexpr int kClusterCells=16;
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr int kLineCells=160;                  // direct-line probe reach
@@ -76,7 +77,7 @@ struct LegionNavigator::Impl {
         struct Slots {std::vector<int> cells;std::vector<uint8_t> taken;bool built=false;uint16_t reach=0;};
         std::map<int,Slots> slots;
     };
-    enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4};
+    enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5};
     struct Member {
         uint64_t controller=0;
         int group=0,goal=-1;              // goal origin cell index
@@ -85,6 +86,7 @@ struct LegionNavigator::Impl {
         State state=None;
         uint16_t best=kUnreached;         // best potential reached
         uint32_t held=0,stalled=0,progress=0xffffffffu;
+        uint32_t trappedSince=0;uint64_t trappedEpoch=0;
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
         int detour=-1;                    // committed side-step cell
@@ -436,6 +438,16 @@ struct LegionNavigator::Impl {
 
     // ---- movement -------------------------------------------------------
     static Fixed centre(int origin,int foot) {return Fixed::fromInt(origin*16+foot*8);}
+    // Aim point for a step into an ADJACENT origin cell: move only along the
+    // axes whose origin changes (to the new cell's centre line) and keep the
+    // other coordinate. Aiming at the cell centre would pull the body back
+    // along the unchanged axis -- a visible back-and-forth in a crowd.
+    std::pair<Fixed,Fixed> stepAim(const Unit& u,int cell) const {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        const int nx=cell%W,nz=cell/W;
+        return {nx!=ox?centre(nx,fx):u.x,nz!=oz?centre(nz,fz):u.z};
+    }
     // Every origin the body passes through moving in a straight line from
     // (x0,z0) to (x1,z1) must be legal; an exact corner crossing must clear
     // both side cells. Raw 16.16 coordinates shifted to origin space.
@@ -487,7 +499,7 @@ struct LegionNavigator::Impl {
         return nx==ox||nz==oz||(bodiesFree(u,nx,oz)&&bodiesFree(u,ox,nz));
     }
     void hold(Unit& u,Member& m) {
-        if(m.state!=Holding)m.nextDetour=8;
+        if(m.state!=Holding&&!m.detourCount)m.nextDetour=8;
         // Holding is a full stop with a constant heading: no creeping, no
         // re-aiming. The body wakes when a candidate cell frees (rechecked
         // against occupancy each update), not on a timer.
@@ -505,12 +517,16 @@ struct LegionNavigator::Impl {
         m.state=Arrived;
         leave(u.id);
     }
-    void trapped(Unit& u) {
-        // No legal route exists for this footprint: stop and retire the leg,
-        // as Retail does for an unreachable goal. Later queued legs proceed.
-        ++stats.trapped;
-        leave(u.id);
+    void trapped(Unit& u,Member& m) {
+        // No legal route exists for this footprint: stop at once (zero speed,
+        // constant heading, no probing). The order is kept for a grace
+        // period so a gate opening or a wall coming down (a new static
+        // epoch) resumes it; after that the leg is retired as Retail retires
+        // an unreachable goal. Later queued legs proceed.
+        if(m.state!=Trapped) {m.state=Trapped;m.trappedSince=w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;}
         u.speed=Fixed();u.turnReqBam=0;
+        if(w.tickCounter_-m.trappedSince<kTrappedRetire)return;
+        leave(u.id);
         w.dropLeg(u);
         u.routeStamp=-1;
     }
@@ -520,8 +536,11 @@ struct LegionNavigator::Impl {
         ++stats.escapes;
         const auto [tx,tz]=target(leg);
         const RetailSteeringPoint start{Fixed::fromInt(u.x.floorInt()),Fixed::fromInt(u.z.floorInt())},end{tx,tz};
+        const Bam heading=u.heading;const Fixed x=u.x,z=u.z;
         const auto d=w.steerGround(u,start,end,end,maximum);
         w.commitGroundStep(u,d.s,d.c);
+        // A refused escape step is a stop, not a turn in place.
+        if(u.x==x&&u.z==z) {u.heading=heading;u.speed=Fixed();u.turnReqBam=0;}
     }
     // Steepest legal descent from an origin, deterministic ties (orthogonal
     // first, then direction order). Returns -1 when nothing is lower.
@@ -621,13 +640,16 @@ struct LegionNavigator::Impl {
         auto found=members.find(u.id);
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         if(leg.mission.pending&0x500||!leg.controller) {w.brakeGround(u);return;}
-        if(found==members.end()||found->second.controller!=leg.controller) {
+        // A new controller, or terrain that changed since this body was
+        // found trapped, means a fresh registration (new goal resolution).
+        if(found==members.end()||found->second.controller!=leg.controller||
+           (found->second.state==Trapped&&found->second.trappedEpoch!=epoch)) {
             registerMove(u);found=members.find(u.id);
             if(found==members.end()) {w.brakeGround(u);return;}
         }
         auto& m=found->second;
         ++stats.moves;
-        if(m.goal<0) {trapped(u);return;}
+        if(m.goal<0) {trapped(u,m);return;}
         auto group=groups.find(m.group);
         if(group==groups.end()) {registerMove(u);w.brakeGround(u);return;}
         auto& g=group->second;g.lastUse=w.tickCounter_;
@@ -648,7 +670,10 @@ struct LegionNavigator::Impl {
                 // bodies cell by cell: follow them one at a time (a pulled
                 // string could clip a body the search went around).
                 const int aim=m.route.front();
-                drive(u,m,p,nullptr,maximum,centre(aim%W,fx),centre(aim/W,fz),false);
+                // A short way around still bodies is walked without turning
+                // the body (a crowd shuffle), not as a U-turn and back.
+                const auto [ax,az]=stepAim(u,aim);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
                 return;
             }
         }
@@ -657,7 +682,9 @@ struct LegionNavigator::Impl {
             // no re-deciding every update, so no back-and-forth.
             if(here==m.detour||++m.detourTicks>45||!legal(p,m.detour%W,m.detour/W)) {m.detour=-1;m.lineCell=-1;}
             else {
-                drive(u,m,p,nullptr,maximum,centre(m.detour%W,fx),centre(m.detour/W,fz),false);
+                // Lateral shuffles keep facing the route: no heading thrash.
+                const auto [ax,az]=stepAim(u,m.detour);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
                 return;
             }
         }
@@ -686,7 +713,7 @@ struct LegionNavigator::Impl {
         if(!direct) {
             if(!f) {m.state=Waiting;w.brakeGround(u);return;}
             const uint16_t potential=f->potential[size_t(here)];
-            if(potential==kUnreached) {trapped(u);return;}
+            if(potential==kUnreached) {trapped(u,m);return;}
             // String-pull along the descent chain: aim at the farthest of the
             // next few cells reachable in a straight legal line.
             int cell=descend(p,*f,ox,oz);
@@ -717,7 +744,8 @@ struct LegionNavigator::Impl {
         }
         drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
     }
-    void drive(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,bool towardGoal=false) {
+    void drive(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
+               bool towardGoal=false,bool face=true) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         int64_t dx=int64_t(aimX.v)-u.x.v,dz=int64_t(aimZ.v)-u.z.v;
@@ -736,7 +764,8 @@ struct LegionNavigator::Impl {
         const int32_t turn=std::max(int32_t(1),int32_t(int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*multiplier.v/65536));
         Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
         const int32_t facing=std::abs(diff);
-        if(facing>12288)cap=Fixed::raw(cap.v/8);
+        if(!face)cap=Fixed::raw(cap.v/2);   // a shuffle: half speed, no turning
+        else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
         if(u.speed>cap)speed=fxMax(cap,u.speed-u.type->brake*multiplier);
@@ -773,13 +802,19 @@ struct LegionNavigator::Impl {
                 for(int i=0;i<count&&!moved;++i) {
                     const auto& d=kDirections[size_t(options[size_t(i)].second)];
                     if(!stepFree(u,ox,oz,ox+d[0],oz+d[1]))continue;
-                    const Fixed cx=centre(ox+d[0],fx),cz=centre(oz+d[1],fz);
+                    const auto [cx,cz]=stepAim(u,(oz+d[1])*W+ox+d[0]);
                     dx=int64_t(cx.v)-u.x.v;dz=int64_t(cz.v)-u.z.v;
                     length=isqrtFloor(uint64_t(dx*dx+dz*dz));
                     travel=std::min<int64_t>(speed.v,length);
                     std::tie(sx,sz)=proposal(dx,dz,length,travel);
                     nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);
-                    if(stepFree(u,ox,oz,nx,nz)) {moved=true;++stats.slides;}
+                    if(stepFree(u,ox,oz,nx,nz)) {
+                        // Commit to finishing this sidestep into the cell
+                        // (hysteresis): no re-deciding mid-cell, and the body
+                        // keeps facing its route while it shuffles.
+                        moved=true;++stats.slides;face=false;
+                        m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;
+                    }
                 }
             }
             if(!moved) {
@@ -791,9 +826,10 @@ struct LegionNavigator::Impl {
                 if(f&&m.detour<0&&m.route.empty()&&m.held>=m.nextDetour&&blockedBySettled(u,nx,nz)) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling.
-                    localDetour(u,m,p,f,towardGoal);
-                    m.nextDetour=m.held+std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
+                    const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
                     ++m.detourCount;
+                    if(localDetour(u,m,p,f,towardGoal)) {m.nextDetour=wait;u.speed=Fixed();return;}
+                    m.nextDetour=m.held+wait;
                 }
                 hold(u,m);return;
             }
@@ -804,7 +840,10 @@ struct LegionNavigator::Impl {
         // The heading only turns with an actual step: a refused step is a
         // hold, and a held body keeps a constant heading.
         if(u.x==beforeX&&u.z==beforeZ) {hold(u,m);return;}
-        u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
+        // A small dead band keeps the body from twitching left and right as
+        // its string-pulled aim shifts by a cell in a crowd; motion is exact
+        // regardless, and a real course change (> ~5.6 deg) still turns.
+        if(face&&std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
         u.turnReqBam=diff;
         m.state=Moving;m.held=0;
     }
@@ -827,7 +866,7 @@ struct LegionNavigator::Impl {
     // statically legal origins whose footprint touches no STILL body. The
     // target is the own goal if inside, else the reachable cell that most
     // reduces the distance still to go. The route is committed.
-    void localDetour(const Unit& u,Member& m,const Plane& p,const Field* f,bool towardGoal) {
+    bool localDetour(const Unit& u,Member& m,const Plane& p,const Field* f,bool towardGoal) {
         constexpr int R=kDetourCells,S=2*R+1;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
@@ -876,18 +915,20 @@ struct LegionNavigator::Impl {
             }
         }
         stats.detourCells+=queue.size();
-        if(best<0||best==start)return;
+        if(best<0||best==start)return false;
         // Only a real gain (about two cells) is worth committing to.
         if(z0goal(best,S,R,ox,oz,W)!=m.goal) {
             const bool field=!towardGoal&&f;
             const int64_t gain=field?current-bestMetric
                 :int64_t(isqrtFloor(uint64_t(current)))-int64_t(isqrtFloor(uint64_t(bestMetric)));
-            if(gain<(field?int64_t(2*kOrthogonal)*64:2))return;
+            if(gain<(field?int64_t(2*kOrthogonal)*64:2))return false;
         }
         std::vector<int> path;
         for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-R)*W+ox+c%S-R);
         std::reverse(path.begin(),path.end());
         m.route=std::move(path);m.routeTicks=0;++stats.detours;
+        m.state=Holding;m.held=0;  // stopped this update; the route starts next
+        return true;
     }
     // Opposing traffic: after a short hold, both bodies commit to a lateral
     // step to their own right (keep-right), so head-on pairs pass instead
@@ -999,6 +1040,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);
+            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
         }
         return h;
