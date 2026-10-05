@@ -259,7 +259,13 @@ namespace {
                     // bypassing shared arrivals and wasting destination fields.
                     // Flying units retain their independent flight controller.
                     const bool shared=u->type && ((sharedPaths&&!u->type->canFly)||
-                        (legion&&!u->type->canFly&&u->type->domain==tak::sim::UnitType::Domain::Ground)||
+                        // Legion plans only footprints up to 8 on a fresh plain
+                        // Move; a leg queued behind other orders may start
+                        // behind a non-plain leg Retail steers, so it keeps
+                        // its offset.
+                        (legion&&!u->type->canFly&&u->type->domain==tak::sim::UnitType::Domain::Ground&&
+                         u->type->footX>=1&&u->type->footZ>=1&&u->type->footX<=8&&u->type->footZ<=8&&
+                         (!queue||u->orders.empty()))||
                         (retailPlus&&tak::sim::retailplus::Traffic::supports(*u->type,plainMove)));
                     c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
                     c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);

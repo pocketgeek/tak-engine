@@ -6173,10 +6173,13 @@ bool World::placeMapFeature(const Feature& f) {
         mapPlacementTypes_.push_back(std::move(type));
     }
     const int cx=footprintOrigin(f.x,f.fx),cz=footprintOrigin(f.z,f.fz);
-    ++placementEpoch_;
+    // Only a change to the placement cells is a new static epoch: a refused
+    // install that replaced nothing leaves every plane valid.
+    bool replaced=false;
     const bool placed=retailMapInstall(hW_,hH_,cx,cz,uint16_t(index),mapPlacementTypes_,[&](int x,int z)->RetailMapFeatureCell& {
             return mapPlacementCells_.at(size_t(z)*hW_+x);
         },[&](int x,int z,uint16_t previous) {
+            replaced=true;
             forgetCorpseAt(x,z);
             const auto& oldType=mapPlacementTypes_[previous];
             if (oldType.blocking) blockCells(x,z,oldType.footX,oldType.footZ,false);
@@ -6187,6 +6190,7 @@ bool World::placeMapFeature(const Feature& f) {
         });
     // Feature grades can change without changing the legacy obstacle bit (for
     // example, clearable -> indestructible). Refresh the actual search cache.
+    if(placed||replaced)++placementEpoch_;
     if(placed && flow_)flow_->dirty(cx,cz,f.fx,f.fz);
     if (placed) for (auto& plane:searchGrades_) refreshSearchRect(plane,cx,cz,f.fx,f.fz);
     return placed;
