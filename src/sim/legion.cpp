@@ -1474,8 +1474,8 @@ struct LegionNavigator::Impl {
         for(const auto& [key,point]:points) {
             h=mix(h,uint64_t(std::get<0>(key)));h=mix(h,std::get<1>(key));
             h=mix(h,uint32_t(std::get<2>(key)));h=mix(h,uint32_t(std::get<3>(key)));h=mix(h,uint64_t(point.refs));
-            h=mix(h,point.assigned);h=mix(h,uint64_t(point.centreX));h=mix(h,uint64_t(point.centreZ));
-            h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));
+            if(point.assigned) {h=mix(h,uint64_t(point.centreX));h=mix(h,uint64_t(point.centreZ));
+                h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));}
             for(int c:point.cells)h=mix(h,uint64_t(c));
         }
         for(const auto& [id,a]:anchors) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);}
