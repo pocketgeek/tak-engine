@@ -20,6 +20,8 @@ public:
         uint64_t arrivals=0,contactArrivals=0,trapped=0,escapes=0;
         uint64_t detours=0,detourCells=0;
         size_t bytes=0;
+        // Live container sizes (observation only).
+        size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
     };
     explicit LegionNavigator(World&);
     ~LegionNavigator();

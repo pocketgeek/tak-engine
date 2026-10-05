@@ -47,6 +47,9 @@ struct LegionNavigator::Impl {
         bool legacy=false;
         uint64_t epoch=0;   // World placement epoch + structure signature
         std::vector<uint8_t> legal;
+        // Static connected component of every legal origin (-1 if illegal),
+        // under the same step rule the field and the mover use.
+        std::vector<int32_t> comp;
         uint64_t lastUse=0;
     };
     // Integer distance field from a group's goal origins, built with a
@@ -68,7 +71,12 @@ struct LegionNavigator::Impl {
         std::vector<int> seeds;          // sorted unique goal origins (cell index)
         std::map<int,int> sharing;       // goal origin -> member count
         int members=0;
-        std::unique_ptr<Field> field;
+        int comp=-1;                     // static component of every seed
+        std::unique_ptr<Field> field;    // the field members steer by (done or building)
+        // After a static change the finished field keeps steering (the mover
+        // re-proves every step) while its replacement builds in `next`.
+        std::unique_ptr<Field> next;
+        bool stale=false;
         uint64_t lastUse=0;
         uint32_t built=0;
         // Packed arrival slots for goals several members share, inside-out
@@ -122,6 +130,9 @@ struct LegionNavigator::Impl {
     }
     int nextGroup=1;
     uint64_t structureSignature=0,epoch=0,lastWorldEpoch=~0ull;
+    // Plane rebuild work (cells) not yet charged to the per-tick quota.
+    uint64_t planeDebt=0;
+    int pruneCursor=0;
     Stats stats;
     explicit Impl(World& world):w(world) {}
 
@@ -201,16 +212,21 @@ struct LegionNavigator::Impl {
             cell[size_t(z)*W+x]=retailMobilePlacement(x,z,1,1,W,H,w.seaLevel_,p.maxDepth,p.minDepth,
                 p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
                 [](uint16_t){return RetailPlacementEntity{};});
-        // Structures are static bodies: stamp them with their yard maps. A
-        // closable yard is treated as closed (conservative: the planner may
-        // avoid a cell the mover would accept, never the reverse).
+        // Structures are static bodies: stamp them with their yard maps by
+        // the mover's rule (World::mobilePlacement): '.' is open, a closable
+        // 'c' yard is open while the script holds it open. The yard state is
+        // part of the static epoch, so opening or closing one rebuilds.
         for(const auto& u:w.units_) {
             if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
             const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+            const bool opened=yardOpen(u.id);
             for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
                 const int cx=ux+i,cz=uz+j;
                 if(cx<0||cz<0||cx>=W||cz>=H)continue;
-                if(!u.type->yardMap.empty()&&u.type->yardMap[size_t(j)*u.type->footX+i]=='.')continue;
+                if(!u.type->yardMap.empty()) {
+                    const char yard=u.type->yardMap[size_t(j)*u.type->footX+i];
+                    if(yard=='.'||(opened&&(yard=='c'||yard=='C')))continue;
+                }
                 cell[size_t(cz)*W+cx]=0;
             }
         }
@@ -232,6 +248,32 @@ struct LegionNavigator::Impl {
             }
         }
     }
+    bool yardOpen(int id) const {
+        const auto script=w.unitScripts_.find(id);
+        return script!=w.unitScripts_.end()&&script->second.yardOpen;
+    }
+    // Label static components by flood fill in cell order (deterministic).
+    void labelPlane(Plane& p) {
+        const int W=width(),H=height();
+        p.comp.assign(p.legal.size(),-1);
+        std::vector<int> queue;int next=0;
+        for(int start=0;start<W*H;++start) {
+            if(!p.legal[size_t(start)]||p.comp[size_t(start)]>=0)continue;
+            p.comp[size_t(start)]=next;queue.assign(1,start);
+            for(size_t head=0;head<queue.size();++head) {
+                const int x=queue[head]%W,z=queue[head]/W;
+                for(const auto& d:kDirections) {
+                    if(!step(p,x,z,d[0],d[1]))continue;
+                    const int c=(z+d[1])*W+x+d[0];
+                    if(p.comp[size_t(c)]<0) {p.comp[size_t(c)]=next;queue.push_back(c);}
+                }
+            }
+            ++next;
+        }
+    }
+    int compAt(const Plane& p,int cell) const {
+        return cell>=0&&size_t(cell)<p.comp.size()?p.comp[size_t(cell)]:-1;
+    }
     const NavGrid* legacyGrid(const Plane& p) const {
         for(const auto& u:w.units_)if(u.type&&u.type->footX==p.footX&&u.type->footZ==p.footZ&&!u.type->canFly)
             return &w.navFor(u.type);
@@ -245,7 +287,7 @@ struct LegionNavigator::Impl {
     }
     Plane& plane(int index) {
         auto& p=planes[size_t(index)];
-        if(p.epoch!=epoch) {p.epoch=epoch;buildPlane(p);}
+        if(p.epoch!=epoch) {p.epoch=epoch;buildPlane(p);labelPlane(p);planeDebt+=2*uint64_t(width())*height();}
         p.lastUse=w.tickCounter_;
         return p;
     }
@@ -282,13 +324,17 @@ struct LegionNavigator::Impl {
     std::pair<Fixed,Fixed> target(const Order& leg) const {
         return leg.missionTarget.value_or(std::pair{leg.x,leg.z});
     }
-    // Nearest statically legal origin to a requested one, -1 if none nearby.
-    int nearestLegal(const Plane& p,int x,int z) const {
+    // Nearest statically legal origin to a requested one. Past the near
+    // search radius, like Retail, settle for the nearest origin the unit can
+    // actually reach (its own static component); -1 only if there is none.
+    int nearestLegal(const Plane& p,int x,int z,int reach=-1) const {
         if(legal(p,x,z))return z*width()+x;
         int best=-1;int64_t bestD=0;
-        for(int r=1;r<=kGoalSearchCells&&best<0;++r)
+        const int far=reach>=0?std::max(width(),height()):kGoalSearchCells;
+        for(int r=1;r<=far&&best<0;++r)
             for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;++dx) {
                 if(std::max(std::abs(dx),std::abs(dz))!=r||!legal(p,x+dx,z+dz))continue;
+                if(r>kGoalSearchCells&&compAt(p,(z+dz)*width()+x+dx)!=reach)continue;
                 const int64_t d=int64_t(dx)*dx+int64_t(dz)*dz;
                 const int index=(z+dz)*width()+x+dx;
                 if(best<0||d<bestD||(d==bestD&&index<best)) {best=index;bestD=d;}
@@ -326,13 +372,20 @@ struct LegionNavigator::Impl {
         auto& p=plane(planeIndex);
         const auto [tx,tz]=target(leg);
         const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
-        Member m;m.controller=leg.controller;m.goal=nearestLegal(p,gx,gz);m.state=Waiting;m.requested=m.goal;
+        const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
+        const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
+        Member m;m.controller=leg.controller;m.goal=nearestLegal(p,gx,gz,reach);m.state=Waiting;m.requested=m.goal;
         m.point={u.player,leg.issuedTick,tx.v,tz.v};++points[m.point].refs;
         if(m.goal<0) {members[u.id]=m;return;}   // trapped on first move
         const int x=m.goal%width(),z=m.goal/width();
+        const int goalComp=compAt(p,m.goal);
         Group* joined=nullptr;
         for(auto& [id,g]:groups) {
             if(g.player!=u.player||g.issuedTick!=leg.issuedTick||g.plane!=planeIndex)continue;
+            // Seeds in different static components never share a field: a
+            // member whose goal it cannot reach would descend to a
+            // teammate's seed and hold there forever instead of retiring.
+            if(g.comp!=goalComp)continue;
             if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)continue;
             const bool seeded=std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
             // A field in progress or complete is never re-seeded.
@@ -340,7 +393,7 @@ struct LegionNavigator::Impl {
             joined=&g;break;
         }
         if(!joined) {
-            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;
+            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;g.comp=goalComp;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             joined=&groups.emplace(g.id,std::move(g)).first->second;
             ++stats.groups;
@@ -354,7 +407,7 @@ struct LegionNavigator::Impl {
         members[u.id]=m;
     }
     size_t liveFields() const {
-        size_t n=0;for(const auto& [id,g]:groups)n+=g.field!=nullptr;return n;
+        size_t n=0;for(const auto& [id,g]:groups)n+=(g.field!=nullptr)+(g.next!=nullptr);return n;
     }
     // At the cap a new field may only displace one that has served its
     // group for a while (oldest build first); otherwise the group waits for
@@ -366,14 +419,14 @@ struct LegionNavigator::Impl {
             for(auto& [id,o]:groups)
                 if(o.field&&o.field->done&&w.tickCounter_-o.built>=kFieldTenure&&(!victim||o.built<victim->built))victim=&o;
             if(!victim)return false;
-            victim->field.reset();++stats.fieldEvictions;
+            victim->field.reset();victim->next.reset();victim->stale=false;++stats.fieldEvictions;
         }
         g.built=w.tickCounter_;
         auto f=std::make_unique<Field>();
         f->plane=g.plane;f->epoch=epoch;
         f->potential.assign(size_t(width())*height(),kUnreached);
         for(int s:g.seeds) {f->potential[size_t(s)]=0;f->buckets[0].push_back(s);++f->queued;}
-        g.field=std::move(f);
+        if(g.field)g.next=std::move(f);else g.field=std::move(f);
         return true;
     }
     // Dial's algorithm: edge costs <= 7 so eight circular buckets suffice.
@@ -406,34 +459,70 @@ struct LegionNavigator::Impl {
         for(const auto& u:w.units_) {
             if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
             sig=mix(sig,uint64_t(u.id));sig=mix(sig,uint64_t(uint32_t(u.x.v))<<32|uint32_t(u.z.v));
+            sig=mix(sig,yardOpen(u.id));
         }
         structureSignature=sig;
         const uint64_t e=worldEpoch();
         if(e!=lastWorldEpoch) {
             lastWorldEpoch=e;++epoch;
-            // Terrain changed: every field is stale. Groups rebuild on demand;
-            // goals are re-resolved against the new plane at that point.
-            for(auto& [id,g]:groups)g.field.reset();
+            // Terrain changed. A finished field keeps steering its group
+            // (a stale potential can only misdirect, never make a step legal:
+            // the plane and commitGroundStep decide legality) until its
+            // replacement on the new plane is done. Half-built fields are
+            // useless and restart.
+            for(auto& [id,g]:groups) {
+                g.next.reset();
+                if(g.field&&!g.field->done)g.field.reset();
+                g.stale=g.field!=nullptr;
+            }
         }
+        prune();
+        // Plane rebuilds and labelling are charged against the same
+        // deterministic quota as field relaxations (debt carries over).
         uint64_t budget=kFieldQuota;
+        auto settle=[&] {const uint64_t c=std::min(budget,planeDebt);budget-=c;planeDebt-=c;};
+        settle();
+        auto finish=[&](Group& g,Field& f,uint64_t spent) {
+            budget-=std::min(budget,spent);stats.fieldWork+=spent;
+            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);g.stale=false;}}
+        };
         for(auto& [id,g]:groups) {
             if(budget==0)break;
-            if(!g.field)continue;
-            if(g.field->done)continue;
-            plane(g.plane);
-            const uint64_t spent=advance(*g.field,budget);
-            budget-=std::min(budget,spent);stats.fieldWork+=spent;
-            if(g.field->done)++stats.fieldsBuilt;
+            Field* f=g.next?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
+            if(!f)continue;
+            plane(g.plane);settle();
+            if(budget==0)break;
+            finish(g,*f,advance(*f,budget));
         }
-        // Groups that need a field and have none start in id order.
+        // Groups that need a field (none, or a stale one) start in id order.
         for(auto& [id,g]:groups) {
             if(budget==0)break;
-            if(g.field)continue;
-            plane(g.plane);
+            if((g.field&&!g.stale)||g.next)continue;
+            plane(g.plane);settle();
+            if(budget==0)break;
             if(!startField(g))break;
-            const uint64_t spent=advance(*g.field,budget);
-            budget-=std::min(budget,spent);stats.fieldWork+=spent;
-            if(g.field->done)++stats.fieldsBuilt;
+            Field& f=g.next?*g.next:*g.field;
+            finish(g,f,advance(f,budget));
+        }
+    }
+    // Members whose unit died, embarked, lost its orders or left Legion's
+    // plain-move domain (no more move() calls) are dropped here, a bounded
+    // number per tick in id order, so their groups, slots and point claims
+    // are freed. The death edge also cancels directly.
+    void prune() {
+        constexpr size_t kPrunePerTick=256;
+        if(members.empty()) {pruneCursor=0;return;}
+        std::vector<int> ids;
+        auto it=members.lower_bound(pruneCursor);
+        for(size_t n=0;n<kPrunePerTick&&n<members.size();++n) {
+            if(it==members.end())it=members.begin();
+            ids.push_back(it->first);++it;
+        }
+        pruneCursor=it==members.end()?0:it->first;
+        for(int id:ids) {
+            const Unit* u=w.unit(id);
+            if(u&&u->alive()&&!u->embarked()&&!u->orders.empty()&&supports(*u))continue;
+            leave(id);
         }
     }
 
@@ -1029,16 +1118,21 @@ struct LegionNavigator::Impl {
     }
     uint64_t checksum() const {
         uint64_t h=mix(0x4c4547494f4eull,epoch);
+        h=mix(h,planeDebt);h=mix(h,uint64_t(pruneCursor));
         h=mix(h,uint64_t(nextGroup));
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
+            h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
+            h=mix(h,uint64_t(uint32_t(g.comp)));h=mix(h,g.stale);
+            for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
+            if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);}
             h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
             for(int s:g.seeds)h=mix(h,uint64_t(s));
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
             if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);}
             for(const auto& [seed,slot]:g.slots) {
-                h=mix(h,uint64_t(seed));
+                h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);
                 for(size_t i=0;i<slot.cells.size();++i)h=mix(h,uint64_t(slot.cells[i])<<1|slot.taken[i]);
             }
         }
@@ -1053,6 +1147,8 @@ struct LegionNavigator::Impl {
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
+            h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
+            h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
         }
         return h;
@@ -1079,6 +1175,8 @@ LegionNavigator::Stats LegionNavigator::stats() const {
         }
     }
     s.bytes+=impl_->members.size()*(sizeof(Impl::Member)+48);
+    s.liveGroups=impl_->groups.size();s.liveMembers=impl_->members.size();
+    s.livePoints=impl_->points.size();s.liveFields=impl_->liveFields();
     return s;
 }
 bool LegionNavigator::staticLegal(const Unit& u,int x,int z) {

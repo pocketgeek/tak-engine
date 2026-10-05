@@ -394,6 +394,111 @@ uint64_t scenario(bool serial) {
     for(int t=0;t<1500;++t)f.world.tick(1.f/30);
     return f.world.stateHash();
 }
+// Units killed mid-move (hp to zero) or stripped of their orders without a
+// cancel leave Legion: groups, members and point claims shrink to nothing, and the
+// survivors still arrive.
+void deaths() {
+    Fixture f(160,64);
+    f.rect(70,0,4,28);f.rect(70,36,4,28);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<40;++i)ids.push_back(f.spawn(type,10+(i%8)*3,14+(i/8)*3));
+    f.start();
+    // Distinct goals: shared-point slots under fresh corpses are a separate
+    // concern (arrival slots), not membership.
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((110+(int(i)%8)*4)*16),float((12+int(i)/8*4)*16),false);
+    for(int t=0;t<60;++t)f.world.tick(1.f/30);
+    std::vector<int> live;
+    for(size_t i=0;i<ids.size();++i) {
+        if(i%2) {f.world.unit(ids[i])->hp=Fixed();} else live.push_back(ids[i]);
+    }
+    // Orders cleared without a cancel (a path that forgets cancelPath): the
+    // member is stale and must be pruned too.
+    for(size_t i=0;i<ids.size();i+=4)f.world.unit(ids[i])->orders.clear();
+    for(int t=0;t<120;++t)f.world.tick(1.f/30);
+    for(size_t i=1;i<ids.size();i+=2) {
+        const auto* u=f.world.unit(ids[i]);
+        check(!u||!u->alive(),"hp=0 did not kill the unit");
+    }
+    auto mid=f.world.legionStats();
+    std::printf("deaths mid members=%zu groups=%zu points=%zu\n",mid.liveMembers,mid.liveGroups,mid.livePoints);
+    size_t moving=0;for(int id:live)moving+=!f.world.unit(id)->orders.empty();
+    check(mid.liveMembers<=moving,"dead or orderless units are still Legion members");
+    for(int t=0;t<6000;++t)f.world.tick(1.f/30);
+    int arrived=0;for(int id:live)arrived+=f.world.unit(id)->orders.empty();
+    const auto e=f.world.legionStats();
+    std::printf("deaths arrived=%d/%zu members=%zu groups=%zu points=%zu fields=%zu\n",arrived,live.size(),
+        e.liveMembers,e.liveGroups,e.livePoints,e.liveFields);
+    printLeft(f,live);
+    check(arrived==int(live.size()),"survivors did not arrive");
+    check(e.liveMembers==0&&e.liveGroups==0&&e.livePoints==0&&e.liveFields==0,"Legion containers did not empty");
+}
+
+// One command sends two units to goals within the cluster radius, one inside
+// a sealed pocket. They must not share a field: the cut-off member is trapped
+// and retires; it never descends to its teammate's seed and holds forever.
+void splitgoal() {
+    Fixture f(64,64);
+    f.rect(30,10,10,1);f.rect(30,19,10,1);f.rect(30,10,1,10);f.rect(39,10,1,10);
+    f.publish();
+    const auto type=mover(2);
+    const int a=f.spawn(type,10,14),b=f.spawn(type,10,20);
+    f.start();
+    f.world.order(a,34*16,14*16,false);   // inside the pocket
+    f.world.order(b,44*16,14*16,false);   // outside, 10 cells away
+    int cleared=-1;
+    for(int t=0;t<9200;++t) {
+        f.world.tick(1.f/30);
+        if(cleared<0&&f.world.unit(a)->orders.empty())cleared=t;
+    }
+    std::printf("splitgoal cut-off cleared_at=%d other_arrived=%d\n",cleared,int(f.world.unit(b)->orders.empty()));
+    check(f.world.unit(b)->orders.empty(),"reachable member did not arrive");
+    check(cleared>=0,"cut-off member never retired");
+}
+
+// A click deep inside a blocked mass (beyond the near goal search) walks to
+// the nearest reachable legal point, as Retail does, instead of trapping.
+void farclick() {
+    Fixture f(128,64);
+    f.rect(60,0,68,64);
+    f.publish();
+    const int id=f.spawn(mover(2),10,30);
+    f.start();
+    f.world.order(id,110*16,30*16,false);
+    int cleared=-1;
+    for(int t=0;t<3000&&cleared<0;++t) {f.world.tick(1.f/30);if(f.world.unit(id)->orders.empty())cleared=t;}
+    const auto& u=*f.world.unit(id);
+    std::printf("farclick cleared_at=%d x=%.1f trapped=%llu\n",cleared,u.x.toFloat()/16,(unsigned long long)f.world.legionStats().trapped);
+    check(cleared>=0&&u.x.toFloat()/16>50,"far click did not walk to the nearest reachable point");
+}
+
+// Static changes away from a moving group (a corpse-like cell toggled every
+// few ticks) must not drop its finished field: no member goes back to
+// waiting for a field, and the group still arrives.
+void churn() {
+    Fixture f(160,64);
+    f.rect(70,0,4,28);f.rect(70,36,4,28);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<24;++i)ids.push_back(f.spawn(type,10+(i%8)*3,14+(i/8)*3));
+    f.start();
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((110+(int(i)%8)*4)*16),float((12+int(i)/8*4)*16),false);
+    auto* legion=f.world.legionNavigator();
+    bool ready=false;int waits=0,arrived=0;
+    for(int t=0;t<6000;++t) {
+        if(t%5==0)f.world.blockCells(150,60,1,1,(t/5)%2==0);
+        f.world.tick(1.f/30);
+        if(!ready&&f.world.legionStats().fieldsBuilt>0)ready=true;
+        else if(ready)for(int id:ids)waits+=legion->unitState(id)==3;
+    }
+    for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
+    std::printf("churn arrived=%d waits=%d planes=%llu\n",arrived,waits,(unsigned long long)f.world.legionStats().planeBuilds);
+    check(arrived==int(ids.size()),"group did not arrive under static churn");
+    check(waits==0,"members lost their field to an unrelated static change");
+}
+
 void determinism() {
     const uint64_t a=scenario(true),b=scenario(true),c=scenario(false);
     std::printf("determinism serial=%016llx repeat=%016llx workers=%016llx\n",(unsigned long long)a,(unsigned long long)b,(unsigned long long)c);
@@ -406,7 +511,8 @@ int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},
-        {"determinism",determinism},{"formation",formation}};
+        {"determinism",determinism},{"formation",formation},
+        {"deaths",deaths},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
