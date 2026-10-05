@@ -167,4 +167,4 @@ jobs:
           ./build/authtest
           ./build/cmdflow_test
           ./build/unit_gift_test
-          ctest --test-dir build -R '^(flowfield|flow_matchsetup|flow_snapshot|flow_memory|flow_routing_compare|navigation_telemetry|movement_orders|builder_automation|cooperative_corridor|cooperative_passages|cooperative_freshness|cooperative_clearance|cooperative_group|cooperative_memory|cooperative_progress_.*|navigation_determinism|crowdbench_matrix|retailplus_world|retailplus_traffic)$' --output-on-failure
+          bash tools/run-ctest-selection.sh build flowfield flow_matchsetup flow_snapshot flow_memory flow_routing_compare navigation_telemetry movement_orders builder_automation cooperative_corridor cooperative_passages cooperative_freshness cooperative_clearance cooperative_group cooperative_memory 'cooperative_progress_*' navigation_determinism crowdbench_matrix retailplus_world retailplus_traffic
