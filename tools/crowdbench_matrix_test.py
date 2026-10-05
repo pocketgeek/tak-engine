@@ -91,5 +91,83 @@ class MatrixTests(unittest.TestCase):
             self.assertTrue(all(row["runs"] == 2 for row in summaries))
 
 
+FINAL_PATH = Path(__file__).with_name("navigation_final_matrix.py")
+FINAL_SPEC = importlib.util.spec_from_file_location("navigation_final_matrix", FINAL_PATH)
+final = importlib.util.module_from_spec(FINAL_SPEC)
+FINAL_SPEC.loader.exec_module(final)
+
+
+class FinalMatrixTests(unittest.TestCase):
+    def fake(self, binaries, calls, broken=None):
+        real = subprocess.run
+        def run(command, **kwargs):
+            if command[0] == "taskset":
+                command = command[3:]
+            if command[0] not in binaries:
+                return real(command, **kwargs)  # provenance/hardware probes
+            calls.append(command)
+            args = dict(zip(command[1::2], command[2::2]))
+            data = {"mode": args["--mode"], "scenario": args["--scenario"], "workers": False,
+                    "units_per_player": int(args["--units"]), "players": int(args["--players"]),
+                    "moving_percent": int(args["--moving-percent"]), "seed": int(args["--seed"]),
+                    "ticks": int(args["--ticks"]), "arrived_settled": 1, "moving_units": 2,
+                    "crossed_middle": 2, "tick_ms_mean": 1.0 + len(calls) % 3, "tick_ms_p95": 2.0,
+                    "tick_ms_p99": 3.0, "hash": "same", "all_arrived_tick": -1,
+                    "route_lifecycle_balanced": True, "build_ndebug": True, "build_optimized": True,
+                    "route_request_to_delivery_ticks_received_only_p95": 5}
+            if broken and broken in command:
+                data["build_optimized"] = False
+            return subprocess.CompletedProcess(command, 0, json.dumps(data) + "\n", "")
+        return run
+
+    def invoke(self, argv, binaries, calls, broken=None):
+        with mock.patch.object(sys, "argv", [str(FINAL_PATH)] + argv), mock.patch.object(
+                final.subprocess, "run", side_effect=self.fake(binaries, calls, broken)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            final.main()
+
+    def test_timing_alternates_pairs_and_reports_both_roles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            a, b = root / "a", root / "b"
+            a.write_bytes(b"baseline")
+            b.write_bytes(b"candidate")
+            calls = []
+            out = root / "timing"
+            self.invoke(["run", "--phase", "timing", "--binary", f"baseline={a}", "--binary", f"candidate={b}",
+                         "--cpus", "0", "--scenarios", "open", "doors", "--populations", "10:1:100",
+                         "--modes", "retail", "--seeds", "0", "--ticks", "5", "--output", str(out)],
+                        {str(a.resolve()), str(b.resolve())}, calls)
+            self.assertEqual(len(calls), 12)
+            self.assertFalse(any("--latency" in c for c in calls))
+            # Adjacent runs are one case's pair, and the leading binary alternates.
+            firsts = [calls[i][0] for i in range(0, len(calls), 2)]
+            self.assertTrue(all(calls[i][1:] == calls[i + 1][1:] for i in range(0, len(calls), 2)))
+            self.assertIn(str(a.resolve()), firsts)
+            self.assertIn(str(b.resolve()), firsts)
+            summary = (out / "summary.md").read_text()
+            self.assertIn("candidate/baseline median", summary)
+            self.assertIn("Repeated-run deterministic outcome mismatches: **0**", summary)
+            self.assertTrue((out / "results.csv").read_text().startswith("phase,role,mode"))
+
+    def test_outcome_uses_diagnostics_and_rejects_unoptimized_binary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            a = root / "a"
+            a.write_bytes(b"one")
+            calls = []
+            with self.assertRaises(SystemExit):
+                self.invoke(["run", "--phase", "outcome", "--binary", f"checkpoint={a}", "--cpus", "0-1",
+                             "--scenarios", "doors", "maze", "--populations", "10:1:100", "--modes", "cooperative",
+                             "--seeds", "0", "7", "--ticks", "5", "--long-ticks", "9", "--long-population",
+                             "20:1:100", "--output", str(root / "outcome")],
+                            {str(a.resolve())}, calls, broken="maze")
+            self.assertEqual(len(calls), 8)  # 2 scenarios x 2 seeds, plus their long cases
+            self.assertTrue(all("--latency" in c and "--allocations" in c for c in calls))
+            manifest = json.loads((root / "outcome" / "manifest.json").read_text())
+            self.assertEqual(len(manifest["errors"]), 4)
+            self.assertIn("not an optimized", manifest["errors"][0]["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
