@@ -300,7 +300,16 @@ struct LegionNavigator::Impl {
     }
     Plane& plane(int index) {
         auto& p=planes[size_t(index)];
-        if(p.epoch!=epoch) {p.epoch=epoch;buildPlane(p);labelPlane(p);planeDebt+=2*uint64_t(width())*height();}
+        if(p.epoch!=epoch) {
+            // Only REbuilds (static churn) are charged to the field quota. A
+            // class's first build is one-time setup; charging it delayed the
+            // first fields by a tick, which changed how the order's members
+            // split into groups (a started field takes no new seeds) and cost
+            // jagged 2000 about 30% of its arrivals (seeds 0/7/42).
+            const bool first=p.epoch==~0ull;
+            p.epoch=epoch;buildPlane(p);labelPlane(p);
+            if(!first)planeDebt+=2*uint64_t(width())*height();
+        }
         p.lastUse=w.tickCounter_;
         return p;
     }
