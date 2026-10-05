@@ -166,9 +166,9 @@ jobs:
       - name: Build + run
         run: |
           cmake -B build -G Ninja
-          cmake --build build --target pathsearch_test authtest cmdflow_test unit_gift_test flowfield_test flow_matchsetup_test flow_snapshot_test flow_memory_test flow_routing_compare navigation_telemetry_test movement_orders_test builder_automation_test cooperative_corridor_test cooperative_passages_test cooperative_freshness_test cooperative_clearance_test cooperative_group_test cooperative_memory_test cooperative_progress_test cooperative_checkpoint_test retailplus_world_test retailplus_traffic_test
+          cmake --build build --target pathsearch_test authtest cmdflow_test unit_gift_test flowfield_test flow_matchsetup_test flow_snapshot_test flow_memory_test flow_mission_test flow_shared_field_test flow_routing_compare navigation_telemetry_test movement_orders_test builder_automation_test cooperative_corridor_test cooperative_passages_test cooperative_freshness_test cooperative_clearance_test cooperative_group_test cooperative_memory_test cooperative_progress_test cooperative_checkpoint_test retailplus_world_test retailplus_traffic_test
           ./build/pathsearch_test
           ./build/authtest
           ./build/cmdflow_test
           ./build/unit_gift_test
-          bash tools/run-ctest-selection.sh build flowfield flow_matchsetup flow_snapshot flow_memory flow_routing_compare navigation_telemetry movement_orders builder_automation cooperative_corridor cooperative_passages cooperative_freshness cooperative_clearance cooperative_group cooperative_memory 'cooperative_progress_*' navigation_determinism crowdbench_matrix retailplus_world retailplus_traffic
+          bash tools/run-ctest-selection.sh build flowfield flow_matchsetup flow_snapshot flow_memory flow_mission_traffic flow_shared_field flow_routing_compare navigation_telemetry movement_orders builder_automation cooperative_corridor cooperative_passages cooperative_freshness cooperative_clearance cooperative_group cooperative_memory 'cooperative_progress_*' navigation_determinism crowdbench_matrix retailplus_world retailplus_traffic

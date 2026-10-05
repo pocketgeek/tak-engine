@@ -17,9 +17,11 @@ public:
     IdIndex()=default;
     IdIndex(const IdIndex&)=delete;
     IdIndex& operator=(const IdIndex&)=delete;
-    IdIndex(IdIndex&& other) noexcept:slots_(std::move(other.slots_)) {other.slots_.clear();}
+    IdIndex(IdIndex&& other) noexcept:slots_(std::move(other.slots_)),cleared_(other.cleared_) {
+        other.slots_.clear();other.cleared_=0;
+    }
     IdIndex& operator=(IdIndex&& other) noexcept {
-        if(this!=&other){slots_=std::move(other.slots_);other.slots_.clear();}
+        if(this!=&other){slots_=std::move(other.slots_);cleared_=other.cleared_;other.slots_.clear();other.cleared_=0;}
         return *this;
     }
     // Null when absent; callers then consult the map for out-of-window ids.
@@ -32,11 +34,23 @@ public:
         if(size_t(id)>=slots_.size())slots_.resize(size_t(id)+1);
         slots_[size_t(id)]=slot;
     }
-    void clear(int id) {if(id>=0&&size_t(id)<slots_.size())slots_[size_t(id)]=Slot{};}
+    // Trim the window back to the highest live id, releasing storage once it
+    // is mostly unused, so a long game's climbing ids do not pin the
+    // high-water size for a few live movers. A trim runs only after size/8
+    // erases, which pays for its scan and for any regrowth (amortized O(1)).
+    void clear(int id) {
+        if(id<0||size_t(id)>=slots_.size())return;
+        slots_[size_t(id)]=Slot{};
+        if(++cleared_<slots_.size()/8)return;
+        cleared_=0;
+        while(!slots_.empty()&&!slots_.back().record)slots_.pop_back();
+        if(slots_.capacity()>4096&&slots_.size()*4<=slots_.capacity())slots_.shrink_to_fit();
+    }
     // Owners release storage once their map is empty, so idle tables own none.
-    void release() {std::vector<Slot>().swap(slots_);}
+    void release() {std::vector<Slot>().swap(slots_);cleared_=0;}
     size_t bytes() const {return slots_.capacity()*sizeof(Slot);}
 private:
     std::vector<Slot> slots_;
+    size_t cleared_=0;
 };
 }

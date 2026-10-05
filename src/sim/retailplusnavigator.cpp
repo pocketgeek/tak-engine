@@ -198,7 +198,13 @@ flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u,bool supported) {
                         const int id=w.occ_[size_t(z)*w.occW_+x];
                         if(id&&id!=u.id&&(!owner||id<owner))owner=id;
                     }
-                    if(owner)if(auto n=lookup(owner)){c.obstruction=n;continue;}
+                    // Accept the named mover only while its current footprint
+                    // still covers the queried rectangle; otherwise fall
+                    // through to the authoritative query below.
+                    if(owner)if(auto n=lookup(owner)) {
+                        const int nx=n->position.x-n->footX/2,nz=n->position.z-n->footZ/2;
+                        if(nx<x0+c.footX&&x0<nx+n->footX&&nz<z0+c.footZ&&z0<nz+n->footZ){c.obstruction=n;continue;}
+                    }
                 }
                 if(!bodyQuery(x0,z0,c.footX,c.footZ))return unavailable();
                 const auto bodies=w.searchBodyRect(x0,z0,c.footX,c.footZ);

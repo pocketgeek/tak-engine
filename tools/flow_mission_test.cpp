@@ -661,6 +661,32 @@ void unblockedFarEquivalence(){
         }
     }
     check(shortcuts>2000&&declines>500,"Flowfield shortcut fixture missed fast or arrival paths");
+    // Small groups: with 2-3 members of 1x1 footprint nearArrival's radius no
+    // longer covers the arrival-area window (sqrt(area)+16)^2, so members that
+    // stop between the two must still take the full update's area path.
+    for(int n=2;n<=3;++n)for(int stop:{15,17,24}){
+        Traffic ref,quick;std::vector<Traffic::Context> group(size_t(n),Traffic::Context{});
+        for(int i=0;i<n;++i){
+            auto& c=group[size_t(i)];c.id=i+1;c.player=0;c.controller=uint64_t(i+1);
+            c.tick=1;c.issuedTick=1;c.position={100+i*3,118};c.target={520,118};c.steeringTarget=c.target;
+            c.footX=c.footZ=1;c.plainMove=true;c.missionKind=1;ref.registerMove(c);quick.registerMove(c);
+        }
+        unsigned fast=0;
+        for(uint32_t tick=1;tick<=600;++tick)for(auto& c:group){
+            c.tick=tick;if(c.position.x<c.target.x-stop)++c.position.x;
+            c.blocked=0;c.goalReached=false;
+            auto full=c;
+            full.free=[](Cell){return true;};full.terrainFree=full.free;
+            full.arrivalReachable=[](Cell){return true;};full.contactReachable=full.arrivalReachable;
+            const auto expected=ref.update(full);
+            Traffic::Result actual;
+            if(quick.updateUnblockedFar(c))++fast;else actual=quick.update(full);
+            check(expected.settled==actual.settled&&expected.detour==actual.detour&&expected.wait==actual.wait&&
+                  expected.repath==actual.repath&&expected.arrivalApproach==actual.arrivalApproach&&
+                  ref.checksum()==quick.checksum(),"Flowfield small-group shortcut skipped the arrival-area path");
+        }
+        check(fast>0,"Flowfield small-group fixture never took the shortcut");
+    }
 }
 }
 int main(int argc,char**argv){if(argc!=2)return 2;try{
