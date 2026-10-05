@@ -145,10 +145,38 @@ class FinalMatrixTests(unittest.TestCase):
             self.assertTrue(all(calls[i][1:] == calls[i + 1][1:] for i in range(0, len(calls), 2)))
             self.assertIn(str(a.resolve()), firsts)
             self.assertIn(str(b.resolve()), firsts)
+            # EVERY case must be led by each binary in some repeat; reversing
+            # the case order must not cancel the alternation.
+            leaders = {}
+            for i in range(0, len(calls), 2):
+                leaders.setdefault(tuple(calls[i][1:]), set()).add(calls[i][0])
+            self.assertEqual(len(leaders), 2)
+            self.assertTrue(all(len(v) == 2 for v in leaders.values()), leaders)
             summary = (out / "summary.md").read_text()
             self.assertIn("candidate/baseline median", summary)
             self.assertIn("Repeated-run deterministic outcome mismatches: **0**", summary)
             self.assertTrue((out / "results.csv").read_text().startswith("phase,role,mode"))
+
+    def test_parallel_timing_keeps_each_case_on_one_cpu_and_combine_refuses_timing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            a, b = root / "a", root / "b"
+            a.write_bytes(b"baseline")
+            b.write_bytes(b"candidate")
+            calls = []
+            out = root / "timing"
+            self.invoke(["run", "--phase", "timing", "--binary", f"baseline={a}", "--binary", f"candidate={b}",
+                         "--cpus", "0-1", "--scenarios", "open", "doors", "maze", "--populations", "10:1:100",
+                         "--modes", "retail", "--seeds", "0", "--ticks", "5", "--output", str(out)],
+                        {str(a.resolve()), str(b.resolve())}, calls)
+            self.assertEqual(len(calls), 18)
+            cpus = {}
+            for row in final.load(out):
+                cpus.setdefault(row["scenario"], set()).add(row["cpu"])
+            self.assertTrue(all(len(v) == 1 for v in cpus.values()), cpus)
+            with self.assertRaises(SystemExit):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    final.combine(root / "merged", [out, out])
 
     def test_outcome_uses_diagnostics_and_rejects_unoptimized_binary(self):
         with tempfile.TemporaryDirectory() as temp:

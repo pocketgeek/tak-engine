@@ -28,6 +28,8 @@ on:
       - 'tools/navigation*'
       - 'tools/retailplus*'
       - 'tools/crowdbench*'
+      - 'tools/flow_*'
+      - 'tools/run-ctest-selection.sh'
       - 'CMakeLists.txt'
       - '.github/workflows/determinism.yml'
   pull_request:
@@ -47,6 +49,8 @@ on:
       - 'tools/navigation*'
       - 'tools/retailplus*'
       - 'tools/crowdbench*'
+      - 'tools/flow_*'
+      - 'tools/run-ctest-selection.sh'
       - 'CMakeLists.txt'
       - '.github/workflows/determinism.yml'
   workflow_dispatch:

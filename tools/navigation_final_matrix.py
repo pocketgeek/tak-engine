@@ -189,9 +189,9 @@ def execute(args):
     diagnostics = args.phase == "outcome"
     total = sum(estimate_seconds(c, diagnostics) for c in all_cases) * len(binaries) * args.repeats
     cpus = parse_cpus(args.cpus)
-    if args.phase == "timing" and len(cpus) != 1:
-        raise SystemExit("timing runs are strictly serial: pass exactly one --cpus value")
-    parallel = len(cpus) if args.phase == "outcome" else 1
+    # Timing may use several pinned cpus: each case's whole repeat/binary
+    # sequence stays on ONE cpu, so every before/after pair shares a core.
+    parallel = len(cpus)
     print(f"{len(all_cases)} cases x {len(binaries)} binaries x {args.repeats} repeats = "
           f"{len(all_cases) * len(binaries) * args.repeats} runs; estimated {total / 3600:.2f} CPU-hours, "
           f"~{total / parallel / 3600:.2f} h wall on {parallel} cpu(s)", flush=True)
@@ -219,20 +219,24 @@ def execute(args):
         "arrival": "live, empty orders, zero speed, legal full footprint, authored goal area, 30 unchanged ticks",
         "measurement": ("outcome: deterministic counters and tick-latency only; wall fields are not timing"
                         if diagnostics else
-                        "timing: World.tick wall time only; serial, one pinned cpu, alternating A/B order"),
+                        "timing: World.tick wall time only; each case's repeats and both binaries run "
+                        "serially on one pinned cpu, leader alternating per repeat"
+                        + (f"; {parallel} cases in parallel on separate cpus" if parallel > 1 else "")),
         "estimated_cpu_seconds": total,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     roles = list(binaries)
     jobs = []
+    stable = {case: index for index, case in enumerate(all_cases)}
     for repeat in range(args.repeats):
         ordered = all_cases if repeat % 2 == 0 else list(reversed(all_cases))
-        for index, case in enumerate(ordered):
-            # Alternate which binary runs first, per case and per repeat.
-            pair = roles if (index + repeat) % 2 == 0 else list(reversed(roles))
+        for case in ordered:
+            # Alternate which binary runs first using the case's STABLE index,
+            # so reversing the case order cannot cancel the alternation.
+            pair = roles if (stable[case] + repeat) % 2 == 0 else list(reversed(roles))
             for role in pair:
                 jobs.append((repeat, role, case))
-    if parallel > 1:
+    if diagnostics and parallel > 1:
         # Outcomes do not depend on order: start the longest runs first so the
         # pool does not end on a tail of 12000-tick cases. Stable, so each
         # case's baseline/candidate pair stays adjacent.
@@ -246,13 +250,14 @@ def execute(args):
     done = [0]
     started = time.monotonic()
 
-    def work(job):
+    def work(job, pinned=None):
         repeat, role, case = job
-        cpu = free.get()
+        cpu = free.get() if pinned is None else pinned
         try:
             data, wall, error = run_one(command_for(binaries[role], case, diagnostics), cpu, args.timeout)
         finally:
-            free.put(cpu)
+            if pinned is None:
+                free.put(cpu)
         if data is not None and error is None:
             error = check_identity(data, case)
         scenario, units, players, moving, ticks, seed, mode = case
@@ -276,6 +281,21 @@ def execute(args):
     if parallel == 1:
         for job in jobs:
             work(job)
+    elif not diagnostics:
+        groups = {}
+        for job in jobs:
+            groups.setdefault(job[2], []).append(job)
+        ordered_groups = sorted(groups.values(), key=lambda g: -sum(estimate_seconds(j[2], False) for j in g))
+
+        def work_group(group):
+            cpu = free.get()
+            try:
+                for job in group:
+                    work(job, cpu)
+            finally:
+                free.put(cpu)
+        with ThreadPoolExecutor(parallel) as pool:
+            list(pool.map(work_group, ordered_groups))
     else:
         with ThreadPoolExecutor(parallel) as pool:
             list(pool.map(work, jobs))
@@ -389,12 +409,14 @@ def report(out):
     # Per-mode totals across every case (sum over seeds and scenarios).
     lines += ["## Per-mode totals (sum over all cases and seeds; first repeat)", ""]
     header = ["mode"] + [f"{field} ({role})" for field in ("crossed", "arrived", "groups done", "stalled unit-ticks",
-                                                             "search work", "latency p95 med")
+                                                             "search work", "latency p95 med (received only)",
+                                                             "requests outstanding at end")
                          for role in roles]
     lines += ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for mode in modes:
         cells = [mode]
-        for field in ("crossed_middle", "arrived_settled", "all_arrived_tick", "stalled_unit_ticks", "work", "lat"):
+        for field in ("crossed_middle", "arrived_settled", "all_arrived_tick", "stalled_unit_ticks", "work", "lat",
+                      "route_requests_still_pending"):
             for role in roles:
                 sel = [r for r in good if r["mode"] == mode and r["role"] == role and r["repeat"] == 0]
                 if field == "all_arrived_tick":
@@ -494,6 +516,19 @@ def combine(out, inputs):
     phases = {m["phase"] for m in manifests}
     if len(phases) != 1:
         raise SystemExit("cannot combine outcome and timing runs")
+    if phases == {"timing"}:
+        # Separate sessions are not paired measurements: different load,
+        # thermal state, and possibly hardware. Run timing roles together.
+        raise SystemExit("refusing to combine timing runs: run both binaries in one timing session")
+    def case_set(d):
+        return {(r.get("scenario"), r.get("units_per_player"), r.get("players"), r.get("moving_percent"),
+                 r.get("ticks"), r.get("seed"), r.get("mode")) for r in load(d)}
+    reference = case_set(inputs[0])
+    for d in inputs[1:]:
+        if case_set(d) != reference:
+            raise SystemExit(f"{d} does not hold the same cases as {inputs[0]}")
+    if len({json.dumps(m.get("hardware"), sort_keys=True) for m in manifests}) != 1:
+        print("warning: inputs were recorded on different hardware", file=sys.stderr)
     binaries = {}
     for m in manifests:
         for role, info in m["binaries"].items():

@@ -42,6 +42,12 @@ out=$(cd "$out" && pwd)
 src="$out/src"
 base=$(git -C "$candidate" rev-parse --verify "$base^{commit}")
 git -C "$candidate" archive --format=tar "$base" | tar -x -C "$src"
+# The candidate is built from committed sources; copying uncommitted harness
+# edits would silently give the two binaries different harnesses.
+if [[ "${ALLOW_DIRTY_HARNESS:-0}" != 1 ]] &&
+   [[ -n "$(git -C "$candidate" status --porcelain -- "${harness[@]}" tools/navigation_baseline_telemetry.patch)" ]]; then
+  echo "error: harness files have uncommitted changes; commit them or set ALLOW_DIRTY_HARNESS=1" >&2; exit 1
+fi
 if [[ "${OVERLAY:-1}" == 1 ]]; then
   (cd "$src" && patch -p1 --forward --batch < "$patch_file")
   for file in "${harness[@]}"; do cp "$candidate/$file" "$src/$file"; done
