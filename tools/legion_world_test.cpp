@@ -336,6 +336,35 @@ void unreachable() {
     check(motion.spins==0,"unreachable units spun");
 }
 
+void slotblock() {
+    // A shared-point order whose arrival slots are covered mid-approach (a
+    // wall stands in for a corpse or new building): no member may claim a
+    // covered slot, so every order completes or retires -- no livelock of
+    // claim, re-register, claim -- and nobody spins.
+    Fixture f(96,64);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<16;++i)ids.push_back(f.spawn(type,8+(i%4)*3,20+(i/4)*3));
+    f.start();
+    for(int id:ids)f.world.order(id,60*16,32*16,false);
+    Motion motion;
+    int done=-1;
+    for(int t=0;t<4000;++t) {
+        if(t==150) {f.rect(61,30,2,5);f.rect(57,35,4,1);f.publish();}
+        f.world.tick(1.f/30);motion.observe(f.world,ids);
+        int left=0;for(int id:ids)left+=!f.world.unit(id)->orders.empty();
+        if(!left&&done<0)done=t;
+    }
+    int cleared=0;for(int id:ids)cleared+=f.world.unit(id)->orders.empty();
+    std::printf("slotblock cleared=%d at=%d spins=%llu reversals=%llu\n",cleared,done,
+        (unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+    printLeft(f,ids);
+    check(cleared==int(ids.size()),"shared-point orders livelocked on covered slots");
+    for(int id:ids)check(f.legal(id),"illegal footprint after slot cover");
+    check(motion.spins==0,"units spun around covered slots");
+}
+
 void quota() {
     // Many independent single-unit orders on a large map exceed the field
     // cap: evicted fields rebuild deterministically and nobody starves.
@@ -406,7 +435,7 @@ int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},
-        {"determinism",determinism},{"formation",formation}};
+        {"determinism",determinism},{"formation",formation},{"slotblock",slotblock}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
