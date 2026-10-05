@@ -84,7 +84,12 @@ Each update a supported unit:
   cell changes. A single unit on open ground therefore moves in a straight
   line, and a formation keeps its shape.
 * otherwise **descends the field**: it takes the legal neighbour with the
-  lowest potential (deterministic tie order), then string-pulls up to three
+  steepest descent per unit of path length (an orthogonal drop of 5 equals
+  a diagonal drop of 7). Ties go to the neighbour nearest the unit's own
+  goal, then a fixed direction order. A group field is "distance to the
+  nearest goal of anyone", and plain first-found ties pulled bodies toward
+  other members' goals, folding a formation into a file
+  (`legion_formation` guards this). The unit then string-pulls up to three
   further descent cells that remain in a legal straight line, and aims there.
   Each aim point is on a segment that has already been proven legal, so the
   unit never aims into a wall. At a jagged edge the steepest legal descent
@@ -122,7 +127,8 @@ cells to the own goal while on a straight line.
   strictly reduces its distance still to go. The step is committed until the
   new cell is entered. It moves only along the axis whose origin changes,
   never back toward a cell centre, and it does not turn the body; this is a
-  shuffle at half speed. If no such neighbour exists the unit **holds**:
+  shuffle. Speed still follows the facing cap. A flat half-speed shuffle was
+  measured to gridlock opposing columns. If no such neighbour exists the unit **holds**:
   speed zero, heading constant (the heading only turns on a committed step),
   no creeping. A held unit rechecks its candidate cells against occupancy
   every update. This is change-driven, since nothing moves until a cell frees,
@@ -131,7 +137,9 @@ cells to the own goal while on a straight line.
 * **Opposing traffic**: after 6 held updates against a moving body facing the
   other way, the unit commits to one lateral step to its own right (keep
   right). Both units do the same, so head-on pairs pass instead of pushing.
-  The step runs to completion or times out after 45 ticks.
+  The step runs to completion or times out after 45 ticks. The body turns
+  with this step: when side-steps did not turn the body, opposing columns
+  gridlocked.
 * **Walled in by still bodies** (settled arrivals, a held queue, idle units of
   any player): after 8 held updates, and then every 30, the unit runs a
   bounded BFS (25x25 window) over legal origins whose footprint touches no
@@ -144,7 +152,8 @@ cells to the own goal while on a straight line.
   updates) while no progress is made. Moving bodies are waited for, never
   planned around.
 * **Heading**: the body turns only on a committed step, with a 5.6° dead
-  band. A refused step, a hold, a shuffle and a trapped stop never turn it.
+  band. A refused step, a hold, a shuffle, a detour route and a trapped
+  stop never turn it.
 * **Arrival on contact**: once a unit has made no progress for 20 updates, it
   arrives if it is inside its goal's area and touching a settled same-player
   body. With a distinct goal the area is one body width. When several members
