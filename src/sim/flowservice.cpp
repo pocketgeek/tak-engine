@@ -157,7 +157,14 @@ Service::Sample Service::sample(int unit,Cell from,std::optional<Cell> aim) {
     const int tile=topo.tileAt(from);
     if(!group.destination->tileReady(tile))return {};
     const FieldId key=resolve(bound->second,group,tile);
-    const auto cached=fields_.find(key);
+    auto cached=fields_.find(key);
+    // A shared key names a profile, not a topology generation: correctness
+    // rests on every topology change passing through invalidate(). Verify
+    // the immutable source tile anyway, so a missed invalidation rebuilds
+    // this field instead of reusing another generation's content.
+    if(cached!=fields_.end()&&!key.group&&cached->second.source!=topo.tiles[size_t(tile)]) {
+        fields_.erase(cached);cached=fields_.end();
+    }
     if(cached!=fields_.end()) {
         cached->second.used=clock_;Cell next;
         if(cached->second.field.next(from,next)) {
