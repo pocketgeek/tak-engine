@@ -1,0 +1,1107 @@
+#include "legion.h"
+#include "sim.h"
+#include "footprint.h"
+#include "retailplacement.h"
+#include <algorithm>
+#include <array>
+#include <map>
+#include <set>
+#include <tuple>
+#include <vector>
+
+// Legion navigation. See docs/legion-pathfinding.md for the design.
+//
+// Everything below is integer arithmetic on the footprint-ORIGIN lattice: a
+// unit of footprint fx*fz whose centre is at x occupies origin column
+// footprintOrigin(x,fx). That is the coordinate the mover's legality test
+// (World::mobilePlacement / commitGroundStep) takes, so planning on it makes
+// "legal for the planner" and "legal for the mover" the same predicate.
+
+namespace tak::sim {
+namespace {
+constexpr uint16_t kUnreached=0xffff;
+constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
+constexpr uint64_t kFieldQuota=4'000'000;      // relaxations per tick, all fields
+constexpr size_t kMaxFields=48,kMaxPlanes=24;
+constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
+constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
+constexpr int kClusterCells=16;
+constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
+constexpr int kLineCells=160;                  // direct-line probe reach
+constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
+constexpr std::array<std::array<int,2>,8> kDirections{{
+    {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
+
+uint64_t mix(uint64_t h,uint64_t v) {
+    h^=v+0x9e3779b97f4a7c15ull+(h<<6)+(h>>2);
+    h=(h^(h>>30))*0xbf58476d1ce4e5b9ull;
+    return h^(h>>27);
+}
+int64_t isqrtFloor(uint64_t n) {return int64_t(isqrt64(n));}
+}
+
+struct LegionNavigator::Impl {
+    // Static legality of every footprint origin for one mobility class.
+    struct Plane {
+        int maxDepth=0,minDepth=0,maxSlope=0,maxWaterSlope=0,footX=1,footZ=1;
+        bool legacy=false;
+        uint64_t epoch=0;   // World placement epoch + structure signature
+        std::vector<uint8_t> legal;
+        uint64_t lastUse=0;
+    };
+    // Integer distance field from a group's goal origins, built with a
+    // bounded bucket queue; resumable across ticks under the work quota.
+    struct Field {
+        int plane=-1;
+        uint64_t epoch=0;
+        std::vector<uint16_t> potential;
+        std::array<std::vector<int>,8> buckets;
+        uint32_t current=0;
+        size_t queued=0;
+        bool done=false;
+        uint64_t work=0;
+    };
+    struct Group {
+        int id=0,player=0,plane=-1;
+        uint32_t issuedTick=0;
+        int minX=0,minZ=0,maxX=0,maxZ=0;
+        std::vector<int> seeds;          // sorted unique goal origins (cell index)
+        std::map<int,int> sharing;       // goal origin -> member count
+        int members=0;
+        std::unique_ptr<Field> field;
+        uint64_t lastUse=0;
+        uint32_t built=0;
+        // Packed arrival slots for goals several members share, inside-out
+        // by field potential; claimed on approach so the area fills from
+        // the point outward and nobody has to cross a settled body.
+        struct Slots {std::vector<int> cells;std::vector<uint8_t> taken;bool built=false;uint16_t reach=0;};
+        std::map<int,Slots> slots;
+    };
+    enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5};
+    struct Member {
+        uint64_t controller=0;
+        int group=0,goal=-1;              // goal origin cell index
+        int lineCell=-1;                  // origin cell the line probe ran from
+        bool line=false;
+        State state=None;
+        uint16_t best=kUnreached;         // best potential reached
+        uint32_t held=0,stalled=0,progress=0xffffffffu;
+        uint32_t trappedSince=0;uint64_t trappedEpoch=0;
+        int requested=-1;                 // the goal origin the order named
+        int slot=-1;                      // claimed slot index (shared goals)
+        int detour=-1;                    // committed side-step cell
+        uint32_t detourTicks=0;
+        bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
+        std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
+        std::vector<int> route;           // committed local detour around still bodies
+        uint32_t routeTicks=0,nextDetour=8,detourCount=0;
+    };
+
+    World& w;
+    std::vector<Plane> planes;
+    std::map<int,Group> groups;
+    std::map<int,Member> members;
+    // Cells claimed by arrival slots of every group sent to one point in one
+    // command (mixed footprints form one group per class but share the area).
+    struct Point {int refs=0;std::set<int> cells;};
+    std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
+    void slotCells(const Member& m,int fx,int fz,bool claim) {
+        auto& cells=points[m.point].cells;
+        const int W=width(),x=m.goal%W,z=m.goal/W;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int c=(z+j)*W+x+i;
+            if(claim)cells.insert(c);else cells.erase(c);
+        }
+    }
+    bool slotFree(const Member& m,int cell,int fx,int fz) const {
+        const auto found=points.find(m.point);
+        if(found==points.end())return true;
+        const int W=width(),x=cell%W,z=cell/W;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)if(found->second.cells.count((z+j)*W+x+i))return false;
+        return true;
+    }
+    int nextGroup=1;
+    uint64_t structureSignature=0,epoch=0,lastWorldEpoch=~0ull;
+    Stats stats;
+    explicit Impl(World& world):w(world) {}
+
+    int width() const {return w.hW_;}
+    int height() const {return w.hH_;}
+    bool placementPlane() const {
+        return !w.mapPlacementCells_.empty()&&w.mapPlacementCells_.size()==size_t(w.hW_)*w.hH_;
+    }
+
+    // ---- static plane -------------------------------------------------
+    int planeFor(const UnitType& t) {
+        const bool legacy=!placementPlane();
+        const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
+        const int minDepth=t.domain==UnitType::Domain::Water?(t.minWaterDepth>0?t.minWaterDepth:13):-10000;
+        for(size_t i=0;i<planes.size();++i) {
+            const auto& p=planes[i];
+            if(p.legacy==legacy&&p.footX==t.footX&&p.footZ==t.footZ&&(legacy||
+               (p.maxDepth==maxDepth&&p.minDepth==minDepth&&p.maxSlope==t.maxSlope&&p.maxWaterSlope==t.maxWaterSlope))) {
+                return int(i);
+            }
+        }
+        if(planes.size()>=kMaxPlanes) {
+            // Evict the least recently used plane no live group refers to.
+            int victim=-1;
+            for(size_t i=0;i<planes.size();++i) {
+                bool used=false;
+                for(const auto& [id,g]:groups)if(g.plane==int(i)) {used=true;break;}
+                if(!used&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
+            }
+            if(victim>=0) {
+                planes[size_t(victim)]=Plane{};
+                auto& p=planes[size_t(victim)];
+                p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
+                p.maxSlope=t.maxSlope;p.maxWaterSlope=t.maxWaterSlope;p.epoch=~0ull;
+                return victim;
+            }
+        }
+        Plane p;p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
+        p.maxSlope=t.maxSlope;p.maxWaterSlope=t.maxWaterSlope;p.epoch=~0ull;
+        planes.push_back(std::move(p));
+        return int(planes.size()-1);
+    }
+    // Same cell rules as World::mobilePlacement with the entity slot empty;
+    // retailMobilePlacement's per-cell loop makes a footprint legal exactly
+    // when every covered cell is (plus the footprint's own bounds test).
+    void buildPlane(Plane& p) {
+        const int W=width(),H=height();
+        p.legal.assign(size_t(std::max(0,W))*std::max(0,H),0);
+        ++stats.planeBuilds;
+        if(W<=0||H<=0)return;
+        if(p.legacy) {
+            const auto* grid=legacyGrid(p);
+            if(!grid||grid->empty())return;
+            const int foot=std::clamp(std::max(p.footX,p.footZ),1,15);
+            for(int z=0;z<H;++z)for(int x=0;x<W;++x)
+                p.legal[size_t(z)*W+x]=grid->fits(x+foot/2,z+foot/2,foot);
+            return;
+        }
+        std::vector<uint8_t> cell(size_t(W)*H,0);
+        auto cellAt=[&](int cx,int cz) {
+            const auto& source=w.mapPlacementCells_[size_t(cz)*W+cx];
+            RetailPlacementCell result;
+            result.low=source.low;
+            result.high=std::max({w.heights_[size_t(cz)*W+cx],w.heights_[size_t(cz)*W+cx+1],
+                                 w.heights_[size_t(cz+1)*W+cx],w.heights_[size_t(cz+1)*W+cx+1]});
+            result.feature=source.feature;
+            if(source.feature<0xfffa||source.feature==0xfffe) {
+                const int ox=cx-(source.feature==0xfffe?source.backX:0);
+                const int oz=cz-(source.feature==0xfffe?source.backZ:0);
+                const auto index=w.mapPlacementCells_[size_t(oz)*W+ox].feature;
+                const bool blocking=index<w.mapPlacementTypes_.size()&&w.mapPlacementTypes_[index].blocking;
+                result.feature=blocking?0:0xffff;
+            }
+            return result;
+        };
+        for(int z=0;z+1<H;++z)for(int x=0;x+1<W;++x)
+            cell[size_t(z)*W+x]=retailMobilePlacement(x,z,1,1,W,H,w.seaLevel_,p.maxDepth,p.minDepth,
+                p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
+                [](uint16_t){return RetailPlacementEntity{};});
+        // Structures are static bodies: stamp them with their yard maps. A
+        // closable yard is treated as closed (conservative: the planner may
+        // avoid a cell the mover would accept, never the reverse).
+        for(const auto& u:w.units_) {
+            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+            const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+            for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+                const int cx=ux+i,cz=uz+j;
+                if(cx<0||cz<0||cx>=W||cz>=H)continue;
+                if(!u.type->yardMap.empty()&&u.type->yardMap[size_t(j)*u.type->footX+i]=='.')continue;
+                cell[size_t(cz)*W+cx]=0;
+            }
+        }
+        // Separable rectangle test: run of legal cells to the right >= footX
+        // on footZ consecutive rows, and the footprint's bounds (x+fx<W).
+        std::vector<uint16_t> run(size_t(W)*H,0);
+        for(int z=0;z<H;++z) {
+            int r=0;
+            for(int x=W-1;x>=0;--x) {
+                r=cell[size_t(z)*W+x]?std::min(r+1,0xffff):0;
+                run[size_t(z)*W+x]=uint16_t(r);
+            }
+        }
+        for(int x=0;x<W;++x) {
+            int r=0;
+            for(int z=H-1;z>=0;--z) {
+                r=run[size_t(z)*W+x]>=p.footX?r+1:0;
+                p.legal[size_t(z)*W+x]=r>=p.footZ&&x+p.footX<W&&z+p.footZ<H;
+            }
+        }
+    }
+    const NavGrid* legacyGrid(const Plane& p) const {
+        for(const auto& u:w.units_)if(u.type&&u.type->footX==p.footX&&u.type->footZ==p.footZ&&!u.type->canFly)
+            return &w.navFor(u.type);
+        return nullptr;
+    }
+    uint64_t worldEpoch() const {
+        uint64_t e=mix(w.placementEpoch_,structureSignature);
+        if(!placementPlane())for(const auto& g:w.navClasses_)e=mix(e,g.version());
+        if(!placementPlane())e=mix(e,w.nav_.version());
+        return e;
+    }
+    Plane& plane(int index) {
+        auto& p=planes[size_t(index)];
+        if(p.epoch!=epoch) {p.epoch=epoch;buildPlane(p);}
+        p.lastUse=w.tickCounter_;
+        return p;
+    }
+    bool legal(const Plane& p,int x,int z) const {
+        return x>=0&&z>=0&&x<width()&&z<height()&&p.legal[size_t(z)*width()+x];
+    }
+    // Diagonal steps must clear both orthogonal neighbours (no corner cut).
+    bool step(const Plane& p,int x,int z,int dx,int dz) const {
+        if(!legal(p,x+dx,z+dz))return false;
+        return !dx||!dz||(legal(p,x+dx,z)&&legal(p,x,z+dz));
+    }
+
+    // ---- groups and fields -------------------------------------------
+    static bool plainMove(const Order& front) {
+        return !front.targetId&&!front.load&&!front.unload&&!front.buildType&&!front.reclaimFeat&&
+            !front.reclaimArea&&!front.manaBuildArea&&!front.repairTarget&&!front.wait&&!front.waitAttack&&
+            !front.attackMove&&!front.patrol&&!front.guard&&!front.autoTarget&&!front.landing&&!front.park&&
+            !front.buildRectangle&&!front.flightGoal&&!front.transportPickup&&!front.transportUnloadApproach&&
+            !front.transportUnloadReleasePending&&!front.transportUnloadTransferDeferred&&!front.transportPassenger&&
+            !front.productionExit;
+    }
+    bool supports(const Unit& u) const {
+        if(!u.alive()||u.embarked()||u.underConstruction||!u.type||u.orders.empty())return false;
+        const auto& t=*u.type;
+        if(t.canFly||t.isStructure()||t.domain!=UnitType::Domain::Ground||t.footX<1||t.footZ<1||
+           t.footX>8||t.footZ>8)return false;
+        if(!placementPlane()&&t.footX!=t.footZ)return false;
+        if(width()<2||height()<2)return false;
+        const auto& leg=u.orders[World::currentLeg(u.orders)];
+        if(!leg.groundMission||!leg.goal)return false;
+        for(size_t i=0;i<=World::currentLeg(u.orders);++i)if(!plainMove(u.orders[i]))return false;
+        return true;
+    }
+    std::pair<Fixed,Fixed> target(const Order& leg) const {
+        return leg.missionTarget.value_or(std::pair{leg.x,leg.z});
+    }
+    // Nearest statically legal origin to a requested one, -1 if none nearby.
+    int nearestLegal(const Plane& p,int x,int z) const {
+        if(legal(p,x,z))return z*width()+x;
+        int best=-1;int64_t bestD=0;
+        for(int r=1;r<=kGoalSearchCells&&best<0;++r)
+            for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;++dx) {
+                if(std::max(std::abs(dx),std::abs(dz))!=r||!legal(p,x+dx,z+dz))continue;
+                const int64_t d=int64_t(dx)*dx+int64_t(dz)*dz;
+                const int index=(z+dz)*width()+x+dx;
+                if(best<0||d<bestD||(d==bestD&&index<best)) {best=index;bestD=d;}
+            }
+        return best;
+    }
+    void leave(int id) {
+        auto found=members.find(id);
+        if(found==members.end())return;
+        if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
+            slotCells(found->second,u->type->footX,u->type->footZ,false);
+        if(auto point=points.find(found->second.point);point!=points.end()&&--point->second.refs<=0)points.erase(point);
+        auto group=groups.find(found->second.group);
+        if(group!=groups.end()) {
+            const auto& m=found->second;
+            // A member that completes keeps its slot (it stands there); one
+            // cancelled or re-ordered frees it for the rest of the group.
+            if(m.slot>=0&&m.state!=Arrived) {
+                auto slots=group->second.slots.find(m.requested);
+                if(slots!=group->second.slots.end()&&size_t(m.slot)<slots->second.taken.size())
+                    slots->second.taken[size_t(m.slot)]=0;
+            }
+            if(auto shared=group->second.sharing.find(m.requested);shared!=group->second.sharing.end()&&
+               --shared->second<=0)group->second.sharing.erase(shared);
+            if(--group->second.members<=0)groups.erase(group);
+        }
+        members.erase(found);
+    }
+    void registerMove(Unit& u) {
+        leave(u.id);
+        if(!supports(u))return;
+        ++stats.registrations;
+        const auto& leg=u.orders[World::currentLeg(u.orders)];
+        const int planeIndex=planeFor(*u.type);
+        auto& p=plane(planeIndex);
+        const auto [tx,tz]=target(leg);
+        const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
+        Member m;m.controller=leg.controller;m.goal=nearestLegal(p,gx,gz);m.state=Waiting;m.requested=m.goal;
+        m.point={u.player,leg.issuedTick,tx.v,tz.v};++points[m.point].refs;
+        if(m.goal<0) {members[u.id]=m;return;}   // trapped on first move
+        const int x=m.goal%width(),z=m.goal/width();
+        Group* joined=nullptr;
+        for(auto& [id,g]:groups) {
+            if(g.player!=u.player||g.issuedTick!=leg.issuedTick||g.plane!=planeIndex)continue;
+            if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)continue;
+            const bool seeded=std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
+            // A field in progress or complete is never re-seeded.
+            if(g.field&&!seeded)continue;
+            joined=&g;break;
+        }
+        if(!joined) {
+            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;
+            g.minX=g.maxX=x;g.minZ=g.maxZ=z;
+            joined=&groups.emplace(g.id,std::move(g)).first->second;
+            ++stats.groups;
+        }
+        auto& g=*joined;
+        if(!std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal))
+            g.seeds.insert(std::upper_bound(g.seeds.begin(),g.seeds.end(),m.goal),m.goal);
+        g.minX=std::min(g.minX,x);g.maxX=std::max(g.maxX,x);g.minZ=std::min(g.minZ,z);g.maxZ=std::max(g.maxZ,z);
+        ++g.sharing[m.goal];++g.members;g.lastUse=w.tickCounter_;
+        m.group=g.id;
+        members[u.id]=m;
+    }
+    size_t liveFields() const {
+        size_t n=0;for(const auto& [id,g]:groups)n+=g.field!=nullptr;return n;
+    }
+    // At the cap a new field may only displace one that has served its
+    // group for a while (oldest build first); otherwise the group waits for
+    // a slot. Evicting the least recently used field every tick thrashed:
+    // all live groups use theirs every tick.
+    bool startField(Group& g) {
+        while(liveFields()>=kMaxFields) {
+            Group* victim=nullptr;
+            for(auto& [id,o]:groups)
+                if(o.field&&o.field->done&&w.tickCounter_-o.built>=kFieldTenure&&(!victim||o.built<victim->built))victim=&o;
+            if(!victim)return false;
+            victim->field.reset();++stats.fieldEvictions;
+        }
+        g.built=w.tickCounter_;
+        auto f=std::make_unique<Field>();
+        f->plane=g.plane;f->epoch=epoch;
+        f->potential.assign(size_t(width())*height(),kUnreached);
+        for(int s:g.seeds) {f->potential[size_t(s)]=0;f->buckets[0].push_back(s);++f->queued;}
+        g.field=std::move(f);
+        return true;
+    }
+    // Dial's algorithm: edge costs <= 7 so eight circular buckets suffice.
+    uint64_t advance(Field& f,uint64_t budget) {
+        const auto& p=planes[size_t(f.plane)];
+        const int W=width();uint64_t spent=0;
+        while(f.queued&&spent<budget) {
+            auto& bucket=f.buckets[f.current&7];
+            if(bucket.empty()) {++f.current;continue;}
+            const int cell=bucket.back();bucket.pop_back();--f.queued;
+            if(f.potential[size_t(cell)]!=f.current)continue;   // stale entry
+            const int x=cell%W,z=cell/W;
+            for(const auto& d:kDirections) {
+                ++spent;
+                if(!step(p,x,z,d[0],d[1]))continue;
+                const uint32_t next=f.current+(d[0]&&d[1]?kDiagonal:kOrthogonal);
+                if(next>=kUnreached)continue;   // saturated: beyond the field's range
+                auto& slot=f.potential[size_t((z+d[1])*W+x+d[0])];
+                if(next<slot) {slot=uint16_t(next);f.buckets[next&7].push_back((z+d[1])*W+x+d[0]);++f.queued;}
+            }
+        }
+        if(!f.queued) {f.done=true;for(auto& b:f.buckets)std::vector<int>().swap(b);}
+        f.work+=spent;
+        return spent;
+    }
+    void tick() {
+        // Structures are bodies the mover always refuses: fold their layout
+        // into the static epoch so the plane follows construction/death.
+        uint64_t sig=0x6c6567696f6e;
+        for(const auto& u:w.units_) {
+            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+            sig=mix(sig,uint64_t(u.id));sig=mix(sig,uint64_t(uint32_t(u.x.v))<<32|uint32_t(u.z.v));
+        }
+        structureSignature=sig;
+        const uint64_t e=worldEpoch();
+        if(e!=lastWorldEpoch) {
+            lastWorldEpoch=e;++epoch;
+            // Terrain changed: every field is stale. Groups rebuild on demand;
+            // goals are re-resolved against the new plane at that point.
+            for(auto& [id,g]:groups)g.field.reset();
+        }
+        uint64_t budget=kFieldQuota;
+        for(auto& [id,g]:groups) {
+            if(budget==0)break;
+            if(!g.field)continue;
+            if(g.field->done)continue;
+            plane(g.plane);
+            const uint64_t spent=advance(*g.field,budget);
+            budget-=std::min(budget,spent);stats.fieldWork+=spent;
+            if(g.field->done)++stats.fieldsBuilt;
+        }
+        // Groups that need a field and have none start in id order.
+        for(auto& [id,g]:groups) {
+            if(budget==0)break;
+            if(g.field)continue;
+            plane(g.plane);
+            if(!startField(g))break;
+            const uint64_t spent=advance(*g.field,budget);
+            budget-=std::min(budget,spent);stats.fieldWork+=spent;
+            if(g.field->done)++stats.fieldsBuilt;
+        }
+    }
+
+    // ---- movement -------------------------------------------------------
+    static Fixed centre(int origin,int foot) {return Fixed::fromInt(origin*16+foot*8);}
+    // Aim point for a step into an ADJACENT origin cell: move only along the
+    // axes whose origin changes (to the new cell's centre line) and keep the
+    // other coordinate. Aiming at the cell centre would pull the body back
+    // along the unchanged axis -- a visible back-and-forth in a crowd.
+    std::pair<Fixed,Fixed> stepAim(const Unit& u,int cell) const {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        const int nx=cell%W,nz=cell/W;
+        return {nx!=ox?centre(nx,fx):u.x,nz!=oz?centre(nz,fz):u.z};
+    }
+    // Every origin the body passes through moving in a straight line from
+    // (x0,z0) to (x1,z1) must be legal; an exact corner crossing must clear
+    // both side cells. Raw 16.16 coordinates shifted to origin space.
+    bool sweep(const Plane& p,const Unit& u,Fixed x0,Fixed z0,Fixed x1,Fixed z1) const {
+        const int64_t bx=int64_t(u.type->footX-1)*8*Fixed::kOne,bz=int64_t(u.type->footZ-1)*8*Fixed::kOne;
+        const int64_t ax=int64_t(x0.v)-bx,az=int64_t(z0.v)-bz,ex=int64_t(x1.v)-bx,ez=int64_t(z1.v)-bz;
+        int cx=int(ax>>20),cz=int(az>>20);const int tx=int(ex>>20),tz=int(ez>>20);
+        if(!legal(p,cx,cz))return false;
+        const int64_t dx=ex-ax,dz=ez-az;
+        const int sx=dx>0?1:-1,sz=dz>0?1:-1;
+        for(int guard=0;(cx!=tx||cz!=tz)&&guard<4*kLineCells+8;++guard) {
+            const bool canX=cx!=tx,canZ=cz!=tz;
+            int64_t nx=0,nz=0;   // distance to the next boundary along each axis
+            if(canX)nx=sx>0?(int64_t(cx+1)<<20)-ax:ax-(int64_t(cx)<<20);
+            if(canZ)nz=sz>0?(int64_t(cz+1)<<20)-az:az-(int64_t(cz)<<20);
+            // Compare nx/|dx| with nz/|dz| without dividing.
+            int order=0;   // -1 x first, 1 z first, 0 corner
+            if(!canZ)order=-1;else if(!canX)order=1;
+            else {
+                const __int128 lx=__int128(nx)*(dz<0?-dz:dz),lz=__int128(nz)*(dx<0?-dx:dx);
+                order=lx<lz?-1:lx>lz?1:0;
+            }
+            if(order==0) {
+                if(!legal(p,cx+sx,cz)||!legal(p,cx,cz+sz)||!legal(p,cx+sx,cz+sz))return false;
+                cx+=sx;cz+=sz;
+            } else if(order<0) {cx+=sx;if(!legal(p,cx,cz))return false;}
+            else {cz+=sz;if(!legal(p,cx,cz))return false;}
+        }
+        return cx==tx&&cz==tz;
+    }
+    // Mobile bodies at an origin (static legality is checked separately).
+    bool bodiesFree(const Unit& u,int x,int z) const {
+        const int fx=u.type->footX,fz=u.type->footZ;
+        if(w.occW_>0) {
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=x+i,cz=z+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                if(o&&o!=u.id)return false;
+            }
+        }
+        if(placementPlane())return w.mobilePlacement(u,x,z,false);
+        const int foot=std::clamp(std::max(fx,fz),1,15);
+        return w.cellFree(centre(x,fx),centre(z,fz),u.id,foot);
+    }
+    bool stepFree(const Unit& u,int ox,int oz,int nx,int nz) const {
+        if(nx==ox&&nz==oz)return true;
+        if(!bodiesFree(u,nx,nz))return false;
+        return nx==ox||nz==oz||(bodiesFree(u,nx,oz)&&bodiesFree(u,ox,nz));
+    }
+    void hold(Unit& u,Member& m) {
+        if(m.state!=Holding)m.nextDetour=8;
+        // Holding is a full stop with a constant heading: no creeping, no
+        // re-aiming. The body wakes when a candidate cell frees (rechecked
+        // against occupancy each update), not on a timer.
+        u.speed=Fixed();u.turnReqBam=0;
+        if(m.state!=Holding)++stats.holds;
+        m.state=Holding;++m.held;
+    }
+    void complete(Unit& u,Member& m,bool contact) {
+        auto& leg=u.orders[World::currentLeg(u.orders)];
+        u.speed=Fixed();u.turnReqBam=0;
+        leg.mission.pending|=0x500;
+        leg.controller=0;leg.navigationExhausted=true;
+        if(uint32_t(u.routeStamp)<=w.tickCounter_-6u)u.routeStamp=0;
+        ++stats.arrivals;if(contact)++stats.contactArrivals;
+        m.state=Arrived;
+        leave(u.id);
+    }
+    void trapped(Unit& u,Member& m) {
+        // No legal route exists for this footprint: stop at once (zero speed,
+        // constant heading, no probing). The order is kept for a grace
+        // period so a gate opening or a wall coming down (a new static
+        // epoch) resumes it; after that the leg is retired as Retail retires
+        // an unreachable goal. Later queued legs proceed.
+        if(m.state!=Trapped) {m.state=Trapped;m.trappedSince=w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;}
+        u.speed=Fixed();u.turnReqBam=0;
+        if(w.tickCounter_-m.trappedSince<kTrappedRetire)return;
+        leave(u.id);
+        w.dropLeg(u);
+        u.routeStamp=-1;
+    }
+    // A body that starts on an origin the static plane rejects (inside a
+    // yard, or on a cell a structure now covers) leaves it the native way.
+    void escape(Unit& u,Fixed maximum,const Order& leg) {
+        ++stats.escapes;
+        const auto [tx,tz]=target(leg);
+        const RetailSteeringPoint start{Fixed::fromInt(u.x.floorInt()),Fixed::fromInt(u.z.floorInt())},end{tx,tz};
+        const Bam heading=u.heading;const Fixed x=u.x,z=u.z;
+        const auto d=w.steerGround(u,start,end,end,maximum);
+        w.commitGroundStep(u,d.s,d.c);
+        // A refused escape step is a stop, not a turn in place.
+        if(u.x==x&&u.z==z) {u.heading=heading;u.speed=Fixed();u.turnReqBam=0;}
+    }
+    // Steepest legal descent, measured per unit of path length (an
+    // orthogonal drop of 5 and a diagonal drop of 7 are equally steep).
+    // Ties -- common on open ground, where a region field is "distance to the
+    // nearest goal of anyone" -- go to the neighbour nearest this member's
+    // OWN goal, then direction order. Plain first-found tie breaking pulled
+    // bodies toward other members' goals and folded formations into a file.
+    // Potential strictly decreases, so no step can cycle.
+    int descend(const Plane& p,const Field& f,int x,int z,int goal) const {
+        const int W=width(),gx=goal%W,gz=goal/W;
+        const uint16_t here=f.potential[size_t(z)*W+x];
+        int best=-1;int64_t bestSlope=0,bestD=0;
+        for(const auto& d:kDirections) {
+            if(!step(p,x,z,d[0],d[1]))continue;
+            const int cell=(z+d[1])*W+x+d[0];
+            const uint16_t v=f.potential[size_t(cell)];
+            if(v>=here)continue;
+            const int64_t slope=int64_t(here-v)*(d[0]&&d[1]?kOrthogonal:kDiagonal);
+            const int64_t dx=gx-x-d[0],dz=gz-z-d[1],dd=dx*dx+dz*dz;
+            if(best<0||slope>bestSlope||(slope==bestSlope&&dd<bestD)) {best=cell;bestSlope=slope;bestD=dd;}
+        }
+        return best;
+    }
+    Group::Slots& slotsFor(Group& g,const Plane& p,int seed,int count,int fx,int fz) {
+        auto& s=g.slots[seed];
+        if(s.built)return s;
+        s.built=true;
+        const Field& f=*g.field;
+        const int W=width(),H=height(),sx=seed%W,sz=seed/W;
+        const int foot=std::max(fx,fz);
+        for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
+            const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
+            const int x1=std::min(W-1,sx+radius),z1=std::min(H-1,sz+radius);
+            std::vector<std::pair<uint16_t,int>> order;
+            for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
+                const int cell=z*W+x;
+                if(legal(p,x,z)&&f.potential[size_t(cell)]!=kUnreached)order.push_back({f.potential[size_t(cell)],cell});
+            }
+            std::sort(order.begin(),order.end());
+            const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
+            std::vector<uint8_t> used(size_t(bw)*bh,0);
+            s.cells.clear();
+            for(const auto& [potential,cell]:order) {
+                const int x=cell%W-x0,z=cell/W-z0;
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used[size_t(z+j)*bw+x+i];
+                if(!clear)continue;
+                for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used[size_t(z+j)*bw+x+i]=1;
+                s.cells.push_back(cell);s.reach=potential;
+                if(int(s.cells.size())>=count)break;
+            }
+            if(int(s.cells.size())>=count)break;
+        }
+        s.taken.assign(s.cells.size(),0);
+        return s;
+    }
+    // Members sharing one point claim the innermost free slot once they are
+    // close, so arrivals pack from the point outward.
+    void claimSlot(const Unit& u,Member& m,Group& g,const Plane& p,int here) {
+        if(m.requested<0)return;
+        bool nearest=false;
+        if(m.slot>=0) {
+            // A claimed slot walled off by bodies that settled first is
+            // re-chosen every 20 held updates: take the nearest free slot,
+            // which fills the area from the side this member stands on.
+            if(m.state!=Holding||m.held<20||m.held%20)return;
+            auto found=g.slots.find(m.requested);
+            if(found==g.slots.end())return;
+            found->second.taken[size_t(m.slot)]=0;
+            slotCells(m,u.type->footX,u.type->footZ,false);
+            m.slot=-1;nearest=true;
+        }
+        const auto sharing=g.sharing.find(m.requested);
+        if(sharing==g.sharing.end()||sharing->second<2)return;
+        auto& s=slotsFor(g,p,m.requested,sharing->second,u.type->footX,u.type->footZ);
+        const uint16_t potential=g.field->potential[size_t(here)];
+        const int foot=std::max(u.type->footX,u.type->footZ);
+        if(potential==kUnreached||potential>uint32_t(s.reach)+uint32_t(12*kOrthogonal*foot))return;
+        const int W=width(),ux=here%W,uz=here/W;
+        // Back-to-front: claim the free slot farthest along this member's
+        // own approach direction (ties: nearest the approach axis). Every
+        // later arrival then finds the cells between it and its slot still
+        // empty, so nobody has to cross a settled body. A member re-claiming
+        // after being walled off takes the nearest free slot instead.
+        const int seedX=m.requested%W,seedZ=m.requested/W;
+        const int64_t ax=seedX-ux,az=seedZ-uz;
+        int best=-1;int64_t bestScore=0,bestSide=0;
+        for(size_t i=0;i<s.cells.size();++i) {
+            if(s.taken[i]||!slotFree(m,s.cells[i],u.type->footX,u.type->footZ))continue;
+            const int64_t cx=s.cells[i]%W,cz=s.cells[i]/W;
+            int64_t score,side;
+            if(nearest) {score=-((cx-ux)*(cx-ux)+(cz-uz)*(cz-uz));side=0;}
+            else {
+                score=(cx-seedX)*ax+(cz-seedZ)*az;
+                side=std::abs((cx-seedX)*az-(cz-seedZ)*ax);
+            }
+            if(best<0||score>bestScore||(score==bestScore&&side<bestSide)) {best=int(i);bestScore=score;bestSide=side;}
+        }
+        if(best<0)return;
+        s.taken[size_t(best)]=1;m.slot=best;m.goal=s.cells[size_t(best)];m.lineCell=-1;
+        slotCells(m,u.type->footX,u.type->footZ,true);
+    }
+    void move(Unit& u,Fixed maximum) {
+        auto found=members.find(u.id);
+        const auto& leg=u.orders[World::currentLeg(u.orders)];
+        if(leg.mission.pending&0x500||!leg.controller) {w.brakeGround(u);return;}
+        // A new controller, or terrain that changed since this body was
+        // found trapped, means a fresh registration (new goal resolution).
+        if(found==members.end()||found->second.controller!=leg.controller||
+           (found->second.state==Trapped&&found->second.trappedEpoch!=epoch)) {
+            registerMove(u);found=members.find(u.id);
+            if(found==members.end()) {w.brakeGround(u);return;}
+        }
+        auto& m=found->second;
+        ++stats.moves;
+        if(m.goal<0) {trapped(u,m);return;}
+        auto group=groups.find(m.group);
+        if(group==groups.end()) {registerMove(u);w.brakeGround(u);return;}
+        auto& g=group->second;g.lastUse=w.tickCounter_;
+        const auto& p=plane(g.plane);
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        if(!legal(p,ox,oz)) {escape(u,maximum,leg);return;}
+        // A goal origin can stop being legal (a building went up on it).
+        if(!legal(p,m.goal%W,m.goal/W)) {registerMove(u);w.brakeGround(u);return;}
+        const int here=oz*W+ox;
+        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+        if(f)claimSlot(u,m,g,p,here);
+        if(!m.route.empty()) {
+            while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
+            if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&m.held>=30)) {m.route.clear();m.lineCell=-1;}
+            else {
+                // Route cells are adjacent and were proven clear of still
+                // bodies cell by cell: follow them one at a time (a pulled
+                // string could clip a body the search went around).
+                const int aim=m.route.front();
+                // A short way around still bodies is walked without turning
+                // the body (a crowd shuffle), not as a U-turn and back.
+                const auto [ax,az]=stepAim(u,aim);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
+                return;
+            }
+        }
+        if(m.detour>=0) {
+            // A committed side-step runs to completion (or a short timeout):
+            // no re-deciding every update, so no back-and-forth.
+            if(here==m.detour||++m.detourTicks>45||!legal(p,m.detour%W,m.detour/W)) {m.detour=-1;m.lineCell=-1;}
+            else {
+                // Lateral shuffles keep facing the route: no heading thrash.
+                // A keep-right side-step turns the body with it: two units
+                // passing each other visibly yield (measured: not turning
+                // here gridlocked opposing columns). A flow-around shuffle in
+                // a crowd does not turn it (measured: turning there reads as
+                // spinning in a held crowd).
+                const auto [ax,az]=stepAim(u,m.detour);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace);
+                return;
+            }
+        }
+        const int goalX=m.goal%W,goalZ=m.goal/W;
+        const Fixed gx=centre(goalX,fx),gz=centre(goalZ,fz);
+        // Progress is the integer distance still to go: field potential, or
+        // squared cells to the own goal once that is in a straight line.
+        {
+            const uint32_t left=uint32_t(std::min<int64_t>(0xfffffff,
+                f&&f->potential[size_t(here)]!=kUnreached&&f->potential[size_t(here)]>0
+                    ? int64_t(f->potential[size_t(here)])*64
+                    : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
+            if(left<m.progress) {m.progress=left;m.stalled=0;m.detourCount=0;} else ++m.stalled;
+            if(m.stalled>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
+        }
+        Fixed aimX=gx,aimZ=gz;
+        bool direct=false;
+        if(here==m.goal)direct=true;
+        else {
+            if(m.lineCell!=here) {
+                m.lineCell=here;
+                m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=kLineCells&&sweep(p,u,u.x,u.z,gx,gz);
+            }
+            direct=m.line;
+        }
+        if(!direct) {
+            if(!f) {m.state=Waiting;w.brakeGround(u);return;}
+            const uint16_t potential=f->potential[size_t(here)];
+            if(potential==kUnreached) {trapped(u,m);return;}
+            // String-pull along the descent chain: aim at the farthest of the
+            // next few cells reachable in a straight legal line.
+            int cell=descend(p,*f,ox,oz,m.goal);
+            if(cell<0) {
+                // Inside the goal region the field is flat (potential 0) but
+                // this member's own goal is not in line: walk its seed set by
+                // re-entering the goal's neighbourhood through the nearest
+                // legal neighbour that reduces octile distance to the goal.
+                int best=-1;int64_t bestD=int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz);
+                for(const auto& d:kDirections) {
+                    if(!step(p,ox,oz,d[0],d[1]))continue;
+                    const int64_t dd=int64_t(goalX-ox-d[0])*(goalX-ox-d[0])+int64_t(goalZ-oz-d[1])*(goalZ-oz-d[1]);
+                    if(dd<bestD) {bestD=dd;best=(oz+d[1])*W+ox+d[0];}
+                }
+                if(best<0) {hold(u,m);return;}
+                cell=best;
+            } else {
+                int chain=cell;
+                for(int k=0;k<3;++k) {
+                    const int next=descend(p,*f,chain%W,chain/W,m.goal);
+                    if(next<0)break;
+                    if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
+                    chain=next;
+                }
+                cell=chain;
+            }
+            aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
+        }
+        drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
+    }
+    void drive(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
+               bool towardGoal=false,bool face=true) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        int64_t dx=int64_t(aimX.v)-u.x.v,dz=int64_t(aimZ.v)-u.z.v;
+        int64_t length=isqrtFloor(uint64_t(dx*dx+dz*dz));
+        if(final&&length<=Fixed::kOne/2) {
+            // Exactly on the goal centre (sub-pixel): this leg is complete.
+            complete(u,m,false);return;
+        }
+        // Heading: turn toward the travel direction at the authored rate.
+        // Motion follows the legal direction exactly; speed is limited while
+        // the body still faces away from it, so turning never sweeps the
+        // footprint off the proved line (no orbiting, no wall pushing).
+        const Fixed multiplier=w.groundTerrainMultiplier(u);
+        const auto wanted=retailHeadingToPort(uint16_t(retailDirection(u.x-aimX,u.z-aimZ).v));
+        const int32_t diff=retailTurnRequest(wanted,u.heading);
+        const int32_t turn=std::max(int32_t(1),int32_t(int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*multiplier.v/65536));
+        Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
+        const int32_t facing=std::abs(diff);
+        if(facing>12288)cap=Fixed::raw(cap.v/8);
+        else if(facing>4096)cap=Fixed::raw(cap.v/2);
+        Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
+        if(u.speed>cap)speed=fxMax(cap,u.speed-u.type->brake*multiplier);
+        if(speed<=Fixed())speed=Fixed::raw(std::max(1,cap.v/8));
+        int64_t travel=std::min<int64_t>(speed.v,length);
+        auto proposal=[&](int64_t ax,int64_t az,int64_t len,int64_t along) {
+            return std::pair{Fixed::raw(int32_t(len?ax*along/len:0)),Fixed::raw(int32_t(len?az*along/len:0))};
+        };
+        auto [sx,sz]=proposal(dx,dz,length,travel);
+        int nx=footprintOrigin(u.x+sx,fx),nz=footprintOrigin(u.z+sz,fz);
+        if(!stepFree(u,ox,oz,nx,nz)) {
+            // Blocked by a body. Flow around it through any other free cell
+            // that is strictly closer to the goal (field descent), committing
+            // to that neighbour for this update; otherwise hold still.
+            bool moved=false;
+            if(f) {
+                // Direct-line members measure progress toward their own goal
+                // cell; field followers by the group potential.
+                const int goalX=m.goal%W,goalZ=m.goal/W;
+                auto metric=[&](int x,int z)->int64_t {
+                    if(towardGoal)return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
+                    return f->potential[size_t(z*W+x)];
+                };
+                const int64_t here=metric(ox,oz);
+                std::array<std::pair<int64_t,int>,8> options{};int count=0;
+                for(int k=0;k<8;++k) {
+                    const auto& d=kDirections[size_t(k)];
+                    if(!step(p,ox,oz,d[0],d[1]))continue;
+                    if(f->potential[size_t((oz+d[1])*W+ox+d[0])]==kUnreached)continue;
+                    const int64_t v=metric(ox+d[0],oz+d[1]);
+                    if(v<here)options[size_t(count++)]={v,k};
+                }
+                std::sort(options.begin(),options.begin()+count);
+                for(int i=0;i<count&&!moved;++i) {
+                    const auto& d=kDirections[size_t(options[size_t(i)].second)];
+                    if(!stepFree(u,ox,oz,ox+d[0],oz+d[1]))continue;
+                    const auto [cx,cz]=stepAim(u,(oz+d[1])*W+ox+d[0]);
+                    dx=int64_t(cx.v)-u.x.v;dz=int64_t(cz.v)-u.z.v;
+                    length=isqrtFloor(uint64_t(dx*dx+dz*dz));
+                    travel=std::min<int64_t>(speed.v,length);
+                    std::tie(sx,sz)=proposal(dx,dz,length,travel);
+                    nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);
+                    if(stepFree(u,ox,oz,nx,nz)) {
+                        // Commit to finishing this step into the cell
+                        // (hysteresis): no re-deciding mid-cell, and the body
+                        // keeps facing its route while it shuffles.
+                        moved=true;++stats.slides;face=false;
+                        m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;
+                    }
+                }
+            }
+            if(!moved) {
+                if(contactArrival(u,m)) {complete(u,m,true);return;}
+                if(f&&m.detour<0)sidestep(u,m,p,*f,ox,oz,nx,nz);
+                // A body walled in by STILL bodies (settled arrivals, a held
+                // queue, idle units) plans a short committed detour around
+                // them; moving traffic is waited for, not planned around.
+                if(f&&m.detour<0&&m.route.empty()&&m.held>=m.nextDetour&&blockedBySettled(u,nx,nz)) {
+                    // Back off geometrically after each attempt: a crowd that
+                    // stays jammed stops re-planning instead of shuffling.
+                    const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
+                    ++m.detourCount;
+                    if(localDetour(u,m,p,f,towardGoal)) {m.nextDetour=wait;u.speed=Fixed();return;}
+                    m.nextDetour=m.held+wait;
+                }
+                hold(u,m);return;
+            }
+        }
+        u.speed=speed;
+        const Fixed beforeX=u.x,beforeZ=u.z;
+        w.commitGroundStep(u,sx,sz,true);
+        // The heading only turns with an actual step: a refused step is a
+        // hold, and a held body keeps a constant heading.
+        if(u.x==beforeX&&u.z==beforeZ) {hold(u,m);return;}
+        // A small dead band keeps the body from twitching left and right as
+        // its string-pulled aim shifts by a cell in a crowd; motion is exact
+        // regardless, and a real course change (> ~5.6 deg) still turns.
+        if(face&&std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
+        u.turnReqBam=diff;
+        m.state=Moving;m.held=0;
+    }
+    // Is the cell this body wants held by a body that will not move on its
+    // own (idle, arrived, or not a Legion mover)? A queue of members waiting
+    // for each other is not: it drains by itself and must not be re-planned.
+    bool blockedBySettled(const Unit& u,int nx,int nz) const {
+        for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+            const int cx=nx+i,cz=nz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            if(!o||o==u.id)continue;
+            const auto peer=members.find(o);
+            if(peer==members.end()||peer->second.state==Arrived)return true;
+        }
+        return false;
+    }
+    static int z0goal(int local,int S,int R,int ox,int oz,int W) {return (oz+local/S-R)*W+ox+local%S-R;}
+    // Bounded breadth-first search (window of radius kDetourCells) over
+    // statically legal origins whose footprint touches no STILL body. The
+    // target is the own goal if inside, else the reachable cell that most
+    // reduces the distance still to go. The route is committed.
+    bool localDetour(const Unit& u,Member& m,const Plane& p,const Field* f,bool towardGoal) {
+        constexpr int R=kDetourCells,S=2*R+1;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        const int goalX=m.goal%W,goalZ=m.goal/W;
+        auto metric=[&](int x,int z)->int64_t {
+            if(!towardGoal&&f) {
+                const uint16_t v=f->potential[size_t(z*W+x)];
+                return v==kUnreached?INT64_MAX:int64_t(v)*64;
+            }
+            return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
+        };
+        auto still=[&](int cx,int cz) {
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
+            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            if(!o||o==u.id)return false;
+            const Unit* other=w.unit(o);
+            if(!other||other->speed!=Fixed())return false;
+            if(other->orders.empty())return true;
+            const auto peer=members.find(o);
+            return peer==members.end()||peer->second.state==Holding||peer->second.state==Arrived;
+        };
+        auto open=[&](int x,int z) {
+            if(!legal(p,x,z))return false;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)if(still(x+i,z+j))return false;
+            return true;
+        };
+        std::vector<int16_t> parent(size_t(S)*S,-1);
+        std::vector<int> queue;queue.reserve(size_t(S)*S);
+        const int start=R*S+R;parent[size_t(start)]=int16_t(start);queue.push_back(start);
+        const int64_t current=metric(ox,oz);
+        int best=-1;int64_t bestMetric=current;
+        for(size_t head=0;head<queue.size();++head) {
+            const int local=queue[head];
+            const int lx=local%S,lz=local/S,x=ox+lx-R,z=oz+lz-R;
+            if(z*W+x==m.goal) {best=local;break;}
+            const int64_t v=local==start?current:metric(x,z);
+            if(v<bestMetric) {bestMetric=v;best=local;}
+            for(const auto& d:kDirections) {
+                const int nlx=lx+d[0],nlz=lz+d[1];
+                if(nlx<0||nlz<0||nlx>=S||nlz>=S)continue;
+                const int next=nlz*S+nlx;
+                if(parent[size_t(next)]>=0)continue;
+                if(!step(p,x,z,d[0],d[1])||!open(x+d[0],z+d[1]))continue;
+                if(d[0]&&d[1]&&(!open(x+d[0],z)||!open(x,z+d[1])))continue;
+                parent[size_t(next)]=int16_t(local);queue.push_back(next);
+            }
+        }
+        stats.detourCells+=queue.size();
+        if(best<0||best==start)return false;
+        // Only a real gain (about two cells) is worth committing to.
+        if(z0goal(best,S,R,ox,oz,W)!=m.goal) {
+            const bool field=!towardGoal&&f;
+            const int64_t gain=field?current-bestMetric
+                :int64_t(isqrtFloor(uint64_t(current)))-int64_t(isqrtFloor(uint64_t(bestMetric)));
+            if(gain<(field?int64_t(2*kOrthogonal)*64:2))return false;
+        }
+        std::vector<int> path;
+        for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-R)*W+ox+c%S-R);
+        std::reverse(path.begin(),path.end());
+        m.route=std::move(path);m.routeTicks=0;++stats.detours;
+        m.state=Holding;m.held=0;  // stopped this update; the route starts next
+        return true;
+    }
+    // Opposing traffic: after a short hold, both bodies commit to a lateral
+    // step to their own right (keep-right), so head-on pairs pass instead
+    // of pushing. Same-direction queues only side-step after a long hold.
+    void sidestep(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz,int nx,int nz) {
+        if(m.held<6)return;
+        const int W=width();
+        int blocker=0;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        for(int j=0;j<fz&&!blocker;++j)for(int i=0;i<fx&&!blocker;++i) {
+            const int cx=nx+i,cz=nz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            if(o&&o!=u.id)blocker=o;
+        }
+        const Unit* other=blocker?w.unit(blocker):nullptr;
+        const bool opposing=other&&!other->orders.empty()&&
+            std::abs(retailTurnRequest(other->heading,u.heading))>16384;
+        // Same-direction queues never side-step: they drain by themselves.
+        // (Purposeful side-steps for them cost opposing-column throughput.)
+        if(!opposing)return;
+        int dx=nx-ox,dz=nz-oz;
+        if(!dx&&!dz)return;
+        dx=std::clamp(dx,-1,1);dz=std::clamp(dz,-1,1);
+        const uint16_t here=f.potential[size_t(oz*W+ox)];
+        const std::array<std::array<int,2>,2> sides{{{-dz,dx},{dz,-dx}}};
+        for(int k=0;k<1;++k) {
+            const int sx=sides[size_t(k)][0],sz=sides[size_t(k)][1];
+            if(!step(p,ox,oz,sx,sz))continue;
+            const int cell=(oz+sz)*W+ox+sx;
+            if(f.potential[size_t(cell)]>uint32_t(here)+kDiagonal)continue;
+            if(!stepFree(u,ox,oz,ox+sx,oz+sz))continue;
+            m.detour=cell;m.detourTicks=0;m.detourFace=true;return;
+        }
+    }
+    // A body pressed against settled bodies inside its goal's area has
+    // arrived: the destination is an area, and the cells nearer the point
+    // are taken. Distinct-goal members use one body width; members sharing a
+    // point use the packed disc that many bodies of this size occupy.
+    bool contactArrival(const Unit& u,const Member& m) const {
+        if(m.stalled<20)return false;
+        auto group=groups.find(m.group);
+        if(group==groups.end())return false;
+        const auto sharing=group->second.sharing.find(m.goal);
+        const int count=sharing==group->second.sharing.end()?1:sharing->second;
+        const int body=std::max(u.type->footX,u.type->footZ)*16;
+        // Packed disc of `count` bodies: body*sqrt(count/pi), plus a body.
+        const int64_t radius=count>1?int64_t(body)+int64_t(body)*isqrtFloor(uint64_t(count)*10000/31416)/100:body;
+        const int W=width();
+        const Fixed gx=centre(m.goal%W,u.type->footX),gz=centre(m.goal/W,u.type->footZ);
+        const int64_t dx=(int64_t(u.x.v)-gx.v)>>16,dz=(int64_t(u.z.v)-gz.v)>>16;
+        if(dx*dx+dz*dz>radius*radius)return false;
+        if(count==1) {
+            // A distinct goal is only "full" if another body stands on it;
+            // otherwise settling short could plug the lane a neighbour needs.
+            bool taken=false;
+            const int gx0=m.goal%W,gz0=m.goal/W;
+            for(int j=0;j<u.type->footZ&&!taken;++j)for(int i=0;i<u.type->footX&&!taken;++i) {
+                const int cx=gx0+i,cz=gz0+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                taken=o&&o!=u.id;
+            }
+            if(!taken)return false;
+        }
+        // Only settled neighbours (idle, or already arrived) make an area full.
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        bool settled=false;
+        for(int j=-1;j<=fz&&!settled;++j)for(int i=-1;i<=fx&&!settled;++i) {
+            const int cx=ox+i,cz=oz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            if(!o||o==u.id)continue;
+            const Unit* other=w.unit(o);
+            if(!other||other->player!=u.player)continue;
+            if(other->orders.empty()||other->orders[World::currentLeg(other->orders)].mission.pending&0x500)settled=true;
+            // Members of a shared point that are themselves pressed still
+            // inside the area count as its filled part.
+            else if(count>1) {
+                const auto peer=members.find(o);
+                settled=peer!=members.end()&&peer->second.group==m.group&&peer->second.stalled>=20;
+            }
+        }
+        return settled;
+    }
+    uint64_t checksum() const {
+        uint64_t h=mix(0x4c4547494f4eull,epoch);
+        h=mix(h,uint64_t(nextGroup));
+        for(const auto& [id,g]:groups) {
+            h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
+            h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
+            for(int s:g.seeds)h=mix(h,uint64_t(s));
+            h=mix(h,g.lastUse);
+            h=mix(h,g.built);
+            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);}
+            for(const auto& [seed,slot]:g.slots) {
+                h=mix(h,uint64_t(seed));
+                for(size_t i=0;i<slot.cells.size();++i)h=mix(h,uint64_t(slot.cells[i])<<1|slot.taken[i]);
+            }
+        }
+        for(const auto& [key,point]:points) {
+            h=mix(h,uint64_t(std::get<0>(key)));h=mix(h,std::get<1>(key));
+            h=mix(h,uint32_t(std::get<2>(key)));h=mix(h,uint32_t(std::get<3>(key)));h=mix(h,uint64_t(point.refs));
+            for(int c:point.cells)h=mix(h,uint64_t(c));
+        }
+        for(const auto& [id,m]:members) {
+            h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
+            h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
+            h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
+            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);
+            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
+            h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
+        }
+        return h;
+    }
+};
+
+LegionNavigator::LegionNavigator(World& w):impl_(std::make_unique<Impl>(w)) {}
+LegionNavigator::~LegionNavigator()=default;
+bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
+void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
+void LegionNavigator::cancel(int id) {impl_->leave(id);}
+void LegionNavigator::tick() {impl_->tick();}
+void LegionNavigator::move(Unit& u,Fixed maximum) {impl_->move(u,maximum);}
+uint64_t LegionNavigator::checksum() const {return impl_->checksum();}
+LegionNavigator::Stats LegionNavigator::stats() const {
+    auto s=impl_->stats;
+    s.bytes=0;
+    for(const auto& p:impl_->planes)s.bytes+=p.legal.capacity();
+    for(const auto& [id,g]:impl_->groups) {
+        s.bytes+=g.seeds.capacity()*sizeof(int);
+        if(g.field) {
+            s.bytes+=g.field->potential.capacity()*sizeof(uint16_t);
+            for(const auto& b:g.field->buckets)s.bytes+=b.capacity()*sizeof(int);
+        }
+    }
+    s.bytes+=impl_->members.size()*(sizeof(Impl::Member)+48);
+    return s;
+}
+bool LegionNavigator::staticLegal(const Unit& u,int x,int z) {
+    if(!u.type)return false;
+    const int index=impl_->planeFor(*u.type);
+    return impl_->legal(impl_->plane(index),x,z);
+}
+int LegionNavigator::unitState(int id) const {
+    const auto found=impl_->members.find(id);
+    return found==impl_->members.end()?0:int(found->second.state);
+}
+int LegionNavigator::unitGroup(int id) const {
+    const auto found=impl_->members.find(id);
+    return found==impl_->members.end()?0:found->second.group;
+}
+}
+namespace tak::sim {
+int LegionNavigator::fieldPotential(int id,int x,int z) const {
+    const auto found=impl_->members.find(id);
+    if(found==impl_->members.end())return -1;
+    const auto group=impl_->groups.find(found->second.group);
+    if(group==impl_->groups.end()||!group->second.field||!group->second.field->done)return -1;
+    if(x<0||z<0||x>=impl_->width()||z>=impl_->height())return -1;
+    return group->second.field->potential[size_t(z)*impl_->width()+x];
+}
+}

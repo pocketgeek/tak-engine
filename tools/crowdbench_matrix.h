@@ -254,6 +254,15 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
             metric("retail_plus_full_updates",s.fullUpdates);
         }
     }
+    if constexpr(requires {world.legionStats();}) {
+        const auto l=world.legionStats();
+        metric("legion_plane_builds",l.planeBuilds);metric("legion_field_work",l.fieldWork);
+        metric("legion_fields_built",l.fieldsBuilt);metric("legion_field_evictions",l.fieldEvictions);
+        metric("legion_groups",l.groups);metric("legion_registrations",l.registrations);
+        metric("legion_holds",l.holds);metric("legion_slides",l.slides);metric("legion_arrivals",l.arrivals);
+        metric("legion_contact_arrivals",l.contactArrivals);metric("legion_trapped",l.trapped);
+        metric("legion_escapes",l.escapes);metric("legion_bytes",l.bytes);
+    }
     const auto f=world.flowStats();
     metric("flow_snapshot_work",f.snapshotWork);metric("flow_field_work",f.fieldWork);
     metric("flow_local_work",f.localWork);metric("flow_local_deliveries",f.localDeliveries);

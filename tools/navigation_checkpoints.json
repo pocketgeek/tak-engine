@@ -102,5 +102,31 @@
     "mode=2 boat=1 tick=3000 hash=db12a048d9ef03c9",
     "mode=2 boat=1 tick=3300 hash=c23e84fa7f51dba5",
     "mode=2 boat=1 tick=3600 hash=d4c9fa414845cf3a"
+  ],
+  "legion": [
+    "mode=4 boat=0 tick=300 hash=7ecc0c73fb27d9fa",
+    "mode=4 boat=0 tick=600 hash=89259c4b5f15c979",
+    "mode=4 boat=0 tick=900 hash=cdfb45e388532e5c",
+    "mode=4 boat=0 tick=1200 hash=58eae71713c82bd8",
+    "mode=4 boat=0 tick=1500 hash=6bdf4ba6efaed215",
+    "mode=4 boat=0 tick=1800 hash=44b167b0460213d4",
+    "mode=4 boat=0 tick=2100 hash=26e16210291cecbd",
+    "mode=4 boat=0 tick=2400 hash=14ab73f25e40cc91",
+    "mode=4 boat=0 tick=2700 hash=5848dde51073b190",
+    "mode=4 boat=0 tick=3000 hash=19a2083b7f982c82",
+    "mode=4 boat=0 tick=3300 hash=1f17ffb62ede5f36",
+    "mode=4 boat=0 tick=3600 hash=29e95a76ad15e3cd",
+    "mode=4 boat=1 tick=300 hash=c41a47a26ae0552c",
+    "mode=4 boat=1 tick=600 hash=ac395f85024564f7",
+    "mode=4 boat=1 tick=900 hash=c468c5713b60ff82",
+    "mode=4 boat=1 tick=1200 hash=03da8b79b3844519",
+    "mode=4 boat=1 tick=1500 hash=190723dcd0c8d475",
+    "mode=4 boat=1 tick=1800 hash=0f6f7eee5f9a3f69",
+    "mode=4 boat=1 tick=2100 hash=6b73f58d93d20315",
+    "mode=4 boat=1 tick=2400 hash=cb19120d6551abeb",
+    "mode=4 boat=1 tick=2700 hash=e4da03261cee0f29",
+    "mode=4 boat=1 tick=3000 hash=0f6661f170d32131",
+    "mode=4 boat=1 tick=3300 hash=98ee014d8523c5d6",
+    "mode=4 boat=1 tick=3600 hash=3ca97a0bc61bdc85"
   ]
 }

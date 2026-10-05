@@ -102,6 +102,7 @@ add_library(tak-formats
   src/sim/pathsearch.cpp
   src/sim/retailplus.cpp
   src/sim/retailplusnavigator.cpp
+  src/sim/legion.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
@@ -338,15 +339,19 @@ add_executable(crowdbench tools/crowdbench.cpp)
 add_executable(navigation_telemetry_test tools/navigation_telemetry_test.cpp)
 target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
+add_executable(legion_world_test tools/legion_world_test.cpp)
+target_link_libraries(legion_world_test PRIVATE tak-formats)
+foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota determinism formation)
+  add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
+endforeach()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; the other modes run the same checks with --report (comparison
-# evidence, never failing). The Legion assertions stay DISABLED until the Legion
-# sim (src/sim/legion*) is integrated; the coordinator removes that property.
+# evidence, never failing).
 add_executable(legion_acceptance_test tools/legion_acceptance_test.cpp)
 target_link_libraries(legion_acceptance_test PRIVATE tak-formats)
 foreach(legion_check singleunit group jagged trapped crowdheld)
   add_test(NAME legion_acceptance_${legion_check}_legion COMMAND legion_acceptance_test legion ${legion_check})
-  set_tests_properties(legion_acceptance_${legion_check}_legion PROPERTIES DISABLED TRUE TIMEOUT 600)
+  set_tests_properties(legion_acceptance_${legion_check}_legion PROPERTIES TIMEOUT 600)
   foreach(legion_mode retail retail-plus flowfield cooperative)
     add_test(NAME legion_acceptance_${legion_check}_${legion_mode}
              COMMAND legion_acceptance_test ${legion_mode} ${legion_check} --report)
