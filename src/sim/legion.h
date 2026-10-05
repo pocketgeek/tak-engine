@@ -41,6 +41,8 @@ public:
     // 3 waiting for its field) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
+    // Test hook: the unit's group field potential at an origin (-1 if none).
+    int fieldPotential(int id,int originX,int originZ) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -91,6 +91,7 @@ struct LegionNavigator::Impl {
         int slot=-1;                      // claimed slot index (shared goals)
         int detour=-1;                    // committed side-step cell
         uint32_t detourTicks=0;
+        bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
         std::vector<int> route;           // committed local detour around still bodies
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
@@ -499,7 +500,7 @@ struct LegionNavigator::Impl {
         return nx==ox||nz==oz||(bodiesFree(u,nx,oz)&&bodiesFree(u,ox,nz));
     }
     void hold(Unit& u,Member& m) {
-        if(m.state!=Holding&&!m.detourCount)m.nextDetour=8;
+        if(m.state!=Holding)m.nextDetour=8;
         // Holding is a full stop with a constant heading: no creeping, no
         // re-aiming. The body wakes when a candidate cell frees (rechecked
         // against occupancy each update), not on a timer.
@@ -542,18 +543,25 @@ struct LegionNavigator::Impl {
         // A refused escape step is a stop, not a turn in place.
         if(u.x==x&&u.z==z) {u.heading=heading;u.speed=Fixed();u.turnReqBam=0;}
     }
-    // Steepest legal descent from an origin, deterministic ties (orthogonal
-    // first, then direction order). Returns -1 when nothing is lower.
-    int descend(const Plane& p,const Field& f,int x,int z,int skip=-1) const {
-        const int W=width();
+    // Steepest legal descent, measured per unit of path length (an
+    // orthogonal drop of 5 and a diagonal drop of 7 are equally steep).
+    // Ties -- common on open ground, where a region field is "distance to the
+    // nearest goal of anyone" -- go to the neighbour nearest this member's
+    // OWN goal, then direction order. Plain first-found tie breaking pulled
+    // bodies toward other members' goals and folded formations into a file.
+    // Potential strictly decreases, so no step can cycle.
+    int descend(const Plane& p,const Field& f,int x,int z,int goal) const {
+        const int W=width(),gx=goal%W,gz=goal/W;
         const uint16_t here=f.potential[size_t(z)*W+x];
-        int best=-1;uint16_t bestPotential=here;
+        int best=-1;int64_t bestSlope=0,bestD=0;
         for(const auto& d:kDirections) {
             if(!step(p,x,z,d[0],d[1]))continue;
             const int cell=(z+d[1])*W+x+d[0];
-            if(cell==skip)continue;
             const uint16_t v=f.potential[size_t(cell)];
-            if(v<bestPotential) {bestPotential=v;best=cell;}
+            if(v>=here)continue;
+            const int64_t slope=int64_t(here-v)*(d[0]&&d[1]?kOrthogonal:kDiagonal);
+            const int64_t dx=gx-x-d[0],dz=gz-z-d[1],dd=dx*dx+dz*dz;
+            if(best<0||slope>bestSlope||(slope==bestSlope&&dd<bestD)) {best=cell;bestSlope=slope;bestD=dd;}
         }
         return best;
     }
@@ -683,8 +691,13 @@ struct LegionNavigator::Impl {
             if(here==m.detour||++m.detourTicks>45||!legal(p,m.detour%W,m.detour/W)) {m.detour=-1;m.lineCell=-1;}
             else {
                 // Lateral shuffles keep facing the route: no heading thrash.
+                // A keep-right side-step turns the body with it: two units
+                // passing each other visibly yield (measured: not turning
+                // here gridlocked opposing columns). A flow-around shuffle in
+                // a crowd does not turn it (measured: turning there reads as
+                // spinning in a held crowd).
                 const auto [ax,az]=stepAim(u,m.detour);
-                drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace);
                 return;
             }
         }
@@ -716,7 +729,7 @@ struct LegionNavigator::Impl {
             if(potential==kUnreached) {trapped(u,m);return;}
             // String-pull along the descent chain: aim at the farthest of the
             // next few cells reachable in a straight legal line.
-            int cell=descend(p,*f,ox,oz);
+            int cell=descend(p,*f,ox,oz,m.goal);
             if(cell<0) {
                 // Inside the goal region the field is flat (potential 0) but
                 // this member's own goal is not in line: walk its seed set by
@@ -733,7 +746,7 @@ struct LegionNavigator::Impl {
             } else {
                 int chain=cell;
                 for(int k=0;k<3;++k) {
-                    const int next=descend(p,*f,chain%W,chain/W);
+                    const int next=descend(p,*f,chain%W,chain/W,m.goal);
                     if(next<0)break;
                     if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
                     chain=next;
@@ -764,8 +777,7 @@ struct LegionNavigator::Impl {
         const int32_t turn=std::max(int32_t(1),int32_t(int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*multiplier.v/65536));
         Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
         const int32_t facing=std::abs(diff);
-        if(!face)cap=Fixed::raw(cap.v/2);   // a shuffle: half speed, no turning
-        else if(facing>12288)cap=Fixed::raw(cap.v/8);
+        if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
         if(u.speed>cap)speed=fxMax(cap,u.speed-u.type->brake*multiplier);
@@ -809,11 +821,11 @@ struct LegionNavigator::Impl {
                     std::tie(sx,sz)=proposal(dx,dz,length,travel);
                     nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);
                     if(stepFree(u,ox,oz,nx,nz)) {
-                        // Commit to finishing this sidestep into the cell
+                        // Commit to finishing this step into the cell
                         // (hysteresis): no re-deciding mid-cell, and the body
                         // keeps facing its route while it shuffles.
                         moved=true;++stats.slides;face=false;
-                        m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;
+                        m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;
                     }
                 }
             }
@@ -961,7 +973,7 @@ struct LegionNavigator::Impl {
             const int cell=(oz+sz)*W+ox+sx;
             if(f.potential[size_t(cell)]>uint32_t(here)+kDiagonal)continue;
             if(!stepFree(u,ox,oz,ox+sx,oz+sz))continue;
-            m.detour=cell;m.detourTicks=0;return;
+            m.detour=cell;m.detourTicks=0;m.detourFace=true;return;
         }
     }
     // A body pressed against settled bodies inside its goal's area has
@@ -1039,7 +1051,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
-            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);
+            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
         }
@@ -1081,5 +1093,15 @@ int LegionNavigator::unitState(int id) const {
 int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
+}
+}
+namespace tak::sim {
+int LegionNavigator::fieldPotential(int id,int x,int z) const {
+    const auto found=impl_->members.find(id);
+    if(found==impl_->members.end())return -1;
+    const auto group=impl_->groups.find(found->second.group);
+    if(group==impl_->groups.end()||!group->second.field||!group->second.field->done)return -1;
+    if(x<0||z<0||x>=impl_->width()||z>=impl_->height())return -1;
+    return group->second.field->potential[size_t(z)*impl_->width()+x];
 }
 }

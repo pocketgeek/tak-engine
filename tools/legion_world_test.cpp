@@ -359,6 +359,29 @@ void quota() {
     check(s.fieldEvictions>0,"fixture did not exercise eviction");
 }
 
+void formation() {
+    // Open ground, a formation sent far (beyond the direct-line reach) to the
+    // same lattice translated: every body should travel its own row, so the
+    // army keeps its shape and nobody crosses into a neighbour's lane.
+    Fixture f(480,128);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids,rows;
+    for(int i=0;i<200;++i) {ids.push_back(f.spawn(type,32+(i/15)*3,36+(i%15)*3));rows.push_back(36+(i%15)*3);}
+    f.start();
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((420+int(i/15)*3)*16),float(rows[i]*16),false);
+    float drift=0;
+    for(int t=0;t<9000;++t) {
+        f.world.tick(1.f/30);
+        for(size_t i=0;i<ids.size();++i)drift=std::max(drift,std::abs(f.world.unit(ids[i])->z.toFloat()/16-float(rows[i])));
+    }
+    int arrived=0;for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
+    printLeft(f,ids);
+    std::printf("formation arrived=%d/%zu max_row_drift_cells=%.2f\n",arrived,ids.size(),drift);
+    check(arrived==int(ids.size()),"formation did not arrive on open ground");
+    check(drift<=1.0f,"formation members left their lanes on open ground");
+}
+
 uint64_t scenario(bool serial) {
     Fixture f(128,64,serial);
     f.rect(60,0,4,28);f.rect(60,34,4,30);
@@ -383,7 +406,7 @@ int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},
-        {"determinism",determinism}};
+        {"determinism",determinism},{"formation",formation}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
