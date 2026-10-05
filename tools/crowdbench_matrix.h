@@ -190,6 +190,35 @@ template<class W> void profiling(W& world,bool enabled) {
         world.setPathProfiling(enabled);world.resetPathDiagnostics();
     } else if(enabled)throw std::runtime_error("path profiling is unavailable in this build");
 }
+template<class W> size_t retailPlusBytes(const W& world) {
+    if constexpr(requires {world.retailPlusStats().bytes;})return world.retailPlusStats().bytes;
+    else return 0;
+}
+// Build identity carried in the result itself, so a debug or unoptimized
+// executable cannot silently stand in for a Release benchmark binary.
+inline void printBuild() {
+#if defined(__clang__)
+    const char* compiler="clang " __clang_version__;
+#elif defined(__GNUC__)
+    const char* compiler="gcc " __VERSION__;
+#elif defined(_MSC_VER)
+    const char* compiler="msvc";
+#else
+    const char* compiler="unknown";
+#endif
+#if defined(NDEBUG)
+    const bool ndebug=true;
+#else
+    const bool ndebug=false;
+#endif
+#if defined(__OPTIMIZE__)
+    const bool optimized=true;
+#else
+    const bool optimized=false;
+#endif
+    std::printf("\"build_compiler\":\"%s\",\"build_ndebug\":%s,\"build_optimized\":%s,",compiler,
+        ndebug?"true":"false",optimized?"true":"false");
+}
 template<class W> void printDiagnostics(const W& world,bool enabled) {
     auto metric=[](const char* name,uint64_t value) {
         std::printf("\"%s\":%llu,",name,(unsigned long long)value);
@@ -341,18 +370,29 @@ inline int run(const Options& o) {
         }
     };
     if(o.latency)RetailReplayProbe::telemetry(world,&latency);
+    // The observer's own map/vector growth is harness work, not simulation
+    // allocation. Pausing the global switch is only exact without workers.
+    if(o.allocations&&!o.workers)latency.quiet=&crowdbench_allocation::enabled;
     command(0,false);
     profiling(world,o.profile);
-    std::ofstream trace,unitTrace;
+    std::ofstream trace,unitTrace,wallTrace;
+    // Plotting sidecar: map extent, then every published barrier set in cells.
+    auto traceWalls=[&](int tick) {
+        if(!wallTrace.is_open())return;
+        wallTrace<<tick<<",set,0,0,0,0\n";
+        for(const auto& r:walls)wallTrace<<tick<<",wall,"<<r.x<<','<<r.z<<','<<r.w<<','<<r.h<<'\n';
+    };
     if(!o.trace.empty()) {
-        trace.open(o.trace);unitTrace.open(o.trace+".units.csv");
-        if(!trace||!unitTrace)throw std::runtime_error("cannot create trace output");
+        trace.open(o.trace);unitTrace.open(o.trace+".units.csv");wallTrace.open(o.trace+".walls.csv");
+        if(!trace||!unitTrace||!wallTrace)throw std::runtime_error("cannot create trace output");
+        wallTrace<<"tick,kind,x,z,w,h\n0,map,0,0,"<<width<<','<<height<<'\n';
+        traceWalls(0);
         trace<<"tick,world_tick,hash,retail_requests,retail_completions,retail_failures,retail_work,retail_pending,flow_requests,flow_deliveries,flow_pending\n";
         unitTrace<<"tick,id,epoch,x_raw,z_raw,speed_raw,orders,route_stamp,control_hash,front_x_raw,front_z_raw,controller,segment,exhausted,consumed,goal_x,goal_z,goal_radius,foot_x,foot_z,pending,heading_bam,turn_request_bam,blocked,route_failed,mission_events,leg_controller,leg_x_raw,leg_z_raw,leg_exhausted,leg_consumed,mission_stage,mission_pending,mission_wait_mask,mission_radius,mission_target_x_raw,mission_target_z_raw,next_x_raw,next_z_raw\n";
     }
     const double setupMs=millis(setupStart,Clock::now());
     std::vector<double> times;times.reserve(size_t(o.ticks));
-    uint64_t illegalSamples=0,peakPending=0;size_t navigationBytes=0;
+    uint64_t illegalSamples=0,peakPending=0;size_t navigationBytes=0,retailPlusPeakBytes=0;
     double eventMs=0;int allAt=-1,firstCross=-1,lastCross=-1;
     auto observeTrace=[&](int tick) {
         if(!trace.is_open())return;
@@ -386,7 +426,7 @@ inline int run(const Options& o) {
         const auto eventStart=Clock::now();
         if(o.scenario=="rapidreplacement"&&tick%120==0&&tick<=o.ticks/2)command(tick,true);
         if((o.scenario=="recovery"||o.scenario=="recovery-passive")&&tick==std::max(1,o.ticks/3)) {
-            barriers(world,width,height,walls,{});walls.clear();
+            barriers(world,width,height,walls,{});walls.clear();traceWalls(tick);
             if(o.scenario=="recovery")command(tick,false);
         }
         if(o.scenario=="dynamicobstacle"&&(tick==std::min(30,std::max(1,o.ticks/3))||tick==std::max(2,o.ticks*2/3))) {
@@ -398,7 +438,7 @@ inline int run(const Options& o) {
                 const int z=36+p*laneHeight+rows*stride/3;
                 next.push_back({middle-2,z,4,std::max(1,rows*stride/3)});
             }
-            barriers(world,width,height,walls,next);walls=std::move(next);
+            barriers(world,width,height,walls,next);walls=std::move(next);traceWalls(tick);
         }
         eventMs+=millis(eventStart,Clock::now());
         crowdbench_allocation::enabled.store(o.allocations,std::memory_order_relaxed);
@@ -407,7 +447,10 @@ inline int run(const Options& o) {
         times.push_back(millis(begin,end));
         const auto flow=world.flowStats();const auto& retail=world.pathStats();
         navigationBytes=std::max(navigationBytes,flow.bytes);
-        peakPending=std::max(peakPending,uint64_t(o.mode=="flowfield"||o.mode=="cooperative"?flow.pending:retail.pendingCount()));
+        // Shared modes can still queue native searches for unsupported
+        // movers, and Retail modes report no flow requests: count both.
+        peakPending=std::max(peakPending,uint64_t(flow.pending)+uint64_t(retail.pendingCount()));
+        if(tick%60==0||tick==o.ticks)retailPlusPeakBytes=std::max(retailPlusPeakBytes,retailPlusBytes(world));
         int arrived=0;
         for(auto& m:members) {
             const auto& u=*world.unit(m.id);
@@ -485,6 +528,11 @@ inline int run(const Options& o) {
         std::printf("\"route_request_to_delivery_ticks_received_only_p50\":%.0f,\"route_request_to_delivery_ticks_received_only_p95\":%.0f,\"route_request_to_delivery_ticks_received_only_p99\":%.0f,\"route_request_to_success_ticks_received_only_p95\":%.0f,\"route_pending_age_ticks_p95\":%.0f,\"route_pending_age_ticks_max\":%.0f,",
             percentile(latency.deliveries,.5),percentile(latency.deliveries,.95),percentile(latency.deliveries,.99),
             percentile(latency.successful,.95),percentile(ages,.95),percentile(ages,1));
+        uint64_t retired=latency.deliveries.size()+latency.pending.size();
+        for(uint64_t count:latency.cancellations)retired+=count;
+        std::printf("\"route_request_to_success_ticks_received_only_p50\":%.0f,\"route_request_to_success_ticks_received_only_p99\":%.0f,\"route_request_to_delivery_ticks_received_only_max\":%.0f,\"route_requests_censored\":%zu,\"route_lifecycle_balanced\":%s,",
+            percentile(latency.successful,.5),percentile(latency.successful,.99),percentile(latency.deliveries,1),
+            latency.pending.size(),retired==latency.sequence&&!latency.unknown?"true":"false");
         std::printf("\"route_request_to_delivery_wall_ms_received_only_p50\":%.6f,\"route_request_to_delivery_wall_ms_received_only_p95\":%.6f,\"route_request_to_delivery_wall_ms_received_only_p99\":%.6f,",
             percentile(latency.deliveryWallMs,.5),percentile(latency.deliveryWallMs,.95),percentile(latency.deliveryWallMs,.99));
     }
@@ -501,6 +549,8 @@ inline int run(const Options& o) {
     std::printf("\"retail_work_sum\":%llu,\"retail_requests\":%llu,\"retail_completions\":%llu,\"retail_failures\":%llu,\"flow_requests\":%llu,\"flow_deliveries\":%llu,\"flow_work\":%llu,\"flow_navigation_peak_bytes\":%zu,\"process_peak_rss_kib\":%ld,",
         (unsigned long long)retail.workSpent(),(unsigned long long)retail.requests(),(unsigned long long)retail.completions(),(unsigned long long)retail.failures(),
         (unsigned long long)flow.requests,(unsigned long long)flow.deliveries,(unsigned long long)(flow.snapshotWork+flow.fieldWork+flow.localWork),navigationBytes,peakRss);
+    std::printf("\"retail_plus_peak_bytes_sampled\":%zu,",retailPlusPeakBytes);
+    printBuild();
     printDiagnostics(world,o.profile);
     std::printf("\"allocation_counting\":%s,\"tick_cpp_allocation_calls\":%llu,\"tick_cpp_allocation_requested_bytes\":%llu,\"hash\":\"%016llx\"}\n",
         o.allocations?"true":"false",(unsigned long long)crowdbench_allocation::calls.load(),(unsigned long long)crowdbench_allocation::bytes.load(),(unsigned long long)world.stateHash());
