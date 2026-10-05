@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <functional>
 #include <future>
+#include <tuple>
 
 namespace tak::sim::flow {
 Service::Service():Service(Budget{}) {}
@@ -20,6 +21,43 @@ uint64_t Service::Key::checksum() const {
         mix(uint32_t(region->outerSquared));mix(region->innerWorldSquared);}
     return h;
 }
+bool Service::FieldId::operator<(const FieldId& other) const {
+    return std::tie(group,profile,tile,low.x,low.z,high.x,high.z,exits)<
+        std::tie(other.group,other.profile,other.tile,other.low.x,other.low.z,other.high.x,other.high.z,other.exits);
+}
+uint64_t Service::FieldId::checksum() const {
+    uint64_t h=1469598103934665603ull;
+    const auto mix=[&](uint64_t value){h=(h^value)*1099511628211ull;};
+    mix(group);mix(profile);mix(uint32_t(tile));mix(uint32_t(low.x));mix(uint32_t(low.z));mix(uint32_t(high.x));mix(uint32_t(high.z));
+    for(uint64_t word:exits)mix(word);
+    return h;
+}
+const Service::FieldId& Service::resolve(uint64_t group,const Group& value,int tile) {
+    const FieldKey key{group,tile};
+    if(const auto found=resolved_.find(key);found!=resolved_.end())return found->second;
+    FieldId id{group,0,tile};
+    const auto& topo=value.destination->topology();
+    auto [low,high]=value.destination->goalBox();
+    low={std::max(0,low.x),std::max(0,low.z)};high={std::min(topo.width-1,high.x),std::min(topo.height-1,high.z)};
+    const int tx=tile%topo.tilesX,tz=tile/topo.tilesX;
+    // Keep exact per-destination bias on the goal tiles and their neighbours.
+    // Farther away the bias only breaks ties between equally short component
+    // routes: aim at the enclosing goal tiles, so nearby goals share fields.
+    // Sharing the neighbour ring too (with a 16-, 8- or 64-cell box) roughly
+    // doubled 1000-unit arrivals but broke formation re-spreading after a
+    // narrow passage and left a queued-group straggler; it is not used.
+    const int gx0=low.x/kTileSize,gz0=low.z/kTileSize,gx1=high.x/kTileSize,gz1=high.z/kTileSize;
+    const int ring=std::max({gx0-tx,tx-gx1,gz0-tz,tz-gz1,0});
+    if(budget_.shareDistant&&low.x<=high.x&&low.z<=high.z&&ring>=2) {
+        id.group=0;id.profile=value.key.profile;
+        id.low={gx0*kTileSize,gz0*kTileSize};
+        id.high={gx1*kTileSize+kTileSize-1,gz1*kTileSize+kTileSize-1};
+        id.exits=value.destination->exits(tile);
+        ++counters_.sharedResolutions;
+        counters_.sharedReuses+=fields_.contains(id)||builders_.contains(id);
+    }
+    return resolved_.emplace(key,id).first->second;
+}
 bool Service::Key::operator<(const Key& other) const {
     if(profile!=other.profile)return profile<other.profile;
     if(region!=other.region)return region<other.region;
@@ -30,16 +68,17 @@ void Service::eraseGroup(uint64_t id) {
     const auto it=destinations_.find(id);if(it==destinations_.end())return;
     keys_.erase(it->second.key);destinations_.erase(it);
     std::erase(destinationQueue_,id);
-    std::erase_if(fields_,[=](const auto& item){return item.first.first==id;});
-    std::erase_if(builders_,[=](const auto& item){return item.first.first==id;});
-    std::erase_if(fieldQueue_,[=](const auto& key){return key.first==id;});
+    std::erase_if(fields_,[=](const auto& item){return item.first.group==id;});
+    std::erase_if(builders_,[=](const auto& item){return item.first.group==id;});
+    std::erase_if(fieldQueue_,[=](const auto& key){return key.group==id;});
+    std::erase_if(resolved_,[=](const auto& item){return item.first.first==id;});
 }
 bool Service::evictGroup() {
     auto oldest=destinations_.end();
     for(auto it=destinations_.begin();it!=destinations_.end();++it)
         if(!it->second.users && (oldest==destinations_.end()||it->second.used<oldest->second.used))oldest=it;
     if(oldest==destinations_.end())return false;
-    eraseGroup(oldest->first);return true;
+    ++counters_.evictedGroups;eraseGroup(oldest->first);return true;
 }
 bool Service::bind(int unit,uint64_t profile,std::shared_ptr<const Topology> topology,std::vector<Cell> goals) {
     return bindImpl(unit,profile,std::move(topology),std::move(goals),std::nullopt);
@@ -65,7 +104,7 @@ bool Service::bindImpl(int unit,uint64_t profile,std::shared_ptr<const Topology>
         const uint64_t id=++nextGroup_;
         auto destination=region?std::make_shared<Destination>(std::move(topology),*region):
             std::make_shared<Destination>(std::move(topology),key.goals);
-        destinations_.emplace(id,Group{key,std::move(destination),++clock_,key.checksum(),0});
+        destinations_.emplace(id,Group{key,std::move(destination),++clock_,key.checksum(),0});++counters_.destinations;
         found=keys_.emplace(std::move(key),id).first;destinationQueue_.push_back(id);
     }
     const uint64_t group=found->second;
@@ -78,13 +117,36 @@ void Service::cancel(int unit) {
     const auto it=bindings_.find(unit);if(it==bindings_.end())return;
     auto& group=destinations_.at(it->second);--group.users;group.used=++clock_;bindings_.erase(it);
 }
-void Service::invalidate(uint64_t profile) {
+void Service::invalidate(uint64_t profile,std::shared_ptr<const Topology> next) {
+    ++counters_.invalidations;
     for(auto it=bindings_.begin();it!=bindings_.end();) {
-        if(destinations_.at(it->second).key.profile==profile)it=bindings_.erase(it);else ++it;
+        if(destinations_.at(it->second).key.profile==profile){it=bindings_.erase(it);++counters_.invalidatedBindings;}else ++it;
     }
     for(auto it=destinations_.begin();it!=destinations_.end();) {
-        if(it->second.key.profile==profile) {const auto id=it->first;++it;eraseGroup(id);}else ++it;
+        if(it->second.key.profile==profile) {
+            const auto id=it->first;++it;++counters_.invalidatedDestinations;
+            for(const auto& [key,cached]:fields_){(void)cached;counters_.invalidatedFields+=key.group==id;}
+            for(const auto& [key,builder]:builders_){(void)builder;counters_.invalidatedBuilders+=key.group==id;}
+            eraseGroup(id);
+        }else ++it;
     }
+    // Shared fields belong to their profile. A finished one survives only when
+    // the new generation still holds the identical immutable source tile:
+    // lookups then recompute the exit mask against the new destinations, so a
+    // changed route anywhere selects a different key instead of stale content.
+    // In-progress builders reference the old generation and are discarded.
+    const auto stale=[=](const FieldId& key){return !key.group&&key.profile==profile;};
+    const auto keep=[&](const FieldId& key,const Cached& cached) {
+        return budget_.retainShared&&next&&cached.source&&key.tile>=0&&size_t(key.tile)<next->tiles.size()&&
+            next->tiles[size_t(key.tile)]==cached.source;
+    };
+    for(const auto& [key,cached]:fields_)if(stale(key)) {
+        if(keep(key,cached))++counters_.retainedFields;else ++counters_.invalidatedFields;
+    }
+    for(const auto& [key,builder]:builders_){(void)builder;counters_.invalidatedBuilders+=stale(key);}
+    std::erase_if(fields_,[&](const auto& item){return stale(item.first)&&!keep(item.first,item.second);});
+    std::erase_if(builders_,[&](const auto& item){return stale(item.first);});
+    std::erase_if(fieldQueue_,stale);
 }
 Service::Sample Service::sample(int unit,Cell from,std::optional<Cell> aim) {
     const auto bound=bindings_.find(unit);if(bound==bindings_.end())return {Status::Capacity,{}};
@@ -92,8 +154,9 @@ Service::Sample Service::sample(int unit,Cell from,std::optional<Cell> aim) {
     if(!group.destination->reachable(from))
         return group.destination->done()?Sample{Status::Unreachable,{}}:Sample{};
     const auto& topo=group.destination->topology();
-    if(!group.destination->tileReady(topo.tileAt(from)))return {};
-    const FieldKey key{bound->second,topo.tileAt(from)};
+    const int tile=topo.tileAt(from);
+    if(!group.destination->tileReady(tile))return {};
+    const FieldId key=resolve(bound->second,group,tile);
     const auto cached=fields_.find(key);
     if(cached!=fields_.end()) {
         cached->second.used=clock_;Cell next;
@@ -106,7 +169,7 @@ Service::Sample Service::sample(int unit,Cell from,std::optional<Cell> aim) {
                 // block each other despite having equally good parallel paths.
                 const Cell straight=std::abs(dx)>2*std::abs(dz)?Cell{from.x+(dx>0?1:-1),from.z}:
                     std::abs(dz)>2*std::abs(dx)?Cell{from.x,from.z+(dz>0?1:-1)}:next;
-                if(straight!=next&&topo.tileAt(straight)==key.second&&topo.cost(straight)) {
+                if(straight!=next&&topo.tileAt(straight)==tile&&topo.cost(straight)) {
                     const auto& field=cached->second.field;
                     const auto remaining=field.distance[size_t(straight.z%kTileSize)*kTileSize+straight.x%kTileSize];
                     const auto current=field.distance[size_t(from.z%kTileSize)*kTileSize+from.x%kTileSize];
@@ -120,7 +183,12 @@ Service::Sample Service::sample(int unit,Cell from,std::optional<Cell> aim) {
     }
     if(!builders_.contains(key)) {
         if(builders_.size()>=budget_.builders)return {};
-        builders_.emplace(key,std::make_shared<FieldBuilder>(group.destination,key.second));fieldQueue_.push_back(key);
+        // A shared builder holds only its key and the topology generation,
+        // never the destination that first asked for it: that group may be
+        // evicted while other destinations still wait for this field.
+        builders_.emplace(key,key.group?std::make_shared<FieldBuilder>(group.destination,tile):
+            std::make_shared<FieldBuilder>(group.destination->topologyPointer(),tile,key.exits,std::pair{key.low,key.high}));
+        fieldQueue_.push_back(key);
     }
     return {};
 }
@@ -130,7 +198,8 @@ Service::Sample Service::sampleCooperative(int unit,Cell from,Cell direction,std
     const auto& binding=bindings_.at(unit);
     const auto& group=destinations_.at(binding);
     const auto& topology=group.destination->topology();
-    const auto found=fields_.find({binding,topology.tileAt(from)});
+    const auto resolved=resolved_.find({binding,topology.tileAt(from)});
+    const auto found=resolved==resolved_.end()?fields_.end():fields_.find(resolved->second);
     if(found!=fields_.end())result.next=cooperative::corridorStep(topology,found->second.field,from,result.next,direction,laneTarget);
     return result;
 }
@@ -140,13 +209,13 @@ void Service::tick(unsigned workerCount) {
     while(remaining&&!destinationQueue_.empty()) {
         const auto id=destinationQueue_.front();destinationQueue_.pop_front();
         auto& d=*destinations_.at(id).destination;
-        const size_t spent=d.step(std::min<size_t>(remaining,512));remaining-=spent;work_+=spent;
+        const size_t spent=d.step(std::min<size_t>(remaining,512));remaining-=spent;work_+=spent;counters_.destinationWork+=spent;
         if(!d.done())destinationQueue_.push_back(id);
     }
     // The selection and work assignment are identical with 0, 1 or 4 workers.
     // Join ALL futures even if one reports an exception, so clear/destruction
     // cannot race an outstanding job. No tasks hold World/Unit pointers.
-    struct Task {FieldKey key;std::shared_ptr<FieldBuilder> builder;size_t quantum;std::future<size_t> future;};
+    struct Task {FieldId key;std::shared_ptr<FieldBuilder> builder;size_t quantum;std::future<size_t> future;};
     std::vector<Task> tasks;tasks.reserve(4);
     remaining=budget_.fieldWork;
     const size_t count=std::min<size_t>(4,fieldQueue_.size());
@@ -166,8 +235,9 @@ void Service::tick(unsigned workerCount) {
             } catch(...) {if(!error)error=std::current_exception();}
         }
         for(size_t i=base;i<end;++i) {
-            try {if(!workerCount || tasks[i].future.valid())
-                work_+=workerCount?tasks[i].future.get():tasks[i].builder->step(tasks[i].quantum); }
+            try {if(!workerCount || tasks[i].future.valid()) {
+                const size_t spent=workerCount?tasks[i].future.get():tasks[i].builder->step(tasks[i].quantum);
+                work_+=spent;counters_.fieldWork+=spent;} }
             catch(...) {if(!error)error=std::current_exception();}
         }
         base=end;
@@ -178,12 +248,15 @@ void Service::tick(unsigned workerCount) {
         if(fields_.size()>=budget_.fields) {
             auto oldest=fields_.begin();
             for(auto it=fields_.begin();it!=fields_.end();++it)if(it->second.used<oldest->second.used)oldest=it;
-            fields_.erase(oldest);
+            fields_.erase(oldest);++counters_.evictedFields;
         }
         const auto& field=task.builder->field();
         const uint64_t fingerprint=field.hash();
-        publishedHash_=publishedHash_*1099511628211ull ^ fingerprint ^ task.key.first ^ uint64_t(task.key.second);
-        fields_.emplace(task.key,Cached{field,clock_,fingerprint});builders_.erase(task.key);
+        publishedHash_=publishedHash_*1099511628211ull ^ fingerprint ^ task.key.checksum();
+        fields_.emplace(task.key,Cached{field,clock_,fingerprint,task.key.group?nullptr:
+            task.builder->topology().tiles[size_t(task.key.tile)]});
+        builders_.erase(task.key);++counters_.fieldsBuilt;
+        counters_.sharedFieldsBuilt+=!task.key.group;
     }
 }
 uint64_t Service::checksum() const {
@@ -191,18 +264,19 @@ uint64_t Service::checksum() const {
     const auto mix=[&](uint64_t value){h=(h^value)*1099511628211ull;};
     mix(clock_);mix(nextGroup_);mix(publishedHash_);mix(work_);
     mix(budget_.destinations);mix(budget_.fields);mix(budget_.builders);mix(budget_.bindings);
-    mix(budget_.destinationWork);mix(budget_.fieldWork);
+    mix(budget_.destinationWork);mix(budget_.fieldWork);mix(budget_.shareDistant);mix(budget_.retainShared);
     mix(bindings_.size());for(const auto& [unit,group]:bindings_){mix(unit);mix(group);}
     mix(destinations_.size());for(const auto& [id,group]:destinations_) {
         mix(id);mix(group.keyHash);mix(group.used);mix(group.users);mix(group.destination->checksum());
     }
     mix(fields_.size());for(const auto& [key,cached]:fields_) {
-        mix(key.first);mix(key.second);mix(cached.used);mix(cached.fingerprint);
+        mix(key.checksum());mix(cached.used);mix(cached.fingerprint);
     }
     mix(builders_.size());for(const auto& [key,builder]:builders_) {
-        mix(key.first);mix(key.second);mix(builder->checksum());
+        mix(key.checksum());mix(builder->checksum());
     }
-    mix(fieldQueue_.size());for(const auto& key:fieldQueue_){mix(key.first);mix(key.second);}
+    mix(resolved_.size());for(const auto& [key,id]:resolved_){mix(key.first);mix(uint32_t(key.second));mix(id.checksum());}
+    mix(fieldQueue_.size());for(const auto& key:fieldQueue_)mix(key.checksum());
     mix(destinationQueue_.size());for(auto id:destinationQueue_)mix(id);
     return h;
 }
@@ -213,6 +287,7 @@ size_t Service::bytes() const {
     for(const auto& [id,group]:destinations_) {
         (void)id;total+=sizeof(Group)+192+group.key.goals.capacity()*sizeof(Cell)*2+group.destination->bytes();
     }
-    return total+(fieldQueue_.size()*sizeof(FieldKey)+destinationQueue_.size()*sizeof(uint64_t))*2;
+    total+=resolved_.size()*(sizeof(FieldKey)+sizeof(FieldId)+64);
+    return total+(fieldQueue_.size()*sizeof(FieldId)+destinationQueue_.size()*sizeof(uint64_t))*2;
 }
 }
