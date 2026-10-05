@@ -23,10 +23,8 @@
 namespace tak {
 
 inline void applyRuntimeSettings(const Settings& s) {
-    // Art smoothing and the cursor factor are sampled here too, but they only affect
-    // textures at BUILD time -- already-built art keeps what it was built with, which is
-    // why their Options rows say RESTART. Refreshing them costs nothing and means a
-    // later reload picks up the current value rather than the startup one.
+    // Active interface owners reload their art only when smoothArt changes. New
+    // screens also build with these values, so smoothing reaches every screen.
     art::setSmoothArt(s.smoothArt);
     art::setCursorFactor(s.cursorScale);
     // Deblocking IS live: it runs per decoded frame, so this reaches the next clip.

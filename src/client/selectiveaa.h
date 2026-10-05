@@ -10,7 +10,12 @@ namespace tak {
 inline int aaStep(int value,int maximum=16) {
     int result=0;for(int n:{2,4,8,16})if(n<=value && n<=maximum)result=n;return result;
 }
-struct AAPlan {int samples=0,w=0,h=0,mw=0,mh=0;size_t bytes=0;int tileW=0,tileH=0;};
+struct AAPlan {
+    int samples=0,w=0,h=0,mw=0,mh=0;
+    size_t bytes=0;
+    int tileW=0,tileH=0;
+    bool operator==(const AAPlan&) const=default;
+};
 inline AAPlan aaPlan(int width,int height,int requested,int limitW,int limitH,size_t budget) {
     if(width<=0 || height<=0)return {};
     for(int n=aaStep(requested);n>=2;n/=2) {
@@ -57,6 +62,12 @@ class SelectiveAA {
     uint64_t retryAt_=0;
     bool opaque_=false,tileCull_=false;
     SDL_BlendMode composite_=SDL_BLENDMODE_NONE;
+    int bind(SDL_Renderer* r,SDL_Texture* target) {
+        const bool changed=SDL_GetRenderTarget(r)!=target;
+        const int result=SDL_SetRenderTarget(r,target);
+        if(result==0 && changed)++targetSwitches;
+        return result;
+    }
 public:
     SelectiveAA()=default;
     SelectiveAA(const SelectiveAA&)=delete;
@@ -69,36 +80,46 @@ public:
     bool tileCulling() const {return effective && tileCull_;}
     int effective=0;
     uint64_t resolves=0;
+    uint64_t clearPixels=0,targetSwitches=0,translatedVertices=0,culledVertices=0;
+    uint64_t targetAllocations=0; // cumulative; unlike the per-frame counters above
     size_t bytes() const {return plan_.bytes;}
     ~SelectiveAA(){clear();}
     void clear() {
         gpuvram::destroy(high_);gpuvram::destroy(middle_);high_=middle_=nullptr;
         plan_={};effective=0;request_=-1;loggedRequest_=loggedEffective_=-1;loggedBytes_=0;loggedReason_.clear();reason_.clear();retryAt_=0;renderer_=nullptr;
     }
-    void configure(SDL_Renderer* r,int w,int h,int requested,bool opaque) {
+    void configure(SDL_Renderer* r,int w,int h,int requested,bool opaque,uint64_t now=SDL_GetTicks64()) {
         if(renderer_!=r || width_!=w || height_!=h || request_!=requested || opaque_!=opaque) {
             clear();renderer_=r;width_=w;height_=h;request_=requested;opaque_=opaque;
         }
         resolves=0;
-        if(high_ && !gpuvram::blocked() && (effective==request_ || SDL_GetTicks64()<retryAt_))return;
+        clearPixels=targetSwitches=translatedVertices=culledVertices=0;
+        const size_t passBudget=opaque?std::min(maxBytes,gpuvram::cap()/2):std::min(modelMaxBytes,gpuvram::cap()/4);
+        if(high_ && !gpuvram::blocked() && effective==request_ &&
+           plan_.bytes<=passBudget && gpuvram::bytes()<=gpuvram::cap())return;
         // Keep a working degraded target during backoff instead of discarding it
         // on every frame, or repeatedly allocating while the GPU is under pressure.
-        if(SDL_GetTicks64()<retryAt_)return;
-        if(high_) {gpuvram::destroy(high_);gpuvram::destroy(middle_);high_=middle_=nullptr;plan_={};effective=0;}
-        reason_.clear();
+        if(now<retryAt_)return;
         if(!requested)return;
-        retryAt_=SDL_GetTicks64()+3000;
+        retryAt_=now+3000;
+        if(gpuvram::blocked()) {
+            if(!high_)reason_="GPU allocation backoff";
+            return;
+        }
+        reason_.clear();
         SDL_RendererInfo info{};
         if(SDL_GetRendererInfo(r,&info)!=0){reason_="renderer information unavailable";return;}
-        if(!(info.flags&SDL_RENDERER_ACCELERATED)){reason_="software renderer";return;}
-        if(!SDL_RenderTargetSupported(r)){reason_="render targets unsupported";return;}
-        if(gpuvram::blocked()){reason_="GPU allocation backoff";return;}
+        if(!(info.flags&SDL_RENDERER_ACCELERATED)){reason_="software renderer";retryAt_=UINT64_MAX;return;}
+        if(!SDL_RenderTargetSupported(r)){reason_="render targets unsupported";retryAt_=UINT64_MAX;return;}
         if(w<=0 || h<=0){reason_="empty drawable";return;}
         composite_=opaque?SDL_BLENDMODE_NONE:SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE,
             SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,SDL_BLENDOPERATION_ADD,SDL_BLENDFACTOR_ONE,
             SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,SDL_BLENDOPERATION_ADD);
-        const size_t available=gpuvram::cap()-std::min(gpuvram::bytes(),gpuvram::cap());
-        const size_t passBudget=opaque?std::min(maxBytes,gpuvram::cap()/2):std::min(modelMaxBytes,gpuvram::cap()/4);
+        // Plan against the space this pass can own, including its existing
+        // targets. Replanning a stable size/capability fallback must not destroy
+        // and recreate those targets every three seconds.
+        const size_t otherBytes=gpuvram::bytes()-std::min(gpuvram::bytes(),plan_.bytes);
+        const size_t available=gpuvram::cap()-std::min(otherBytes,gpuvram::cap());
         const size_t budget=std::min(passBudget,available);
         auto choose=[&](int n,size_t bytes) {
             return opaque?aaPlan(w,h,n,info.max_texture_width,info.max_texture_height,bytes)
@@ -110,9 +131,12 @@ public:
             if(unlimited.samples!=requested)reason_="texture dimension limit "+std::to_string(info.max_texture_width)+"x"+std::to_string(info.max_texture_height);
             else reason_=available<passBudget?"shared texture-memory budget":"AA pass memory budget";
         }
+        if(high_ && plan==plan_)return;
+        if(high_) {gpuvram::destroy(high_);gpuvram::destroy(middle_);high_=middle_=nullptr;plan_={};effective=0;}
         while(plan.samples) {
             high_=gpuvram::create(r,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,plan.w,plan.h);
             if(high_ && plan.mw)middle_=gpuvram::create(r,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,plan.mw,plan.mh);
+            targetAllocations+=bool(high_)+bool(middle_);
             const bool allocated=high_ && (!plan.mw || middle_);
             if(allocated &&
                SDL_SetTextureBlendMode(middle_?middle_:high_,composite_)==0 &&
@@ -123,7 +147,9 @@ public:
             }
             reason_=(allocated?std::string("required blending/filtering unsupported: "):std::string("render-target allocation failed: "))+SDL_GetError();
             gpuvram::destroy(high_);gpuvram::destroy(middle_);high_=middle_=nullptr;
-            if(allocated)break; // changing dimensions cannot add a missing blend/filter capability
+            // A missing backend blend/filter capability cannot recover until
+            // renderer reset/reconfiguration, unlike temporary memory pressure.
+            if(allocated){retryAt_=UINT64_MAX;break;}
             // A smaller tile can retain the requested sample level on a driver
             // that rejects the preferred allocation. Terrain still steps down.
             plan=opaque?choose(plan.samples/2,budget):choose(plan.samples,std::min(budget,plan.bytes-1));
@@ -146,15 +172,17 @@ public:
         if(!tileCull_) {
             translated_.assign(vertices.begin(),vertices.end());
             for(auto& v:translated_){v.position.x+=offset.x;v.position.y+=offset.y;}
+            translatedVertices+=translated_.size();
             return translated_;
         }
         translated_.clear();
         for(size_t i=0;i+2<vertices.size();i+=3) {
             const auto triangle=vertices.subspan(i,3);
             const auto b=bounds(triangle);
-            if(b.x+b.w<tile.x || b.y+b.h<tile.y || b.x>tile.x+tile.w || b.y>tile.y+tile.h)continue;
+            if(b.x+b.w<tile.x || b.y+b.h<tile.y || b.x>tile.x+tile.w || b.y>tile.y+tile.h){culledVertices+=3;continue;}
             for(auto v:triangle){v.position.x+=offset.x;v.position.y+=offset.y;translated_.push_back(v);}
         }
+        translatedVertices+=translated_.size();
         return translated_;
     }
     static SDL_FRect bounds(std::span<const SDL_Vertex> verts) {
@@ -164,6 +192,7 @@ public:
         return {x,y,r-x,b-y};
     }
     template<class F> void render(SDL_Renderer* r,SDL_FRect bounds,F draw) {
+        tileCull_=false;
         if(!high_ || !effective){draw(SDL_FPoint{},SDL_Rect{});return;}
         if(!std::isfinite(bounds.x+bounds.y+bounds.w+bounds.h)){draw(SDL_FPoint{},SDL_Rect{});return;}
         SDL_Texture* previous=SDL_GetRenderTarget(r);
@@ -176,7 +205,7 @@ public:
         const bool clipped=SDL_RenderIsClipEnabled(r);
         SDL_BlendMode blend;Uint8 red,green,blue,alpha;
         SDL_GetRenderDrawBlendMode(r,&blend);SDL_GetRenderDrawColor(r,&red,&green,&blue,&alpha);
-        auto restore=[&]{SDL_SetRenderTarget(r,previous);SDL_RenderSetScale(r,sx,sy);SDL_RenderSetViewport(r,&viewport);SDL_RenderSetClipRect(r,clipped?&clip:nullptr);SDL_SetRenderDrawBlendMode(r,blend);SDL_SetRenderDrawColor(r,red,green,blue,alpha);};
+        auto restore=[&]{bind(r,previous);SDL_RenderSetScale(r,sx,sy);SDL_RenderSetViewport(r,&viewport);SDL_RenderSetClipRect(r,clipped?&clip:nullptr);SDL_SetRenderDrawBlendMode(r,blend);SDL_SetRenderDrawColor(r,red,green,blue,alpha);};
         auto fallback=[&]{
             restore();gpuvram::destroy(high_);gpuvram::destroy(middle_);high_=middle_=nullptr;
             plan_={};effective=0;reason_="render-target bind/resolve failed";retryAt_=SDL_GetTicks64()+3000;draw(SDL_FPoint{},SDL_Rect{});
@@ -189,18 +218,19 @@ public:
         const SDL_Rect clearArea=area;
         if(clipped){SDL_Rect intersection;if(!SDL_IntersectRect(&area,&clip,&intersection))return;area=intersection;}
         if(area.w<=0 || area.h<=0)return;
-        if(SDL_SetRenderTarget(r,high_)!=0){fallback();return;}
+        if(bind(r,high_)!=0){fallback();return;}
         SDL_RenderSetViewport(r,nullptr);SDL_RenderSetScale(r,float(plan_.w)/width_,float(plan_.h)/height_);
         SDL_RenderSetClipRect(r,nullptr);SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE);
         SDL_SetRenderDrawColor(r,opaque_?18:0,opaque_?18:0,opaque_?26:0,opaque_?255:0);
         if(SDL_RenderFillRect(r,&clearArea)!=0){fallback();return;}
+        clearPixels+=uint64_t(std::ceil(double(clearArea.w)*plan_.w/width_))*uint64_t(std::ceil(double(clearArea.h)*plan_.h/height_));
         // Apply the caller's clip only on the native resolve. Clipping the high
         // target at a fractional scale would attenuate the first visible pixel.
         SDL_RenderSetClipRect(r,&clearArea);SDL_SetRenderDrawBlendMode(r,blend);SDL_SetRenderDrawColor(r,red,green,blue,alpha);
         try {draw(SDL_FPoint{},clearArea);}catch(...){restore();throw;}
         SDL_Texture* resolved=high_;
         if(middle_) {
-            if(SDL_SetRenderTarget(r,middle_)!=0){fallback();return;}
+            if(bind(r,middle_)!=0){fallback();return;}
             SDL_RenderSetViewport(r,nullptr);SDL_RenderSetScale(r,float(plan_.mw)/width_,float(plan_.mh)/height_);SDL_RenderSetClipRect(r,&clearArea);
             SDL_Rect full{0,0,width_,height_};
             if(SDL_RenderCopy(r,high_,nullptr,&full)!=0){fallback();return;}
@@ -216,7 +246,7 @@ public:
         const bool clipped=SDL_RenderIsClipEnabled(r);
         SDL_BlendMode blend;Uint8 red,green,blue,alpha;
         SDL_GetRenderDrawBlendMode(r,&blend);SDL_GetRenderDrawColor(r,&red,&green,&blue,&alpha);
-        auto restore=[&]{SDL_SetRenderTarget(r,nullptr);SDL_RenderSetScale(r,1,1);SDL_RenderSetViewport(r,&viewport);SDL_RenderSetClipRect(r,clipped?&clip:nullptr);SDL_SetRenderDrawBlendMode(r,blend);SDL_SetRenderDrawColor(r,red,green,blue,alpha);};
+        auto restore=[&]{bind(r,nullptr);SDL_RenderSetScale(r,1,1);SDL_RenderSetViewport(r,&viewport);SDL_RenderSetClipRect(r,clipped?&clip:nullptr);SDL_SetRenderDrawBlendMode(r,blend);SDL_SetRenderDrawColor(r,red,green,blue,alpha);};
         const int left=int(std::clamp(std::floor(double(bounds.x))-2.,0.,double(width_)));
         const int top=int(std::clamp(std::floor(double(bounds.y))-2.,0.,double(height_)));
         const int right=int(std::clamp(std::ceil(double(bounds.x)+bounds.w)+2.,0.,double(width_)));
@@ -252,7 +282,7 @@ public:
                 restore();
             };
             if(!effective){native();continue;}
-            if(SDL_SetRenderTarget(r,high_)!=0){fail();native();continue;}
+            if(bind(r,high_)!=0){fail();native();continue;}
             SDL_RenderSetViewport(r,nullptr);SDL_RenderSetScale(r,1,1);SDL_RenderSetClipRect(r,nullptr);
             SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE);SDL_SetRenderDrawColor(r,0,0,0,0);
             // Clear only the used region plus the filter guard. Full-target
@@ -263,12 +293,13 @@ public:
             const int usedBottom=std::min(plan.h,int(std::ceil((padded.y+padded.h)*scale-oy)));
             const SDL_Rect used{usedX,usedY,usedRight-usedX,usedBottom-usedY};
             if(SDL_RenderFillRect(r,&used)!=0){fail();native();continue;}
+            clearPixels+=uint64_t(used.w)*used.h;
             SDL_RenderSetScale(r,float(scale),float(scale));
             SDL_SetRenderDrawBlendMode(r,blend);SDL_SetRenderDrawColor(r,red,green,blue,alpha);
             try {draw(offset,padded);}catch(...){restore();throw;}
             SDL_Texture* resolved=high_;
             if(middle_) {
-                if(SDL_SetRenderTarget(r,middle_)!=0){fail();native();continue;}
+                if(bind(r,middle_)!=0){fail();native();continue;}
                 SDL_RenderSetViewport(r,nullptr);SDL_RenderSetScale(r,1,1);
                 const SDL_Rect usedMiddle{used.x/2,used.y/2,
                     (used.x+used.w+1)/2-used.x/2,(used.y+used.h+1)/2-used.y/2};

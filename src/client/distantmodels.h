@@ -14,6 +14,7 @@ public:
     struct Item {
         int id=-1;
         uint64_t revision=0;
+        uint32_t textureTick=0; // preserve animated-image refresh cadence independently of geometry reuse
         float x=0,y=0,zoom=1;
         bool eligible=false;
         std::span<const SDL_Vertex> source;
@@ -24,11 +25,14 @@ public:
     void prepare(SDL_Renderer*,std::span<Item>,uint64_t now);
     void clear(); // renderer must still be alive
     size_t used=0, refreshed=0;
+    size_t bakeVertices=0,bakeDraws=0,targetSwitches=0;
+    size_t bytes() const {return pages_.size()*size_t(pageSize)*pageSize*4;}
 private:
     static constexpr int tileSize=64,pageSize=2048,tilesPerPage=1024,maxPages=4;
     struct Entry {
         int slot=-1;
         uint64_t seen=0,painted=0,revision=0;
+        uint32_t textureTick=0;
         uintptr_t source=0;
         float x=0,y=0,w=0,h=0,zoom=1,sx=1,sy=1;
         int pixelsW=0,pixelsH=0;

@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 221;      // 221: persistent lodestone-area command
+constexpr uint32_t kNetVersion = 227;      // 227: Retail+ route and local-traffic mode (value 3)
+                                           // 226: Cooperative follower scheduling, retry and lane behavior
+                                           // 224: bounded Flowfield crowd avoidance and legal compact arrivals
+                                           // 223: Flowfield group areas, route spacing and formation pacing
+                                           // 222: Flowfield arrivals at crowded rally formations
                                            // 220: authoritative Retail/Flowfield match selection
                                            // 219: weapon damage and rubble transitions for death-spawned corpses
                                            // 218: v7 generated mazes with open edges

@@ -56,12 +56,17 @@ int main() try {
         check(item.texture && cache.refreshed==0 && item.quad[0].position.x==oldX+4,"smooth translation between pose refreshes");
         cache.prepare(renderer,{&item,1},200);
         check(item.texture && cache.refreshed==1,"changed poses refresh after bounded interval");
+        item.textureTick=1;
+        cache.prepare(renderer,{&item,1},220);
+        check(item.texture && cache.refreshed==0,"texture tick bypassed image refresh interval");
+        cache.prepare(renderer,{&item,1},280);
+        check(item.texture && cache.refreshed==1,"texture tick must refresh even when geometry revision holds");
         auto relocated=vertices;
         item.source=relocated;
-        cache.prepare(renderer,{&item,1},300);
+        cache.prepare(renderer,{&item,1},380);
         check(item.texture && cache.refreshed==1,"geometry slot changes invalidate equal revision numbers");
         SDL_RenderSetScale(renderer,2,2);
-        cache.prepare(renderer,{&item,1},320);
+        cache.prepare(renderer,{&item,1},400);
         float sx=0,sy=0;SDL_RenderGetScale(renderer,&sx,&sy);
         check(item.texture && cache.refreshed==1 && sx==2 && sy==2,"output scale change refreshes and restores renderer state");
         SDL_RenderSetScale(renderer,1,1);
@@ -70,6 +75,19 @@ int main() try {
         item.zoom=.25;item.eligible=false;cache.prepare(renderer,{&item,1},500);
         check(!item.texture,"special render paths must bypass sprites");
         std::printf("PASS: GPU sprite transparency, camera, refresh and zoom (max channel error %d)\n",worst);
+        item.eligible=true;
+        cache.prepare(renderer,{&item,1},520);
+        check(cache.bytes()>0 && cache.used==1 && cache.refreshed==1,
+              "AA transition fixture must contain a live distant page and work counters");
+        cache.clear();
+        check(gpuvram::bytes()==0 && cache.used==0 && cache.refreshed==0 &&
+              cache.bakeVertices==0 && cache.bakeDraws==0 && cache.targetSwitches==0,
+              "disabling distant images releases AA budget and clears work counters");
+        cache.prepare(renderer,{&item,1},550);
+        check(item.texture && cache.used==1 && cache.refreshed==1,
+              "returning from model AA can rebuild native distant images");
+        for(int frame=0;frame<180;++frame)cache.prepare(renderer,{},500);
+        check(gpuvram::bytes()==0,"unused distant pages expire without another eligible model");
     }
     // Verify the actual shadow-batch quad builder against SDL's former copy
     // path, including texture alpha and independently overlapping silhouettes.

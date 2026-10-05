@@ -7,6 +7,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace tak::mapgen {
@@ -75,6 +76,8 @@ Params sanitize(Params p) {
 }
 
 Result generate(const Params& raw, const tak::hpi::Vfs& input) {
+    if(raw.formatVer!=Params{}.formatVer)
+        throw std::runtime_error("Unsupported random-map recipe version; generate a new map");
     tak::hpi::Vfs vfs(&input, true);
     Params p = sanitize(raw);
     if (p.formatVer >= 3) return generateBalanced(p, vfs);
@@ -490,7 +493,7 @@ Params decodeMapId(const std::string& id) {
     auto u16 = [&](size_t o) -> uint16_t { return uint16_t(u8(o) | (u8(o + 1) << 8)); };
     if (raw.size() >= 19) {
         p.formatVer = u16(0);
-        if (p.formatVer > 7 || (p.formatVer >= 3 && p.formatVer <= 4 && raw.size() != 22) ||
+        if (p.formatVer > 8 || (p.formatVer >= 3 && p.formatVer <= 4 && raw.size() != 22) ||
             (p.formatVer >= 5 && (raw.size() < 22 || raw.size() > 46))) return Params{};
         if (p.formatVer >= 5) p.name = raw.substr(22);
         if (p.formatVer >= 3) p.layout = u8(21);

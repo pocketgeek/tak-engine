@@ -1,5 +1,6 @@
 #include "util/virtualpath.h"
 #include "client/gameview.h"
+#include <cctype>
 
 // Out-of-line GameView method definitions (lobby concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -28,6 +29,11 @@ namespace {
 std::string mapDisplayName(const std::string& id) {
     if (!tak::mapgen::isGeneratedMapId(id)) return id;
     return tak::mapgen::friendlyLabel(tak::mapgen::decodeMapId(id));
+}
+std::string pathfindingLabel(tak::sim::PathfindingMode mode) {
+    std::string name=tak::sim::pathfindingModeName(mode);
+    for(char& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
+    return "PATHFINDING: "+name;
 }
 }  // namespace
 
@@ -290,13 +296,15 @@ std::string mapDisplayName(const std::string& id) {
         // Feature dots -- sparse, so plot every one lest the downsample drop it. A
         // Sacred Stone (the mana spot) gets a bold 2x2 gold marker; Standing Stones
         // (ruins) are muted; rocks grey; trees dark green.
+        int manaSpots=0;
         for (int cz = 0; cz < H; ++cz)
             for (int cx = 0; cx < W; ++cx) {
                 uint16_t fi = m.features[size_t(cz) * W + cx];
                 if (fi == 0xFFFF || fi >= m.featureNames.size()) continue;
                 const std::string& nm = m.featureNames[fi];
                 int tx = cx * TW / W, ty = cz * TH / H;
-                if (nm.find("Mana") != std::string::npos) {                                 // sacred spot: gold
+                if (tak::hpi::MountSet::key(nm).find("mana") != std::string::npos) {          // sacred spot: gold
+                    ++manaSpots;
                     for (int dy = 0; dy <= 1; ++dy)
                         for (int dx = 0; dx <= 1; ++dx) put(tx + dx, ty + dy, 250, 224, 82);
                 } else if (nm.find("Henge") != std::string::npos) put(tx, ty, 176, 162, 132);  // ruins: stone
@@ -319,7 +327,7 @@ std::string mapDisplayName(const std::string& id) {
         std::snprintf(dims, sizeof dims, "%d x %d   %d PLAYER", W / 32, H / 32, int(gp.players));
         mapPreviewDims_ = dims;
         if (gp.formatVer >= 3)
-            genPreviewInfo_ = "ACTUAL WATER: " + std::to_string(g.waterPercent) + "%";
+            genPreviewInfo_ = "WATER: " + std::to_string(g.waterPercent) + "%  MANA: " + std::to_string(manaSpots);
 
     }
 
@@ -413,10 +421,8 @@ std::string mapDisplayName(const std::string& id) {
               [this](int) { createCrusades_ = !createCrusades_; }); y += 28;
         lbCycle(x, y, 240, 26, createDoubleSight_ ? "DOUBLE SIGHT/RADAR: ON" : "DOUBLE SIGHT/RADAR: OFF", true,
               [this](int) { createDoubleSight_ = !createDoubleSight_; }); y += 28;
-        lbCycle(x, y, 260, 26, createPathfindingMode_ == tak::sim::PathfindingMode::Flowfield
-                  ? "PATHFINDING: FLOWFIELD" : "PATHFINDING: RETAIL", true,
-              [this](int) { createPathfindingMode_ = createPathfindingMode_ == tak::sim::PathfindingMode::Retail
-                  ? tak::sim::PathfindingMode::Flowfield : tak::sim::PathfindingMode::Retail; }); y += 28;
+        lbCycle(x, y, 280, 26, pathfindingLabel(createPathfindingMode_), true,
+              [this](int direction) { createPathfindingMode_=tak::sim::cyclePathfindingMode(createPathfindingMode_,direction); }); y += 28;
         lbCycle(x,y,240,26,"UNIT CAP: " + std::to_string(createUnitCap_),true,[this](int direction) {
             static constexpr uint16_t limits[]={250,500,1000,2000};
             auto at=std::find(std::begin(limits),std::end(limits),createUnitCap_);
@@ -657,7 +663,8 @@ std::string mapDisplayName(const std::string& id) {
             SDL_FRect handle{bx + bw * t - 3, by - 2, 6, bh + 4};
             SDL_SetRenderDrawColor(ren_, 200, 220, 200, 255); if (enabled) SDL_RenderFillRectF(ren_, &handle);
             SDL_SetRenderDrawColor(ren_, 70, 76, 96, 255); SDL_RenderDrawRectF(ren_, &bar);
-            const char* level = !enabled ? "AUTO" : val == 0 ? "NONE" : val < 86 ? "LOW" : val < 171 ? "MED" : "HIGH";
+            const std::string level = idx==2 ? "+" + std::to_string(tak::mapgen::extraManaRounds(val)) + "/P" :
+                !enabled ? "AUTO" : val == 0 ? "NONE" : val < 86 ? "LOW" : val < 171 ? "MED" : "HIGH";
             blockText(level, bx + bw + 8, py + 16, 1.5f, {160, 165, 180, 255});
             py += kSliderH + kGap;
         };
@@ -698,7 +705,7 @@ std::string mapDisplayName(const std::string& id) {
             if (!genPreviewError_.empty())
                 blockText("CHECK RETAIL DATA", pvx, pvy + pvH + 46, 1.4f, {220, 140, 120, 255});
             blockText("3 HOME MANA SPOTS EACH", pvx, pvy + pvH + 106, 1.3f, {160, 175, 160, 255});
-            blockText("MANA SLIDER: EXTRA SPOTS", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
+            blockText("EXTRAS NEED FREE SPACE", pvx, pvy + pvH + 124, 1.3f, {160, 175, 160, 255});
             if (genParams_.layout == tak::mapgen::Islands || genParams_.layout == tak::mapgen::Ports)
                 blockText("SIZE RESERVES SEA LANES", pvx, pvy + pvH + 142, 1.3f, {160, 175, 160, 255});
         }
@@ -904,7 +911,7 @@ std::string mapDisplayName(const std::string& id) {
         static const char* fogNames[]={"NOT EXPLORED","EXPLORED","FULL VISION"};
         info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
         info(3,0,std::string("START LOCATIONS: ")+(room.opts.randomStarts?"RANDOM":"FIXED"));
-        info(4,0,std::string("PATHFINDING: ")+(room.opts.pathfindingMode==tak::sim::PathfindingMode::Flowfield?"FLOWFIELD":"RETAIL"));
+        info(4,0,pathfindingLabel(room.opts.pathfindingMode));
         if(singlePlayer_)
             info(3,1,std::string("SPECTATE (WATCH AIS): ")+onOff(mp_->isSpectator()));
         else if(!campaign) {

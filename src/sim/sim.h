@@ -33,6 +33,8 @@
 #include "sim/pathsearch.h"
 #include "sim/pathmode.h"
 #include "sim/flownavigator.h"
+#include "sim/cooperativemovement.h"
+#include "sim/retailplusnavigator.h"
 #include <cstdint>
 #include <deque>
 #include <unordered_map>
@@ -592,9 +594,15 @@ struct Order {
     bool landing = false; // controller owned by the VTOL landing mission
     // Tick this order was issued, for the order-line beads: retail phases the
     // trail by (now - orderCreationTick) so each segment's dots crawl toward the
-    // destination independently (icd 0x4d5747 reading order+0x5e). Display only --
-    // never read by the simulation, never hashed.
+    // destination independently (icd 0x4d5747 reading order+0x5e). Flowfield also
+    // uses this to retain arrival progress across retries of the same mission.
     uint32_t issuedTick = 0;
+    // Automatic Flowfield production exit. A blocked generated parking point
+    // may retire once the child has cleared this original birthplace.
+    std::optional<std::pair<Fixed,Fixed>> productionExit;
+    // Retail+ keeps automatic exits in the native mission handler; unlike
+    // productionExit, this does not authorize shared-area early acceptance.
+    bool nativeProductionExit=false;
     // Where the player actually CLICKED, when that differs from x/z. order()
     // snaps a destination the unit cannot stand on to the nearest cell it fits
     // in, so x/z is where the unit will END UP -- but the on-map marker belongs
@@ -1294,6 +1302,7 @@ class World {
     // Offline diagnostic importer; not a supported game-save load interface.
     friend struct RetailReplayProbe;
     friend class FlowNavigator;
+    friend class RetailPlusNavigator;
 public:
     int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
     // CRT ownership transfer: preserves HP/progress, clears the former owner's commands.
@@ -1320,7 +1329,9 @@ public:
     const PathService& pathStats() const { return paths_; }
     void setPathfindingMode(PathfindingMode mode);
     PathfindingMode pathfindingMode() const { return pathfindingMode_; }
-    FlowNavigator::Stats flowStats() const { return flow_?flow_->stats():FlowNavigator::Stats{}; }
+    FlowNavigator::Stats flowStats() const;
+    cooperative::MovementBatch::Stats cooperativeMovementStats() const {return cooperativeMovementStats_;}
+    RetailPlusNavigator::Stats retailPlusStats() const {return retailPlus_?retailPlus_->stats():RetailPlusNavigator::Stats{};}
 
 
     // Footprint route score: terrain/parked bodies block, qualifying same-way
@@ -1330,9 +1341,18 @@ public:
     int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
 
     // Enable retail's background pathfinder for this world (default off).
-    void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();flow_.reset();} }
+    void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();flow_.reset();retailPlus_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};} }
     // Path search work units per tick, shared across all pending requests.
     void setPathBudget(int b) { paths_.setBudget(b); }
+    void setPathProfiling(bool enabled) { paths_.setProfiling(enabled); }
+    void resetPathDiagnostics() { paths_.resetDiagnostics();searchGradeBodyRebuilds_=0; }
+    PathService::Diagnostics pathDiagnostics() const {
+        auto result=paths_.diagnostics();
+        result.bodySnapshotRebuilds=searchGradeBodyRebuilds_;
+        result.bodySnapshotBytes=searchGradeBodies_.capacity()*sizeof(RetailGradeBody);
+        for (const auto& plane:searchGrades_) result.gradePlaneBytes+=plane.cells.capacity();
+        return result;
+    }
 
     // Passability is a function of the unit's MOVEMENT CLASS, not its domain:
     // retail bakes one grid per class at map load and its path search reads that
@@ -1432,11 +1452,13 @@ public:
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
     bool mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const;
     Fixed surfaceHeight(const Unit& subject,uint32_t clock,uint16_t* pitch=nullptr,uint16_t* roll=nullptr) const;
-    void commitGroundStep(Unit& subject,Fixed dx,Fixed dz);
+    void commitGroundStep(Unit& subject,Fixed dx,Fixed dz,bool strictDiagonal=false);
     void updateGroundTerrainFlags(Unit& subject) const;
     Fixed groundTerrainMultiplier(const Unit& subject) const;
     void brakeGround(Unit& subject,std::optional<Bam> facing=std::nullopt);
     void tickNavigationMovement(Unit& subject,Fixed maximum);
+    void followGroundLeader(Unit& subject,Fixed maximum);
+    void flushGroundFollowers();
     SinCos steerGround(Unit& subject,RetailSteeringPoint start,RetailSteeringPoint end,
                        RetailSteeringPoint next,Fixed maximum);
     bool featureReclaimable(const Feature& f) const {
@@ -1568,7 +1590,7 @@ public:
         clearScenarioState();
         scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
-        paths_.clear();flow_.reset();
+        paths_.clear();flow_.reset();retailPlus_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         projectiles_.clear();flames_.clear();
@@ -2136,6 +2158,23 @@ private:
     };
     std::vector<SearchGradePlane> searchGrades_;
     int activeSearchGrade_=-1;
+    // Eligibility/footprints/stamps cannot change during the synchronous path
+    // scheduler. Share one sorted snapshot only within that explicit scope;
+    // replay/probe calls outside it still sample current bodies each time.
+    std::vector<RetailGradeBody> searchGradeBodies_;
+    uint64_t searchGradeBodyRebuilds_=0; // profiling only, never hashed
+    bool searchGradeBatch_=false,searchGradeBodiesValid_=false;
+    struct SearchGradeBatch {
+        World& world;
+        explicit SearchGradeBatch(World& w):world(w) {
+            world.searchGradeBatch_=true; world.searchGradeBodiesValid_=false;
+        }
+        ~SearchGradeBatch() {
+            world.searchGradeBatch_=false; world.searchGradeBodiesValid_=false;
+        }
+        SearchGradeBatch(const SearchGradeBatch&)=delete;
+        SearchGradeBatch& operator=(const SearchGradeBatch&)=delete;
+    };
     struct SearchBodyRect {
         int x=0,z=0,width=0,height=0;
         std::vector<const Unit*> cells;
@@ -2226,7 +2265,7 @@ private:
     std::vector<uint8_t> vis_;
     int visPlayer_ = 0;
     bool doubleSight_ = false;  // synchronized skirmish/MP rule; campaigns use authored sight
-    bool patrolRepairs_ = true; // protocol 221; legacy playback retains prior patrol behavior
+    bool patrolRepairs_ = true;
     int visW_ = 0, visH_ = 0;
     // Client-local fog acceleration: the LoS-tested cell set for a (sight, radar,
     // cell) combination is a pure function of the IMMUTABLE heightmap, so it is
@@ -2430,7 +2469,14 @@ private:
                                  // (deterministic: derived from the live-unit count)
     PathService paths_;          // retail's request queue + budget scheduler
     PathfindingMode pathfindingMode_=PathfindingMode::Retail;
+    std::unique_ptr<RetailPlusNavigator> retailPlus_;
     std::unique_ptr<FlowNavigator> flow_; // never instantiated by Retail matches
+    std::unique_ptr<cooperative::MovementBatch> cooperativeMovement_;
+    cooperative::MovementBatch::Stats cooperativeMovementStats_;
+    // Derived before unit updates, reused by every flight-body entry path.
+    // Not persistent state: the formation aggregation rebuilds it each tick.
+    struct FlowFormationCap { Fixed maximum; bool active=false; };
+    FlowFormationCap flowFormationCaps_[kMaxPlayers][11] = {};
     bool pathPending(int id) const {return flow_?flow_->pending(id):paths_.pending(id);}
 
     struct UnitScript {

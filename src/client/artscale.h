@@ -159,20 +159,19 @@ inline void resample(const std::vector<uint8_t>& src, int sw, int sh,
 
 // ---- the one switch, and the texture helper ----------------------------------------
 //
-// Sampled ONCE at startup from Settings::smoothArt and then left alone. It must not be
-// re-read per texture: art loaded before a mid-session toggle keeps the factor it was
-// built with, and a caller that laid out from the OLD factor while asking the NEW one
-// would misplace it. Hence the Options row says the change needs a restart.
+// Updated by applyRuntimeSettings. Each active interface owner reloads its art when
+// the value changes. Logical dimensions remain authored pixels; callers keep the
+// actual factor returned by makeTexture wherever they query physical dimensions.
 inline bool g_smoothArt = false;
 inline void setSmoothArt(bool on) { g_smoothArt = on; }
 
-// The factor the CURSORS are built at, sampled from Settings::cursorScale at startup.
+// The factor the CURSORS are built at, updated from Settings::cursorScale.
 // Cursors are magnified up to 8x by that setting, and a source that still has to be
 // magnified stays soft -- overshooting so the draw DOWNSAMPLES is what makes the edge
 // crisp as well as smooth. Rounded up to a power of two and clamped to [2,8]; a 29x32
 // cursor at 8x is ~240 KB, which is affordable for the dozen or so of them and would
-// not be on the unit atlas. Sampled once, like the switch above, so changing cursor
-// size mid-session rebuilds nothing until a restart.
+// not be on the unit atlas. Software textures pick up this factor when loaded or
+// when Smooth GUI Art changes; hardware cursors also rebuild when their size changes.
 // NOTE this is the TEXTURE path's factor, and it deliberately lands near the drawn size
 // rather than overshooting. SDL minifies with a plain linear filter and no mipmaps, so a
 // big overshoot there would alias, not smooth. The HARDWARE cursor path is the opposite:

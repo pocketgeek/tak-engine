@@ -35,11 +35,10 @@ namespace tak::net {
 // Bump when the layout changes, and handle the older values in readReplayHeader.
 inline constexpr uint32_t kReplayFormat = 11;   // 11: independent pathfinding mode
 
-// Existing 219/220 recordings have no area-build commands and retain their pathfinder.
+// Simulation changes require the matching engine; do not emulate older rules.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
     if (format < 1 || format > kReplayFormat) return false;
-    if (protocol == kNetVersion) return true;
-    return (format == 11 && protocol == 220) || (format == 10 && protocol == 219);
+    return protocol == kNetVersion;
 }
 
 struct ReplayHeader {
@@ -129,7 +128,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
     h.mapDigest = fmt >= 9 ? r.str() : "";
     h.overrideDigest = fmt >= 10 ? r.str() : "";
     const auto pathMode = fmt >= 11 ? r.u8() : 0;
-    if (pathMode > uint8_t(sim::PathfindingMode::Flowfield)) return false;
+    if (!sim::validPathfindingMode(pathMode)) return false;
     h.pathfindingMode = h.mission.empty() ? sim::PathfindingMode(pathMode) : sim::PathfindingMode::Retail;
     const uint8_t nslots = r.u8();
     if (!r.ok || nslots > kMaxSlots) return false;

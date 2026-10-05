@@ -40,9 +40,9 @@
 
 using tak::sim::UnitType;
 using tak::sim::World;
-static bool g_flow = false;
+static tak::sim::PathfindingMode g_pathfinding = tak::sim::PathfindingMode::Retail;
 static void setTestPathfinding(World& world) {
-    if(g_flow)world.setPathfindingMode(tak::sim::PathfindingMode::Flowfield);
+    if(g_pathfinding!=tak::sim::PathfindingMode::Retail)world.setPathfindingMode(g_pathfinding);
 }
 
 namespace tak::sim {
@@ -2845,7 +2845,13 @@ static void airUnloadMapFlightTraceFixture(const char* retailRoot,const char* ma
 int main(int argc,char** argv) {
     // Optional backend run reuses the same placement/mission assertions. The
     // default and every retail trace command retain their existing backend.
-    if(argc>1 && !std::strcmp(argv[1],"--flow")) {g_flow=true;--argc;++argv;}
+    if(argc>1 && !std::strcmp(argv[1],"--flow")) {
+        g_pathfinding=tak::sim::PathfindingMode::Flowfield;--argc;++argv;
+    } else if(argc>1 && !std::strcmp(argv[1],"--cooperative")) {
+        g_pathfinding=tak::sim::PathfindingMode::Cooperative;--argc;++argv;
+    } else if(argc>1 && !std::strcmp(argv[1],"--retail-plus")) {
+        g_pathfinding=tak::sim::PathfindingMode::RetailPlus;--argc;++argv;
+    }
     if(argc==3 && !std::strcmp(argv[1],"--air-flight-trace")) {
         airFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)));
         return 0;

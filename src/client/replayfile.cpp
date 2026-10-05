@@ -54,7 +54,6 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     out.cfg.monarchExpendable = h.monarchExpendable != 0;
     out.cfg.doubleSight = h.mission.empty() && h.doubleSight != 0;
     out.cfg.pathfindingMode = h.mission.empty() ? h.pathfindingMode : tak::sim::PathfindingMode::Retail;
-    out.cfg.patrolRepairs = proto >= 221;
     out.cfg.stressTest = h.stressTest != 0;
     out.cfg.randomStarts = h.randomStarts != 0;
     out.cfg.benchmark = h.benchmark;

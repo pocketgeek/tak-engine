@@ -708,7 +708,7 @@ static void readSlots(Reader& r, RoomView& v) {
     v.opts.randomStarts = r.u8();
     v.opts.doubleSight = r.u8();
     const auto pathMode = r.u8();
-    if (pathMode > uint8_t(sim::PathfindingMode::Flowfield)) r.ok = false;
+    if (!sim::validPathfindingMode(pathMode)) r.ok = false;
     v.opts.pathfindingMode = sim::PathfindingMode(pathMode);
     v.hostId = r.u32();
     v.mapsReady = r.u8() != 0;

@@ -244,6 +244,26 @@ class PathService {
     uint64_t completions() const { return completions_; }
     uint64_t failures() const { return failures_; }
     uint64_t requests() const { return requests_; }
+    struct Diagnostics {
+        uint64_t initializations=0,executionSlices=0,resetCells=0;
+        uint64_t initializationNanoseconds=0,preparationNanoseconds=0,executionNanoseconds=0;
+        size_t scratchBytes=0;
+        // Filled by World's adapter; a standalone service has no grade cache.
+        uint64_t bodySnapshotRebuilds=0;
+        size_t bodySnapshotBytes=0,gradePlaneBytes=0;
+    };
+    // Opt-in wall-clock observations. Never read by simulation or scheduler;
+    // initialization time excludes the separately measured prepare callback.
+    void setProfiling(bool enabled) { profiling_=enabled; }
+    bool profiling() const { return profiling_; }
+    void resetDiagnostics() { diagnostics_={}; }
+    Diagnostics diagnostics() const {
+        auto result=diagnostics_;
+        const auto& a=worker_.attempt;
+        result.scratchBytes=a.cost.scratchBytes()+a.trace.cells.capacity()*sizeof(RetailCostSearch::Cell)+
+            a.trace.scratch.touched.capacity()*sizeof(uint32_t)+a.route.points.capacity()*sizeof(RetailReachability::Point);
+        return result;
+    }
     // Allocated entity ranges include empty slots. The default range starts
     // at zero and grows with observed IDs; replay hosts can restore exact pools.
     void setEntityPool(int player,int first,int count);
@@ -341,6 +361,8 @@ class PathService {
     uint64_t completions_ = 0;
     uint64_t failures_ = 0;      // searches that gave up (visit limit / boxed in)
     uint64_t requests_ = 0;      // admissions, i.e. how often a route was asked for
+    bool profiling_=false;
+    Diagnostics diagnostics_;
 
     int budget_ = kPathBudgetDefault;
     // Requests are looked up by ID only. RetailSearchScheduler owns traversal

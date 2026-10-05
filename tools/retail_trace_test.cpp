@@ -129,6 +129,60 @@ struct RetailReplayProbe {
         const auto& cells=world.searchGrades_[size_t(world.activeSearchGrade_)].cells;
         return cells[9*32+9]==(flight==2?6:0) && cells[8*32+9]==(flight==2?6:4) && cells[7*32+9]==6;
     }
+    static bool sharedSearchGradeSnapshot() {
+        World batched,serial;
+        batched.setPathProfiling(true);
+        UnitType mover,wide,flyer;
+        mover.footX=mover.footZ=1;mover.maxVel=Fixed::fromInt(1);
+        wide=mover;wide.footX=wide.footZ=2;
+        flyer=mover;flyer.canFly=true;
+        for (World* world:{&batched,&serial}) {
+            world->setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
+            world->setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
+            world->spawn(&mover,104,104);world->spawn(&wide,200,200);
+            const int flying=world->spawn(&flyer,280,280);
+            world->unit(flying)->flightGroundMode=2;
+            world->tickCounter_=200;
+        }
+        auto compare=[&] {
+            if (batched.stateHash()!=serial.stateHash() || batched.searchGrades_.size()!=serial.searchGrades_.size())
+                return false;
+            for (size_t i=0;i<batched.searchGrades_.size();++i)
+                if (batched.searchGrades_[i].cells!=serial.searchGrades_[i].cells) return false;
+            return true;
+        };
+        // Each request changes grade-plane requester/age state, but none changes
+        // the body snapshot; retries and different footprints share it safely.
+        auto requests=[&] {
+            for (int i=0;i<6;++i) {
+                const int id=batched.units_[size_t(i%2)].id;
+                batched.prepareSearchGrade(id,i==4);serial.prepareSearchGrade(id,i==4);
+                if (!compare()) return false;
+                batched.finishSearchGrade(id);serial.finishSearchGrade(id);
+                if (!compare()) return false;
+            }
+            return true;
+        };
+        {
+            World::SearchGradeBatch batch(batched);
+            if (!requests() || batched.searchGradeBodies_.size()!=2 || batched.pathDiagnostics().bodySnapshotRebuilds!=1)
+                return false;
+        }
+        // Change eligibility, position and age at the SAME simulation tick.
+        // A new batch and calls outside a batch must both observe those edits.
+        for (World* world:{&batched,&serial}) {
+            world->units_[0].x=Fixed::fromInt(120);world->units_[0].groundGradeTick=195;
+            world->units_[2].flightGroundMode=1;
+        }
+        {
+            World::SearchGradeBatch batch(batched);
+            if (!requests() || batched.searchGradeBodies_.size()!=3 || batched.pathDiagnostics().bodySnapshotRebuilds!=2)
+                return false;
+        }
+        for (World* world:{&batched,&serial}) world->units_[2].flightGroundMode=2;
+        return requests() && batched.searchGradeBodies_.size()==2 && !batched.searchGradeBodiesValid_ &&
+            batched.pathDiagnostics().bodySnapshotRebuilds==8 && serial.pathDiagnostics().bodySnapshotRebuilds==0;
+    }
     static bool preciseSearchDestination(bool boat,int foot,int delta) {
         World world;world.setPathService(true);world.setPathBudget(12000);
         world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,boat?32:0);
@@ -337,12 +391,53 @@ static void word(uint64_t& hash, int value) {
         hash ^= (uint32_t(value) >> (byte * 8)) & 255; hash *= 1099511628211ull;
     }
 }
+static bool profilingPreservesSearch() {
+    using namespace tak::sim;
+    std::array<PathService,2> services;
+    std::array<std::vector<int>,2> events;
+    services[0].setProfiling(true);
+    for (size_t i=0;i<services.size();++i) {
+        auto& service=services[i];
+        service.setBudget(137);
+        service.setGradeHost({[&,i](int id,bool last) {
+            events[i].insert(events[i].end(),{1,id,int(last)});
+        },{},[&,i](int id) { events[i].insert(events[i].end(),{2,id}); }});
+        for (int id:{1,2}) service.request(id,{2,2},{27,19},32,24,
+            Fixed::fromInt(432),Fixed::fromInt(304),0,false,0,49152,{}, {},0,uint64_t(id));
+    }
+    for (uint32_t tick=1;tick<10000;++tick) {
+        for (size_t i=0;i<services.size();++i) {
+            services[i].tick([&,i](int id,int x,int z) {
+                events[i].insert(events[i].end(),{3,id,x,z});
+                return (z==2 && x>=2 && x<=27) || (x==27 && z>=2 && z<=19) ? 6 : 0;
+            },[&,i](int id,const std::vector<PathCell>& route,Fixed x,Fixed z,
+                    bool failed,bool crowded,bool traffic,bool detour) {
+                events[i].insert(events[i].end(),{4,id,x.v,z.v,int(failed),int(crowded),int(traffic),int(detour),int(route.size())});
+                for (auto p:route) events[i].insert(events[i].end(),{p.x,p.z});
+            },{},tick);
+            for (auto e:services[i].takeNotifications())
+                events[i].insert(events[i].end(),{5,e.unitId,int(e.controller),e.events});
+        }
+        if (events[0]!=events[1] || services[0].pendingCount()!=services[1].pendingCount() ||
+            services[0].workSpent()!=services[1].workSpent() || services[0].requests()!=services[1].requests() ||
+            services[0].completions()!=services[1].completions() || services[0].failures()!=services[1].failures()) return false;
+        if (!services[0].pendingCount()) {
+            const auto profile=services[0].diagnostics(),disabled=services[1].diagnostics();
+            return profile.initializations>0 && profile.executionSlices>0 && profile.resetCells>=32*24 &&
+                profile.scratchBytes>0 && profile.initializationNanoseconds+profile.preparationNanoseconds+
+                    profile.executionNanoseconds>0 && disabled.initializations==0 && disabled.executionSlices==0 &&
+                disabled.initializationNanoseconds==0 && disabled.preparationNanoseconds==0 && disabled.executionNanoseconds==0;
+        }
+    }
+    return false;
+}
 static int selfTest() {
     using namespace tak::sim;
     int failures = 0;
     auto check = [&](bool condition, const char* label) {
         if (!condition) { std::cerr << "FAIL: " << label << '\n'; ++failures; }
     };
+    check(profilingPreservesSearch(),"opt-in stage timings preserve every query, delivery tick, notification and work charge");
     check(RetailReplayProbe::gateGrade(true,false,false,3,2,1,1)==3,"closed gate c passage has special grade");
     check(RetailReplayProbe::gateGrade(true,false,false,4,2,1,1)==3,"closed gate C passage has special grade");
     check(RetailReplayProbe::gateGrade(true,false,false,2,2,1,1)==0,"gate frame remains blocked");
@@ -372,6 +467,7 @@ static int selfTest() {
     check(RetailReplayProbe::constructionSearchOccupancy(true,1),"unfinished landed flyer ages cached occupancy");
     check(RetailReplayProbe::constructionSearchOccupancy(false,1),"landed flyer ages cached occupancy");
     check(RetailReplayProbe::constructionSearchOccupancy(false,2),"airborne flyer does not age ground occupancy");
+    check(RetailReplayProbe::sharedSearchGradeSnapshot(),"scoped body snapshots preserve grade bytes and hashes across requests and same-tick changes");
     for (bool boat : {false,true}) {
         for (int foot : {2,3,5}) for (int delta : {-1,0,1})
             check(RetailReplayProbe::preciseSearchDestination(boat,foot,delta),

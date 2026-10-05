@@ -21,7 +21,10 @@ struct MemoryPlan {
     static constexpr uint64_t tileBytes=16512,fieldBytes=20736,builderBytes=49152,edgeBytes=24;
     // Per admitted unit: bounded request + firing seeds, subscriber and FIFO
     // nodes, traffic record/group/wait sets, service binding, and node padding.
-    // The individual worst-case buckets total about 1.3KiB on 64-bit hosts.
+    // Traffic's footprint reservations cap both links (65,536 at 48 bytes)
+    // and buckets (16,384 at 112 bytes): at most 304 bytes per admitted unit.
+    // Including those reservations, the individual worst-case buckets total
+    // about 1.7KiB on 64-bit hosts, below the canonical 2KiB charge.
     static constexpr uint64_t requestBytes=2048;
     static_assert(sizeof(Tile)<=tileBytes && sizeof(Field)<=fieldBytes &&
                   sizeof(FieldBuilder)<=builderBytes && sizeof(Edge)<=edgeBytes);

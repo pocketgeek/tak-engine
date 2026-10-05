@@ -46,7 +46,7 @@ enter `tcp://hostname` (and an optional `:port`). Bare menu hostnames always use
 TLS, with no plaintext fallback. Automatically launched single-player servers
 keep their private loopback connection. Debug command-line harness connections
 retain their explicit transport behavior. Old clients cannot connect to a TLS
-listener. The current gameplay protocol is 213; update clients and servers together.
+listener. Version 0.7.24 uses gameplay protocol 227; update clients and servers together.
 
 The login exchange alone is not session encryption. Do not expose the old
 plaintext port alongside TLS as a compatibility fallback.
@@ -372,6 +372,46 @@ game-data mismatch can mean the `--data` directory is missing, inaccessible or
 contains different base files. Confirm that path exists outside the hidden home
 directories. For ACME failures, check the hostname, DNS records, firewall and
 whether another process owns port 80.
+
+### Querying server status
+
+Run this on the machine hosting the server:
+
+```sh
+takserver --status
+```
+
+For a nondefault game port, use `takserver --status --port 7678`. A successful
+query writes only JSON to standard output and exits with status 0:
+
+```json
+{
+  "running_games": 2,
+  "lobby_games": 1,
+  "connected_clients": 7
+}
+```
+
+Counts include private games and enabled Crusades games. `running_games`
+includes started games that are loading or paused; `lobby_games` counts rooms
+that have not started. `connected_clients` counts established player, spectator,
+and game-browser sessions. It excludes unfinished handshakes/logins, disconnected
+players retained for rejoining, AI players, and status queries themselves.
+
+No `--data`, account, or certificate arguments are needed. The server binds a
+small status listener to **127.0.0.1 UDP** on the game TCP port's numeric value
+(7677 by default). This also works with manual TLS and while ACME is waiting for
+a certificate; it reports activity, not certificate readiness. The UDP port must
+be free when the server starts. Do not forward or open it to the Internet: this
+is a local monitoring interface and requires no change to the packaged service
+sandbox. For remote monitoring, run the command through SSH.
+
+The query requires an updated running server. Failure or a three-second timeout
+returns a nonzero exit status with a diagnostic on standard error and no JSON
+on standard output. Status processing is bounded to 32 datagrams per second,
+including invalid requests, with at most eight handled per network-loop pass.
+Poll about once per second; excessive local traffic can cause query timeouts.
+Status does not modify game state or change the gameplay network protocol.
 
 ### Changing server defaults
 

@@ -23,6 +23,7 @@
 // Report all of them so that trade is visible rather than hidden behind one figure.
 
 #include "sim/sim.h"
+#include "crowdbench_matrix.h"
 
 #include <algorithm>
 #include <cmath>
@@ -188,6 +189,7 @@ void report(const Result& r) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc > 1 && argv[1][0] == '-') return crowdbench_matrix::main(argc, argv);
     std::vector<std::string> want;
     for (int i = 1; i < argc; ++i) want.push_back(argv[i]);
     auto wanted = [&](const char* n) {

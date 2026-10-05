@@ -54,7 +54,7 @@ int main(int argc,char** argv) {
     try {
         auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,true);
-        constexpr auto recipe="~gen1~0700f0a981b8b476a2cb010008000808ffffff67ff034a616e6b204d617a65207631";
+        constexpr auto recipe="~gen1~0800f0a981b8b476a2cb010008000808ffffff67ff034a616e6b204d617a65207631";
         auto generated=mapgen::generate(mapgen::decodeMapId(recipe),vfs);
         check(generated.map.width==2048&&generated.map.height==2048&&generated.starts.size()==8,
               "profile maze recipe changed");

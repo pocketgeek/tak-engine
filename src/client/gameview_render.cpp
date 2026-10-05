@@ -120,6 +120,10 @@
         int mvw = mapViewW(winW);
         SDL_Rect worldClip{0, 0, mvw, winH};
         SDL_RenderSetClipRect(ren_, &worldClip);
+        // Model AA uses full geometry. Release its dormant native-resolution
+        // impostors before admitting AA targets against the shared GPU budget.
+        if(settings_ && settings_->modelAA && distantModelCache_.bytes())
+            distantModelCache_.clear();
         terrainAA_.configure(ren_,winW,winH,settings_?settings_->terrainAA:0,true);
         modelAA_.configure(ren_,winW,winH,settings_?settings_->modelAA:0,false);
         terrainAA_.report("terrain");modelAA_.report("models");
@@ -234,6 +238,9 @@
         interpAlpha_ = front().tickDurMs > 0.0f
             ? std::clamp(float(SDL_GetTicks64() - front().tickMs) / front().tickDurMs, 0.0f, 1.0f)
             : 1.0f;
+#ifndef NDEBUG
+        if(tak::devFlag("TAK_RENDER_STUDY"))interpAlpha_=0.5f;
+#endif
         // Build the texture atlas for every colour slot in view (main thread; the
         // parallel pass below only reads the finished atlas pointers).
         const double _atl0 = double(SDL_GetPerformanceCounter());
@@ -268,6 +275,9 @@
         // submitting it for one frame.
         shadowsOnFrame_ = shadowsOn();
         const bool kNoShadow = !shadowsOnFrame_;
+        // Resolve the lazy height datum/debug scales on this thread. Worker
+        // projection and terrain occlusion then read immutable height state.
+        if(heightRef_<0)(void)heightAbove(0,0);
         double _pt0 = double(SDL_GetPerformanceCounter());
         pool_.parallelFor(visUnits_.size(), [this](size_t b, size_t e) {
             thread_local std::vector<Tri> scratch;
@@ -301,18 +311,26 @@
             const auto& u=*visUnits_[i];const auto& g=geomPool_[i];
             auto& item=distantModelItems_[i];
             item.id=u.id;item.revision=g.revision;item.x=g.ax;item.y=g.ay;
+            item.textureTick=g.animatedTexture?front().gameTick:0;
             item.zoom=zm0;item.source=g.verts;item.runs=g.runs;item.texture=nullptr;
             item.eligible=!tak::devFlag("TAK_DISTANT_MODELS_OFF") && !special(u,g) &&
                 !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel && !(u.type && u.type->ghost) &&
                 !selSet_.contains(u.id);
         }
         if(settings_ && settings_->modelAA) {for(auto& item:distantModelItems_)item.texture=nullptr;}
-        else distantModelCache_.prepare(ren_,distantModelItems_,SDL_GetTicks64());
+        else distantModelCache_.prepare(ren_,distantModelItems_,tak::devFlag("TAK_RENDER_STUDY")
+            ? uint64_t(animClock_*1000) : SDL_GetTicks64());
         static uint64_t distantLogAt=0;
         if(tak::devFlag("TAK_DISTANT_STATS") && SDL_GetTicks64()-distantLogAt>=1000) {
             distantLogAt=SDL_GetTicks64();
-            std::fprintf(stderr,"DISTANT models=%zu refreshed=%zu visible=%zu\n",
-                distantModelCache_.used,distantModelCache_.refreshed,visUnits_.size());
+            size_t reused=0,buildings=0,vertices=0,runs=0,moving=0,walking=0;
+            for(size_t i=0;i<visUnits_.size();++i) {
+                const auto& g=geomPool_[i];reused+=g.reused;buildings+=isStructure(visUnits_[i]->type);
+                vertices+=g.verts.size();runs+=g.runs.size();
+                moving+=visUnits_[i]->moving();walking+=visUnits_[i]->walking();
+            }
+            std::fprintf(stderr,"DISTANT models=%zu refreshed=%zu visible=%zu buildings=%zu geometry_reused=%zu verts=%zu runs=%zu moving=%zu walking=%zu\n",
+                distantModelCache_.used,distantModelCache_.refreshed,visUnits_.size(),buildings,reused,vertices,runs,moving,walking);
         }
 
         // Retail-style per-unit silhouette coverage. Each projected
@@ -720,11 +738,14 @@
         int destOff = 0;
         SDL_Texture* segTex = nullptr;
         int segStart = 0, segCount = 0;
+        size_t segRangeStart = 0;
         auto closeSeg = [&] {
             if (segCount > 0) {
-                drawOps_.push_back({nullptr, nullptr, segTex, segStart, segCount});
+                drawOps_.push_back({nullptr, nullptr, segTex, segStart, segCount,
+                    segRangeStart,copyTasks_.size()-segRangeStart});
                 segCount = 0;
             }
+            segRangeStart=copyTasks_.size();
             // Force the next run to re-anchor segStart to the current destOff. Without
             // this, a unit whose texture matches segTex but follows a feature/special
             // unit (which closed the segment) keeps the PREVIOUS segment's segStart and
@@ -770,7 +791,9 @@
         }
         closeSeg();
         bodyVerts_.resize(size_t(destOff));
-        pool_.parallelFor(copyTasks_.size(), [this](size_t b, size_t e) {
+        const bool indexModelTiles=modelAA_.effective && !tak::devFlag("TAK_AA_TILE_REFERENCE");
+        if(indexModelTiles)bodyTileRanges_.resize(copyTasks_.size());
+        pool_.parallelFor(copyTasks_.size(), [this,indexModelTiles](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) {
                 const CopyTask& t = copyTasks_[i];
                 const auto& distant=distantModelItems_[size_t(t.geom)];
@@ -780,6 +803,8 @@
                     std::copy(gv.begin() + t.src, gv.begin() + t.src + t.count,
                               bodyVerts_.begin() + t.dst);
                 }
+                if(indexModelTiles)bodyTileRanges_[i]={size_t(t.dst),size_t(t.count),
+                    tak::SelectiveAA::bounds({bodyVerts_.data()+t.dst,size_t(t.count)})};
             }
         });
         // The deferred air shadows run INSIDE the body window but belong to the shadow
@@ -966,12 +991,23 @@
                 while(end<drawOps_.size() && end!=airShadowOp_ && !drawOps_[end].f && !drawOps_[end].u && drawOps_[end].count>0 && drawOps_[end].tex)++end;
                 const auto& last=drawOps_[end-1];
                 const auto vertices=std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(last.start+last.count-op.start));
-                modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(vertices):SDL_FRect{},[&](SDL_FPoint offset,SDL_Rect tile){
+                const SDL_FRect bounds=indexModelTiles
+                    ? tak::geometryTileBounds(std::span<const tak::GeometryTileRange>(bodyTileRanges_).subspan(
+                        op.rangeFirst,last.rangeFirst+last.rangeCount-op.rangeFirst))
+                    : modelAA_.effective?tak::SelectiveAA::bounds(vertices):SDL_FRect{};
+                modelAA_.render(ren_,bounds,[&](SDL_FPoint offset,SDL_Rect tile){
                     for(size_t i=opi;i<end;++i) {
                         const auto& part=drawOps_[i];
                         const auto source=std::span<const SDL_Vertex>(bodyVerts_.data()+part.start,size_t(part.count));
-                        const bool cull=modelAA_.tileCulling();
-                        const auto verts=cull?modelAA_.translated(source,offset,tile):source;
+                        const bool cull=modelAA_.tileCulling() && tile.w>0 && tile.h>0;
+                        const auto verts=cull && indexModelTiles
+                            ? tak::translatedGeometryTile(bodyVerts_,std::span<const tak::GeometryTileRange>(bodyTileRanges_).subspan(
+                                part.rangeFirst,part.rangeCount),offset,tile,bodyTileScratch_)
+                            : cull?modelAA_.translated(source,offset,tile):source;
+                        if(cull && indexModelTiles) {
+                            modelAA_.translatedVertices+=verts.size();
+                            modelAA_.culledVertices+=source.size()-verts.size();
+                        }
                         bodySubmit_.draw(ren_,part.tex,verts,!tak::devFlag("TAK_BODY_SDL_SUBMIT"),0,cull?SDL_FPoint{}:offset);
                     }
                 });
@@ -1550,7 +1586,9 @@
             // vertical projection the model does: retail's half (icd 0x421dad),
             // not the cosine of a tilt we invented.
             const float ct = kProjY;
-            const float spin = float(SDL_GetTicks64() % 4000) / 4000.0f;   // 1 rev / 4s
+            const uint64_t ringTime=tak::devFlag("TAK_RENDER_STUDY")
+                ? uint64_t(animClock_*1000) : SDL_GetTicks64();
+            const float spin = float(ringTime % 4000) / 4000.0f;   // 1 rev / 4s
             // Iterate the (few) selected ids, not the whole world -- frameUnitP(id)
             // is O(1). (A duplicate id would just redraw the same brackets in place.)
             for (int selId : selection_) {
@@ -2532,7 +2570,11 @@
         word(uint64_t(discoCol.r)|(uint64_t(discoCol.g)<<8)|(uint64_t(discoCol.b)<<16));
         for(float value:{zm,ax,ay,occlusion,altitude,facing,discoBob,discoMix,p})real(value);
         if(conjuring)real(animClock_);
-        if(vt->second.meta.animated)word(front().gameTick);
+        // Texture playback may hold one frame for multiple simulation ticks.
+        // Use its actual inputs, so an unchanged frame retains exact geometry.
+        if(!tak::devFlag("TAK_TEXTURE_TICK_REFERENCE"))
+            for(const auto* frame:vt->second.meta.animationFrames)word(*frame);
+        else if(vt->second.meta.animated)word(front().gameTick);
         if(anim) {
             word(reinterpret_cast<uintptr_t>(anim->pieceNames));
             const auto poses=!anim->capturedPose.empty() ? anim->capturedPose :
@@ -2547,10 +2589,23 @@
         const bool cacheHit=!tak::devFlag("TAK_GEOMETRY_NOCACHE") &&
             !tak::devFlag("TAK_GEOMETRY_REFERENCE") && key==g.geometryKey;
         g.reused=cacheHit;
+        g.animatedTexture=vt->second.meta.animated;
         const bool verifyCache=cacheHit && tak::devFlag("TAK_GEOMETRY_VERIFY");
+#ifndef NDEBUG
+        if(tak::devFlag("TAK_GEOMETRY_VERIFY")) {
+            if(verifyCache && vt->second.meta.animated && g.verifiedTick!=front().gameTick)
+                ++animatedTextureChecks_;
+            g.verifiedTick=front().gameTick;
+        }
+#endif
         thread_local UnitGeom referenceGeom;
         if(cacheHit && !verifyCache)return;
-        if(verifyCache)referenceGeom=g;
+        if(verifyCache) {
+            referenceGeom=g;
+#ifndef NDEBUG
+            ++geometryChecks_;
+#endif
+        }
         g.geometryKey=key;g.owner=u.id;
         if(!cacheHit)++g.revision;
         g.verts.clear();g.runs.clear();g.shadowVerts.clear();
@@ -3309,7 +3364,7 @@
             for (const auto& fi : features_) {
                 const auto* sf = world_.feature(fi.simId);
                 simState.push_back(sf ? FeatSim{sf->type, sf->alive && sf->burn != 0,
-                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world_.featureReclaimable(*sf)}
+                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world_.featureReclaimable(*sf),sf->blocks}
                                       : FeatSim{-1, false, true, 1, 1, false});
             }
             // The type NAMES are read below too, and featureTypes() is filled at map
@@ -3339,6 +3394,7 @@
                 fi.z = float((fi.simId / mapView_.map().width) * 16 + fi.fz * 8);
             }
             fi.reclaimable=st.reclaimable;
+            fi.blocking=st.blocking;
             fi.hasSim = st.hasSim ? 1 : 0;    // ...and whether it is reclaimable at all
             if (st.type < 0) continue;
             if (fi.simType == -2) fi.simType = st.type;        // first sight
@@ -3545,11 +3601,12 @@
 
     bool GameView::buildIconClick(float mx, float my, bool lmb, bool rmb) {
         if (!lmb && !rmb) return false;
+        const auto* b = selectedBuilder();
+        if (!b) return false;   // selection can change before the next HUD draw
         for (const auto& [r, bt] : iconRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
             playClickTone();
-            const auto* b = selectedBuilder();
-            if (!b || !bt) return true;   // consume the click even if it can't act
+            if (!bt) return true;   // consume the click even if it can't act
             uint16_t mod = SDL_GetModState();
             bool ctrl = (mod & KMOD_CTRL) != 0, shift = (mod & KMOD_SHIFT) != 0;
             // Ctrl+left-click = infinite production (RepeatTrain), FIRST so it also
@@ -3564,7 +3621,7 @@
                 return true;
             }
             if (isStructure(bt) || !isStructure(b->type)) {
-                if (lmb) placing_ = bt;   // manual placement (buildings / mobile conjurers)
+                if (lmb) { placing_ = bt;shiftBuildPlaced_=false; } // fresh manual placement
                 return true;
             }
             tak::net::Command c;
@@ -4407,6 +4464,49 @@
     // owner filter, and the render snapshot carries every unit's orders, so drawing
     // trails for anything but our own units would hand the player a readout of
     // enemy intent.
+    void GameView::refreshOrderTrailTargets() {
+        orderTrailTargets_.clear();orderTrailSites_.clear();
+        for(const auto& f:features_) {
+            if(!f.aliveVis || !f.hasSim || !f.reclaimable || !canPickPoint(f.x,f.z))continue;
+            orderTrailTargets_.push_back({f.simId,tak::sim::Fixed::fromFloat(f.x),tak::sim::Fixed::fromFloat(f.z),
+                f.simId%mapView_.map().width,f.simId/mapView_.map().width,f.fx,f.fz,f.blocking});
+        }
+        for(const auto* u:front().live) {
+            if(u->alive() || !u->corpsePhase || !u->corpseReclaimable || !canPickPoint(u->x,u->z))continue;
+            orderTrailTargets_.push_back({-u->id,tak::sim::Fixed::fromFloat(u->x),tak::sim::Fixed::fromFloat(u->z),
+                u->corpseCellX,u->corpseCellZ,u->corpseFootX,u->corpseFootZ,false});
+        }
+        const auto& frame=front();
+        for(const auto& [x,z]:manaSpots_) {
+            bool known=noFog_ || frame.vis.empty();
+            const int cx=int(x)/16,cz=int(z)/16;
+            const int width=frame.visW,height=frame.visH;
+            if(!known && cx>=0 && cz>=0 && cx<width && cz<height)
+                known=frame.vis[size_t(cz)*width+cx]!=0;
+            tak::OrderTrailSite site{tak::sim::Fixed::fromFloat(x),tak::sim::Fixed::fromFloat(z),known};
+            if(known)for(const auto* u:frame.live) {
+                if(!u->alive() || !u->type || !u->type->onMana || !canPickPoint(u->x,u->z))continue;
+                const float dx=u->x-x,dz=u->z-z;
+                if(dx*dx+dz*dz>=44.f*44.f)continue;
+                site.occupant=u->type;site.player=u->player;site.underConstruction=u->underConstruction;break;
+            }
+            orderTrailSites_.push_back(site);
+        }
+        // Fog generations can advance even if none of this area's known
+        // targets changed. Reuse the planned chain across those recomputes.
+        uint64_t h=14695981039346656037ull;
+        const auto add=[&](uint64_t v){h^=v;h*=1099511628211ull;};
+        for(const auto& t:orderTrailTargets_) {
+            for(auto v:{t.id,t.x.v,t.z.v,t.cellX,t.cellZ,t.footX,t.footZ})add(uint32_t(v));
+            add(t.blocks);
+        }
+        for(const auto& s:orderTrailSites_) {
+            add(uint32_t(s.x.v));add(uint32_t(s.z.v));add(s.known);
+            add(reinterpret_cast<uintptr_t>(s.occupant));add(uint32_t(s.player));add(s.underConstruction);
+        }
+        orderTrailSceneSignature_=h;
+    }
+
     void GameView::drawOrderTrails(int mvw, int winH) {
         if (selection_.empty() || !cursors_.ok()) return;
         // Held right now -- polled rather than tracked through key events, so it is
@@ -4428,6 +4528,7 @@
         const bool shiftHeld = (SDL_GetModState() & KMOD_SHIFT) != 0;
         const uint32_t tick = front().gameTick;
         int drawn = 0;
+        bool targetsRefreshed=false;
         for (int selId : selection_) {
             const UnitR* up = frameUnitP(selId);
             if (!up || !up->alive() || !up->type) continue;
@@ -4437,21 +4538,45 @@
             // every selected unit's orders (the dots flag is per unit; the marker
             // is not), so the caps differ on purpose.
             const bool beads = drawn < kTrailUnits && shiftHeld;
+            const auto& actual=up->displayedOrders();
+            const std::vector<RenderOrder>* trail=&actual;
+            // Persistent jobs queue one child at a time. Draw the area boundary
+            // and expand its remaining known work, followed by the queued tail.
+            // Cache only the few beaded units; ordinary queues need no planning.
+            bool areas=false;
+            for(const auto& o:actual)if(o.goal && (o.manaBuildArea || o.reclaimArea)) {
+                areas=true;
+                SDL_FRect box{(o.x.toFloat()-mapView_.offX())*zm,(o.z.toFloat()-mapView_.offY())*zm,
+                    (o.buildX-o.x).toFloat()*zm,(o.buildZ-o.z).toFloat()*zm};
+                if(o.manaBuildArea)SDL_SetRenderDrawColor(ren_,130,230,255,180);
+                else SDL_SetRenderDrawColor(ren_,255,210,90,180);
+                SDL_RenderDrawRectF(ren_,&box);
+            }
+            if(areas && beads) {
+                auto& cache=orderTrailCache_[size_t(drawn)];
+                const auto signature=tak::orderTrailSignature(actual)^reinterpret_cast<uintptr_t>(up->type);
+                if(cache.unitId!=selId || cache.signature!=signature || cache.featGen!=lastFeatGen_ ||
+                   cache.visGen!=front().visGen || cache.noFog!=noFog_ || tick-cache.tick>=30u) {
+                    if(!targetsRefreshed) {refreshOrderTrailTargets();targetsRefreshed=true;}
+                    if(cache.unitId!=selId || cache.signature!=signature ||
+                       cache.sceneSignature!=orderTrailSceneSignature_ || tick-cache.tick>=30u)
+                        tak::expandOrderTrail(actual,*up->type,up->player,
+                            tak::sim::Fixed::fromFloat(up->x),tak::sim::Fixed::fromFloat(up->z),
+                            orderTrailTargets_,orderTrailSites_,cache.orders);
+                    cache.unitId=selId;cache.signature=signature;cache.featGen=lastFeatGen_;
+                    cache.visGen=front().visGen;cache.noFog=noFog_;cache.tick=tick;
+                    cache.sceneSignature=orderTrailSceneSignature_;
+                }
+                trail=&cache.orders;
+            }
             ++drawn;
             float px = up->x, pz = up->z;                  // running position
-            for (const auto& o : up->displayedOrders()) {
+            for (const auto& o : *trail) {
                 // Only the ends of the player's own orders are line vertices; the
                 // Route waypoints between them are the navigator's business, exactly
                 // as retail's order list held goals and not path nodes.
                 if (!o.goal) continue;
-                if (o.manaBuildArea) {
-                    if (shiftHeld) {
-                        SDL_FRect box{(o.x.toFloat()-mapView_.offX())*zm,(o.z.toFloat()-mapView_.offY())*zm,
-                            (o.buildX-o.x).toFloat()*zm,(o.buildZ-o.z).toFloat()*zm};
-                        SDL_SetRenderDrawColor(ren_,130,230,255,180);SDL_RenderDrawRectF(ren_,&box);
-                    }
-                    continue;
-                }
+                if (o.manaBuildArea || o.reclaimArea) continue;
                 const float qx = o.x.toFloat(), qz = o.z.toFloat();
                 const bool line = o.targetId == 0;         // attack orders: marker only
                 if (beads && line) {
@@ -4460,8 +4585,25 @@
                     if (len >= 1.0f) {
                         float ux = dx / len, uz = dz / len;
                         float phase = float((tick - o.issuedTick) % 30u) * kSpacing / 30.0f;
-                        int bead = 0;
-                        for (float t = phase; t < len && bead < kTrailBeads; t += kSpacing, ++bead) {
+                        // Clip in world space with conservative byte-height
+                        // relief margins. Large clears should not spend frame
+                        // time sampling thousands of entirely offscreen legs.
+                        // Begin at the first visible bead, keeping its phase and
+                        // index, so a long leg stays dotted anywhere along it.
+                        float enter=0,leave=len;
+                        const auto clip=[&](float p,float u,float lo,float hi) {
+                            if(std::abs(u)<1e-6f)return p>=lo && p<=hi;
+                            float a=(lo-p)/u,b=(hi-p)/u;if(a>b)std::swap(a,b);
+                            enter=std::max(enter,a);leave=std::min(leave,b);return enter<=leave;
+                        };
+                        const float padX=16/zm+255*std::abs(kHeightScaleX_);
+                        const float padZ=16/zm+255*std::abs(kHeightScale_);
+                        const bool visible=clip(px,ux,mapView_.offX()-padX,mapView_.offX()+mvw/zm+padX) &&
+                            clip(pz,uz,mapView_.offY()-padZ,mapView_.offY()+winH/zm+padZ);
+                        int bead=std::max(0,int(std::ceil((enter-phase)/kSpacing)));
+                        int count=0;
+                        for (float t = phase+bead*kSpacing; visible && t < len && t<=leave && count < kTrailBeads;
+                             t += kSpacing, ++bead,++count) {
                             float wx = px + ux * t, wz = pz + uz * t;
                             float sx = (wx - mapView_.offX()) * zm - terrainLiftX(wx, wz) * zm;
                             float sy = (wz - mapView_.offY()) * zm - terrainLift(wx, wz) * zm;
@@ -4481,7 +4623,10 @@
                 // retail ever put on the map.
                 tak::CursorId marker = tak::CursorId::Move;
                 bool haveMarker = true;
-                if (o.buildType)            haveMarker = false;   // the site ghost says it
+                if (o.buildType) {
+                    marker=tak::CursorId::FindSite;
+                    haveMarker=o.trailPreview; // existing queued sites already have ghosts
+                }
                 else if (o.reclaimFeat || o.reclaimArea) marker = tak::CursorId::Reclaim;
                 else if (o.repairTarget)    marker = tak::CursorId::Repair;
                 else if (o.load)            marker = tak::CursorId::Load;

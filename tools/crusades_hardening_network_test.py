@@ -402,7 +402,11 @@ def restore_service(binary, data, admin, root):
 
 def authored_state_bounds(binary, data, root):
     def rejected_start(database, definition):
-        result = subprocess.run([str(binary), '--local', '--data', str(data), '--port', '0',
+        # Reach authored-state validation with an otherwise valid command line.
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            port = reservation.getsockname()[1]
+        result = subprocess.run([str(binary), '--local', '--data', str(data), '--port', str(port),
             '--accounts', str(root / 'accounts.conf'), '--crusades-db', str(database),
             '--crusades-definition', str(definition)], capture_output=True, timeout=40)
         assert result.returncode != 0 and b'listening on' not in result.stderr

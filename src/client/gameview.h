@@ -52,6 +52,7 @@
 #include "client/aascalereset.h"   // RAII 1:1 render-scale guard (extracted leaf)
 #include "client/distantmodels.h"
 #include "client/selectiveaa.h"
+#include "client/geometrytiles.h"
 #include "client/featureindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
@@ -60,6 +61,7 @@
 #include "client/projectilemodelscale.h"
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
+#include "client/ordertrail.h"
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
 #include "client/retaileffectvisibility.h"
@@ -72,6 +74,7 @@
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
+#include "client/artscale.h"
 #include "client/dev.h"
 #include "client/appquit.h"
 #include "client/mainmenu.h"
@@ -222,23 +225,7 @@ public:
         } catch (const std::exception&) {}
         loadTextures();
         mapView_.setZoom(0.9f);
-        try {
-            hudFont_ = Font(ren_, vfs_, "fonts/bodfontbody.gaf");
-            bigFont_ = Font(ren_, vfs_, "fonts/font48.gaf");
-            // A plain, legible font for the HUD stat readouts.
-            try { statFont_ = Font(ren_, vfs_, "fonts/b_times new roman (100b).gaf"); }
-            catch (const std::exception&) {
-                try { statFont_ = Font(ren_, vfs_, "fonts/ig_times new roman (100).gaf"); }
-                catch (const std::exception&) {}
-            }
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "font load: %s\n", e.what());
-        }
-        try {
-            scoreboardFont_ = Font(ren_, vfs_, "fonts/ig_times new roman (100).gaf");
-            scoreboardFont_.setLetterSpacing(0);
-        }
-        catch (const std::exception&) {}
+        loadInterfaceFonts();
         loadOrderButtons();
         sounds_.init(vfs_);
         soundClasses_.load(vfs_);   // music is started per-state by manageMusic()
@@ -246,6 +233,34 @@ public:
         loadGui(side_);
 
 #ifndef NDEBUG
+        if (tak::devFlag("TAK_GUI_SMOOTH_TEST")) {
+            const auto hash = world_.stateHash();
+            const auto initial = smoothArt_;
+            tak::Settings s; s.hardwareCursor = false; s.smoothArt = false;
+            applySettings(s);
+            cursorsInit_ = true; cursors_.load(ren_, vfs_, &s);
+            const auto bytes = gpuvram::bytes(), count = gpuvram::count();
+            const auto buttons = orderBtns_.size();
+            const auto width = hudFont_.width("Smoothing test"), height = hudFont_.height();
+            auto check = [](bool ok, const char* message) {
+                if (!ok) throw std::runtime_error(message);
+            };
+            for (int i = 0; i < 3; ++i) for (bool on : {true, false}) {
+                s.smoothArt = on; applySettings(s);
+                int w = 0, h = 0;
+                check(panelTex_ && SDL_QueryTexture(panelTex_, nullptr, nullptr, &w, &h) == 0,
+                      "HUD panel missing during live smoothing toggle");
+                check(w == panelW_ * (on ? 2 : 1) && h == panelH_ * (on ? 2 : 1),
+                      "HUD smoothing did not apply live");
+                check(orderBtns_.size() == buttons && hudFont_.width("Smoothing test") == width && hudFont_.height() == height,
+                      "live smoothing changed interface layout");
+                check(world_.stateHash() == hash, "interface smoothing changed simulation state");
+                if (!on) check(gpuvram::bytes() == bytes && gpuvram::count() == count,
+                               "HUD smoothing leaks textures");
+            }
+            s.smoothArt = initial; applySettings(s);
+            std::puts("PASS: HUD smoothing applies live, keeps layout/state and releases textures");
+        }
         if (!bare && !scenario && tak::devFlag("TAK_PATROL_PERF")) {
             setupPatrolPerf();
             return;
@@ -504,6 +519,19 @@ public:
     void drawOrderTrails(int mvw, int winH);
     static constexpr int kTrailUnits = 3;    // retail beaded only its few "focus" units
     static constexpr int kTrailBeads = 96;   // per leg, so a map-long order can't run away
+    struct OrderTrailCache {
+        int unitId=0;
+        uint64_t signature=0;
+        uint64_t sceneSignature=0;
+        uint32_t featGen=0,visGen=0,tick=0;
+        bool noFog=false;
+        std::vector<RenderOrder> orders;
+    };
+    std::array<OrderTrailCache,kTrailUnits> orderTrailCache_;
+    std::vector<tak::OrderTrailTarget> orderTrailTargets_;
+    std::vector<tak::OrderTrailSite> orderTrailSites_;
+    uint64_t orderTrailSceneSignature_=0;
+    void refreshOrderTrailTargets();
 
     // A mobile, reclaim-capable builder of ours is selected (drives the right-drag).
     bool haveReclaimer();
@@ -841,6 +869,37 @@ public:
     }
 
     void draw(int winW, int winH);
+#ifndef NDEBUG
+    uint64_t geometryChecks() const { return geometryChecks_.load(); }
+    uint64_t animatedTextureChecks() const { return animatedTextureChecks_.load(); }
+    void renderStudyMotion(unsigned frame) {
+        if(!frame || frame%240)return;
+        const float direction=(frame/240)%2 ? -1.f : 1.f;
+        for(const auto& unit:world_.units())
+            if(unit.alive() && unit.type && unit.type->canMove)
+                world_.order(unit.id,unit.x.toFloat()+direction*320,unit.z.toFloat()+direction*160,false);
+    }
+    void renderStudyZoom(float zoom) { mapView_.setZoom(zoom); }
+    void renderWork(size_t& vertices,size_t& calls,size_t& images,size_t& bakes,size_t& bakeVertices,
+                    size_t& bakeCalls,size_t& switches,size_t& imageBytes) const {
+        vertices=bodyVerts_.size();calls=0;
+        for(const auto& op:drawOps_)calls+=!op.f && !op.u && op.tex && op.count>0;
+        images=distantModelCache_.used;bakes=distantModelCache_.refreshed;
+        bakeVertices=distantModelCache_.bakeVertices;bakeCalls=distantModelCache_.bakeDraws;
+        switches=distantModelCache_.targetSwitches;imageBytes=distantModelCache_.bytes();
+    }
+    struct AAWork {
+        uint64_t terrainResolves,modelResolves,clearPixels,targetSwitches,translatedVertices,culledVertices;
+        size_t bytes;
+    };
+    AAWork aaWork() const {
+        return {terrainAA_.resolves,modelAA_.resolves,
+            terrainAA_.clearPixels+modelAA_.clearPixels,
+            terrainAA_.targetSwitches+modelAA_.targetSwitches,
+            modelAA_.translatedVertices,modelAA_.culledVertices,
+            terrainAA_.bytes()+modelAA_.bytes()};
+    }
+#endif
 
     void advance(float seconds);
 
@@ -908,6 +967,7 @@ private:
     };
     struct PieceMeta {
         bool animated = false;              // any animated texture in this subtree
+        std::vector<const size_t*> animationFrames; // stable texture-animation records
         bool skip = false;                  // ground plate / *off duplicate: draws nothing
         std::vector<std::string> primTex;   // lowercased per primitive ("" = untextured)
         std::vector<const SDL_Rect*> primAtlas; // immutable atlas layout; shared by all colour slots
@@ -942,11 +1002,19 @@ private:
             m.primShadowMasks.push_back(mask==shadowMasks_.end() ? nullptr : &mask->second);
             m.primAnimated.push_back(animatedTex_.count(name)!=0);
             m.animated |= m.primAnimated.back();
+            if(m.primAnimated.back()) {
+                const auto* frame=&modelTextureAnimations_.at(name).frame;
+                if(std::find(m.animationFrames.begin(),m.animationFrames.end(),frame)==m.animationFrames.end())
+                    m.animationFrames.push_back(frame);
+            }
         }
         m.children.resize(o.children.size());
         for (size_t i = 0; i < o.children.size(); ++i) {
             buildPieceMeta(o.children[i], m.children[i], false);
             m.animated |= m.children[i].animated;
+            for(const auto* frame:m.children[i].animationFrames)
+                if(std::find(m.animationFrames.begin(),m.animationFrames.end(),frame)==m.animationFrames.end())
+                    m.animationFrames.push_back(frame);
         }
     }
 
@@ -1235,6 +1303,10 @@ private:
         std::vector<uint64_t> geometryKey; // exact inputs, never a probabilistic hash
         uint64_t revision=0;
         bool reused=false;
+        bool animatedTexture=false;
+#ifndef NDEBUG
+        uint32_t verifiedTick=~0u;
+#endif
         int owner=-1;
         std::vector<SDL_Vertex> verts;                  // transformed, coloured
         std::vector<std::pair<SDL_Texture*, int>> runs; // (texture, vertex count)
@@ -1347,7 +1419,8 @@ private:
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
     struct DrawOp { const UnitR* u; const FeatureInst* f;
-                    SDL_Texture* tex; int start, count; };   // seg if u&&f both null
+                    SDL_Texture* tex; int start, count;
+                    size_t rangeFirst=0,rangeCount=0; };   // seg if u&&f both null
     // Feature sync: the sim-side state of each visual feature, refreshed only when
     // World::featGeneration() moves. A member rather than a function-static so a new
     // game cannot inherit the previous one's array.
@@ -1355,12 +1428,14 @@ private:
     // instances (shoreline waves and the like) have none, and the snapshot's fallback
     // deliberately reports them alive so they keep RENDERING. That must not be confused
     // with "reclaimable" -- see hoverCursor.
-    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; };
+    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; bool blocking = false; };
     std::vector<FeatSim> featSimState_;
     uint32_t lastFeatGen_ = UINT32_MAX;   // != any real generation, so the first sync runs
 
     std::vector<CopyTask> copyTasks_;
     std::vector<DrawOp> drawOps_;
+    std::vector<tak::GeometryTileRange> bodyTileRanges_;
+    std::vector<SDL_Vertex> bodyTileScratch_;
     // TAK_PROF sub-phase timers (main thread). ALL of these are MONOTONIC -- they only
     // ever grow, and takeProf() returns the delta since its last call rather than zeroing
     // them. They used to be reset in takeProf, which silently corrupted the TAK_SPIKES
@@ -1377,6 +1452,10 @@ private:
     // behaviour, not just a wrong number -- about a minute into a game. The increments
     // are unguarded by TAK_PROF, so it would have happened in ordinary play.
     uint64_t profUnits_ = 0;        // visible units accumulated over the sampled frames
+#ifndef NDEBUG
+    std::atomic<uint64_t> geometryChecks_{0};
+    std::atomic<uint64_t> animatedTextureChecks_{0};
+#endif
     uint64_t profShadowVerts_ = 0;  // shadow vertices copied + submitted, likewise
     // takeProf's own previous values, so it can report per-interval deltas.
     double profProjPrev_ = 0, profSubmitPrev_ = 0, profShadowPrev_ = 0;
@@ -1473,6 +1552,7 @@ private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
     bool bilinear_ = false;     // smooth terrain/feature scaling (Options)
+    bool smoothArt_ = tak::art::g_smoothArt; // how the current interface was built
     int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
     uint64_t statsSampleAt_ = 0, statsGpuAt_ = 0;
     tak::proc::Sample statsProcess_;
@@ -2263,8 +2343,6 @@ private:
     // Screen-Y sink for a wading (canhover) or floating (floater) unit standing in
     // water, from FBI `waterline`. Zero on land and for every other unit.
     float waterSink(const tak::sim::UnitType* t, float wx, float wz);
-    const void* hMemoMap_ = nullptr;   // heightAbove 1-entry memo (see above)
-    float hMemoX_ = 0, hMemoZ_ = 0, hMemoV_ = 0;
     // Screen-space displacement of a world point's surface from its flat grid cell,
     // baked into the tile art by the tilted 2.5D view: up (Y) AND sideways (X).
     float terrainLift(float wx, float wz) { return heightAbove(wx, wz) * kHeightScale_; }
@@ -2286,7 +2364,10 @@ private:
     std::vector<uint8_t> flyGround_;         // 3x3-dilated per-sector max height
     int flyGroundW_ = 0, flyGroundH_ = 0;    // sectors
     const void* flyGroundMap_ = nullptr;     // which map it was built for
-    float terrainLiftX(float wx, float wz) { return heightAbove(wx, wz) * kHeightScaleX_; }
+    float terrainLiftX(float wx, float wz) {
+        if(heightRef_>=0 && kHeightScaleX_==0)return kHeightScaleX_;
+        return heightAbove(wx, wz) * kHeightScaleX_;
+    }
     // The terrain-relief lift is for MOBILE units standing on painted slopes. A
     // A "structure" (building) for render/build purposes = one that can't actually
     // move. NOTE: the FBI `canmove` flag is unreliable -- some buildings (the Keep,
@@ -2503,6 +2584,7 @@ private:
     std::optional<std::pair<float,float>> initialCamera_;
     int playerMonarchId_ = -1, aiMonarchId_ = -1;
     const tak::sim::UnitType* placing_ = nullptr;
+    bool shiftBuildPlaced_ = false; // disarm placement on Shift release after queued work
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
                                         // edge-scroll can't fire from a (0,0) default
                                         // cursor on launch (before the mouse moves)
@@ -2568,6 +2650,8 @@ private:
     std::map<std::string, SDL_Texture*> icons_;
     std::map<std::pair<std::string, int>, SDL_Texture*> modelIcons_;  // model-rendered fallback icons
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
+    SDL_FRect buildMenuRect_{};
+    bool overBuildMenu(float mx, float my) const;
     static constexpr int kMiniSizeBase = 180;
     int miniSize() const { return int(kMiniSizeBase * uiScale_); }   // UI-scale (Options)
     // Right-side UI strip (minimap + command panel). The map view is kept to the
@@ -2684,6 +2768,7 @@ private:
         // click could ever reclaim.
         uint8_t hasSim = 0;
         bool reclaimable = false;
+        bool blocking = false;
         int simType = -2;    // last-seen sim FeatType index (-2 = not yet synced)
         int simId = -1;      // cell-derived sim feature id (matches World's ids)
         bool tree = false;   // category=trees (eligible for the wind-sway option)
@@ -2753,6 +2838,8 @@ private:
     std::vector<int> allFactionMusicTracks();
 
     void loadPanel(const std::string& side);
+    void loadInterfaceFonts();
+    void reloadInterfaceArt(const tak::Settings& s);
 
     // Palette for a GUI GAF: the sibling anims/<gaf>.pcx if it exists (per-faction
     // panels ship one), else the global palettes/guipal.pal used by gui.gaf.
@@ -2925,8 +3012,8 @@ private:
     // balance made buildable -- so without this its slot would be an empty box.
     SDL_Texture* modelIconTex(const std::string& id, int slot, bool canMove);
 
-    // The selected builder (any builder in the selection).
-    const UnitR* selectedBuilder();
+    // Build controls belong to exactly one selected builder.
+    const UnitR* selectedBuilder() const;
 
     // Keys.TDF-derived hotkeys. Returns true when the key was consumed.
     bool handleKey(SDL_Keycode key, uint16_t mod);
@@ -3241,8 +3328,8 @@ private:
         float x0, float z0, float x1, float z1) const;
 
     // Queue a whole line of the current building from a shift-drag.
-    void placeBuildLine(float x0, float z0, float x1, float z1);
-    void placeManaBuildBox(float x0,float z0,float x1,float z1,bool queue);
+    bool placeBuildLine(float x0, float z0, float x1, float z1);
+    bool placeManaBuildBox(float x0,float z0,float x1,float z1,bool queue);
 
     void drawGhost();
 

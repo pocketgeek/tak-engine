@@ -237,6 +237,9 @@ namespace {
                 voice(selection_.front(), "attack");
             } else {
                 voice(selection_.front(), "move");
+                const bool sharedPaths=tak::sim::isSharedPathfinding(world_.pathfindingMode());
+                const bool retailPlus=world_.pathfindingMode()==tak::sim::PathfindingMode::RetailPlus;
+                tak::sim::Order plainMove;plainMove.goal=plainMove.groundMission=true;
                 float cx = 0, cz = 0;
                 int n = 0;
                 for (int id : selection_)
@@ -248,8 +251,14 @@ namespace {
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Move;
                     c.unitId = id;
-                    c.x = wx + std::clamp(u->x - cx, -60.0f, 60.0f);
-                    c.z = wz + std::clamp(u->z - cz, -60.0f, 60.0f);
+                    // Shared pathfinding owns footprint-aware group spreading. Per-unit
+                    // click offsets split one selection into unrelated goals,
+                    // bypassing shared arrivals and wasting destination fields.
+                    // Flying units retain their independent flight controller.
+                    const bool shared=u->type && ((sharedPaths&&!u->type->canFly)||
+                        (retailPlus&&tak::sim::retailplus::Traffic::supports(*u->type,plainMove)));
+                    c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
+                    c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);
                     c.queue = queue;
                     issue(c);
                 }
@@ -301,6 +310,9 @@ namespace {
         // Overlays / lobby: a plain arrow for clicking UI.
         if (inLobbyPhase() || exitMenu_ || giveUnitsMenu_ || options_)
             return tak::CursorId::Normal;
+        // Build icons and their strip cover the map. Do not classify world
+        // targets behind them, even with a placement or command armed.
+        if (overBuildMenu(mouseX_, mouseY_)) return tak::CursorId::Normal;
         // Native action mode 14 (armed by selecting a build item) returns
         // FindSite for a selected builder; placement validity is shown by the
         // ghost and does not change this cursor slot.
@@ -1040,7 +1052,42 @@ namespace {
         return true;
     }
 
+    void GameView::loadInterfaceFonts() {
+        auto load = [&](Font& font, const char* path) {
+            font.destroyGlyphs();
+            try { font = Font(ren_, vfs_, path); }
+            catch (const std::exception& e) { std::fprintf(stderr, "font load: %s\n", e.what()); }
+        };
+        load(hudFont_, "fonts/bodfontbody.gaf");
+        load(bigFont_, "fonts/font48.gaf");
+        load(statFont_, "fonts/b_times new roman (100b).gaf");
+        if (!statFont_.ok()) load(statFont_, "fonts/ig_times new roman (100).gaf");
+        load(scoreboardFont_, "fonts/ig_times new roman (100).gaf");
+        scoreboardFont_.setLetterSpacing(0);
+    }
+
+    void GameView::reloadInterfaceArt(const tak::Settings& s) {
+        loadInterfaceFonts();
+        loadPanel(side_);
+        loadGui(side_);
+        loadOrderButtons();
+        for (auto& [name, texture] : weaponIcons_) gpuvram::destroy(texture);
+        weaponIcons_.clear();
+        for (auto& [name, texture] : scoreboardLogos_) gpuvram::destroy(texture);
+        scoreboardLogos_.clear();
+        auto kill = [](SDL_Texture*& t) { gpuvram::destroy(t); t = nullptr; };
+        kill(unitInfoBg_); kill(unitInfoIcon_);
+        unitInfoIconFor_.clear();
+        for (auto& texture : unitInfoOk_) kill(texture);
+        unitInfoLabelFont_.destroyGlyphs(); unitInfoValueFont_.destroyGlyphs();
+        if (cursorsInit_) cursors_.load(ren_, vfs_, &s);
+        cursorMode_ = -1;
+        hwCursorFailed_ = false;
+    }
+
     void GameView::loadPanel(const std::string& side) {
+        gpuvram::destroy(panelTex_); panelTex_ = nullptr;
+        gpuvram::destroy(botTex_); botTex_ = nullptr;
         std::string base = "anims/" + side + "ingame";
         try {
             auto pal = tak::gaf::Palette::fromBytes(vread(base + ".pcx"), base + ".pcx");
@@ -1131,6 +1178,8 @@ namespace {
     }
 
     void GameView::loadOrderButtons() {
+        for (auto& b : orderBtns_) for (auto* texture : b.frames) gpuvram::destroy(texture);
+        orderBtns_.clear();
         auto grab = [&](const char* gaf, const char* seq, char cmd,
                         const char* label, int f0 = 0, int f1 = 1, int f2 = 2) {
             try {
@@ -2022,6 +2071,7 @@ namespace {
         // horizontal row just above the info bar. Where it sits along the bottom is
         // a user preference (Options "BUILD MENU": left / centered / right).
         iconRects_.clear();
+        buildMenuRect_ = {};
         const auto* b = selectedBuilder();
         if (b) {
             const auto menu = conjureMenu(b->type->id);   // mission-filtered
@@ -2063,10 +2113,11 @@ namespace {
             x0 = std::max(x0, 10.0f);               // a huge menu never runs off-screen left
             float iconY = bar.y - iconSz - 5;       // sit just above the bar
             float x = x0;
+            if (n > 0) buildMenuRect_ = {x0 - 5, iconY - 5, rowW + 10, iconSz + 10};
             // A recessed container behind the row so the conjure menu reads as one HUD
             // strip (matching the InfoPanel bar's dark inset + bronze frame).
             if (n > 0 && guiBar) {
-                SDL_FRect box{x0 - 5, iconY - 5, rowW + 10, iconSz + 10};
+                const SDL_FRect& box = buildMenuRect_;
                 SDL_SetRenderDrawColor(ren_, 14, 12, 10, 225);
                 SDL_RenderFillRectF(ren_, &box);
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);

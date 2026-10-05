@@ -3,6 +3,7 @@
 
 #include <bit>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
@@ -621,6 +622,10 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
             if (admitted) { activeId_=id; e.notification=0; ++requests_; }
             const RetailCircleGoal circle{e.goal.x-e.cellOffset.x,e.goal.z-e.cellOffset.z,
                                            e.goalTolerance,e.goalRadiusSquared};
+            const bool initializing=admitted || worker_.initializationPending;
+            std::chrono::steady_clock::time_point profileStart;
+            uint64_t preparationNanoseconds=0;
+            if (profiling_) profileStart=std::chrono::steady_clock::now();
             auto result=worker_.dispatch(admitted,remaining,[&](int retry) {
                 if (refresh) refresh(id,e.start,e.heading,e.costs);
                 RetailSearchAttempt::Parameters p;
@@ -634,7 +639,14 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
                 last=int(wrap);
                 return p;
             },[&](bool last) {
-                if (gradeHost_.prepare) gradeHost_.prepare(id,last);
+                if (gradeHost_.prepare) {
+                    if (profiling_) {
+                        const auto start=std::chrono::steady_clock::now();
+                        gradeHost_.prepare(id,last);
+                        preparationNanoseconds+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now()-start).count());
+                    } else gradeHost_.prepare(id,last);
+                }
             },[&] {
                 std::vector<RetailReachability::Point> cells;
                 auto emit=[&](int x,int z) { cells.push_back({x,z}); };
@@ -655,6 +667,19 @@ void PathService::tick(const std::function<int(int,int,int)>& score,
                 if (refresh) refresh(id,start,heading,costs);
                 return heading;
             });
+            if (profiling_) {
+                const uint64_t elapsed=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now()-profileStart).count());
+                if (initializing) {
+                    ++diagnostics_.initializations;
+                    diagnostics_.resetCells+=worker_.attempt.trace.scratch.resetCells;
+                    diagnostics_.initializationNanoseconds+=elapsed-preparationNanoseconds;
+                    diagnostics_.preparationNanoseconds+=preparationNanoseconds;
+                } else {
+                    ++diagnostics_.executionSlices;
+                    diagnostics_.executionNanoseconds+=elapsed;
+                }
+            }
             workSpent_+=uint64_t(result.work);
             if (result.notification) {
                 e.notification=result.notification;

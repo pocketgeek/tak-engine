@@ -15,6 +15,18 @@
     void GameView::input(const SDL_Event& e, int winW, int winH) {
         winW_ = winW;
         winH_ = winH;
+        // Placement mode and the selected builder are separate. Only disarm an
+        // icon after actual queued placement, and wait for the final Shift key.
+        // Handle this ahead of overlays so they cannot swallow the release.
+        if (e.type == SDL_KEYUP &&
+            (e.key.keysym.sym == SDLK_LSHIFT || e.key.keysym.sym == SDLK_RSHIFT)) {
+            const auto released = e.key.keysym.sym == SDLK_LSHIFT ? KMOD_LSHIFT : KMOD_RSHIFT;
+            if (!(e.key.keysym.mod & KMOD_SHIFT & ~released) && shiftBuildPlaced_ &&
+                !buildDrag_ && !manaBuildDrag_) {
+                placing_ = nullptr;
+                shiftBuildPlaced_ = false;
+            }
+        }
         if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL ||
             (e.type == SDL_KEYDOWN &&
              (e.key.keysym.sym < SDLK_0 || e.key.keysym.sym > SDLK_9 ||
@@ -142,6 +154,7 @@
             else if (outcome_ != 0) { menuRequested_ = true; }
             else if (placing_ || pendingCmd_) {
                 placing_ = nullptr; pendingCmd_ = 0;buildDrag_=manaBuildDrag_=false;
+                shiftBuildPlaced_ = false;
             }
             else if (!selection_.empty()) selection_.clear();
             else exitMenu_ = true;
@@ -186,6 +199,9 @@
                                   e.button.button == SDL_BUTTON_LEFT,
                                   e.button.button == SDL_BUTTON_RIGHT)) {
             // conjure/build icon (bottom-left, above the bar) handled
+        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+                   overBuildMenu(float(e.button.x), float(e.button.y))) {
+            // Build-strip borders and gaps are UI too, not world order targets.
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.y > winH - barH()) {
             // bottom bar: build icons already handled above; swallow the rest so a stray
@@ -247,6 +263,7 @@
                 std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
                 issue(c);
                 placing_ = nullptr;
+                shiftBuildPlaced_ = false;
             } else if (!selection_.empty()) {
                 // Blocked only by clearable doodads: send the builder to reclaim them
                 // and queue the build behind. Anything else still refuses, as retail
@@ -256,6 +273,7 @@
                     int bid = selectedBuilder() ? selectedBuilder()->id : selection_.front();
                     issueClearThenBuild(bid, placing_, wx, wz, feats, false);
                     placing_ = nullptr;
+                    shiftBuildPlaced_ = false;
                 }
             }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
@@ -265,8 +283,9 @@
             const bool box=std::abs(float(e.button.x)-bdSx0_)>=6 ||
                 std::abs(float(e.button.y)-bdSy0_)>=6;
             if (box) {
-                placeManaBuildBox(bdX0_,bdZ0_,wx,wz,bdQueue_);
-                if (!bdQueue_) placing_=nullptr;
+                if (placeManaBuildBox(bdX0_,bdZ0_,wx,wz,bdQueue_) && bdQueue_)
+                    shiftBuildPlaced_=true;
+                if (!bdQueue_) { placing_=nullptr;shiftBuildPlaced_=false; }
             } else if (placing_ && !selection_.empty()) {
                 std::vector<int> clearing;
                 if (canPlaceLocked(placing_,wx,wz) || clearableAt(placing_,wx,wz,clearing)) {
@@ -274,16 +293,24 @@
                     c.unitId=selectedBuilder() ? selectedBuilder()->id : selection_.front();
                     c.x=wx;c.z=wz;c.queue=bdQueue_;
                     std::snprintf(c.type,sizeof c.type,"%s",placing_->id.c_str());issue(c);
-                    if (!bdQueue_) placing_=nullptr;
+                    if (bdQueue_) shiftBuildPlaced_=true;
+                    else { placing_=nullptr;shiftBuildPlaced_=false; }
                 }
+            }
+            // Shift may have been released during this drag, before any work
+            // was issued. Finish the drag normally, then disarm its build icon.
+            if (shiftBuildPlaced_ && !(SDL_GetModState() & KMOD_SHIFT)) {
+                placing_=nullptr;shiftBuildPlaced_=false;
             }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
                    buildDrag_) {
             buildDrag_ = false;
             float ewx, ewz;
             pickWorld(float(e.button.x), float(e.button.y), ewx, ewz);
-            placeBuildLine(bdX0_, bdZ0_, ewx, ewz);
-            if (!(SDL_GetModState() & KMOD_SHIFT)) placing_ = nullptr;
+            if (placeBuildLine(bdX0_, bdZ0_, ewx, ewz)) shiftBuildPlaced_=true;
+            if (shiftBuildPlaced_ && !(SDL_GetModState() & KMOD_SHIFT)) {
+                placing_ = nullptr;shiftBuildPlaced_=false;
+            }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT &&
                    reclaimDrag_) {
             reclaimDrag_ = false;
@@ -299,6 +326,7 @@
                    placing_) {
             placing_ = nullptr;
             buildDrag_ = manaBuildDrag_ = false;
+            shiftBuildPlaced_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    !spectating_) {   // a spectator watches only -- no unit selection
             dragging_ = true;
@@ -454,12 +482,16 @@
         voice(builderId, "move");
     }
 
-    const UnitR* GameView::selectedBuilder() {
-        for (int id : selection_) {
-            const auto* u = frameUnitP(id);
-            if (u && u->alive() && u->type && u->type->isBuilder) return u;
-        }
-        return nullptr;
+    const UnitR* GameView::selectedBuilder() const {
+        if (selection_.size() != 1) return nullptr;
+        const auto* u = frameUnitP(selection_.front());
+        return u && u->alive() && u->type && u->type->isBuilder ? u : nullptr;
+    }
+
+    bool GameView::overBuildMenu(float mx, float my) const {
+        return selectedBuilder() && buildMenuRect_.w > 0 && buildMenuRect_.h > 0 &&
+               mx >= buildMenuRect_.x && mx <= buildMenuRect_.x + buildMenuRect_.w &&
+               my >= buildMenuRect_.y && my <= buildMenuRect_.y + buildMenuRect_.h;
     }
 
     void GameView::cycleNextUnit() {
@@ -510,17 +542,19 @@
         clampMapScroll();
     }
 
-    void GameView::placeManaBuildBox(float x0,float z0,float x1,float z1,bool queue) {
-        if (!placing_ || !placing_->onMana || selection_.empty()) return;
+    bool GameView::placeManaBuildBox(float x0,float z0,float x1,float z1,bool queue) {
+        if (!placing_ || !placing_->onMana || selection_.empty()) return false;
         const auto* builder=selectedBuilder();
-        if (!builder) return;
+        if (!builder) return false;
         tak::net::Command c;c.kind=tak::net::Cmd::BuildManaArea;
         c.unitId=builder->id;c.x=x0;c.z=z0;c.x2=x1;c.z2=z1;c.queue=queue;
         std::snprintf(c.type,sizeof c.type,"%s",placing_->id.c_str());issue(c);
+        return true;
     }
 
-    void GameView::placeBuildLine(float x0, float z0, float x1, float z1) {
-        if (!placing_ || selection_.empty()) return;
+    bool GameView::placeBuildLine(float x0, float z0, float x1, float z1) {
+        if (!placing_ || selection_.empty()) return false;
+        bool placed=false;
         int builderId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
         // Lock the sim ONCE for the whole line: a build-line drag is often dozens of sites,
         // and O(N) separate canPlaceLocked() calls would each risk waiting a full tick.
@@ -537,7 +571,9 @@
             c.queue = true;   // all queued; the first starts if the builder is free
             std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
             issue(c);
+            placed=true;
         }
+        return placed;
     }
 
 #ifndef NDEBUG

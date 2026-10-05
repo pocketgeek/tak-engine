@@ -239,14 +239,30 @@ void OptionsScreen::build(int channels) {
     slider("MAX FPS", 30, 240, [&] { return float(s_.maxFps); },
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
 
-    // GRAPHICS: shadows and tree sway remain configurable; AA/filtering are off.
+    // GRAPHICS: independent world sampling and optional art filters.
     section("GRAPHICS");
+    auto aaSlider=[&](const char* label,int& preference,int& effective,int steps) {
+        slider(label,0,float(steps),[&preference]{return preference>=16?4.f:preference>=8?3.f:preference>=4?2.f:preference>=2?1.f:0.f;},
+            [&preference,steps](float v){int step=std::clamp(int(v+.5f),0,steps);preference=step?1<<step:0;},
+            [&effective](float v){int step=int(v+.5f);int wanted=step?1<<step:0;
+                std::string text=wanted?std::to_string(wanted)+"X":"OFF";
+                if(effective>=0 && effective!=wanted)text+=" (ACTIVE "+(effective?std::to_string(effective)+"X":std::string("OFF"))+")";
+                return text;});
+    };
+    aaSlider("TERRAIN AA",s_.terrainAA,s_.terrainAAEffective,2);
+    aaSlider("MODEL AA",s_.modelAA,s_.modelAAEffective,4);
+    toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
+           [&](float v) { s_.bilinear = v > 0.5f; });
     // Projected unit shadows. Retail's Glide path casts these, so ON is the faithful
     // setting -- but it is the largest single cost in a crowded frame (measured ~3.2ms
     // of a ~12ms draw at ~1180 visible units), which is worth a switch on a slow machine.
     toggle("SHADOWS", [&] { return s_.unitShadows ? 1.0f : 0.0f; },
            [&](float v) { s_.unitShadows = v > 0.5f; });
 
+    toggle("SMOOTH GUI ART", [&] { return s_.smoothArt ? 1.0f : 0.0f; },
+           [&](float v) { s_.smoothArt = v > 0.5f; });
+    toggle("SMOOTH MOVIES", [&] { return s_.videoDeblock ? 1.0f : 0.0f; },
+           [&](float v) { s_.videoDeblock = v > 0.5f; });
     toggle("TREES SWAY IN WIND", [&] { return s_.treeSway ? 1.0f : 0.0f; },
            [&](float v) { s_.treeSway = v > 0.5f; });
 

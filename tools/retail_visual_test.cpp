@@ -1101,7 +1101,9 @@ int main(int argc,char** argv) {
             o.clickX=o.z;o.clickZ=o.x;o.buildX=o.x;o.buildZ=o.z;
             o.targetId=int(bits);o.reclaimFeat=-int(bits);o.repairTarget=int(bits+1);o.issuedTick=bits*37;
             o.load=bits&1;o.unload=bits&2;o.attackMove=bits&4;o.patrol=bits&8;o.guard=bits&16;o.goal=bits&32;
-            if(bits&64)o.reclaimArea.emplace();
+            if(bits&64) {
+                o.reclaimArea=tak::sim::RetailReclaimArea{o.x.v,o.z.v,o.buildX.v,o.buildZ.v,bool(bits&1)};
+            }
             if(bits&128){o.buildRectangle.emplace();o.buildType=&producer;}
             source.orders.push_back(o);
         }
@@ -1117,11 +1119,20 @@ int main(int argc,char** argv) {
                r.issuedTick!=o.issuedTick || r.load!=o.load || r.unload!=o.unload || r.attackMove!=o.attackMove ||
                r.patrol!=o.patrol || r.guard!=o.guard || r.goal!=o.goal ||
                r.reclaimArea!=bool(o.reclaimArea) || r.buildRectangle!=bool(o.buildRectangle))return 1;
+            if(o.reclaimArea && r.areaApproached!=o.reclaimArea->approached)return 1;
         }
         source.orders.clear();source.rally.clear();frame.repeatType=nullptr;frame.captureOrders(source);
         if(!frame.orders.empty() || !frame.rally.empty() || frame.hasQueuedWork() || frame.hasQueuedBuild() ||
            &frame.displayedOrders()!=&frame.orders)return 1;
         std::puts("PASS: compact render orders preserve queue, rally, markers and work status");
+        tak::sim::Order area;area.goal=true;
+        area.manaBuildArea=tak::sim::ManaBuildArea{&producer,tak::sim::Fixed::fromInt(100),
+            tak::sim::Fixed::fromInt(800),tak::sim::Fixed::fromInt(200),tak::sim::Fixed::fromInt(900),7,true};
+        const RenderOrder r(area);
+        if(!r.manaBuildArea || r.buildType!=&producer || r.areaNextSpot!=7 || !r.areaExploring ||
+            r.x!=area.manaBuildArea->minX || r.z!=area.manaBuildArea->minZ ||
+            r.buildX!=area.manaBuildArea->maxX || r.buildZ!=area.manaBuildArea->maxZ)return 1;
+        std::puts("PASS: compact area orders retain bounds, progress and exploration state");
     }
     if (argc==1) {
         tak::sim::UnitType type;type.maxVel=tak::sim::Fixed::fromInt(1);

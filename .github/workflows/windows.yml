@@ -174,10 +174,10 @@ jobs:
           ./build/map_transfer_test.exe
           ./build/unit_gift_test.exe
 
-      - name: AA and validation regressions
+      - name: Rendering, navigation and validation regressions
         run: |
-          cmake --build build --target selective_aa_test tdf_limits_test validationworker_test
-          ctest --test-dir build -R '^(selective_aa|tdf_limits|validationworker)$' --output-on-failure
+          cmake --build build --target selective_aa_test tdf_limits_test validationworker_test geometry_tiles_test order_trail_test retail_search_scratch_test retailplus_traffic_test retailplus_world_test cooperative_traffic_test cooperative_movement_test cooperative_followers_test flow_group_commands_test replay_test
+          ctest --test-dir build -R '^(selective_aa|tdf_limits|validationworker|geometry_tiles|order_trail|retail_search_scratch|retailplus_traffic|retailplus_world|cooperative_traffic|cooperative_movement|cooperative_followers|flow_group_commands|replay)$' --output-on-failure
 
       - name: Verify fully static (only system DLL imports)
         run: |

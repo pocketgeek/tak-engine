@@ -17,7 +17,7 @@ def main():
         root=Path(tmp)
         with server(a.server.resolve(),a.data.resolve(),root) as (port,h,process):
             with contextlib.closing(login(port,h,'Flood')) as p,contextlib.closing(login(port,h,'Observer')) as observer:
-                recipe='~gen1~'+(struct.pack('<HQBHH',4,1234,0,128,128)+bytes([2,0,0,1,0,0,0])).hex()
+                recipe='~gen1~'+(struct.pack('<HQBHH',8,1234,0,128,128)+bytes([2,0,0,1,0,0,0])).hex()
                 p.send('CreateGame',auth.field('flood')+auth.field('')+auth.field(recipe)+auth.field('')+options()+bytes([2,0,0]))
                 p.receive('JoinResult');baseline=lobby(p.receive('LobbyState'))
                 values=baseline[3][0][0]

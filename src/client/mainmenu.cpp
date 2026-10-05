@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -125,6 +126,7 @@ struct MainMenu::Impl {
 
     gui::Gui gui;
     SDL_Texture* bg = nullptr;
+    bool smoothArt_ = art::g_smoothArt;
     std::vector<Door> doors;
     std::vector<Button> buttons;
     std::unordered_map<std::string, std::string> bikByLower;   // lowercased name -> path
@@ -464,6 +466,69 @@ struct MainMenu::Impl {
             buttons.push_back(std::move(bt));
         }
     }
+
+    // Rebuild only static interface art. Door video state, audio, hover state,
+    // login fields and the open Options overlay survive a smoothing change.
+    void applyArtSettings(const Settings& s) {
+        tak::applyRuntimeSettings(s);
+        if (smoothArt_ == s.smoothArt) return;
+        smoothArt_ = s.smoothArt;
+        if (bg) { gpuvram::destroy(bg); bg = nullptr; }
+        if (!gui.gadgets.empty() && !gui.gadgets[0].imgs.empty()) {
+            const auto& im = gui.gadgets[0].imgs[0];
+            bg = gafTex(im.gaf, im.seq, im.frame, nullptr, true);
+            if (bg) SDL_SetTextureBlendMode(bg, SDL_BLENDMODE_NONE);
+        }
+        for (auto& d : doors) {
+            if (d.gaf) { gpuvram::destroy(d.gaf); d.gaf = nullptr; }
+            if (const auto* g = gui.find(d.name); g && !g->imgs.empty()) {
+                const auto& im = g->imgs[0];
+                d.gaf = gafTex(im.gaf, im.seq, im.frame);
+            }
+        }
+        for (auto& b : buttons) {
+            const auto* g = gui.find(b.name);
+            for (int i = 0; i < 3; ++i) {
+                if (b.tex[i]) { gpuvram::destroy(b.tex[i]); b.tex[i] = nullptr; }
+                b.texFac[i] = 1;
+                if (g && size_t(i) < g->imgs.size()) {
+                    const auto& im = g->imgs[size_t(i)];
+                    b.tex[i] = gafTex(im.gaf, im.seq, im.frame, &b.texFac[i]);
+                }
+            }
+        }
+        if (cursorsInit_) cursors_.load(ren, vfs, &s);
+    }
+
+#ifndef NDEBUG
+    void testSmoothArt(const Settings& current, int width, int height) {
+        auto check = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        Settings s = current; s.hardwareCursor = false;
+        s.smoothArt = false; applyArtSettings(s);
+        cursorsInit_ = true; cursors_.load(ren, vfs, &s);
+        const auto bytes = gpuvram::bytes(), count = gpuvram::count();
+        auto capture = [&] {
+            render(width, height);
+            std::vector<uint8_t> pixels(size_t(width) * height * 4);
+            check(SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32, pixels.data(), width * 4) == 0,
+                  "title art readback failed");
+            return pixels;
+        };
+        const auto original = capture();
+        for (int i = 0; i < 3; ++i) {
+            s.smoothArt = true; applyArtSettings(s);
+            check(capture() != original, "title art smoothing did not apply live");
+            s.smoothArt = false; applyArtSettings(s);
+            check(capture() == original, "title art did not restore exactly after live toggle");
+            check(gpuvram::bytes() == bytes && gpuvram::count() == count,
+                  "title art smoothing leaks textures");
+        }
+        applyArtSettings(current);
+        std::puts("PASS: title art smoothing applies live, restores pixels and releases textures");
+    }
+#endif
 
     // ---- render ---------------------------------------------------------------
 
@@ -987,9 +1052,13 @@ void MainMenu::setReplayError(const std::string& msg) { d_->pendingReplayError =
 
 MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverOut,
                                MenuMusic* music, Settings* settings, Streaming* streaming) {
-    if (settings) tak::video::setDeblock(settings->videoDeblock);
+    if (settings) d_->applyArtSettings(*settings);
     int w = 0, h = 0;
     SDL_GetRendererOutputSize(d_->ren, &w, &h);
+
+#ifndef NDEBUG
+    if (settings && tak::devFlag("TAK_GUI_SMOOTH_TEST")) d_->testSmoothArt(*settings, w, h);
+#endif
 
     if (!shotPath.empty()) {
         for (auto& dr : d_->doors) d_->updateDoor(dr, 0.0);
@@ -1207,10 +1276,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
                         d_->settingsMenu_ = false;
                         d_->options_ = std::make_unique<OptionsScreen>(ren, *settings,
-                            [ren, music, settings, fsWas = settings->fullscreen,
+                            [this, ren, music, settings, fsWas = settings->fullscreen,
                              vsWas = settings->vsync]() mutable {
                                 if (music) music->setVolume(settings->masterVol, settings->bgmVol);
-                                tak::applyRuntimeSettings(*settings);   // incl. DEFAULTS
+                                d_->applyArtSettings(*settings);   // incl. DEFAULTS
                                 // onChange fires on EVERY control tweak (a volume-slider drag
                                 // fires it many times a second). ANY window/renderer reconfigure
                                 // here re-commits the Wayland surface -- which rescales it and

@@ -24,8 +24,7 @@ struct Settings {
     int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.75..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
-    // Retained renderer controls: fixed off in the application, not loaded/saved
-    // or exposed in Options. The same policy applies to bilinear, videoDeblock, smoothArt.
+    // Independent world passes; interface art stays at native output resolution.
     int terrainAA=0, modelAA=0; // pixel sample counts, independently resolved
     int terrainAAEffective=-1, modelAAEffective=-1; // runtime only; not preferences
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
@@ -41,8 +40,8 @@ struct Settings {
                                    // panels, backdrops, cursors) when it is built, so
                                    // 1999 sprites do not show blocky stair-steps when
                                    // magnified. Costs load time and VRAM, nothing per
-                                   // frame. Applied when the art is BUILT, so a change
-                                   // needs a restart to reach art already loaded.
+                                   // frame. Changing it reloads the current interface
+                                   // textures immediately; no restart required.
     bool  unitShadows = true;      // projected unit shadows (retail Glide casts them; the
                                    // single largest cost in a crowded frame, so it is worth
                                    // being able to turn off on a slow machine)

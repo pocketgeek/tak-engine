@@ -151,6 +151,63 @@ int main(int argc,char** argv) {
             check(travel(d,{1,1},{500,500},cache)<560,"open-ground hierarchy produces a long L-shaped route");
         }
         {
+            auto topo=build(64,64,std::vector<uint16_t>(64*64,1));
+            const Cell goal{60,32};
+            Service service;
+            check(service.bind(1,1,topo,{goal}),"wide-front field bind failed");
+            for(int tick=0;tick<100;++tick){service.sample(1,{3,8});service.tick();}
+            const auto integrated=field(destination(topo,goal),0);
+            int canonicalLow=64,canonicalHigh=0,straightLow=64,straightHigh=0;
+            for(int z=8;z<=28;z+=4) {
+                Cell canonical{3,z},straight=canonical;
+                for(int step=0;step<24;++step) {
+                    const auto normal=service.sample(1,canonical);
+                    const auto preferred=service.sample(1,straight,goal);
+                    check(normal.status==Service::Status::Ready&&preferred.status==Service::Status::Ready,
+                          "wide-front sample not ready");
+                    const int dx=std::abs(preferred.next.x-straight.x),dz=std::abs(preferred.next.z-straight.z);
+                    check(integrated.distance[size_t(straight.z)*64+straight.x]==
+                          integrated.distance[size_t(preferred.next.z)*64+preferred.next.x]+(dx&&dz?1448u:1024u),
+                          "lane preservation chose a more expensive or non-descending step");
+                    canonical=normal.next;straight=preferred.next;
+                }
+                canonicalLow=std::min(canonicalLow,canonical.z);canonicalHigh=std::max(canonicalHigh,canonical.z);
+                straightLow=std::min(straightLow,straight.z);straightHigh=std::max(straightHigh,straight.z);
+                for(int step=0;step<100&&straight!=goal;++step) {
+                    const auto next=service.sample(1,straight,goal);
+                    check(next.status==Service::Status::Ready,"lane preservation failed to finish");straight=next.next;
+                }
+                check(straight==goal,"lane preservation cycles before goal");
+            }
+            check(straightHigh-straightLow>=10&&canonicalHigh-canonicalLow<straightHigh-straightLow,
+                  "equal-cost straight choice collapsed the open-ground front width");
+            check(service.fields()==1&&service.destinations()==1,"lane preservation duplicated shared fields");
+        }
+        {
+            auto topo=build(64,64,std::vector<uint16_t>(64*64,1));
+            const Cell goal{60,60};Service service;
+            check(service.bind(1,1,topo,{goal}),"diagonal-front field bind failed");
+            for(int tick=0;tick<100;++tick){service.sample(1,{4,4});service.tick();}
+            const auto integrated=field(destination(topo,goal),0);
+            // A touching square cohort must advance in parallel near45 degrees,
+            // not have its two triangular halves fold into the same centerline.
+            for(int z=4;z<16;++z)for(int x=4;x<16;++x) {
+                Cell at{x,z};
+                for(int step=0;step<24;++step) {
+                    const auto result=service.sample(1,at,goal);
+                    check(result.status==Service::Status::Ready,"diagonal-front sample not ready");
+                    check(result.next==Cell{at.x+1,at.z+1},
+                          "diagonal-front tie choice merges adjacent lanes into a seam");
+                    check(integrated.distance[size_t(at.z)*64+at.x]==
+                          integrated.distance[size_t(result.next.z)*64+result.next.x]+1448u,
+                          "diagonal lane chose a more expensive or non-descending step");
+                    at=result.next;
+                }
+                check(at.x-at.z==x-z,"diagonal front lost its lateral offset");
+            }
+            check(service.fields()==1&&service.destinations()==1,"diagonal lanes duplicated shared fields");
+        }
+        {
             uint32_t rng=97231;std::vector<uint16_t> costs(64*64);
             for(auto& cost:costs) {rng=rng*1664525u+1013904223u;cost=(rng>>24)<40?0:1+(rng%255);}
             const Cell goal{32,32};costs[32*64+32]=1;
@@ -456,6 +513,41 @@ int main(int argc,char** argv) {
             route.clear();
             for(int cell=0;cell<64;++cell)appendRouteCorner(route,Cell{cell,cell});
             check(route==std::vector<Cell>{{0,0},{63,63}},"straight flow route retained per-cell steering points");
+        }
+        {
+            const auto clear=[](Cell){return true;};
+            const auto end=[](Cell c){return c==Cell{8,3};};
+            check(directRoute(Cell{0,0},Cell{8,3},64,clear,end),"valid slot supercover rejected");
+            check(!directRoute(Cell{0,0},Cell{8,3},64,
+                [](Cell c){return c!=Cell{4,1};},end),"slot ray cut a diagonal terrain edge");
+            check(!directRoute(Cell{0,0},Cell{65,0},64,clear,
+                [](Cell c){return c==Cell{65,0};}),"slot ray exceeded local work bound");
+            check(directRoute(Cell{0,0},Cell{8,0},64,
+                [](Cell c){return c.x!=8;},[](Cell c){return c.x==7;}),
+                "interaction-area ray demanded occupied target centre");
+            check(!directRoute(Cell{0,0},Cell{8,0},64,
+                [](Cell c){return c.x!=4;},[](Cell c){return c.x>=7;}),
+                "opposite-side-of-wall slot accepted");
+        }
+        {
+            ProofBudget budget(8);
+            std::array<bool,8> served{};
+            // Every early ID keeps requesting work, even after its successful
+            // proof: later callers must still get a complete proof opportunity.
+            for(int tick=0;tick<8;++tick) {
+                size_t work=0;
+                for(int id=1;id<=8;++id)if(budget.spend(id,3)) {served[size_t(id-1)]=true;work+=3;}
+                check(work<=8,"arrival proof quota exceeded");budget.tick();
+            }
+            check(std::all_of(served.begin(),served.end(),[](bool value){return value;}),
+                  "low-ID arrival proofs starved a later valid destination");
+            ProofBudget wrap(2);
+            check(wrap.spend(8,2),"proof quota setup failed");wrap.tick();
+            check(!wrap.accepts(1)&&!wrap.accepts(8),"exhausted proof priority did not advance");
+            wrap.tick();check(wrap.accepts(1),"proof priority did not wrap after a deferred tick");
+            ProofBudget ordinary;
+            check(ordinary.spend(8,2),"ordinary proof failed");ordinary.tick();
+            check(ordinary.accepts(1),"unsaturated proof quota unnecessarily excluded an earlier unit");
         }
         if(bench) {
             const int size=2048;auto t=build(size,size,std::vector<uint16_t>(size_t(size)*size,1),65536);

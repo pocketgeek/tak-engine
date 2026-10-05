@@ -1,8 +1,10 @@
 #include "flownavigator.h"
+#include "cooperativeclearance.h"
 #include "flowservice.h"
 #include "flowlocal.h"
 #include "flowroute.h"
 #include "flowmemory.h"
+#include "navigationmemory.h"
 #include "flowobstacles.h"
 #include "flowcost.h"
 #include "retailheight.h"
@@ -12,10 +14,11 @@
 #include <bit>
 #include <map>
 #include <tuple>
+#include <utility>
 
 namespace tak::sim {
 // This adapter is deliberately separate from PathService. Only explicit
-// Flowfield worlds own it; Retail never allocates these caches or jobs.
+// shared-navigation worlds own it; Retail never allocates these caches or jobs.
 struct FlowNavigator::Impl {
     using Cell=flow::Cell;
     using Key=std::tuple<int,int,int,int,int,int,int>;
@@ -28,11 +31,21 @@ struct FlowNavigator::Impl {
         std::shared_ptr<const flow::Topology> topology;
         std::unique_ptr<flow::SnapshotBuilder> builder;
         std::vector<bool> dirty;
+        // Cooperative can certify unchanged published tiles while another
+        // part of this profile rebuilds. begin() transfers dirty to the job;
+        // retain those bits until publication rather than treating them clean.
+        std::vector<bool> updating;
+        // Proof bits describe only the matching immutable snapshot. Building
+        // the next generation must not replace proofs for a usable old prefix.
+        std::vector<bool> openPublished,openPreparing;
+        uint64_t openPublishedHash=0,openPreparingHash=0;
         struct TileStamp {Key key{};uint64_t revision=0;};
         std::vector<TileStamp> preparing;
         std::vector<uint64_t> tileHashes;
 
     };
+    static_assert(sizeof(Profile::TileStamp)+sizeof(uint64_t)+4<=128,
+        "profile tile stamps, hashes and four bitmasks must fit canonical metadata");
     struct Request {
         Key key;
         Fixed x,z;
@@ -46,7 +59,7 @@ struct FlowNavigator::Impl {
         uint8_t firingState=0,firingCount=0;
         uint32_t firingCursor=0;
         std::array<Cell,16> firingSeeds{};
-        bool firingDone=false,firingContinuation=false;
+        bool firingDone=false,firingContinuation=false,passagePending=false;
         void resetFiring() {firingState=0;firingCount=0;firingCursor=0;firingDone=false;}
     };
     static_assert(sizeof(Request)<=384,"review canonical request/traffic memory reservation");
@@ -57,10 +70,40 @@ struct FlowNavigator::Impl {
     World& world;
     flow::MemoryPlan memory;
     flow::Service service;
-    flow::Traffic traffic;
+    // Keep the original traffic object and call order intact in Flowfield.
+    // The third mode owns its independent coordinator and reuses terrain data.
+    struct Traffic {
+        using Context=flow::Traffic::Context;
+        flow::Traffic original;
+        std::unique_ptr<cooperative::Traffic> coordinator;
+        explicit Traffic(bool enabled) {
+            if(enabled)coordinator=std::make_unique<cooperative::Traffic>();
+        }
+        template<class F> decltype(auto) visit(F&& f) {
+            if(coordinator)return f(*coordinator);
+            return f(original);
+        }
+        template<class F> decltype(auto) visit(F&& f) const {
+            if(coordinator)return f(std::as_const(*coordinator));
+            return f(original);
+        }
+        void registerMove(const Context& c) {visit([&](auto& t){t.registerMove(c);});}
+        int arrivalRadiusSquared(const Context& c) const {return visit([&](const auto& t){return t.arrivalRadiusSquared(c);});}
+        bool settled(int id,Cell at) const {return visit([&](const auto& t){return t.settled(id,at);});}
+        void refreshSettled(int id,Cell at) {visit([&](auto& t){t.refreshSettled(id,at);});}
+        bool nearArrival(const Context& c) const {return visit([&](const auto& t){return t.nearArrival(c);});}
+        bool needsArrivalNeighbors(const Context& c) const {return visit([&](const auto& t){return t.needsArrivalNeighbors(c);});}
+        void prune(size_t count,const std::function<bool(int,int,uint64_t,Cell,bool)>& valid) {
+            visit([&](auto& t){t.prune(count,valid);});
+        }
+        flow::Traffic::Result update(const Context& c) {return visit([&](auto& t){return t.update(c);});}
+        uint64_t checksum() const {return visit([](const auto& t){return t.checksum();});}
+        size_t bytes() const {return visit([](const auto& t){return t.bytes();});}
+    } traffic;
+    std::unique_ptr<cooperative::Passages> passages;
     std::map<Key,Profile> profiles;
     using TileKey=std::pair<Key,size_t>;
-    struct CachedTile {std::shared_ptr<const flow::Tile> tile;uint64_t revision=0,used=0,fingerprint=0;};
+    struct CachedTile {std::shared_ptr<const flow::Tile> tile;uint64_t revision=0,used=0,fingerprint=0;bool open=false;};
     std::map<TileKey,CachedTile> tiles;
     std::map<uint64_t,TileKey> tileLru;
     struct Evidence {
@@ -84,13 +127,28 @@ struct FlowNavigator::Impl {
     uint64_t nextProfile=0,clock=0;
     int requestCursor=0;
     size_t firingRays=0,firingCells=0;
+    flow::ProofBudget arrivalBudget;
     // Canonical reservations include simultaneous old/new snapshots and scratch.
     // Admission is independent of pointer sizes and measured allocator usage.
     static constexpr size_t maxRequests=flow::MemoryPlan::maxRequests;
-    explicit Impl(World& w):world(w),memory(flow::MemoryPlan::forMap(w.nav_.width(),w.nav_.height())),
+    explicit Impl(World& w):world(w),memory(navigationMemoryPlan(w.pathfindingMode_,w.nav_.width(),w.nav_.height())),
         service(flow::Service::Budget{flow::MemoryPlan::maxDestinations,flow::MemoryPlan::maxFields,
-            flow::MemoryPlan::maxBuilders,flow::MemoryPlan::maxRequests,8192,4096}) {
+            flow::MemoryPlan::maxBuilders,flow::MemoryPlan::maxRequests,8192,4096}),
+        traffic(w.pathfindingMode_==PathfindingMode::Cooperative) {
+        if(traffic.coordinator) {
+            passages=std::make_unique<cooperative::Passages>();
+        }
+        updateAlliances();
         evidence.resize(size_t((w.nav_.width()+63)/64)*((w.nav_.height()+63)/64));
+    }
+    void updateAlliances() {
+        if(!traffic.coordinator)return;
+        for(int player=0;player<16;++player) {
+            uint16_t mask=0;
+            for(int other=0;other<16;++other)
+                if(world.allied(player,other))mask|=uint16_t(1u<<other);
+            traffic.coordinator->setAllianceMask(player,mask);
+        }
     }
     Key key(const Unit& u) const {
         const auto nav=world.navIdx_.find(u.type);
@@ -98,6 +156,74 @@ struct FlowNavigator::Impl {
         const int supportClass=(u.type->upright?1:0)|(u.type->floater?2:0)|(u.type->canHover?4:0)|
             (int(uint8_t(u.type->waterline))<<3);
         return {index,u.type->footX,u.type->footZ,u.type->roadMult.v,u.type->waterMult.v,u.player,supportClass};
+    }
+    static const Order* exitRally(const Unit& other) {
+        if(other.orders.empty()||!other.type)return nullptr;
+        const size_t end=World::currentLeg(other.orders);const auto& exit=other.orders[end];
+        if(!exit.productionExit||end+1>=other.orders.size())return nullptr;
+        const int64_t movedX=int64_t(other.x.floorInt())-exit.productionExit->first.floorInt();
+        const int64_t movedZ=int64_t(other.z.floorInt())-exit.productionExit->second.floorInt();
+        // A populated nearby rally can extend back over the birth position.
+        // It must not settle this child before that entire footprint is clear
+        // for the next output, regardless of the rally's distance from the site.
+        if(std::abs(movedX)<other.type->footX*16 &&
+           std::abs(movedZ)<other.type->footZ*16)return nullptr;
+        const auto& rally=other.orders[end+1];
+        if(!rally.goal||!rally.groundMission||rally.targetId||rally.attackMove||rally.patrol||
+           rally.guard||rally.load||rally.unload||rally.buildType||rally.reclaimFeat||
+           rally.reclaimArea||rally.manaBuildArea||rally.repairTarget||rally.buildRectangle||rally.park||
+           rally.transportPickup||rally.transportUnloadApproach||rally.wait||rally.waitAttack)return nullptr;
+        const auto point=rally.missionTarget.value_or(std::pair{rally.x,rally.z});
+        const int64_t dx=int64_t(point.first.floorInt())-exit.productionExit->first.floorInt();
+        const int64_t dz=int64_t(point.second.floorInt())-exit.productionExit->second.floorInt();
+        // Nearby rallies must still clear the producer's independent exit.
+        if(std::abs(dx)<std::max(60,(other.type->footX+1)*16)&&
+           std::abs(dz)<std::max(60,(other.type->footZ+1)*16))return nullptr;
+        return &rally;
+    }
+    flow::Traffic::Identity identity(const Order& order) const {
+        auto target=order.missionTarget.value_or(std::pair{order.x,order.z});
+        if(order.guard)if(const auto* guarded=world.unit(order.targetId);guarded&&guarded->alive())
+            target={guarded->x,guarded->z};
+        const uint32_t kind=uint32_t(order.groundMission)|uint32_t(order.attackMove)<<1|
+            uint32_t(order.patrol)<<2|uint32_t(order.guard)<<3|uint32_t(order.load)<<4|
+            uint32_t(order.unload)<<5|uint32_t(bool(order.buildType))<<6|
+            uint32_t(bool(order.reclaimFeat))<<7|uint32_t(bool(order.repairTarget))<<8|
+            uint32_t(bool(order.buildRectangle))<<9|uint32_t(bool(order.park))<<10|
+            uint32_t(order.transportUnloadApproach)<<11|uint32_t(order.wait>0)<<12|
+            uint32_t(order.waitAttack)<<13|uint32_t(bool(order.targetId))<<14|
+            uint32_t(bool(order.reclaimArea))<<15|uint32_t(order.transportPickup)<<16;
+        const int targetId=order.targetId?order.targetId:order.repairTarget?order.repairTarget:order.reclaimFeat;
+        return {order.controller,{target.first.floorInt()/16,target.second.floorInt()/16},kind,targetId};
+    }
+    int guardReach(const Unit& escort,const Order& order) const {
+        const auto* target=world.unit(order.targetId);
+        if(!target||!target->type)return 70;
+        // A center-only escort radius can lie wholly inside a large building.
+        // Account for both complete footprints and one cell of anchor margin.
+        return std::max(70,8*std::max(escort.type->footX+target->type->footX,
+            escort.type->footZ+target->type->footZ)+16);
+    }
+    flow::Traffic::Context trafficContext(Unit& u) const {
+        flow::Traffic::Context c;
+        if(!u.type||u.type->canFly||u.orders.empty())return c;
+        const auto& goal=u.orders[World::currentLeg(u.orders)];
+        const auto* rally=exitRally(u);const auto& arrival=rally?*rally:goal;
+        const auto intent=identity(arrival);
+        c.steeringTarget=Cell{footprintCell(u.orders.front().x,u.type->footX),footprintCell(u.orders.front().z,u.type->footZ)};
+        c.id=u.id;c.player=u.player;c.controller=goal.controller;c.tick=world.tickCounter_;
+        c.issuedTick=arrival.issuedTick;
+        c.position={footprintCell(u.x,u.type->footX),footprintCell(u.z,u.type->footZ)};
+        c.target=intent.target;c.missionKind=intent.kind;c.targetId=intent.targetId;
+        c.footX=u.type->footX;c.footZ=u.type->footZ;c.blocked=u.bodyBlockStreak;
+        c.plainMove=(goal.guard||world.groundMissionOrder(u,true))&&!goal.load&&!goal.unload&&
+            !goal.transportUnloadApproach&&!goal.buildRectangle&&!goal.park;
+        c.goalReached=c.plainMove&&!goal.guard&&world.groundMissionAccepts(u,arrival);
+        if(goal.guard) {
+            const int64_t dx=int64_t(c.position.x)-c.target.x,dz=int64_t(c.position.z)-c.target.z;
+            c.goalReached=dx*dx+dz*dz<=retailCircleRadiusSquared(guardReach(u,goal));
+        }
+        return c;
     }
     bool used(const Key& key) const {
         return subscribers.contains(key);
@@ -143,6 +269,7 @@ struct FlowNavigator::Impl {
             }
             if(oldest==profiles.end())return nullptr;
             service.invalidate(oldest->second.id);
+            if(passages)passages->invalidate(oldest->second.id);
             for(auto& [id,r]:requests) {(void)id;if(r.key==oldest->first){r.bound=false;r.resetFiring();}}
             if(used(oldest->first))awaitProfile(oldest->first);
             profiles.erase(oldest);++counters.profileEvictions;
@@ -263,11 +390,24 @@ struct FlowNavigator::Impl {
         return {x0,z0,std::max(0,std::min(nav.width(),x+64+p.type->footX-1)-x0),
                        std::max(0,std::min(nav.height(),z+64+p.type->footZ-1)-z0)};
     }
-    static uint64_t tileFingerprint(const flow::Tile& value) {
+    template<bool ProveOpen=false>
+    static uint64_t tileFingerprint(const flow::Tile& value,bool* open=nullptr) {
         uint64_t hash=1469598103934665603ull;
-        for(size_t n=0;n<flow::kTileCells;++n)hash=(hash^(uint32_t(value.cost[n])|(uint32_t(value.component[n])<<16)))*1099511628211ull;
+        bool all=true;
+        for(size_t n=0;n<flow::kTileCells;++n) {
+            hash=(hash^(uint32_t(value.cost[n])|(uint32_t(value.component[n])<<16)))*1099511628211ull;
+            if constexpr(ProveOpen)all&=value.cost[n]!=0;
+        }
+        if constexpr(ProveOpen)*open=all;
         hash=(hash^value.componentCount)*1099511628211ull;
         return (hash^value.minimumCost)*1099511628211ull;
+    }
+    static void prepareOpen(Profile& p,size_t tile,bool open) {
+        if(p.openPreparing[tile]==open)return;
+        p.openPreparing[tile]=open;
+        uint64_t hash=uint64_t(tile+1)*0x9e3779b97f4a7c15ull;
+        hash=(hash^(hash>>30))*0xbf58476d1ce4e5b9ull;
+        p.openPreparingHash^=hash^(hash>>27);
     }
     std::shared_ptr<const flow::Tile> prepared(Profile& p,size_t tile) {
         const auto rectangle=rawRectangle(p,tile);const auto e=tileEvidence(p,rectangle);
@@ -287,12 +427,14 @@ struct FlowNavigator::Impl {
                 auto value=std::make_shared<flow::Tile>();value->cost.fill(64);value->component.fill(1);
                 value->componentCount=1;value->minimumCost=64;unknownHash=tileFingerprint(*value);unknownTile=std::move(value);
             }
+            if(passages)prepareOpen(p,tile,true);
             p.tileHashes[tile]=unknownHash;mixStamp(unknownHash);++counters.uniformTiles;return unknownTile;
         }
         const auto found=tiles.find({key,tile});
         if(found==tiles.end()||found->second.revision!=stamp.revision)return {};
         tileLru.erase(found->second.used);found->second.used=++tileClock;tileLru.emplace(tileClock,found->first);
         p.tileHashes[tile]=found->second.fingerprint;mixStamp(found->second.fingerprint);
+        if(passages)prepareOpen(p,tile,found->second.open);
         ++counters.tileCacheHits;return found->second.tile;
     }
     Key keyFor(const Profile& p) const {
@@ -311,10 +453,13 @@ struct FlowNavigator::Impl {
         // Compute once at publication, never by scanning tile payloads in the
         // per-tick World checksum. Reuse it for an unchanged immutable tile.
         const auto old=tiles.find(key);
-        if(old!=tiles.end()&&old->second.tile==value)fingerprint=old->second.fingerprint;
+        bool open=false;
+        if(old!=tiles.end()&&old->second.tile==value){fingerprint=old->second.fingerprint;open=old->second.open;}
+        else if(passages){fingerprint=tileFingerprint<true>(*value,&open);++counters.cooperativeClearanceRebuilds;}
         else fingerprint=tileFingerprint(*value);
+        if(passages)prepareOpen(p,tile,open);
         p.tileHashes[tile]=fingerprint;
-        tiles[key]={std::move(value),stamp.revision,++tileClock,fingerprint};tileLru.emplace(tileClock,key);++counters.preparedTiles;
+        tiles[key]={std::move(value),stamp.revision,++tileClock,fingerprint,open};tileLru.emplace(tileClock,key);++counters.preparedTiles;
     }
     void delivered(const Request& r) {
         const uint64_t age=clock-r.issued;
@@ -334,6 +479,11 @@ struct FlowNavigator::Impl {
             return tileEvidence(p,r).unknown?std::optional<uint16_t>(64):std::nullopt;
         };
         hooks.publish=[this,&p](size_t tile,std::shared_ptr<const flow::Tile> value){publishTile(p,tile,std::move(value));};
+        if(passages) {
+            p.updating=p.dirty;
+            p.openPreparing=p.openPublished;p.openPreparing.resize(p.dirty.size(),false);
+            p.openPreparingHash=p.openPublishedHash;
+        }
         p.builder=std::make_unique<flow::SnapshotBuilder>(nav.width(),nav.height(),p.type->footX,p.type->footZ,
             [this,&p](int x,int z){return sample(p,x,z);},p.topology,p.dirty,
             flow::MemoryPlan::topologyLimits,std::move(hooks),world.serialThreads_?0:4);
@@ -360,7 +510,7 @@ struct FlowNavigator::Impl {
                 // route to a blocked point; a reverse field must seed the
                 // reachable interaction area explicitly.
                 float reach=0;uint64_t innerSquared=0;
-                if(leg.guard)reach=54; // 70px escort distance, with anchor margin
+                if(leg.guard)reach=float(guardReach(u,leg));
                 else if(leg.repairTarget) {
                     const float half=8.f*float(std::max(target->type->footX,target->type->footZ));
                     reach=std::max(half+40.f,u.type->buildDist>0?u.type->buildDist+half:0.f)-16.f;
@@ -389,7 +539,8 @@ struct FlowNavigator::Impl {
                 }
                 const int cells=int(std::clamp(reach/16.f,0.f,46340.f));
                 return {innerSquared?flow::GoalRegion::Kind::Ring:flow::GoalRegion::Kind::Circle,
-                    footprintCell(x,u.type->footX),footprintCell(z,u.type->footZ),0,0,cells*cells,innerSquared};
+                    footprintCell(x,u.type->footX),footprintCell(z,u.type->footZ),0,0,
+                    leg.guard?retailCircleRadiusSquared(guardReach(u,leg)):cells*cells,innerSquared};
             }
         }
         // Fight/patrol wrap the same ground move but are deliberately excluded
@@ -426,11 +577,13 @@ struct FlowNavigator::Impl {
                     const auto topology=p.builder->finish();
                     if(topology!=p.topology) {
                         service.invalidate(p.id);
+                        if(passages)passages->invalidate(p.id);
                         for(auto& [id,r]:requests) { (void)id;if(r.key==it->first){r.bound=false;r.resetFiring();} }
                         p.topology=topology;p.topologyHash=p.builder->checksum();
+                        if(passages){p.openPublished=std::move(p.openPreparing);p.openPublishedHash=p.openPreparingHash;}
                         for(uint64_t hash:p.tileHashes)p.topologyHash=(p.topologyHash^hash)*1099511628211ull;
                     }
-                    p.builder.reset();p.failures=0;p.retryAt=0;
+                    p.builder.reset();p.updating.clear();p.openPreparing.clear();p.openPreparingHash=0;p.failures=0;p.retryAt=0;
                     // A fragmented graph may need much more than 256 ticks to
                     // seed/integrate its first destination. Give the first
                     // global delivery a larger, still bounded opportunity.
@@ -440,7 +593,7 @@ struct FlowNavigator::Impl {
                     // and retry at deterministic bounded intervals so a later
                     // terrain/yard change can recover a previously over-limit
                     // graph without spinning every tick or pinning this slot.
-                    p.builder.reset();++counters.snapshotFailures;std::fill(p.dirty.begin(),p.dirty.end(),true);
+                    p.builder.reset();p.updating.clear();p.openPreparing.clear();p.openPreparingHash=0;++counters.snapshotFailures;std::fill(p.dirty.begin(),p.dirty.end(),true);
                     p.failures=std::min(p.failures+1,6u);
                     p.retryAt=clock+(uint64_t(60)<<p.failures);
                     if(!p.leaseUntil)p.leaseUntil=clock;
@@ -526,8 +679,24 @@ struct FlowNavigator::Impl {
     }
     bool deliver(int id,Request& r,Profile& p,Unit& u) {
         if(!p.topology)return false;
+        // Incomplete obstacle installation cannot certify even a local prefix.
+        if(passages&&(!structuresComplete||!obstacles->settled())) {
+            r.passagePending=true;return false;
+        }
+        const bool snapshotFresh=!passages||(!p.builder&&
+            !std::any_of(p.dirty.begin(),p.dirty.end(),[](bool d){return d;}));
+        const auto freshTile=[&](int tile) {
+            if(snapshotFresh)return true;
+            // Out-of-map cells remain blocked independently of any rebuild.
+            return tile<0||(!p.dirty[size_t(tile)]&&
+                (p.updating.empty()||!p.updating[size_t(tile)]));
+        };
+        const auto fresh=[&](Cell cell){return snapshotFresh||freshTile(p.topology->tileAt(cell));};
+        Cell at{footprintCell(u.x,u.type->footX),footprintCell(u.z,u.type->footZ)};
+        if(!fresh(at)){r.passagePending=true;return false;}
         if(!prepareFiring(r,p,u))return false;
         if(r.firingState==2&&!r.firingCount&&r.firingDone) {
+            if(!snapshotFresh){r.passagePending=true;return false;}
             world.deliverSearchRoute(id,{},r.x,r.z,true,false,false,false);
             delivered(r);++counters.failures;served(p);return true;
         }
@@ -535,9 +704,11 @@ struct FlowNavigator::Impl {
             ?service.bind(id,p.id,p.topology,std::vector<Cell>(r.firingSeeds.begin(),r.firingSeeds.begin()+r.firingCount))
             :service.bindRegion(id,p.id,p.topology,r.region);
         if(!r.bound)return false;
-        Cell at{footprintCell(u.x,u.type->footX),footprintCell(u.z,u.type->footZ)};
         std::vector<PathCell> route;route.reserve(64);route.push_back({at.x,at.z});
         if(!p.topology->cost(at)) {
+            // This separate recovery path does not screen a complete open
+            // prefix, so retain the full freshness requirement for admission.
+            if(!snapshotFresh){r.passagePending=true;return false;}
             // Live collision can stop between cell anchors as a newly revealed
             // structure enters the footprint. Escape to a nearby legal
             // anchor; a blocked start is not proof that the goal is unreachable.
@@ -585,22 +756,75 @@ struct FlowNavigator::Impl {
             return false;
         }
         bool arrived=false,failed=false;
+        const auto corridor=traffic.coordinator?traffic.coordinator->corridorDirection(trafficContext(u)):
+            std::optional<Cell>{};
+        const auto lane=traffic.coordinator?traffic.coordinator->corridorAim(trafficContext(u)):
+            std::optional<Cell>{};
+        std::optional<cooperative::Traffic::Passage> passage;
         // Bound both field sampling and the output independently of route length.
         for(size_t n=0;n<63;++n) {
-            const auto next=service.sample(id,at);
+            const auto next=traffic.coordinator
+                ?service.sampleCooperative(id,at,corridor.value_or(Cell{r.region.x-at.x,r.region.z-at.z}),lane)
+                :service.sample(id,at,Cell{r.region.x,r.region.z});
             if(next.status==flow::Service::Status::Arrived) {arrived=true;break;}
             if(next.status==flow::Service::Status::Unreachable) {
                 if(r.firingState==2&&!r.firingDone){service.cancel(id);r.bound=false;r.firingCount=0;return false;}
                 failed=true;break;
             }
             if(next.status!=flow::Service::Status::Ready)break;
+            if(!fresh(next.next)||(at.x!=next.next.x&&at.z!=next.next.z&&
+                (!fresh({at.x,next.next.z})||!fresh({next.next.x,at.z})))) {
+                r.passagePending=true;return false;
+            }
+            if(passages&&!passage) {
+                const Cell delta{(next.next.x>at.x)-(next.next.x<at.x),(next.next.z>at.z)-(next.next.z<at.z)};
+                const std::array<Cell,2> directions{{{delta.x,0},{0,delta.z}}};
+                for(const Cell direction:directions) {
+                    if(direction==Cell{})continue;
+                    // Prove open ground with contiguous rays; sampling only
+                    // their endpoints could jump over thin separating walls.
+                    // Use the detector's full supported width so small peers
+                    // also register strips needed by larger bodies.
+                    const auto screened=cooperative::Clearance::screen(*p.topology,next.next,bool(direction.z),
+                        freshTile,[&](int tile){return p.openPublished[size_t(tile)];},
+                        counters.cooperativePassageScreeningCells,counters.cooperativeClearanceHits);
+                    if(screened==cooperative::Clearance::Result::Stale){r.passagePending=true;return false;}
+                    if(screened==cooperative::Clearance::Result::Open)continue;
+                    // Only a fully current topology may supply a cached strip
+                    // descriptor. Unrelated edits can delay narrow admission,
+                    // but cannot stop a prefix proved open on unchanged tiles.
+                    if(!snapshotFresh){r.passagePending=true;return false;}
+                    const auto result=passages->probe(world.tickCounter_,p.id,p.topologyHash,*p.topology,
+                        u.type->footX,u.type->footZ,next.next,direction);
+                    if(result.status==cooperative::Passages::Status::Pending) {
+                        r.passagePending=true;return false;
+                    }
+                    if(result.status==cooperative::Passages::Status::Found) {
+                        passage=result.passage;
+                        if(!traffic.coordinator->setPassage(id,passage)) {
+                            // A proved strip still needs admission to the
+                            // bounded gate table. Wait rather than publishing
+                            // an uncoordinated route when that table is full.
+                            r.passagePending=true;return false;
+                        }
+                        break;
+                    }
+                }
+            }
             at=next.next;
             // The retail mover consumes direction-change corners, not every
             // 16px cell on a straight run. Keep the same sampled polyline and
             // fixed 63-cell work budget, without extra steering stops/turns.
             flow::appendRouteCorner(route,PathCell{at.x,at.z});
+            if(passage) {
+                const int64_t dx=int64_t(passage->last.x)-passage->first.x;
+                const int64_t dz=int64_t(passage->last.z)-passage->first.z;
+                const int64_t passed=(int64_t(at.x)-passage->last.x)*dx+(int64_t(at.z)-passage->last.z)*dz;
+                if(passed>int64_t(std::max(u.type->footX,u.type->footZ))*(std::abs(dx)+std::abs(dz)))break;
+            }
         }
         if(route.size()==1&&!arrived&&!failed)return false;
+        if(passages&&!passage)traffic.coordinator->setPassage(id,{});
         // Never report stale topology as a permanent mission failure.
         if(failed&&(!structuresComplete||!obstacles->settled()||p.builder||std::any_of(p.dirty.begin(),p.dirty.end(),[](bool d){return d;})))return false;
         if(failed&&route.size()==1)route.clear();
@@ -656,16 +880,39 @@ struct FlowNavigator::Impl {
     }
     void tick() {
         if(!memory.supported)return;
-        ++clock;firingRays=64;firingCells=8192;updateStructures();
+        updateAlliances();
+        ++clock;firingRays=64;firingCells=8192;arrivalBudget.tick();updateStructures();
         traffic.prune(64,[&](int id,int player,uint64_t controller,Cell position,bool settled) {
             auto* u=world.unit(id);
             if(!u||!u->alive()||u->embarked()||u->player!=player||!u->type)return false;
-            if(settled&&position!=Cell{footprintCell(u->x,u->type->footX),footprintCell(u->z,u->type->footZ)})return false;
-            if(u->orders.empty())return settled;
+            const Cell current{footprintCell(u->x,u->type->footX),footprintCell(u->z,u->type->footZ)};
+            if(u->orders.empty()) {
+                if(settled&&position!=current)traffic.refreshSettled(id,current);
+                return settled;
+            }
             const auto& goal=u->orders[World::currentLeg(u->orders)];
-            return goal.controller==controller||(settled&&!goal.controller);
+            const bool valid=goal.controller?goal.controller==controller:
+                (goal.guard||(settled&&goal.groundMission&&(goal.mission.pending&0x500)));
+            if(valid&&settled&&position!=current&&(goal.guard||!goal.controller))
+                traffic.refreshSettled(id,current);
+            return valid;
         });
         if(structuresComplete&&obstacles->settled())advanceProfiles();
+        if(passages) {
+            // Descriptor work progresses independently of how often a unit's
+            // request is revisited. Retain no old topology in the sparse cache.
+            std::array<const Profile*,flow::MemoryPlan::maxProfiles> fresh{};
+            size_t count=0;
+            if(structuresComplete&&obstacles->settled())for(const auto& [key,p]:profiles) {
+                (void)key;
+                if(p.topology&&!p.builder&&!std::any_of(p.dirty.begin(),p.dirty.end(),[](bool d){return d;}))
+                    fresh[count++]=&p;
+            }
+            passages->advance(world.tickCounter_,[&fresh](uint64_t id,uint64_t generation)->const flow::Topology* {
+                for(const auto* p:fresh)if(p&&p->id==id&&p->topologyHash==generation)return p->topology.get();
+                return nullptr;
+            });
+        }
         advanceLocal();
         // Selection does not depend on worker availability or elapsed time.
         service.tick(world.serialThreads_?0:4);
@@ -679,7 +926,9 @@ struct FlowNavigator::Impl {
                 auto* p=profile(r.key,*u);
                 const bool classified=classifyFiring(r,*u);
                 if(classified&&p)remove=deliver(id,r,*p,*u);
-                if(!remove&&classified&&r.firingState==1&&clock-r.issued>=64&&(!p||!p->topology||!r.bound))remove=fallback(id,r,*u);
+                // Cooperative waits for fair shared-profile admission. A local
+                // shortcut would bypass passage discovery and entry permits.
+                if(!passages&&!remove&&classified&&r.firingState==1&&clock-r.issued>=64&&(!p||!p->topology||!r.bound))remove=fallback(id,r,*u);
             }
             if(remove) {service.cancel(id);local.erase(id);release(r);it=requests.erase(it);}else ++it;
             if(!firingRays||!firingCells)break;
@@ -705,6 +954,9 @@ bool FlowNavigator::request(Unit& u,Fixed x,Fixed z) {
     if(auto it=p.requests.find(u.id);it!=p.requests.end()&&it->second.key==key&&it->second.x==x&&it->second.z==z&&it->second.controller==controller&&it->second.targetId==(mission?mission->targetId:0)&&it->second.region==goals)return true;
     p.cancel(u.id);++p.subscribers[key];
     p.requests[u.id]={key,x,z,controller,u.player,u.type,std::move(goals),false,p.clock,0};
+    // The third backend must prove clearance and coordinate passage entry
+    // before consuming either a new raw goal or an older installed prefix.
+    p.requests[u.id].passagePending=bool(p.passages);
     p.requests[u.id].targetId=mission?mission->targetId:0;
     // Preserve an ongoing firing-position detour across bounded prefixes, even
     // when it temporarily leads away from weapon range. Every continuation is
@@ -713,10 +965,17 @@ bool FlowNavigator::request(Unit& u,Fixed x,Fixed z) {
     u.routeStamp=std::bit_cast<int32_t>(p.world.tickCounter_);
     u.routeCrowded=u.routeTraffic=u.routeFailed=u.routeDetour=false;
     if(!u.orders.empty()&&World::currentLeg(u.orders)==0)u.orders.front().navigationExhausted=true;
+    p.traffic.registerMove(p.trafficContext(u));
     ++p.counters.requests;
     return true;
 }
 bool FlowNavigator::pending(int unit) const {return impl_->requests.contains(unit);}
+bool FlowNavigator::settled(const Unit& u) const {
+    if(!u.type)return false;
+    const flow::Cell at{footprintCell(u.x,u.type->footX),footprintCell(u.z,u.type->footZ)};
+    if(u.alive()&&!u.embarked()&&u.orders.empty())impl_->traffic.refreshSettled(u.id,at);
+    return impl_->traffic.settled(u.id,at);
+}
 bool FlowNavigator::routeBlocked(const Unit& u) const {
     if(u.orders.empty()||!u.type)return false;
     const auto found=impl_->profiles.find(impl_->key(u));
@@ -804,95 +1063,123 @@ bool FlowNavigator::routeBlocked(const Unit& u) const {
 flow::Traffic::Result FlowNavigator::traffic(Unit& u) {
     auto& p=*impl_;auto& w=p.world;
     if(!u.type||u.type->canFly||u.orders.empty())return {};
+    if(p.traffic.coordinator) {
+        const auto request=p.requests.find(u.id);
+        if(request!=p.requests.end()&&request->second.passagePending) {
+            flow::Traffic::Result result;result.wait=true;return result;
+        }
+    }
     const auto& goal=u.orders[World::currentLeg(u.orders)];
-    flow::Traffic::Context c;
-    c.steeringTarget=flow::Cell{footprintCell(u.orders.front().x,u.type->footX),footprintCell(u.orders.front().z,u.type->footZ)};
-    c.id=u.id;c.player=u.player;c.controller=goal.controller;c.tick=w.tickCounter_;
-    c.position={footprintCell(u.x,u.type->footX),footprintCell(u.z,u.type->footZ)};
-    const auto target=goal.missionTarget.value_or(std::pair{goal.x,goal.z});
-    c.target={target.first.floorInt()/16,target.second.floorInt()/16};
-    c.footX=u.type->footX;c.footZ=u.type->footZ;c.blocked=u.bodyBlockStreak;
-    c.plainMove=w.groundMissionOrder(u,true)&&!goal.load&&!goal.unload&&!goal.transportUnloadApproach&&
-        !goal.buildRectangle&&!goal.park;
-    c.goalReached=c.plainMove&&w.groundMissionAccepts(u,goal);
-    const auto identity=[](const Order& order) {
-        const auto target=order.missionTarget.value_or(std::pair{order.x,order.z});
-        const uint32_t kind=uint32_t(order.groundMission)|uint32_t(order.attackMove)<<1|
-            uint32_t(order.patrol)<<2|uint32_t(order.guard)<<3|uint32_t(order.load)<<4|
-            uint32_t(order.unload)<<5|uint32_t(bool(order.buildType))<<6|
-            uint32_t(bool(order.reclaimFeat))<<7|uint32_t(bool(order.repairTarget))<<8|
-            uint32_t(bool(order.buildRectangle))<<9|uint32_t(bool(order.park))<<10|
-            uint32_t(order.transportUnloadApproach)<<11|uint32_t(order.wait>0)<<12|
-            uint32_t(order.waitAttack)<<13|uint32_t(bool(order.targetId))<<14|
-            uint32_t(bool(order.reclaimArea))<<15|uint32_t(order.transportPickup)<<16;
-        const int targetId=order.targetId?order.targetId:order.repairTarget?order.repairTarget:order.reclaimFeat;
-        return flow::Traffic::Identity{order.controller,{target.first.floorInt()/16,target.second.floorInt()/16},kind,targetId};
+    const auto* rally=Impl::exitRally(u);const auto& arrival=rally?*rally:goal;
+    auto c=p.trafficContext(u);
+    // Completed controllers can brake for several ticks before their native
+    // wrapper retires. Refresh before update(), not just the 64-record prune,
+    // so a large cohort does not forget members crossing a cell while coasting.
+    if(goal.guard||(!goal.controller&&goal.groundMission&&(goal.mission.pending&0x500)))
+        p.traffic.refreshSettled(u.id,c.position);
+    const auto trafficIdle=[&](const Unit& other) {
+        if(other.orders.empty())return true;
+        // A parked escort retains Guard forever. It is still a standing body
+        // for local avoidance and can anchor arrival contact for its peers.
+        const auto& order=other.orders[World::currentLeg(other.orders)];
+        return order.guard&&p.traffic.settled(other.id,
+            {footprintCell(other.x,other.type->footX),footprintCell(other.z,other.type->footZ)});
     };
-    c.missionKind=identity(goal).kind;c.targetId=identity(goal).targetId;
-    c.lookup=[&](int id)->std::optional<flow::Traffic::Neighbor> {
+    const auto lookup=[&](int id)->std::optional<flow::Traffic::Neighbor> {
         const auto* other=w.unit(id);
         if(!other||!other->alive()||other->embarked()||!other->type||
            (other->type->canFly&&other->flightGroundMode!=1))return {};
         auto result=flow::Traffic::Neighbor{id,other->player,
             {footprintCell(other->x,other->type->footX),footprintCell(other->z,other->type->footZ)},
-            other->type->footX,other->type->footZ,other->orders.empty()};
+            other->type->footX,other->type->footZ,trafficIdle(*other)};
         result.mobile=!other->type->isStructure();
         if(!other->orders.empty()) {
-            result.identity=identity(other->orders[World::currentLeg(other->orders)]);
+            const auto legIndex=World::currentLeg(other->orders);
+            const auto& leg=other->orders[legIndex];
+            const auto* next=Impl::exitRally(*other);
+            result.identity=p.identity(next?*next:leg);result.identity->controller=leg.controller;
             result.steeringTarget=flow::Cell{footprintCell(other->orders.front().x,other->type->footX),
                 footprintCell(other->orders.front().z,other->type->footZ)};
+            if(p.traffic.coordinator&&result.steeringTarget==result.position) {
+                // An off-centre body can still be approaching a corner in its
+                // current cell. Its next distinct corner describes which lane
+                // a yielding peer must leave clear. Do not cross a queued order
+                // or change the physical mover's current steering waypoint.
+                for(size_t i=1;i<=std::min<size_t>(legIndex,63);++i) {
+                    const flow::Cell at{footprintCell(other->orders[i].x,other->type->footX),
+                        footprintCell(other->orders[i].z,other->type->footZ)};
+                    if(at!=result.position){result.steeringTarget=at;break;}
+                }
+            }
         }
         return result;
     };
-    if(c.blocked>=2) {
+    c.lookup=std::cref(lookup);
+    const bool arrivalNeighbors=p.traffic.needsArrivalNeighbors(c);
+    const bool stalledArrival=c.blocked<2&&arrivalNeighbors;
+    if(c.blocked>=2||stalledArrival) {
         const auto& next=u.orders.front();
         const int nx=footprintCell(next.x,u.type->footX)-c.position.x,nz=footprintCell(next.z,u.type->footZ)-c.position.z;
         const int sx=(nx>0)-(nx<0),sz=(nz>0)-(nz<0);
-        const int x0=c.position.x+sx-c.footX/2,z0=c.position.z+sz-c.footZ/2;
-        int blocker=0;
-        for(int z=std::max(0,z0);z<std::min(w.occH_,z0+c.footZ);++z)
-            for(int x=std::max(0,x0);x<std::min(w.occW_,x0+c.footX);++x) {
-                const int id=w.occ_[size_t(z)*w.occW_+x];
-                if(id&&id!=u.id&&(!blocker||id<blocker))blocker=id;
-            }
-        // The coarse occupancy grid omits flying types, but authoritative
-        // ground collision includes them while landed. Query that same body
-        // index for grounded flyers so an idle scout cannot permanently block
-        // a ground army without ever becoming a local-avoidance obstacle.
-        if(!blocker) {
-            if(!w.bodyIndexValid_)w.rebuildBodyIndex();
-            const int x1=x0+c.footX,z1=z0+c.footZ;
-            const int tx0=std::max(0,x0)/8,tz0=std::max(0,z0)/8;
-            const int tx1=(std::min(w.hW_,x1)+7)/8,tz1=(std::min(w.hH_,z1)+7)/8;
-            size_t examined=0,buckets=0;
-            for(int tz=tz0;tz<tz1&&examined<256&&buckets<128;++tz)
-                for(int tx=tx0;tx<tx1&&examined<256&&buckets<128;++tx) {
-                    ++buckets;
-                    const auto& entries=w.bodyTiles_[size_t(tz)*w.bodyTilesW_+tx];
-                    for(size_t i=0;i<entries.size()&&examined<256;++i) {
-                        ++examined;
-                        const size_t offset=(i+uint32_t(u.id)+c.tick/8)%entries.size();
-                        const auto& other=w.units_[size_t(entries[offset])];
-                        if(other.id==u.id||!other.alive()||other.embarked()||!other.type||
-                           !other.type->canFly||other.flightGroundMode!=1)continue;
-                        const int ox=footprintOrigin(other.x,other.type->footX);
-                        const int oz=footprintOrigin(other.z,other.type->footZ);
-                        if(ox<x1&&x0<ox+other.type->footX&&oz<z1&&z0<oz+other.type->footZ&&
-                           (!blocker||other.id<blocker))blocker=other.id;
-                    }
+        // A no-progress orbit may stay just short of physical refusal. Look
+        // only a footprint stride along its installed leg, never past a turn.
+        const int reach=stalledArrival?std::min(std::clamp(std::max(c.footX,c.footZ)+1,2,16),
+            std::max(std::abs(nx),std::abs(nz))):1;
+        size_t examined=0,buckets=0;
+        for(int step=1;step<=reach;++step) {
+          // Physical diagonal movement also needs both cardinal side
+          // footprints. A clear diagonal endpoint can hide the body that
+          // refused the first subcell step, leaving avoidance without a cause.
+          const flow::Cell ahead{c.position.x+sx*step,c.position.z+sz*step};
+          const std::array<flow::Cell,3> anchors{{ahead,{ahead.x,ahead.z-sz},{ahead.x-sx,ahead.z}}};
+          const int anchorCount=sx&&sz?3:1;
+          for(int anchor=0;anchor<anchorCount;++anchor) {
+            const int x0=anchors[size_t(anchor)].x-c.footX/2,z0=anchors[size_t(anchor)].z-c.footZ/2;
+            int blocker=0;
+            for(int z=std::max(0,z0);z<std::min(w.occH_,z0+c.footZ);++z)
+                for(int x=std::max(0,x0);x<std::min(w.occW_,x0+c.footX);++x) {
+                    const int id=w.occ_[size_t(z)*w.occW_+x];
+                    if(id&&id!=u.id&&(!blocker||id<blocker))blocker=id;
                 }
-        }
-        if(blocker) {
-            c.obstruction=c.lookup(blocker);
-            c.obstructionFriendly=c.obstruction&&w.allied(u.player,c.obstruction->player);
+            // The coarse occupancy grid omits flying types, but authoritative
+            // ground collision includes them while landed. Query that same body
+            // index for grounded flyers so an idle scout cannot permanently block
+            // a ground army without ever becoming a local-avoidance obstacle.
+            if(!blocker) {
+                if(!w.bodyIndexValid_)w.rebuildBodyIndex();
+                const int x1=x0+c.footX,z1=z0+c.footZ;
+                const int tx0=std::max(0,x0)/8,tz0=std::max(0,z0)/8;
+                const int tx1=(std::min(w.hW_,x1)+7)/8,tz1=(std::min(w.hH_,z1)+7)/8;
+                for(int tz=tz0;tz<tz1&&examined<256&&buckets<128;++tz)
+                    for(int tx=tx0;tx<tx1&&examined<256&&buckets<128;++tx) {
+                        ++buckets;
+                        const auto& entries=w.bodyTiles_[size_t(tz)*w.bodyTilesW_+tx];
+                        for(size_t i=0;i<entries.size()&&examined<256;++i) {
+                            ++examined;
+                            const size_t offset=(i+uint32_t(u.id)+c.tick/8)%entries.size();
+                            const auto& other=w.units_[size_t(entries[offset])];
+                            if(other.id==u.id||!other.alive()||other.embarked()||!other.type||
+                               !other.type->canFly||other.flightGroundMode!=1)continue;
+                            const int ox=footprintOrigin(other.x,other.type->footX);
+                            const int oz=footprintOrigin(other.z,other.type->footZ);
+                            if(ox<x1&&x0<ox+other.type->footX&&oz<z1&&z0<oz+other.type->footZ&&
+                               (!blocker||other.id<blocker))blocker=other.id;
+                        }
+                    }
+            }
+            if(blocker) {
+                c.obstruction=c.lookup(blocker);
+                c.obstructionFriendly=c.obstruction&&w.allied(u.player,c.obstruction->player);
+                break;
+            }
+          }
+          if(c.obstruction)break;
         }
     }
     std::array<flow::Traffic::Neighbor,64> neighbors;size_t count=0,examined=0;
-    const int64_t dx=int64_t(c.position.x)-c.target.x,dz=int64_t(c.position.z)-c.target.z;
-    const int64_t spacing=std::max(c.footX,c.footZ)+1;
-    // No legal cache population can grow this destination's arrival area past
-    // this bound. Far-away armies avoid an entirely useless neighbor scan.
-    if(c.plainMove&&c.blocked>=2&&dx*dx+dz*dz<=16400*spacing*spacing) {
+    // Use this destination's actual population. Far-away armies avoid an
+    // irrelevant neighbor scan.
+    if(arrivalNeighbors) {
         if(!w.bodyIndexValid_)w.rebuildBodyIndex();
         // The body index stamps complete footprints. Querying around our own
         // rectangle therefore sees a touching giant whose center is far away.
@@ -914,7 +1201,7 @@ flow::Traffic::Result FlowNavigator::traffic(Unit& u) {
                 for(size_t offset=0;offset<bucket.size()&&examined<256&&count<neighbors.size();++offset) {
                     const size_t index=(offset+uint32_t(u.id)+c.tick/8)%bucket.size();
                     ++examined;const auto& n=w.units_[size_t(bucket[index])];
-                    if(n.id==u.id||!n.alive()||n.embarked()||!n.type||n.type->canFly||!n.orders.empty())continue;
+                    if(n.id==u.id||!n.alive()||n.embarked()||!n.type||n.type->canFly||!trafficIdle(n))continue;
                     bool duplicate=false;
                     for(size_t prior=0;prior<count;++prior)if(neighbors[prior].id==n.id){duplicate=true;break;}
                     if(duplicate)continue;
@@ -924,7 +1211,7 @@ flow::Traffic::Result FlowNavigator::traffic(Unit& u) {
             }
     }
     c.neighbors=std::span(neighbors.data(),count);
-    c.terrainFree=[&](flow::Cell at) {
+    const auto terrainFree=[&](flow::Cell at) {
         // Incomplete static evidence must not invent a narrow corridor. Live
         // movement remains collision-checked while obstacle stamps finish.
         if(!p.structuresComplete||!p.obstacles||!p.obstacles->settled())return true;
@@ -933,6 +1220,7 @@ flow::Traffic::Result FlowNavigator::traffic(Unit& u) {
             if(!p.sample(u.type,u.player,x,z))return false;
         return true;
     };
+    c.terrainFree=std::cref(terrainFree);
     c.free=[&](flow::Cell at){
         const int x0=at.x-u.type->footX/2,z0=at.z-u.type->footZ/2;
         if(x0<0||z0<0||x0+u.type->footX>w.occW_||z0+u.type->footZ>w.occH_)return false;
@@ -942,10 +1230,129 @@ flow::Traffic::Result FlowNavigator::traffic(Unit& u) {
         }
         return w.cellScore(u.type,at.x,at.z,u.id)>=4;
     };
-    return p.traffic.update(c);
+    bool arrivalDeferred=false;c.arrivalDeferred=&arrivalDeferred;
+    const auto arrivalProof=[&](flow::Cell at,bool contact) {
+        arrivalDeferred=false;
+        if(!p.arrivalBudget.accepts(u.id)){arrivalDeferred=true;return false;}
+        const auto profile=p.profiles.find(p.key(u));
+        if(!p.structuresComplete||!p.obstacles||!p.obstacles->settled()) {
+            arrivalDeferred=true;return false;
+        }
+        const auto* profileData=profile==p.profiles.end()?nullptr:&profile->second;
+        const auto* topology=profileData&&!profileData->builder?profileData->topology.get():nullptr;
+        const auto known=[&](flow::Cell cell) {
+            if(cell.x<0||cell.z<0||cell.x>=w.nav_.width()||cell.z>=w.nav_.height())return false;
+            if(u.player<0||u.player>=16||w.navigationExplored_.empty())return true;
+            const int width=w.hW_/2,height=w.hH_/2;
+            return cell.x/2<width&&cell.z/2<height&&
+                (w.navigationExplored_[size_t(cell.z/2)*width+cell.x/2]&(1u<<u.player));
+        };
+        const auto knownFree=[&](flow::Cell cell) {
+            if(!p.arrivalBudget.spend(u.id,1)){arrivalDeferred=true;return false;}
+            ++p.counters.arrivalCells;
+            // Optimistic unknown terrain is navigation guidance, never proof
+            // that an arrival slot connects to the commanded destination.
+            if(!known(cell))return false;
+            const int x0=cell.x-c.footX/2,z0=cell.z-c.footZ/2;
+            const int x1=x0+c.footX-1,z1=z0+c.footZ-1;
+            if(x0<0||z0<0||x1>=w.nav_.width()||z1>=w.nav_.height())return false;
+            if(u.player>=0&&u.player<16&&!w.navigationExplored_.empty()) {
+                // A known centre does not certify a large footprint straddling
+                // the discovery boundary. Entirely known source tiles take
+                // the cheap path; partial tiles check only touched fog cells.
+                const uint16_t mask=uint16_t(1u<<u.player);
+                const int tilesX=(w.nav_.width()+63)/64;
+                bool all=true;
+                for(int z=z0/64;z<=z1/64;++z)for(int x=x0/64;x<=x1/64;++x) {
+                    const auto& evidence=p.evidence[size_t(z)*tilesX+x];
+                    all&=!evidence.dirty&&bool(evidence.all&mask);
+                }
+                if(!all) {
+                    const int width=w.hW_/2,height=w.hH_/2;
+                    const size_t cells=size_t(x1/2-x0/2+1)*size_t(z1/2-z0/2+1);
+                    if(!p.arrivalBudget.spend(u.id,cells)){arrivalDeferred=true;return false;}
+                    p.counters.arrivalCells+=cells;
+                    if(x1/2>=width||z1/2>=height)return false;
+                    for(int z=z0/2;z<=z1/2;++z)for(int x=x0/2;x<=x1/2;++x)
+                        if(!(w.navigationExplored_[size_t(z)*width+x]&mask))return false;
+                }
+            }
+            if(topology) {
+                const int tile=topology->tileAt(cell);
+                if(tile<0)return false;
+                if(!profileData->dirty[size_t(tile)])return bool(topology->cost(cell));
+            }
+            // Cache eviction or discovery must not strand an already-arrived
+            // group. A shared raw-cell quota bounds exact local proof while
+            // its footprint snapshot is unavailable; no new field is needed.
+            const size_t cells=size_t(c.footX)*c.footZ;
+            if(!p.arrivalBudget.spend(u.id,cells-1)){arrivalDeferred=true;return false;}
+            p.counters.arrivalCells+=cells-1;
+            for(int z=0;z<c.footZ;++z)for(int x=0;x<c.footX;++x) {
+                const flow::Cell raw{cell.x-c.footX/2+x,cell.z-c.footZ/2+z};
+                if(!known(raw)||!p.sample(u.type,u.player,raw.x,raw.z))return false;
+            }
+            return true;
+        };
+        // A settled neighbor supplies the remainder of the connection, but
+        // not permission to cross unknown terrain or an unfinished snapshot.
+        // Its occupied footprint is valid here: only terrain is being proved.
+        if(contact)return flow::directRoute(c.position,at,64,knownFree,
+            [&](flow::Cell cell){return cell==at;});
+        auto target=arrival.missionTarget.value_or(std::pair{arrival.x,arrival.z});
+        if(arrival.guard)if(const auto* guarded=w.unit(arrival.targetId);guarded&&guarded->alive())
+            target={guarded->x,guarded->z};
+        const flow::GoalRegion region{flow::GoalRegion::Kind::Circle,
+            footprintCell(target.first,u.type->footX),footprintCell(target.second,u.type->footZ),0,0,
+            retailCircleRadiusSquared(arrival.guard?p.guardReach(u,arrival):
+                std::bit_cast<int32_t>(arrival.missionRadius+4u))};
+        const flow::Cell center{region.x,region.z};
+        // A short approach and straight goal connection, never a global search.
+        // The shared 8192-cell quota also bounds huge destination formations.
+        // Body checks apply to the approach; arrived peers may occupy the
+        // remaining terrain connection between that slot and the goal area.
+        return flow::directRoute(c.position,at,64,
+            [&](flow::Cell cell){return knownFree(cell)&&c.free(cell);},
+            [&](flow::Cell cell){return cell==at;})&&
+            flow::directRoute(at,center,512,knownFree,[&](flow::Cell cell){return region.contains(cell);});
+    };
+    const auto arrivalReachable=[&](flow::Cell at){return arrivalProof(at,false);};
+    const auto contactReachable=[&](flow::Cell at){return arrivalProof(at,true);};
+    // These callbacks live through update(); reference wrappers avoid a heap
+    // allocation per moving unit/tick for captures larger than std::function's
+    // small-object storage.
+    c.arrivalReachable=std::cref(arrivalReachable);
+    c.contactReachable=std::cref(contactReachable);
+    if(p.traffic.coordinator&&c.obstructionFriendly&&c.blocked>=2) {
+        c.cooperativeOpenTerrain=false;
+        const auto profile=p.profiles.find(p.key(u));
+        if(p.structuresComplete&&p.obstacles&&p.obstacles->settled()&&profile!=p.profiles.end()) {
+            const auto& data=profile->second;
+            if(data.topology) {
+                const int tile=data.topology->tileAt(c.position);
+                // Scope following and moving-peer retries to an open published
+                // footprint tile. Dirty/updating include its source footprint
+                // halo; no per-mover terrain scan is needed here. Unknown costs
+                // remain optimistic, not proof of known ground.
+                if(tile>=0&&size_t(tile)<data.openPublished.size()&&size_t(tile)<data.dirty.size()&&
+                   !data.dirty[size_t(tile)]&&(data.updating.empty()||
+                    (size_t(tile)<data.updating.size()&&!data.updating[size_t(tile)])))
+                    c.cooperativeOpenTerrain=data.openPublished[size_t(tile)];
+            }
+        }
+    }
+    auto result=p.traffic.update(c);
+    result.settledRally=rally&&result.settled;
+    return result;
 }
-void FlowNavigator::cancel(int unit) {impl_->cancel(unit);}
+void FlowNavigator::cancel(int unit) {
+    impl_->cancel(unit);
+    if(impl_->traffic.coordinator)impl_->traffic.coordinator->cancel(unit);
+}
 void FlowNavigator::tick() {impl_->tick();}
+bool FlowNavigator::allowFollowerStep(int id,flow::Cell from,flow::Cell to) const {
+    return impl_->traffic.coordinator&&impl_->traffic.coordinator->allowFollowerStep(id,from,to);
+}
 void FlowNavigator::dirty(int x,int z,int w,int h,uint16_t viewers) {
     impl_->markDirty(x,z,w,h,viewers);
 }
@@ -953,14 +1360,19 @@ uint64_t FlowNavigator::checksum() const {
     uint64_t h=1469598103934665603ull;
     const auto mix=[&](uint64_t v){h=(h^v)*1099511628211ull;};
     mix(impl_->traffic.checksum());mix(impl_->clock);mix(impl_->nextProfile);mix(impl_->requestCursor);
+    if(impl_->passages)mix(impl_->passages->checksum());
     mix(impl_->service.checksum());mix(impl_->service.publishedHash());mix(impl_->service.work());mix(impl_->counters.snapshotWork);
     mix(impl_->revision);mix(impl_->tileClock);
     for(const auto& [key,tile]:impl_->tiles) {
         std::apply([&](auto... values){(mix(uint64_t(values)),...);},key.first);
         mix(key.second);mix(tile.revision);mix(tile.used);mix(tile.fingerprint);
+        if(impl_->passages)mix(tile.open);
     }
     for(const auto& e:impl_->evidence) {mix(e.terrain);mix(e.any);mix(e.all);mix(e.dirty);for(auto value:e.knowledge)mix(value);}
     mix(impl_->nextAdmission);mix(impl_->counters.firingRays);mix(impl_->counters.firingCells);
+    mix(impl_->counters.arrivalCells);
+    mix(impl_->arrivalBudget.limit);mix(impl_->arrivalBudget.remaining);
+    mix(impl_->arrivalBudget.after);mix(impl_->arrivalBudget.last);mix(impl_->arrivalBudget.exhausted);
     for(const auto& [ticket,key]:impl_->admission) {
         mix(ticket);std::apply([&](auto... values){(mix(uint64_t(values)),...);},key);
     }
@@ -970,10 +1382,13 @@ uint64_t FlowNavigator::checksum() const {
         std::apply([&](auto... values){(mix(uint64_t(values)),...);},key);mix(p.id);mix(p.used);mix(p.leaseUntil);mix(p.retryAt);mix(p.failures);mix(p.delivered);mix(p.topology!=nullptr);mix(p.topologyHash);mix(p.builder!=nullptr);
         if(p.builder){mix(p.preparingHash);mix(p.builder->checksum());}
         for(bool dirty:p.dirty)mix(dirty);
+        if(impl_->passages){mix(p.updating.size());for(bool updating:p.updating)mix(updating);
+            mix(p.openPublished.size());mix(p.openPublishedHash);mix(p.openPreparing.size());mix(p.openPreparingHash);}
     }
     for(const auto& [id,r]:impl_->requests) {
         std::apply([&](auto... values){(mix(uint64_t(values)),...);},r.key);
         mix(r.targetId);mix(r.firingState);mix(r.firingCount);mix(r.firingCursor);mix(r.firingDone);mix(r.firingContinuation);
+        if(impl_->passages)mix(r.passagePending);
         for(size_t n=0;n<r.firingCount;++n){mix(r.firingSeeds[n].x);mix(r.firingSeeds[n].z);}
         mix(id);mix(r.x.v);mix(r.z.v);mix(r.controller);mix(r.player);mix(r.bound);mix(r.issued);mix(r.retryLocal);
         mix(uint8_t(r.region.kind));mix(r.region.x);mix(r.region.z);mix(r.region.maxX);mix(r.region.maxZ);
@@ -984,11 +1399,26 @@ uint64_t FlowNavigator::checksum() const {
 }
 FlowNavigator::Stats FlowNavigator::stats() const {
     auto stats=impl_->counters;stats.profiles=impl_->profiles.size();stats.pending=impl_->requests.size();
+    if(impl_->traffic.coordinator) {
+        const auto value=impl_->traffic.coordinator->stats();
+        stats.cooperativeProbes=value.probes;stats.cooperativeSearches=value.searches;
+        stats.cooperativeRoutes=value.routes;stats.cooperativeWaits=value.waits;
+        stats.cooperativeConflicts=value.conflicts;stats.cooperativeRecords=value.records;
+        stats.cooperativeReservations=value.reservations;stats.cooperativeBytes=value.bytes;
+        stats.cooperativeCompleteFailures=value.completeFailures;stats.cooperativeDeferredSearches=value.deferredSearches;
+        stats.cooperativeRetrySkips=value.retrySkips;
+    }
+    if(impl_->passages) {
+        const auto value=impl_->passages->stats();
+        stats.cooperativePassageProbes=value.probes;stats.cooperativePassageHits=value.hits;
+        stats.cooperativePassages=value.entries;
+    }
     stats.cachedTiles=impl_->tiles.size();
     std::vector<uint64_t> ages;ages.reserve(impl_->requests.size());
     for(const auto& [id,r]:impl_->requests){(void)id;ages.push_back(impl_->clock-r.issued);}
     if(!ages.empty()) {std::sort(ages.begin(),ages.end());stats.pendingAgeMax=ages.back();stats.pendingAgeP95=ages[(ages.size()-1)*95/100];}
     stats.fields=impl_->service.fields();stats.bytes=sizeof(Impl)+impl_->service.bytes()+impl_->traffic.bytes();
+    if(impl_->passages)stats.bytes+=impl_->passages->bytes();
     stats.bytes+=impl_->requests.size()*(sizeof(Impl::Request)+64)+
         impl_->profiles.size()*(sizeof(Impl::Key)+sizeof(Impl::Profile)+64)+
         impl_->subscribers.size()*(sizeof(Impl::Key)+sizeof(size_t)+64)+
@@ -996,7 +1426,10 @@ FlowNavigator::Stats FlowNavigator::stats() const {
     stats.bytes+=impl_->evidence.capacity()*sizeof(Impl::Evidence)+impl_->tiles.size()*(flow::MemoryPlan::tileBytes+256);
     if(impl_->unknownTile)stats.bytes+=flow::MemoryPlan::tileBytes;
     if(impl_->obstacles)stats.bytes+=impl_->obstacles->bytes()+impl_->structures.size()*(sizeof(Impl::Structure)+64);
-    for(const auto& [key,p]:impl_->profiles) {(void)key;if(p.topology)stats.bytes+=p.topology->bytes();if(p.builder)stats.bytes+=p.builder->bytes();stats.bytes+=p.preparing.capacity()*sizeof(Impl::Profile::TileStamp)+p.tileHashes.capacity()*sizeof(uint64_t)+(p.dirty.capacity()+7)/8;}
+    for(const auto& [key,p]:impl_->profiles) {(void)key;if(p.topology)stats.bytes+=p.topology->bytes();if(p.builder)stats.bytes+=p.builder->bytes();stats.bytes+=p.preparing.capacity()*sizeof(Impl::Profile::TileStamp)+p.tileHashes.capacity()*sizeof(uint64_t)+(p.dirty.capacity()+7)/8+(p.updating.capacity()+7)/8;
+        if(impl_->passages){stats.cooperativeClearanceEntries+=p.openPublished.size();stats.cooperativeClearanceBytes+=(p.openPublished.capacity()+7)/8+(p.openPreparing.capacity()+7)/8;}
+    }
+    stats.bytes+=stats.cooperativeClearanceBytes;
     for(const auto& [id,job]:impl_->local) {(void)id;stats.bytes+=job->bytes()+64;}
     return stats;
 }

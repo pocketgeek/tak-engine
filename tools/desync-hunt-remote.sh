@@ -60,6 +60,8 @@
 #        [--only NAME[,NAME...]]
 # Set TAK_CLIENT=./build-o2/takclient to use an optimized client with Debug hooks.
 # Set TAK_SERVER=/home/pocket_geek/takserver.sweep170 to test an isolated remote binary.
+# TAK_REMOTE_REPLAY_DIR and TAK_REMOTE_CACHE_DIR isolate writable test data.
+# TAK_VALIDATE_PORT / TAK_NEGATIVE_PORT isolate the two validation listeners.
 # --minutes is simulated time. TAK_WALL_TIMEOUT can set a per-client real-time
 # deadline in seconds (default: simulated seconds + 300). Dense Flowfield stress
 # runs can need a longer deadline without changing their tick or hash checks.
@@ -101,7 +103,8 @@ find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'desync-hunt-remote.*.sh' -mmin +120 -d
 HOSTS_SPEC="${TAK_HOSTS:-tak.pgnet.us:10:heavy vpn3.pgnet.us:6:light}"
 RUSER="pocket_geek"
 RDATA="/home/pocket_geek/tak_data"
-RREPLAY="/home/pocket_geek/tak_replay"
+RREPLAY="${TAK_REMOTE_REPLAY_DIR:-/home/pocket_geek/tak_replay}"
+RCACHE="${TAK_REMOTE_CACHE_DIR:-$RDATA}"
 RBIN="${TAK_SERVER:-/home/pocket_geek/takserver}"
 LDATA="assets/game"
 MINUTES=45
@@ -184,6 +187,8 @@ SSH=(ssh -n -o ControlMaster=auto -o ControlPath="$CTL" -o ControlPersist=15m -o
 # indexed from PORT_BASE, so a second invocation hands its clients the first one's
 # referees. Overridable rather than fixed.
 PORT_BASE="${TAK_PORT_BASE:-7900}"
+VALIDATE_PORT="${TAK_VALIDATE_PORT:-7890}"
+NEGATIVE_PORT="${TAK_NEGATIVE_PORT:-7891}"
 # Shaping interface is DETECTED per host (see run_one); this only overrides it.
 MYIP=$(hostname -I 2>/dev/null | awk '{print $1}')
 # Every referee this run starts is recorded here as "host<TAB>pid", and cleanup kills
@@ -352,11 +357,11 @@ cleanup() {
   for h in $hosts; do
     local pids; pids=$(awk -v h="$h" -F'\t' '$1==h {printf "%s ", $2}' "$PIDFILE")
     [ -n "$pids" ] || continue
-    # Confirm each pid is still OUR takserver before signalling: pids get recycled, and
-    # killing a stranger because a number came round again is the same class of bug.
+    # Match the exact executable: renamed sweep binaries have a different comm,
+    # and killing a stranger after its pid was recycled would break isolation.
     "${SSH[@]}" "$RUSER@$h" "for p in $pids; do \
-         c=\$(cat /proc/\$p/comm 2>/dev/null); \
-         [ \"\$c\" = takserver ] && kill \$p 2>/dev/null; \
+         c=\$(readlink /proc/\$p/exe 2>/dev/null); \
+         [ \"\$c\" = '$RBIN' ] && kill \$p 2>/dev/null; \
        done; true" >/dev/null 2>&1 || true
   done
 }
@@ -519,6 +524,9 @@ run_one() {
   # file: the build-id gate had the same shape with VSSH.)
   local SSHH=(ssh -n -o ControlMaster=auto -o ControlPath="$OUT/ctl-%C" -o ControlPersist=15m -o BatchMode=yes)  # -n: see SSH above
   rsh1() { "${SSHH[@]}" "$RUSER@$host" "$@"; }
+  local replay_dir="$RREPLAY/$port"
+  rsh1 "mkdir -p '$replay_dir' '$RCACHE'" || {
+    echo "FAIL $name ($host): cannot create isolated writable directories"; return 1; }
 
   # LATENCY SHAPING. TAK_RTT / TAK_JITTER ride in the ENVS column rather than adding
   # positional fields -- a wider spec is how --overrides full once ended up in the seat
@@ -658,7 +666,7 @@ run_one() {
   local srv_env=""
   case "$envs" in *TAK_GODS=1*) srv_env="TAK_GODS=1";; esac
   local spid
-  spid=$(rsh1 "nohup env $srv_env $RBIN --port $port --data $RDATA --replaydir $RREPLAY --no-auth --allow-plaintext --allow-benchmarks \
+  spid=$(rsh1 "nohup env $srv_env $RBIN --port $port --data $RDATA --map-cache-dir $RCACHE --replaydir $replay_dir --no-auth --allow-plaintext --allow-benchmarks \
          --seed $seed >/tmp/tak-srv-$port.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
   [ -n "$spid" ] && note_server "$host" "$spid"
   local up=0
@@ -731,7 +739,8 @@ run_one() {
   local secs=$((MINUTES * 60))
   local wall_secs=${TAK_WALL_TIMEOUT:-$((secs + 300))}
   # shellcheck disable=SC2086
-  env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy $seatenv $SPEED_DEFAULT $envs \
+  env XDG_DATA_HOME="$OUT/preferences/$name/host" XDG_CONFIG_HOME="$OUT/config/$name/host" \
+      TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy $seatenv $SPEED_DEFAULT $envs \
       timeout -k 30 "$wall_secs" $CLIENT game "$map" --data "$LDATA" \
       --server "$thost" --serverport "$tport" --mphost --time "$secs" $flags \
       >"$clog" 2>&1 &
@@ -744,7 +753,8 @@ run_one() {
     sleep 8
     for ((j = 2; j <= humans; j++)); do
       # shellcheck disable=SC2086
-      env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy $SPEED_DEFAULT $envs \
+      env XDG_DATA_HOME="$OUT/preferences/$name/client$j" XDG_CONFIG_HOME="$OUT/config/$name/client$j" \
+          TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy $SPEED_DEFAULT $envs \
           timeout -k 30 "$wall_secs" $CLIENT game "$map" --data "$LDATA" \
           --server "$thost" --serverport "$tport" --mpjoin --time "$secs" $flags \
           >"$OUT/$name.client$j.log" 2>&1 &
@@ -968,13 +978,13 @@ if [ "$VALIDATE" = "1" ]; then
   esac
 
 echo "== validating the detector with a PLANTED desync (TAK_FAKE_DESYNC=900) on $vhost =="
-  vpid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7890 --data $RDATA --no-auth --allow-plaintext --allow-benchmarks --seed 999 >/tmp/tak-val.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
+  vpid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port $VALIDATE_PORT --data $RDATA --map-cache-dir $RCACHE --no-auth --allow-plaintext --allow-benchmarks --seed 999 >/tmp/tak-val-$VALIDATE_PORT.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
   [ -n "$vpid" ] && note_server "$vhost" "$vpid"
-  for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-val.log 2>/dev/null" && break; sleep 2; done
+  for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-val-$VALIDATE_PORT.log 2>/dev/null" && break; sleep 2; done
   env TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy TAK_MP_AIS=7 TAK_SPEED=40 TAK_FAKE_DESYNC=900 \
       timeout -k 30 400 $CLIENT game "Ulasem Arena" --data "$LDATA" \
-      --server "$vhost" --serverport 7890 --mphost --time 120 >"$OUT/validate.client.log" 2>&1
-  "${VSSH[@]}" "$RUSER@$vhost" "cat /tmp/tak-val.log" >"$OUT/validate.server.log" 2>/dev/null
+      --server "$vhost" --serverport "$VALIDATE_PORT" --mphost --time 120 >"$OUT/validate.client.log" 2>&1
+  "${VSSH[@]}" "$RUSER@$vhost" "cat /tmp/tak-val-$VALIDATE_PORT.log" >"$OUT/validate.server.log" 2>/dev/null
   [ -n "$vpid" ] && "${VSSH[@]}" "$RUSER@$vhost" "kill $vpid 2>/dev/null; true" >/dev/null 2>&1
   if grep -qi "DESYNCED" "$OUT/validate.server.log"; then
     echo "   PASS -- referee reported: $(grep -i DESYNCED "$OUT/validate.server.log" | head -1)"
@@ -994,12 +1004,12 @@ echo "== validating the detector with a PLANTED desync (TAK_FAKE_DESYNC=900) on 
       ln -s "$(realpath "$_e")" "$_negdata/$_side/$(basename "$_e")"
     done
   done
-  npid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port 7891 --data $RDATA --no-auth --allow-plaintext --seed 999 >/tmp/tak-neg.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
+  npid=$("${VSSH[@]}" "$RUSER@$vhost" "nohup $RBIN --port $NEGATIVE_PORT --data $RDATA --map-cache-dir $RCACHE --no-auth --allow-plaintext --seed 999 >/tmp/tak-neg-$NEGATIVE_PORT.log 2>&1 </dev/null & echo \$!" 2>/dev/null | tr -d '\r')
   [ -n "$npid" ] && note_server "$vhost" "$npid"
-  for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-neg.log 2>/dev/null" && break; sleep 2; done
+  for _ in $(seq 60); do "${VSSH[@]}" "$RUSER@$vhost" "grep -q listening /tmp/tak-neg-$NEGATIVE_PORT.log 2>/dev/null" && break; sleep 2; done
   _gate=0
-  timeout -k 20 150 "$(dirname "$CLIENT")/override_transfer_test" 7891 "$_negdata/host" "$_negdata/peer" "$vhost" --bad-loaded >"$OUT/negative.client.log" 2>&1 && _gate=1
-  "${VSSH[@]}" "$RUSER@$vhost" "cat /tmp/tak-neg.log" >"$OUT/negative.server.log" 2>/dev/null
+  timeout -k 20 150 "$(dirname "$CLIENT")/override_transfer_test" "$NEGATIVE_PORT" "$_negdata/host" "$_negdata/peer" "$vhost" --bad-loaded >"$OUT/negative.client.log" 2>&1 && _gate=1
+  "${VSSH[@]}" "$RUSER@$vhost" "cat /tmp/tak-neg-$NEGATIVE_PORT.log" >"$OUT/negative.server.log" 2>/dev/null
   [ -n "$npid" ] && "${VSSH[@]}" "$RUSER@$vhost" "kill $npid 2>/dev/null; true" >/dev/null 2>&1
   if [ "$_gate" != 1 ] || ! grep -q 'rejected at load' "$OUT/negative.server.log"; then
     echo "   FAIL -- shared override load-hash gate failed; see $OUT/negative.*.log" >&2

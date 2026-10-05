@@ -10,6 +10,26 @@ struct RetailReplayProbe {
 using namespace tak;
 namespace {
 void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
+bool guardingNearby(const sim::Unit& escort,const sim::Unit& target) {
+    // Leave room for both complete footprints, one navigation cell of
+    // clearance, and at most one diagonal cell of center quantization.
+    const int clearance=8*std::max(escort.type->footX+target.type->footX,
+        escort.type->footZ+target.type->footZ)+16;
+    const int radius=std::max(70,clearance)+24;
+    return sim::fxLen(escort.x-target.x,escort.z-target.z)<=sim::Fixed::fromInt(radius);
+}
+void checkGuardArrival(const sim::World& world) {
+    const auto& escort=*world.unit(1);
+    check(!escort.orders.empty()&&escort.orders.back().guard&&escort.orders.back().targetId==2,
+        "escort discarded its persistent Guard order");
+    // This fixture deliberately uses manually blocked navigation cells rather
+    // than a feature plane. Query its complete route footprint accordingly.
+    check(world.cellScore(escort.type,sim::footprintCell(escort.x,escort.type->footX),
+        sim::footprintCell(escort.z,escort.type->footZ),escort.id)>=sim::kCellThreshold,
+        "escort arrived inside terrain or an occupied footprint");
+    check(sim::footprintOrigin(escort.x,escort.type->footX)>=65,
+        "escort stopped on the wrong side of the terrain wall");
+}
 void setup(sim::World& world,bool serial) {
     world.setVisPlayer(-1);world.setSerialThreads(serial);world.setPathService(true);
     world.setPathfindingMode(sim::PathfindingMode::Flowfield);
@@ -48,8 +68,7 @@ int main(int argc,char** argv) {
                 serial.tick(1.f/30);parallel.tick(1.f/30);
                 check(serial.stateHash()==parallel.stateHash(),"action routing differs by worker mode");
                 const auto* unit=serial.unit(1);const auto* destination=serial.unit(2);
-                const auto dx=unit->x-destination->x,dz=unit->z-destination->z;
-                achieved=(kind==0||kind==5) ? (sim::fxLen(dx,dz)<=sim::Fixed::fromInt(70)) :
+                achieved=(kind==0||kind==5) ? guardingNearby(*unit,*destination) :
                     (kind==1||kind==3||kind==4||kind==6||kind==7) ? (destination->hp<sim::Fixed::fromInt(10000)) :
                     (destination->hp>sim::Fixed::fromInt(100));
                 if(achieved)break;
@@ -59,6 +78,7 @@ int main(int argc,char** argv) {
                 kind,serial.tickCount(),achieved,u->x.floorInt(),u->z.floorInt(),
                 (unsigned long long)stats.deliveries,(unsigned long long)stats.failures,stats.pending);
             check(achieved,"guard/attack/repair did not negotiate terrain wall");
+            if(kind==0||kind==5)checkGuardArrival(serial);
             if(kind<=2)check(stats.deliveries<20,"interaction approach repeatedly replanned near its occupied target");
             if(kind==6)check(stats.requests==0,"multiweapon attacker retreated despite usable close weapon");
             else check(stats.deliveries>0,"mission did not consume flow navigation");
@@ -72,11 +92,11 @@ int main(int argc,char** argv) {
                     serial.tick(1.f/30);parallel.tick(1.f/30);
                     check(serial.stateHash()==parallel.stateHash(),"moving escort differs by worker mode");
                     followed=serial.unit(2)->z.floorInt()>1150&&
-                        sim::fxLen(serial.unit(1)->x-serial.unit(2)->x,
-                            serial.unit(1)->z-serial.unit(2)->z)<=sim::Fixed::fromInt(70);
+                        guardingNearby(*serial.unit(1),*serial.unit(2));
                     if(followed)break;
                 }
                 check(followed,"guard did not follow its moving target");
+                checkGuardArrival(serial);
             }
         }
         // Being inside weapon range does not mean the current side of a

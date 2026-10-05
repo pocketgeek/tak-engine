@@ -2,7 +2,7 @@
 #include "sim/matchsetup.h"
 
 #include "sim/detmath.h"
-#include "sim/flowmemory.h"
+#include "sim/navigationmemory.h"
 #include "gaf/featureburntiming.h"
 #include "sim/footprint.h"
 #include <algorithm>
@@ -541,12 +541,12 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     }
     // Validate the incoming pair before replacing terrain. A reused World may
     // still carry the previous replay's mode/dimensions: neither may constrain
-    // the new match (large Retail -> small Flowfield, or the reverse).
-    if(cfg.pathfindingMode!=PathfindingMode::Retail && cfg.pathfindingMode!=PathfindingMode::Flowfield)
+    // the new match (large Retail -> small shared pathfinder, or the reverse).
+    if(!validPathfindingMode(uint8_t(cfg.pathfindingMode)))
         throw std::invalid_argument("invalid pathfinding mode");
-    if(cfg.pathfindingMode==PathfindingMode::Flowfield &&
-       !flow::MemoryPlan::forMap(map.width,map.height).supported)
-        throw std::invalid_argument("Flowfield supports maps up to 64x64 within its storage budget");
+    if(isSharedPathfinding(cfg.pathfindingMode) &&
+       !navigationMemoryPlan(cfg.pathfindingMode,map.width,map.height).supported)
+        throw std::invalid_argument(std::string(pathfindingModeName(cfg.pathfindingMode))+" supports maps up to 64x64 within its storage budget");
     world.setPathfindingMode(PathfindingMode::Retail);
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     world.setNoSeaLevelTrigger(noSeaLevelTrigger);
@@ -1156,6 +1156,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     MatchConfig cfg;
     cfg.vfs = &vfs;
     cfg.mapPath = base + ".tnt";
+    cfg.pathfindingMode = PathfindingMode::Retail; // campaign mission movement is fixed
     cfg.loadCrt = false;              // campaign units/rules come from OTA/COB
     cfg.slots = slots;                 // no used slots -> setupMatch spawns no monarchs
     cfg.unitCap = int(gh->numberOr("maxunits", 500));

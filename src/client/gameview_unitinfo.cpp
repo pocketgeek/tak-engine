@@ -75,10 +75,11 @@ const Geom& geom(const tak::hpi::Vfs& vfs) {
 const tak::sim::UnitType* GameView::unitInfoSubject() const {
     int mx = 0, my = 0;
     SDL_GetMouseState(&mx, &my);
-    for (const auto& [r, bt] : iconRects_)
-        if (bt && float(mx) >= r.x && float(mx) <= r.x + r.w &&
-            float(my) >= r.y && float(my) <= r.y + r.h)
-            return bt;
+    if (selectedBuilder())
+        for (const auto& [r, bt] : iconRects_)
+            if (bt && float(mx) >= r.x && float(mx) <= r.x + r.w &&
+                float(my) >= r.y && float(my) <= r.y + r.h)
+                return bt;
     for (int id : selection_)
         if (const UnitR* u = frameUnitP(id); u && u->alive() && u->type) return u->type;
     return nullptr;

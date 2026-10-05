@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.23-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.24-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -35,7 +35,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.23 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.24 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -47,7 +47,38 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.23
+## New in 0.7.24
+
+- **Four pathfinding choices:** Retail remains the default. Experimental
+  **Retail+** keeps native long-distance routes and adds bounded local traffic
+  handling for ordinary ground moves. **Flowfield** and **Cooperative** offer
+  shared routes and group coordination. Each has scene-dependent costs and
+  limitations; none is uniformly faster or more reliable in every crowd.
+- **Movement and route work:** improve group arrivals, local yielding, narrow
+  passages and route recovery. Retail search reuses scratch storage without
+  changing its route decisions. See [Retail+](docs/retail-plus-pathfinding.md),
+  [Flowfield](docs/pathfinding-port.md), and
+  [Cooperative](docs/cooperative-pathfinding.md) for scope and measurements.
+- **Graphics controls restored:** independently select Terrain AA and Model AA,
+  bilinear filtering, Smooth GUI Art and Smooth Movies. All default off and
+  remember your choices; Smooth GUI Art updates the current interface immediately.
+  Rendering also reduces repeated geometry work and retires unused image caches.
+- **Clearer builder controls:** releasing Shift after queued placement clears
+  the chosen build icon, keeping the builder and its queued work. The build menu
+  appears for one selected builder or producer. Shift previews remaining known
+  area-work stops together with later queued orders.
+- **Map and server controls:** Extra Mana Spots requests 0–6 additional spots
+  per player, subject to balanced placement space. `takserver --status` reports
+  local game and connection counts as JSON, including on TLS servers.
+
+Version **0.7.24 uses protocol 227 and replay format 11**. Update clients and
+servers together. Replays require the current simulation protocol; older
+recordings need the engine that recorded them. No new dynamic runtime
+dependencies or retail assets are included. See the
+[release notes](docs/release-0.7.24-notes.md) and
+[validation report](docs/release-0.7.24-validation.md).
+
+### Previously in 0.7.23
 
 - **Optional Flowfield pathfinding:** choose Retail or experimental Flowfield when
   creating skirmish and multiplayer games. Shared terrain preparation and route
@@ -84,7 +115,7 @@ shipped. See the [release notes](docs/release-0.7.23-notes.md) and
 - **Independent antialiasing:** Terrain AA (Off/2x/4x) and Model AA
   (Off/2x/4x/8x/16x), with native-resolution UI, preserved scenery ordering,
   remembered settings, and reported capability/memory fallbacks in that release.
-  AA is now fixed off; renderer support is retained. See the
+  Version 0.7.24 restores these controls. See the
   [quality and performance comparison](docs/antialiasing.md).
 - **Server hardening:** bounded map parsing and background validation, actual-size
   memory admission, command-processing budgets, automatic ACME retry recovery,
@@ -303,7 +334,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.23** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.24** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -320,9 +351,9 @@ Choose the package for your system:
 Native **Linux ARM64** packages are also built by [Linux CI](https://github.com/pocketgeek/tak-engine/actions/workflows/linux.yml)
 for Ubuntu 22.04/24.04/26.04, Debian 12/13 (`arm64.deb`), and Fedora 44
 (`aarch64.rpm`), plus an ARM64 Debug tarball. Download these from a successful
-workflow run and version 0.7.23 releases. Arch packages remain x64.
+workflow run and the current release. Arch packages remain x64.
 CI also builds **openSUSE Leap 16.0** RPMs for x64 and ARM64, and a native
-**Slackware64 15.0** `.txz` package in version 0.7.23 releases;
+**Slackware64 15.0** `.txz` package in the current release;
 install with `sudo zypper install ./tak-engine-…rpm` or
 `sudo upgradepkg --install-new ./tak-engine-…txz`, respectively. Slackware does
 not use systemd; run `takserver` directly with the documented command-line options.
@@ -449,6 +480,13 @@ See [public-server deployment](docs/public-server.md#linux-service-setup) for
 manual certificates, troubleshooting, service limits and upgrades. Setup notes
 are also installed at `/usr/share/doc/tak-engine/systemd/README.md`.
 
+To query a running server from the same machine, run `takserver --status`
+(or `takserver --status --port 7678` for a different game port). It prints one
+JSON object containing `running_games`, `lobby_games`, and `connected_clients`,
+then exits. No game data, account, or certificate arguments are needed, including
+for TLS/ACME servers. See [server status](docs/public-server.md#querying-server-status)
+for count definitions and monitoring details.
+
 ## Getting started
 
 1. Install or unpack TAK Engine.
@@ -556,20 +594,23 @@ Choose **Generate Random Map** under the map preview to configure a Mainland,
 Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.
 The available sizes depend on the layout and player count.
 Drag a density slider to choose its value; the preview regenerates once you
-release it. New Lakes maps can reach the map edge, without a forced land border.
+release it. **Extra Mana Spots** requests 0–6 additional spots per player; the
+preview shows the actual total. Terrain can limit the number of balanced rounds
+that fit. New Lakes maps can reach the map edge, without a forced land border.
 Enter an optional **Map Name** (up to 24 letters, digits, spaces, hyphens or
 underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Older recipes retain their terrain.
+the same named map when the game starts. Version 0.7.24 uses generator v8;
+older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
 fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.7.23 uses protocol **221**: update clients and servers together.
+Version 0.7.24 uses protocol **227**: update clients and servers together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -751,6 +792,10 @@ queues. A reclaim-capable builder automatically clears trees, rocks, and other
 reclaimable obstacles from a valid site before construction starts. Terrain,
 other units, and unreclaimable obstacles can still prevent placement.
 
+The build menu appears only with one builder or production building selected.
+Hovering its icons or frame uses the normal UI cursor, including when a map
+target is underneath it. Mixed selections use the ordinary command controls.
+
 For basic or Divine lodestones, choose the build icon and left-drag a box over
 the map. The builder explores unseen deposits, then builds on each eligible
 spot in map order, clearing reclaimable obstacles when it can. Occupied or
@@ -819,25 +864,38 @@ See [unit gifting](docs/unit-gifting.md) for eligibility details and the
 
 Choose the per-player unit limit on the game-creation screen: the button cycles
 through 250, 500, 1,000, and 2,000. The lobby displays this value without allowing
-it to change. **Pathfinding** also belongs to game creation: choose **Retail**
-(the default) or **Flowfield** for skirmish and multiplayer. Left- or right-click
-cycles the choice; the lobby shows the host's choice as read-only information.
+it to change. **Pathfinding** also belongs to game creation: choose **Retail** (the default), **Retail+**, **Flowfield**, and **Cooperative** for skirmish and
+multiplayer. Left-click cycles forward and right-click cycles backward through
+the four choices. The choice is saved for future games; the lobby displays it
+as read-only information. Cooperative is an additional experimental option.
+It includes bounded follower movement and shared clearance proofs. Arrival time
+and CPU cost vary by scene, and it remains slower than existing modes in some
+large-crowd and exploration cases; see its
+[design, limits and validation](docs/cooperative-pathfinding.md).
+Retail+ retains Retail's long-distance search and adds bounded local traffic
+handling for ordinary ground Move orders. Builders, transports, combat
+approaches, patrols and special goals retain native movement. See its
+[scope and measurements](docs/retail-plus-pathfinding.md).
 Campaigns retain Retail pathfinding regardless of the saved create preference.
 Flowfield is experimental. It shares prepared terrain tiles, prepares large tile
 jobs in parallel, and delivers detailed routes as their required connectivity
-becomes ready. Bounded caches avoid allocating the worst-case 512 MiB limit up
+becomes ready. Ground and naval move, fight-move, patrol, escort, and production
+rally orders use shared destination areas with separate free stopping places.
+Routes retain parallel lanes where equally short, legal choices exist; narrow
+passages still require columns. Formations keep the slowest member's surface
+speed. Unknown terrain is explored as units advance; an unexplored maze can
+require substantial backtracking. Bounded caches avoid allocating the worst-case 512 MiB limit up
 front; measured Flowfield storage was about 48–92 MiB in the latest flat and
 maze tests. Giant maps with many players and movement classes can still incur
 long waits. Better route throughput does not guarantee lower simulation cost.
 See [implementation, limits and measurements](docs/pathfinding-port.md).
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.23 uses protocol 221**, including authoritative pathfinding
+Version **0.7.24 uses protocol 227**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
 Update clients and servers together; earlier clients cannot join these matches.
-Protocol-220 format-11 and protocol-219 format-10 recordings remain playable
-with their original pathfinder and patrol behavior;
-older incompatible recordings need their original engine.
+Replay format remains **11**, and playback requires the current simulation
+protocol. Older recordings need the engine that recorded them.
 The connection checks gameplay definitions, scripts, and models. Selected map
 contents are verified separately and transferred automatically when needed.
 
@@ -856,11 +914,14 @@ Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
 and camera behavior. **F4 Scorecard Scale** independently adjusts the player
 scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
 and Smooth Motion default to **on**; saved choices still apply.
-Bilinear Filtering, Smooth GUI Art, Smooth Movies, Terrain AA and Model AA are fixed **off** and have no settings controls.
-Existing values for these disabled options (including legacy `antiAlias`) in
-`settings.ini` are ignored and are omitted when settings are saved. The engine's
-rendering support is retained; see [antialiasing](docs/antialiasing.md) for the
-implementation and historical measurements. **Trees Sway in Wind** is selectable,
+Graphics options include **Bilinear Filtering**, **Smooth GUI Art**,
+**Smooth Movies**, **Terrain AA** (Off/2x/4x) and **Model AA** (Off/2x/4x/8x/16x)
+controls. All default to **off** and remember your choices. Smooth GUI
+Art applies immediately to the current interface, fonts and cursors without a
+restart. The AA sliders operate independently and leave the HUD, menus and cursor
+outside both world passes. Legacy `antiAlias` initializes either AA setting only
+when its new preference is absent. See [antialiasing](docs/antialiasing.md) for
+resource limits, fallback behavior and measurements. **Trees Sway in Wind** is selectable,
 defaults to **on**, and remembers your choice.
 
 World sounds stay at full volume inside the camera view and fade with distance
@@ -882,6 +943,11 @@ selected, and special-effect units retain their full geometry. Wide-map renderin
 also reuses fog geometry and combines fog cells over flat terrain. See the
 [distant rendering measurements](docs/distant-rendering-performance.md) for
 limits and local comparisons.
+Animated model textures retain exact geometry while their actual frame is
+unchanged; animation playback continues normally. Unused distant-image pages
+also expire after leaving a region or zooming in. See the
+[AA-off model reuse investigation](docs/render-reuse-2026-10-04.md) for measured
+benefits, the rejected larger-image prototype, and platform limits.
 
 Unit scripts control corpse selection and the handoff from death animation to
 wreck. Buildings also use the authored palette shading and per-piece shadow
@@ -1000,7 +1066,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.23 uses protocol **221**; update server and clients together.
+Version 0.7.24 uses protocol **227**; update server and clients together.
 
 
 ## License

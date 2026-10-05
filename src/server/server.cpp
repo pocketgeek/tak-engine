@@ -20,6 +20,7 @@
 #include "server/validationworker.h"
 #include "util/stoptoken.h"
 #include "server/roomtick.h"
+#include "server/status.h"
 #include "net/crusades.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
@@ -32,6 +33,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <cmath>
@@ -52,6 +54,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -1744,7 +1747,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             o.randomStarts = r.u8() ? 1 : 0;
             o.doubleSight = r.u8() ? 1 : 0;
             const auto pathMode = r.u8();
-            if (pathMode > uint8_t(tak::sim::PathfindingMode::Flowfield)) { sendReject(c,"invalid pathfinding mode"); return; }
+            if (!tak::sim::validPathfindingMode(pathMode)) { sendReject(c,"invalid pathfinding mode"); return; }
             o.pathfindingMode = mission.empty() ? tak::sim::PathfindingMode(pathMode) : tak::sim::PathfindingMode::Retail;
             if (!mission.empty()) o.doubleSight = 0;
             int cap = int(r.u8());
@@ -2523,7 +2526,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             o.randomStarts = rd.u8() ? 1 : 0;
             o.doubleSight = rd.u8() ? 1 : 0;
             const auto pathMode = rd.u8();
-            if (pathMode > uint8_t(tak::sim::PathfindingMode::Flowfield)) { sendReject(c,"invalid pathfinding mode"); return; }
+            if (!tak::sim::validPathfindingMode(pathMode)) { sendReject(c,"invalid pathfinding mode"); return; }
             // Creation-only: lobby updates cannot change the selected pathfinder.
             o.pathfindingMode = r->opts.pathfindingMode;
             if (!r->mission.empty()) o.doubleSight = 0;
@@ -3055,6 +3058,7 @@ int Server::run() {
     std::string err;
     listenFd_ = listenOn(port_, err, loopbackOnly_);
     if (listenFd_ < 0) { std::fprintf(stderr, "takserver: %s on port %u\n", err.c_str(), port_); return 1; }
+    tak::srv::StatusListener status(port_);
     std::fprintf(stderr, "takserver %s listening on %s port %u (protocol v%u)\n",
                  tak::kVersion, loopbackOnly_ ? "loopback" : "all interfaces", port_, kNetVersion);
     // Build id on its own line: the harness greps it to refuse a server built from
@@ -3083,6 +3087,12 @@ int Server::run() {
         // (unsigned) in a Windows pollfd, which brace-init would reject as narrowing.
         pollfd lp{}; lp.fd = listenFd_; lp.events = POLLIN; pfds.push_back(lp);
         ids.push_back(0);
+        const int statusFd = status.pollFd();
+        if (statusFd >= 0) {
+            pollfd sp{}; sp.fd = statusFd; sp.events = POLLIN; pfds.push_back(sp);
+            ids.push_back(0);
+        }
+        const size_t clientsBegin = pfds.size();
         for (auto& [id, c] : clients_) {
             short ev = canRead(*c,nowMs()) ? POLLIN : 0;
             if (c->conn.wantWrite()) ev |= POLLOUT;
@@ -3123,6 +3133,21 @@ int Server::run() {
         for(auto& [id,room]:rooms_) {(void)id;finishTick(room);}
         throttle_.expire(now);   // forget hosts that have long since behaved
 
+        if (statusFd >= 0 && (pfds[1].revents & POLLIN)) {
+            tak::srv::StatusCounts counts;
+            for (const auto& [id, room] : rooms_) {
+                if (room.running) ++counts.runningGames;
+                else ++counts.lobbyGames;
+            }
+            // Count established player/spectator/browser sessions, not sockets
+            // still authenticating. Status queries never create such sessions.
+            for (const auto& [id, client] : clients_)
+                if (client->conn.ok() && !client->conn.peerClosed() &&
+                    (client->state == Client::Lobby || client->state == Client::InGame))
+                    ++counts.connectedClients;
+            status.respond(counts);
+        }
+
         // Accept new connections.
         if (pfds[0].revents & POLLIN) {
             for (unsigned accepted=0;accepted<32;++accepted) {
@@ -3152,7 +3177,7 @@ int Server::run() {
         }
         // Service clients.
         std::vector<uint32_t> dead;
-        for (size_t i = 1; i < pfds.size(); ++i) {
+        for (size_t i = clientsBegin; i < pfds.size(); ++i) {
             uint32_t id = ids[i];
             auto it = clients_.find(id);
             if (it == clients_.end()) continue;
@@ -3340,6 +3365,7 @@ static int serverMain(int argc, char** argv) {
     bool acmeOption=false;
     bool allowTestWork=false;
     bool allowPlaintext=false;
+    bool statusQuery=false;
     std::string accountsPath = "takserver-accounts.conf";
     std::string crusadesDb, crusadesDefinition;
     uint32_t fixedSeed = 0;
@@ -3348,7 +3374,17 @@ static int serverMain(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         try {if(limits.set(argv[i],i+1<argc?argv[i+1]:"")) {++i;continue;}}
         catch(const std::exception& e) {std::fprintf(stderr,"takserver: %s: %s\n",argv[i],e.what());return 1;}
-        if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
+        if (!std::strcmp(argv[i], "--port") && i + 1 < argc) {
+            const std::string_view value(argv[++i]);
+            unsigned parsed = 0;
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+            if (error != std::errc{} || end != value.data() + value.size() || parsed == 0 || parsed > 65535) {
+                std::fprintf(stderr, "takserver: --port must be between 1 and 65535\n");
+                return 1;
+            }
+            port = uint16_t(parsed);
+        }
+        else if (!std::strcmp(argv[i], "--status")) statusQuery=true;
         else if (!std::strcmp(argv[i], "--data") && i + 1 < argc) dataRoot = argv[++i];
         else if (!std::strcmp(argv[i], "--replaydir") && i + 1 < argc) replayDir = argv[++i];
 #ifndef NDEBUG
@@ -3388,7 +3424,11 @@ static int serverMain(int argc, char** argv) {
                         "                 [--map-memory-mib N] [--map-storage-mib N]\n"
                         "                 [--replay-memory-mib N] [--replay-storage-mib N]\n"
                         "                 [--crusades-db <file>] [--crusades-definition <file>]\n"
-                        "  --data is REQUIRED: it is what the referee sim and the\n"
+                        "       takserver --status [--port N]\n"
+                        "  --status queries the local running server and prints JSON, then exits.\n"
+                        "  No data, account, or TLS arguments are needed; default port is 7677.\n"
+                        "  Status uses loopback-only UDP on the game port's numeric value.\n"
+                        "  --data is REQUIRED when hosting: it is what the referee sim and the\n"
                         "  server-hosted AI players read. There is no relay-only mode.\n"
                         "  --replaydir writes a .takrep replay file per finished game.\n"
                         "  --seed N pins every game's RNG seed, so a headless run is\n"
@@ -3413,6 +3453,16 @@ static int serverMain(int argc, char** argv) {
                         "  Benchmark/stress and local campaign missions require --local --no-auth.\n");
             return 0;
         } else {std::fprintf(stderr,"takserver: unknown option or missing value: %s\n",argv[i]);return 1;}
+    }
+    if (statusQuery) {
+        tak::srv::StatusCounts counts;
+        std::string error;
+        if (!tak::srv::queryStatus(port, counts, error)) {
+            std::fprintf(stderr, "takserver: %s\n", error.c_str());
+            return 1;
+        }
+        std::fputs(counts.json().c_str(), stdout);
+        return 0;
     }
     if(acmeOption && (acme.domain.empty() || !acme.agreeTerms || !tlsCert.empty() || !tlsKey.empty() || allowPlaintext || loopbackOnly || port==80)) {
         std::fprintf(stderr,"takserver: ACME requires --acme-domain and --acme-agree-tos; cannot combine with manual TLS, plaintext, --local, or game port 80.\n");return 1;

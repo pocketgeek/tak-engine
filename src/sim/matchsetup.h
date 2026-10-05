@@ -49,7 +49,7 @@ struct MatchConfig {
     int unitCap = 2000;             // per-player live-unit limit (0 = unlimited)
     bool monarchExpendable = true;  // false = losing your Monarch loses the game
     PathfindingMode pathfindingMode = PathfindingMode::Retail;
-    bool patrolRepairs = true; // legacy replays disable the new automatic patrol work
+    bool patrolRepairs = true;
     bool doubleSight = false;       // double authored sight and radar distances (not weapon range)
     bool stressTest = false;        // spawn each player at ~95% of the unit cap in combat
                                     // units at setup (SP all-AI load test)

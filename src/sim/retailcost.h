@@ -14,6 +14,33 @@
 
 namespace tak::sim {
 
+// Scratch planes retain direction bytes between attempts. Once initialization
+// owns the plane, flags never return to zero until the next reset, so that byte
+// also identifies the first write without a second map-sized marker array.
+// Imported/test planes use a full reset until their writes are tracked.
+struct RetailSearchCellScratch {
+    std::vector<uint32_t> touched;
+    bool complete = false;
+    size_t resetCells = 0; // observational work count, never scheduler work
+
+    void touch(size_t index, uint8_t flags) {
+        if (complete && !flags) touched.push_back(uint32_t(index));
+    }
+    template<class Cells>
+    void reset(Cells& cells) {
+        resetCells = 0;
+        if (complete) {
+            for (size_t index : touched) if (index < cells.size()) {
+                cells[index].flags = 0; cells[index].node = -1; ++resetCells;
+            }
+        } else {
+            for (auto& cell : cells) { cell.flags = 0; cell.node = -1; }
+            resetCells = cells.size();
+        }
+        touched.clear(); complete = true;
+    }
+};
+
 inline int retailGoalDistance(int dx, int dz, int tolerance = 0) {
     dx = std::abs(dx); dz = std::abs(dz);
     return std::max(0, 18 * std::max(dx, dz) + 7 * std::min(dx, dz) - tolerance);
@@ -55,7 +82,8 @@ public:
     }
 
     void reset(int width, int height, int startCell, int direction,
-               int initialDistance, int weight = 98304, std::vector<Cell> plane = {}) {
+               int initialDistance, int weight = 98304, std::vector<Cell> plane = {},
+               RetailSearchCellScratch tracked = {}) {
         width_ = width; height_ = height;
         // A tracer hands its existing visited/goal plane to phase 2. Do not
         // allocate and clear another map-sized plane just to throw it away.
@@ -65,10 +93,13 @@ public:
                 throw std::invalid_argument("invalid search plane size");
             cells=std::move(plane);
         }
+        scratch=std::move(tracked);
         nodes.clear(); heap.clear(); free_.clear();
         processed = 0; heuristicWeight = weight; pendingRoot_ = false;
         endpoint = -1;
-        cells.at(size_t(startCell)).flags |= 1;
+        auto& start=cells.at(size_t(startCell));
+        scratch.touch(size_t(startCell),start.flags);
+        start.flags |= 1;
         cells[size_t(startCell)].direction = uint8_t(direction & 7);
         insert({startCell, 0, weighted(initialDistance), 0, 0, 100});
     }
@@ -76,9 +107,23 @@ public:
     // The tracer leaves goal/visited bits in this same scratch plane. Preserve
     // them before calling pop(); bits 0x18 permit even a now-blocked trace cell.
     std::vector<Cell> cells;
+    RetailSearchCellScratch scratch;
     std::vector<Node> nodes;
     std::vector<int> heap;
     int processed = 0, heuristicWeight = 98304, endpoint = -1;
+
+    // Initialization resets the logical search, while retaining the allocation
+    // buffers that phase 2 will reuse. The plane/scratch move to the tracer first.
+    void clearAttempt() {
+        cells.clear(); scratch.touched.clear(); scratch.complete=false; scratch.resetCells=0;
+        nodes.clear(); heap.clear(); free_.clear();
+        costs={}; width_=height_=processed=0; heuristicWeight=98304;
+        endpoint=-1; pendingRoot_=false;
+    }
+    size_t scratchBytes() const {
+        return cells.capacity()*sizeof(Cell)+scratch.touched.capacity()*sizeof(uint32_t)+
+               nodes.capacity()*sizeof(Node)+(heap.capacity()+free_.capacity())*sizeof(int);
+    }
 
     bool empty() const { return heap.size() == size_t(pendingRoot_); }
     const Node& top() const { return nodes.at(size_t(heap.at(0))); }
@@ -92,6 +137,7 @@ public:
             count < 0 || (pendingRoot && orderedNodes.empty()))
             throw std::invalid_argument("invalid suspended search");
         width_ = width; height_ = height; cells = std::move(plane);
+        scratch.touched.clear(); scratch.complete=false; scratch.resetCells=0;
         nodes = std::move(orderedNodes); heap.clear(); free_.clear();
         for (auto& cell : cells) cell.node = -1;
         for (size_t i = 0; i < nodes.size(); ++i) {
@@ -133,6 +179,7 @@ public:
             if (state == 1) {
                 entry = nodes[size_t(cell.node)].gradeCost;
             } else {
+                scratch.touch(size_t(index),cell.flags);
                 const int score = [&] {
                     if constexpr (requires { grade(nx, nz, direction); })
                         return grade(nx, nz, direction);

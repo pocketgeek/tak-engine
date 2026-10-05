@@ -26,11 +26,11 @@ int main() {
                              200,200,20,64,20,200,200,192,200,20,200,255};
     SDL_UpdateTexture(texture,nullptr,pixels,12);
     std::vector<SDL_Vertex> vertices;
-    for(int i=0;i<100;++i) {
+    for(int i=0;i<200;++i) {
         const float x=float(i%10)*5+.25f,y=float(i/10)*5+.5f;
         const SDL_Color color{uint8_t(100+i),180,uint8_t(250-i),uint8_t(100+i)};
         SDL_Vertex quad[4]={{{x,y},color,{0,0}},{{x+4,y},color,{1,0}},
-                            {{x+4,y+4},color,{1,1}},{{x,y+4},color,{0,1}}};
+                            {{x+4-(i%3)*.237f,y+4},color,{1,1}},{{x+(i%4)*.183f,y+4-(i%3)*.127f},color,{0,1}}};
         for(int index:{0,1,2,0,2,3})vertices.push_back(quad[index]);
     }
     tak::GeometrySubmit submit;
@@ -39,7 +39,9 @@ int main() {
     for(uint64_t revision:{0,1,2}) {
     if(revision==2)for(auto& v:vertices){v.position.x+=1.25f;v.color.r^=127;}
     for(SDL_FPoint offset:{SDL_FPoint{0,0},SDL_FPoint{1.25f,-2.5f}})
-    for(float scale:{1.f,2.f,4.f,1.41421356f})for(bool textured:{false,true})
+    for(SDL_FPoint scales:{SDL_FPoint{1,1},SDL_FPoint{2,2},SDL_FPoint{4,4},
+                           SDL_FPoint{1.41421356f,1.41421356f},SDL_FPoint{2.82842712f,2.82842712f},
+                           SDL_FPoint{1.25f,.75f},SDL_FPoint{1.41421356f,2.82842712f}})for(bool textured:{false,true})
     for(bool clipped:{false,true})for(bool offscreen:{false,true})
     for(auto blend:{SDL_BLENDMODE_NONE,SDL_BLENDMODE_BLEND,SDL_BLENDMODE_ADD,SDL_BLENDMODE_MOD})
     for(auto filter:{SDL_ScaleModeNearest,SDL_ScaleModeLinear}) {
@@ -49,8 +51,8 @@ int main() {
             SDL_SetRenderTarget(renderer,offscreen?target:nullptr);
             SDL_RenderSetScale(renderer,1,1);SDL_RenderSetViewport(renderer,nullptr);SDL_RenderSetClipRect(renderer,nullptr);
             SDL_SetRenderDrawColor(renderer,45,70,110,255);SDL_RenderClear(renderer);
-            SDL_RenderSetScale(renderer,scale,scale);
-            SDL_Rect viewport{2,3,int(120/scale),int(120/scale)},clip{3,4,42,39};
+            SDL_RenderSetScale(renderer,scales.x,scales.y);
+            SDL_Rect viewport{2,3,int(120/scales.x),int(120/scales.y)},clip{3,4,42,39};
             SDL_RenderSetViewport(renderer,&viewport);SDL_RenderSetClipRect(renderer,clipped?&clip:nullptr);
             SDL_SetRenderDrawBlendMode(renderer,blend);
             ok &= submit.draw(renderer,textured?texture:nullptr,vertices,native,revision,offset)==0;
@@ -65,7 +67,7 @@ int main() {
                 native?actual.data():expected.data(),128*4)==0;
         }
         if(actual!=expected) {
-            std::printf("FAIL scale=%f texture=%d clip=%d target=%d blend=%d filter=%d\n",scale,textured,clipped,offscreen,blend,filter);
+            std::printf("FAIL scale=%f/%f offset=%f/%f texture=%d clip=%d target=%d blend=%d filter=%d\n",scales.x,scales.y,offset.x,offset.y,textured,clipped,offscreen,blend,filter);
             ok=false;
         }
         ++cases;

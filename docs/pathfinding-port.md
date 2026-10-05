@@ -1,14 +1,29 @@
 # Porting retail's movement layer
 
+Version 0.7.24 (protocol 227) adds [Retail+](retail-plus-pathfinding.md) as a fourth
+choice. It retains native long-distance search with separately scoped local
+crowd handling. Shared Retail search scratch/buffer optimizations are required
+to preserve routes, work accounting, delivery ticks and per-tick simulation
+results; behavioral changes belong only to the new mode.
+
+The same release includes [Cooperative](cooperative-pathfinding.md), introduced
+during development with protocol 226. It reuses the shared terrain planner with separate
+group and traffic policies; the Retail and Flowfield behavior documented below
+remains unchanged by that addition.
+
 ## Optional Flowfield mode (2026-10-03)
 
-Retail remains the default; its search worker and scheduler are unchanged. A separate experimental
-World adapter handles Flowfield matches. Create screens now expose a persisted
+At its introduction, Retail remained the default and its search worker and
+scheduler were unchanged. A separate experimental
+World adapter handles Flowfield matches. That update exposed a persisted
 Retail/Flowfield choice; lobby displays are informational and campaigns force
 Retail. Protocol 220 makes the choice authoritative. Replay format 11 stores it;
-protocol-219/format-10 recordings migrate to Retail. Protocol 221 adds builder
-automation without changing either search or steering algorithm; older replays
-retain their original patrol behavior.
+Protocol 221 adds builder automation without changing either search or steering
+algorithm. Protocol 222 fixes crowded Flowfield rally arrivals. Protocol 223
+adds group destination areas, lane preservation and formation pacing. Protocol 224
+fixes crowd avoidance and arrival routing around obstacles. The wire layout
+and replay format are unchanged, but older replay protocols are refused; use
+the original engine version for those recordings.
 
 Implementation:
 
@@ -31,6 +46,10 @@ Implementation:
   its final reverse-BFS distance; unrelated distant components need not finish.
   Missing components remain pending until exhaustion proves them unreachable. Worker readiness
   never selects a gameplay result. Retail does not instantiate this service.
+  Protocol 223 can choose a cardinal step toward the dominant destination axis
+  when its integrated cost exactly equals the canonical step's cost. This keeps
+  parallel lanes open longer without extra fields, longer weighted routes, or
+  cycles. Obstructed routes retain their legal field direction.
 - `flowsnapshot.h/.cpp`: incremental rectangular-footprint sampling with tile-local
   summed-area tables and dirty halos. World-thread sampling seals at most two
   raw tiles per snapshot; pure footprint/component jobs run on the shared pool,
@@ -70,7 +89,7 @@ Implementation:
   substitutes for global guidance. Faraway goal areas skip local allocation.
   This prevents fallback routes from undoing maze detours during profile
   contention. Local failure is not a global unreachable result.
-- `flowtraffic.h/.cpp`: separate transient traffic and same-destination point-move
+- `flowtraffic.h/.cpp`: separate transient traffic and same-destination area-move
   arrival handling. Neighbor inspection is bounded; at most 256 queued units
   start a strict-footprint local detour per tick in deterministic rotating order.
   A completed detour reanchors its shared route once. Waiting for detour work
@@ -89,22 +108,73 @@ Implementation:
   tries a one-cell escape after full-stride alternatives fail; this matters in
   packed corners where a whole footprint-width sidestep cannot fit.
   Parked formations use a collision-checked lateral leg followed by a forward
-  continuation, with each leg receiving its own deadline. Lateral and forward
-  look-ahead are each capped at 16 cells and four lateral candidates per side;
-  narrow terrain falls back to the short escape. This prevents a mover from
-  repeatedly returning to a route corner covered by a stopped friendly body.
+  continuation, with each leg receiving its own deadline. Ordinary avoidance
+  caps both legs at 16 cells and four lateral candidates per side. A mover that
+  has made no destination progress for 300 ticks against its own group's parked
+  front (or a moving fringe in front of already-arrived members) can try seven
+  geometric lateral lengths per side, from one cell up to 64 cells,
+  with a forward leg capped at 64 cells. These searches use the same rotating
+  admission limit and check whole footprints, including diagonal crossings.
+  If no complete inward turn fits that local window, it retains a deterministic
+  side across further bounded lateral legs until an inward leg becomes free.
+  A one-cell gap retains that side too, so short route corners cannot make a
+  member alternate direction indefinitely. Final-area bypass uses the shared
+  destination direction; ordinary terrain avoidance follows the installed route.
+  This continuation stays within 128 cells of the destination-area boundary;
+  it does not create a new global route or enlarge the arrival area.
+  Progress renews the long detour's deadline, so slow units can complete it;
+  300 ticks without progress expires it. Narrow terrain falls back to the short
+  escape. Stalled movers also inspect nearby arrivals without requiring a body
+  refusal: small circles can otherwise keep their collision counter at zero.
+  Contact settlement still requires a free standing footprint, a connected
+  same-goal arrival and the existing destination-area bounds. This prevents a
+  mover from repeatedly returning to a route corner covered by stopped bodies.
   Landed flyers participate in avoidance just as they do in physical ground
   collision. The coarse ground occupancy plane omits them, so a bounded body
   query (128 buckets/256 entries, rotating entry offsets) finds those blockers.
   Airborne flyers remain excluded.
-  Near the destination, contact with an already settled member of the same
-  group can form a queue where terrain prevents a compact formation. This
-  extra allowance requires nearby static obstruction at the mover or its
-  settled contact, is bounded by actual group population, and never extends
-  the original arrival radius beyond a 64-cell local window. Open-ground
-  settling admits one touching footprint beyond the original area, anchored by
-  a same-destination body inside it. Outside anchors cannot extend that allowance
-  further. Targeted attacks and other interaction missions cannot settle this way.
+  Protocol 223 enrolls movers before route following and sizes the destination
+  area from their summed footprint spacing. Its radius grows with the square
+  root of that area, capped at 512 navigation cells. Move, fight-move, patrol,
+  Guard and inherited production rallies share this handling. Plain right-click
+  groups now send one center instead of splitting their destination by display
+  offsets. Targeted attacks, construction and transport interactions keep their
+  own acceptance rules.
+  Arrivals reserve separate full-footprint standing places, filling the interior
+  before outer rows. The approach is checked over at most 64 cells and its
+  terrain connection to the original goal over at most 512 cells. Unknown
+  terrain cannot prove arrival. All arrival proofs share an 8,192-cell-per-tick
+  quota; exhausted work is deferred, including validation of existing slots.
+  A completed area arrival stops on its accepted footprint, without coasting
+  through the reserved space or snapping its position. Membership survives the
+  controller handoff, so the area does not shrink while the rest of the group is
+  still approaching. Formation regrouping does not wake these completed arrivals.
+  Where terrain prevents a compact formation, contact with an already settled
+  member can form a queue. That allowance is bounded by actual population,
+  requires a terrain connection and local obstruction, and cannot adopt an
+  unrelated idle unit. The longer fallback requires 300 ticks without progress.
+  Neighbor scans still inspect
+  at most 128 buckets/256 bodies and retain at most 64 contacts. The population
+  filter skips irrelevant scans; the progress record adds no path search or
+  allocation per update. Internal controller retries preserve progress for the
+  same issued mission. Traffic stores at most 16,384 records, 16,384 reservation
+  buckets and 65,536 bucket links, within the existing memory reservation.
+  Crowded arrival formations can form elongated queues in narrow terrain.
+  Newly produced ground units ordinarily take their separate exit step before a
+  queued rally. Every automatic Flowfield ground exit retains its birthplace.
+  If its parking destination becomes blocked after the child has cleared that
+  complete footprint on an axis, it can finish the exit and start its rally, or
+  stop if no rally follows. This avoids chasing an automatic parking gap later
+  outputs have enclosed; an explicit player Move does not receive this rule.
+  Route replacements retain the birthplace; moving or stopping the producer
+  cannot change it. Flyers and Retail matches retain their exit behavior.
+  For a distant plain rally, an exit that has already cleared the birthplace
+  participates in that rally's arrival group while retaining its normal exit
+  steering. Contact with its filled arrival formation
+  can retire both the redundant exit and that rally point; later queued orders
+  remain. Close rallies and attack, patrol or work missions do not use that
+  future-point completion shortcut.
+  Retail routing, steering and arrival rules are unchanged.
   Local detours follow the next installed route waypoint, not the final mission
   destination. Steering at the final destination can pull a unit back toward
   the same wall when a maze route must initially travel away from its goal.
@@ -134,6 +204,11 @@ Implementation:
   turn. This keeps slow-turning units within narrow anchor-cell corridors,
   including units with no turn-in-place ability. Terrain scaling applies once;
   headings, collision checks, and the Retail-mode movement path are unchanged.
+  Flowfield ground/naval formations also cap each member to the slowest member's
+  terrain-adjusted surface speed; the Retail catch-up exception is unchanged.
+  Flying formation members use the same tick-derived cap for horizontal travel
+  through every flight-body entry path, including escort and combat movement.
+  Individual flyers and Retail flight retain their existing velocity behavior.
 - `flowobstacles.h/.cpp`: a shared structure-footprint layer, separate from mobile
   traffic, with 16,384 stamp-work units per World tick. Yard opening, overlapping
   structures, destruction, and changes during in-flight stamping are coalesced.
@@ -5437,3 +5512,276 @@ need KINGDOMS.icd running under wine with the RNG + frame counter instrumented -
 outside this repo's harness (which emulates routines, it does not run the game).
 Recorded as a known gap, not a discrepancy: nothing observed contradicts the
 port; the tail's timing constants are simply unverified against a running binary.
+
+## Flowfield routing and group validation (2026-10-04)
+
+The Flowfield sampler now prefers straight progress on the dominant destination
+axis only when that axis's remaining distance is **more than twice** the other
+axis's distance and the step has **exactly the same integrated cost** as the
+field's canonical direction. Near diagonals it retains the canonical direction:
+forcing cardinal steps there would fold the two halves of a dense formation
+into the same diagonal seam. This preserves transverse lanes on open ground without
+creating per-unit fields, changing weighted route cost, or allowing a
+non-descending step. The existing 63-cell prefix budget and footprint-aware
+corner checks remain. In the 32-unit open-ground fixture, the middle half of
+the group retained its original 192-pixel width halfway to the destination;
+the earlier canonical-direction route had narrowed it to 20 pixels. A narrow
+maze passage still requires units to pass in the space physically available.
+
+Destination-slot proofs use a footprint supercover: diagonal transitions check
+both side cells. The approach to a slot is limited to 64 cells, and its terrain
+connection to the original mission region to 512 cells. All proofs share a
+budget of 8,192 cached-cost, fog, or raw terrain samples per tick; an unavailable
+snapshot can use the same bounded quota to check live footprint cells. The
+entire footprint must be explored to certify arrival. Quota exhaustion defers
+a proof instead of treating the slot as blocked, and advances next tick's
+starting unit ID so expensive early callers cannot starve later arrivals.
+These checks add no destination field or per-tick callback allocation.
+
+The reproducible 64×64 Taros maze fixture retains the reported map's authored
+terrain and scenery. The tests assert physical arrival rather than accepting
+an empty order queue or a moving unit as sufficient evidence:
+
+| Fixture | Observed arrival tick | Coverage |
+| --- | ---: | --- |
+| One Swordsman, explored | 19,882 | Complete route; serial/threaded checkpoints |
+| One Swordsman, unexplored | 49,639 | Complete route with discovery |
+| One Cannon, explored | 43,129 | Slow-turning terrain clearance |
+| One Beast Rider, explored | 60,608 | Zero-pivot terrain clearance; serial/threaded checkpoints |
+| One Beast Rider, unexplored | 570,471 | Complete discovery route; serial/threaded checkpoints |
+| Eight independently owned Swordsmen | 111,600 | Every player arrives; matching serial/threaded checkpoints; zero local fallback work |
+| Eight Beast Riders, unexplored | 647,590 | Full group soak: every unit reaches the destination area |
+
+These measurements describe the tested movement behavior, not timing goldens:
+arrival can change when group settling changes. Every 300 ticks the physical
+maze tests also verify that the entire footprint remains legally placed.
+The known-map group checks require all 32 Zhon Hunters and all 16 Swordsmen to
+finish within 30,000 ticks and remain within a bounded destination area. The
+standard unknown-group test compares 90,000-tick serial/threaded checkpoints;
+the longer soak separately requires **all eight arrivals**, with a 900,000-tick
+limit. A merely moving unit cannot pass the full soak.
+
+Unexplored mazes can require much more travel than explored ones: a unit has
+to discover dead ends and alternative corridors. The long Beast Rider runs
+continued to reveal terrain instead of orbiting a corner. Their large tick
+counts should not be read as a guarantee of a short route through unknown
+terrain.
+
+Run the complete single-unit cases with
+`build/flow_maze_world_test /path/to/retail-data`, the ordinary group coverage
+with `build/flow_group_maze_test /path/to/retail-data`, and the full unknown-group
+crossing with `build/flow_group_maze_test /path/to/retail-data --soak`.
+`flowfield_test` covers equal-cost lane selection, shared-field reuse, diagonal
+terrain edges, blocked goal connections, and local proof limits without assets.
+These additions are confined to Flowfield navigation; the Retail search and
+movement selection remain separate.
+
+`build/flow_group_commands_test` exercises shared Move/Fight destinations,
+queued visits, repeating patrols, escorts following a moved target, naval and
+mixed-footprint groups, ground/flying formation speed limits, and static/mobile
+production rallies (including nearby rallies and patrol plans). It requires
+legal physical footprints, arrival within a finite destination area and sustained
+rest; simply dropping orders cannot pass. Its optional `large` case exercises
+2,000 simultaneous movers. The `--retail-checksums` and `--flight-checksums`
+modes support comparisons with a saved baseline build.
+
+The same synthetic 32-unit scenarios, compiled against the saved pre-change
+library and the final Release library, produced these movement results:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| All 32 complete Move | 3,816 ticks | 1,591 ticks |
+| Middle-half group width halfway through Move | 20 px | 192 px |
+| Move route requests | 598 | 173 |
+| Reported Flowfield storage for that Move | 817,736 bytes | 820,132 bytes |
+| Complete both queued destinations | 30/32 after 6,000 ticks | 32/32 after 3,082 ticks |
+| All 32 boats complete Move | 4,426 ticks | 2,103 ticks |
+| Minimum completed patrol laps in 12,000 ticks | 1 | 3 |
+
+These are physical progress and work counts, not CPU-speed measurements. The
+2,000-unit case completes all arrivals by tick 17,186, stays within its existing
+2,240-pixel destination bound (observed maximum 2,216), and reports 4,443,920
+bytes of peak Flowfield storage. It checks every final footprint and sustained
+rest, and runs in CTest as `flow_group_arrival_large`. An eight-direction
+variation of the small Move also passed. Narrow
+passages still require columns.
+
+Twenty-four saved ground/naval Retail checkpoints match exactly after the change.
+Twenty-seven flight checkpoints also match for Retail formed/unformed flyers and
+ungrouped Flowfield flyers. The separate Flowfield flying-formation tests check
+the new horizontal speed cap. Traffic's pure tests pass address, undefined-
+behavior and leak sanitizers. These runs use Linux x86-64; Windows and macOS
+execution were not tested here.
+
+The final rebuild passes 48 Release and 16 Debug CTest cases covering Flowfield,
+Retail movement, production, combat, transport, exploration, replay and client
+command dispatch. Two private loopback matches each used one human slot and
+seven Absurd AIs with Crusades balance and Flowfield. All 180 common checkpoints
+and the command prefixes match; both recorded replays verify through exactly
+5,371 simulated ticks (`e54f7cfb670e1be9`). Different final packet boundaries
+(5,400/5,401 ticks) are excluded by comparing the identical command prefix.
+
+### Simulation cost of group areas
+
+The saved pre-change Release binary and final Release build ran the same
+16,000-Swordsman, 1,200-tick, threaded Flowfield fixture on a flat 64×64 map.
+Both layouts use legal 2×2 footprints: 32-pixel spacing touches adjacent
+footprints; 48-pixel spacing leaves gaps. The wider variant changes only the
+initial spacing in `flow_benchmark.cpp`. Measurements are medians of three
+alternating before/after pairs, pinned to CPU cores 0–7 on an Intel Core Ultra 9
+275HX under Fedora 44, with our other builds and tests stopped.
+
+| Layout | Mean tick, before → after | p95 tick, before → after | Flowfield storage, before → after |
+| --- | ---: | ---: | ---: |
+| Touching 32 px grid | 20.791 → 20.283 ms | 24.319 → 23.965 ms | 47.88 → 48.85 MiB |
+| Spaced 48 px grid | 20.448 → 21.393 ms | 24.562 → 25.410 ms | 48.42 → 49.40 MiB |
+
+Physical progress and route deliveries match before/after exactly in these
+diagonal-travel fixtures: respectively 491.9/1,354.6 pixels of mean L1
+displacement and 73,683/158,317 deliveries. A discarded cardinal-steering
+variant reduced movement severely despite lower CPU time; the dense diagonal
+World regression now checks progress as well as transverse width.
+
+The final result is about 2.4% less tick time in the touching layout and 4.6%
+more in the spaced layout, with approximately 0.98 MiB additional Flowfield
+storage in each. These are movement-only simulation timings, not complete
+AI/combat or rendering benchmarks. The extra area reservations have a real
+cost; shared fields, bounded admission/proofs and skipping unused arrival
+neighbor scans keep that cost limited. The existing 512 MiB admission ceiling
+is unchanged, and the storage figures above are logical Flowfield accounting,
+not whole-process RSS.
+
+### Replay-driven crowd avoidance corrections (protocol 224)
+
+A locally recorded Crusades match with Hunters, Trolls and Goblins reproduced
+long-running obstacle loops. The saved pre-change simulation reproduced all
+1,436 recorded checkpoints. Comparisons start each new implementation only
+after the recorded 60-unit or 211-unit command, preserving the exact preceding
+simulation. Running changed code from the beginning would change production
+timing and unit IDs, invalidating the later recorded selection commands.
+The 60-unit extension omits the later retargeting commands from tick 36,454;
+the 211-unit run preserves the remaining recording and then appends empty
+command bundles. This lets each recorded destination order finish undisturbed.
+Original recordings and retail-derived diagnostics are kept outside Git.
+
+The corrections are confined to Flowfield:
+
+- Short avoidance turns use the Flowfield turning-speed limit even when the
+  periodic ground-obstacle scan reports clear ground. Otherwise a unit can
+  overshoot a one-cell steering leg repeatedly.
+- Both obstruction lookup and avoidance continuations check diagonal side
+  anchors as well as the endpoint. The lookup includes landed flyers under
+  its existing shared scan limits. Entire footprints remain subject to live
+  collision checks.
+- A failed arrival proof no longer consumes the unit's admission a second time
+  before its avoidance search. A definite standing-position connection result
+  is reused only within that update.
+- New destination-formation bypasses require a known terrain connection, so
+  their goal-directed steering cannot replace a necessary terrain detour.
+  They take priority over generic short escapes once committed.
+- A one-sided cliff is no longer classified as a narrow arrival corridor.
+  Population-length arrival queues require opposing terrain constraints;
+  touching a stopped peer beside a single wall cannot propagate arrivals far
+  from the destination.
+- A free standing footprint touching a verified, arrived member can finish in
+  a small packing band: `floor(sqrt(group area)) + 2 * footprint stride`.
+  Each accepted center must satisfy that same fixed bound and a strict known
+  terrain connection to the peer. The band cannot grow with the length of an
+  arrival chain. This prevents the last row of a formation from being sent
+  around the army indefinitely for being just outside the ordinary area.
+- Stalled traffic can retain a complete short route around several occupied
+  corners instead of repeatedly taking and undoing one backward step.
+
+The short-route search uses fixed stack arrays for a 33-by-33 anchor window,
+at most 512 probes/pops per search, and a shared 4,096 footprint-cell work
+allowance per simulation tick. Admission rotates after exhaustion. Up to 42
+directions fit in two words in the existing bounded traffic record, with no
+per-unit route allocation or extra global flowfield. Window, route-length or
+work limits are not treated as proof that a physical route is impossible.
+Retained legs are checked again if moving bodies obstruct them. Their progress
+state and the shared work budget participate in the deterministic checksum.
+
+`flow_group_obstacle_test` adds asset-free mixed-speed crowd regressions, both
+on open ground and around a static wall with parked neighbors. It requires
+actual destination arrival, legal footprints, sustained rest and matching
+serial/threaded results. The pure traffic tests separately cover diagonal
+clearance, single-use admission, terrain-gated bypasses, real versus false
+corridors, multi-leg escapes, cancellation, changing occupancy, packed-route
+boundaries and shared-budget fairness. Separate contact-band cases reject
+walls, missing proofs and propagation past the fixed limit.
+
+The final controlled runs produce the following results. Command timings,
+unit IDs, initial physical positions and the entire simulation prefix are
+identical to the original recording; subsequent simulation hashes intentionally
+change with the fix.
+
+| Recorded cohort | Fix enabled at tick | All orders complete by sampled tick | Farthest final center from goal |
+| --- | ---: | ---: | ---: |
+| 60 Hunters, Trolls and Goblins | 25,642 | 45,384 | 450.38 px |
+| 211 Hunters, Trolls and Goblins | 36,458 | 71,205 | 789.90 px |
+
+Every final footprint is legal. Both groups have zero speed and unchanged
+sampled positions throughout their final 6,000-tick observation windows. The
+60-unit trace samples every three ticks in decimal coordinates; the 211-unit
+trace samples every 15 ticks and also verifies unchanged raw fixed-point
+coordinates. The later group test preserves all 1,216 pre-change replay
+checkpoints. These are
+extended diagnostic runs, not a claim of immediate arrival: narrow terrain
+and parked armies still require queues and can cause indirect routes.
+
+The synthetic 32-unit mixed-speed regression completes in 1,942 ticks on open
+ground and 3,587 ticks around the wall and parked units, identically in serial
+and threaded modes. The diagonal-side obstruction regression independently
+fails against the old adapter and passes against the corrected adapter.
+The pure traffic suite passes address, undefined-behavior and leak sanitizers.
+
+The final targeted sweep passes 28 Release and 9 Debug CTest cases, including
+the 2,000-unit arrival case. That case finishes by tick 16,877, with every
+footprint legal and sustained rest afterward. Its fixed contact limit is
+140 navigation cells; the observed maximum physical distance is 2,241 pixels.
+Unlike the earlier protocol-223 result above, this includes the packing band.
+Arrival tests enforce the exact anchor-cell bound first, then a world-coordinate
+bound derived from footprint parity and the clicked destination's cell offset.
+The two coordinates can differ by a few pixels at the boundary. Mixed-size
+cohorts share their area but use each mover's own footprint stride.
+
+Twenty-four Retail ground/naval and 27 unaffected flight checkpoints remain
+identical to the saved pre-fix build. The deterministic math guard and the
+GCC/Clang x86-64 golden-hash checks at O0/O2/O3 pass. Two private loopback games
+with seven Absurd AIs, Crusades and Flowfield both finish at tick 10,800 with
+hash `02ba82d9bd6fb015`, without desyncs. Both resulting recordings verify all
+360 checkpoints and finish with that same hash. The host/join/spectator
+pathfinding-selection network test also passes.
+
+All targets in both local build directories were rebuilt. Execution was tested
+on Linux x86-64; Windows and macOS were not run. The ARM64 determinism builds
+were skipped because the cross-toolchain lacks target libc/headers.
+
+For this correction, the saved protocol-223 Release binary and final build
+ran three alternating pairs of the same 16,000-Swordsman, 1,200-tick, threaded
+Flowfield fixture: flat 64×64 terrain, Crusades, touching 32-pixel grid. Both
+executables were pinned to cores 0–7 on the same Fedora machine, with our other
+builds and tests stopped. Medians of the three runs were:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Mean simulation tick | 19.743 ms | 20.299 ms |
+| p95 simulation tick | 23.577 ms | 23.828 ms |
+| Logical Flowfield storage | 51,224,816 bytes | 51,615,356 bytes |
+| Movers making physical progress | 16,000 | 16,000 |
+| Mean L1 displacement after 1,200 ticks | 491.9 px | 479.0 px |
+| Route deliveries | 73,683 | 72,420 |
+
+This is approximately 2.8% more mean tick time and 0.37 MiB more Flowfield
+storage. The stricter turning behavior changes progress and route work, so
+these numbers describe the complete behavioral correction, not isolated
+search throughput. All runs finish without pending field requests. This
+movement-only fixture does not measure AI combat, rendering, process RSS or
+every kind of maze congestion; desktop scheduling also contributes variance.
+The correction is retained for its reproduced routing improvement, not as a
+CPU optimization claim.
+
+This remains bounded local avoidance, not a completeness guarantee for every
+possible crowd arrangement. A separate experimental change to clip long
+bypass ingress exposed another stuck fringe unit in this replay and was not
+retained; more general improvements to long bypass routing remain open.

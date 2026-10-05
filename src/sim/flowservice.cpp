@@ -1,4 +1,5 @@
 #include "flowservice.h"
+#include "cooperativecorridor.h"
 #include "flowworkers.h"
 #include <algorithm>
 #include <functional>
@@ -85,7 +86,7 @@ void Service::invalidate(uint64_t profile) {
         if(it->second.key.profile==profile) {const auto id=it->first;++it;eraseGroup(id);}else ++it;
     }
 }
-Service::Sample Service::sample(int unit,Cell from) {
+Service::Sample Service::sample(int unit,Cell from,std::optional<Cell> aim) {
     const auto bound=bindings_.find(unit);if(bound==bindings_.end())return {Status::Capacity,{}};
     auto& group=destinations_.at(bound->second);group.used=++clock_;
     if(!group.destination->reachable(from))
@@ -96,7 +97,24 @@ Service::Sample Service::sample(int unit,Cell from) {
     const auto cached=fields_.find(key);
     if(cached!=fields_.end()) {
         cached->second.used=clock_;Cell next;
-        if(cached->second.field.next(from,next))return {Status::Ready,next};
+        if(cached->second.field.next(from,next)) {
+            if(aim) {
+                const int64_t dx=int64_t(aim->x)-from.x,dz=int64_t(aim->z)-from.z;
+                // Favor a cardinal lane only for predominantly cardinal
+                // travel. Near a diagonal, opposite sides of a dense group
+                // would otherwise turn toward the same diagonal seam and
+                // block each other despite having equally good parallel paths.
+                const Cell straight=std::abs(dx)>2*std::abs(dz)?Cell{from.x+(dx>0?1:-1),from.z}:
+                    std::abs(dz)>2*std::abs(dx)?Cell{from.x,from.z+(dz>0?1:-1)}:next;
+                if(straight!=next&&topo.tileAt(straight)==key.second&&topo.cost(straight)) {
+                    const auto& field=cached->second.field;
+                    const auto remaining=field.distance[size_t(straight.z%kTileSize)*kTileSize+straight.x%kTileSize];
+                    const auto current=field.distance[size_t(from.z%kTileSize)*kTileSize+from.x%kTileSize];
+                    if(uint64_t(remaining)+uint64_t(topo.cost(from))*1024==current)next=straight;
+                }
+            }
+            return {Status::Ready,next};
+        }
         const auto direction=cached->second.field.direction[size_t(from.z%kTileSize)*kTileSize+from.x%kTileSize];
         return {direction==8?Status::Arrived:Status::Unreachable,from};
     }
@@ -105,6 +123,16 @@ Service::Sample Service::sample(int unit,Cell from) {
         builders_.emplace(key,std::make_shared<FieldBuilder>(group.destination,key.second));fieldQueue_.push_back(key);
     }
     return {};
+}
+Service::Sample Service::sampleCooperative(int unit,Cell from,Cell direction,std::optional<Cell> laneTarget) {
+    auto result=sample(unit,from);
+    if(result.status!=Status::Ready)return result;
+    const auto& binding=bindings_.at(unit);
+    const auto& group=destinations_.at(binding);
+    const auto& topology=group.destination->topology();
+    const auto found=fields_.find({binding,topology.tileAt(from)});
+    if(found!=fields_.end())result.next=cooperative::corridorStep(topology,found->second.field,from,result.next,direction,laneTarget);
+    return result;
 }
 void Service::tick(unsigned workerCount) {
     ++clock_;

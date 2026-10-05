@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(tak-engine VERSION 0.7.23 LANGUAGES CXX)
+project(tak-engine VERSION 0.7.24 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -91,12 +91,17 @@ add_library(tak-formats
   src/sim/flowsnapshot.cpp
   src/sim/flowlocal.cpp
   src/sim/flowtraffic.cpp
+  src/sim/cooperative.cpp
+  src/sim/cooperativemovement.cpp
+  src/sim/cooperativepassages.cpp
   src/sim/flowobstacles.cpp
   src/sim/flownavigator.cpp
   src/sim/flowworkers.cpp
   src/sim/flowservice.cpp
   src/sim/flowfield.cpp
   src/sim/pathsearch.cpp
+  src/sim/retailplus.cpp
+  src/sim/retailplusnavigator.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
@@ -323,6 +328,12 @@ add_executable(pathgeom_test tools/pathgeom_test.cpp)
 add_executable(ambush_test tools/ambush_test.cpp)
 add_executable(cadence_test tools/cadence_test.cpp)
 add_executable(crowdbench tools/crowdbench.cpp)
+add_executable(retail_search_scratch_test tools/retail_search_scratch_test.cpp)
+target_include_directories(retail_search_scratch_test PRIVATE src)
+add_executable(retailplus_traffic_test tools/retailplus_traffic_test.cpp)
+target_link_libraries(retailplus_traffic_test PRIVATE tak-formats)
+add_executable(retailplus_world_test tools/retailplus_world_test.cpp)
+target_link_libraries(retailplus_world_test PRIVATE tak-formats)
 add_executable(cobanim_test tools/cobanim_test.cpp)
 add_executable(unit_gift_test tools/unit_gift_test.cpp)
 target_link_libraries(unit_gift_test PRIVATE tak-formats)
@@ -429,6 +440,43 @@ add_test(NAME mapgen COMMAND mapgen_test)
 add_executable(retail_visual_test tools/retail_visual_test.cpp)
 target_link_libraries(retail_visual_test PRIVATE tak-formats)
 add_test(NAME retail_visual COMMAND retail_visual_test)
+add_executable(order_trail_test tools/order_trail_test.cpp src/client/ordertrail.cpp)
+target_link_libraries(order_trail_test PRIVATE tak-formats)
+add_test(NAME order_trail COMMAND order_trail_test)
+add_executable(flow_group_commands_test tools/flow_group_commands_test.cpp)
+target_link_libraries(flow_group_commands_test PRIVATE tak-formats)
+add_test(NAME flow_group_commands COMMAND flow_group_commands_test)
+add_executable(flow_group_obstacle_test tools/flow_group_obstacle_test.cpp)
+target_link_libraries(flow_group_obstacle_test PRIVATE tak-formats)
+add_test(NAME flow_group_obstacle COMMAND flow_group_obstacle_test)
+add_executable(cooperative_corridor_test tools/cooperative_corridor_test.cpp)
+target_link_libraries(cooperative_corridor_test PRIVATE tak-formats)
+add_test(NAME cooperative_corridor COMMAND cooperative_corridor_test)
+foreach(cooperative_tool checkpoint group memory maze traffic passages freshness clearance movement followers progress)
+  add_executable(cooperative_${cooperative_tool}_test tools/cooperative_${cooperative_tool}_test.cpp)
+  target_link_libraries(cooperative_${cooperative_tool}_test PRIVATE tak-formats)
+endforeach()
+add_executable(cooperative_benchmark tools/cooperative_benchmark.cpp)
+target_link_libraries(cooperative_benchmark PRIVATE tak-formats)
+add_test(NAME cooperative_memory COMMAND cooperative_memory_test)
+add_test(NAME cooperative_group COMMAND cooperative_group_test)
+add_test(NAME cooperative_traffic COMMAND cooperative_traffic_test)
+add_test(NAME cooperative_passages COMMAND cooperative_passages_test)
+add_test(NAME cooperative_freshness COMMAND cooperative_freshness_test)
+add_test(NAME cooperative_clearance COMMAND cooperative_clearance_test)
+add_test(NAME cooperative_movement COMMAND cooperative_movement_test)
+add_test(NAME cooperative_followers COMMAND cooperative_followers_test)
+foreach(cooperative_case east diagonal turn corridor corridor-far)
+  add_test(NAME cooperative_progress_${cooperative_case} COMMAND cooperative_progress_test cooperative ${cooperative_case} 64 12000 complete)
+endforeach()
+add_test(NAME cooperative_production COMMAND production_test --cooperative)
+add_test(NAME cooperative_transport COMMAND transport_test --cooperative)
+add_test(NAME retailplus_production COMMAND production_test --retail-plus)
+add_test(NAME retailplus_transport COMMAND transport_test --retail-plus)
+add_test(NAME cooperative_movement_orders COMMAND movement_orders_test --cooperative)
+set_tests_properties(flow_group_commands PROPERTIES TIMEOUT 180)
+add_test(NAME flow_group_arrival_large COMMAND flow_group_commands_test large)
+set_tests_properties(flow_group_arrival_large PROPERTIES TIMEOUT 600)
 add_executable(retail_movement_animation_test tools/retail_movement_animation_test.cpp)
 target_link_libraries(retail_movement_animation_test PRIVATE tak-formats)
 add_test(NAME retail_movement_animation COMMAND retail_movement_animation_test)
@@ -498,6 +546,10 @@ add_test(NAME sim_driver_equiv COMMAND sim_driver_equiv_test)
 add_test(NAME pathsearch COMMAND pathsearch_test)
 add_test(NAME retail_scheduler COMMAND retail_scheduler_test)
 add_test(NAME retail_trace COMMAND retail_trace_test --selftest)
+add_test(NAME retail_search_scratch COMMAND retail_search_scratch_test)
+add_test(NAME retailplus_traffic COMMAND retailplus_traffic_test)
+add_test(NAME retailplus_world COMMAND retailplus_world_test)
+set_tests_properties(retailplus_world PROPERTIES TIMEOUT 180)
 add_test(NAME auth COMMAND authtest)
 add_test(NAME unit_gift COMMAND unit_gift_test)
 add_test(NAME cmdflow COMMAND cmdflow_test)
@@ -552,6 +604,17 @@ if(TAK_TEST_DATA)
     set_tests_properties(builder_automation_data PROPERTIES TIMEOUT 300)
     add_test(NAME movement_orders_maze COMMAND movement_orders_test "${TAK_TEST_DATA}")
     set_tests_properties(movement_orders_maze PROPERTIES TIMEOUT 300)
+    add_test(NAME movement_orders_trolls COMMAND movement_orders_test --trolls "${TAK_TEST_DATA}")
+    set_tests_properties(movement_orders_trolls PROPERTIES TIMEOUT 300)
+    add_test(NAME cooperative_movement_orders_maze COMMAND movement_orders_test --cooperative "${TAK_TEST_DATA}")
+    add_test(NAME retailplus_maze_known COMMAND flow_maze_world_test "${TAK_TEST_DATA}" --retail-plus-known)
+    add_test(NAME retailplus_maze_groups COMMAND cooperative_maze_test "${TAK_TEST_DATA}" retail-plus known)
+    set_tests_properties(retailplus_maze_known retailplus_maze_groups PROPERTIES TIMEOUT 180)
+    add_test(NAME cooperative_movement_orders_trolls COMMAND movement_orders_test --cooperative --trolls "${TAK_TEST_DATA}")
+    add_test(NAME cooperative_maze_known COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative known)
+    add_test(NAME cooperative_maze_discovery COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative discovery)
+    set_tests_properties(cooperative_movement_orders_maze cooperative_movement_orders_trolls
+        cooperative_maze_known cooperative_maze_discovery PROPERTIES TIMEOUT 600)
     add_test(NAME flow_cache_world COMMAND flow_cache_world_test "${TAK_TEST_DATA}")
     add_test(NAME flow_actions COMMAND flow_actions_test "${TAK_TEST_DATA}")
     add_test(NAME flow_combat_admission COMMAND flow_combat_admission_test "${TAK_TEST_DATA}")
@@ -561,12 +624,15 @@ if(TAK_TEST_DATA)
     add_test(NAME flow_mission COMMAND flow_mission_test "${TAK_TEST_DATA}")
     add_test(NAME flow_world COMMAND flow_world_test "${TAK_TEST_DATA}")
     add_test(NAME flow_maze_world COMMAND flow_maze_world_test "${TAK_TEST_DATA}")
+    set_tests_properties(flow_maze_world PROPERTIES TIMEOUT 1800)
     add_test(NAME flow_group_maze COMMAND flow_group_maze_test "${TAK_TEST_DATA}")
     # This data-backed 64x64 regression executes bounded multi-unit progress
     # windows; unoptimized builds need extra wall time under a parallel sweep.
     set_tests_properties(flow_group_maze PROPERTIES TIMEOUT 600)
     add_test(NAME map_transfer_data COMMAND map_transfer_test "${TAK_TEST_DATA}")
     add_test(NAME mapgen_roster COMMAND mapgen_test "${TAK_TEST_DATA}")
+    add_test(NAME mapgen_mana COMMAND mapgen_test "${TAK_TEST_DATA}" --mana)
+    set_tests_properties(mapgen mapgen_mana PROPERTIES TIMEOUT 180)
     add_test(NAME mapgen_naval COMMAND mapgen_test "${TAK_TEST_DATA}" --naval)
     add_test(NAME mapgen_themes COMMAND mapgen_test "${TAK_TEST_DATA}" --themes)
     add_test(NAME mapgen_ports COMMAND mapgen_test "${TAK_TEST_DATA}" --ports)
@@ -798,7 +864,7 @@ set_tests_properties(streaming PROPERTIES TIMEOUT 30)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
+    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/font.cpp src/client/distantmodels.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/video/bink.cpp src/video/stream.cpp src/client/streaming.cpp)
     if(WIN32)
       target_link_libraries(takclient PRIVATE psapi)   # GetProcessMemoryInfo (benchmark metrics)
     elseif(APPLE)
@@ -837,6 +903,40 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(cursor_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(cursor_test PRIVATE tak-formats ${_tak_sdl2})
     add_test(NAME cursor_roster COMMAND cursor_test)
+    if(TAK_TEST_DATA AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+      add_test(NAME build_controls COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_CURSOR_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/ui-test-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/ui-test-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/build-controls.png")
+      set_tests_properties(build_controls PROPERTIES TIMEOUT 90)
+      add_test(NAME render_texture_reuse COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          TAK_SHADOW_BENCH=16 TAK_SHADOW_BENCH_TYPE=arakeep TAK_PROFILE_ZOOM=0.5
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=180 TAK_GEOMETRY_VERIFY=1 TAK_REQUIRE_GEOMETRY_REUSE=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/render-test-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/render-test-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --novsync)
+      set_tests_properties(render_texture_reuse PROPERTIES TIMEOUT 90)
+      add_test(NAME gui_smoothing_menu COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_GUI_SMOOTH_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-menu-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-menu-profile
+          $<TARGET_FILE:takclient> --data "${TAK_TEST_DATA}" --winsize 1280 960
+          --shot "${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-menu.png")
+      set_tests_properties(gui_smoothing_menu PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: title art smoothing applies live")
+      add_test(NAME gui_smoothing_game COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_GUI_SMOOTH_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-game-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-game-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-game.png")
+      set_tests_properties(gui_smoothing_game PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: HUD smoothing applies live")
+    endif()
     add_executable(shadow_test tools/shadow_test.cpp)
     target_include_directories(shadow_test PRIVATE src)
     target_compile_definitions(shadow_test PRIVATE SDL_MAIN_HANDLED)
@@ -888,6 +988,11 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(selective_aa_test PRIVATE ${_tak_sdl2})
     add_test(NAME selective_aa COMMAND selective_aa_test)
     set_tests_properties(selective_aa PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    add_executable(geometry_tiles_test tools/geometry_tiles_test.cpp)
+    target_include_directories(geometry_tiles_test PRIVATE src)
+    target_compile_definitions(geometry_tiles_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(geometry_tiles_test PRIVATE ${_tak_sdl2})
+    add_test(NAME geometry_tiles COMMAND geometry_tiles_test)
     add_executable(distant_models_test tools/distant_models_test.cpp src/client/distantmodels.cpp)
     target_include_directories(distant_models_test PRIVATE src)
     target_compile_definitions(distant_models_test PRIVATE SDL_MAIN_HANDLED)
@@ -1215,10 +1320,15 @@ add_test(NAME acme COMMAND acme_test)
 set_tests_properties(acme PROPERTIES TIMEOUT 30)
 add_executable(acme_test_driver tools/acme_test_driver.cpp)
 target_link_libraries(acme_test_driver PRIVATE tak-acme)
-add_executable(takserver src/server/server.cpp src/server/accounts.cpp src/server/roomtick.cpp src/ai/ai.cpp)
+add_executable(takserver src/server/server.cpp src/server/status.cpp src/server/accounts.cpp src/server/roomtick.cpp src/ai/ai.cpp)
 target_link_libraries(takserver PRIVATE tak-acme tak-formats tak-crusades-allegiance tak-crusades-network tak-crusades-servicelease)
 if(APPLE)
   target_link_libraries(takserver PRIVATE "-framework CoreFoundation")
+endif()
+if(Python3_Interpreter_FOUND)
+  add_test(NAME server_status_cli COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tools/server_status_test.py" --server "$<TARGET_FILE:takserver>")
+  set_tests_properties(server_status_cli PROPERTIES TIMEOUT 30)
 endif()
 if(TAK_TEST_DATA)
   find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -1238,6 +1348,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>" --map-tool "$<TARGET_FILE:map_transfer_test>")
     set_tests_properties(server_public PROPERTIES TIMEOUT 120)
+    add_test(NAME server_status COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_status_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>")
+    set_tests_properties(server_status PROPERTIES TIMEOUT 120)
     add_test(NAME crusades_auth_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_auth_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

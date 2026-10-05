@@ -1,13 +1,13 @@
 # Independent terrain and model antialiasing
 
-**Current application policy:** Terrain AA and Model AA are fixed off, along
-with Bilinear Filtering, Smooth GUI Art and Smooth Movies. Their controls have
-been removed, their saved values (including legacy `antiAlias`) are ignored,
-and those keys are no longer written. Renderer implementations and direct
-renderer tests remain available. The design, settings migration and measurements
-below describe the retained implementation before this policy change.
+**Current application policy:** Version 0.7.24 restores Terrain
+AA, Model AA, Bilinear Filtering, Smooth GUI Art and Smooth Movies to Graphics
+options. All five default to Off and remember saved choices. Smooth GUI Art
+reloads the current title-screen or in-game interface immediately, including
+fonts and cursors; no restart is required. Version 0.7.23 fixed these options
+off and omitted their preferences when saving.
 
-Graphics options previously provided **Terrain AA: Off / 2x / 4x** and
+Graphics options provide **Terrain AA: Off / 2x / 4x** and
 **Model AA: Off / 2x / 4x / 8x / 16x**. The settings are independent. Samples
 are relative to final drawable pixels: each dimension is rounded up after
 multiplication by `sqrt(samples)`. Thus 16x uses four times the width and height,
@@ -80,6 +80,9 @@ allowance. The shared cap still defaults to 1.25 GiB and can tighten after GPU
 allocation failures; it is an application budget, not detected physical VRAM.
 Terrain allocates first. Neither pass exceeds the backend's reported maximum
 texture dimensions; the old arbitrary 7/8 dimension margin is removed.
+Enabling Model AA releases dormant distant-model image pages before either AA
+pass is admitted: those native-resolution images cannot be used for exact model
+supersampling. Switching Model AA off rebuilds that cache as needed.
 
 Model AA shrinks its native tile from 1024 to 512, 256, 128 or 64 pixels per
 axis before reducing samples. This makes 16x available on large/wide outputs
@@ -104,6 +107,11 @@ once every three seconds; resize/settings/reset allow immediate reconfiguration.
 A working degraded target is retained during retry backoff. Successful targets
 are reused, with no per-draw target allocation. One pass never multiplies the
 other's sample count.
+Rechecking an unchanged size/budget fallback also retains its existing textures,
+rather than reallocating every three seconds. Budget growth can restore a higher
+level; budget shrink triggers readmission after backoff. Unsupported software,
+target, blending or filtering capabilities wait for reconfiguration/reset rather
+than repeatedly retrying a capability that cannot change in place.
 
 At 3840×2160, Terrain 4x needs 126.56 MiB; Model 16x needs about 80.70 MiB,
 for about 207.27 MiB combined instead of a screen-sized model allocation of
@@ -132,7 +140,7 @@ exercises accelerated targets and writes comparison BMPs to the temporary
 Run the focused tests with:
 
 ```sh
-ctest --test-dir build-dbg -R '^(settings|override_settings|selective_aa|geometrysubmit|terrain_cache|distant_models)$' --output-on-failure
+ctest --test-dir build-dbg -R '^(settings|override_settings|selective_aa|geometry_tiles|geometrysubmit|terrain_cache|distant_models)$' --output-on-failure
 SDL_VIDEODRIVER=x11 SDL_RENDER_DRIVER=opengl ./build-dbg/selective_aa_test --gpu
 ```
 
@@ -220,7 +228,7 @@ isolated in the projectile capture; long-running dense combat remains unmeasured
 
 ## Compact-model-target update (2026-10-02)
 
-The current implementation was compared with an executable saved immediately
+The compact-target implementation was compared with an executable saved immediately
 before this update, on the same Linux/X11/OpenGL system and Debug configuration.
 The 13-second runs use the same fixture, capture point and 5–12 second frame-time
 sampling window described above. Actual drawable size was 1920×1080. These are
@@ -241,14 +249,14 @@ model sample count fourfold; it is not an equal-quality speed comparison. Higher
 quality can still cost frame time even while target memory falls. Very small
 tiles under pressure also increase repeated submissions and resolves.
 
-The final direct OpenGL submission path accepts the exact integer 4× scale used
+At that point, direct OpenGL submission accepted the exact integer 4× scale used
 by Model 16x, as well as the existing 1× and 2× scales. Fractional scales and
 other backends retain SDL submission. Single-tile model runs use an offset in the
 OpenGL transform to avoid a CPU vertex copy; multi-tile runs cull/translate their
 triangles into reusable scratch storage. No model vertices or rendering state
 are mutated in the simulation.
 
-Current validation includes all 15 independent combinations on software and
+Validation for that update included all 15 independent combinations on software and
 OpenGL, 1,536 accelerated geometry pixel/state comparisons (including 4× scale,
 texturing, transparency, offset, clip and offscreen rendering), and tile-boundary
 comparisons at 2x/4x/8x/16x. Large versus deliberately memory-constrained tiles
@@ -283,3 +291,153 @@ remained 80.70 MiB and effective model AA remained 16x. This change fixes a
 reproduced sampling instability; it does not claim a speed improvement.
 Follow-up logs and the crowded-scene capture are in
 `/tmp/tak-aa-flicker-benchmark`. Windows and macOS remain untested locally.
+
+## AA cost and lifecycle review (2026-10-04)
+
+The review keeps the sample counts, filter kernels, screen-anchored sample grid
+and painter boundaries unchanged. It does not reuse native-resolution distant
+images as supersampled models or reduce animation frequency.
+
+Model/material bounds are now calculated in the existing parallel body-copy
+jobs. For a tiled model run, entire ranges outside a tile are rejected together,
+ranges fully inside are copied in their original order, and only boundary ranges
+need individual triangle tests. Outward-rounded range bounds conservatively
+preserve the original triangle inclusion rules, including subpixel positions.
+Single-tile runs also avoid the former serial scan of the whole vertex stream
+for bounds. AA Off skips index construction. The index costs 32 bytes per
+model/material copy range and 16 bytes per draw operation on 64-bit builds,
+plus reusable translated-vertex scratch; it adds no texture targets.
+
+Stable budget/size fallbacks no longer destroy and recreate the same targets
+every three seconds. Working targets survive shared-allocation backoff, and
+budget changes are readmitted. Native fallback draws reset stale tile-culling
+state, including nested-target, scaled-renderer and nonfinite-bounds cases.
+Unused distant-image pages are released when Model AA is enabled. Actual driver
+allocation failures can still cause a bounded three-second retry of a larger
+terrain target; this is distinct from the stable planner fallback now fixed.
+
+Image comparisons also exposed a pre-existing race in terrain-height sampling:
+parallel geometry workers shared a mutable one-entry height memo. It could
+return another worker's height and change a unit's lift/terrain clipping. The
+memo is removed, terrain height initialization runs before worker dispatch, and
+the exact bilinear calculation is unchanged. The normal zero horizontal-lift
+scale skips unnecessary sampling after initialization. Repeated 600-frame runs
+now agree in every frame's geometry counts, resolves and cleared pixels; before
+this fix, 26 frames in a repeated run differed by one unit's geometry.
+
+### Measurements
+
+Linux, NVIDIA RTX 5070 Laptop / driver 615.71.09, Core Ultra 9 275HX, vendored
+SDL 2.32.10 OpenGL. Both clients use the same optimized Debug flags (`-O2 -g`),
+fixed simulation/animation steps and camera paths, with vsync and frame limiting
+off. Fixed-size measurements use SDL's offscreen OpenGL backend. Each run has
+600 frames, discarding the first 180. GPU completion is awaited; the reported GL
+timer measures the draw timeline including submission gaps, not GPU utilization.
+Screenshot capture is measured separately because readback changes frame time.
+
+The first 4K sweep, before fixing the height-sampling race, isolates the range
+index in the same executable, alternating the
+reference and optimized path in ABBA order. Values are means of two runs per
+path. Animated means 1,200 moving Archers; buildings means 200 spaced Keeps.
+All AA settings shown remained effective, and simulation hashes matched.
+
+| Scene, Terrain / Model | Frame ms, reference → indexed | Body phase ms, reference → indexed | AA target MiB |
+| --- | ---: | ---: | ---: |
+| Animated, Off / Off (control) | 8.509 → 8.621 | 2.231 → 2.186 | 0 |
+| Animated, 4 / 4 | 10.340 → 10.097 | 4.432 → 3.794 | 142.72 |
+| Animated, 4 / 8 | 11.808 → 11.270 | 5.502 → 4.926 | 166.94 |
+| Animated, 4 / 16 | 11.691 → 11.010 | 5.032 → 4.294 | 207.27 |
+| Buildings, 4 / 4 | 4.356 → 4.508 | — | 142.72 |
+| Buildings, 4 / 8 | 4.600 → 4.571 | — | 166.94 |
+| Buildings, 4 / 16 | 4.830 → 4.832 | — | 207.27 |
+
+That sweep shows approximately 2–6% lower overall frame time and 10–15% lower
+body-phase time for the crowded fixture. The building fixture has no consistent overall improvement, despite
+slightly cheaper submission; its 4x run is slower. The Off control and repeated
+legs show run-to-run variation. This is a targeted reduction in repeated CPU
+work, not a claim that AA becomes free or that every scene gets faster. Target
+bytes are unchanged. Painter boundaries still require many resolves: roughly
+73 per frame in the 1280×960 animated fixture. Flattening those boundaries would
+change scenery/shadow occlusion and is not part of this optimization.
+For the crowded 4/16 case, mean per-run p95 improves from 15.195 to 14.125 ms;
+the Off control changes from 10.909 to 11.151 ms. Sampled peak process RSS across
+these runs spans 456–550 MiB without a consistent increase from indexing. RSS
+includes assets and driver allocations and is not the AA target-memory count.
+
+A final ABBA check with the height race fixed in **both** paths produced:
+
+| Animated 4K | Mean / p95 frame ms, reference → indexed | Body phase ms | GPU draw timeline ms |
+| --- | ---: | ---: | ---: |
+| Off / Off control | 8.495 / 10.649 → 8.481 / 10.529 | — | — |
+| Terrain 4 / Model 16 | 11.362 / 15.031 → 11.710 / 15.518 | 4.953 → 4.424 | 5.734 → 5.741 |
+
+The model-submission saving is repeatable, but an overall FPS or stutter
+improvement is **not** established on this system. In the final run, shorter
+draw submission was offset by longer present/GPU-completion waits. The small,
+portable range index is retained for its reduced repeated CPU geometry work;
+it adds no draws or targets. Full-frame behavior remains limited by other phases
+and GPU synchronization. Average sampled peak RSS was 537 → 549 MiB in that
+4/16 comparison; target memory remained exactly 207.27 MiB.
+
+### Experiment not retained
+
+A separate OpenGL prototype pre-scaled only positions for Model 2x/8x while
+retaining existing color/UV arrays. It matched SDL bit-for-bit in 2,688 paired
+pixel/state cases at both O0 and O3, and reduced isolated large-batch submission
+times by 28–46%. However, repeated full-game comparisons were mixed: the final
+4K 2x case improved 10.789 → 10.254 ms, while 8x regressed 11.204 → 11.768 ms.
+An earlier round had the opposite pattern. That does not justify another GL
+submission path and up to 16 MiB of position scratch per submission object.
+The prototype is removed; fractional scales retain SDL submission. The expanded
+geometry/state tests remain, including skewed silhouettes and anisotropic scales.
+
+### Final validation
+
+All 15 independent combinations pass the accelerated synthetic checks, including
+transparent edges, painter order, native UI, viewport/clip handling, sample-grid
+stability, resize/reset, fallback, cleanup and stable target reuse. The expanded
+geometry suite passes 2,688 pixel/state comparisons on both software and OpenGL.
+The range index passes 1,600 exact vertex-stream comparisons, also checked with
+AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer.
+Both full local build trees were rebuilt. All eight focused Release CTests and
+nine Debug CTests passed (Debug additionally runs the real-asset geometry-reuse
+check). The normal Release binaries also pass the accelerated AA and geometry
+tests, independently of the optimized Debug benchmark build.
+
+With the height fix common to both paths, **156 same-binary capture pairs are
+pixel-identical**, including native UI: 72 at Terrain 4 / Model 16, 72 at Model
+2/8 with Terrain 4, and 12 Off controls. These 1280×960 comparisons cover spaced
+buildings, moving units, battles, changing zoom, scenery overlap, construction
+transparency/sparkles and boats in actual deep water with shadows. They include
+ten consecutive motion frames per case. All 26 capture clients released their
+tracked texture/buffer resources on teardown. The projectile fixture activated,
+but its sampled frames did not isolate a bolt in flight; this remains a visual
+coverage gap, not a claim that every projectile/corpse asset was reviewed.
+
+Linux/OpenGL is the accelerated backend tested here. Windows Direct3D, macOS
+Metal, other GPUs, real high-DPI/fullscreen monitor transitions and actual GPU
+device loss still require native testing. SDL's offscreen backend did not resize
+its drawable correctly in the synthetic resize test, so that test uses X11;
+fixed-size offscreen measurements and captures use their verified output sizes.
+
+### Reproducing the review
+
+The harness records frame-time distributions, CPU draw phases, GL timing,
+process RSS, texture bytes, geometry counts, resolves, target switches, cleared
+pixels and translated/culled vertices. It can reproduce the comparison using an
+optimized Debug client:
+
+```sh
+python3 tools/aa_benchmark.py --client /path/to/optimized-debug/takclient \
+  --data /path/to/tak_data --output /tmp/aa-matrix --frames 600 --warmup 180
+python3 tools/aa_benchmark.py --client /path/to/optimized-debug/takclient \
+  --tile-reference --data /path/to/tak_data --output /tmp/aa-4k \
+  --scenes animated spaced-keeps --combinations 0:0 4:4 4:8 4:16 \
+  --width 3840 --height 2160 --frames 600 --warmup 180
+```
+
+Use `--reference /path/to/saved-client` to compare executables built with the
+same flags. `--capture --frames 721` adds fixed-frame stills and a ten-frame
+motion sequence; those runs must not be used for timing comparisons. Logs and
+retail captures from this review are local under
+`/tmp/tak-aa-review-20261004/`, not committed assets.

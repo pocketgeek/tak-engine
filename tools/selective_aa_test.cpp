@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 using namespace tak;
@@ -96,6 +97,23 @@ int main(int argc,char** argv) try {
         check(SDL_RenderReadPixels(r,nullptr,SDL_PIXELFORMAT_RGBA32,readback.data(),320*4)==0,SDL_GetError());
         check(pixel(50,50,0)==40 && pixel(200,90,0)>140,"moving geometry left stale coverage");
         check(gpuvram::bytes()==retained,"per-draw target allocation");
+        // A translated viewport keeps clip coordinates relative to its origin
+        // in both the terrain target and the final native-resolution resolve.
+        SDL_SetRenderDrawColor(r,40,80,120,255);SDL_RenderClear(r);
+        const SDL_Rect viewport{7,11,300,210},terrainClip{17,19,60,60};
+        SDL_RenderSetViewport(r,&viewport);SDL_RenderSetClipRect(r,&terrainClip);
+        terrainAA.render(r,{0,0,320,240},[&](SDL_FPoint,SDL_Rect){
+            SDL_SetRenderDrawColor(r,90,120,150,255);
+            const SDL_Rect full{0,0,320,240};SDL_RenderFillRect(r,&full);
+            SDL_SetRenderDrawColor(r,200,150,100,255);
+            const SDL_Rect mark{40,40,20,20};SDL_RenderFillRect(r,&mark);
+        });
+        SDL_RenderGetViewport(r,&restored);check(SDL_RectEquals(&viewport,&restored),"terrain lost viewport");
+        SDL_RenderGetClipRect(r,&restored);check(SDL_RectEquals(&terrainClip,&restored),"terrain lost clip");
+        SDL_RenderSetViewport(r,nullptr);SDL_RenderSetClipRect(r,nullptr);
+        check(SDL_RenderReadPixels(r,nullptr,SDL_PIXELFORMAT_RGBA32,readback.data(),320*4)==0,SDL_GetError());
+        check(pixel(23,30,0)==40 && pixel(24,30,0)==90 && pixel(84,30,0)==40 &&
+              pixel(50,55,0)==200,"terrain viewport/clip changed position or coverage");
     }
     terrainAA.clear();modelAA.clear();
     if(gpu) {
@@ -157,6 +175,39 @@ int main(int argc,char** argv) try {
             }
             check(interiorChanges==0 && significant<=32 && maxDifference<=12,
                   "tile boundaries changed interior sampling or introduced alpha seams");
+            // The next draw may deliberately bypass AA. A preceding tiled draw
+            // must not leave culling enabled against the fallback's empty tile.
+            for(int fallback=0;fallback<3;++fallback) {
+                capture(modelAA,reference);
+                check(modelAA.tileCulling(),"test did not exercise multi-tile culling");
+                SDL_Texture* nested=nullptr;
+                if(fallback==0) {
+                    nested=SDL_CreateTexture(r,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_TARGET,320,240);
+                    check(nested && SDL_SetRenderTarget(r,nested)==0,SDL_GetError());
+                }
+                const float scale=fallback==1?2.f:1.f;
+                SDL_RenderSetScale(r,scale,scale);
+                SDL_SetRenderDrawColor(r,40,80,120,255);SDL_RenderClear(r);
+                SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_BLEND);
+                const auto before=modelAA.resolves;
+                const auto bounds=fallback==2?SDL_FRect{std::numeric_limits<float>::infinity(),0,320,240}
+                                              :SelectiveAA::bounds(model);
+                unsigned draws=0;
+                modelAA.render(r,bounds,[&](SDL_FPoint offset,SDL_Rect tile) {
+                    ++draws;
+                    check(!modelAA.tileCulling() && tile.w==0 && tile.h==0 && offset.x==0 && offset.y==0,
+                          "native fallback retained stale tile culling");
+                    check(SDL_RenderGeometry(r,texture,model,3,nullptr,0)==0,SDL_GetError());
+                });
+                check(draws==1 && modelAA.resolves==before && SDL_GetRenderTarget(r)==nested,
+                      "native fallback changed target or resolved AA");
+                SDL_RenderSetScale(r,1,1);
+                const SDL_Rect sample{int(150*scale),int(90*scale),1,1};
+                unsigned char pixel[4]{};
+                check(SDL_RenderReadPixels(r,&sample,SDL_PIXELFORMAT_RGBA32,pixel,4)==0,SDL_GetError());
+                check(std::abs(int(pixel[0])-148)<=3,"native fallback dropped model geometry");
+                SDL_SetRenderTarget(r,nullptr);SDL_DestroyTexture(nested);
+            }
             tight.clear();check(gpuvram::bytes()==retained,"tile allocations leaked");
             modelAA.configure(r,width,height,n,false);
             check(gpuvram::bytes()==retained,"stable model targets reallocated");
@@ -218,6 +269,32 @@ int main(int argc,char** argv) try {
         modelAA.configure(r,7680,4320,16,false);
         check(modelAA.effective==16 && modelAA.bytes()<(size_t(81)<<20),"8K model AA fallback");
         modelAA.clear();
+
+        // Simulated retry times make permanent fallback and later recovery
+        // deterministic without a three-second wall-clock delay per attempt.
+        const auto normalCap=gpuvram::g_cap;
+        const auto smallPlan=aaPlan(320,240,2,8192,8192,SelectiveAA::maxBytes);
+        gpuvram::g_cap=smallPlan.bytes*2;
+        terrainAA.configure(r,320,240,4,true,10000);
+        check(terrainAA.effective==2,"test failed to exercise terrain memory fallback");
+        const auto fallbackAllocations=terrainAA.targetAllocations;
+        const auto fallbackBytes=terrainAA.bytes();
+        terrainAA.configure(r,320,240,4,true,14000);
+        check(terrainAA.targetAllocations==fallbackAllocations && terrainAA.bytes()==fallbackBytes,
+              "stable degraded targets recreated at retry deadline");
+        gpuvram::g_backoffUntil=SDL_GetTicks()+1000;
+        terrainAA.configure(r,320,240,4,true,18000);
+        check(terrainAA.effective==2 && terrainAA.targetAllocations==fallbackAllocations,
+              "global allocation backoff discarded working AA targets");
+        gpuvram::g_backoffUntil=0;gpuvram::g_cap=normalCap;
+        terrainAA.configure(r,320,240,4,true,22000);
+        check(terrainAA.effective==4 && terrainAA.targetAllocations==fallbackAllocations+1,
+              "AA failed to recover when the memory budget increased");
+        gpuvram::g_cap=smallPlan.bytes*2;
+        terrainAA.configure(r,320,240,4,true,26000);
+        check(terrainAA.effective==2 && terrainAA.bytes()==fallbackBytes,
+              "active AA ignored a reduced memory budget");
+        terrainAA.clear();gpuvram::g_cap=normalCap;
     }
     const auto cap=gpuvram::g_cap;gpuvram::g_cap=1;
     modelAA.configure(r,320,240,16,false);

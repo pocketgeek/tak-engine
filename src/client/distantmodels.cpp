@@ -31,10 +31,19 @@ struct RenderState {
 void DistantModels::clear() {
     for(auto* page:pages_)gpuvram::destroy(page);
     pages_.clear();entries_.clear();free_.clear();unsupported_=false;frame_=0;
+    used=refreshed=bakeVertices=bakeDraws=targetSwitches=0;
 }
 void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) {
-    used=refreshed=0;++frame_;
+    used=refreshed=bakeVertices=bakeDraws=targetSwitches=0;++frame_;
     for(auto& item:items)item.texture=nullptr;
+    // Expire images while zoomed in or offscreen too, instead of keeping the
+    // last distant view's pages resident until the session ends.
+    if(frame_%60==0) {
+        for(auto it=entries_.begin();it!=entries_.end();) {
+            if(frame_-it->second.seen>120){free_.push_back(it->second.slot);it=entries_.erase(it);}else ++it;
+        }
+        if(entries_.empty() && !pages_.empty())clear();
+    }
     if(unsupported_ || std::none_of(items.begin(),items.end(),[](const auto& i) {
         return i.eligible && i.zoom<=0.6f && i.source.size()>=96;
     }))return;
@@ -49,10 +58,6 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
     const SDL_BlendMode composite=SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE,
         SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,SDL_BLENDOPERATION_ADD,
         SDL_BLENDFACTOR_ONE,SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,SDL_BLENDOPERATION_ADD);
-    if(frame_%60==0)for(auto it=entries_.begin();it!=entries_.end();) {
-        if(frame_-it->second.seen>120) {free_.push_back(it->second.slot);it=entries_.erase(it);}
-        else ++it;
-    }
     for(auto& item:items) {
         if(!item.eligible || item.zoom>0.6f || item.source.size()<96)continue;
         auto found=entries_.find(item.id);
@@ -60,7 +65,8 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
         if(entry)entry->seen=frame_;
         const bool scaleChanged=entry && (entry->zoom!=item.zoom || entry->sx!=state.sx || entry->sy!=state.sy);
         const bool repaint=!entry || !entry->valid || scaleChanged ||
-            ((entry->revision!=item.revision || entry->source!=reinterpret_cast<uintptr_t>(item.source.data())) &&
+            ((entry->revision!=item.revision || entry->textureTick!=item.textureTick ||
+              entry->source!=reinterpret_cast<uintptr_t>(item.source.data())) &&
              now-entry->painted>=67);
         if(repaint) {
             // At most 128 model bakes per frame. If a crowd exceeds the budget,
@@ -97,6 +103,8 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
             entry->valid=false;entry->seen=frame_;
             const int local=entry->slot%tilesPerPage;
             const int tx=(local%32)*tileSize,ty=(local/32)*tileSize;
+            const auto* target=pages_[size_t(entry->slot/tilesPerPage)];
+            if(SDL_GetRenderTarget(r)!=target)++targetSwitches;
             if(SDL_SetRenderTarget(r,pages_[size_t(entry->slot/tilesPerPage)])!=0)continue;
             SDL_RenderSetScale(r,1,1);SDL_RenderSetViewport(r,nullptr);SDL_RenderSetClipRect(r,nullptr);
             SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE);SDL_SetRenderDrawColor(r,0,0,0,0);
@@ -111,15 +119,16 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
             for(const auto& run:item.runs) {
                 if(run.second<0 || size_t(offset)+size_t(run.second)>scratch_.size() ||
                    SDL_RenderGeometry(r,run.first,scratch_.data()+offset,run.second,nullptr,0)!=0) {ok=false;break;}
-                offset+=run.second;
+                offset+=run.second;++bakeDraws;
             }
-            ++refreshed;
+            bakeVertices+=scratch_.size();++refreshed;
             if(!ok)continue;
             entry->x=minX-item.x-1/state.sx;entry->y=minY-item.y-1/state.sy;
             entry->w=float(pw)/state.sx;entry->h=float(ph)/state.sy;
             entry->pixelsW=pw;entry->pixelsH=ph;entry->zoom=item.zoom;
             entry->sx=state.sx;entry->sy=state.sy;entry->painted=now;
-            entry->revision=item.revision;entry->source=reinterpret_cast<uintptr_t>(item.source.data());entry->valid=true;
+            entry->revision=item.revision;entry->textureTick=item.textureTick;
+            entry->source=reinterpret_cast<uintptr_t>(item.source.data());entry->valid=true;
         }
         if(!entry || !entry->valid)continue;
         const int local=entry->slot%tilesPerPage;
@@ -134,5 +143,6 @@ void DistantModels::prepare(SDL_Renderer* r,std::span<Item> items,uint64_t now) 
         for(int i=0;i<6;++i)item.quad[size_t(i)]=q[indices[i]];
         item.texture=pages_[size_t(entry->slot/tilesPerPage)];++used;
     }
+    if(SDL_GetRenderTarget(r)!=state.target)++targetSwitches;
 }
 }

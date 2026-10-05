@@ -10,6 +10,12 @@
 namespace tak::mapgen {
 using namespace detail;
 
+namespace {
+struct NoManaRuins : std::runtime_error {
+    NoManaRuins():std::runtime_error("Random map mana site has no space for ruins"){}
+};
+}
+
 const char* layoutName(uint8_t layout) {
     switch (layout) {
         case Lakes: return "Lakes";
@@ -110,10 +116,17 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     m.width=w;m.height=h;m.blocksX=w/2;m.blocksY=h/2;m.seaLevel=levels.sea;
     const size_t cells=size_t(w)*h,blocks=size_t(w/2)*(h/2);
     std::vector<uint8_t> wet(size_t(sw+1)*(sh+1)),reserved(cells),claim(cells),obstacles(cells);
+    struct CellState {size_t index;uint16_t feature;uint8_t reserved,claim,obstacle;};
+    std::vector<CellState> undo;bool transaction=false;
+    const auto remember=[&](size_t i) {
+        if(transaction)undo.push_back({i,m.features[i],reserved[i],claim[i],obstacles[i]});
+    };
     const auto mark=[&](int x,int z,int radius,uint8_t value) {
         for (int nz=std::max(0,z-radius);nz<=std::min(h-1,z+radius);++nz)
-            for (int nx=std::max(0,x-radius);nx<=std::min(w-1,x+radius);++nx)
-                reserved[size_t(nz)*w+nx]|=value;
+            for (int nx=std::max(0,x-radius);nx<=std::min(w-1,x+radius);++nx) {
+                const size_t i=size_t(nz)*w+nx;
+                if((reserved[i]|value)!=reserved[i]){remember(i);reserved[i]|=value;}
+            }
     };
     const auto reserveRoute=[&](Point a,Point b,int radius) {
         const int steps=std::max(std::abs(b.first-a.first),std::abs(b.second-a.second));
@@ -205,9 +218,10 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     const auto putFeature=[&](int x,int z,const std::string& name,bool sacred=false) {
         const auto* f=sizeOf(name);
         if (!f||x<0||z<0||x+f->x>w||z+f->z>h) return false;
+        remember(size_t(z)*w+x);
         m.features[size_t(z)*w+x]=intern(name);
         for (int dz=0;dz<f->z;++dz) for (int dx=0;dx<f->x;++dx) {
-            const size_t i=size_t(z+dz)*w+x+dx;claim[i]=1;
+            const size_t i=size_t(z+dz)*w+x+dx;remember(i);claim[i]=1;
             if (f->blocking&&!sacred) obstacles[i]=1;
         }
         return true;
@@ -423,7 +437,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                     }
                 }
             }
-            if (count==0) throw std::runtime_error("Random map mana site has no space for ruins");
+            if (count==0) throw NoManaRuins{};
         }
     };
     const auto deposit=[&](int x,int z,int tier) {
@@ -455,16 +469,22 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     // Add expansions in complete rounds: each player gets the same number and
     // tier, and the route-length band grows equally. A cramped map stops a round
     // for everyone instead of silently favoring whichever start was scanned first.
-    const int rounds=std::min(6,int(cells)*int(p.manaDensity)/(255*9000*p.players));
+    const int rounds=extraManaRounds(p.manaDensity);
     for(int round=0;round<rounds;++round) {
         std::vector<Point> sites;
         for(size_t player=0;player<r.starts.size();++player) {
             Point best={-1,-1};int bestScore=1000000;
             const auto& d=homeDistances[player];
             const int target=64+round*24;
+            // Walking distance is at least the cardinal distance. Sampling the
+            // whole map made these short bands practically disappear on 64x64
+            // maps; use their containing box around this owner's home instead.
+            const auto home=r.starts[player];const int reach=target+12;
+            const int x0=std::max(8,home.first-reach),x1=std::min(w-8,home.first+reach+1);
+            const int z0=std::max(8,home.second-reach),z1=std::min(h-8,home.second+reach+1);
             for(int attempt=0;attempt<800;++attempt) {
-                const int x=8+int(splitmix(featureRng)%uint64_t(w-16));
-                const int z=8+int(splitmix(featureRng)%uint64_t(h-16));
+                const int x=x0+int(splitmix(featureRng)%uint64_t(x1-x0));
+                const int z=z0+int(splitmix(featureRng)%uint64_t(z1-z0));
                 const size_t i=size_t(z)*w+x;const int distance=d[i];
                 if(distance<target-12||distance>target+12||reserved[i]||!flat(x-6,z-6,14,14))continue;
                 bool good=true;
@@ -480,6 +500,8 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             sites.push_back(best);
         }
         if(sites.size()!=r.starts.size())break;
+        const auto oldDeposits=deposits.size(),oldNames=m.featureNames.size();
+        undo.clear();transaction=true;
         // Reserve every route in this round before its ruins are placed.
         for(size_t player=0;player<sites.size();++player) {
             const auto site=sites[player];
@@ -494,16 +516,26 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                     if(nx>=0&&nz>=0&&nx<w&&nz<h&&d[size_t(nz)*w+nx]==here-1){at={nx,nz};break;}
                 }
             }
-            if (p.formatVer<4) deposit(site.first,site.second,1);
         }
-        if (p.formatVer>=4) {
+        try {
             for (const auto site : sites) deposit(site.first,site.second,1);
-            // New ruins are real obstacles. Plan the next round against the
-            // updated terrain, rather than routing through an earlier ruin.
-            ground.markClearanceDirty();
-            for (size_t player=0;player<r.starts.size();++player)
-                homeDistances[player]=distances(ground,r.starts[player],6);
+        } catch(const NoManaRuins&) {
+            // Ruins can lose their last free position when all approaches in
+            // the round are reserved. Omit the complete round fairly, restoring
+            // only changed cells instead of copying the entire map's planes.
+            for(auto it=undo.rbegin();it!=undo.rend();++it) {
+                m.features[it->index]=it->feature;reserved[it->index]=it->reserved;
+                claim[it->index]=it->claim;obstacles[it->index]=it->obstacle;
+            }
+            deposits.resize(oldDeposits);m.featureNames.resize(oldNames);
+            transaction=false;undo.clear();break;
         }
+        transaction=false;undo.clear();
+        // New ruins are real obstacles. Plan the next round against the
+        // updated terrain, rather than routing through an earlier ruin.
+        ground.markClearanceDirty();
+        for (size_t player=0;player<r.starts.size();++player)
+            homeDistances[player]=distances(ground,r.starts[player],6);
     }
     // A separate noise field makes forest stands and rocky regions, with clear
     // paths through them. Dry, flat approaches around bases are never filled in.

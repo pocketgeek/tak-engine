@@ -681,6 +681,10 @@ int main(int argc, char** argv) {
     Uint32 renFlags = SDL_RENDERER_SOFTWARE;
     if (shot.empty()) renFlags = noVsync ? SDL_RENDERER_ACCELERATED
                                          : SDL_RENDERER_PRESENTVSYNC;
+#ifndef NDEBUG
+    if(testbuild && tak::devFlag("TAK_RENDER_STUDY") && SDL_GetCurrentVideoDriver() &&
+       std::strcmp(SDL_GetCurrentVideoDriver(),"dummy")==0)renFlags=SDL_RENDERER_SOFTWARE;
+#endif
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, renFlags);
     if (!ren) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
@@ -692,9 +696,8 @@ int main(int argc, char** argv) {
     // SOFTWARE rasteriser, where submit and present are CPU rasterisation and say
     // nothing about a real GPU. Measuring there sent me to the wrong conclusion
     // once already.
-    // Static-art smoothing is sampled ONCE here, before any art is built. Textures keep
-    // whatever factor they were built with, so a mid-session toggle must not be re-read
-    // per texture -- the Options row says RESTART for exactly this reason.
+    // Set texture-build policy before loading art. Options hosts rebuild the current
+    // interface when smoothing changes; ordinary frames reuse those textures.
     tak::applyRuntimeSettings(settings);
     bool renAccelerated = false;
     {
@@ -1342,6 +1345,25 @@ int main(int argc, char** argv) {
             if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
         });
     uint64_t last = SDL_GetPerformanceCounter();
+#ifndef NDEBUG
+    const bool renderStudy=gameView && !gameView->isNet() && testbuild && tak::devFlag("TAK_RENDER_STUDY");
+    const char* studyFrameText=tak::devEnv("TAK_RENDER_FRAMES");
+    const unsigned studyFrameLimit=unsigned(studyFrameText?std::clamp(std::atoi(studyFrameText),1,10000):900);
+    unsigned studyFrame=0;
+    void (APIENTRY *studyBeginQuery)(GLenum,GLuint)=nullptr;
+    void (APIENTRY *studyEndQuery)(GLenum)=nullptr;
+    void (APIENTRY *studyGetQuery)(GLuint,GLenum,uint64_t*)=nullptr;
+    void (APIENTRY *studyDeleteQuery)(GLsizei,const GLuint*)=nullptr;
+    GLuint studyQuery=0;
+    if(renderStudy && SDL_GL_ExtensionSupported("GL_ARB_timer_query")) {
+        auto gen=reinterpret_cast<void(APIENTRY*)(GLsizei,GLuint*)>(SDL_GL_GetProcAddress("glGenQueries"));
+        studyBeginQuery=reinterpret_cast<decltype(studyBeginQuery)>(SDL_GL_GetProcAddress("glBeginQuery"));
+        studyEndQuery=reinterpret_cast<decltype(studyEndQuery)>(SDL_GL_GetProcAddress("glEndQuery"));
+        studyGetQuery=reinterpret_cast<decltype(studyGetQuery)>(SDL_GL_GetProcAddress("glGetQueryObjectui64v"));
+        studyDeleteQuery=reinterpret_cast<decltype(studyDeleteQuery)>(SDL_GL_GetProcAddress("glDeleteQueries"));
+        if(gen && studyBeginQuery && studyEndQuery && studyGetQuery && studyDeleteQuery)gen(1,&studyQuery);
+    }
+#endif
     auto windowTarget = [&] {
         SDL_SetRenderTarget(ren, nullptr);
         SDL_RenderSetScale(ren, 1.0f, 1.0f);
@@ -1423,6 +1445,9 @@ int main(int argc, char** argv) {
         uint64_t now = SDL_GetPerformanceCounter();
         float dt = float(now - last) / float(SDL_GetPerformanceFrequency());
         last = now;
+#ifndef NDEBUG
+        if(renderStudy)dt=1.f/60;
+#endif
         // FPS readout in the window title (updated ~4x/sec).
         {
             static float fpsAcc = 0; static int fpsFrames = 0;
@@ -1546,6 +1571,15 @@ int main(int argc, char** argv) {
             if (!benchFrozen) {
                 gameView->benchmarkCamera(dt, w, h);   // benchmark flythrough (no-op otherwise)
 #ifndef NDEBUG
+                if(renderStudy && tak::devFlag("TAK_RENDER_CAMERA")) {
+                    const float phase=float(studyFrame)*.012f;
+                    gameView->lookAt(5000+240*std::sin(phase),5000+160*std::cos(phase));
+                }
+                if(renderStudy && tak::devFlag("TAK_RENDER_ZOOM"))
+                    gameView->renderStudyZoom(.25f+.75f*(.5f+.5f*std::sin(float(studyFrame)*.008f)));
+                if(renderStudy && tak::devFlag("TAK_RENDER_MOTION"))gameView->renderStudyMotion(studyFrame);
+#endif
+#ifndef NDEBUG
                 if(tak::devFlag("TAK_PROFILE_PAN"))
                     gameView->lookAt(15000+1000*std::sin(float(SDL_GetTicks64())*.0004f),14000);
 #endif
@@ -1555,8 +1589,25 @@ int main(int argc, char** argv) {
                 gameView->benchmarkSample();   // perf samples at each 10s milestone (no-op unless benchmarking)
             }
             t2 = prof ? pnow() : 0;
+#ifndef NDEBUG
+            if(studyQuery)studyBeginQuery(0x88bf,studyQuery); // GL_TIME_ELAPSED
+#endif
             gameView->draw(w, h);
+#ifndef NDEBUG
+            if(studyQuery) {
+                SDL_RenderFlush(ren); // include SDL's queued world draws in the query
+                studyEndQuery(0x88bf);
+            }
+#endif
             t3 = prof ? pnow() : 0;
+#ifndef NDEBUG
+            if(renderStudy && (studyFrame==360 || (studyFrame>=480 && studyFrame<490) || studyFrame==720))
+                if(const char* directory=tak::devEnv("TAK_RENDER_CAPTURE_DIR")) {
+                    const auto path=std::filesystem::u8path(directory)/("frame-"+std::to_string(studyFrame)+".png");
+                    const auto utf8=path.u8string();
+                    screenshot(ren,w,h,std::string(utf8.begin(),utf8.end()));
+                }
+#endif
             if (prof) { pUpd += t2 - t1; pDraw += t3 - t2; }
             // Feed the whole real frame time (dt = last frame's total incl. present)
             // to the sprite auto-tuner, so a GPU-bound full-model crowd triggers it.
@@ -1587,6 +1638,38 @@ int main(int argc, char** argv) {
             }
 #endif
         SDL_RenderPresent(ren);
+#ifndef NDEBUG
+        if(renderStudy && profFrames) {
+            uint64_t gpuNs=0;
+            if(studyQuery)studyGetQuery(studyQuery,GL_QUERY_RESULT,&gpuNs);
+            double pj=0,sb=0,sh=0,at=0,bd=0;
+            gameView->profPeek(pj,sb,sh);gameView->profOther2(at,bd);
+            static double lastPj=0,lastSb=0,lastSh=0,lastAt=0,lastBd=0;
+            size_t vertices=0,calls=0,images=0,bakes=0,bakeVertices=0,bakeCalls=0,switches=0,imageBytes=0;
+            gameView->renderWork(vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes);
+            const auto aa=gameView->aaWork();
+            std::printf("DRAWPHASE frame=%u proj=%.3f submit=%.3f shadow=%.3f atlas=%.3f body=%.3f gpu=%.3f vram=%zu body_vertices=%zu body_calls=%zu images=%zu image_bakes=%zu bake_vertices=%zu bake_calls=%zu cache_switches=%zu image_bytes=%zu terrain_resolves=%llu model_resolves=%llu aa_cleared_pixels=%llu aa_switches=%llu aa_translated_vertices=%llu aa_culled_vertices=%llu aa_bytes=%zu\n",
+                studyFrame,pj-lastPj,sb-lastSb,sh-lastSh,at-lastAt,bd-lastBd,
+                studyQuery?double(gpuNs)/1e6:-1.,gpuvram::bytes(),vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes,
+                static_cast<unsigned long long>(aa.terrainResolves),static_cast<unsigned long long>(aa.modelResolves),
+                static_cast<unsigned long long>(aa.clearPixels),static_cast<unsigned long long>(aa.targetSwitches),
+                static_cast<unsigned long long>(aa.translatedVertices),static_cast<unsigned long long>(aa.culledVertices),aa.bytes);
+            lastPj=pj;lastSb=sb;lastSh=sh;lastAt=at;lastBd=bd;
+        }
+        if(renderStudy && ++studyFrame==studyFrameLimit) {
+            std::printf("RENDER_STUDY frames=%u hash=%016llx\n",studyFrame,
+                static_cast<unsigned long long>(gameView->worldHashPublic()));
+            if(tak::devFlag("TAK_REQUIRE_GEOMETRY_REUSE")) {
+                std::printf("GEOMETRY_VERIFY checks=%llu animated_cross_tick=%llu\n",
+                    static_cast<unsigned long long>(gameView->geometryChecks()),
+                    static_cast<unsigned long long>(gameView->animatedTextureChecks()));
+                if(!gameView->animatedTextureChecks())
+                    throw std::runtime_error("texture reuse test had no unchanged animated frames across ticks");
+            }
+            running=false;quitApp=true;
+            if(studyQuery){studyDeleteQuery(1,&studyQuery);studyQuery=0;}
+        }
+#endif
         streamPacer.pace(win, settings.vsync && !noVsync && streaming.stream().active());
         if (prof) {
             double t5 = pnow();
@@ -1926,6 +2009,9 @@ int main(int argc, char** argv) {
             }
         }
     }
+#ifndef NDEBUG
+    if(studyQuery)studyDeleteQuery(1,&studyQuery);
+#endif
     if (crusadesView) {
         if (gameView) gameView->setAudioTap(nullptr,nullptr);
         gameView.reset(); gameView=std::move(crusadesView);

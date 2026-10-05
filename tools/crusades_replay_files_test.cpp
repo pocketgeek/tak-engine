@@ -77,7 +77,7 @@ void identityAndHeader(const fs::path& root){
     wrong.id.clear();check(!files.inspect(wrong,sample.result),"empty battle identity accepted");
     check(!c::ReplayFiles({}).inspect(sample.battle,sample.result),"empty artifact root accepted");
     fs::remove(path);
-    for(int kind=0;kind<13;++kind){
+    for(int kind=0;kind<14;++kind){
         Sample altered;auto header=altered.header;
         if(kind==0)header.mapId="other.ota";
         if(kind==1)header.mapDigest=std::string(64,'b');
@@ -86,6 +86,7 @@ void identityAndHeader(const fs::path& root){
         if(kind==4)header.overridePolicy=1;
         if(kind==5)header.mission="camp01";
         if(kind==12)header.pathfindingMode=tak::sim::PathfindingMode::Flowfield;
+        if(kind==13)header.pathfindingMode=tak::sim::PathfindingMode::Cooperative;
         if(kind==9)header.mapId=std::string(9000,'m');
         auto data=recording(header,kind==6?n::kNetVersion+1:kind==10?210u:kind==11?211u:n::kNetVersion);
         if(kind==7)data[4]=8;

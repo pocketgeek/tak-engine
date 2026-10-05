@@ -39,12 +39,15 @@ public:
     Point start, goal, directEnd, march, origin, a, b;
     int trafficRadius = 0;
     std::vector<RetailCostSearch::Cell> cells;
+    RetailSearchCellScratch scratch;
 
     template<class Grade, class Distance>
     int step(Grade grade, Distance distance, int budget) {
         work = 0;
         auto mark = [&](Point p, int flags, int direction = -1) -> bool {
-            auto& cell = cells.at(size_t(p.z * width + p.x));
+            const size_t index=size_t(p.z * width + p.x);
+            auto& cell = cells.at(index);
+            scratch.touch(index,cell.flags);
             cell.flags |= uint8_t(flags);
             if (direction >= 0) cell.direction = uint8_t(direction);
             return (cell.flags & 4) != 0;
@@ -235,9 +238,12 @@ public:
                      Accepts accepts, Distance distance) {
         if (p.width <= 0 || p.height <= 0 || p.retry < 0 || p.retry > 3)
             throw std::invalid_argument("invalid search initialization");
-        auto plane = cost.cells.empty() ? std::move(trace.cells) : std::move(cost.cells);
+        const bool costPlane=!cost.cells.empty();
+        auto plane = costPlane ? std::move(cost.cells) : std::move(trace.cells);
+        auto scratch = costPlane ? std::move(cost.scratch) : std::move(trace.scratch);
         const auto previousGoal = trace.goal;
-        *this = {};
+        trace={}; cost.clearAttempt(); route.points.clear(); route.flags=0;
+        phase=1; partialDistance=nodeLimit=initialDistance=0; spread=4;
         heading = p.heading; retry = p.retry;
         weight = p.weight < 65536 || p.weight > 20 * 65536 ? 20 * 65536 : p.weight;
         cost.costs = p.costs;
@@ -245,12 +251,16 @@ public:
         trace.start = p.start; trace.goal = previousGoal; trace.trafficRadius = p.trafficRadius;
         prepare(retry == 3);
         plane.resize(size_t(p.width) * size_t(p.height));
-        for (auto& cell : plane) { cell.flags = 0; cell.node = -1; }
+        scratch.reset(plane);
         trace.cells = std::move(plane);
+        trace.scratch = std::move(scratch);
         int64_t nearest = INT32_MAX;
         for (const auto goal : goals()) {
-            if (goal.x >= 0 && goal.z >= 0 && goal.x < p.width && goal.z < p.height)
-                trace.cells[size_t(goal.z * p.width + goal.x)].flags |= 4;
+            if (goal.x >= 0 && goal.z >= 0 && goal.x < p.width && goal.z < p.height) {
+                const size_t index=size_t(goal.z * p.width + goal.x);
+                trace.scratch.touch(index,trace.cells[index].flags);
+                trace.cells[index].flags |= 4;
+            }
             const int64_t dx = int64_t(p.start.x) - goal.x, dz = int64_t(p.start.z) - goal.z;
             const int64_t squared = dx * dx + dz * dz;
             if (squared < nearest) { nearest = squared; trace.goal = goal; }
@@ -286,7 +296,7 @@ public:
             // potentially many simulation ticks after attempt initialization.
             if (currentHeading) heading=currentHeading();
             cost.reset(trace.width, trace.height, startCell, (heading + 4096) >> 13,
-                       initialDistance, weight, std::move(trace.cells));
+                       initialDistance, weight, std::move(trace.cells),std::move(trace.scratch));
             const int count = trace.width * trace.height;
             nodeLimit = retry > 2 ? count * 2 : retry > 0 ? count / (10 / retry) : count / 20;
             spread = 4; phase = 2;

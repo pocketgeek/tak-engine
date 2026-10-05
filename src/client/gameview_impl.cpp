@@ -82,6 +82,10 @@
         // hook, so wiring it here reaches the Esc-menu Options and its DEFAULTS button
         // without either of them having to know the globals exist.
         tak::applyRuntimeSettings(s);
+        if (smoothArt_ != s.smoothArt) {
+            smoothArt_ = s.smoothArt;
+            reloadInterfaceArt(s);
+        }
         sounds_.setMasterVolume(s.masterVol);
         sounds_.setMusicVolume(s.bgmVol);
         sounds_.setSfxVolume(s.sfxVol);
@@ -104,7 +108,7 @@
         SDL_ScaleMode fm = s.bilinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
         for (auto& [id, a] : featureArt_) {
             for (SDL_Texture* t : a.frames) if (t) SDL_SetTextureScaleMode(t, fm);
-            if (a.shadow) SDL_SetTextureScaleMode(a.shadow, fm);
+            for (SDL_Texture* t : a.shadowFrames) if (t) SDL_SetTextureScaleMode(t, fm);
         }
     }
 
@@ -500,6 +504,159 @@
             expect(tak::CursorId::Green,"non-builder cannot assist unfinished construction");
             selection_={builder};
             expect(tak::CursorId::Repair,"unrestricted builder can assist own construction");
+            winW_=1000;winH_=700;drawPanel(winW_,winH_);
+            if (iconRects_.empty() || selectedBuilder()->id!=builder)
+                throw std::runtime_error("single builder lost its build controls");
+            const auto icon=iconRects_.front().first;
+            const auto* buildType=iconRects_.front().second;
+            const float offX=mapView_.offX(),offY=mapView_.offY();
+            const float ix=icon.x+icon.w*.5f,iy=icon.y+icon.h*.5f;
+            // Put unfinished construction directly behind a real build icon.
+            mapView_.setOffset(offX+mouseX_-ix,offY+mouseY_-iy);point(site);
+            const auto strip=buildMenuRect_;buildMenuRect_={};
+            expect(tak::CursorId::Repair,"construction remains pickable beneath the build strip");
+            buildMenuRect_=strip;
+            expect(tak::CursorId::Normal,"build icon hides the construction cursor behind it");
+            placing_=buildType;
+            expect(tak::CursorId::Normal,"build icon hides an armed placement cursor");
+            placing_=nullptr;pendingCmd_='f';
+            bool tint=true;
+            if (desiredCursor(tint)!=tak::CursorId::Normal || tint)
+                throw std::runtime_error("build icon retained an armed fight cursor/tint");
+            pendingCmd_=0;
+            mouseX_=buildMenuRect_.x+1;mouseY_=buildMenuRect_.y+1;
+            expect(tak::CursorId::Normal,"build strip padding is also UI");
+            SDL_Event click{};click.type=SDL_MOUSEBUTTONDOWN;click.button.button=SDL_BUTTON_RIGHT;
+            click.button.x=int(mouseX_);click.button.y=int(mouseY_);
+            input(click,winW_,winH_);
+            if (!world_.unit(builder)->orders.empty() || world_.unit(builder)->buildSiteId)
+                throw std::runtime_error("build strip padding issued a world order");
+            for (const auto& ids:std::array<std::vector<int>,3>{{{builder,soldier},{soldier,builder},{builder,site}}}) {
+                selection_=ids;
+                if (selectedBuilder() || buildIconClick(ix,iy,true,false))
+                    throw std::runtime_error("mixed/multiple builders used stale build icons");
+                drawPanel(winW_,winH_);
+                if (!iconRects_.empty() || buildMenuRect_.w!=0)
+                    throw std::runtime_error("multiple selection displayed build controls");
+            }
+            selection_={soldier};drawPanel(winW_,winH_);
+            if (!iconRects_.empty()) throw std::runtime_error("non-builder displayed build controls");
+            selection_={builder};mapView_.setOffset(offX,offY);point(site);
+            drawPanel(winW_,winH_);
+            std::fprintf(stderr,"PASS: build controls cover world picking and require one builder\n");
+            // Real icon / mouse / key events: queued placement must leave the
+            // builder selected, and only commit the Shift-release reset after
+            // at least one accepted placement. These are client input checks;
+            // the following cursor fixtures still start with an empty queue.
+            const auto buildIcon=std::find_if(iconRects_.begin(),iconRects_.end(),
+                [](const auto& entry){return entry.second && !entry.second->onMana;});
+            if(buildIcon==iconRects_.end())throw std::runtime_error("placement test needs a non-mana build icon");
+            const auto* queuedType=buildIcon->second;
+            const auto arm=[&] {
+                SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;
+                e.button.x=int(buildIcon->first.x+buildIcon->first.w*.5f);
+                e.button.y=int(buildIcon->first.y+buildIcon->first.h*.5f);input(e,winW_,winH_);
+                if(placing_!=queuedType || shiftBuildPlaced_)throw std::runtime_error("new build icon did not start fresh placement");
+            };
+            const auto releaseShift=[&](SDL_Keycode key,SDL_Keymod remaining) {
+                SDL_SetModState(remaining);SDL_Event e{};e.type=SDL_KEYUP;e.key.keysym.sym=key;
+                e.key.keysym.mod=remaining;input(e,winW_,winH_);
+                if(selection_!=std::vector<int>{builder})throw std::runtime_error("Shift release deselected the builder");
+            };
+            const auto mouse=[&](uint32_t kind,int x,int y) {
+                SDL_Event e{};e.type=kind;e.button.button=SDL_BUTTON_LEFT;e.button.x=x;e.button.y=y;
+                input(e,winW_,winH_);
+            };
+            const auto savedMod=SDL_GetModState();SDL_SetModState(KMOD_NONE);
+            arm();releaseShift(SDLK_LSHIFT,KMOD_NONE);
+            if(placing_!=queuedType)throw std::runtime_error("Shift without placement disarmed the build icon");
+            int placeX=-1,placeY=-1;
+            for(int y=40;y<winH_-barH()-20 && placeX<0;y+=16)
+                for(int x=40;x<mapViewW(winW_)-20;x+=16) {
+                    float wx,wz;pickWorld(float(x),float(y),wx,wz);
+                    if(!overBuildMenu(float(x),float(y)) && world_.canPlace(queuedType,wx,wz,localPlayer_)) {
+                        placeX=x;placeY=y;break;
+                    }
+                }
+            if(placeX<0)throw std::runtime_error("placement fixture could not find a valid site");
+            SDL_SetModState(KMOD_LSHIFT);
+            mouse(SDL_MOUSEBUTTONDOWN,placeX,placeY);mouse(SDL_MOUSEBUTTONUP,placeX,placeY);
+            if(placing_!=queuedType || !shiftBuildPlaced_ || world_.unit(builder)->orders.empty())
+                throw std::runtime_error("Shift click did not queue and retain the armed build icon");
+            const auto queued=world_.unit(builder)->orders.size();
+            releaseShift(SDLK_RSHIFT,KMOD_LSHIFT);
+            if(placing_!=queuedType)throw std::runtime_error("releasing one Shift disarmed while the other was held");
+            releaseShift(SDLK_LSHIFT,KMOD_NONE);
+            if(placing_ || shiftBuildPlaced_ || world_.unit(builder)->orders.size()!=queued)
+                throw std::runtime_error("last Shift release did not disarm without changing queued work");
+            arm();SDL_SetModState(KMOD_LSHIFT);
+            mouse(SDL_MOUSEBUTTONDOWN,placeX,placeY);
+            releaseShift(SDLK_LSHIFT,KMOD_NONE);
+            if(!buildDrag_ || placing_!=queuedType)throw std::runtime_error("mid-drag release lost pending placement");
+            mouse(SDL_MOUSEBUTTONUP,placeX,placeY);
+            if(placing_ || buildDrag_ || selection_!=std::vector<int>{builder})
+                throw std::runtime_error("drag completion after Shift release did not keep the builder");
+            arm();SDL_SetModState(KMOD_LSHIFT);
+            mouse(SDL_MOUSEBUTTONDOWN,placeX,placeY);mouse(SDL_MOUSEBUTTONUP,placeX,placeY);
+            arm();releaseShift(SDLK_LSHIFT,KMOD_NONE);
+            if(placing_!=queuedType)throw std::runtime_error("fresh icon inherited a prior Shift placement");
+            placing_=nullptr;shiftBuildPlaced_=false;
+            world_.cancelBuilds(builder);world_.stop(builder);SDL_SetModState(savedMod);publish();point(site);
+            // An invalid placement must not count as a queued build.
+            int invalidX=-1,invalidY=-1;
+            for(int y=40;y<winH_-barH()-20 && invalidX<0;y+=16)
+                for(int x=40;x<mapViewW(winW_)-20;x+=16) {
+                    float wx,wz;pickWorld(float(x),float(y),wx,wz);std::vector<int> clearing;
+                    if(!overBuildMenu(float(x),float(y)) && !world_.canPlace(queuedType,wx,wz,localPlayer_) &&
+                       !world_.clearableForPlacement(queuedType,wx,wz,clearing,localPlayer_)) {
+                        invalidX=x;invalidY=y;break;
+                    }
+                }
+            if(invalidX<0)throw std::runtime_error("placement fixture needs a blocked site");
+            arm();SDL_SetModState(KMOD_LSHIFT);
+            mouse(SDL_MOUSEBUTTONDOWN,invalidX,invalidY);mouse(SDL_MOUSEBUTTONUP,invalidX,invalidY);
+            releaseShift(SDLK_LSHIFT,KMOD_NONE);
+            if(placing_!=queuedType || shiftBuildPlaced_ || !world_.unit(builder)->orders.empty())
+                throw std::runtime_error("invalid placement counted as queued work");
+            SDL_SetModState(KMOD_LSHIFT);mouse(SDL_MOUSEBUTTONDOWN,invalidX,invalidY);
+            releaseShift(SDLK_LSHIFT,KMOD_NONE);mouse(SDL_MOUSEBUTTONUP,invalidX,invalidY);
+            if(placing_!=queuedType || shiftBuildPlaced_)
+                throw std::runtime_error("invalid drag disarmed without any queued placement");
+            const auto manaIcon=std::find_if(iconRects_.begin(),iconRects_.end(),
+                [](const auto& entry){return entry.second && entry.second->onMana;});
+            if(manaIcon==iconRects_.end())throw std::runtime_error("placement fixture needs a mana build icon");
+            mouse(SDL_MOUSEBUTTONDOWN,int(manaIcon->first.x+manaIcon->first.w*.5f),
+                int(manaIcon->first.y+manaIcon->first.h*.5f));
+            SDL_SetModState(KMOD_LSHIFT);
+            mouse(SDL_MOUSEBUTTONDOWN,100,100);mouse(SDL_MOUSEBUTTONUP,180,180);
+            if(!shiftBuildPlaced_ || world_.unit(builder)->orders.empty() ||
+               !world_.unit(builder)->orders.back().manaBuildArea)
+                throw std::runtime_error("Shift area placement did not queue a mana job");
+            releaseShift(SDLK_LSHIFT,KMOD_NONE);
+            if(placing_ || world_.unit(builder)->orders.empty())
+                throw std::runtime_error("Shift release lost queued mana-area work or kept placement armed");
+            world_.stop(builder);SDL_SetModState(savedMod);publish();point(site);
+            std::fprintf(stderr,"PASS: Shift placement release clears the build icon, keeps the builder and queue, supports both keys and mid-drag release\n");
+            const auto* manaType=registry_.find("aralode");
+            if(!manaType || manaSpots_.empty())throw std::runtime_error("area trail fixture needs lodestones and deposits");
+            world_.queueManaBuildArea(builder,manaType,0,0,float(mapView_.map().width*16-1),
+                float(mapView_.map().height*16-1),false);
+            world_.order(builder,2200,2300,true);
+            publish();syncBurningFeatures();
+            if(!cursors_.ok()) {cursorsInit_=true;cursors_.load(ren_,vfs_,settings_);}
+            const auto previewHash=world_.stateHash();SDL_SetModState(KMOD_LSHIFT);
+            drawOrderTrails(mapViewW(winW_),winH_);
+            const auto& preview=orderTrailCache_[0];
+            size_t sitesShown=0;for(const auto& o:preview.orders)if(o.buildType && o.trailPreview)++sitesShown;
+            if(preview.unitId!=builder || sitesShown<2 || preview.orders.empty() ||
+               preview.orders.back().buildType || preview.orders.back().x.toFloat()!=2200 ||
+               world_.stateHash()!=previewHash)
+                throw std::runtime_error("live area-build overlay lost remaining sites, queued tail, or changed simulation state");
+            drawOrderTrails(mapViewW(winW_),winH_);
+            if(world_.stateHash()!=previewHash)throw std::runtime_error("cached area preview changed simulation state");
+            world_.stop(builder);publish();drawOrderTrails(mapViewW(winW_),winH_);
+            SDL_SetModState(savedMod);point(site);
+            std::fprintf(stderr,"PASS: live area trail shows remaining sites and queued tail without changing simulation state\n");
             const auto* original=world_.unit(builder)->type;
             auto restricted=*original;restricted.builderLimited=true;
             world_.unit(builder)->type=&restricted;publish();point(site);
@@ -522,6 +679,35 @@
             pendingCmd_='u';expect(tak::CursorId::Normal,"non-transport cannot arm unload");
             pendingCmd_='c';expect(tak::CursorId::Normal,"non-reclaimer cannot arm reclaim");
             pendingCmd_=0;
+            const auto savedPathfinding=world_.pathfindingMode();
+            selection_={builder,soldier};mouseX_=mouseY_=-1000;
+            for(const auto mode:{tak::sim::PathfindingMode::Retail,tak::sim::PathfindingMode::Flowfield,
+                                 tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Cooperative}) {
+                world_.setPathfindingMode(mode);publish();
+                rightClickOrder(2400,2400,false);
+                for(const int id:selection_) {
+                    const auto* u=world_.unit(id);
+                    if(u->orders.empty())throw std::runtime_error("group right-click lost a selected mover");
+                    const auto& order=u->orders.back();
+                    const auto target=order.missionTarget.value_or(std::pair{order.x,order.z});
+                    const bool shared=tak::sim::isSharedPathfinding(mode)||
+                        (mode==tak::sim::PathfindingMode::RetailPlus&&id==soldier);
+                    const float expected=shared?2400.f:
+                        (id==builder?2460.f:2340.f);
+                    if(target.first.toFloat()!=expected || target.second.toFloat()!=2400.f)
+                        throw std::runtime_error("group right-click split shared destinations or changed Retail offsets");
+                    world_.stop(id);
+                }
+            }
+            const int flyer=spawn("zonhunt",1650,2100,0,0);
+            selection_={builder,flyer};publish();
+            rightClickOrder(2400,2400,false);
+            if(world_.unit(builder)->orders.back().x.toFloat()!=2400.f ||
+               world_.unit(flyer)->orders.back().x.toFloat()!=2340.f)
+                throw std::runtime_error("shared group right-click changed independent flight destinations");
+            world_.stop(builder);world_.stop(flyer);
+            world_.setPathfindingMode(savedPathfinding);
+            std::fprintf(stderr,"PASS: group right-click shares supported destination areas and preserves Retail/fallback offsets\n");
             resultParticipants_=uint8_t((1u<<0)|(1u<<3));
             playerName_[0]="PLAYER";playerName_[3]="AI";
             world_.player(3).defeated=true;publish();
@@ -540,15 +726,23 @@
             const char* only=tak::devEnv("TAK_SHADOW_BENCH_TYPE");
             const char* roster[]={"zonter","araarch","aralode","tarlode","zonroc","versword"};
             const int columns=std::max(1,int(std::ceil(std::sqrt(float(count)*1.6f))));
+            const char* spacingText=tak::devEnv("TAK_RENDER_SPACING");
+            const float spacing=spacingText?std::clamp(float(std::atof(spacingText)),16.f,256.f):40.f;
             const int rows=(count+columns-1)/columns;
             int spawned=0;
             for(int i=0;i<count;++i) {
                 const char* name=only ? only : roster[i%6];
                 const auto* type=registry_.find(name);
                 if(!type || world_.atUnitCap(localPlayer_) || world_.atTypeCap(localPlayer_,type)) continue;
-                const float x=5000+(float(i%columns)-float(columns-1)*0.5f)*40;
-                const float z=5000+(float(i/columns)-float(rows-1)*0.5f)*40;
-                if(spawn(name,x,z,float(i%8)*0.785398163f,localPlayer_)) ++spawned;
+                const float x=5000+(float(i%columns)-float(columns-1)*0.5f)*spacing;
+                const float z=5000+(float(i/columns)-float(rows-1)*0.5f)*spacing;
+                const bool battle=tak::devFlag("TAK_RENDER_BATTLE");
+                const int owner=battle?i%2:localPlayer_;
+                if(const int id=spawn(name,x,z,float(i%8)*0.785398163f,owner)) {
+                    ++spawned;
+                    if(tak::devFlag("TAK_RENDER_MOTION"))world_.order(id,x+320,z+160,false);
+                    if(battle)world_.attackMove(id,5000,5000,false);
+                }
             }
             noFog_=!tak::devFlag("TAK_PROFILE_FOG");edgeScrollOn_=false;
             float zoom=std::min(1.5f,std::min(1400.f/(columns*40),760.f/(rows*40)));
@@ -1967,6 +2161,14 @@
             s.severity = u.severity;
             s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
                                                : world_.corpseTypeOf(u.type);
+            s.corpseReclaimable=false;
+            if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
+                const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
+                s.corpseReclaimable=corpse.reclaimable;
+                s.corpseCellX=tak::sim::footprintOrigin(u.x,u.type->footX)+u.type->corpseAdjX;
+                s.corpseCellZ=tak::sim::footprintOrigin(u.z,u.type->footZ)+u.type->corpseAdjZ;
+                s.corpseFootX=corpse.fx;s.corpseFootZ=corpse.fz;
+            }
             s.corpseStatue = u.corpseStatue >= 0;
             // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
             // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
@@ -3655,10 +3857,7 @@
         hitBoxes_.clear();ringBoxes_.clear();kingdomPals_.clear();
         featureDefs_.clear();featurePals_.clear();cursorsInit_=false;
         loadTextures();loadOrderButtons();
-        try {hudFont_=Font(ren_,vfs_,"fonts/bodfontbody.gaf");bigFont_=Font(ren_,vfs_,"fonts/font48.gaf");
-            statFont_=Font(ren_,vfs_,"fonts/b_times new roman (100b).gaf");
-            scoreboardFont_=Font(ren_,vfs_,"fonts/ig_times new roman (100).gaf");scoreboardFont_.setLetterSpacing(0);
-        }catch(const std::exception& e){std::fprintf(stderr,"override font load: %s\n",e.what());}
+        loadInterfaceFonts();
         sounds_.reload(vfs_);soundClasses_.load(vfs_);musicMode_=0;
         registry_ = tak::sim::TypeRegistry{};
         tak::sim::setupRegistry(registry_, vfs_, crusades_);
@@ -3713,11 +3912,8 @@
     float GameView::heightAbove(float wx, float wz) {
         const auto& m = mapView_.map();
         if (m.heights.empty() || m.width <= 0) return 0.0f;
-        // 1-entry memo: nearly every render pass asks for terrainLiftX(x,z) and
-        // terrainLift(x,z) back-to-back for the SAME point, so the second call reuses
-        // this 4-sample bilinear instead of redoing it. Keyed on the map identity so a
-        // map change can't return a stale height.
-        if (&m == hMemoMap_ && wx == hMemoX_ && wz == hMemoZ_) return hMemoV_;
+        // Geometry workers call this concurrently. The terrain datum is resolved
+        // on the render thread before dispatch; sample without shared memo state.
         if (heightRef_ < 0) {
             long hist[256] = {0};
             for (uint8_t v : m.heights) hist[v]++;
@@ -3737,9 +3933,7 @@
         auto H = [&](int x, int z) { return float(m.heights[size_t(z) * m.width + x]); };
         float h = H(x0, z0) * (1 - fx) * (1 - fz) + H(x1, z0) * fx * (1 - fz) +
                   H(x0, z1) * (1 - fx) * fz + H(x1, z1) * fx * fz;
-        float v = std::max(0.0f, h - float(heightRef_));
-        hMemoMap_ = &m; hMemoX_ = wx; hMemoZ_ = wz; hMemoV_ = v;
-        return v;
+        return std::max(0.0f, h - float(heightRef_));
     }
 
     // Retail's flyer datum, built once per map (icd 0x50e740). One byte per

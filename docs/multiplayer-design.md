@@ -581,18 +581,31 @@ it from `OverrideCache/`; format 9 / protocol 212 remains readable.
 
 ### Match pathfinding selection
 
-Protocol 220 carries the creation-time `Retail` (default) or `Flowfield` choice
-in game options and every lobby/start/rejoin snapshot. The server validates the
+Protocol 220 introduced the creation-time `Retail` (default) or `Flowfield` choice;
+protocol 226 adds the independent experimental `Cooperative` option, and 227
+adds experimental `Retail+`. Game options
+and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
 through shared match setup. Campaign missions and Crusades battle rooms remain
 Retail. The lobby reports the selected mode without changing it.
 
-Replay format 11 records the pathfinder. Protocol-220/format-11 and
-protocol-219/format-10 recordings remain supported; other older simulation
-protocols are rejected. Campaign
-playback forces Retail even if a header supplies Flowfield. A debug-only
-`TAK_FLOWFIELD=1` selects Flowfield in the headless multiplayer test harness.
+Replay format 11 records the pathfinder. Version 0.7.24 requires the current
+simulation protocol for playback; older recordings require their original engine.
+Campaign playback forces Retail even if a header supplies another mode. Saved
+`gameCreate.pathfindingMode` values and the wire byte retain `0=Retail` and
+`1=Flowfield`, `2=Cooperative`, and `3=Retail+`. Missing or unknown saved values default to
+Retail, while unknown network/replay mode bytes are rejected. Creation controls
+cycle forward or backward in display order Retail, Retail+, Flowfield, Cooperative.
+Debug-only `TAK_FLOWFIELD=1` selects Flowfield in the headless multiplayer test
+harness; `TAK_COOPERATIVE=1` selects Cooperative and takes precedence if both are
+set. `TAK_RETAIL_PLUS=1` takes precedence over both. The synthetic
+`flow_benchmark` accepts `0/1/2`; the extended `crowdbench` accepts `--mode
+retail`, `retail-plus`, or `flowfield` for direct comparisons. Retail+ owns no
+shared terrain fields; its local claims, work-budget cursors and queued command
+identities are part of the simulation checksum. Its addition changes neither
+the default nor existing mode identities. Replay format 11's byte layout is
+unchanged; the protocol bump prevents silently replaying old simulation rules.
 For `tools/desync-hunt-remote.sh`, `--minutes` limits simulated match time.
 `TAK_WALL_TIMEOUT=3600` grants each client up to one real hour for a dense
 Flowfield stress run; the default remains simulated seconds plus 300.
@@ -608,7 +621,29 @@ hashed, with no per-deposit command list or render-owned decisions. The server
 validates coordinates and command ownership; build-menu restrictions apply.
 
 New matches also enable automatic nearby repairs during builder patrols.
-Replay format 11 is unchanged; playback of protocols 219 and 220 disables that
-new patrol behavior and rejects area-build commands. All live peers and the
-server must use protocol 221. Defensive AI interception is server-local policy;
+Replay format 11 is unchanged. Defensive AI interception is server-local policy;
 its ordinary movement commands are sequenced and recorded as usual.
+
+Protocol 222 retains the same wire layout and replay format, while fixing
+Flowfield arrivals around parked formations at a shared rally point. The
+additional allowance remains bounded by group population, local distance and
+full-footprint collision checks. Retail pathfinding is unchanged.
+
+Protocol 223 adds footprint-sized destination areas, reserved final approaches,
+equal-cost lane preservation, and strict Flowfield formation pacing. The wire
+layout and replay format remain unchanged. Local traffic reservations, work
+admission, and validation budgets participate in deterministic simulation state.
+All live peers and the server must use the same protocol. Older replay protocols are refused rather
+than running compatibility variants of the simulation.
+
+Protocol 224 retains the wire layout and replay format while fixing Flowfield
+turning, local crowd escapes, and arrival avoidance around terrain obstacles.
+It requires matching clients and server; protocol-223 replays require the engine
+that recorded them. Retail pathfinding behavior is unchanged.
+
+Protocol 225 first added Cooperative selection without changing the existing mode
+values, command layout, or replay format 11. Retail and Flowfield remain separate
+choices with their existing behavior. This was superseded by protocols 226 and
+227. Current live peers and the server require protocol 227; its replay loader
+rejects older simulation protocols, including 225 and 226.
+Campaign missions and Crusades battle rooms remain fixed to Retail.

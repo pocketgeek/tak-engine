@@ -24,7 +24,15 @@ public:
     bool bindRegion(int unit,uint64_t profile,std::shared_ptr<const Topology> topology,GoalRegion region);
     void cancel(int unit);
     void invalidate(uint64_t profile);
-    Sample sample(int unit,Cell from);
+    // An optional distant aim selects a cardinal alternative for predominantly
+    // cardinal travel only when it has exactly the same integrated cost. Broad
+    // fronts retain lanes without collapsing diagonal fronts into a seam,
+    // changing fields, permitting cycles, or adding route work.
+    Sample sample(int unit,Cell from,std::optional<Cell> aim={});
+    // Cooperative keeps a shared group direction and bounded lateral lanes.
+    // Every choice still descends the field. Existing Flowfield sampling and
+    // its cache access order are intact.
+    Sample sampleCooperative(int unit,Cell from,Cell direction,std::optional<Cell> laneTarget={});
     // workers=0 executes inline. Worker counts affect scheduling only, never
     // chosen work or publication: all selected jobs join before tick returns.
     void tick(unsigned workers=0);

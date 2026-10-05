@@ -24,6 +24,29 @@ uint64_t hash(const tak::mapgen::Result& r) {
     for(auto [x,z]:r.starts){mix(x);mix(z);}
     return h;
 }
+int manaCount(const tak::mapgen::Result& r) {
+    int count=0;
+    for(auto f:r.map.features)
+        if(f<r.map.featureNames.size() && tak::hpi::MountSet::key(r.map.featureNames[f]).find("mana")!=std::string::npos)++count;
+    return count;
+}
+void manaSlider(const tak::hpi::Vfs& vfs) {
+    using namespace tak::mapgen;
+    for(const auto [size,players]:std::array<std::pair<int,int>,3>{{{256,2},{512,2},{2048,8}}}) {
+        int previous=-1;
+        for(int density:{0,43,85,128,170,213,255}) {
+            Params p;p.widthCells=p.heightCells=uint16_t(size);p.players=uint8_t(players);
+            p.waterDensity=p.reliefDensity=p.treeDensity=p.rockDensity=0;p.manaDensity=uint8_t(density);
+            const auto r=generate(p,vfs);const int count=manaCount(r),rounds=extraManaRounds(p.manaDensity);
+            check(count>=previous,"raising extra mana removed deposits");
+            check(count>=players*3 && count<=players*(3+rounds) && count%players==0,"extra mana count violates balanced-round limit");
+            if(!density)check(count==players*3,"zero extra mana changed guaranteed home deposits");
+            if(size>=512)check(count==players*(3+rounds),"roomy flat map did not honor extra mana setting");
+            std::printf("mana slider size=%d players=%d requested=%d actual=%d\n",size,players,rounds,count);
+            previous=count;
+        }
+    }
+}
 void syntheticMaps() {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-mapgen-"+
@@ -41,16 +64,25 @@ void syntheticMaps() {
             }
     }
     tak::hpi::Vfs vfs;vfs.addLayer(tak::hpi::MountSet(root));
-    for(int version : {3,4,5}) for(int players=2;players<=8;++players) {
+    for(int density=0;density<=255;++density) {
+        const int rounds=tak::mapgen::extraManaRounds(uint8_t(density));
+        check(rounds>=0 && rounds<=6,"extra mana scale is unbounded");
+        if(density)check(rounds>=tak::mapgen::extraManaRounds(uint8_t(density-1)),"extra mana scale is not monotone");
+    }
+    check(tak::mapgen::extraManaRounds(0)==0 && tak::mapgen::extraManaRounds(128)==3 &&
+          tak::mapgen::extraManaRounds(255)==6,"extra mana endpoints/default changed");
+    tak::mapgen::Params old;old.formatVer=7;bool refused=false;
+    try {tak::mapgen::generate(old,vfs);}catch(const std::runtime_error&) {refused=true;}
+    check(refused,"obsolete map recipe silently regenerated with different rules");
+    for(int players=2;players<=8;++players) {
         tak::mapgen::Params p;p.players=players;p.seed=0xfedcba9876543210ULL;
-        p.formatVer=version; // Keep the previous recipe golden stable.
         p.waterDensity=p.reliefDensity=0;p.treeDensity=p.rockDensity=p.manaDensity=255;
         const auto r=tak::mapgen::generate(p,vfs);
         const auto repeated=tak::mapgen::generate(tak::mapgen::decodeMapId(tak::mapgen::encodeMapId(p)),vfs);
         check(hash(r)==hash(repeated),"synthetic map not deterministic");
         check(r.waterPercent==0&&r.reliefPatches==0,"dry flat synthetic map changed terrain");
-        if(players==8 && version==3) {
-            check(hash(r)==0x9258a896baaf4285ULL,"cross-platform generator golden changed");
+        if(players==8) {
+            check(hash(r)==0x6bf977a42891c638ULL,"cross-platform generator golden changed");
             std::printf("synthetic generator golden: %016llx\n",(unsigned long long)hash(r));
         }
         // Non-square feature footprints are deliberately unlike the old guessed
@@ -71,6 +103,7 @@ void syntheticMaps() {
             }
         }
     }
+    manaSlider(vfs);
 }
 void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
     const auto p=tak::mapgen::sanitize(input);const auto& m=r.map;
@@ -127,7 +160,7 @@ void verify(const tak::mapgen::Params& input,const tak::mapgen::Result& r) {
 int main(int argc,char** argv) {
     try {
         using namespace tak::mapgen;
-        for(int version:{1,2,3,4,5,6,7})for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
+        for(int version:{1,2,3,4,5,6,7,8})for(int layout=0;layout<3;++layout)for(int players=2;players<=8;++players) {
             Params p;p.formatVer=version;p.layout=layout;p.players=players;p.seed=0xfedcba9876543210ULL;
             p.widthCells=768;p.heightCells=640;
             const auto id=encodeMapId(p);const auto d=decodeMapId(id);const auto expected=sanitize(p);
@@ -157,6 +190,26 @@ int main(int argc,char** argv) {
         syntheticMaps();
         if(argc<2){std::puts("mapgen codec/bounds passed (retail sweep takes a data path)");return 0;}
         const auto vfs=tak::hpi::mountRetailRoot(argv[1]);
+        if(argc>2 && std::string(argv[2])=="--mana") {
+            Params cramped;cramped.mapType=Veruna;cramped.players=7;cramped.widthCells=cramped.heightCells=384;
+            const auto limited=generate(cramped,vfs);verify(cramped,limited);
+            check(manaCount(limited)%7==0,"omitted expansion left a partial resource round");
+            check(hash(limited)==hash(generate(cramped,vfs)),"omitted expansion is not deterministic");
+            for(int world=0;world<kMapTypes;++world)for(int layout:{int(Mainland),int(themedLayout(uint8_t(world)))}) {
+                int previous=-1;
+                for(int density:{0,128,255}) {
+                    Params p;p.mapType=uint8_t(world);p.layout=uint8_t(layout);p.widthCells=p.heightCells=1024;
+                    p.players=2;p.manaDensity=uint8_t(density);
+                    const auto r=generate(p,vfs);verify(p,r);const int count=manaCount(r);
+                    check(count>=previous,"authored terrain reduced mana when slider increased");
+                    check(count>=6 && count<=2*(3+extraManaRounds(p.manaDensity)),"authored terrain ignored extra mana limit");
+                    std::printf("mana world=%d layout=%d density=%d count=%d\n",world,layout,density,count);
+                    previous=count;
+                }
+                check(previous>6,"roomy authored map never added extra mana");
+            }
+            std::puts("extra mana slider passed");return 0;
+        }
         if(argc>2&&(std::string(argv[2])=="--naval"||std::string(argv[2])=="--ports")) {
             for(bool crusades:{false,true}) {
                 tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
@@ -215,24 +268,16 @@ int main(int argc,char** argv) {
             const auto r=generate(p,vfs);verify(p,r);
             for(auto key:r.map.tileKeys) check(std::find(incompatible.begin(),incompatible.end(),key)==incompatible.end(),"incompatible relief surface used");
         }
-        // New lakes may meet the edge; old recipes retain their dry rim.
-        int edgeWet = 0;
-        for (int seed = 1; seed <= 5; ++seed) for (int version : {4,5}) {
-            Params p; p.layout=Lakes; p.waterDensity=255; p.seed=seed; p.formatVer=version;
-            const auto r=generate(p,vfs); verify(p,r);
-            int wet=0; const auto& m=r.map;
-            for (int x=0;x<m.width;++x) wet += m.heights[x]<m.seaLevel || m.heights[size_t(m.height-1)*m.width+x]<m.seaLevel;
-            for (int z=0;z<m.height;++z) wet += m.heights[size_t(z)*m.width]<m.seaLevel || m.heights[size_t(z)*m.width+m.width-1]<m.seaLevel;
-            if (version==4) check(wet==0,"legacy lake rim changed");
-            else edgeWet += wet;
+        // Lakes may meet the edge; there is no guaranteed dry rim.
+        int edgeWet=0;
+        for(int seed=1;seed<=5;++seed) {
+            Params p;p.layout=Lakes;p.waterDensity=255;p.seed=seed;
+            const auto r=generate(p,vfs);verify(p,r);const auto& m=r.map;
+            for(int x=0;x<m.width;++x)edgeWet+=m.heights[x]<m.seaLevel || m.heights[size_t(m.height-1)*m.width+x]<m.seaLevel;
+            for(int z=0;z<m.height;++z)edgeWet+=m.heights[size_t(z)*m.width]<m.seaLevel || m.heights[size_t(z)*m.width+m.width-1]<m.seaLevel;
         }
-        check(edgeWet>0,"new lakes still have a guaranteed dry rim");
+        check(edgeWet>0,"lakes still have a guaranteed dry rim");
         if(argc>2&&std::string(argv[2])=="--themes") {
-            Params legacyMaze;legacyMaze.layout=Maze;legacyMaze.formatVer=6;
-            const auto oldMaze=generate(legacyMaze,vfs);
-            check(oldMaze.map.heights[96]>=200,"legacy maze perimeter changed");
-            check(hash(oldMaze)==hash(generate(decodeMapId(encodeMapId(legacyMaze)),vfs)),
-                  "legacy maze recipe roundtrip changed");
             for(int layout=Maze;layout<kLayouts;++layout)for(int players:{2,3,4,5,6,7,8})for(int seed=1;seed<=3;++seed) {
                 Params p;p.layout=layout;p.players=players;p.seed=seed;
                 if(seed==2)p.treeDensity=p.rockDensity=p.manaDensity=p.reliefDensity=0;

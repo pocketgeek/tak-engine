@@ -1,6 +1,7 @@
 #include "client/settings.h"
 #include "net/crypto.h"
 #include <SDL.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -17,6 +18,19 @@ int main() {
         s.hostOverridePacks={"Sound Pack #1","Textures", "Accents-é"};
         s.cosmeticOverridePacks={"My local art"};
         using PathMode=tak::sim::PathfindingMode;
+        static_assert(uint8_t(PathMode::Retail)==0&&uint8_t(PathMode::Flowfield)==1&&uint8_t(PathMode::Cooperative)==2&&uint8_t(PathMode::RetailPlus)==3);
+        for(auto mode:{PathMode::Retail,PathMode::Flowfield,PathMode::Cooperative,PathMode::RetailPlus}) {
+            auto next=tak::sim::cyclePathfindingMode(mode,1);
+            if(tak::sim::cyclePathfindingMode(next,-1)!=mode ||
+               tak::sim::cyclePathfindingMode(tak::sim::cyclePathfindingMode(tak::sim::cyclePathfindingMode(next,1),1),1)!=mode)
+                throw std::runtime_error("pathfinding choices do not cycle in both directions");
+        }
+        if(tak::sim::cyclePathfindingMode(PathMode::Retail,-1)!=PathMode::Cooperative ||
+           tak::sim::cyclePathfindingMode(PathMode::Retail,1)!=PathMode::RetailPlus ||
+           tak::sim::cyclePathfindingMode(PathMode::RetailPlus,1)!=PathMode::Flowfield ||
+           tak::sim::cyclePathfindingMode(PathMode::Flowfield,1)!=PathMode::Cooperative ||
+           std::string(tak::sim::pathfindingModeName(PathMode::Cooperative))!="Cooperative")
+            throw std::runtime_error("third pathfinder choice or display name missing");
         if(s.gameCreate.pathfindingMode!=PathMode::Retail)
             throw std::runtime_error("new create preferences must default to Retail");
         s.gameCreate.pathfindingMode=PathMode::Flowfield;
@@ -30,12 +44,20 @@ int main() {
             throw std::runtime_error("independent scorecard scale did not persist");
         if(loaded.gameCreate.pathfindingMode!=PathMode::Flowfield)
             throw std::runtime_error("Flowfield create preference did not persist");
+        auto cooperative=s;cooperative.gameCreate.pathfindingMode=PathMode::Cooperative;
+        if(cooperative==s || !tak::saveSettings(cooperative) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Cooperative)
+            throw std::runtime_error("Cooperative create preference did not persist independently");
+        auto retailPlus=s;retailPlus.gameCreate.pathfindingMode=PathMode::RetailPlus;
+        if(retailPlus==s || !tak::saveSettings(retailPlus) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::RetailPlus)
+            throw std::runtime_error("Retail+ create preference did not persist independently");
+        if(std::string(tak::sim::pathfindingModeName(PathMode::RetailPlus))!="Retail+")
+            throw std::runtime_error("Retail+ display name changed");
         auto modeChanged=s;modeChanged.gameCreate.pathfindingMode=PathMode::Retail;
         if(modeChanged==s)throw std::runtime_error("pathfinding preference changes not detected");
         std::ofstream(path)<<"gameCreate.crusades = true\ngameCreate.doubleSight = true\ngameCreate.unitCap = 2000\n";
         if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
             throw std::runtime_error("legacy create preferences must remain Retail");
-        for(const char* value:{"", "0", "-1", "2", "256", "flowfield", "1oops"}) {
+        for(const char* value:{"", "0", "-1", "4", "255", "256", "flowfield", "cooperative", "1oops", "2oops"}) {
             std::ofstream(path)<<"gameCreate.pathfindingMode = "<<value<<"\n";
             if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
                 throw std::runtime_error("unknown pathfinding preference must fall back to Retail");
@@ -50,30 +72,59 @@ int main() {
         if(tak::loadSettings().scorecardScale!=2.0f)throw std::runtime_error("scorecard upper limit");
         std::ofstream(path)<<"scorecardScale = 0\n";
         if(tak::loadSettings().scorecardScale!=0.75f)throw std::runtime_error("scorecard lower limit");
-        auto disabled=[](const tak::Settings& v) {
+        auto defaultsOff=[](const tak::Settings& v) {
             if(v.terrainAA || v.modelAA || v.bilinear || v.smoothArt || v.videoDeblock)
-                throw std::runtime_error("disabled graphics options enabled by saved preferences");
+                throw std::runtime_error("graphics quality options must default off");
         };
-        disabled(tak::Settings{});
+        defaultsOff(tak::Settings{});
         if(!tak::Settings{}.treeSway)throw std::runtime_error("tree sway must default on");
         for(int terrain:{0,2,4})for(int model:{0,2,4,8,16}) {
             std::ofstream(path)<<"antiAlias = 4\nterrainAA = "<<terrain<<"\nmodelAA = "<<model
                 <<"\nbilinear = true\nsmoothArt = on\nvideoDeblock = 1\ntreeSway = 0\nvsync = 0\n";
             const auto loaded=tak::loadSettings();
-            disabled(loaded);
+            if(loaded.terrainAA!=terrain || loaded.modelAA!=model || !loaded.bilinear || !loaded.smoothArt || !loaded.videoDeblock)
+                throw std::runtime_error("independent graphics preferences not loaded");
             if(loaded.treeSway)throw std::runtime_error("tree sway off preference ignored");
             if(loaded.vsync)throw std::runtime_error("unrelated preference ignored");
+            if(!tak::saveSettings(loaded) || !(tak::loadSettings()==loaded))
+                throw std::runtime_error("graphics preferences failed round trip");
+        }
+        for(const char* text:{"antiAlias = 4\nterrainAA = 0\n", "terrainAA = 0\nantiAlias = 4\n"}) {
+            std::ofstream(path)<<text;
+            const auto v=tak::loadSettings();
+            if(v.terrainAA!=0 || v.modelAA!=4)throw std::runtime_error("legacy AA overrides explicit terrain choice");
+        }
+        for(const char* text:{"antiAlias = 2\nmodelAA = 16\n", "modelAA = 16\nantiAlias = 2\n"}) {
+            std::ofstream(path)<<text;
+            const auto v=tak::loadSettings();
+            if(v.terrainAA!=2 || v.modelAA!=16)throw std::runtime_error("legacy AA overrides explicit model choice");
+        }
+        for(int value:{-1,0,1,2,3,4,7,8,15,16,99}) {
+            std::ofstream(path)<<"terrainAA = "<<value<<"\nmodelAA = "<<value<<"\n";
+            const auto v=tak::loadSettings();
+            const int expected=value>=16?16:value>=8?8:value>=4?4:value>=2?2:0;
+            if(v.terrainAA!=std::min(4,expected) || v.modelAA!=expected)
+                throw std::runtime_error("invalid AA levels not clamped to supported steps");
         }
         s.terrainAA=4;s.modelAA=16;s.bilinear=s.smoothArt=s.videoDeblock=true;s.treeSway=false;
+        s.terrainAAEffective=2;s.modelAAEffective=4;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
-        disabled(tak::loadSettings());
+        const auto graphics=tak::loadSettings();
+        if(graphics.terrainAA!=4 || graphics.modelAA!=16 || !graphics.bilinear || !graphics.smoothArt || !graphics.videoDeblock)
+            throw std::runtime_error("enabled graphics preferences not saved");
+        if(graphics.terrainAAEffective!=-1 || graphics.modelAAEffective!=-1)
+            throw std::runtime_error("runtime AA fallback saved as a preference");
         if(tak::loadSettings().treeSway)throw std::runtime_error("tree sway off did not persist");
         s.treeSway=true;
         if(!tak::saveSettings(s) || !tak::loadSettings().treeSway)throw std::runtime_error("tree sway on did not persist");
         std::ifstream saved(path);
         const std::string contents((std::istreambuf_iterator<char>(saved)),{});
-        for(const char* key:{"antiAlias =", "terrainAA =", "modelAA =", "bilinear =", "smoothArt =", "videoDeblock ="})
-            if(contents.find(key)!=std::string::npos)throw std::runtime_error("disabled preference still saved");
+        if(contents.find("antiAlias =")!=std::string::npos)throw std::runtime_error("legacy AA preference still saved");
+        for(const char* key:{"terrainAA =", "modelAA =", "bilinear =", "smoothArt =", "videoDeblock ="})
+            if(contents.find(key)==std::string::npos)throw std::runtime_error("graphics preference not saved");
+        s.terrainAA=s.modelAA=0;s.bilinear=s.smoothArt=s.videoDeblock=false;
+        if(!tak::saveSettings(s))throw std::runtime_error("save failed");
+        defaultsOff(tak::loadSettings());
         fs::remove_all(root);std::cout<<"PASS: independent host/guest selections persist while Off\n";return 0;
     }catch(const std::exception& e){fs::remove_all(root);std::cerr<<e.what()<<'\n';return 1;}
 }

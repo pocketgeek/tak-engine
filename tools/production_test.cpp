@@ -36,9 +36,9 @@
 
 using namespace tak::sim;
 
-static bool g_flow = false;
+static PathfindingMode g_pathfinding = PathfindingMode::Retail;
 static void setTestPathfinding(World& world) {
-    if(g_flow)world.setPathfindingMode(PathfindingMode::Flowfield);
+    if(g_pathfinding!=PathfindingMode::Retail)world.setPathfindingMode(g_pathfinding);
 }
 static int g_fail = 0;
 static void check(bool cond, const char* what, const std::string& detail = {}) {
@@ -516,7 +516,9 @@ static void defensiveBodyStaysFixed() {
 }
 
 int main(int argc,char** argv) {
-    if(argc==2 && !std::strcmp(argv[1],"--flow"))g_flow=true;
+    if(argc==2 && !std::strcmp(argv[1],"--flow"))g_pathfinding=PathfindingMode::Flowfield;
+    else if(argc==2 && !std::strcmp(argv[1],"--cooperative"))g_pathfinding=PathfindingMode::Cooperative;
+    else if(argc==2 && !std::strcmp(argv[1],"--retail-plus"))g_pathfinding=PathfindingMode::RetailPlus;
     else if(argc!=1)return 2;
     std::printf("production_test\n");
     {

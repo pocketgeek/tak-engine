@@ -5,7 +5,7 @@
 // client and the server referee build the BYTE-IDENTICAL map from the same seed --
 // the generated terrain/features feed the hashed lockstep sim, so it must agree on
 // every peer. The parameters ride inside the mapId string ("~gen1~<hex>"), which the
-// lobby threads to every peer. Protocol 218 supports v7 open-edge maze recipes.
+// lobby threads to every peer. Protocol 222 supports v8 explicit extra-mana rounds.
 
 #include "tnt/tnt.h"
 
@@ -28,7 +28,7 @@ uint8_t themedLayout(uint8_t world);
 bool automaticWater(uint8_t layout);
 
 struct Params {
-    uint16_t formatVer = 7;          // Older recipes retain their original terrain/features
+    uint16_t formatVer = 8;
     uint64_t seed = 1;
     std::string name;               // v5: optional ASCII map title, up to 24 characters
     uint8_t  mapType = Aramon;
@@ -36,7 +36,7 @@ struct Params {
     uint8_t  players = 2;            // 2..8
     uint8_t  treeDensity = 128;      // 0..255 (few..lots)
     uint8_t  rockDensity = 96;       // 0..255
-    uint8_t  manaDensity = 128;      // 0..255
+    uint8_t  manaDensity = 128;      // 0..255 requests 0..6 extra spots per player
     uint8_t  waterDensity = 96;      // mainland/lake intensity, not coverage; 0 = dry
     uint8_t  layout = Mainland;
     uint8_t  reliefDensity = 128;    // authored hill patch density; 0 = flat
@@ -68,5 +68,8 @@ std::vector<std::string> assetPaths(const hpi::Vfs& vfs);
 
 // Clamp UI inputs to section multiples, 2..8 players, and layout-specific space.
 Params sanitize(Params p);
+
+// Complete, balanced expansion rounds; independent of map area/player count.
+inline int extraManaRounds(uint8_t density) { return (int(density)*6+127)/255; }
 
 }  // namespace tak::mapgen
