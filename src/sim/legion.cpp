@@ -26,6 +26,7 @@ constexpr size_t kMaxFields=48,kMaxPlanes=24;
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
 constexpr int kClusterCells=16;
+constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr int kLineCells=160;                  // direct-line probe reach
@@ -413,6 +414,12 @@ struct LegionNavigator::Impl {
             const bool seeded=std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
             // A field in progress or complete is never re-seeded.
             if(g.field&&!seeded)continue;
+            // A field is "distance to the nearest seed of anyone": over a
+            // whole army's goal lattice it pulls every body to the lattice's
+            // near edge, where they jam and then thread between settled goals.
+            // Groups of at most kGroupSeeds goals keep each field aimed at its
+            // own block of the destination.
+            if(!seeded&&g.seeds.size()>=kGroupSeeds)continue;
             joined=&g;break;
         }
         if(!joined) {
