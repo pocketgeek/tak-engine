@@ -108,13 +108,21 @@ cells to the own goal while on a straight line.
 
 * **Terrain-trapped**: the unit's origin has no finite potential once its
   group's field is complete, or its goal has no legal origin nearby. No legal
-  route exists for this footprint. The unit stops and its leg is retired with
-  `dropLeg`, as Retail does for an unreachable goal. Queued legs continue. In
-  `legion_trapped`, a unit in a closed pocket retires its order on its first
-  update and never moves again.
+  route exists for this footprint. The unit stops on the same update and then
+  never moves, turns or probes. It keeps its order: a new static epoch (a gate
+  opening, a wall destroyed, a building removed) re-plans it, with no
+  polling. If nothing opens within 5 minutes (9000 ticks), the leg is retired
+  with `dropLeg`, as Retail does for an unreachable goal, and queued legs
+  continue. `legion_trapped` checks both paths: a sealed pocket that stays
+  sealed, where the unit never moves and its order retires at about 9000
+  ticks, and the same pocket opened at tick 300, where the unit resumes and
+  arrives.
 * **Crowd-blocked**: a route exists but bodies occupy it. The unit first
   **flows around** the blockage by stepping to any free legal neighbour that
-  strictly reduces its distance still to go. If none exists it **holds**:
+  strictly reduces its distance still to go. The step is committed until the
+  new cell is entered. It moves only along the axis whose origin changes,
+  never back toward a cell centre, and it does not turn the body; this is a
+  shuffle at half speed. If no such neighbour exists the unit **holds**:
   speed zero, heading constant (the heading only turns on a committed step),
   no creeping. A held unit rechecks its candidate cells against occupancy
   every update. This is change-driven, since nothing moves until a cell frees,
@@ -129,8 +137,14 @@ cells to the own goal while on a straight line.
   bounded BFS (25x25 window) over legal origins whose footprint touches no
   still body. The target is its own goal if it is inside the window,
   otherwise the reachable cell that most reduces its distance to go. The
-  resulting route is committed. Moving bodies are waited for, never planned
-  around.
+  resulting route is committed and walked cell by cell without turning the
+  body. It is attempted only when the blocking body will not move by itself
+  (idle, arrived, or not a Legion mover), never for a queue of members
+  waiting on each other. Attempts back off geometrically (30, 60, ... 480
+  updates) while no progress is made. Moving bodies are waited for, never
+  planned around.
+* **Heading**: the body turns only on a committed step, with a 5.6° dead
+  band. A refused step, a hold, a shuffle and a trapped stop never turn it.
 * **Arrival on contact**: once a unit has made no progress for 20 updates, it
   arrives if it is inside its goal's area and touching a settled same-player
   body. With a distinct goal the area is one body width. When several members
@@ -185,7 +199,10 @@ blocked Legion army therefore never "arrives" because the circle grew.
   benchmark's 3-cell lattice for 2x2 bodies leaves 1-cell gaps) can only fill
   in approach order. A unit whose goal is behind already-settled bodies relies
   on the local detour, which cannot open a gap of less than one body. Legion
-  does not reassign goals, because the order names a point per unit.
+  does not reassign goals, because the order names a point per unit. This is
+  why the `group`, `trapped` and `crowdheld` acceptance checks still miss full
+  arrival. The in-game group right-click sends one shared point in Legion
+  mode, so the client path uses packed slots instead.
 * Units that are idle (no orders) never step aside for a Legion mover. They
   are treated as still bodies to route around.
 * Fog: Legion plans on the static plane as Retail's mover sees it. It does not
