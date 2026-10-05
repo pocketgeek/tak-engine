@@ -15,6 +15,7 @@ public:
         uint64_t bodyEntries=0,bodyDeferrals=0;
         // Optional wall-clock observers, excluded from simulation state/hash.
         uint64_t contextNanoseconds=0,setupNanoseconds=0,policyNanoseconds=0,maintenanceNanoseconds=0;
+        // Always-counted fast/full traffic updates, also unhashed.
         uint64_t fastUpdates=0,fullUpdates=0;
     };
     explicit RetailPlusNavigator(World&);

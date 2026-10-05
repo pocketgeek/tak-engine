@@ -77,9 +77,15 @@ const Traffic::Record* Traffic::lookup(int id) const {
     if(IdIndex<Slot>::covers(id))return nullptr;
     const auto it=records_.find(id);return it==records_.end()?nullptr:&it->second;
 }
+const Traffic::Population* Traffic::population(const Context& c) const {
+    // A plain member's cached population is its own group's map node.
+    const Group key{c.player,c.target.x,c.target.z,c.targetId};
+    if(const auto* s=slot(c.id);s&&s->group&&s->record->group==key)return s->group;
+    const auto group=groups_.find(key);return group==groups_.end()?nullptr:&group->second;
+}
 int Traffic::arrivalRadiusSquared(const Context& c) const {
-    const auto group=groups_.find({c.player,c.target.x,c.target.z,c.targetId});
-    return group==groups_.end()||group->second.members<2?0:int(std::min<uint64_t>(512*512,group->second.area));
+    const auto* group=population(c);
+    return !group||group->members<2?0:int(std::min<uint64_t>(512*512,group->area));
 }
 bool Traffic::settled(int id,Cell position) const {
     const auto* r=lookup(id);return r&&r->settled&&r->position==position;
@@ -89,13 +95,9 @@ void Traffic::refreshSettled(int id,Cell position) {
 }
 bool Traffic::nearArrival(const Context& c) const {
     const int64_t spacing=std::max(c.footX,c.footZ)+1;
-    const Group key{c.player,c.target.x,c.target.z,c.targetId};
-    // A plain member's cached population is its own group's map node.
-    const Population* population=nullptr;
-    if(const auto* s=slot(c.id);s&&s->group&&s->record->group==key)population=s->group;
-    else if(const auto group=groups_.find(key);group!=groups_.end())population=&group->second;
-    const int64_t members=!population?1:int64_t(population->members)+1;
-    const int64_t area=!population?spacing*spacing:int64_t(population->area);
+    const auto* group=population(c);
+    const int64_t members=!group?1:int64_t(group->members)+1;
+    const int64_t area=!group?spacing*spacing:int64_t(group->area);
     const int64_t ordinary=std::min<int64_t>(64,members*spacing);
     // Geometric area plus the ordinary constrained-queue window is enough for
     // movers making progress. A linear population radius made every refusal
@@ -107,8 +109,8 @@ bool Traffic::nearArrival(const Context& c) const {
 }
 bool Traffic::needsArrivalNeighbors(const Context& c) const {
     if(!c.plainMove)return false;
-    const auto group=groups_.find({c.player,c.target.x,c.target.z,c.targetId});
-    if(group==groups_.end()||!group->second.settledArea)return false;
+    const auto* group=population(c);
+    if(!group||!group->settledArea)return false;
     if(c.blocked<2) {
         const auto* r=lookup(c.id);
         if(!r||!r->plain||r->issuedTick!=c.issuedTick||

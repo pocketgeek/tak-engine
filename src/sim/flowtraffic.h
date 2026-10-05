@@ -125,6 +125,7 @@ private:
     struct Slot {Record* record=nullptr;Population* group=nullptr;};
     IdIndex<Slot> index_;
     const Slot* slot(int id) const {return index_.find(id);}
+    const Population* population(const Context&) const;
     Record* lookup(int id);
     const Record* lookup(int id) const;
     using Bucket=std::pair<int,int>;

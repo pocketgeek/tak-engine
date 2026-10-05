@@ -9144,11 +9144,12 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             const auto& goal=u.orders[currentLeg(u.orders)];
             requestPath(u,goal.x.toFloat(),goal.z.toFloat());
         }
-        if(retailPlusMove && routeable && !pathPending(u.id) &&
+        // The pending-request lookup is the costly term; evaluate it last.
+        if(retailPlusMove && routeable &&
            tickCounter_-uint32_t(std::max(0,u.routeStamp))>=30u &&
            (flowTraffic.repath || (!flowTraffic.detour&&!flowTraffic.wait&&
             (u.bodyBlockStreak>=2||u.orders[currentLeg(u.orders)].navigationConsumed||
-             u.orders[currentLeg(u.orders)].navigationExhausted)))) {
+             u.orders[currentLeg(u.orders)].navigationExhausted))) && !pathPending(u.id)) {
             const auto& goal=u.orders[currentLeg(u.orders)];
             if(!requestPath(u,goal.x.toFloat(),goal.z.toFloat()))u.routeStamp=int32_t(tickCounter_);
         }

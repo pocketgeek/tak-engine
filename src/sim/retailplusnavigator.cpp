@@ -90,10 +90,17 @@ flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u,bool supported) {
     // Preserve both coordinators' progress, identities, groups and work cursors
     // before skipping the callback-rich path. Arrival and retained claims always
     // take the full path; no openness or collision clearance is assumed here.
+    // Here c has no neighbors, obstruction or proof callbacks yet, so those
+    // guards in updateUnblocked are vacuous. Safety rests on two real ones:
+    // blocked>=2 declines (the full path's obstruction query), and nearArrival
+    // declines (needsArrivalNeighbors requires it, and update() only supplies
+    // arrival callbacks to arrivals_ when goalReached or nearArrival holds).
+    // Away from both, the full path never consults what is skipped here.
     const bool unblocked=p.policy.updateUnblocked(c);
     if(profile)p.contextNanoseconds+=profileElapsed(start);
-    if(unblocked){if(profile)++p.fastUpdates;return {};}
-    if(profile)++p.fullUpdates;
+    // Unhashed observation counts, kept whether or not clocks are enabled.
+    if(unblocked){++p.fastUpdates;return {};}
+    ++p.fullUpdates;
     const auto setupStart=profile?ProfileClock::now():ProfileClock::time_point{};
     // Include early density/deferred exits in setup timing as well.
     struct SetupProfile {
