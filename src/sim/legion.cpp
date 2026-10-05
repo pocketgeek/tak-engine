@@ -29,6 +29,7 @@ constexpr int kClusterCells=16;
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr int kLineCells=160;                  // direct-line probe reach
+constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr std::array<std::array<int,2>,8> kDirections{{
     {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
@@ -124,7 +125,14 @@ struct LegionNavigator::Impl {
     static constexpr uint8_t kMaxYields=3;
     // Cells claimed by arrival slots of every group sent to one point in one
     // command (mixed footprints form one group per class but share the area).
-    struct Point {int refs=0;std::set<int> cells;};
+    // A shared point's members get their slots all at once, by formation:
+    // each member's offset from the group's centroid, scaled into the
+    // packed area around the point (see assignFormation).
+    struct Point {
+        int refs=0;std::set<int> cells;
+        bool assigned=false;
+        int64_t centreX=0,centreZ=0,scaleNum=1,scaleDen=1,limit=0;   // px
+    };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
     void slotCells(const Member& m,int fx,int fz,bool claim) {
         auto& cells=points[m.point].cells;
@@ -671,7 +679,7 @@ struct LegionNavigator::Impl {
         if(!legal(p,cx,cz))return false;
         const int64_t dx=ex-ax,dz=ez-az;
         const int sx=dx>0?1:-1,sz=dz>0?1:-1;
-        for(int guard=0;(cx!=tx||cz!=tz)&&guard<4*kLineCells+8;++guard) {
+        for(int guard=0;(cx!=tx||cz!=tz)&&guard<4*kFormationLineCells+8;++guard) {
             const bool canX=cx!=tx,canZ=cz!=tz;
             int64_t nx=0,nz=0;   // distance to the next boundary along each axis
             if(canX)nx=sx>0?(int64_t(cx+1)<<20)-ax:ax-(int64_t(cx)<<20);
@@ -820,8 +828,175 @@ struct LegionNavigator::Impl {
     }
     // Members sharing one point claim the innermost free slot once they are
     // close, so arrivals pack from the point outward.
+    // Nearest origin to a target centre (px) that this body may take as its
+    // slot: statically legal, in the group's component, its footprint clear
+    // of every claimed cell of the point, and its centre inside the point's
+    // packed area. -1 if none within the search window.
+    int formationCell(const Unit& u,const Plane& p,int comp,const Point& pt,int64_t px,int64_t pz,int64_t tx,int64_t tz) const {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int sx=footprintOrigin(Fixed::fromInt(int32_t(tx)),fx),sz=footprintOrigin(Fixed::fromInt(int32_t(tz)),fz);
+        int best=-1;int64_t bestD=0;
+        for(int r=0;r<=48;++r) {
+            if(best>=0&&int64_t(r-1)*16*int64_t(r-1)*16>bestD)break;
+            for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;++dx) {
+                if(std::max(std::abs(dx),std::abs(dz))!=r)continue;
+                const int x=sx+dx,z=sz+dz;
+                if(!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
+                const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
+                if((cx-px)*(cx-px)+(cz-pz)*(cz-pz)>pt.limit*pt.limit)continue;
+                const int64_t d=(cx-tx)*(cx-tx)+(cz-tz)*(cz-tz);
+                if(best>=0&&(d>bestD||(d==bestD&&z*W+x>best)))continue;
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt.cells.count((z+j)*W+x+i);
+                if(clear) {best=z*W+x;bestD=d;}
+            }
+        }
+        return best;
+    }
+    // A member walled off from its slot: breadth-first over legal origins
+    // whose footprint no other body covers (window of 24 cells), and take the
+    // reached free slot cell nearest the point. Reached means a way in
+    // exists past the bodies standing now.
+    int reachableFormationCell(const Unit& u,const Plane& p,const Point& pt,int64_t px,int64_t pz) const {
+        constexpr int R=24,S=2*R+1;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        auto open=[&](int x,int z) {
+            if(!legal(p,x,z))return false;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=x+i,cz=z+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                if(o&&o!=u.id)return false;
+            }
+            return true;
+        };
+        std::vector<uint8_t> seen(size_t(S)*S,0);
+        std::vector<int> queue;queue.reserve(size_t(S)*S);
+        seen[size_t(R*S+R)]=1;queue.push_back(R*S+R);
+        int best=-1;int64_t bestD=0;
+        for(size_t head=0;head<queue.size();++head) {
+            const int local=queue[head],lx=local%S,lz=local/S,x=ox+lx-R,z=oz+lz-R;
+            const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
+            const int64_t d=(cx-px)*(cx-px)+(cz-pz)*(cz-pz);
+            if(d<=pt.limit*pt.limit&&(best<0||d<bestD)) {
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt.cells.count((z+j)*W+x+i);
+                if(clear) {best=z*W+x;bestD=d;}
+            }
+            for(const auto& dd:kDirections) {
+                const int nlx=lx+dd[0],nlz=lz+dd[1];
+                if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
+                if(!step(p,x,z,dd[0],dd[1])||!open(x+dd[0],z+dd[1]))continue;
+                if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
+                seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
+            }
+        }
+        return best;
+    }
+    bool formationMember(const Member& m) const {
+        const auto found=points.find(m.point);
+        return found!=points.end()&&found->second.assigned&&found->second.limit>0;
+    }
+    void takeFormation(Member& m,const Unit& u,int cell) {
+        m.goal=cell;m.slot=0;m.lineCell=-1;
+        slotCells(m,u.type->footX,u.type->footZ,true);
+    }
+    // Every member sent to one point in one command gets its slot at once,
+    // by formation: its offset from the members' centroid, scaled so the
+    // formation's spread matches the packed disc that many bodies occupy,
+    // placed around the point. Members are served front first (farthest
+    // along the centroid->point direction), so the front of the crowd takes
+    // the far side of the area and nobody has to cross a settled body.
+    void assignFormation(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
+        pt.assigned=true;
+        const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
+        std::vector<std::pair<int,Member*>> list;
+        int64_t sumX=0,sumZ=0,area=0,areaGap=0,firstSide=0,minSide=8;bool mixed=false;
+        for(auto& [id,mm]:members) {
+            if(mm.point!=key||mm.goal<0||mm.slot>=0)continue;
+            const Unit* v=w.unit(id);
+            if(!v||!v->type||groups.find(mm.group)==groups.end())continue;
+            list.push_back({id,&mm});
+            sumX+=v->x.v>>16;sumZ+=v->z.v>>16;
+            const int64_t side=std::max(v->type->footX,v->type->footZ);area+=side*side*256;
+            areaGap+=(side+1)*(side+1)*256;
+            if(!firstSide)firstSide=side;
+            minSide=std::min(minSide,side);
+            mixed|=side!=firstSide;
+        }
+        // Bodies of different sizes never tile: give each a cell of clearance.
+        if(mixed)area=areaGap;
+        if(list.size()<2)return;
+        const int64_t n=int64_t(list.size());
+        pt.centreX=sumX/n;pt.centreZ=sumZ/n;
+        const int64_t packed=isqrtFloor(uint64_t(area)*10000/31416);
+        // The area: the packed disc plus a margin of three of the smallest
+        // bodies (greedy formation packing leaves holes inside the disc).
+        pt.limit=packed+48*minSide-8;
+        int64_t spread=0;
+        for(const auto& [id,mm]:list) {
+            const Unit* v=w.unit(id);
+            const int64_t ox=(v->x.v>>16)-pt.centreX,oz=(v->z.v>>16)-pt.centreZ;
+            spread+=ox*ox+oz*oz;
+        }
+        // RMS radius of a uniform disc of radius a is a/sqrt(2).
+        const int64_t rms2=isqrtFloor(uint64_t(2*spread/n));
+        if(rms2>packed) {pt.scaleNum=packed;pt.scaleDen=rms2;} else {pt.scaleNum=pt.scaleDen=1;}
+        const int64_t ax=px-pt.centreX,az=pz-pt.centreZ;
+        std::vector<std::tuple<int64_t,int,Member*>> order;
+        for(const auto& [id,mm]:list) {
+            const Unit* v=w.unit(id);
+            const int64_t ox=(v->x.v>>16)-pt.centreX,oz=(v->z.v>>16)-pt.centreZ;
+            order.push_back({-(ox*ax+oz*az),id,mm});
+        }
+        std::sort(order.begin(),order.end(),[](const auto& a,const auto& b) {
+            return std::get<0>(a)!=std::get<0>(b)?std::get<0>(a)<std::get<0>(b):std::get<1>(a)<std::get<1>(b);});
+        for(const auto& [key2,id,mm]:order) {
+            const Unit* v=w.unit(id);
+            const Group& gg=groups.find(mm->group)->second;
+            const Plane& pp=plane(gg.plane);
+            const int64_t ox=(v->x.v>>16)-pt.centreX,oz=(v->z.v>>16)-pt.centreZ;
+            const int cell=formationCell(*v,pp,gg.comp,pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
+            if(cell>=0)takeFormation(*mm,*v,cell);
+        }
+    }
+    // Shared points: formation slots (assigned once for the whole point; a
+    // later joiner maps its own offset the same way). A member walled off
+    // from its slot re-chooses the free cell nearest itself every 20 held
+    // updates, inside the same area.
+    bool formationSlot(const Unit& u,Member& m,const Group& g,const Plane& p) {
+        auto found=points.find(m.point);
+        if(found==points.end()||found->second.refs<2)return false;
+        auto& pt=found->second;
+        if(!pt.assigned)assignFormation(pt,m.point);
+        if(!pt.assigned||pt.limit<=0)return true;
+        const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
+        if(m.slot>=0) {
+            if(m.state!=Holding||m.held<20||m.held%20)return true;
+            slotCells(m,u.type->footX,u.type->footZ,false);
+            const int cell=reachableFormationCell(u,p,pt,px,pz);
+            if(cell>=0)m.goal=cell;
+            slotCells(m,u.type->footX,u.type->footZ,true);m.lineCell=-1;
+            return true;
+        }
+        // No free cell was left for this member: it walks to the point and
+        // looks again (by reachability) only while it is held.
+        if(m.slot==-2) {
+            if(m.state!=Holding||m.held<20||m.held%20)return true;
+            const int cell=reachableFormationCell(u,p,pt,px,pz);
+            if(cell>=0)takeFormation(m,u,cell);
+            return true;
+        }
+        const int64_t ox=ux-pt.centreX,oz=uz-pt.centreZ;
+        const int cell=formationCell(u,p,g.comp,pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
+        if(cell>=0)takeFormation(m,u,cell);else m.slot=-2;
+        return true;
+    }
     void claimSlot(const Unit& u,Member& m,Group& g,const Plane& p,int here) {
         if(m.requested<0)return;
+        if(formationSlot(u,m,g,p))return;
         bool nearest=false;
         if(m.slot>=0) {
             // A claimed slot walled off by bodies that settled first is
@@ -943,7 +1118,10 @@ struct LegionNavigator::Impl {
         else {
             if(m.lineCell!=here) {
                 m.lineCell=here;
-                m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=kLineCells&&sweep(p,u,u.x,u.z,gx,gz);
+                // A formation member walks its own straight lane from farther out:
+                // descending the shared field first funnels the crowd into a file.
+                const int reach=m.slot>=0&&formationMember(m)?kFormationLineCells:kLineCells;
+                m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz);
             }
             direct=m.line;
         }
@@ -1059,7 +1237,10 @@ struct LegionNavigator::Impl {
                 // A body walled in by STILL bodies (settled arrivals, a held
                 // queue, idle units) plans a short committed detour around
                 // them; moving traffic is waited for, not planned around.
-                if(f&&m.detour<0&&m.route.empty()&&m.held>=m.nextDetour&&blockedBySettled(u,nx,nz)) {
+                // A formation member held a long time is in a standing jam of
+                // crossing lanes (nobody ahead will move first): it plans too.
+                if(f&&m.detour<0&&m.route.empty()&&m.held>=m.nextDetour&&
+                   (blockedBySettled(u,nx,nz)||(m.held>=60&&formationMember(m)))) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling.
                     const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
@@ -1221,13 +1402,23 @@ struct LegionNavigator::Impl {
         const int W=width();
         const int point=count>1?m.requested:m.goal;
         const Fixed gx=centre(point%W,u.type->footX),gz=centre(point/W,u.type->footZ);
-        const int64_t dx=(int64_t(u.x.v)-gx.v)>>16,dz=(int64_t(u.z.v)-gz.v)>>16;
+        int64_t dx=(int64_t(u.x.v)-gx.v)>>16,dz=(int64_t(u.z.v)-gz.v)>>16;
         // A member of a shared point held still for ten seconds within one
         // body of the packed disc is at the destination area: its slot is
         // gone (covered, or walled off by bodies that settled first) and
         // waiting longer cannot make one.
-        if(count>1&&m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
-        if(dx*dx+dz*dz>radius*radius)return false;
+        if(const auto pt=points.find(m.point);count>1&&pt!=points.end()&&pt->second.assigned&&pt->second.limit>0) {
+            // Formation slots: the area is the whole point's (every class
+            // sent there), measured from the requested point itself.
+            dx=(int64_t(u.x.v)>>16)-(int64_t(std::get<2>(m.point))>>16);
+            dz=(int64_t(u.z.v)>>16)-(int64_t(std::get<3>(m.point))>>16);
+            const int64_t limit=pt->second.limit;
+            if(dx*dx+dz*dz>limit*limit)return false;
+            if(m.stalled>=kAreaSettle)return true;
+        } else {
+            if(count>1&&m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
+            if(dx*dx+dz*dz>radius*radius)return false;
+        }
         if(count==1) {
             // A distinct goal is only "full" if another body stands on it;
             // otherwise settling short could plug the lane a neighbour needs.
@@ -1286,6 +1477,8 @@ struct LegionNavigator::Impl {
         for(const auto& [key,point]:points) {
             h=mix(h,uint64_t(std::get<0>(key)));h=mix(h,std::get<1>(key));
             h=mix(h,uint32_t(std::get<2>(key)));h=mix(h,uint32_t(std::get<3>(key)));h=mix(h,uint64_t(point.refs));
+            if(point.assigned) {h=mix(h,uint64_t(point.centreX));h=mix(h,uint64_t(point.centreZ));
+                h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));}
             for(int c:point.cells)h=mix(h,uint64_t(c));
         }
         for(const auto& [id,a]:anchors) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);}
