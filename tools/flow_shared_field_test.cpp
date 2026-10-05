@@ -72,7 +72,7 @@ int main() {
             bool threw=false;
             try {FieldBuilder bad(a,13,anchor);} catch(const std::invalid_argument&) {threw=true;}
             check(threw,"anchored field accepted a tile containing its goal");
-            // Goal-tile neighbours aim at the enclosing 16-cell block instead.
+            // An anchored field depends only on the box, also for a finer one.
             const auto c=destination(t,{410,108});
             const std::pair<Cell,Cell> block{{400,96},{415,111}};
             check(a->exits(12)==c->exits(12)&&field(a,12,block).hash()==field(c,12,block).hash(),
@@ -105,10 +105,10 @@ int main() {
             std::printf("shared fields: built %llu vs %llu (shared %llu, reuses %llu), first route %d steps\n",
                 (unsigned long long)c.fieldsBuilt,(unsigned long long)separate.counters().fieldsBuilt,
                 (unsigned long long)c.sharedFieldsBuilt,(unsigned long long)c.sharedReuses,first.steps);
-            // Only the goal tile itself resolves privately; its neighbour shares.
+            // The goal tile and its neighbours resolve privately.
             Service near;check(near.bind(1,1,t,{{400,100}}),"bind near");
             check(walk(near,1,*t,{330,100}).status==Service::Status::Arrived,"near route");
-            check(near.counters().sharedResolutions==1,"goal tile or its neighbour resolved incorrectly");
+            check(near.counters().sharedResolutions==0,"goal tile or its neighbour used a shared field");
         }
         {
             // Serial and worker scheduling publish identical shared state.

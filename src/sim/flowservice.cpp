@@ -40,17 +40,18 @@ const Service::FieldId& Service::resolve(uint64_t group,const Group& value,int t
     auto [low,high]=value.destination->goalBox();
     low={std::max(0,low.x),std::max(0,low.z)};high={std::min(topo.width-1,high.x),std::min(topo.height-1,high.z)};
     const int tx=tile%topo.tilesX,tz=tile/topo.tilesX;
-    // Keep exact per-destination bias on the goal tiles themselves. Outside
-    // them the bias only breaks ties between equally short component routes:
-    // aim neighbouring tiles at the goal's enclosing 16-cell blocks and
-    // farther tiles at its enclosing goal tiles, so nearby goals share fields.
+    // Keep exact per-destination bias on the goal tiles and their neighbours.
+    // Farther away the bias only breaks ties between equally short component
+    // routes: aim at the enclosing goal tiles, so nearby goals share fields.
+    // Sharing the neighbour ring too (with a 16-, 8- or 64-cell box) roughly
+    // doubled 1000-unit arrivals but broke formation re-spreading after a
+    // narrow passage and left a queued-group straggler; it is not used.
     const int gx0=low.x/kTileSize,gz0=low.z/kTileSize,gx1=high.x/kTileSize,gz1=high.z/kTileSize;
     const int ring=std::max({gx0-tx,tx-gx1,gz0-tz,tz-gz1,0});
-    if(budget_.shareDistant&&low.x<=high.x&&low.z<=high.z&&ring>=1) {
-        const int snap=ring>=2?kTileSize:16;
+    if(budget_.shareDistant&&low.x<=high.x&&low.z<=high.z&&ring>=2) {
         id.group=0;id.profile=value.key.profile;
-        id.low={low.x/snap*snap,low.z/snap*snap};
-        id.high={high.x/snap*snap+snap-1,high.z/snap*snap+snap-1};
+        id.low={gx0*kTileSize,gz0*kTileSize};
+        id.high={gx1*kTileSize+kTileSize-1,gz1*kTileSize+kTileSize-1};
         id.exits=value.destination->exits(tile);
         ++counters_.sharedResolutions;
         counters_.sharedReuses+=fields_.contains(id)||builders_.contains(id);
