@@ -9037,8 +9037,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         flow::Traffic::Result flowTraffic;
         if(isSharedPathfinding(pathfindingMode_) && flow_)
             flowTraffic=flow_->traffic(u);
-        const bool retailPlusMove=pathfindingMode_==PathfindingMode::RetailPlus&&retailPlus_&&retailPlus_->supports(u);
-        if(retailPlus_)flowTraffic=retailPlus_->traffic(u);
+        // One support decision serves both the movement branch and traffic.
+        const bool retailPlusSupported=retailPlus_&&retailPlus_->supports(u);
+        const bool retailPlusMove=pathfindingMode_==PathfindingMode::RetailPlus&&retailPlusSupported;
+        if(retailPlus_)flowTraffic=retailPlus_->traffic(u,retailPlusSupported);
         if(flowTraffic.settled) {
             // Area arrival owns a collision-checked standing footprint. Coasting
             // beyond it can plug another arrival lane or leave the accepted area.

@@ -64,29 +64,44 @@ void Traffic::erase(std::map<int,Record>::iterator it) {
         if(it->second.settled)group->second.settledArea-=footprintArea(it->second.footX,it->second.footZ);
         if(!--group->second.members)groups_.erase(group);
     }}
-    waiting_.erase(it->first);admitted_.erase(it->first);records_.erase(it);
+    waiting_.erase(it->first);admitted_.erase(it->first);index_.clear(it->first);records_.erase(it);
+    if(records_.empty())index_.release();
+}
+Traffic::Record* Traffic::lookup(int id) {
+    if(const auto* s=index_.find(id))return s->record;
+    if(IdIndex<Slot>::covers(id))return nullptr;
+    const auto it=records_.find(id);return it==records_.end()?nullptr:&it->second;
+}
+const Traffic::Record* Traffic::lookup(int id) const {
+    if(const auto* s=index_.find(id))return s->record;
+    if(IdIndex<Slot>::covers(id))return nullptr;
+    const auto it=records_.find(id);return it==records_.end()?nullptr:&it->second;
 }
 int Traffic::arrivalRadiusSquared(const Context& c) const {
     const auto group=groups_.find({c.player,c.target.x,c.target.z,c.targetId});
     return group==groups_.end()||group->second.members<2?0:int(std::min<uint64_t>(512*512,group->second.area));
 }
 bool Traffic::settled(int id,Cell position) const {
-    const auto it=records_.find(id);return it!=records_.end()&&it->second.settled&&it->second.position==position;
+    const auto* r=lookup(id);return r&&r->settled&&r->position==position;
 }
 void Traffic::refreshSettled(int id,Cell position) {
-    const auto it=records_.find(id);if(it!=records_.end()&&it->second.settled)it->second.position=position;
+    if(auto* r=lookup(id);r&&r->settled)r->position=position;
 }
 bool Traffic::nearArrival(const Context& c) const {
     const int64_t spacing=std::max(c.footX,c.footZ)+1;
-    const auto group=groups_.find({c.player,c.target.x,c.target.z,c.targetId});
-    const int64_t members=group==groups_.end()?1:int64_t(group->second.members)+1;
-    const int64_t area=group==groups_.end()?spacing*spacing:int64_t(group->second.area);
+    const Group key{c.player,c.target.x,c.target.z,c.targetId};
+    // A plain member's cached population is its own group's map node.
+    const Population* population=nullptr;
+    if(const auto* s=slot(c.id);s&&s->group&&s->record->group==key)population=s->group;
+    else if(const auto group=groups_.find(key);group!=groups_.end())population=&group->second;
+    const int64_t members=!population?1:int64_t(population->members)+1;
+    const int64_t area=!population?spacing*spacing:int64_t(population->area);
     const int64_t ordinary=std::min<int64_t>(64,members*spacing);
     // Geometric area plus the ordinary constrained-queue window is enough for
     // movers making progress. A linear population radius made every refusal
     // in a large travelling army scan destination neighbors across the map.
     int64_t radius2=std::max({64*spacing*spacing,ordinary*ordinary,2*area+2*spacing*spacing});
-    if(const auto record=records_.find(c.id);record!=records_.end()&&c.tick-record->second.progressTick>=300u)
+    if(const auto* record=lookup(c.id);record&&c.tick-record->progressTick>=300u)
         radius2=std::max(radius2,members*members*spacing*spacing);
     return distance(c.position,c.target)<=radius2;
 }
@@ -95,27 +110,27 @@ bool Traffic::needsArrivalNeighbors(const Context& c) const {
     const auto group=groups_.find({c.player,c.target.x,c.target.z,c.targetId});
     if(group==groups_.end()||!group->second.settledArea)return false;
     if(c.blocked<2) {
-        const auto r=records_.find(c.id);
-        if(r==records_.end()||!r->second.plain||r->second.issuedTick!=c.issuedTick||
-           r->second.group!=Group{c.player,c.target.x,c.target.z,c.targetId}||c.tick-r->second.progressTick<300u)return false;
+        const auto* r=lookup(c.id);
+        if(!r||!r->plain||r->issuedTick!=c.issuedTick||
+           r->group!=Group{c.player,c.target.x,c.target.z,c.targetId}||c.tick-r->progressTick<300u)return false;
     }
     return nearArrival(c);
 }
 Traffic::Record& Traffic::remember(const Context& c) {
     const Group group{c.player,c.target.x,c.target.z,c.targetId};
-    auto it=records_.find(c.id);
-    if(it!=records_.end()&&(it->second.controller!=c.controller||it->second.group!=group||it->second.plain!=c.plainMove||
-       it->second.footX!=c.footX||it->second.footZ!=c.footZ||
-       it->second.missionKind!=c.missionKind||it->second.targetId!=c.targetId||it->second.issuedTick!=c.issuedTick)) {
-        const auto& r=it->second;
+    Record* existing=lookup(c.id);
+    if(existing&&(existing->controller!=c.controller||existing->group!=group||existing->plain!=c.plainMove||
+       existing->footX!=c.footX||existing->footZ!=c.footZ||
+       existing->missionKind!=c.missionKind||existing->targetId!=c.targetId||existing->issuedTick!=c.issuedTick)) {
+        const auto& r=*existing;
         if(c.plainMove&&r.plain&&r.group==group&&r.issuedTick==c.issuedTick&&r.footX==c.footX&&r.footZ==c.footZ&&
            r.missionKind==c.missionKind&&r.targetId==c.targetId) {
             // Internal controller retries retain the issued mission. Keep its
             // progress instead of resetting the watchdog each time.
-            it->second.controller=c.controller;it->second.yieldTo=0;
-        } else {erase(it);it=records_.end();}
+            existing->controller=c.controller;existing->yieldTo=0;
+        } else {erase(records_.find(c.id));existing=nullptr;}
     }
-    if(it==records_.end()) {
+    if(!existing) {
         // Unit caps already bound normal matches. Retain deterministic behavior
         // in synthetic/oversubscribed callers without growing the cache forever.
         if(records_.size()==16384) {
@@ -127,10 +142,12 @@ Traffic::Record& Traffic::remember(const Context& c) {
         r.issuedTick=c.issuedTick;
         r.footX=c.footX;r.footZ=c.footZ;
         if(c.plainMove){r.progressTick=c.tick;r.bestDistance=distance(c.position,c.target);}
-        it=records_.emplace(c.id,r).first;
-        if(c.plainMove){auto& population=groups_[group];++population.members;population.area+=footprintArea(c.footX,c.footZ);}
+        existing=&records_.emplace(c.id,r).first->second;
+        Population* population=nullptr;
+        if(c.plainMove){population=&groups_[group];++population->members;population->area+=footprintArea(c.footX,c.footZ);}
+        index_.set(c.id,{existing,population});
     }
-    auto& record=it->second;
+    auto& record=*existing;
     if(record.settled&&record.position!=c.position) {
         if(record.plain)groups_.at(record.group).settledArea-=footprintArea(record.footX,record.footZ);
         record.settled=false;
@@ -157,8 +174,8 @@ void Traffic::beginTick(uint32_t tick) {
 bool Traffic::updateUnblocked(const Context& c) {
     if(!c.plainMove||c.goalReached||c.blocked>=2||c.obstruction||!c.neighbors.empty()||
        c.arrivalReachable||c.contactReachable||(c.localDeferred&&*c.localDeferred))return false;
-    const auto it=records_.find(c.id);if(it==records_.end())return false;
-    auto& r=it->second;
+    Record* const record=lookup(c.id);if(!record)return false;
+    auto& r=*record;
     if(r.controller!=c.controller||r.group!=Group{c.player,c.target.x,c.target.z,c.targetId}||
        r.plain!=c.plainMove||r.footX!=c.footX||r.footZ!=c.footZ||r.missionKind!=c.missionKind||
        r.targetId!=c.targetId||r.issuedTick!=c.issuedTick||
@@ -793,5 +810,5 @@ uint64_t Traffic::checksum() const {
         mix(r.yieldDirection.x);mix(r.yieldDirection.z);mix(r.yieldOrigin.x);mix(r.yieldOrigin.z);mix(bool(r.detour));if(r.detour){mix(r.detour->x);mix(r.detour->z);}mix(bool(r.continuation));if(r.continuation){mix(r.continuation->x);mix(r.continuation->z);}}
     return h;
 }
-size_t Traffic::bytes() const {return records_.size()*(sizeof(Record)+64)+groups_.size()*(sizeof(Group)+sizeof(Population)+48)+(waiting_.size()+admitted_.size())*48+reservations_.size()*112+reservationLinks_*48;}
+size_t Traffic::bytes() const {return index_.bytes()+records_.size()*(sizeof(Record)+64)+groups_.size()*(sizeof(Group)+sizeof(Population)+48)+(waiting_.size()+admitted_.size())*48+reservations_.size()*112+reservationLinks_*48;}
 }

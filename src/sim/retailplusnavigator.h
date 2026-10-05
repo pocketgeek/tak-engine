@@ -24,6 +24,8 @@ public:
     void cancel(int);
     void tick();
     flow::Traffic::Result traffic(Unit&);
+    // Same as traffic(Unit&) for a caller that has just evaluated supports().
+    flow::Traffic::Result traffic(Unit&,bool supported);
     uint64_t checksum() const;
     Stats stats() const;
 private:

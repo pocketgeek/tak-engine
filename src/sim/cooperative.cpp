@@ -71,7 +71,13 @@ void Traffic::erase(std::map<int,Record>::iterator it) {
         group->second.x-=r.start.x;group->second.z-=r.start.z;
         if(!--group->second.count)groups_.erase(group);
     }
-    admitted_.erase(id);pending_.erase(id);records_.erase(it);
+    admitted_.erase(id);pending_.erase(id);index_.clear(id);records_.erase(it);
+    if(records_.empty())index_.release();
+}
+Traffic::Record* Traffic::lookup(int id) {
+    if(const auto* s=index_.find(id))return s->record;
+    if(flow::IdIndex<Slot>::covers(id))return nullptr;
+    const auto it=records_.find(id);return it==records_.end()?nullptr:&it->second;
 }
 void Traffic::cancel(int id) {
     const auto it=records_.find(id);if(it!=records_.end())erase(it);
@@ -183,26 +189,27 @@ Traffic::Record* Traffic::remember(const Context& c) {
     // physical probe or retain an earlier valid body's movement claims.
     if(c.footX<1||c.footX>64||c.footZ<1||c.footZ>64){cancel(c.id);return nullptr;}
     const flow::Traffic::Identity identity{c.controller,c.target,c.missionKind,c.targetId};
-    auto it=records_.find(c.id);
-    if(it!=records_.end()) {
-        auto& r=it->second;
+    Record* existing=lookup(c.id);
+    if(existing) {
+        auto& r=*existing;
         if(r.identity.target!=c.target||r.identity.kind!=c.missionKind||r.identity.targetId!=c.targetId||
            r.issued!=c.issuedTick||r.player!=c.player||r.coordination!=coordinationMask(c.player)||r.footX!=c.footX||r.footZ!=c.footZ) {
-            erase(it);it=records_.end();
+            erase(records_.find(c.id));existing=nullptr;
         } else {
             if(r.identity.controller!=c.controller)r.retryPolicy=0;
             r.identity.controller=c.controller;
         }
     }
-    if(it==records_.end()) {
+    if(!existing) {
         if(records_.size()>=maxRecords||logicalBytes()+65536>=memoryLimit)return nullptr;
         Record r;r.identity=identity;r.player=c.player;r.coordination=coordinationMask(c.player);r.footX=c.footX;r.footZ=c.footZ;
         r.issued=c.issuedTick;r.start=r.position=c.position;r.seen=r.progress=c.tick;
-        it=records_.emplace(c.id,r).first;
+        existing=&records_.emplace(c.id,r).first->second;
+        index_.set(c.id,{existing});
         auto& group=groups_[{c.player,c.target.x,c.target.z,c.targetId}];
         group.x+=c.position.x;group.z+=c.position.z;++group.count;
     }
-    auto& r=it->second;
+    auto& r=*existing;
     if(r.position!=c.position){r.progress=c.tick;r.position=c.position;r.retryPolicy=0;}
     r.seen=c.tick;return &r;
 }
@@ -444,8 +451,8 @@ Traffic::Result Traffic::follow(const Context& c,Record& r) {
 bool Traffic::updateUnblocked(const Context& c) {
     if(!c.plainMove||c.goalReached||c.blocked>=2||c.obstruction||!c.neighbors.empty()||
        c.arrivalReachable||c.contactReachable||(c.localDeferred&&*c.localDeferred)||!claims_.empty())return false;
-    const auto it=records_.find(c.id);if(it==records_.end())return false;
-    auto& r=it->second;
+    Record* const record=lookup(c.id);if(!record)return false;
+    auto& r=*record;
     if(r.identity!=flow::Traffic::Identity{c.controller,c.target,c.missionKind,c.targetId}||
        r.issued!=c.issuedTick||r.player!=c.player||r.coordination!=coordinationMask(c.player)||
        r.footX!=c.footX||r.footZ!=c.footZ||
@@ -588,7 +595,7 @@ void Traffic::prune(size_t budget,const std::function<bool(int,int,uint64_t,Cell
     }
 }
 size_t Traffic::bytes() const {
-    return sizeof(*this)+arrivals_.bytes()+records_.size()*(sizeof(Record)+64)+groups_.size()*(sizeof(Group)+sizeof(Population)+64)+
+    return sizeof(*this)+index_.bytes()+arrivals_.bytes()+records_.size()*(sizeof(Record)+64)+groups_.size()*(sizeof(Group)+sizeof(Population)+64)+
         passages_.size()*(sizeof(PassageKey)+sizeof(Gate)+64)+claims_.size()*112+links_*48+(pending_.size()+admitted_.size())*48;
 }
 size_t Traffic::logicalBytes() const {

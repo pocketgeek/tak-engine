@@ -78,11 +78,12 @@ void RetailPlusNavigator::tick() {
     if(profile)p.maintenanceNanoseconds+=profileElapsed(start);
 }
 
-flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {
+flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {return traffic(u,supports(u));}
+flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u,bool supported) {
     auto& p=*impl_;auto& w=p.world;
     const bool profile=w.paths_.profiling();
     const auto start=profile?ProfileClock::now():ProfileClock::time_point{};
-    if(!supports(u)) {p.policy.cancel(u.id);return {};}
+    if(!supported) {p.policy.cancel(u.id);return {};}
     auto c=p.context(u);
     const auto& goal=u.orders[World::currentLeg(u.orders)];
     if(!goal.controller&&(goal.mission.pending&0x500))p.policy.refreshSettled(u.id,c.position);

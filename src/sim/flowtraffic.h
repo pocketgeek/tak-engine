@@ -1,6 +1,7 @@
 #pragma once
 #include "flowfield.h"
 #include "flowroute.h"
+#include "trafficindex.h"
 #include <array>
 #include <functional>
 #include <map>
@@ -119,6 +120,13 @@ private:
     std::map<int,Record> records_;
     struct Population {size_t members=0;uint64_t area=0,settledArea=0;};
     std::map<Group,Population> groups_;
+    // Pointer cache over records_/groups_ nodes; plain records keep their
+    // group node alive, so its population pointer is valid with the record.
+    struct Slot {Record* record=nullptr;Population* group=nullptr;};
+    IdIndex<Slot> index_;
+    const Slot* slot(int id) const {return index_.find(id);}
+    Record* lookup(int id);
+    const Record* lookup(int id) const;
     using Bucket=std::pair<int,int>;
     std::map<Bucket,std::set<int>> reservations_;
     size_t reservationLinks_=0;

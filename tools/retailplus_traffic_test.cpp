@@ -300,12 +300,55 @@ void unblockedEquivalence() {
     check(shortcuts>1000&&declines>100,"equivalence fixture missed fast or retained/arrival paths");
 }
 
+// Record lookups use a dense id index over the ordered record maps. Exercise
+// every way a record is replaced or retired, with ids inside and outside the
+// dense window, and require the shortcut to match full updates exactly.
+void unblockedLifecycleEquivalence() {
+    Traffic reference,fast;
+    std::array<Traffic::Context,12> members;
+    for(size_t i=0;i<members.size();++i) {
+        const int id=i%2?int(i+1):int(flow::IdIndex<int*>::dense+7+i);
+        members[i]=context(id,{100,100+int(i)*6},{1200,100});
+        reference.registerMove(members[i]);fast.registerMove(members[i]);
+    }
+    unsigned shortcuts=0,declines=0;
+    for(uint32_t tick=1;tick<=900;++tick) {
+        if(tick==300){reference.setAllianceMask(0,3);fast.setAllianceMask(0,3);} // Alliance change.
+        if(tick==500){reference.reset();fast.reset();}                          // Moved-from tables.
+        const int dead=tick>=650?members[4].id:0;
+        const auto valid=[&](int id,int,uint64_t,Cell,bool){return id!=dead;};
+        reference.prune(64,valid);fast.prune(64,valid);
+        for(size_t i=0;i<members.size();++i) {
+            auto& c=members[i];c.tick=tick;
+            if(i==4&&tick>=650)continue;                                     // Death: prune retires it.
+            ++c.position.x;
+            if(tick==100&&i%3==0){c.footX=3;}                                 // Footprint change.
+            if(tick==200&&i==3)c.player=1;                                     // Ownership change.
+            if(tick==400&&i<4){reference.cancel(c.id);fast.cancel(c.id);}      // Cancelled/killed.
+            if(tick==600&&i%2){++c.issuedTick;c.target.z+=40;++c.controller;} // Order replacement.
+            auto cheap=c;cheap.free={};cheap.terrainFree={};cheap.arrivalReachable={};cheap.contactReachable={};
+            const auto expected=reference.update(c);
+            Traffic::Result actual;
+            const auto before=fast.checksum();
+            if(fast.updateUnblocked(cheap))++shortcuts;
+            else {
+                check(fast.checksum()==before,"declined indexed shortcut changed state");
+                ++declines;actual=fast.update(c);
+            }
+            check(expected.settled==actual.settled&&expected.detour==actual.detour&&expected.wait==actual.wait&&
+                  expected.repath==actual.repath&&expected.arrivalApproach==actual.arrivalApproach&&
+                  reference.checksum()==fast.checksum(),"indexed shortcut diverged after a record lifecycle change");
+        }
+    }
+    check(shortcuts>5000&&declines>=20,"lifecycle fixture missed fast or replacement paths");
+}
+
 }
 int main() {
     scope();const auto first=retainedRoute(),second=retainedRoute();
     check(first==second,"identical traffic contexts produced different retained state");
     diagonalAndEnclosed();opposingAndLifecycle();strictArrivals();boundedFairWork();deferredLocalQueries();cancelledArrivalSlot();
-    proofCosts();unblockedEquivalence();
+    proofCosts();unblockedEquivalence();unblockedLifecycleEquivalence();
     std::printf("PASS Retail+ scope, retained legal routes, strict arrivals, lifecycle and fair bounded work hash=%016llx\n",
         (unsigned long long)first);
 }
