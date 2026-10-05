@@ -501,12 +501,14 @@ struct LegionNavigator::Impl {
             const int cx=ox+d[0],cz=oz+d[1];
             if((cx==nx&&cz==nz)||!step(p,ox,oz,d[0],d[1]))continue;
             const int64_t v=int64_t(gx-cx)*(gx-cx)+int64_t(gz-cz)*(gz-cz);
-            if(v<here)options[size_t(count++)]={v,k};
+            // Nearer the goal, or square to it (a step into the lane beside
+            // the row ahead); never backwards.
+            if(v<here||int64_t(d[0])*(gx-ox)+int64_t(d[1])*(gz-oz)==0)options[size_t(count++)]={v,k};
         }
         std::sort(options.begin(),options.begin()+count);
         for(int i=0;i<count;++i) {
             const auto& d=kDirections[size_t(options[size_t(i)].second)];
-            if(!requestYield(u,ox+d[0],oz+d[1]))continue;
+            if(!stepFree(u,ox,oz,ox+d[0],oz+d[1])&&!requestYield(u,ox+d[0],oz+d[1]))continue;
             m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;
             return true;
         }
