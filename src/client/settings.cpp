@@ -98,9 +98,10 @@ Settings loadSettings() {
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
         else if (key == "gameCreate.pathfindingMode")
-            s.gameCreate.pathfindingMode = val == "3" ? sim::PathfindingMode::RetailPlus :
-                val == "2" ? sim::PathfindingMode::Cooperative :
-                val == "1" ? sim::PathfindingMode::Flowfield : sim::PathfindingMode::Retail;
+            // Exactly one stable mode byte; anything else falls back to Retail.
+            s.gameCreate.pathfindingMode = val.size() == 1 && val[0] >= '0' &&
+                sim::validPathfindingMode(uint8_t(val[0] - '0'))
+                ? sim::PathfindingMode(val[0] - '0') : sim::PathfindingMode::Retail;
         else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
         else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
         else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();

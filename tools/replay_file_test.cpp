@@ -31,14 +31,16 @@ void run(){
  auto load=[&](const Writer& value,ReplayFile* decoded=nullptr){std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(value.b.data()),std::streamsize(value.b.size()));out.close();ReplayFile replay;const bool ok=loadReplayFile(name,replay);if(ok && decoded)*decoded=std::move(replay);return ok;};
  check(load(recording()),"current simulation recording refused");
  ReplayFile decoded;
- for(auto mode:{tak::sim::PathfindingMode::Retail,tak::sim::PathfindingMode::Flowfield,tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus})
+ for(auto mode:{tak::sim::PathfindingMode::Retail,tak::sim::PathfindingMode::Flowfield,tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Legion})
   check(load(recording(kNetVersion,Command{},0,false,mode),&decoded)&&decoded.cfg.pathfindingMode==mode,
         "recorded pathfinder did not reach match configuration");
  check(load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Cooperative,"campaign"),&decoded)&&
        decoded.cfg.pathfindingMode==tak::sim::PathfindingMode::Retail,"campaign replay used a non-Retail pathfinder");
- check(!load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode(4))),"unknown pathfinder accepted");
+ check(load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode::Legion,"campaign"),&decoded)&&
+       decoded.cfg.pathfindingMode==tak::sim::PathfindingMode::Retail,"campaign replay used Legion");
+ check(!load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode(5))),"unknown pathfinder accepted");
  check(!load(recording(kNetVersion,Command{},0,false,tak::sim::PathfindingMode(255))),"invalid pathfinder byte accepted");
- for(uint32_t protocol:{219,220,221,222,223,224,225,226})
+ for(uint32_t protocol:{219,220,221,222,223,224,225,226,227})
   check(!load(recording(protocol,Command{},0,false,tak::sim::PathfindingMode::Flowfield)),
         "incompatible simulation recording accepted");
  Command area;area.kind=Cmd::BuildManaArea;area.unitId=1;area.x=100;area.z=200;area.x2=800;area.z2=900;

@@ -17,21 +17,24 @@ int main(){try {
     (*files)["maps/large.tnt"]=mapBytes(2050);(*files)["maps/small.tnt"]=mapBytes(64);
     hpi::Vfs vfs;vfs.setMapFiles(files);sim::TypeRegistry registry;
     for(int mode=0;mode<256;++mode)
-        check(sim::validPathfindingMode(uint8_t(mode))==(mode<4),"pathfinder byte validation is not strict");
+        check(sim::validPathfindingMode(uint8_t(mode))==(mode<5),"pathfinder byte validation is not strict");
     check(!sim::isSharedPathfinding(sim::PathfindingMode::Retail)&&
           !sim::isSharedPathfinding(sim::PathfindingMode::RetailPlus)&&
           sim::isSharedPathfinding(sim::PathfindingMode::Flowfield)&&sim::isSharedPathfinding(sim::PathfindingMode::Cooperative),
           "shared pathfinder classification changed Retail");
-    {
+    check(!sim::isSharedPathfinding(sim::PathfindingMode::Legion)&&!sim::isRetailPathfinding(sim::PathfindingMode::Legion)&&
+          sim::isLegionPathfinding(sim::PathfindingMode::Legion)&&!sim::isLegionPathfinding(sim::PathfindingMode::Retail),
+          "Legion pathfinder classification overlaps another mode");
+    for(auto mode:{sim::PathfindingMode::RetailPlus,sim::PathfindingMode::Legion}) {
         sim::World world;world.setVisPlayer(-1);
         sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.loadCrt=false;cfg.mapPath="maps/small.tnt";
-        cfg.pathfindingMode=sim::PathfindingMode::RetailPlus;
+        cfg.pathfindingMode=mode;
         sim::setupMatch(world,registry,cfg);
-        check(world.pathfindingMode()==sim::PathfindingMode::RetailPlus,"Retail+ lost its match configuration");
+        check(world.pathfindingMode()==mode,"Retail+/Legion lost its match configuration");
         world.tick(1.f/30);world.resetForReplay();
         cfg.pathfindingMode=sim::PathfindingMode::Retail;
         sim::setupMatch(world,registry,cfg);
-        check(world.pathfindingMode()==sim::PathfindingMode::Retail,"Retail+ state survived replay reset");
+        check(world.pathfindingMode()==sim::PathfindingMode::Retail,"Retail+/Legion state survived replay reset");
     }
     for(auto mode:{sim::PathfindingMode::Flowfield,sim::PathfindingMode::Cooperative}) {
         sim::World world;world.setVisPlayer(-1);
@@ -49,7 +52,7 @@ int main(){try {
         cfg.mapPath="maps/large.tnt";
         bool refused=false;try{sim::setupMatch(world,registry,cfg);}catch(const std::invalid_argument&){refused=true;}
         check(refused&&world.nav().width()==64,"unsupported shared pathfinder map mutated navigation before rejection");
-        cfg.mapPath="maps/small.tnt";cfg.pathfindingMode=sim::PathfindingMode(4);
+        cfg.mapPath="maps/small.tnt";cfg.pathfindingMode=sim::PathfindingMode(5);
         refused=false;try{sim::setupMatch(world,registry,cfg);}catch(const std::invalid_argument&){refused=true;}
         check(refused&&world.nav().width()==64,"invalid pathfinder mutated navigation before rejection");
         cfg.mapPath="maps/large.tnt";

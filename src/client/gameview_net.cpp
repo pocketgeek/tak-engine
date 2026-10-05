@@ -720,7 +720,8 @@ void GameView::autoplayStep() {
             o.monarchExpendable = tak::devFlag("TAK_MONARCH_EXPENDABLE") ? 1 : 0;
             o.forfeitSelfDestruct = tak::devFlag("TAK_FORFEIT_SELFDESTRUCT") ? 1 : 0;
             o.doubleSight = tak::devFlag("TAK_DOUBLE_SIGHT") ? 1 : 0;
-            o.pathfindingMode = tak::devFlag("TAK_RETAIL_PLUS") ? tak::sim::PathfindingMode::RetailPlus :
+            o.pathfindingMode = tak::devFlag("TAK_LEGION") ? tak::sim::PathfindingMode::Legion :
+                tak::devFlag("TAK_RETAIL_PLUS") ? tak::sim::PathfindingMode::RetailPlus :
                 tak::devFlag("TAK_COOPERATIVE") ? tak::sim::PathfindingMode::Cooperative :
                 tak::devFlag("TAK_FLOWFIELD") ? tak::sim::PathfindingMode::Flowfield : tak::sim::PathfindingMode::Retail;
             // TAK_FOG=0|1|2 forces the room's fog rule (not explored / explored /
