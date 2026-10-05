@@ -62,7 +62,7 @@ must be judged on physical outcomes as well as its tick cost.
 
 ### Unblocked traffic bookkeeping
 
-An ordinary unblocked mover far from arrival can now update its existing traffic
+An ordinary unblocked mover far from arrival can update its existing traffic
 records without constructing the body-query and arrival-proof callbacks. The
 shortcut requires exact command, player, alliance, footprint and goal identities,
 no retained detour, passage, arrival slot or yielding state, and an empty local
@@ -72,13 +72,63 @@ shortcut leaves all state untouched: the full adapter may subsequently defer on
 its body-query quota without calling the traffic policy. Geometric arrival and
 every retained claim continue through the complete validation path.
 
-The optional `--profile` observations separate context/bookkeeping, callback and
-body-query setup, traffic-policy execution, and per-tick maintenance. These
-clocks never affect movement, work quotas, or checksums. A 2,000-unit open-ground
-diagnostic over 6,000 ticks used the shortcut for 7,715,839 updates and the full
-path for 717,959 updates; both paths retained the reference completion tick 4,384.
-This is workload coverage, not a speedup estimate. Final four-mode timing results
-must use the exact integrated candidate and its recorded baseline.
+The identity checks above are not what makes skipping the callbacks safe; at
+the shortcut's call site no neighbor, obstruction or proof callback exists yet,
+so they are vacuous there. Two guards carry the equivalence. A member with
+`blocked>=2` declines, because the full path would run an obstruction query.
+A member for which `nearArrival` holds declines, because only then does the full
+path request arrival neighbors or hand arrival callbacks to the arrival
+coordinator. Away from both, the full update never consults what was skipped,
+and skipping the setup has no side effects. A regression test compares the
+shortcut against the full update, including checksums after every update, across
+footprint, ownership and alliance changes, cancellation by death, prune
+retirement, order and controller replacement, coordinator reset by move
+assignment, and unit ids above the dense index window. Declined shortcuts must
+leave state unchanged.
+
+Flowfield and Cooperative now use the same shortcut through their traffic
+adapter; the Flowfield variant also declines inside the arrival-area window.
+See [the Flowfield notes](pathfinding-port.md#unblocked-traffic-fast-path-protocol-228).
+
+Support for a unit is evaluated once per unit update and passed to the traffic
+adapter, rather than once for movement and again for traffic. The Retail+
+re-request condition evaluates the pending-path lookup last; every term is pure,
+so the order changes cost, not results.
+
+Traffic records in both coordinators are reached through `flow::IdIndex`
+(`src/sim/trafficindex.h`), a dense id-indexed vector of pointers into the
+existing record maps. Before this change, map tree walks accounted for most of
+the measured Retail+ traffic cost: record lookups in both coordinators and the
+group lookup, which runs about once per mover because groups are per mission
+target. The maps remain authoritative for membership, ordered iteration, prune
+and eviction cursors, and checksums; the index is set and cleared only where a
+record is inserted or erased. Ids at or above 2^18 fall back to the map. The
+index costs 8 bytes per id (Cooperative records) or 16 bytes (Flowfield records
+plus a cached group pointer) up to the highest live id. It is released when a
+table empties and is trimmed back to the highest live id after enough erasures,
+in amortized constant time. A single live mover with an id near 2^18 still holds
+its window, at most 4 MiB per Flowfield table. The index is counted in the
+statistics `bytes()` but not in the protocol-constant logical admission charge,
+so it does not change admission. Coordinators that hold an index are move-only.
+Simulation hashes are unchanged in every mode.
+
+Fast and full update counts are always recorded, whether or not `--profile`
+clocks are enabled; previously they printed zero without profiling, which read
+as Retail+ never running. They are unhashed observations. The optional
+`--profile` clocks separate context/bookkeeping, callback and body-query setup,
+traffic-policy execution, and per-tick maintenance. None of these values affects
+movement, work quotas or checksums. A 2,000-unit open-ground diagnostic over
+6,000 ticks used the shortcut for 7,715,839 updates and the full path for
+717,959 updates; both paths retained the reference completion tick 4,384.
+That is workload coverage, not a speedup estimate.
+
+Exploratory timing on a heavily shared host (load 23 to 69 on 24 CPUs) placed
+the index and the shared-mode fast path at 0.85 to 0.90 of the previous
+Retail+ tick time on open ground at 500 to 2,000 movers (paired runs, five
+repeats), and 0.92 in the saturated 2,000-unit doorway. Before the change,
+Retail+ took 1.23 to 1.37 times Retail's tick time on the same open-ground
+cases. No clean Retail+-versus-Retail ratio was obtained for the final build;
+these ratios are not idle-host results.
 
 ## Shared CPU improvements
 
@@ -124,8 +174,9 @@ worker completion order never choose movement outcomes.
 
 ## Compatibility
 
-The mode byte retains `0=Retail`, `1=Flowfield`, `2=Cooperative`, and adds
-`3=Retail+`. Version 0.7.24 uses protocol 227 and requires matching clients and servers.
+The mode byte retains `0=Retail`, `1=Flowfield`, `2=Cooperative` and
+`3=Retail+`, and adds `4=Legion`. The current build uses protocol 228 and requires
+matching clients and servers.
 Replay format 11's layout is unchanged, but playback requires the current
 simulation protocol; use an older engine for its older recordings. Unknown
 network/replay mode bytes are rejected. Missing or invalid saved preferences
@@ -166,6 +217,8 @@ without reissuing commands. A lower tick time with less movement is not counted
 as an equivalent-throughput improvement.
 
 ## Measurements, 2026-10-05
+
+Later results are in [navigation comparison, 2026-10-05](navigation-comparison-2026-10-05.md).
 
 The final timing sweep ran 120 cases serially on Fedora 44, x86-64, Intel Core
 Ultra 9 275HX. Frozen and new binaries used the same benchmark source, `-O3`,
@@ -410,7 +463,7 @@ passage integration needs those prerequisites and its own measured memory/work
 cost. Existing committed-detour and clearance behavior remains intact.
 
 Only the behavior-equivalent unblocked bookkeeping shortcut is retained from
-this local-policy work. Its regression compares results and checksums after
+this local-policy work; the later occupancy-grid change is described below. Its regression compares results and checksums after
 12,000 individual updates, including replacements, cancellation, stalls, retained
 routes and arrivals, and verifies that declined shortcuts change no state.
 The final implementation matches 52 frozen-baseline trace files byte for byte:
@@ -425,8 +478,131 @@ a general congestion improvement.
 A separate Cooperative adapter prototype called the same bookkeeping-only
 shortcut after refreshing settled members and checking pending passage proofs.
 All 26 trace files matched its frozen control across the same 13 scenarios.
-It was removed because its performance comparison was not completed; no
-Cooperative speedup is claimed or shipped from that prototype.
+It was removed because its performance comparison was not completed. A later
+version of the adapter, for both Cooperative and Flowfield, was merged with the
+id index; see Unblocked traffic bookkeeping above. In Cooperative it measured
+as neutral.
 
 The stopped investigation and remaining validation work are summarized in
 [navigation comparison, 2026-10-05](navigation-comparison-2026-10-05.md).
+
+## Saturated doorway: occupancy-grid obstruction lookup (protocol 228)
+
+### Diagnosis
+
+Temporary observation-only probes were run on the 2,000-unit, one-player
+doorway at seed 0 for 6,000 ticks; they left hashes unchanged and were removed.
+They showed the following.
+
+- Native search work binds both modes. Each spent about 72.1 million work units,
+  the full per-tick search budget. Crossings tracked native search completions
+  at about 7% in both modes, but Retail+ completed 1,199 searches against
+  Retail's 3,569 for the same work.
+- Retail+ searches cost more each: 7,620 work units per request against 3,730.
+  Searches from the far crowd were the difference. Retail's far crowd was mostly
+  stationary against the wall (56% of far unit-ticks had not moved for 150
+  ticks), so its searches failed early and cheaply. Retail+'s local detours kept
+  far bodies recently moved (21% stationary), so their partial searches explored
+  further before failing and returned short shuffling routes.
+- Retail+ units were parked rather than pushing. About 90% of units in both
+  modes had a native request pending at tick 6,000, but 1,620 Retail+ units were
+  at speed zero against Retail's 135. Retail+ did not drop live routes when
+  traffic handling fired, and the 30-tick re-request throttle rarely applied
+  because a request was nearly always already pending.
+- The door was under-used: usually one to three Retail+ units inside the
+  six-cell opening per tick, against four to seven for Retail.
+- Waits divided into: not yet admitted 34%, the 120-tick yield hold 24% (about
+  two thirds of those followed the stalled-queue fallback sidestep, not opposing
+  traffic), body-query deferral 22%, follow legality 12% and claim conflict 5%.
+- The body-query deferrals were a scheduling defect, not real scarcity. Of
+  1.50 million deferrals, 1.20 million occurred on a tick's first charge with the
+  whole 32,768 allowance unspent: the rotating budget cursor refused every id at
+  or below the previous tick's exhaustion point for the entire tick. Average
+  spend was about 19,000 per tick. Roughly 43% of it was obstruction queries for
+  blocked members.
+
+### Change
+
+A blocked member's check for a body directly ahead now reads the World
+occupancy grid, which already names the ground mover standing in each cell.
+The lowest-id mover in the queried footprint is accepted as the obstruction
+only while that mover's current footprint still overlaps the queried rectangle.
+An empty grid footprint, a stale or dead id, or a non-overlapping owner falls
+back to the charged body-index query, which also covers landed flyers,
+structure yards and other bodies the grid does not record. Collision, arrival,
+quota and legality rules are unchanged, and the body allowance stays at 32,768.
+This removed about half of the body-index demand and, in the doorway, every
+deferral. The idle-cursor pattern also exists in the arrival-proof budget and in
+the Cooperative traffic budget; it was not significant in the doorway and was
+left unchanged.
+
+Only Retail+ hashes change. Retail per-tick traces stayed byte-identical on nine
+scenarios, the Retail 2,000-unit doorway hash was unchanged, and serial and
+`--workers` runs agree. A new World test fails on the previous code because the
+occupied-ahead check charged the shared body-index allowance.
+
+### Results
+
+Doorway, 2,000 units, one player, before and after. X/A is crossings/legal
+arrivals. The Retail column is the unchanged Retail reference for the same seed.
+
+| Seed | Ticks | X/A before | X/A after | Retail X/A | Native completions | Local searches | Body-index entries | Deferrals |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 6,000 | 85/34 | 113/43 | 246/87 | 1,199 → 1,402 | 161k → 216k | 113.9M → 90.4M | 1.50M → 0 |
+| 7 | 6,000 | 67/42 | 89/51 | 240/103 | 1,170 → 1,335 | 161k → 213k | 113.6M → 92.1M | 1.38M → 0 |
+| 42 | 6,000 | 86/48 | 138/53 | 267/104 | 1,145 → 1,474 | 166k → 219k | 114.1M → 89.0M | 1.37M → 0 |
+| 0 | 12,000 | 222/142 | 241/172 | 504/89 | 1,997 → 2,210 | 442k → 511k | 273.6M → 189.3M | 1.62M → 0 |
+| 7 | 12,000 | 166/96 | 189/136 | 493/104 | 1,632 → 1,833 | 455k → 509k | 273.5M → 191.2M | 1.45M → 0 |
+| 42 | 12,000 | 201/127 | 264/180 | 521/105 | 1,837 → 2,246 | 456k → 518k | 274.0M → 188.2M | 1.47M → 0 |
+
+All six cases improve on both crossings and legal arrivals. At 12,000 ticks
+Retail+ now has more legal arrivals than Retail in every seed, but still about
+half of Retail's crossings. The remaining crossing gap follows native search
+completions: far-crowd partial searches still cost about 3.5 times Retail's.
+Local searches rose 13% to 34% because more members reach the local policy each
+tick; body-index work fell 17% to 31%. Stalled unit-ticks fell slightly. Tick
+time was not measured meaningfully; the host was heavily loaded throughout.
+
+A regression screen covered ten scenarios at 200, 500, 1,000 and 2,000 units,
+one and four players, 6,000 ticks at seed 0, with seeds 7 and 42 added for every
+case that looked worse. Over 105 cases, total crossings rose 3.2% and legal
+arrivals 2.7%. Most small-population cases were byte-identical because the body
+budget was never exhausted. The largest gains were at four players: doors 2,000
+went from 313/202 to 460/342 and passive recovery 2,000 from 81/57 to 321/183.
+Regressions that persisted across seeds:
+
+- recovery, 1,000 units × 4 players: legal arrivals fell 4% to 11% (2,626 →
+  2,327, 2,582 → 2,353, 2,464 → 2,365), with crossings about 1% lower;
+- shared goal, 1,000 × 4: legal arrivals fell 11% to 30% (64 → 57, 81 → 69,
+  86 → 60) while crossings rose 12% to 21%;
+- bridges, 2,000 × 1: mixed. Crossings were 66 → 39, 76 → 70 and 48 → 50, and
+  legal arrivals 22 → 22, 40 → 28 and 21 → 24 for seeds 0, 7 and 42.
+
+Other cases worse on one seed only were maze 500 × 4, recovery 2,000 × 1,
+mixed footprints 2,000 × 1 and passive recovery 500 × 4; maze 2,000 had fewer
+than 25 crossings and no arrivals in either build. These are trade-offs that
+could not be ruled out as noise, not demonstrated defects.
+
+### Rejected attempts
+
+All were evaluated on the same doorway, crossings/legal arrivals for seeds 0,
+7 and 42, and removed.
+
+- **Skip a repeat local search when nothing it reads has changed** (position,
+  aim, peer, claims, and bodies, features and terrain in the window). Exact and
+  deterministic, but the local-search window around a moving crowd changes
+  almost every tick, so only 154 to 234 searches were skipped per run. Results 65/30,
+  73/41 and 80/39 at 6,000 ticks were no better.
+- **Work-conserving rotating body budget**: ids after the refusal point were
+  favored and the others capped at half. 125/58, 94/45 and 90/36 at 6,000 ticks;
+  deferrals rose to 1.87 million and the reserved half idled. Removing the
+  demand with the occupancy grid was the better fix.
+- **No 120-tick yield hold after the stalled-queue fallback sidestep**, on top
+  of the grid change: 75/39, 111/58 and 98/57 at 6,000 ticks and 223/146,
+  275/180 and 256/189 at 12,000. Mixed by seed against the grid change alone.
+- **Press toward the mission point while a replacement search is pending**,
+  as Retail does without growing the radius: 97/44, 85/51 and 103/48 at 6,000
+  ticks and 212/156, 205/136 and 244/183 at 12,000, with fewer search
+  completions.
+
+Cooperative passage reuse and stable directional lanes were not attempted.
