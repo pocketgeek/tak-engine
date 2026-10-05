@@ -28,6 +28,9 @@ constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order 
 constexpr int kClusterCells=16;
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
+constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
+constexpr int kPassCells=6;                    // oncoming-traffic look-ahead (cells)
+constexpr int32_t kOncomingBam=20480;          // heading difference (~112 deg) that counts as oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr std::array<std::array<int,2>,8> kDirections{{
@@ -102,6 +105,9 @@ struct LegionNavigator::Impl {
         int detour=-1;                    // committed side-step cell
         uint32_t detourTicks=0;
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
+        bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
+        uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
+        int8_t passRX=0,passRZ=0;         // the side it moved over to
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
         std::vector<int> route;           // committed local detour around still bodies
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
@@ -592,7 +598,7 @@ struct LegionNavigator::Impl {
         for(int i=0;i<count;++i) {
             const auto& d=kDirections[size_t(options[size_t(i)].second)];
             if(!requestYield(u,ox+d[0],oz+d[1]))continue;
-            m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;
+            m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
             return true;
         }
         return false;
@@ -915,13 +921,13 @@ struct LegionNavigator::Impl {
             if(here==m.detour||++m.detourTicks>45||!legal(p,m.detour%W,m.detour/W)) {m.detour=-1;m.lineCell=-1;}
             else {
                 // Lateral shuffles keep facing the route: no heading thrash.
-                // A keep-right side-step turns the body with it: two units
-                // passing each other visibly yield (measured: not turning
-                // here gridlocked opposing columns). A flow-around shuffle in
-                // a crowd does not turn it (measured: turning there reads as
-                // spinning in a held crowd).
+                // Side-steps do not turn the body either (measured: turning
+                // 90 degrees and back in a jam reads as spinning). A
+                // lane-discipline pass keeps travel speed; the facing cap
+                // that made non-turning keep-right steps crawl (and
+                // gridlocked opposing columns) does not apply to it.
                 const auto [ax,az]=stepAim(u,m.detour);
-                drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass);
                 return;
             }
         }
@@ -979,10 +985,71 @@ struct LegionNavigator::Impl {
             }
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
         }
+        if(here!=m.goal&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct))return;
         drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
     }
+    // Lane discipline for opposing traffic: a mover that sees an oncoming
+    // Legion mover in its own swept lane a few cells ahead moves over one
+    // cell to its right (the same side sidestep() uses) BEFORE contact, as a
+    // committed forward-right step, so both streams keep moving and form
+    // lanes instead of meeting nose to nose and holding. It repeats while
+    // the lane ahead still holds oncoming bodies; same-direction bodies
+    // ahead are followed, never passed. Returns whether a step was committed.
+    bool passAhead(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,int ox,int oz,Fixed aimX,Fixed aimZ,bool direct) {
+        const int64_t ax=int64_t(aimX.v)-u.x.v,az=int64_t(aimZ.v)-u.z.v;
+        const int64_t aax=std::abs(ax),aaz=std::abs(az);
+        if(!aax&&!aaz)return false;
+        // Travel octant (tan 22.5 ~ 0.414 ~ 2/5).
+        const int dx=aax*5>=aaz*2?(ax>0?1:-1):0,dz=aaz*5>=aax*2?(az>0?1:-1):0;
+        const auto wanted=retailHeadingToPort(uint16_t(retailDirection(u.x-aimX,u.z-aimZ).v));
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        bool oncoming=false;
+        for(int k=1;k<=kPassCells&&!oncoming;++k)for(int j=0;j<fz&&!oncoming;++j)for(int i=0;i<fx&&!oncoming;++i) {
+            const int cx=ox+k*dx+i,cz=oz+k*dz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            if(!o||o==u.id)continue;
+            const auto peer=members.find(o);
+            if(peer==members.end()||peer->second.state==Arrived||peer->second.state==Trapped)continue;
+            const Unit* other=w.unit(o);
+            if(!other||other->orders.empty())continue;
+            oncoming=std::abs(retailTurnRequest(other->heading,wanted))>kOncomingBam;
+        }
+        if(!oncoming) {
+            // Committed pass: for a while after moving over, keep to the new
+            // lane (straight ahead) instead of edging back toward the goal
+            // line, which would cross the lane just left and read as a
+            // left-right shuffle in dense traffic.
+            if(!direct||m.passUntil<=w.tickCounter_)return false;
+            // Near the goal the body heads for it (no walking past it).
+            if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=2*kPassCells)return false;
+            if(!step(p,ox,oz,dx,dz)||!stepFree(u,ox,oz,ox+dx,oz+dz))return false;
+            const auto [cx,cz]=stepAim(u,(oz+dz)*W+ox+dx);
+            drive(u,m,p,f,maximum,cx,cz,false,true);
+            return true;
+        }
+        const int rx=-dz,rz=dx;
+        const uint16_t here=f?f->potential[size_t(oz*W+ox)]:kUnreached;
+        const std::array<std::array<int,2>,2> options{{{std::clamp(dx+rx,-1,1),std::clamp(dz+rz,-1,1)},{rx,rz}}};
+        for(const auto& d:options) {
+            if(!d[0]&&!d[1])continue;
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const int cell=(oz+d[1])*W+ox+d[0];
+            // Never onto an unreachable cell; a field follower also may not
+            // climb more than a diagonal step of potential.
+            if(f&&(f->potential[size_t(cell)]==kUnreached||(!direct&&f->potential[size_t(cell)]>uint32_t(here)+kDiagonal)))continue;
+            if(!stepFree(u,ox,oz,ox+d[0],oz+d[1]))continue;
+            ++stats.slides;
+            m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=true;m.lineCell=-1;
+            m.passUntil=w.tickCounter_+kPassHold;m.passRX=int8_t(rx);m.passRZ=int8_t(rz);
+            const auto [cx,cz]=stepAim(u,cell);
+            drive(u,m,p,nullptr,maximum,cx,cz,false,false,false,true);
+            return true;
+        }
+        return false;
+    }
     void drive(Unit& u,Member& m,const Plane& p,const Field* f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
-               bool towardGoal=false,bool face=true) {
+               bool towardGoal=false,bool face=true,bool pass=false) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         int64_t dx=int64_t(aimX.v)-u.x.v,dz=int64_t(aimZ.v)-u.z.v;
@@ -1001,7 +1068,10 @@ struct LegionNavigator::Impl {
         const int32_t turn=std::max(int32_t(1),int32_t(int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*multiplier.v/65536));
         Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
         const int32_t facing=std::abs(diff);
-        if(facing>12288)cap=Fixed::raw(cap.v/8);
+        // A lane-discipline pass slides one cell over without turning (turning
+        // there read as spinning in a jam); it keeps travel speed.
+        if(pass) {}
+        else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
         if(u.speed>cap)speed=fxMax(cap,u.speed-u.type->brake*multiplier);
@@ -1031,6 +1101,9 @@ struct LegionNavigator::Impl {
                     const auto& d=kDirections[size_t(k)];
                     if(!step(p,ox,oz,d[0],d[1]))continue;
                     if(f->potential[size_t((oz+d[1])*W+ox+d[0])]==kUnreached)continue;
+                    // A body that just moved over for oncoming traffic does
+                    // not edge back across the lane it left.
+                    if(m.passUntil>w.tickCounter_&&d[0]*m.passRX+d[1]*m.passRZ<0)continue;
                     const int64_t v=metric(ox+d[0],oz+d[1]);
                     if(v<here)options[size_t(count++)]={v,k};
                 }
@@ -1049,7 +1122,7 @@ struct LegionNavigator::Impl {
                         // (hysteresis): no re-deciding mid-cell, and the body
                         // keeps facing its route while it shuffles.
                         moved=true;++stats.slides;face=false;
-                        m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;
+                        m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
                     }
                 }
             }
@@ -1198,7 +1271,7 @@ struct LegionNavigator::Impl {
             const int cell=(oz+sz)*W+ox+sx;
             if(f.potential[size_t(cell)]>uint32_t(here)+kDiagonal)continue;
             if(!stepFree(u,ox,oz,ox+sx,oz+sz))continue;
-            m.detour=cell;m.detourTicks=0;m.detourFace=true;return;
+            m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;return;
         }
     }
     // A body pressed against settled bodies inside its goal's area has
@@ -1294,7 +1367,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
-            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);
+            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
