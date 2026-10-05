@@ -218,7 +218,26 @@ int main() {
                     (unsigned long long)(kept.counters().retainedFields-before),a.steps);
             }
         }
-        std::puts("PASS shared distant flow fields: identity, reuse, workers, disconnect, shortcut and retention");
+        {
+            // Exit-mask identity: two goals in one goal tile on opposite sides
+            // of a full-width wall. Every far tile in the goal's row is split by
+            // the wall, so the two destinations seed different exits there and
+            // must not share those fields even though profile, tile and box agree.
+            auto costs=open(W,H);for(int x=0;x<W;++x)costs[size_t(96)*W+x]=0;
+            auto t=build(W,H,costs);
+            Service service;
+            check(service.bind(1,1,t,{{430,80}})&&service.bind(2,1,t,{{430,110}}),"split-wall bind");
+            const auto a=walk(service,1,*t,{130,80});
+            const auto builtA=service.counters().sharedFieldsBuilt;
+            check(builtA>0,"split-wall route used no shared fields");
+            const auto b=walk(service,2,*t,{130,110});
+            check(a.status==Service::Status::Arrived&&b.status==Service::Status::Arrived,
+                "split-wall destination reused a field seeded with the other side's exits");
+            check(service.counters().sharedFieldsBuilt>builtA,"split-wall destinations shared differently seeded fields");
+            std::printf("split-wall exits: shared built %llu then %llu\n",(unsigned long long)builtA,
+                (unsigned long long)service.counters().sharedFieldsBuilt);
+        }
+        std::puts("PASS shared distant flow fields: identity, reuse, workers, disconnect, shortcut, retention and exit masks");
         return 0;
     } catch(const std::exception& e) {std::fprintf(stderr,"flow shared field test: %s\n",e.what());return 1;}
 }
