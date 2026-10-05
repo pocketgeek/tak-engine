@@ -69,6 +69,10 @@ public:
     // Complete only an ordinary unblocked update with no retained local work.
     // A declined call leaves all state untouched, including work admission.
     bool updateUnblocked(const Context&);
+    // For an adapter calling before it builds neighbors or arrival callbacks:
+    // also declines near the arrival area, including the area-bypass window
+    // that update() would consider once arrival proofs are supplied.
+    bool updateUnblockedFar(const Context&);
     void registerMove(const Context&);
     // Opt-in lifecycle cleanup for an adapter that distinguishes completed
     // contact anchors from cancelled, uncompleted arrival reservations.

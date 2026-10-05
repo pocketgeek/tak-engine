@@ -1,6 +1,7 @@
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/flowtraffic.h"
+#include <array>
 #include <cstdio>
 #include <stdexcept>
 #include <string_view>
@@ -621,9 +622,49 @@ void trafficRules(){
         check(released.repath&&!released.detour,"dead/stopped/captured/reordered blocker retained a yield");
     }
 }
+// Flowfield calls updateUnblockedFar before it builds neighbor and arrival
+// callbacks. It must match full updates exactly, including near the arrival
+// area and across record replacement, cancellation and dense-index fallback.
+void unblockedFarEquivalence(){
+    using Traffic=sim::flow::Traffic;using Cell=sim::flow::Cell;
+    Traffic reference,fast;
+    std::array<Traffic::Context,12> members;
+    for(size_t i=0;i<members.size();++i){
+        auto& c=members[i];c.id=i%2?int(i+1):sim::flow::IdIndex<int*>::dense+int(i);c.player=0;c.controller=uint64_t(i+1);
+        c.tick=1;c.issuedTick=1;c.position={100,100+int(i)*3};c.target={520,118};c.steeringTarget=c.target;
+        c.footX=c.footZ=2;c.plainMove=true;c.missionKind=1;
+        reference.registerMove(c);fast.registerMove(c);
+    }
+    unsigned shortcuts=0,declines=0;
+    for(uint32_t tick=1;tick<=700;++tick){
+        if(tick==350){reference=Traffic{};fast=Traffic{};} // Moved-in empty tables.
+        for(size_t i=0;i<members.size();++i){
+            auto& c=members[i];c.tick=tick;
+            if(c.position.x<c.target.x-int(i))++c.position.x;
+            if(tick==100&&i%3==0)c.footZ=3;
+            if(tick==150&&i%4==1){++c.issuedTick;c.target.z+=6;}
+            if(tick==200&&i<3){reference.cancelUnsettled(c.id);fast.cancelUnsettled(c.id);}
+            if(tick==250&&i==5)++c.controller;
+            c.blocked=tick%97<3?2:0;
+            c.goalReached=std::abs(c.position.x-c.target.x)+std::abs(c.position.z-c.target.z)<=4;
+            auto full=c;
+            full.free=[](Cell){return true;};full.terrainFree=full.free;
+            full.arrivalReachable=[](Cell){return true;};full.contactReachable=full.arrivalReachable;
+            const auto expected=reference.update(full);
+            Traffic::Result actual;
+            const auto before=fast.checksum();
+            if(fast.updateUnblockedFar(c))++shortcuts;
+            else{check(fast.checksum()==before,"declined Flowfield shortcut changed state");++declines;actual=fast.update(full);}
+            check(expected.settled==actual.settled&&expected.detour==actual.detour&&expected.wait==actual.wait&&
+                  expected.repath==actual.repath&&expected.arrivalApproach==actual.arrivalApproach&&
+                  reference.checksum()==fast.checksum(),"Flowfield unblocked shortcut changed traffic results or state");
+        }
+    }
+    check(shortcuts>2000&&declines>500,"Flowfield shortcut fixture missed fast or arrival paths");
+}
 }
 int main(int argc,char**argv){if(argc!=2)return 2;try{
-    areaArrivals();trafficRules();localEscapes();if(std::string_view(argv[1])=="--traffic-only"){std::puts("PASS flow traffic geometry, admission and local escapes");return 0;}auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
+    areaArrivals();trafficRules();localEscapes();unblockedFarEquivalence();if(std::string_view(argv[1])=="--traffic-only"){std::puts("PASS flow traffic geometry, admission and local escapes");return 0;}auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
     auto type=*registry.find("arasword");type.weapons.clear();type.weapon.damage=0;
     sim::World serial,parallel;setup(serial,true);setup(parallel,false);
     for(auto* w:{&serial,&parallel})for(int i=0;i<100;++i){const int id=w->spawn(&type,float(160+(i%10)*40),float(160+(i/10)*40),std::nullopt,0);w->order(id,1500,1500,false);}

@@ -192,6 +192,15 @@ bool Traffic::updateUnblocked(const Context& c) {
     waiting_.erase(c.id);
     return true;
 }
+bool Traffic::updateUnblockedFar(const Context& c) {
+    if(nearArrival(c))return false;
+    if(const int area=arrivalRadiusSquared(c)) {
+        const int64_t distance2=distance(c.position,c.target);
+        const int radius=root(area);
+        if(distance2<=528*528&&distance2<=int64_t(radius+16)*(radius+16))return false;
+    }
+    return updateUnblocked(c);
+}
 Traffic::Result Traffic::update(const Context& c) {
     Result out;
     const auto localDeferred=[&] {return c.localDeferred&&*c.localDeferred;};
