@@ -243,6 +243,33 @@ void blockedStandingArrival() {
         compact(world,{id},1408,1024,32);rest(world,{id});
     }
 }
+void queueObstruction() {
+    // A blocked queue member names the ground body ahead from the occupancy
+    // grid without charging the shared body-index allowance. Bodies the grid
+    // does not record (a landed flyer here) still take the full query.
+    for(const bool landedFlyer:{false,true}) {
+        World world;setup(world,selected);auto type=mover(),air=mover();air.canFly=true;
+        const int id=world.spawn(&type,1024,1024,std::nullopt,0);
+        const int peer=world.spawn(landedFlyer?&air:&type,1056,1024,std::nullopt,0);
+        if(landedFlyer){auto& p=*world.unit(peer);p.flightGroundMode=1;p.standbyAllowed=false;}
+        known(world);world.tick(1.f/30);world.order(id,3008,1024,false);legal(world,{id});
+        const Intent start{world.unit(id)->x,world.unit(id)->z};
+        world.unit(id)->bodyBlockStreak=2;
+        const auto before=world.retailPlusStats();world.tick(1.f/30);const auto after=world.retailPlusStats();
+        require(after.traffic.waits>before.traffic.waits,"blocked member did not recognise the friendly body ahead");
+        require(Intent{world.unit(id)->x,world.unit(id)->z}==start||world.unit(id)->x<=start.first+Fixed::fromInt(1),
+            "blocked member advanced into the body ahead");
+        if(landedFlyer)require(after.bodyEntries>before.bodyEntries,"a body missing from the occupancy grid skipped the full query");
+        else require(after.bodyEntries==before.bodyEntries,"occupied-ahead check charged the shared body-index allowance");
+        require(after.bodyDeferrals==before.bodyDeferrals,"single blocked member deferred its obstruction evidence");
+        legal(world,{id});
+        // The obstruction leaves: the member resumes native movement.
+        world.unit(peer)->x=Fixed::fromInt(1024);world.unit(peer)->z=Fixed::fromInt(1600);
+        for(int tick=0;tick<120;++tick)world.tick(1.f/30);
+        require(world.unit(id)->x>start.first+Fixed::fromInt(64),"member stayed parked after the body ahead left");
+        legal(world,{id});
+    }
+}
 }
 int main(int argc,char** argv) {try {
     const std::string wanted=argc>1?argv[1]:"all";
@@ -252,5 +279,6 @@ int main(int argc,char** argv) {try {
     run("boxed",boxedMoveRetainsQueuedGoal);run("returned-corner",returnedCorner);run("fallback",fallback);run("formation",formation);
     run("body-budget",boundedAirborneNeighbors);
     run("blocked-arrival",blockedStandingArrival);
+    run("queue-obstruction",queueObstruction);
     return 0;
 }catch(const std::exception& error){std::fprintf(stderr,"FAIL %s\n",error.what());return 1;}}

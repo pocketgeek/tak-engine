@@ -102,7 +102,7 @@ int main() {
     }
 
     std::printf("pathfinding mode and incompatible recordings:\n");
-    for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Flowfield, tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus}) {
+    for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Flowfield, tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Legion}) {
         auto in = sample(); in.mission.clear(); in.pathfindingMode = mode;
         Writer w; writeReplayHeader(w, in);
         const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 2;
@@ -110,16 +110,18 @@ int main() {
         Reader r(w.b.data()+4,w.b.size()-4);
         check(readReplayHeader(r,out,fmt,proto) && out.pathfindingMode==mode,
               "explicit skirmish pathfinder survives recording");
-        w.b[modeAt] = 4;
-        Reader invalid(w.b.data()+4,w.b.size()-4);
-        check(!readReplayHeader(invalid,out,fmt,proto), "unknown pathfinder is refused");
+        for (uint8_t unknown : {uint8_t(5), uint8_t(255)}) {
+            auto bad = w.b; bad[modeAt] = unknown;
+            Reader invalid(bad.data()+4,bad.size()-4);
+            check(!readReplayHeader(invalid,out,fmt,proto), "unknown pathfinder is refused");
+        }
         w.b.erase(w.b.begin()+modeAt); w.b[4]=10; w.b[8]=219;
         Reader old(w.b.data()+4,w.b.size()-4);
         out.pathfindingMode=tak::sim::PathfindingMode::Flowfield;
         check(readReplayHeader(old,out,fmt,proto) && out.pathfindingMode==tak::sim::PathfindingMode::Retail &&
               !supportedReplayProtocol(fmt,proto), "old header is readable but incompatible playback is refused");
     }
-    for(auto mode:{tak::sim::PathfindingMode::Flowfield,tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus}) {
+    for(auto mode:{tak::sim::PathfindingMode::Flowfield,tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Legion}) {
         auto in=sample(); in.pathfindingMode=mode;
         Writer w; writeReplayHeader(w,in);
         Reader r(w.b.data()+4,w.b.size()-4); ReplayHeader out; uint32_t fmt=0,proto=0;
@@ -133,6 +135,8 @@ int main() {
     check(!supportedReplayProtocol(11, 220), "pre-area Retail and Flowfield replays are refused");
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
+    check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 228, "Legion keeps replay format 11 under protocol 228");
     check(!supportedReplayProtocol(11, 224), "previous two-pathfinder simulation protocol is refused");
     check(!supportedReplayProtocol(11, 219), "old protocol cannot claim a flow-capable format");
     check(!supportedReplayProtocol(9, 212), "older simulation protocol is refused");

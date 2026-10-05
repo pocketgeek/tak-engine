@@ -129,10 +129,6 @@ inline Options parse(int argc,char** argv) {
     }
     if(o.mode!="retail"&&o.mode!="retail-plus"&&o.mode!="flowfield"&&o.mode!="cooperative"&&o.mode!="legion")
         throw std::runtime_error("mode must be retail, retail-plus, flowfield, cooperative, or legion");
-#ifdef TAK_CROWDBENCH_BASELINE
-    if(o.mode=="retail-plus")throw std::runtime_error("Retail+ is unavailable in the frozen baseline");
-    if(o.mode=="legion")throw std::runtime_error("Legion is unavailable in the frozen baseline");
-#endif
     constexpr std::array names{"open","doors","bridges","maze","opposingcolumns","sharedgoal",
         "mixedfootprints","exploration","dynamicobstacle","rapidreplacement","unreachable","recovery","recovery-passive",
         "jagged","trapped","crowdtrap","singleunit","groupdetour"};
@@ -287,6 +283,25 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
     metric("cooperative_passage_screening_cells",f.cooperativePassageScreeningCells);
     metric("cooperative_clearance_hits",f.cooperativeClearanceHits);
     metric("cooperative_clearance_rebuilds",f.cooperativeClearanceRebuilds);
+    // Shared-field invalidation diagnostics (agent "routing"); absent in older builds.
+    if constexpr(requires {f.serviceInvalidations;f.tickNs;}) {
+        metric("flow_dirty_events",f.dirtyEvents);metric("flow_dirty_profile_tiles",f.dirtyProfileTiles);
+        metric("flow_snapshot_starts",f.snapshotStarts);metric("flow_topology_publications",f.topologyPublications);
+        metric("flow_unchanged_publications",f.unchangedPublications);
+        metric("flow_service_destinations",f.serviceDestinations);metric("flow_service_destination_work",f.serviceDestinationWork);
+        metric("flow_service_fields_built",f.serviceFieldsBuilt);metric("flow_service_field_work",f.serviceFieldWork);
+        metric("flow_service_invalidations",f.serviceInvalidations);
+        metric("flow_service_invalidated_destinations",f.serviceInvalidatedDestinations);
+        metric("flow_service_invalidated_fields",f.serviceInvalidatedFields);
+        metric("flow_service_invalidated_builders",f.serviceInvalidatedBuilders);
+        metric("flow_service_invalidated_bindings",f.serviceInvalidatedBindings);
+        metric("flow_service_evicted_groups",f.serviceEvictedGroups);metric("flow_service_evicted_fields",f.serviceEvictedFields);
+        metric("flow_unbound_requests",f.unboundRequests);metric("flow_stale_delivery_blocks",f.staleDeliveryBlocks);
+        metric("flow_shared_fields_built",f.serviceSharedFieldsBuilt);metric("flow_shared_resolutions",f.serviceSharedResolutions);
+        metric("flow_shared_reuses",f.serviceSharedReuses);metric("flow_retained_fields",f.serviceRetainedFields);
+        metric("flow_service_ns",f.serviceNs);metric("flow_snapshot_ns",f.snapshotNs);
+        metric("flow_deliver_ns",f.deliverNs);metric("flow_tick_ns",f.tickNs);
+    }
     if constexpr(requires {world.cooperativeMovementStats();}) {
         const auto m=world.cooperativeMovementStats();
         metric("cooperative_movement_queued",m.queued);metric("cooperative_movement_attempted",m.attempted);
@@ -428,7 +443,7 @@ inline int run(const Options& o) {
     const int movingPerPlayer=o.units*o.movingPercent/100,totalMoving=movingPerPlayer*o.players;
     LatencyObserver latency;
     World world;world.setGameSeed(o.seed);world.setVisPlayer(-1);world.setSerialThreads(!o.workers);world.setPathService(true);
-    world.setPathfindingMode(PathfindingMode(o.mode=="retail"?0:o.mode=="flowfield"?1:o.mode=="cooperative"?2:o.mode=="legion"?4:3));
+    world.setPathfindingMode(PathfindingMode(o.mode=="retail"?0:o.mode=="flowfield"?1:o.mode=="cooperative"?2:o.mode=="retail-plus"?3:4));
     world.setPlayerCount(o.players);for(int p=0;p<o.players;++p)world.setTeam(p,0);
     world.setTerrain(std::vector<uint8_t>(size_t(width)*height,100),width,height,64);
     std::vector<Rect> walls;if(accept)walls=acc.walls;

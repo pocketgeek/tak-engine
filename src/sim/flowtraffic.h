@@ -1,6 +1,7 @@
 #pragma once
 #include "flowfield.h"
 #include "flowroute.h"
+#include "trafficindex.h"
 #include <array>
 #include <functional>
 #include <map>
@@ -68,6 +69,10 @@ public:
     // Complete only an ordinary unblocked update with no retained local work.
     // A declined call leaves all state untouched, including work admission.
     bool updateUnblocked(const Context&);
+    // For an adapter calling before it builds neighbors or arrival callbacks:
+    // also declines near the arrival area, including the area-bypass window
+    // that update() would consider once arrival proofs are supplied.
+    bool updateUnblockedFar(const Context&);
     void registerMove(const Context&);
     // Opt-in lifecycle cleanup for an adapter that distinguishes completed
     // contact anchors from cancelled, uncompleted arrival reservations.
@@ -119,6 +124,14 @@ private:
     std::map<int,Record> records_;
     struct Population {size_t members=0;uint64_t area=0,settledArea=0;};
     std::map<Group,Population> groups_;
+    // Pointer cache over records_/groups_ nodes; plain records keep their
+    // group node alive, so its population pointer is valid with the record.
+    struct Slot {Record* record=nullptr;Population* group=nullptr;};
+    IdIndex<Slot> index_;
+    const Slot* slot(int id) const {return index_.find(id);}
+    const Population* population(const Context&) const;
+    Record* lookup(int id);
+    const Record* lookup(int id) const;
     using Bucket=std::pair<int,int>;
     std::map<Bucket,std::set<int>> reservations_;
     size_t reservationLinks_=0;

@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 int main(int argc,char**argv){
- if(argc!=6&&argc!=7){std::fprintf(stderr,"usage: flow_benchmark DATA UNITS TICKS PATHFINDING SERIAL [CRUSADES]\nPATHFINDING: 0=Retail, 1=Flowfield, 2=Cooperative.\nSynthetic flat 64x64 map; timing includes the complete World tick.\n");return 2;}
+ if(argc!=6&&argc!=7){std::fprintf(stderr,"usage: flow_benchmark DATA UNITS TICKS PATHFINDING SERIAL [CRUSADES]\nPATHFINDING: 0=Retail, 1=Flowfield, 2=Cooperative, 3=Retail+, 4=Legion.\nSynthetic flat 64x64 map; timing includes the complete World tick.\n");return 2;}
  using namespace tak;using Clock=std::chrono::steady_clock;
  const bool crusades=argc==7&&std::atoi(argv[6])!=0;
  auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,crusades);
@@ -23,6 +23,7 @@ int main(int argc,char**argv){
  int moved=0;int64_t displacement=0;for(int i=0;i<count;++i){auto* u=w.unit(i+1);const int dx=std::abs(u->x.floorInt()-512-(i%128)*32),dz=std::abs(u->z.floorInt()-512-(i/128)*32);moved+=(dx||dz);displacement+=dx+dz;}
  std::printf("moved=%d/%d mean_l1_displacement_px=%.1f\n",moved,count,double(displacement)/count);
  std::sort(times.begin(),times.end());auto s=w.flowStats();
- const char* label=mode==sim::PathfindingMode::Retail?"retail":mode==sim::PathfindingMode::Flowfield?"flow":"cooperative";
+ const char* label=mode==sim::PathfindingMode::Retail?"retail":mode==sim::PathfindingMode::Flowfield?"flow":
+  mode==sim::PathfindingMode::Cooperative?"cooperative":mode==sim::PathfindingMode::RetailPlus?"retail-plus":"legion";
  std::printf("synthetic64x64 units=%d ticks=%d mode=%s serial=%d crusades=%d mean_ms=%.3f p50_ms=%.3f p95_ms=%.3f max_ms=%.3f flow_bytes=%zu deliveries=%llu pending=%zu hash=%016llx\n",count,ticks,label,serial,crusades,sum/ticks,times[ticks/2],times[size_t(ticks-1)*95/100],times.back(),s.bytes,(unsigned long long)s.deliveries,s.pending,(unsigned long long)w.stateHash());
 }

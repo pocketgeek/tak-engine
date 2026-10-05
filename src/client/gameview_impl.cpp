@@ -682,7 +682,8 @@
             const auto savedPathfinding=world_.pathfindingMode();
             selection_={builder,soldier};mouseX_=mouseY_=-1000;
             for(const auto mode:{tak::sim::PathfindingMode::Retail,tak::sim::PathfindingMode::Flowfield,
-                                 tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Cooperative}) {
+                                 tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Cooperative,
+                                 tak::sim::PathfindingMode::Legion}) {
                 world_.setPathfindingMode(mode);publish();
                 rightClickOrder(2400,2400,false);
                 for(const int id:selection_) {

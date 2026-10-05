@@ -68,6 +68,10 @@ private:
     static constexpr size_t maxRecords=16384,maxLinks=32768,maxBuckets=8192;
     flow::Traffic arrivals_;
     std::map<int,Record> records_;
+    // Pointer cache over records_ nodes (see flow::IdIndex); never iterated.
+    struct Slot {Record* record=nullptr;};
+    flow::IdIndex<Slot> index_;
+    Record* lookup(int id);
     using Group=std::tuple<int,int,int,int>;
     struct Population {int64_t x=0,z=0;size_t count=0;};
     std::map<Group,Population> groups_;

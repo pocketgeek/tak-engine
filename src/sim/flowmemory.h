@@ -26,6 +26,7 @@ struct MemoryPlan {
     // Including those reservations, the individual worst-case buckets total
     // about 1.7KiB on 64-bit hosts, below the canonical 2KiB charge.
     static constexpr uint64_t requestBytes=2048;
+    static constexpr uint64_t resolvedBytes=192;
     static_assert(sizeof(Tile)<=tileBytes && sizeof(Field)<=fieldBytes &&
                   sizeof(FieldBuilder)<=builderBytes && sizeof(Edge)<=edgeBytes);
     uint64_t sharedBytes=0,profileBytes=0,snapshotBytes=0,cacheBytes=0,reservedBytes=0,limitBytes=0;
@@ -59,7 +60,10 @@ struct MemoryPlan {
         out.sharedBytes=cells*2+8*MiB+maxStructures*640ull+
             maxRequests*requestBytes+maxDestinations*(components*12+4096*32+4096)+
             maxFields*(fieldBytes+256)+maxBuilders*(builderBytes+512)+
-            maxLocalJobs*MiB+4*MiB;
+            maxLocalJobs*MiB+4*MiB+
+            // Per destination and tile, the memoised field identity (exit
+            // mask and bias box) that selects a private or shared field.
+            maxDestinations*maxCachedTiles*resolvedBytes;
         const uint64_t fixed=out.sharedBytes+out.cacheBytes+maxSnapshots*out.snapshotBytes;
         if(fixed>limit||out.profileBytes>limit-fixed)return out;
         out.profiles=size_t(std::min<uint64_t>(maxProfiles,(limit-fixed)/out.profileBytes));

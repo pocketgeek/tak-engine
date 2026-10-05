@@ -97,6 +97,8 @@ public:
     Destination(std::shared_ptr<const Topology> topology,GoalRegion region);
     size_t step(size_t budget);
     bool done() const { return regionSeed_==regionCells_ && head_==queue_.size(); }
+    // Exit rule shared by FieldBuilder and exits(): a neighbour one hop closer.
+    bool downhill(uint32_t from,uint32_t to) const;
     uint32_t distance(uint32_t component) const;
     bool reachable(Cell c) const;
     // After all region seeds are admitted, discovered BFS distances are final.
@@ -104,11 +106,20 @@ public:
     // global exhaustion also proves any remaining components unreachable.
     bool tileReady(int tile) const;
     const Topology& topology() const { return *topology_; }
+    const std::shared_ptr<const Topology>& topologyPointer() const {return topology_;}
     const std::vector<Cell>& goals() const { return goals_; }
     const std::optional<GoalRegion>& region() const {return region_;}
     bool goalContains(Cell c) const {return region_ && region_->contains(c);}
     size_t bytes() const;
     uint32_t estimate(Cell c) const; // geometric goal-box bias, not reachability
+    static uint32_t estimate(Cell c,Cell low,Cell high); // same bias toward an explicit box
+    std::pair<Cell,Cell> goalBox() const {return {goalMin_,goalMax_};}
+    // Exact exit-seed mask FieldBuilder uses for a ready tile: bit n is border
+    // cell n (top, right, bottom, left; 64 each) leading to a component one hop
+    // closer. Together with tile content and the bias box it determines the
+    // detailed field of any tile holding no goal seed.
+    using Exits=std::array<uint64_t,4>;
+    Exits exits(int tile) const;
     uint64_t checksum() const;
 private:
     Cell goalMin_{},goalMax_{},seedMin_{},seedMax_{};
@@ -135,20 +146,32 @@ struct Field {
 };
 class FieldBuilder {
 public:
-    FieldBuilder(std::shared_ptr<const Destination> destination,int tile);
+    // An anchor replaces the exact goal box in the tie-breaking bias. Only
+    // valid for a tile that holds no goal seed; the result then depends on
+    // tile content, exits() and the anchor alone and may be shared.
+    FieldBuilder(std::shared_ptr<const Destination> destination,int tile,
+                 std::optional<std::pair<Cell,Cell>> anchor={});
+    // A shared field built from its key alone: exactly these exit seeds and
+    // this bias box, no goal and no destination. Equal to the anchored
+    // destination form above for any destination reporting the same exits().
+    FieldBuilder(std::shared_ptr<const Topology> topology,int tile,Destination::Exits exits,
+                 std::pair<Cell,Cell> anchor);
     size_t step(size_t budget);
     bool done() const { return phase_==Phase::Done; }
     const Field& field() const { return result_; }
+    const Topology& topology() const {return *topology_;}
     uint64_t checksum() const;
     size_t bytes() const;
 private:
     enum class Phase { Seeds,Integrate,Done };
     Phase phase_=Phase::Seeds;
     std::shared_ptr<const Destination> destination_;
+    std::shared_ptr<const Topology> topology_;
+    std::optional<Destination::Exits> exits_;
     Field result_;
     int originX_=0,originZ_=0;
     uint32_t biasBase_=0;
-    Cell seedMin_{},seedMax_{};
+    Cell seedMin_{},seedMax_{},boxMin_{},boxMax_{};
     size_t goalSeeds_=0;
     size_t scan_=0;
     std::array<int32_t,kTileCells> heapPos_{};
@@ -157,6 +180,7 @@ private:
     uint64_t digest_=1469598103934665603ull,work_=0;
     void seedOne();
     void integrateOne();
+    void place(int tile,std::pair<Cell,Cell> box);
     void offer(uint16_t cell,uint32_t distance,uint8_t direction);
     bool less(uint16_t a,uint16_t b) const;
     void swapHeap(size_t a,size_t b);

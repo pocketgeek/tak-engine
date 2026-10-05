@@ -78,21 +78,29 @@ void RetailPlusNavigator::tick() {
     if(profile)p.maintenanceNanoseconds+=profileElapsed(start);
 }
 
-flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {
+flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {return traffic(u,supports(u));}
+flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u,bool supported) {
     auto& p=*impl_;auto& w=p.world;
     const bool profile=w.paths_.profiling();
     const auto start=profile?ProfileClock::now():ProfileClock::time_point{};
-    if(!supports(u)) {p.policy.cancel(u.id);return {};}
+    if(!supported) {p.policy.cancel(u.id);return {};}
     auto c=p.context(u);
     const auto& goal=u.orders[World::currentLeg(u.orders)];
     if(!goal.controller&&(goal.mission.pending&0x500))p.policy.refreshSettled(u.id,c.position);
     // Preserve both coordinators' progress, identities, groups and work cursors
     // before skipping the callback-rich path. Arrival and retained claims always
     // take the full path; no openness or collision clearance is assumed here.
+    // Here c has no neighbors, obstruction or proof callbacks yet, so those
+    // guards in updateUnblocked are vacuous. Safety rests on two real ones:
+    // blocked>=2 declines (the full path's obstruction query), and nearArrival
+    // declines (needsArrivalNeighbors requires it, and update() only supplies
+    // arrival callbacks to arrivals_ when goalReached or nearArrival holds).
+    // Away from both, the full path never consults what is skipped here.
     const bool unblocked=p.policy.updateUnblocked(c);
     if(profile)p.contextNanoseconds+=profileElapsed(start);
-    if(unblocked){if(profile)++p.fastUpdates;return {};}
-    if(profile)++p.fullUpdates;
+    // Unhashed observation counts, kept whether or not clocks are enabled.
+    if(unblocked){++p.fastUpdates;return {};}
+    ++p.fullUpdates;
     const auto setupStart=profile?ProfileClock::now():ProfileClock::time_point{};
     // Include early density/deferred exits in setup timing as well.
     struct SetupProfile {
@@ -180,6 +188,18 @@ flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {
             for(int side=0;side<(sx&&sz?3:1)&&!c.obstruction;++side) {
                 const int x0=cells[size_t(side)].x-c.footX/2,z0=cells[size_t(side)].z-c.footZ/2;
                 if(x0<0||z0<0||x0+c.footX>w.hW_||z0+c.footZ>w.hH_)continue;
+                // The occupancy grid already names the ground mover standing
+                // there. Reading it costs no index work; only an empty grid
+                // footprint still needs the full query for landed flyers,
+                // structure yards and other bodies the grid does not record.
+                if(w.occW_==w.hW_&&w.occH_==w.hH_) {
+                    int owner=0;
+                    for(int z=z0;z<z0+c.footZ;++z)for(int x=x0;x<x0+c.footX;++x) {
+                        const int id=w.occ_[size_t(z)*w.occW_+x];
+                        if(id&&id!=u.id&&(!owner||id<owner))owner=id;
+                    }
+                    if(owner)if(auto n=lookup(owner)){c.obstruction=n;continue;}
+                }
                 if(!bodyQuery(x0,z0,c.footX,c.footZ))return unavailable();
                 const auto bodies=w.searchBodyRect(x0,z0,c.footX,c.footZ);
                 int id=0;

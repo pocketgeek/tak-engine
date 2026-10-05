@@ -34,12 +34,12 @@ def main():
             with contextlib.closing(login(port, fingerprint, 'FlowHost')) as host, \
                  contextlib.closing(login(port, fingerprint, 'FlowGuest')) as guest:
                 host.socket.settimeout(20);guest.socket.settimeout(20)
-                for invalid in (4, 255):
+                for invalid in (5, 255):
                     create(host, invalid)
                     assert b'pathfinding' in host.receive('Reject').field()
                     host.send('ListGames')
                     assert host.receive('GameList').num('<I') == 0
-                for mode in (0, 1, 2, 3):
+                for mode in (0, 1, 2, 3, 4):
                     # Creation/start work is deliberately rate limited by the
                     # real server. Give each mode its own one-second window.
                     time.sleep(1.05)
@@ -47,9 +47,9 @@ def main():
                     assert host.receive('JoinResult').num('<B') == 1
                     initial = lobby(host.receive('LobbyState'))
                     assert initial[2][-1] == mode
-                    host.send('SetGameOptions', selected(4))
+                    host.send('SetGameOptions', selected(5))
                     assert b'pathfinding' in host.receive('Reject').field()
-                    host.send('SetGameOptions', selected((mode + 1) % 4))
+                    host.send('SetGameOptions', selected((mode + 1) % 5))
                     assert lobby(host.receive('LobbyState'))[2][-1] == mode
                     guest.send('JoinGame', struct.pack('<I', initial[0]) + auth.field(''))
                     assert guest.receive('JoinResult').num('<B') == 1
@@ -57,7 +57,7 @@ def main():
                     assert joined[2][-1] == mode
                     # A non-host also cannot alter the pathfinder; the next slot
                     # update acts as a sequencing barrier that publishes state.
-                    guest.send('SetGameOptions', selected((mode + 1) % 4))
+                    guest.send('SetGameOptions', selected((mode + 1) % 5))
                     slots = joined[3]
                     for peer, index in ((host, 0), (guest, 1)):
                         value = slots[index][0]

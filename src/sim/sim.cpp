@@ -9054,8 +9054,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         flow::Traffic::Result flowTraffic;
         if(isSharedPathfinding(pathfindingMode_) && flow_)
             flowTraffic=flow_->traffic(u);
-        const bool retailPlusMove=pathfindingMode_==PathfindingMode::RetailPlus&&retailPlus_&&retailPlus_->supports(u);
-        if(retailPlus_)flowTraffic=retailPlus_->traffic(u);
+        // One support decision serves both the movement branch and traffic.
+        const bool retailPlusSupported=retailPlus_&&retailPlus_->supports(u);
+        const bool retailPlusMove=pathfindingMode_==PathfindingMode::RetailPlus&&retailPlusSupported;
+        if(retailPlus_)flowTraffic=retailPlus_->traffic(u,retailPlusSupported);
         if(flowTraffic.settled) {
             // Area arrival owns a collision-checked standing footprint. Coasting
             // beyond it can plug another arrival lane or leave the accepted area.
@@ -9159,11 +9161,12 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             const auto& goal=u.orders[currentLeg(u.orders)];
             requestPath(u,goal.x.toFloat(),goal.z.toFloat());
         }
-        if(retailPlusMove && routeable && !pathPending(u.id) &&
+        // The pending-request lookup is the costly term; evaluate it last.
+        if(retailPlusMove && routeable &&
            tickCounter_-uint32_t(std::max(0,u.routeStamp))>=30u &&
            (flowTraffic.repath || (!flowTraffic.detour&&!flowTraffic.wait&&
             (u.bodyBlockStreak>=2||u.orders[currentLeg(u.orders)].navigationConsumed||
-             u.orders[currentLeg(u.orders)].navigationExhausted)))) {
+             u.orders[currentLeg(u.orders)].navigationExhausted))) && !pathPending(u.id)) {
             const auto& goal=u.orders[currentLeg(u.orders)];
             if(!requestPath(u,goal.x.toFloat(),goal.z.toFloat()))u.routeStamp=int32_t(tickCounter_);
         }
