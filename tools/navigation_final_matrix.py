@@ -49,10 +49,11 @@ LONG_SCENARIOS = ("doors", "maze", "sharedgoal", "opposingcolumns")
 TIMING_SCENARIOS = ("open", "doors", "maze", "opposingcolumns", "sharedgoal", "mixedfootprints",
                     "exploration", "dynamicobstacle", "rapidreplacement", "recovery")
 TIMING_POPULATIONS = ("200:1:100", "2000:1:100", "500:4:100")
-# Seconds per million unit-ticks, measured 2026-10-05 on an i9-275HX E-core with
-# the checkpoint binary (2000 units, 6000 ticks: 13-35 s depending on mode).
-# Retail+ is the slowest mode; Cooperative the fastest. Only for estimates.
-COST_PER_MUNIT_TICK = {"retail": 1.45, "retail-plus": 2.75, "flowfield": 1.9, "cooperative": 1.25}
+# Seconds per million unit-ticks. Calibrated 2026-10-05 from the 672-run
+# checkpoint outcome matrix (23,376 process-seconds) on an i9-275HX running 20
+# pinned processes on cpus 4-23 while other agents loaded the host (load ~40):
+# conservative. An idle P-core should need roughly half. Estimates only.
+COST_PER_MUNIT_TICK = {"retail": 3.2, "retail-plus": 5.1, "flowfield": 2.9, "cooperative": 2.1}
 DIAGNOSTIC_OVERHEAD = 1.15
 
 # Deterministic outcome fields: identical across repeats of one binary. Also the
