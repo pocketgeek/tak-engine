@@ -45,10 +45,10 @@ inline std::span<const SDL_Vertex> translatedGeometryTile(
         // across zero. Expand them before reconstructing the far edge, then
         // round outward again. Never reject a triangle retained by the
         // original per-triangle test.
-        const float far=std::numeric_limits<float>::infinity();
-        const float bx=std::nextafter(b.x,-far),by=std::nextafter(b.y,-far);
-        const float br=std::nextafter(b.x+std::nextafter(b.w,far),far);
-        const float bb=std::nextafter(b.y+std::nextafter(b.h,far),far);
+        const float positiveInfinity=std::numeric_limits<float>::infinity();
+        const float bx=std::nextafter(b.x,-positiveInfinity),by=std::nextafter(b.y,-positiveInfinity);
+        const float br=std::nextafter(b.x+std::nextafter(b.w,positiveInfinity),positiveInfinity);
+        const float bb=std::nextafter(b.y+std::nextafter(b.h,positiveInfinity),positiveInfinity);
         if(br<tile.x || bb<tile.y || bx>right || by>bottom)continue;
         const auto source=vertices.subspan(range.first,range.count);
         if(bx>=tile.x && by>=tile.y && br<=right && bb<=bottom) {

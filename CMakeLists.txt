@@ -936,6 +936,10 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-game.png")
       set_tests_properties(gui_smoothing_game PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: HUD smoothing applies live")
+      # These isolated UI processes own SDL's DBus initialization; release its
+      # global cache at shutdown so leak checks can see engine allocations.
+      set_tests_properties(build_controls render_texture_reuse gui_smoothing_menu gui_smoothing_game
+          PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     add_executable(shadow_test tools/shadow_test.cpp)
     target_include_directories(shadow_test PRIVATE src)
@@ -987,7 +991,7 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(selective_aa_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(selective_aa_test PRIVATE ${_tak_sdl2})
     add_test(NAME selective_aa COMMAND selective_aa_test)
-    set_tests_properties(selective_aa PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    set_tests_properties(selective_aa PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     add_executable(geometry_tiles_test tools/geometry_tiles_test.cpp)
     target_include_directories(geometry_tiles_test PRIVATE src)
     target_compile_definitions(geometry_tiles_test PRIVATE SDL_MAIN_HANDLED)
@@ -998,7 +1002,7 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(distant_models_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(distant_models_test PRIVATE ${_tak_sdl2})
     add_test(NAME distant_models COMMAND distant_models_test)
-    set_tests_properties(distant_models PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    set_tests_properties(distant_models PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     add_executable(campaign_presentation_test tools/campaign_presentation_test.cpp
         src/client/campaignscreen.cpp src/client/font.cpp src/client/guiart.cpp)
     target_compile_definitions(campaign_presentation_test PRIVATE SDL_MAIN_HANDLED)
