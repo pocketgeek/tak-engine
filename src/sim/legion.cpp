@@ -912,7 +912,7 @@ struct LegionNavigator::Impl {
         pt.assigned=true;
         const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
         std::vector<std::pair<int,Member*>> list;
-        int64_t sumX=0,sumZ=0,area=0,areaGap=0,firstSide=0;bool mixed=false;
+        int64_t sumX=0,sumZ=0,area=0,areaGap=0,firstSide=0,minSide=8;bool mixed=false;
         for(auto& [id,mm]:members) {
             if(mm.point!=key||mm.goal<0||mm.slot>=0)continue;
             const Unit* v=w.unit(id);
@@ -922,6 +922,7 @@ struct LegionNavigator::Impl {
             const int64_t side=std::max(v->type->footX,v->type->footZ);area+=side*side*256;
             areaGap+=(side+1)*(side+1)*256;
             if(!firstSide)firstSide=side;
+            minSide=std::min(minSide,side);
             mixed|=side!=firstSide;
         }
         // Bodies of different sizes never tile: give each a cell of clearance.
@@ -930,7 +931,9 @@ struct LegionNavigator::Impl {
         const int64_t n=int64_t(list.size());
         pt.centreX=sumX/n;pt.centreZ=sumZ/n;
         const int64_t packed=isqrtFloor(uint64_t(area)*10000/31416);
-        pt.limit=packed+80;
+        // The area: the packed disc plus a margin of three of the smallest
+        // bodies (greedy formation packing leaves holes inside the disc).
+        pt.limit=packed+48*minSide-8;
         int64_t spread=0;
         for(const auto& [id,mm]:list) {
             const Unit* v=w.unit(id);
