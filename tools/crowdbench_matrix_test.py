@@ -58,7 +58,7 @@ class MatrixTests(unittest.TestCase):
             self.assertIn("src/new.h", second["source_files_sha256"])
             self.assertIn("modified", second["tracked_diff"])
 
-    def test_runner_checks_identity_and_writes_all_four_modes(self):
+    def test_runner_checks_identity_and_writes_all_five_modes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             binary = root / "fake-crowdbench"
@@ -83,10 +83,10 @@ class MatrixTests(unittest.TestCase):
                     matrix.subprocess, "run", side_effect=fake_run), contextlib.redirect_stdout(io.StringIO()):
                 matrix.main()
             manifest = json.loads((out / "manifest.json").read_text())
-            self.assertEqual(len(manifest["runs"]), 16)
+            self.assertEqual(len(manifest["runs"]), 20)
             self.assertTrue(manifest["binary_unchanged"])
             summaries = json.loads((out / "summary.json").read_text())
-            self.assertEqual(len(summaries), 8)
+            self.assertEqual(len(summaries), 10)
             self.assertEqual({row["mode"] for row in summaries}, set(matrix.MODES))
             self.assertTrue(all(row["runs"] == 2 for row in summaries))
 

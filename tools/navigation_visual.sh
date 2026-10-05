@@ -27,7 +27,7 @@ for part in "${parts[@]}"; do
   if [[ "$part" == *-* ]]; then for ((c=${part%-*}; c<=${part#*-}; c++)); do cpu_list+=("$c"); done
   else cpu_list+=("$part"); fi
 done
-modes=(retail retail-plus flowfield cooperative)
+modes=(${MODES:-retail retail-plus flowfield cooperative})
 jobs=()
 for scenario in "${scenarios[@]}"; do
   for units in ${VISUAL_UNITS:-200 2000}; do
