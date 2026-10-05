@@ -373,8 +373,9 @@ def report(out):
     modes = [m for m in MODES if any(r["mode"] == m for r in good)]
     if len(roles) == 2:
         a, b = roles
-        same = differ = 0
+        lines += [f"Final state hashes, {a} vs {b} (Retail must match everywhere):", ""]
         for mode in modes:
+            same = differ = 0
             for key in {k for (role, m, k, seed) in by_run if m == mode}:
                 for seed in {s for (_, m, k, s) in by_run if m == mode and k == key}:
                     x, y = by_run.get((a, mode, key, seed)), by_run.get((b, mode, key, seed))
@@ -383,7 +384,8 @@ def report(out):
                             same += 1
                         else:
                             differ += 1
-        lines += [f"Final hashes equal between {a} and {b}: {same} cases; different: {differ}.", ""]
+            lines.append(f"- {mode}: equal {same}, different {differ}")
+        lines.append("")
     # Per-mode totals across every case (sum over seeds and scenarios).
     lines += ["## Per-mode totals (sum over all cases and seeds; first repeat)", ""]
     header = ["mode"] + [f"{field} ({role})" for field in ("crossed", "arrived", "groups done", "stalled unit-ticks",
@@ -485,6 +487,29 @@ def report(out):
     print(f"wrote {out / 'results.csv'} and {out / 'summary.md'}")
 
 
+def combine(out, inputs):
+    """One report from runs made separately, e.g. a baseline matrix published
+    earlier and a candidate matrix run later with identical case lists."""
+    manifests = [json.loads((d / "manifest.json").read_text()) for d in inputs]
+    phases = {m["phase"] for m in manifests}
+    if len(phases) != 1:
+        raise SystemExit("cannot combine outcome and timing runs")
+    binaries = {}
+    for m in manifests:
+        for role, info in m["binaries"].items():
+            if role in binaries:
+                raise SystemExit(f"role {role!r} appears in more than one input")
+            binaries[role] = info
+    out.mkdir(parents=True, exist_ok=True)
+    merged = dict(manifests[0], binaries=binaries, label=" + ".join(m.get("label", "") for m in manifests),
+                  combined_from=[str(d) for d in inputs])
+    (out / "manifest.json").write_text(json.dumps(merged, indent=2) + "\n")
+    with (out / "results.jsonl").open("w") as handle:
+        for d in inputs:
+            handle.write((d / "results.jsonl").read_text())
+    report(out)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -512,9 +537,15 @@ def main():
         p.add_argument("--timeout", type=float, default=3600)
     p = sub.add_parser("report")
     p.add_argument("output", type=Path)
+    p = sub.add_parser("combine", help="merge separate same-phase runs (distinct roles) into one before/after report")
+    p.add_argument("output", type=Path)
+    p.add_argument("inputs", nargs="+", type=Path)
     args = parser.parse_args()
     if args.command == "report":
         report(args.output)
+        return
+    if args.command == "combine":
+        combine(args.output, args.inputs)
         return
     timing = args.phase == "timing"
     if args.scenarios is None:
