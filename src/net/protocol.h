@@ -19,7 +19,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 228;      // 228: shared far-tile flow fields + field reuse; Retail+ occupancy obstruction
+constexpr uint32_t kNetVersion = 228;      // 228: Legion group pathfinding mode (value 4); shared far-tile flow
+                                           //      fields + field reuse; Retail+ occupancy obstruction
                                            // 227: Retail+ route and local-traffic mode (value 3)
                                            // 226: Cooperative follower scheduling, retry and lane behavior
                                            // 224: bounded Flowfield crowd avoidance and legal compact arrivals
