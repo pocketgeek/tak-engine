@@ -29,6 +29,14 @@ public:
         size_t cooperativePassages=0;
         uint64_t cooperativeClearanceHits=0,cooperativeClearanceRebuilds=0,cooperativeClearanceEvictions=0;
         size_t cooperativeClearanceEntries=0,cooperativeClearanceBytes=0;
+        // Diagnostics only (never hashed or read by decisions). The *Ns
+        // fields are wall-clock and must only be used as exploratory timing.
+        uint64_t dirtyEvents=0,dirtyProfileTiles=0,snapshotStarts=0,topologyPublications=0,unchangedPublications=0;
+        uint64_t serviceDestinations=0,serviceDestinationWork=0,serviceFieldsBuilt=0,serviceFieldWork=0;
+        uint64_t serviceInvalidations=0,serviceInvalidatedDestinations=0,serviceInvalidatedFields=0;
+        uint64_t serviceInvalidatedBuilders=0,serviceInvalidatedBindings=0,serviceEvictedGroups=0,serviceEvictedFields=0;
+        uint64_t unboundRequests=0,staleDeliveryBlocks=0,serviceSharedFieldsBuilt=0,serviceSharedResolutions=0,serviceSharedReuses=0,serviceRetainedFields=0;
+        uint64_t serviceNs=0,snapshotNs=0,deliverNs=0,tickNs=0;
     };
     explicit FlowNavigator(World& world);
     ~FlowNavigator();

@@ -248,6 +248,10 @@ size_t Destination::step(size_t budget) {
     }
     return work;
 }
+bool Destination::downhill(uint32_t from,uint32_t to) const {
+    const auto a=distance(from),b=distance(to);
+    return a!=kUnreachable&&b!=kUnreachable&&b+1==a;
+}
 void Destination::discover(uint32_t component,uint32_t distance) {
     distance_[component]=distance;queue_.push_back(component);
     fold(digest_,component);fold(digest_,distance);
@@ -271,10 +275,25 @@ uint32_t Destination::distance(uint32_t component) const {
     return component<distance_.size()?distance_[component]:kUnreachable;
 }
 bool Destination::reachable(Cell c) const {return regionSeed_==regionCells_ && distance(topology_->componentAt(c))!=kUnreachable;}
-uint32_t Destination::estimate(Cell c) const {
-    const int64_t dx=std::max({int64_t(goalMin_.x)-c.x,int64_t(0),int64_t(c.x)-goalMax_.x});
-    const int64_t dz=std::max({int64_t(goalMin_.z)-c.z,int64_t(0),int64_t(c.z)-goalMax_.z});
+uint32_t Destination::estimate(Cell c) const {return estimate(c,goalMin_,goalMax_);}
+uint32_t Destination::estimate(Cell c,Cell low,Cell high) {
+    const int64_t dx=std::max({int64_t(low.x)-c.x,int64_t(0),int64_t(c.x)-high.x});
+    const int64_t dz=std::max({int64_t(low.z)-c.z,int64_t(0),int64_t(c.z)-high.z});
     return uint32_t(std::min<int64_t>(kUnreachable-1,std::max(dx,dz)*1024+std::min(dx,dz)*424));
+}
+Destination::Exits Destination::exits(int tile) const {
+    Exits mask{};
+    if(!tileReady(tile))return mask;
+    const auto& topo=*topology_;
+    const int originX=(tile%topo.tilesX)*kTileSize,originZ=(tile/topo.tilesX)*kTileSize;
+    for(int border=0;border<4*kTileSize;++border) {
+        const int d=border/kTileSize,offset=border%kTileSize;
+        const Cell c=d==0?Cell{originX+offset,originZ}:d==1?Cell{originX+63,originZ+offset}:
+            d==2?Cell{originX+offset,originZ+63}:Cell{originX,originZ+offset};
+        if(downhill(topo.componentAt(c),topo.componentAt({c.x+dx[d],c.z+dz[d]})))
+            mask[size_t(border/64)]|=uint64_t(1)<<(border%64);
+    }
+    return mask;
 }
 size_t Destination::bytes() const {return sizeof(*this)+goals_.capacity()*sizeof(Cell)+(distance_.capacity()+queue_.capacity())*sizeof(uint32_t)+undiscovered_.capacity()*sizeof(uint16_t);}
 bool Field::next(Cell from,Cell& to) const {
@@ -291,28 +310,47 @@ uint64_t Field::hash() const {
     }
     return h;
 }
-FieldBuilder::FieldBuilder(std::shared_ptr<const Destination> destination,int tile):destination_(std::move(destination)) {
+void FieldBuilder::place(int tile,std::pair<Cell,Cell> box) {
+    result_.tile=tile;result_.distance.fill(kUnreachable);result_.direction.fill(255);heapPos_.fill(-1);
+    originX_=(tile%topology_->tilesX)*kTileSize;
+    originZ_=(tile/topology_->tilesX)*kTileSize;
+    result_.originX=originX_;result_.originZ=originZ_;
+    boxMin_=box.first;boxMax_=box.second;
+    // Subtract a constant so distant goals do not inflate per-tile distances.
+    // The goal-box heuristic biases otherwise equivalent portals toward a
+    // diagonal heading on open ground instead of an entire-map L-shaped route.
+    const auto bias=[this](Cell c){return Destination::estimate(c,boxMin_,boxMax_);};
+    biasBase_=std::min({bias({originX_,originZ_}),bias({originX_+63,originZ_}),
+        bias({originX_,originZ_+63}),bias({originX_+63,originZ_+63})});
+    biasBase_=biasBase_>128*1448?biasBase_-128*1448:0;
+}
+FieldBuilder::FieldBuilder(std::shared_ptr<const Topology> topology,int tile,Destination::Exits exits,
+                           std::pair<Cell,Cell> anchor):topology_(std::move(topology)),exits_(std::move(exits)) {
+    if(!topology_||tile<0||size_t(tile)>=topology_->tiles.size())throw std::invalid_argument("shared flow field tile");
+    place(tile,anchor);
+}
+FieldBuilder::FieldBuilder(std::shared_ptr<const Destination> destination,int tile,
+                           std::optional<std::pair<Cell,Cell>> anchor):destination_(std::move(destination)) {
     if(!destination_ || !destination_->tileReady(tile))
         throw std::invalid_argument("flow field destination/tile not ready");
-    result_.tile=tile;result_.distance.fill(kUnreachable);result_.direction.fill(255);heapPos_.fill(-1);
-    originX_=(tile%destination_->topology().tilesX)*kTileSize;
-    originZ_=(tile/destination_->topology().tilesX)*kTileSize;
-    result_.originX=originX_;result_.originZ=originZ_;
+    topology_=destination_->topologyPointer();
+    place(tile,anchor?*anchor:destination_->goalBox());
     goalSeeds_=destination_->goals().size();
-    if(destination_->region()) {
+    if(anchor) {
+        // Shared detailed fields never contain a goal: callers select only
+        // tiles outside the goal box. Seeding here would make content depend
+        // on the individual destination rather than on its sharing key.
+        const auto [low,high]=destination_->goalBox();
+        if(low.x<=originX_+63&&high.x>=originX_&&low.z<=originZ_+63&&high.z>=originZ_)
+            throw std::invalid_argument("anchored flow field overlaps its goal");
+        goalSeeds_=0;
+    } else if(destination_->region()) {
         const auto [low,high]=destination_->region()->bounds();
         seedMin_={std::max(originX_,low.x),std::max(originZ_,low.z)};
         seedMax_={std::min(originX_+63,high.x),std::min(originZ_+63,high.z)};
         goalSeeds_=seedMin_.x<=seedMax_.x&&seedMin_.z<=seedMax_.z?
             size_t(seedMax_.x-seedMin_.x+1)*size_t(seedMax_.z-seedMin_.z+1):0;
     }
-    // Subtract a constant so distant goals do not inflate per-tile distances.
-    // The goal-box heuristic biases otherwise equivalent portals toward a
-    // diagonal heading on open ground instead of an entire-map L-shaped route.
-    biasBase_=std::min({destination_->estimate({originX_,originZ_}),
-        destination_->estimate({originX_+63,originZ_}),destination_->estimate({originX_,originZ_+63}),
-        destination_->estimate({originX_+63,originZ_+63})});
-    biasBase_=biasBase_>128*1448?biasBase_-128*1448:0;
 }
 bool FieldBuilder::less(uint16_t a,uint16_t b) const {
     return result_.distance[a]!=result_.distance[b]?result_.distance[a]<result_.distance[b]:a<b;
@@ -329,7 +367,7 @@ void FieldBuilder::offer(uint16_t cell,uint32_t distance,uint8_t direction) {
     while(i && less(heap_[i],heap_[(i-1)/2])) {swapHeap(i,(i-1)/2);i=(i-1)/2;}
 }
 void FieldBuilder::seedOne() {
-    const auto& topo=destination_->topology();
+    const auto& topo=*topology_;
     const auto& tile=*topo.tiles[size_t(result_.tile)];
     if(scan_<goalSeeds_) {
         Cell c;
@@ -352,11 +390,12 @@ void FieldBuilder::seedOne() {
     // reverse BFS has already discovered every strictly lower-distance peer;
     // later discoveries can only be equal/higher and cannot add exit seeds.
     // Destination work runs before field jobs and all jobs join each tick.
-    const auto from=destination_->distance(topo.componentAt(c));
-    const auto to=destination_->distance(topo.componentAt(next));
-    if(from!=kUnreachable && to!=kUnreachable && to+1==from)
+    const bool exit=exits_?bool(((*exits_)[border/64]>>(border%64))&1):
+        destination_->downhill(topo.componentAt(c),topo.componentAt(next));
+    if(exit)
         offer(uint16_t(local(c)),addCost(uint32_t(tile.cost[size_t(local(c))])*1024,
-            (destination_->estimate(next)>biasBase_?destination_->estimate(next)-biasBase_:0)*uint32_t(tile.minimumCost)),uint8_t(d));
+            (Destination::estimate(next,boxMin_,boxMax_)>biasBase_?Destination::estimate(next,boxMin_,boxMax_)-biasBase_:0)*
+            uint32_t(tile.minimumCost)),uint8_t(d));
 }
 void FieldBuilder::integrateOne() {
     if(!heapSize_) {phase_=Phase::Done;return;}
@@ -368,7 +407,7 @@ void FieldBuilder::integrateOne() {
         if(!less(heap_[best],heap_[i]))break;
         swapHeap(i,best);i=best;
     }
-    const auto& tile=*destination_->topology().tiles[size_t(result_.tile)];
+    const auto& tile=*topology_->tiles[size_t(result_.tile)];
     const int x=cell%kTileSize,z=cell/kTileSize;
     for(int d=0;d<8;++d) {
         const int nx=x+dx[d],nz=z+dz[d];

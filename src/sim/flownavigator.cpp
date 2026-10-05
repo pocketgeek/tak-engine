@@ -12,6 +12,7 @@
 #include "sim.h"
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <map>
 #include <tuple>
 #include <utility>
@@ -308,9 +309,11 @@ struct FlowNavigator::Impl {
                 it=local.erase(it);
             else ++it;
         }
+        ++counters.dirtyEvents;
         for(auto& [key,p]:profiles) {
             (void)key;if(p.player<0||p.player>=16||!(viewers&(1u<<p.player)))continue;
             const auto& nav=world.navFor(p.type);
+            counters.dirtyProfileTiles+=size_t(std::count(p.dirty.begin(),p.dirty.end(),false));
             flow::SnapshotBuilder::dirtyRectangle(p.dirty,nav.width(),nav.height(),p.type->footX,p.type->footZ,x,z,w,h);
         }
     }
@@ -496,7 +499,7 @@ struct FlowNavigator::Impl {
         p.builder=std::make_unique<flow::SnapshotBuilder>(nav.width(),nav.height(),p.type->footX,p.type->footZ,
             [this,&p](int x,int z){return sample(p,x,z);},p.topology,p.dirty,
             flow::MemoryPlan::topologyLimits,std::move(hooks),world.serialThreads_?0:4);
-        std::fill(p.dirty.begin(),p.dirty.end(),false);
+        std::fill(p.dirty.begin(),p.dirty.end(),false);++counters.snapshotStarts;
     }
     flow::GoalRegion goals(Unit& u,Fixed x,Fixed z) const {
         const auto* mission=world.navigationMissionOrder(u);
@@ -584,8 +587,11 @@ struct FlowNavigator::Impl {
                 remaining-=work;counters.snapshotWork+=work;
                 if(p.builder->done()) {
                     const auto topology=p.builder->finish();
+                    if(topology==p.topology)++counters.unchangedPublications;
                     if(topology!=p.topology) {
-                        service.invalidate(p.id);
+                        ++counters.topologyPublications;
+                        for(auto& [id,r]:requests){(void)id;counters.unboundRequests+=r.key==it->first&&r.bound;}
+                        service.invalidate(p.id,topology);
                         if(passages)passages->invalidate(p.id);
                         for(auto& [id,r]:requests) { (void)id;if(r.key==it->first){r.bound=false;r.resetFiring();} }
                         p.topology=topology;p.topologyHash=p.builder->checksum();
@@ -702,7 +708,7 @@ struct FlowNavigator::Impl {
         };
         const auto fresh=[&](Cell cell){return snapshotFresh||freshTile(p.topology->tileAt(cell));};
         Cell at{footprintCell(u.x,u.type->footX),footprintCell(u.z,u.type->footZ)};
-        if(!fresh(at)){r.passagePending=true;return false;}
+        if(!fresh(at)){r.passagePending=true;++counters.staleDeliveryBlocks;return false;}
         if(!prepareFiring(r,p,u))return false;
         if(r.firingState==2&&!r.firingCount&&r.firingDone) {
             if(!snapshotFresh){r.passagePending=true;return false;}
@@ -786,7 +792,7 @@ struct FlowNavigator::Impl {
             if(next.status!=flow::Service::Status::Ready)break;
             if(!fresh(next.next)||(at.x!=next.next.x&&at.z!=next.next.z&&
                 (!fresh({at.x,next.next.z})||!fresh({next.next.x,at.z})))) {
-                r.passagePending=true;return false;
+                r.passagePending=true;++counters.staleDeliveryBlocks;return false;
             }
             if(passages&&!passage) {
                 const Cell delta{(next.next.x>at.x)-(next.next.x<at.x),(next.next.z>at.z)-(next.next.z<at.z)};
@@ -911,7 +917,9 @@ struct FlowNavigator::Impl {
                 traffic.refreshSettled(id,current);
             return valid;
         });
+        const auto snapshotStart=std::chrono::steady_clock::now();
         if(structuresComplete&&obstacles->settled())advanceProfiles();
+        counters.snapshotNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-snapshotStart).count());
         if(passages) {
             // Descriptor work progresses independently of how often a unit's
             // request is revisited. Retain no old topology in the sparse cache.
@@ -929,7 +937,10 @@ struct FlowNavigator::Impl {
         }
         advanceLocal();
         // Selection does not depend on worker availability or elapsed time.
+        const auto serviceStart=std::chrono::steady_clock::now();
         service.tick(world.serialThreads_?0:4);
+        const auto deliverStart=std::chrono::steady_clock::now();
+        counters.serviceNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(deliverStart-serviceStart).count());
         auto it=requests.upper_bound(requestCursor);
         const size_t count=std::min<size_t>(requests.size(),256);
         for(size_t n=0;n<count&&!requests.empty();++n) {
@@ -949,6 +960,7 @@ struct FlowNavigator::Impl {
             if(!firingRays||!firingCells)break;
         }
         counters.fieldWork=service.work();
+        counters.deliverNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-deliverStart).count());
     }
 };
 FlowNavigator::FlowNavigator(World& world):impl_(std::make_unique<Impl>(world)) {}
@@ -1373,7 +1385,10 @@ void FlowNavigator::cancel(int unit) {
     impl_->cancel(unit);
     if(impl_->traffic.coordinator)impl_->traffic.coordinator->cancel(unit);
 }
-void FlowNavigator::tick() {impl_->tick();}
+void FlowNavigator::tick() {
+    const auto start=std::chrono::steady_clock::now();impl_->tick();
+    impl_->counters.tickNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count());
+}
 bool FlowNavigator::allowFollowerStep(int id,flow::Cell from,flow::Cell to) const {
     return impl_->traffic.coordinator&&impl_->traffic.coordinator->allowFollowerStep(id,from,to);
 }
@@ -1423,6 +1438,16 @@ uint64_t FlowNavigator::checksum() const {
 }
 FlowNavigator::Stats FlowNavigator::stats() const {
     auto stats=impl_->counters;stats.profiles=impl_->profiles.size();stats.pending=impl_->requests.size();
+    {
+        const auto& c=impl_->service.counters();
+        stats.serviceDestinations=c.destinations;stats.serviceDestinationWork=c.destinationWork;
+        stats.serviceFieldsBuilt=c.fieldsBuilt;stats.serviceFieldWork=c.fieldWork;
+        stats.serviceInvalidations=c.invalidations;stats.serviceInvalidatedDestinations=c.invalidatedDestinations;
+        stats.serviceInvalidatedFields=c.invalidatedFields;stats.serviceInvalidatedBuilders=c.invalidatedBuilders;
+        stats.serviceInvalidatedBindings=c.invalidatedBindings;stats.serviceEvictedGroups=c.evictedGroups;
+        stats.serviceEvictedFields=c.evictedFields;stats.serviceSharedFieldsBuilt=c.sharedFieldsBuilt;
+        stats.serviceSharedResolutions=c.sharedResolutions;stats.serviceSharedReuses=c.sharedReuses;stats.serviceRetainedFields=c.retainedFields;
+    }
     if(impl_->traffic.coordinator) {
         const auto value=impl_->traffic.coordinator->stats();
         stats.cooperativeProbes=value.probes;stats.cooperativeSearches=value.searches;

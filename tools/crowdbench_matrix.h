@@ -245,6 +245,25 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
     metric("cooperative_passage_screening_cells",f.cooperativePassageScreeningCells);
     metric("cooperative_clearance_hits",f.cooperativeClearanceHits);
     metric("cooperative_clearance_rebuilds",f.cooperativeClearanceRebuilds);
+    // Shared-field invalidation diagnostics (agent "routing"); absent in older builds.
+    if constexpr(requires {f.serviceInvalidations;f.tickNs;}) {
+        metric("flow_dirty_events",f.dirtyEvents);metric("flow_dirty_profile_tiles",f.dirtyProfileTiles);
+        metric("flow_snapshot_starts",f.snapshotStarts);metric("flow_topology_publications",f.topologyPublications);
+        metric("flow_unchanged_publications",f.unchangedPublications);
+        metric("flow_service_destinations",f.serviceDestinations);metric("flow_service_destination_work",f.serviceDestinationWork);
+        metric("flow_service_fields_built",f.serviceFieldsBuilt);metric("flow_service_field_work",f.serviceFieldWork);
+        metric("flow_service_invalidations",f.serviceInvalidations);
+        metric("flow_service_invalidated_destinations",f.serviceInvalidatedDestinations);
+        metric("flow_service_invalidated_fields",f.serviceInvalidatedFields);
+        metric("flow_service_invalidated_builders",f.serviceInvalidatedBuilders);
+        metric("flow_service_invalidated_bindings",f.serviceInvalidatedBindings);
+        metric("flow_service_evicted_groups",f.serviceEvictedGroups);metric("flow_service_evicted_fields",f.serviceEvictedFields);
+        metric("flow_unbound_requests",f.unboundRequests);metric("flow_stale_delivery_blocks",f.staleDeliveryBlocks);
+        metric("flow_shared_fields_built",f.serviceSharedFieldsBuilt);metric("flow_shared_resolutions",f.serviceSharedResolutions);
+        metric("flow_shared_reuses",f.serviceSharedReuses);metric("flow_retained_fields",f.serviceRetainedFields);
+        metric("flow_service_ns",f.serviceNs);metric("flow_snapshot_ns",f.snapshotNs);
+        metric("flow_deliver_ns",f.deliverNs);metric("flow_tick_ns",f.tickNs);
+    }
     if constexpr(requires {world.cooperativeMovementStats();}) {
         const auto m=world.cooperativeMovementStats();
         metric("cooperative_movement_queued",m.queued);metric("cooperative_movement_attempted",m.attempted);
