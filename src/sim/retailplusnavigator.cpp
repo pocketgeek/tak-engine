@@ -180,6 +180,18 @@ flow::Traffic::Result RetailPlusNavigator::traffic(Unit& u) {
             for(int side=0;side<(sx&&sz?3:1)&&!c.obstruction;++side) {
                 const int x0=cells[size_t(side)].x-c.footX/2,z0=cells[size_t(side)].z-c.footZ/2;
                 if(x0<0||z0<0||x0+c.footX>w.hW_||z0+c.footZ>w.hH_)continue;
+                // The occupancy grid already names the ground mover standing
+                // there. Reading it costs no index work; only an empty grid
+                // footprint still needs the full query for landed flyers,
+                // structure yards and other bodies the grid does not record.
+                if(w.occW_==w.hW_&&w.occH_==w.hH_) {
+                    int owner=0;
+                    for(int z=z0;z<z0+c.footZ;++z)for(int x=x0;x<x0+c.footX;++x) {
+                        const int id=w.occ_[size_t(z)*w.occW_+x];
+                        if(id&&id!=u.id&&(!owner||id<owner))owner=id;
+                    }
+                    if(owner)if(auto n=lookup(owner)){c.obstruction=n;continue;}
+                }
                 if(!bodyQuery(x0,z0,c.footX,c.footZ))return unavailable();
                 const auto bodies=w.searchBodyRect(x0,z0,c.footX,c.footZ);
                 int id=0;
