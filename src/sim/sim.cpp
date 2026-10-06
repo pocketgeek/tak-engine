@@ -83,6 +83,9 @@ void TypeRegistry::loadMoveInfo(const hpi::Vfs& vfs, const std::string& path) {
             m.badSlope=std::min(m.badSlope,m.maxSlope);
             m.badMaxWaterDepth=int(c.numberOr("BadMaxWaterDepth",32768));
             m.badMinWaterDepth=int(c.numberOr("BadMinWaterDepth",32768));
+            m.retailMaxWaterDepth=int16_t(int(c.numberOr("MaxWaterDepth",10000)));
+            m.retailMinWaterDepth=int16_t(int(c.numberOr("MinWaterDepth",-10000)));
+            m.retailMaxSlope=uint8_t(int(c.numberOr("MaxSlope",255)));
             moveClasses_[name] = m;
         }
     } catch (const std::exception&) {}   // no MOVEINFO -> units keep FBI defaults
@@ -312,6 +315,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.receivesWind = info->numberOr("wind", 0) != 0 ||
                              info->numberOr("windgenerator", 0) != 0;
             t.transportLandEligible=info->numberOr("minwaterdepth",-10000)<0;
+            t.landMaxWaterDepth=int16_t(int(info->numberOr("maxwaterdepth",10000)));
+            t.landMinWaterDepth=int16_t(int(info->numberOr("minwaterdepth",-10000)));
+            t.landMaxSlope=uint8_t(int(info->numberOr("maxslope",255)));
             std::string mc = lower(info->valueOr("movementclass", ""));
             if (mc.rfind("water", 0) == 0) t.domain = UnitType::Domain::Water;
             else if (mc.rfind("hover", 0) == 0) t.domain = UnitType::Domain::Hover;
@@ -323,6 +329,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 t.maxWaterDepth = mci->second.maxWaterDepth;
                 t.minWaterDepth = mci->second.minWaterDepth;
                 t.transportLandEligible=mci->second.transportLandEligible;
+                t.landMaxWaterDepth=mci->second.retailMaxWaterDepth;
+                t.landMinWaterDepth=mci->second.retailMinWaterDepth;
+                t.landMaxSlope=mci->second.retailMaxSlope;
                 t.badSlope=mci->second.badSlope;t.badWaterSlope=mci->second.badWaterSlope;
                 t.badMaxWaterDepth=mci->second.badMaxWaterDepth;t.badMinWaterDepth=mci->second.badMinWaterDepth;
                 // The movement class WINS over the FBI, which is retail's precedence
@@ -1263,6 +1272,8 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     noSeaLevelTrigger_ = false;
     heights_ = heights;   // keep raw heights for fog line-of-sight
     hW_ = w; hH_ = h;
+    airOccupancy_.reset(w,h);
+    for (auto& u:units_) u.airOccupant={};
     explorationHeights_=retailExplorationHeights(w,h,uint8_t(seaLevel),
         [&](int x,int z){return heights_[size_t(z)*w+x];});
     navigationExplored_.assign(explorationHeights_.size(),0);
@@ -2146,51 +2157,98 @@ void World::tickGuardNoMove(Unit& u) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
 }
 
+// 509400, ported exactly. Every footprint cell is tested only when the
+// coarse exploration word at the footprint lacks the lander's player bit:
+// retail accepts an unexplored site with no terrain or occupancy test at all.
+// Word +0 is World's ground body plane (searchBodyRect), word +2 the persistent
+// secondary grid airOccupancy_, +0xd bit 0x10 any non-'.' structure yard cell.
 bool World::flightLandingFree(const Unit& self,Fixed x,Fixed z) const {
-    const auto& grid=navFor(self.type);
-    const int foot=footCells(self.type);
-    if (!grid.empty() && !grid.fits(footprintCell(x,foot),footprintCell(z,foot),foot)) return false;
-    if (!cellFree(x,z,self.id,foot)) return false;
-    // Ground traffic's occupancy plane deliberately excludes flyers. Landing
-    // additionally sees grounded aircraft and descents that already claimed a
-    // footprint, including earlier units processed in this very tick.
-    const int x0=footprintOrigin(x,self.type->footX),z0=footprintOrigin(z,self.type->footZ);
-    const int x1=x0+self.type->footX,z1=z0+self.type->footZ;
-    const auto blocks=[&](const Unit& other) {
-        if (other.id==self.id || !other.alive() || other.embarked() ||
-            !other.type || !other.type->canFly) return false;
-        const bool descending=other.landing && !other.landing->canceled &&
-                              other.landing->mission.stage==3;
-        if (other.flightGroundMode!=1 && !descending) return false;
-        const int ox=footprintOrigin(other.x,other.type->footX);
-        const int oz=footprintOrigin(other.z,other.type->footZ);
-        return x0<ox+other.type->footX && ox<x1 && z0<oz+other.type->footZ && oz<z1;
-    };
-    if (bodyIndexEnabled_ && x0>=0 && z0>=0 && x1<=hW_ && z1<=hH_) {
-        if (!bodyIndexValid_) rebuildBodyIndex();
-        for (int tz=z0/8;tz<(z1+7)/8;++tz)
-            for (int tx=x0/8;tx<(x1+7)/8;++tx)
-                for (int index:bodyTiles_[size_t(tz)*bodyTilesW_+tx])
-                    if (blocks(units_[size_t(index)])) return false;
-    } else {
-        for (const auto& other:units_) if (blocks(other)) return false;
-    }
-    return true;
+    const auto& type=*self.type;
+    const RetailLandingLimits limits{int16_t(type.footX),int16_t(type.footZ),type.landMaxWaterDepth,
+        type.landMinWaterDepth,type.landMaxSlope,type.canFly,type.floater,uint8_t(self.player)};
+    const int fx=type.footX,fz=type.footZ;
+    const int x0=int16_t(std::bit_cast<int32_t>(uint32_t(x.v)-(uint32_t(fx)<<19)+0x80000u)>>20);
+    const int z0=int16_t(std::bit_cast<int32_t>(uint32_t(z.v)-(uint32_t(fz)<<19)+0x80000u)>>20);
+    struct Host {
+        const World& w; const Unit& self; int x0,z0,fx,fz;
+        std::optional<SearchBodyRect> bodies;
+        std::vector<uint8_t> yards;
+        int width() const { return w.hW_; }
+        int height() const { return w.hH_; }
+        uint16_t exploration(size_t coarse) const {
+            if (w.navigationExplored_.empty()) return 0xffff;
+            return coarse<w.navigationExplored_.size() ? w.navigationExplored_[coarse] : 0;
+        }
+        bool mapCells() const { return w.mapPlacementCells_.size()==size_t(w.hW_)*w.hH_ && w.hW_>0; }
+        uint16_t feature(size_t cell) const { return mapCells() && cell<w.mapPlacementCells_.size() ? w.mapPlacementCells_[cell].feature : 0xffff; }
+        int featureBack(size_t cell) const {
+            const auto& c=w.mapPlacementCells_[cell];
+            return int(c.backZ)*w.hW_+c.backX;
+        }
+        int featureCount() const { return int(w.mapPlacementTypes_.size()); }
+        bool featureBlocking(int index) const {
+            return size_t(index)>=w.mapPlacementTypes_.size() || w.mapPlacementTypes_[size_t(index)].blocking;
+        }
+        size_t local(size_t cell) const {
+            return size_t(int(cell/size_t(w.hW_))-z0)*fx+size_t(int(cell%size_t(w.hW_))-x0);
+        }
+        bool yard(size_t cell) {
+            if (yards.empty()) {
+                // 5066f0 stamps +0xd bit 0x10 for every yard byte with bit 0:
+                // the decoded characters C c O o S w f y Y (4c0f59 table).
+                // An unparsed (empty) yardmap is a repeated blocking character.
+                yards.assign(size_t(fx)*fz,2);
+                auto stamp=[&](const Unit& u) {
+                    if (!u.alive() || u.embarked() || !u.type || !u.type->isStructure()) return;
+                    const auto& t=*u.type;
+                    const int ux=footprintOrigin(u.x,t.footX),uz=footprintOrigin(u.z,t.footZ);
+                    for (int cz=std::max(z0,uz);cz<std::min(z0+fz,uz+t.footZ);++cz)
+                        for (int cx=std::max(x0,ux);cx<std::min(x0+fx,ux+t.footX);++cx) {
+                            const char c=t.yardMap.empty() ? 'o' : t.yardMap[size_t(cz-uz)*t.footX+cx-ux];
+                            if (std::strchr("CcOoSwfyY",c) && c) yards[size_t(cz-z0)*fx+cx-x0]=1;
+                        }
+                };
+                if (w.bodyIndexEnabled_) {
+                    if (!w.bodyIndexValid_) w.rebuildBodyIndex();
+                    for (int tz=z0/8;tz<(z0+fz+7)/8;++tz)
+                        for (int tx=x0/8;tx<(x0+fx+7)/8;++tx)
+                            for (int index:w.bodyTiles_[size_t(tz)*w.bodyTilesW_+tx]) stamp(w.units_[size_t(index)]);
+                } else for (const auto& u:w.units_) stamp(u);
+            }
+            return yards[local(cell)]==1;
+        }
+        bool groundOther(size_t cell) {
+            if (!bodies) bodies=w.searchBodyRect(x0,z0,fx,fz);
+            const Unit* body=bodies->cells[local(cell)];
+            return body && body!=&self;
+        }
+        bool airOther(size_t cell) const {
+            if (w.airOccupancy_.empty() || cell>=w.airOccupancy_.cells().size()) return false;
+            const int id=w.airOccupancy_.cells()[cell];
+            if (id<=0 || id==self.id) return false;
+            const Unit* other=w.unit(id);
+            return other && other->alive();
+        }
+        int low(size_t cell) const { return w.cellHeightRange(cell).first; }
+        int high(size_t cell) const { return w.cellHeightRange(cell).second; }
+        int sea() const { return uint8_t(w.seaLevel_); }
+    } host{*this,self,x0,z0,fx,fz,{},{}};
+    return retailLandingSiteFree(x.v,z.v,limits,host);
+}
+
+// Cell quad extrema (+6 low, +5 high) from the corner lattice (50ed60).
+std::pair<int,int> World::cellHeightRange(size_t cell) const {
+    if (heights_.empty() || hW_<=0) return {0,0};
+    const int x=int(cell%size_t(hW_)),z=int(cell/size_t(hW_));
+    auto at=[&](int cx,int cz){return int(heights_[size_t(std::min(cz,hH_-1))*hW_+std::min(cx,hW_-1)]);};
+    const int a=at(x,z),b=at(x+1,z),c=at(x,z+1),d=at(x+1,z+1);
+    return {std::min(std::min(a,b),std::min(c,d)),std::max(std::max(a,b),std::max(c,d))};
 }
 
 void World::tickGroundMission(Unit& u) {
     // Other mission kinds continue through their existing handlers.
     if (!u.orders.empty() && !u.orders.front().landing) {
         u.standbyActive=false; u.landing.reset();
-    }
-    // A moving ground body can enter a site after descent began. Recheck before
-    // accepting touchdown and let the existing landing search choose another
-    // point; do not change the ground movement/traffic rules to reserve it.
-    if (u.landing && u.landing->mission.stage==3 && !flightLandingFree(u,u.x,u.z)) {
-        std::erase_if(u.orders,[](const Order& order){return order.landing;});
-        auto& mission=u.landing->mission;
-        mission.stage=2;mission.waitMask=0;mission.deadline=0xffffffffu;
-        mission.pending&=~0x700u;u.missionEvents&=~0x700u;
     }
     struct Host {
         World& w; Unit& u;
@@ -8301,19 +8359,57 @@ void World::tickFlames(std::span<const int> airGrid) {
     std::erase_if(flames_,[](const auto& flame){return flame.expired;});
 }
 
-std::span<const int> World::projectileAirGrid() {
-    std::vector<const Unit*> aircraft;
-    for(const auto& u:units_)
-        if(u.alive() && u.type && u.type->canFly && !u.embarked())aircraft.push_back(&u);
-    if(std::none_of(aircraft.begin(),aircraft.end(),[](const Unit* u){return u->flightGroundMode==2;}))return {};
-    std::sort(aircraft.begin(),aircraft.end(),[](const Unit* a,const Unit* b) {
+struct World::AirOccupancyHost {
+    World& w;
+    Unit* live(int id) {
+        Unit* u=w.unit(id);
+        return u && u->type && (u->alive() || id==w.airRetiring_) ? u : nullptr;
+    }
+    RetailAirOccupant* state(int id) { Unit* u=live(id); return u ? &u->airOccupant : nullptr; }
+    bool footprint(int id,int& x,int& z,int& fx,int& fz) {
+        const Unit* u=w.unit(id);
+        fx=u->type->footX;fz=u->type->footZ;
+        x=footprintOrigin(u->x,fx);z=footprintOrigin(u->z,fz);
+        return true;
+    }
+    bool airborne(int id) { const Unit* u=w.unit(id); return u->flightGroundMode==2 && !u->embarked(); }
+    template<class F> void forEachFlyer(F f) {
+        for (const auto& u:w.units_) if (u.type && u.type->canFly && (u.alive() || u.id==w.airRetiring_)) f(u.id);
+    }
+};
+
+// 512ae0 -> 5066a0 -> 507050(unit,0): a retiring flyer hands each cell it
+// owns to a random overlapping list member. World retires a body from the
+// occupancy planes when it dies, so this runs at that transition.
+void World::retireAirOccupant(Unit& u) {
+    if (!u.type || !u.type->canFly || u.airOccupant.recordedX<0 || airOccupancy_.empty()) return;
+    AirOccupancyHost host{*this};
+    airRetiring_=u.id;
+    airOccupancy_.remove(u.id,host,[&](unsigned n){return gameRand(int32_t(n));});
+    airRetiring_=0;
+    u.airOccupant.recordedX=u.airOccupant.recordedZ=-9999;
+}
+
+// 51da6a..51dbbe: after the unit updates, clear every live flyer's recorded
+// footprint (507050(unit,1)), then insert them all (506c40), each pass in
+// player/entity order. The grid persists between ticks: the landing predicate
+// and projectiles read it.
+std::span<const int> World::updateAirOccupancy() {
+    if (airOccupancy_.width()!=hW_ || airOccupancy_.height()!=hH_) airOccupancy_.reset(hW_,hH_);
+    std::vector<Unit*> flyers;
+    for (auto& u:units_) {
+        if (!u.type || !u.type->canFly) continue;
+        if (u.alive()) flyers.push_back(&u);
+        else if (u.airOccupant.recordedX>=0) retireAirOccupant(u); // a removal path without a death hook
+    }
+    if (flyers.empty()) return airOccupancy_.cells();
+    std::sort(flyers.begin(),flyers.end(),[](const Unit* a,const Unit* b) {
         return a->player!=b->player ? a->player<b->player : a->id<b->id;
     });
-    std::vector<RetailAirCollisionBody> bodies;
-    bodies.reserve(aircraft.size());
-    for(const auto* u:aircraft)bodies.push_back({u->id,footprintOrigin(u->x,u->type->footX),
-        footprintOrigin(u->z,u->type->footZ),u->type->footX,u->type->footZ,u->flightGroundMode==2});
-    return projectileAirScratch_.build(hW_,hH_,bodies,[&](unsigned n){return gameRand(int32_t(n));});
+    AirOccupancyHost host{*this};
+    for (auto* u:flyers) airOccupancy_.clear(u->id,host);
+    for (auto* u:flyers) airOccupancy_.insert(u->id,host,[&](unsigned n){return gameRand(int32_t(n));});
+    return airOccupancy_.cells();
 }
 
 World::ProjectileCollisionResult World::projectileCollision(const std::array<int32_t,3>& point,
@@ -9616,8 +9712,8 @@ void World::tick(float dt) {
     }
     }
 
-    // Native airborne occupancy is rebuilt before projectile updates.
-    const auto projectileAircraft=projectileAirGrid();
+    // Native airborne occupancy (persistent) is rebuilt before projectile updates.
+    const auto projectileAircraft=updateAirOccupancy();
     tickFlames(projectileAircraft);
     tickStraightProjectiles(projectileAircraft);
     // Projectiles.
@@ -9997,6 +10093,7 @@ void World::tick(float dt) {
             // Drop this unit's per-unit pathfinding state. Ids are never reused, so a
             // dead unit's entries can never match anything again -- they would simply
             // accumulate for the rest of the match.
+            retireAirOccupant(u);
             u.deadFor = 0; u.orders.clear(); u.speed = Fixed();
             // Refresh the old body before a corpse offset moves the record.
             for (auto& plane:searchGrades_)
@@ -10178,7 +10275,7 @@ void World::tick(float dt) {
                 u.x=Fixed::raw(point[0]);u.groundY=Fixed::raw(point[1]);u.z=Fixed::raw(point[2]);
                 updateBodyIndex(u);
             }
-            else { if (mission_ || scenario_) justDied_.push_back(u.id); u.deadFor = 0; }  // transport lost with all hands
+            else { if (mission_ || scenario_) justDied_.push_back(u.id); retireAirOccupant(u); u.deadFor = 0; }  // transport lost with all hands
             continue;
         }
         // Frozen / petrified / paralyzed: the unit is inert this tick.

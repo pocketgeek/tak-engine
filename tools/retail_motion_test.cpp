@@ -709,6 +709,10 @@ int main(int argc, char** argv) {
         }
     }
     {
+        // 509400: an airborne flyer owns the secondary occupant word of the
+        // explored cells below it, so a landing there is refused and the
+        // landing search relocates. Retail does not recheck a site once descent
+        // has begun (the engine's earlier recheck was removed by user decision).
         World world;world.setVisPlayer(-1);
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
@@ -719,23 +723,36 @@ int main(int argc, char** argv) {
         const int above=world.spawn(&overhead,256,256);
         world.unit(above)->flightGroundMode=2;world.unit(above)->flightY=Fixed::fromInt(300);
         auto* u=world.unit(id);u->flightGroundMode=2;u->flightY=Fixed::fromInt(180);
+        world.tick(1.0f/30.0f); // explore, then build the persistent airborne grid
+        u=world.unit(id);
         u->standbyActive=true;u->standbyState={1,0,0xffffffffu,0,0};
         world.tick(1.0f/30.0f);
-        check(world.unit(id)->landing && world.unit(id)->landing->mission.stage==3,
-              "an airborne nonlanding flyer does not block the ground below it");
+        u=world.unit(id);
+        check(!(u->landing && u->landing->mission.stage==3),
+              "an airborne flyer overhead blocks the explored landing site below it");
+        for(int tick=0;tick<1800 && world.unit(id)->flightGroundMode!=1;++tick)world.tick(1.0f/30.0f);
+        u=world.unit(id);const auto* a=world.unit(above);
+        const int ux=footprintOrigin(u->x,2),uz=footprintOrigin(u->z,2);
+        const int ax=footprintOrigin(a->x,2),az=footprintOrigin(a->z,2);
+        check(u->flightGroundMode==1 && (ux>=ax+2 || ax>=ux+2 || uz>=az+2 || az>=uz+2),
+              "the blocked flyer lands clear of the airborne occupant");
+        // A ground unit arriving under a descending flyer does not interrupt it.
+        u->standbyActive=false;u->landing.reset();
+        u->flightGroundMode=2;u->flightY=Fixed::fromInt(180);
+        u->standbyActive=true;u->standbyState={1,0,0xffffffffu,0,0};
+        int stage3=-1;
+        for(int tick=0;tick<600 && stage3<0;++tick) {
+            world.tick(1.0f/30.0f);
+            u=world.unit(id);
+            if(u->landing && u->landing->mission.stage==3)stage3=tick;
+        }
         UnitType ground;ground.canMove=true;ground.maxVel=Fixed::fromInt(1);
         ground.footX=ground.footZ=2;
-        const int blocker=world.spawn(&ground,256,256);
+        world.spawn(&ground,u->x.toFloat(),u->z.toFloat());
         world.tick(1.0f/30.0f);
         u=world.unit(id);
-        check(u->landing && u->landing->mission.stage==2 && u->flightGroundMode==2,
-              "a new ground obstruction interrupts an in-progress descent");
-        for(int tick=0;tick<1800;++tick)world.tick(1.0f/30.0f);
-        u=world.unit(id);const auto* b=world.unit(blocker);
-        const int ux=footprintOrigin(u->x,2),uz=footprintOrigin(u->z,2);
-        const int bx=footprintOrigin(b->x,2),bz=footprintOrigin(b->z,2);
-        check(u->flightGroundMode==1 && (ux>=bx+2 || bx>=ux+2 || uz>=bz+2 || bz>=uz+2),
-              "interrupted descent relocates instead of landing on the intruding unit");
+        check(stage3>=0 && ((u->landing && u->landing->mission.stage==3) || u->flightGroundMode==1),
+              "retail keeps an in-progress descent when a ground unit enters the site");
     }
     {
         World world; world.setVisPlayer(-1);

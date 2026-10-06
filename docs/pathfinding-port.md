@@ -506,6 +506,148 @@ at the same rate. Ordinary physical collision and flyer flight rules remain in
 force. Flowfield is experimental and is not guaranteed to be faster in every
 scene.
 
+## Retail audit: flyer landing site and airborne occupancy (2026-10-06, all modes)
+
+**User decision.** The user was asked whether to port retail's landing check
+exactly, port it for Retail only, or keep our rule. The answer was "Port it".
+Flight is not handled separately per pathfinding mode, so the port is
+world-level flight behaviour and **changes every mode**. It removes the
+engine-only "no shared landing spot" rule from commit `a7d8e00`. That rule had
+two parts: an overlap test against grounded or descending flyers, and a recheck
+during descent that restarted the landing. Retail has neither, and both are
+gone.
+
+### `509400`: the landing-site predicate
+
+`509400(unit, point)` is called only from the landing search/mission `416cd0`,
+at `41708e` (the current position) and at `41721f` (each candidate). It is now
+`retailLandingSiteFree` (`src/sim/retailairgrid.h`), and
+`World::flightLandingFree` supplies World's planes:
+
+- **Footprint origin.** `(x - fx<<19 + 0x80000) >> 20` is kept as int16, and
+  likewise for z. The site is refused when `x0<0`, `z0<0`, `x0+fx>=W` or
+  `z0+fz>=H`.
+- **Unexplored sites need no checks.** The coarse exploration word is at
+  `((z0>>1)+(fx>>2))*(W>>1) + (fx>>2)+(x0>>1)`. Retail uses footprintX on both
+  axes. If the lander's player bit (`1<<unit+0xfd`) is clear, the site is
+  accepted and no terrain or occupancy test runs. World reads
+  `navigationExplored_`, the same plane the search grades use.
+- **Feature word `+8`.** `0xffff` passes. An index below `0xfffa` fails if it
+  is out of range (count `+0x19ec0`) or if its feature has blocking bit `0x20`
+  (`+0x13c`). A tail `0xfffe` resolves its anchor through `+0xa*W + +0xb`;
+  the site passes if the anchor holds a marker value, otherwise the anchor's
+  blocking bit decides. Any other value from `0xfffa` to `0xfffd` fails.
+- **Structure yard flag `+0xd` bit `0x10`.** Any flagged cell fails. `5066f0`
+  stamps the flag at `5068ca` for every yard byte with bit 0 set, which the
+  `4c0f59` table gives to `C c O o S w f y Y` (every character except `.`).
+  `506b39` clears it. The flag is set whether a gate is open or closed. World
+  takes it from the live structures' yardmaps, and an unparsed (empty) yardmap
+  counts as a repeated blocking character.
+- **Ground word `+0`.** A live entity other than the lander fails. `5066f0`
+  stamps mobile units in mode 1 and the yard cells of structures (open gate
+  cells excepted). World's equivalent is `searchBodyRect`.
+- **Airborne word `+2`.** A live entity other than the lander fails; `0`,
+  `0xffff` and stale dead owners pass. This is the persistent grid described
+  below. **Any airborne flyer overhead blocks**, not only one that is
+  descending.
+- **Heights.** Let `lowest = sea - maxwaterdepth` (`+0x192`). For `canfly`
+  types (`+0x260` bit `0x800`) that are not `floater` (`0x200000`), `lowest`
+  is raised to `sea`. A cell fails if `low (+6) < lowest`, if
+  `high (+5) > sea - minwaterdepth` (`+0x194`), or if
+  `high - low > maxslope` (`+0x23c`). Flyers therefore cannot land on water.
+  World derives the quad extrema from the corner lattice (`50ed60`). The new
+  `landMaxWaterDepth`/`landMinWaterDepth`/`landMaxSlope` type words take the
+  movement class's raw values, or else the FBI keys, with retail's constructor
+  defaults 10000/-10000/255 (`4dfb10`, `4dfc40`).
+
+### The persistent airborne occupant grid
+
+World previously built this grid as projectile scratch, and only in ticks that
+had an airborne unit. Retail's grid persists, and so does World's now
+(`World::airOccupancy_`, `RetailAirOccupancy`):
+
+- **Tick placement.** `51d3e0` runs the per-unit update loop first. It then
+  clears every live `canfly` unit, in player/entity order, with
+  `507050(unit,1)` (`51da6a..51db00`), and inserts every live `canfly` unit
+  with `506c40` (`51db2a..51dbbe`). Projectiles and the next tick's missions,
+  including `509400`, read the result. World keeps the rebuild where the
+  scratch build used to be, immediately before projectiles. Relative to the
+  unit loop this is the same position in the cycle, and the RNG ordering
+  verified by the air traces is unchanged.
+- **Clear, `507050(unit,1)`.** This zeroes the footprint recorded at insertion
+  (`+0x126/+0x128`, with the current size `+0x78`) and resets the overlap
+  count `+0x117`. Units that are not live are skipped. A flyer whose live bit
+  is cleared without a removal therefore leaves stale ids behind.
+- **Insert, `506c40`.** This runs only for mode 2 (airborne) footprints that
+  lie strictly inside the map; otherwise it records origin -9999. When a cell
+  owner is invalid or not live, or its list has overflowed, the cell becomes
+  the `0xffff` sentinel and the inserter's list overflows. Otherwise it builds
+  reciprocal lists with `519bd0`/`519c10`, collects at most seven candidates
+  whose current footprint (`+0x74`) covers the cell, and picks one with
+  `535cc0`. An eighth candidate sets the sentinel and overflows every list
+  involved.
+- **Retirement, `512ae0 -> 5066a0 -> 507050(unit,0)`.** Each cell owned by the
+  retiring flyer goes to a random overlapping list member whose recorded
+  footprint covers that cell (`535cc0` at `50725e`, which draws RNG), or
+  becomes `0` if there is none. Sentinel cells are cleared. The retiring
+  flyer's id is then removed from the other lists with `519c70`, which
+  replaces the entry with the last one and decrements the count even when the
+  id is absent. A flyer whose list overflowed is removed from every live
+  `canfly` unit's list. World retires a body from its occupancy planes when it
+  dies, not at the end of the death animation, so World runs this at the
+  death transition. A dead flyer reached through any other removal path is
+  removed at the next rebuild.
+
+### Validation
+
+- `tools/re/check_landing_site.py` sets up random native map, exploration,
+  feature, pool and type memory and calls the original `509400` for 8,192
+  sites. The sites cover unexplored sites, map edges, feature tails and
+  markers, yard flags, self, dead and out-of-pool owners, `0xffff`, water and
+  depth/slope limits. All 8,192 decisions match (1,055 accepted, 7,137
+  refused).
+- `tools/re/check_air_occupancy.py` runs retail's own `507050`/`506c40` tick
+  sequence over 256 persistent scenarios (5,735 ticks). The bodies cluster,
+  wander, take off and land, and cross map edges. Retirements go through
+  `507050(unit,0)`, and some deaths only clear the live bit, leaving stale
+  ids. Every grid word, the draw count and the RNG state match after every
+  tick: 7,292 draws, 1,256 retirements, 663 silent deaths and 582 sentinel
+  cells.
+- `check_air_collision_grid` (1,024) still passes on the new class.
+  `retail_visual_test`'s cached-grid check now compares the persistent
+  clear/insert cycle with fresh builds over 200 frames. Also re-run and
+  passing: `check_landing_search` (1,024), `check_landing_mission` (2,048),
+  `check_flight_motion` (4,000), `check_flight_patrol` (4,000),
+  `check_hover_attack` (4,096), and the air traces
+  `check_air_flight_motion_trace` (600, plus 128 unload ticks),
+  `check_air_unload_heightstep` (480), `check_air_map_height_scan` (480) and
+  `check_air_unload_integrated_trace` (500).
+- `retail_motion`: the a7d8e00 cases that check grounded or simultaneous flyers
+  still pass under the retail rule. The other a7d8e00 cases now test retail
+  behaviour: an airborne flyer overhead blocks an explored site, the blocked
+  flyer lands clear of it, and a ground unit entering the site does not
+  interrupt a descent that has already begun.
+
+Hashes: the Debug `--mpai` harness (Inner Circle, `--seed 1`, `--time 60`,
+`takserver --local`, empty `XDG_DATA_HOME`) gives the same hash before and
+after the change in all five modes: Retail `56cfcbf8ef57181e`, Retail+
+`79d2aed53aea2158`, Flowfield `41811497213fffb7`, Cooperative
+`e649bc36fe02765a` and Legion `a265fb6f8db7dae5`. No flyer lands or retires
+while overlapping another flyer in that minute, so the harness does not
+exercise this change. Hashes change only in games where flyers land or die
+while overlapping other flyers. All 199 Debug ctests pass.
+
+Residual approximations:
+
+- World removes dying units from occupancy at death, whereas retail keeps a
+  dying flyer in both words until `512ae0`. Most flyer retirements are 1 tick
+  later (see the native death lifecycle audit).
+- World ids are never reused, so a stale id can never resolve to a new unit
+  that occupies the same pool slot.
+- Retail's ground word is last-stamp-wins at map-placement events. World uses
+  the last unit in vector order, which is the established `searchBodyRect`
+  model.
+
 ## Retail audit: search, scheduler and budget classes (2026-10-06)
 
 A fidelity audit of the Retail-mode search layer (scheduler `416430`, init
@@ -802,7 +944,9 @@ Re-run at `87444e9` against the retail binary; no simulation code changed.
 Open findings:
 
 - **Embarked units' sight** was open here and is now ported; see "Retail audit: embarked cargo sight" below.
-- **VTOL landing-site predicate `509400` is not ported.** Every landing
+- **VTOL landing-site predicate `509400`: PORTED since this audit** (see
+  "Retail audit: flyer landing site and airborne occupancy" above). The
+  original note follows. Every landing
   oracle (`check_landing_search`, `check_landing_mission`) supplies this
   predicate as a controlled input, and `World::flightLandingFree` is an
   engine approximation: the legacy nav-class `fits`, `cellFree`, and a

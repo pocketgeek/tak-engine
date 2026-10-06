@@ -36,10 +36,10 @@ struct RetailReplayProbe {
 
     static void shoot(World& world,int from,int target) {world.fire(*world.unit(from),*world.unit(target),0);}
     static void flameTick(World& world,uint32_t tick) {
-        world.tickCounter_=tick;const auto aircraft=world.projectileAirGrid();world.tickFlames(aircraft);
+        world.tickCounter_=tick;const auto aircraft=world.updateAirOccupancy();world.tickFlames(aircraft);
     }
     static void straightTick(World& world,uint32_t tick) {
-        world.tickCounter_=tick;const auto aircraft=world.projectileAirGrid();world.tickStraightProjectiles(aircraft);
+        world.tickCounter_=tick;const auto aircraft=world.updateAirOccupancy();world.tickStraightProjectiles(aircraft);
     }
 
     static std::vector<uint32_t> movementQueries(World& world,int id) {
@@ -1233,7 +1233,7 @@ int main(int argc,char** argv) {
         u->flightGroundMode=2;
         type.projectileQuad=RetailCollisionQuad{{{-2*65536,-2*65536},{2*65536,-2*65536},
             {2*65536,2*65536},{-2*65536,2*65536}}};
-        const auto airborne=world.projectileAirGrid();
+        const auto airborne=world.updateAirOccupancy();
         require(airborne[12*32+12]==id,"airborne footprint enters the secondary grid");
         require(world.projectileCollision({206*65536,120*65536,200*65536},vy,0,1,airborne).unitId==id,
             "secondary footprint uses inclusive height without a selection-quad test");
