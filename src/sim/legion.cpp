@@ -82,7 +82,10 @@ struct LegionNavigator::Impl {
         std::map<int,int> sharing;       // goal origin -> member count
         std::map<int,int> peak;          // goal origin -> most members it ever had (area size)
         int members=0;
-        int comp=-1;                     // static component of every seed
+        // A seed cell standing for the static component of every seed. Raw
+        // component labels are renumbered on every plane rebuild, so the
+        // region is compared live through this cell (see groupComp).
+        int compCell=-1;
         bool approach=false;             // seeds are approach points of unreachable goals
         std::unique_ptr<Field> field;    // the field members steer by (done or building)
         // After a static change the finished field keeps steering (the mover
@@ -111,6 +114,7 @@ struct LegionNavigator::Impl {
         // `goal` is the nearest reachable point to it, walked to and held
         // (order kept) until a static change re-resolves the real goal.
         bool approach=false;uint32_t approachSince=0;uint64_t approachEpoch=0;
+        int real=-1;                      // the unreachable goal origin an approach member stands in for
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
         int detour=-1;                    // committed side-step cell
@@ -133,7 +137,7 @@ struct LegionNavigator::Impl {
     // cell (never farther than one cell from that goal origin, so it stays
     // inside its destination area) to open a lane for a same-player member
     // whose own goal it walls in. Capped per body: no endless shuffling.
-    struct Anchor {int goal=-1;uint8_t yields=0;};
+    struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
     std::map<int,Anchor> anchors;
     // Committed yield steps in progress: unit id -> target origin cell.
     struct Yield {int cell=-1;uint32_t ticks=0;};
@@ -146,7 +150,7 @@ struct LegionNavigator::Impl {
     // packed area around the point (see assignFormation).
     struct Point {
         int refs=0;std::set<int> cells;
-        bool assigned=false;
+        bool assigned=false,tried=false;
         int64_t centreX=0,centreZ=0,scaleNum=1,scaleDen=1,limit=0;   // px
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
@@ -170,6 +174,13 @@ struct LegionNavigator::Impl {
     // Plane rebuild work (cells) not yet charged to the per-tick quota.
     uint64_t planeDebt=0;
     int pruneCursor=0;
+    // Goal resolution per (plane, requested origin, body region) on the
+    // current static epoch: a whole selection clicking one far point (or a
+    // re-resolution after a change) searches once, not once per body. Pure
+    // function of the plane, so a cache, never hashed; dropped on any epoch
+    // change or plane reuse.
+    std::map<std::tuple<int,int,int,int>,std::pair<int,int>> resolved;
+    uint64_t resolvedEpoch=~0ull;
     Stats stats;
     explicit Impl(World& world):w(world) {}
 
@@ -200,6 +211,7 @@ struct LegionNavigator::Impl {
                 if(!used&&(victim<0||planes[i].lastUse<planes[size_t(victim)].lastUse))victim=int(i);
             }
             if(victim>=0) {
+                resolved.clear();
                 planes[size_t(victim)]=Plane{};
                 auto& p=planes[size_t(victim)];
                 p.legacy=legacy;p.footX=t.footX;p.footZ=t.footZ;p.maxDepth=maxDepth;p.minDepth=minDepth;
@@ -318,6 +330,13 @@ struct LegionNavigator::Impl {
     int compAt(const Plane& p,int cell) const {
         return cell>=0&&size_t(cell)<p.comp.size()?p.comp[size_t(cell)]:-1;
     }
+    // A group's static component on the CURRENT labelling: its seed cell's,
+    // or (that cell now covered) the first seed still legal.
+    int groupComp(const Group& g,const Plane& p) const {
+        if(const int c=compAt(p,g.compCell);c>=0)return c;
+        for(int s:g.seeds)if(const int c=compAt(p,s);c>=0)return c;
+        return -1;
+    }
     const NavGrid* legacyGrid(const Plane& p) const {
         for(const auto& u:w.units_)if(u.type&&u.type->footX==p.footX&&u.type->footZ==p.footZ&&!u.type->canFly)
             return &w.navFor(u.type);
@@ -339,7 +358,11 @@ struct LegionNavigator::Impl {
             // jagged 2000 about 30% of its arrivals (seeds 0/7/42).
             const bool first=p.epoch==~0ull;
             p.epoch=epoch;buildPlane(p);labelPlane(p);
-            if(!first)planeDebt+=2*uint64_t(width())*height();
+            // The carried debt is clamped to half a tick's quota: under
+            // constant churn (corpses, burning features) every epoch rebuilds
+            // every plane in use, and an unbounded debt starved all field
+            // work, so new groups never got a field.
+            if(!first)planeDebt=std::min(planeDebt+2*uint64_t(width())*height(),kFieldQuota/2);
         }
         p.lastUse=w.tickCounter_;
         return p;
@@ -385,8 +408,8 @@ struct LegionNavigator::Impl {
         int best=-1;int64_t bestD=0;
         const int far=reach>=0?std::max(width(),height()):kGoalSearchCells;
         for(int r=1;r<=far&&best<0;++r)
-            for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;++dx) {
-                if(std::max(std::abs(dx),std::abs(dz))!=r||!legal(p,x+dx,z+dz))continue;
+            for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;dx+=(dz==-r||dz==r||dx==r)?1:2*r) {
+                if(!legal(p,x+dx,z+dz))continue;
                 if(r>kGoalSearchCells&&compAt(p,(z+dz)*width()+x+dx)!=reach)continue;
                 const int64_t d=int64_t(dx)*dx+int64_t(dz)*dz;
                 const int index=(z+dz)*width()+x+dx;
@@ -448,9 +471,29 @@ struct LegionNavigator::Impl {
         members.erase(found);
     }
     void registerMove(Unit& u) {
+        // A re-registration of the same order keeps its approach clock: the
+        // 5-minute retire counts from the first time this goal was found
+        // unreachable, not from the latest static change.
+        int priorReal=-1;uint64_t priorController=0;uint32_t priorSince=0;
+        std::tuple<int,uint32_t,int32_t,int32_t> pinned{};bool pin=false;
+        if(const auto prior=members.find(u.id);prior!=members.end()) {
+            if(prior->second.approach) {
+                priorReal=prior->second.real;priorController=prior->second.controller;priorSince=prior->second.approachSince;
+            }
+            // Hold the member's point across its own re-registration: the
+            // last member leaving would erase it (its formation and the
+            // cells arrived bodies claimed), and the re-registered member
+            // would aim at the occupied centre with no area to settle in.
+            if(const auto pt=points.find(prior->second.point);pt!=points.end()) {pinned=prior->second.point;pin=true;++pt->second.refs;}
+        }
+        auto unpin=[&] {
+            if(!pin)return;
+            pin=false;
+            if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
+        };
         leave(u.id);
         anchors.erase(u.id);yielding.erase(u.id);
-        if(!supports(u))return;
+        if(!supports(u)) {unpin();return;}
         ++stats.registrations;
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const int planeIndex=planeFor(*u.type);
@@ -459,17 +502,30 @@ struct LegionNavigator::Impl {
         const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
-        Member m;m.controller=leg.controller;m.goal=nearestLegal(p,gx,gz,reach);m.state=Waiting;
+        Member m;m.controller=leg.controller;m.state=Waiting;
+        if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
+        auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
+        if(fresh) {
+            cached->second.first=nearestLegal(p,gx,gz,reach);
+            const int goal=cached->second.first;
+            if(reach>=0&&goal>=0&&compAt(p,goal)!=reach&&p.compSize[size_t(reach)]>=kApproachRegion)
+                cached->second.second=nearestReachable(p,gx,gz,reach);
+        }
+        m.goal=cached->second.first;
         // A goal outside this body's static region, while the region still
         // leaves room to move: walk to the region's nearest point to it and
         // hold there, order kept, as Retail does (a small sealed pocket holds
         // where it stands). A static change re-resolves the real goal.
         if(reach>=0&&m.goal>=0&&compAt(p,m.goal)!=reach&&p.compSize[size_t(reach)]>=kApproachRegion) {
-            const int near=nearestReachable(p,gx,gz,reach);
-            if(near>=0) {m.goal=near;m.approach=true;m.approachSince=w.tickCounter_;m.approachEpoch=epoch;}
+            const int near=cached->second.second;
+            if(near>=0) {
+                m.real=m.goal;m.goal=near;m.approach=true;m.approachEpoch=epoch;
+                m.approachSince=priorReal==m.real&&priorController==m.controller?priorSince:w.tickCounter_;
+            }
         }
         m.requested=m.goal;
         m.point={u.player,leg.issuedTick,tx.v,tz.v};++points[m.point].refs;
+        unpin();
         if(m.goal<0) {members[u.id]=m;return;}   // trapped on first move
         const int x=m.goal%width(),z=m.goal/width();
         const int goalComp=compAt(p,m.goal);
@@ -479,7 +535,7 @@ struct LegionNavigator::Impl {
             // Seeds in different static components never share a field: a
             // member whose goal it cannot reach would descend to a
             // teammate's seed and hold there forever instead of retiring.
-            if(g.comp!=goalComp)continue;
+            if(groupComp(g,p)!=goalComp)continue;
             // Approach points never share a field with real goals: a member
             // would descend to a stand-in point beside an obstacle instead
             // of its own goal behind it.
@@ -497,7 +553,7 @@ struct LegionNavigator::Impl {
             joined=&g;break;
         }
         if(!joined) {
-            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;g.comp=goalComp;g.approach=m.approach;
+            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;g.compCell=m.goal;g.approach=m.approach;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             joined=&groups.emplace(g.id,std::move(g)).first->second;
             ++stats.groups;
@@ -572,21 +628,31 @@ struct LegionNavigator::Impl {
             // Terrain changed. A finished field keeps steering its group
             // (a stale potential can only misdirect, never make a step legal:
             // the plane and commitGroundStep decide legality) until its
-            // replacement on the new plane is done. Half-built fields are
-            // useless and restart. Arrival slots were proven on the old
+            // replacement on the new plane is done. A group's FIRST field,
+            // half built, keeps building on the new plane (marked stale, so
+            // a clean rebuild follows): restarting it on every change meant
+            // a group ordered during constant churn (corpses every tick)
+            // never got any field. Arrival slots were proven on the old
             // plane: they are rebuilt (see restaleSlots).
             for(auto& [id,g]:groups) {
                 g.next.reset();
-                if(g.field&&!g.field->done)g.field.reset();
                 g.stale=g.field!=nullptr;
                 restaleSlots(g);
             }
         }
         prune();
+        // Yields run even while no Legion member remains (a committed yield
+        // must finish or time out, never freeze until the next order).
+        serviceYields();
         // Plane rebuilds and labelling are charged against the same
         // deterministic quota as field relaxations (debt carries over).
-        uint64_t budget=kFieldQuota;
-        auto settle=[&] {const uint64_t c=std::min(budget,planeDebt);budget-=c;planeDebt-=c;};
+        // At most half the quota pays plane debt in one tick, so field work
+        // always progresses (the rest of the debt carries over).
+        uint64_t budget=kFieldQuota,charged=0;
+        auto settle=[&] {
+            const uint64_t c=std::min({budget,planeDebt,kFieldQuota/2-charged});
+            budget-=c;planeDebt-=c;charged+=c;
+        };
         settle();
         auto finish=[&](Group& g,Field& f,uint64_t spent) {
             budget-=std::min(budget,spent);stats.fieldWork+=spent;
@@ -600,10 +666,14 @@ struct LegionNavigator::Impl {
             if(budget==0)break;
             finish(g,*f,advance(*f,budget));
         }
-        // Groups that need a field (none, or a stale one) start in id order.
-        for(auto& [id,g]:groups) {
+        // Groups that need a field start in id order: first those with none
+        // (they cannot steer at all), then stale refreshes. Under constant
+        // churn a refresh restarts every tick and never finishes; served
+        // first, refreshes of older groups starved a new group forever.
+        for(int pass=0;pass<2;++pass)for(auto& [id,g]:groups) {
             if(budget==0)break;
-            if((g.field&&!g.stale)||g.next)continue;
+            if((g.field&&(!g.stale||!g.field->done))||g.next)continue;
+            if((pass==0)!=(g.field==nullptr))continue;
             plane(g.plane);settle();
             if(budget==0)break;
             if(!startField(g))break;
@@ -630,7 +700,6 @@ struct LegionNavigator::Impl {
             if(u&&u->alive()&&!u->embarked()&&!u->orders.empty()&&supports(*u))continue;
             leave(id);
         }
-        serviceYields();
     }
     // A settled body that is no longer idle (new order, death) forgets its
     // anchor. Yield steps advance one update per tick in id order: straight
@@ -691,6 +760,14 @@ struct LegionNavigator::Impl {
     // ask each of them to step one cell clear of that footprint, staying
     // within one cell of its own goal origin. All blockers must be able to
     // yield, or none is asked. Returns whether a yield was committed.
+    // Body legality of a yield step (World::mobilePlacement needs a loaded
+    // placement plane; legacy terrain-only worlds use the nav grid, as
+    // bodiesFree does).
+    bool yieldFree(const Unit& b,int x,int z) const {
+        if(placementPlane())return w.mobilePlacement(b,x,z,false);
+        const int foot=std::clamp(std::max(b.type->footX,b.type->footZ),1,15);
+        return w.cellFree(centre(x,b.type->footX),centre(z,b.type->footZ),b.id,foot);
+    }
     bool requestYield(const Unit& u,int nx,int nz) {
         const int fx=u.type->footX,fz=u.type->footZ,W=width();
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
@@ -708,6 +785,7 @@ struct LegionNavigator::Impl {
         if(!count)return false;
         std::sort(ids.begin(),ids.begin()+count);
         std::array<int,16> cells{};
+        std::array<int,16> feetX{},feetZ{};
         for(int k=0;k<count;++k) {
             const int id=ids[size_t(k)];
             const Unit* b=w.unit(id);
@@ -717,6 +795,10 @@ struct LegionNavigator::Impl {
             const int bfx=b->type->footX,bfz=b->type->footZ;
             const int bx=footprintOrigin(b->x,bfx),bz=footprintOrigin(b->z,bfz);
             const int gx=anchor->second.goal%W,gz=anchor->second.goal/W;
+            // A formation arrival stays inside its point's area and off the
+            // cells other members claimed there (its own footprint excepted).
+            const auto pt=points.find(anchor->second.point);
+            const bool formation=pt!=points.end()&&pt->second.assigned&&pt->second.limit>0;
             int best=-1;int64_t bestD=0;
             for(const auto& d:kDirections) {
                 const int cx=bx+d[0],cz=bz+d[1];
@@ -724,13 +806,32 @@ struct LegionNavigator::Impl {
                 // Clear of the member's wanted footprint and its current one.
                 auto overlaps=[&](int ax,int az){return cx<ax+fx&&ax<cx+bfx&&cz<az+fz&&az<cz+bfz;};
                 if(overlaps(nx,nz)||overlaps(ox,oz))continue;
-                if(!w.mobilePlacement(*b,cx,cz,false))continue;
-                if(d[0]&&d[1]&&(!w.mobilePlacement(*b,cx,bz,false)||!w.mobilePlacement(*b,bx,cz,false)))continue;
+                // Never onto a target an earlier blocker of this request took.
+                bool reserved=false;
+                for(int q=0;q<k&&!reserved;++q) {
+                    const int qx=cells[size_t(q)]%W,qz=cells[size_t(q)]/W;
+                    reserved=cx<qx+feetX[size_t(q)]&&qx<cx+bfx&&cz<qz+feetZ[size_t(q)]&&qz<cz+bfz;
+                }
+                if(reserved)continue;
+                if(formation) {
+                    const int64_t px=int64_t(std::get<2>(anchor->second.point))>>16,pz=int64_t(std::get<3>(anchor->second.point))>>16;
+                    const int64_t tx=int64_t(cx)*16+bfx*8-px,tz=int64_t(cz)*16+bfz*8-pz;
+                    if(tx*tx+tz*tz>pt->second.limit*pt->second.limit)continue;
+                    bool claimed=false;
+                    for(int j=0;j<bfz&&!claimed;++j)for(int i=0;i<bfx&&!claimed;++i) {
+                        const int qx=cx+i,qz=cz+j;
+                        if(qx>=bx&&qx<bx+bfx&&qz>=bz&&qz<bz+bfz)continue;
+                        claimed=pt->second.cells.count(qz*W+qx)>0;
+                    }
+                    if(claimed)continue;
+                }
+                if(!yieldFree(*b,cx,cz))continue;
+                if(d[0]&&d[1]&&(!yieldFree(*b,cx,bz)||!yieldFree(*b,bx,cz)))continue;
                 const int64_t dd=int64_t(cx-gx)*(cx-gx)+int64_t(cz-gz)*(cz-gz);
                 if(best<0||dd<bestD) {best=cz*W+cx;bestD=dd;}
             }
             if(best<0)return false;
-            cells[size_t(k)]=best;
+            cells[size_t(k)]=best;feetX[size_t(k)]=bfx;feetZ[size_t(k)]=bfz;
         }
         for(int k=0;k<count;++k) {
             ++anchors[ids[size_t(k)]].yields;
@@ -821,7 +922,7 @@ struct LegionNavigator::Impl {
         if(uint32_t(u.routeStamp)<=w.tickCounter_-6u)u.routeStamp=0;
         ++stats.arrivals;if(contact)++stats.contactArrivals;
         m.state=Arrived;
-        anchors[u.id]=Anchor{m.goal,0};
+        anchors[u.id]=Anchor{m.goal,0,m.point};
         leave(u.id);
     }
     void trapped(Unit& u,Member& m) {
@@ -996,12 +1097,13 @@ struct LegionNavigator::Impl {
     // along the centroid->point direction), so the front of the crowd takes
     // the far side of the area and nobody has to cross a settled body.
     void assignFormation(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
-        pt.assigned=true;
         const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
         std::vector<std::pair<int,Member*>> list;
         int64_t sumX=0,sumZ=0,area=0,areaGap=0,firstSide=0,minSide=8;bool mixed=false;
         for(auto& [id,mm]:members) {
-            if(mm.point!=key||mm.goal<0||mm.slot>=0)continue;
+            // Approach members stand in for an unreachable click: they take
+            // no slot and do not size the area.
+            if(mm.point!=key||mm.goal<0||mm.slot>=0||mm.approach)continue;
             const Unit* v=w.unit(id);
             if(!v||!v->type||groups.find(mm.group)==groups.end())continue;
             list.push_back({id,&mm});
@@ -1014,7 +1116,10 @@ struct LegionNavigator::Impl {
         }
         // Bodies of different sizes never tile: give each a cell of clearance.
         if(mixed)area=areaGap;
+        // Assigned only once two members can take part; until then the point
+        // is retried (every 16 ticks, a deterministic bound on the scan).
         if(list.size()<2)return;
+        pt.assigned=true;
         const int64_t n=int64_t(list.size());
         pt.centreX=sumX/n;pt.centreZ=sumZ/n;
         const int64_t packed=isqrtFloor(uint64_t(area)*10000/31416);
@@ -1044,7 +1149,7 @@ struct LegionNavigator::Impl {
             const Group& gg=groups.find(mm->group)->second;
             const Plane& pp=plane(gg.plane);
             const int64_t ox=(v->x.v>>16)-pt.centreX,oz=(v->z.v>>16)-pt.centreZ;
-            const int cell=formationCell(*v,pp,gg.comp,pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
+            const int cell=formationCell(*v,pp,groupComp(gg,pp),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
             if(cell>=0)takeFormation(*mm,*v,cell);
         }
     }
@@ -1054,9 +1159,11 @@ struct LegionNavigator::Impl {
     // updates, inside the same area.
     bool formationSlot(const Unit& u,Member& m,const Group& g,const Plane& p) {
         auto found=points.find(m.point);
-        if(found==points.end()||found->second.refs<2)return false;
+        // Once assigned, the point's formation stays in force for its last
+        // member too (refs 1): it can still re-choose a walled-off slot.
+        if(found==points.end()||(found->second.refs<2&&!found->second.assigned))return false;
         auto& pt=found->second;
-        if(!pt.assigned)assignFormation(pt,m.point);
+        if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)) {pt.tried=true;assignFormation(pt,m.point);}
         if(!pt.assigned||pt.limit<=0)return true;
         const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
@@ -1077,7 +1184,7 @@ struct LegionNavigator::Impl {
             return true;
         }
         const int64_t ox=ux-pt.centreX,oz=uz-pt.centreZ;
-        const int cell=formationCell(u,p,g.comp,pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
+        const int cell=formationCell(u,p,groupComp(g,p),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
         if(cell>=0)takeFormation(m,u,cell);else m.slot=-2;
         return true;
     }
@@ -1134,12 +1241,33 @@ struct LegionNavigator::Impl {
         s.taken[size_t(best)]=1;m.slot=best;m.goal=s.cells[size_t(best)];m.lineCell=-1;
         slotCells(m,u.type->footX,u.type->footZ,true);
     }
+    // An approach member's stand-in still holds after a static change: the
+    // body and its approach point share a region, the point is still legal,
+    // and the real goal is still legal and outside that region.
+    bool approachValid(const Unit& u,const Member& m) {
+        auto group=groups.find(m.group);
+        if(group==groups.end()||m.goal<0||m.real<0)return false;
+        const auto& p=plane(group->second.plane);
+        const int W=width(),ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+        if(!legal(p,ox,oz))return false;
+        const int reach=compAt(p,oz*W+ox);
+        return reach>=0&&compAt(p,m.goal)==reach&&compAt(p,m.real)>=0&&compAt(p,m.real)!=reach;
+    }
     void move(Unit& u,Fixed maximum) {
         auto found=members.find(u.id);
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         if(leg.mission.pending&0x500||!leg.controller) {w.brakeGround(u);return;}
         // A new controller, or terrain that changed since this body was
         // found trapped, means a fresh registration (new goal resolution).
+        // An approach member re-resolves only when its own reachability
+        // changed (see approachValid), not on every unrelated static change:
+        // re-registering reset its walk, detours and timers each time.
+        if(found!=members.end()&&found->second.controller==leg.controller&&found->second.approach&&
+           (found->second.approachEpoch!=epoch||(found->second.state==Trapped&&found->second.trappedEpoch!=epoch))&&
+           approachValid(u,found->second)) {
+            found->second.approachEpoch=epoch;
+            if(found->second.state==Trapped)found->second.trappedEpoch=epoch;
+        }
         if(found==members.end()||found->second.controller!=leg.controller||
            (found->second.state==Trapped&&found->second.trappedEpoch!=epoch)||
            (found->second.approach&&found->second.approachEpoch!=epoch)) {
@@ -1444,7 +1572,7 @@ struct LegionNavigator::Impl {
             const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
             if(!o||o==u.id)continue;
             const auto peer=members.find(o);
-            if(peer==members.end()||peer->second.state==Arrived)return true;
+            if(peer==members.end()||peer->second.state==Arrived||peer->second.state==Trapped)return true;
         }
         return false;
     }
@@ -1473,7 +1601,7 @@ struct LegionNavigator::Impl {
             if(!other||other->speed!=Fixed())return false;
             if(other->orders.empty())return true;
             const auto peer=members.find(o);
-            return peer==members.end()||peer->second.state==Holding||peer->second.state==Arrived;
+            return peer==members.end()||peer->second.state==Holding||peer->second.state==Arrived||peer->second.state==Trapped;
         };
         auto open=[&](int x,int z) {
             if(!legal(p,x,z))return false;
@@ -1576,19 +1704,25 @@ struct LegionNavigator::Impl {
         // body of the packed disc is at the destination area: its slot is
         // gone (covered, or walled off by bodies that settled first) and
         // waiting longer cannot make one.
-        if(const auto pt=points.find(m.point);count>1&&pt!=points.end()&&pt->second.assigned&&pt->second.limit>0) {
+        bool formation=false;
+        if(const auto pt=points.find(m.point);!m.approach&&(count>1||m.slot!=-1)&&pt!=points.end()&&pt->second.assigned&&pt->second.limit>0) {
             // Formation slots: the area is the whole point's (every class
             // sent there), measured from the requested point itself.
+            formation=true;
             dx=(int64_t(u.x.v)>>16)-(int64_t(std::get<2>(m.point))>>16);
             dz=(int64_t(u.z.v)>>16)-(int64_t(std::get<3>(m.point))>>16);
             const int64_t limit=pt->second.limit;
-            if(dx*dx+dz*dz>limit*limit)return false;
+            // Walled out at the ring edge by settled bodies: after the same
+            // long stand-still, within two bodies of the area, it settles
+            // (bounded: a formation member never waits forever).
+            if(dx*dx+dz*dz>limit*limit)
+                return m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(limit+2*body)*(limit+2*body);
             if(m.stalled>=kAreaSettle)return true;
         } else {
             if(count>1&&m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
             if(dx*dx+dz*dz>radius*radius)return false;
         }
-        if(count==1) {
+        if(count==1&&!formation) {
             // A distinct goal is only "full" if another body stands on it;
             // otherwise settling short could plug the lane a neighbour needs.
             bool taken=false;
@@ -1615,7 +1749,7 @@ struct LegionNavigator::Impl {
             if(other->orders.empty()||other->orders[World::currentLeg(other->orders)].mission.pending&0x500)settled=true;
             // Members of a shared point that are themselves pressed still
             // inside the area count as its filled part.
-            else if(count>1) {
+            else if(count>1||formation) {
                 const auto peer=members.find(o);
                 settled=peer!=members.end()&&peer->second.group==m.group&&peer->second.stalled>=20;
             }
@@ -1629,7 +1763,7 @@ struct LegionNavigator::Impl {
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
             h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
-            h=mix(h,uint64_t(uint32_t(g.comp)));h=mix(h,g.stale);h=mix(h,g.approach);
+            h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);
             for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
             if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);}
             h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
@@ -1645,12 +1779,16 @@ struct LegionNavigator::Impl {
         }
         for(const auto& [key,point]:points) {
             h=mix(h,uint64_t(std::get<0>(key)));h=mix(h,std::get<1>(key));
-            h=mix(h,uint32_t(std::get<2>(key)));h=mix(h,uint32_t(std::get<3>(key)));h=mix(h,uint64_t(point.refs));
+            h=mix(h,uint32_t(std::get<2>(key)));h=mix(h,uint32_t(std::get<3>(key)));h=mix(h,uint64_t(point.refs));h=mix(h,point.tried);
             if(point.assigned) {h=mix(h,uint64_t(point.centreX));h=mix(h,uint64_t(point.centreZ));
                 h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));}
             for(int c:point.cells)h=mix(h,uint64_t(c));
         }
-        for(const auto& [id,a]:anchors) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);}
+        for(const auto& [id,a]:anchors) {
+            h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);
+            h=mix(h,uint64_t(std::get<0>(a.point)));h=mix(h,std::get<1>(a.point));
+            h=mix(h,uint32_t(std::get<2>(a.point)));h=mix(h,uint32_t(std::get<3>(a.point)));
+        }
         for(const auto& [id,y]:yielding) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(y.cell));h=mix(h,y.ticks);}
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
@@ -1658,7 +1796,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
-            h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);
+            h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
