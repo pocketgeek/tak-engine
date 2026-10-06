@@ -2222,94 +2222,37 @@ uint32_t World::retailMissionFlags(Unit& u) {
 // 51c612 (navigator vt+0x38) has no movement consumer and is not modelled.
 void World::tickRetailGroups() {
     retailGroupPaced_.assign(units_.size(),0);
-    const auto eligible=[&](const Unit& u) {
-        return u.alive() && u.type && !u.underConstruction && !u.embarked() && !u.type->isStructure() &&
-               u.player>=0 && u.player<kMaxPlayers;
-    };
-    const auto scaledType=[&](const Unit& u) { return (u.type->maxVel*groundTerrainMultiplier(u)).v; };
-    struct Sum { int64_t x=0,y=0,z=0; int32_t count=0,area=0; };
-    std::array<std::array<bool,100>,kMaxPlayers> grouped{};
-    for (const auto& u:units_)
-        if (u.alive() && u.player>=0 && u.player<kMaxPlayers) {
-            const int g=retailGroupIndex(u);
-            if (g>0 && g<100) grouped[size_t(u.player)][size_t(g)]=true;
+    std::array<std::array<bool,100>,kMaxPlayers> members{};
+    std::array<std::vector<RetailGroupUnit>,kMaxPlayers> roster;
+    std::array<std::vector<size_t>,kMaxPlayers> index;
+    for (size_t i=0;i<units_.size();++i) {
+        Unit& u=units_[i];
+        if (!u.alive() || !u.type || u.player<0 || u.player>=kMaxPlayers) continue;
+        const int g=retailGroupIndex(u);
+        if (g<1 || g>=100) continue;
+        members[size_t(u.player)][size_t(g)]=true;
+        RetailGroupUnit entry;
+        entry.group=g;
+        entry.eligible=!u.underConstruction && !u.embarked() && !u.type->isStructure();
+        if (entry.eligible) {
+            entry.member=retailGroupMember(u);
+            entry.missionFlags=retailMissionFlags(u);
+            entry.typeMaximum=(u.type->maxVel*groundTerrainMultiplier(u)).v;
         }
+        roster[size_t(u.player)].push_back(entry);index[size_t(u.player)].push_back(i);
+    }
+    std::vector<uint8_t> paced;
     for (int player=0;player<kMaxPlayers;++player) {
-        const auto& members=grouped[size_t(player)];
-        if (std::none_of(members.begin(),members.end(),[](bool b){return b;})) {
-            for (auto& record:retailGroups_[size_t(player)]) record.active=false;
-            continue;
-        }
-        std::array<std::array<Sum,3>,100> all{},moving{};
-        std::array<int32_t,100> ground{},boat{};
-        for (size_t i=0;i<units_.size();++i) {
-            Unit& u=units_[i];
-            if (u.player!=player || !eligible(u)) continue;
-            const int g=retailGroupIndex(u);
-            if (g<1 || g>=100 || !members[size_t(g)]) continue;
-            const uint32_t flags=retailMissionFlags(u);
-            retailGroupPaced_[i]=(flags&0x2000000u)!=0;
-            const auto m=retailGroupMember(u);
-            const auto add=[&](Sum& s) { ++s.count;s.area+=m.area;s.x+=m.position.x;s.y+=m.position.y;s.z+=m.position.z; };
-            add(all[size_t(g)][size_t(m.kind)]);
-            if (!(flags&0x1000000u)) continue;
-            if (!(flags&0x4000000u)) add(moving[size_t(g)][size_t(m.kind)]);
-            if (m.kind==RetailGroupClass::Flyer) continue;
-            auto& speed=m.kind==RetailGroupClass::Boat ? boat[size_t(g)] : ground[size_t(g)];
-            const int32_t value=scaledType(u);
-            if (speed==0 || value<speed) speed=value;
-        }
-        for (size_t g=1;g<100;++g) {
-            auto& record=retailGroups_[size_t(player)][g];
-            if (!members[g]) { record.active=false; continue; }
-            bool any=false;
-            for (size_t c=0;c<3;++c) {
-                const auto write=[](RetailGroupAggregate& a,const Sum& s) {
-                    a.count=s.count;a.area=s.area;
-                    if (s.count>0) a.centre={int32_t(s.x/s.count),int32_t(s.y/s.count),int32_t(s.z/s.count)};
-                };
-                write(record.all[c],all[g][c]);write(record.moving[c],moving[g][c]);
-                any|=all[g][c].count>0;
-            }
-            record.active=any;
-            if (any) { record.groundSpeed=ground[g];record.boatSpeed=boat[g]; }
-        }
-        // 51c3bf..51c5fb: paced surface members out of slot at level 4.
-        for (size_t i=0;i<units_.size();++i) {
-            Unit& u=units_[i];
-            if (u.player!=player || !eligible(u) || u.type->canFly || !retailGroupPaced_[i]) continue;
-            const int g=retailGroupIndex(u);
-            if (g<1 || g>=100) continue;
-            auto& record=retailGroups_[size_t(player)][size_t(g)];
-            if (!record.active) continue;
-            const auto m=retailGroupMember(u);
-            if (!retailGroupOutOfSlot(record,m,true,4,(retailMissionFlags(u)&0x4000000u)!=0)) continue;
-            auto& speed=m.kind==RetailGroupClass::Boat ? record.boatSpeed : record.groundSpeed;
-            speed=retailGroupStragglerSpeed(speed,scaledType(u));
-        }
+        retailGroupTick(roster[size_t(player)],members[size_t(player)],retailGroups_[size_t(player)],paced);
+        for (size_t k=0;k<paced.size();++k) retailGroupPaced_[index[size_t(player)][k]]=paced[k];
     }
 }
 
 // 50c480: take a member out of its group's moving aggregate for the rest of
 // the tick. With fewer than two moving members only a flyer subset clears.
 void World::leaveRetailGroupCentre(const Unit& u) {
-    const int group=retailGroupIndex(u);
     if (!retailGroupOf(u) || u.type->isStructure()) return;
-    auto& record=retailGroups_[size_t(u.player)][size_t(group)];
-    if (!record.active) return;
-    const auto m=retailGroupMember(u);
-    auto& part=record.moving[size_t(m.kind)];
-    const int32_t n=part.count;
-    if (n<2) {
-        if (m.kind==RetailGroupClass::Flyer) part={};
-        return;
-    }
-    const int32_t area=part.area-m.area;
-    if (area<=0) return;
-    const auto word=[](int32_t v){return int32_t(int16_t(uint16_t(uint32_t(v))));};
-    part.centre={(word(part.centre.x)*n-m.position.x)/(n-1),(word(part.centre.y)*n-m.position.y)/(n-1),
-                 (word(part.centre.z)*n-m.position.z)/(n-1)};
-    part.count=n-1;part.area=area;
+    retailGroupLeave(retailGroups_[size_t(u.player)][size_t(retailGroupIndex(u))],retailGroupMember(u));
 }
 
 // 4d95f0's group cap for the unit about to move, after terrain scaling and
@@ -2319,6 +2262,10 @@ Fixed World::retailGroupLimit(const Unit& u) const {
     if (index>=retailGroupPaced_.size() || !retailGroupPaced_[index] || u.type->canFly) return Fixed();
     const auto* record=retailGroupOf(u);
     if (!record || !record->active) return Fixed();
+    // A computer player (owner +0xea == 3) takes navigator vt+0x3c instead,
+    // which is zero for ground navigators (4e60d0): no group cap. Our
+    // computer players are the slots with the AI's automatic gates.
+    if (players_[size_t(u.player)].automaticGates) return Fixed();
     const Fixed multiplier=groundTerrainMultiplier(u);
     const int32_t type=(u.type->maxVel*multiplier).v;
     Fixed moded=Fixed::raw(type);
@@ -2507,33 +2454,28 @@ void World::tickGroundMission(Unit& u) {
                     },
                     [&] {
                         const auto c=retailGroupCentre(*group,w.retailGroupMember(u),all,level<=0);
+                        // 402918..40292f writes the centre to mission+0x22: the
+                        // mission point itself, which 4d4da0 then hands to the
+                        // controller. Retarget missionTarget too, or the reset
+                        // below would steer to the first cycle's stale centre.
                         goal.x=Fixed::fromInt(int16_t(c.x));goal.z=Fixed::fromInt(int16_t(c.z));
+                        goal.missionTarget=std::pair{goal.x,goal.z};
                     },
                     [&] { resetGoal(4); },[] { return false; },[&](int n) { return random(n); });
             }
-            if (group && w.pathfindingMode_==PathfindingMode::Retail && !goal.patrol && !goal.park) {
+            if (group && w.pathfindingMode_==PathfindingMode::Retail && !goal.park) {
                 const auto member=w.retailGroupMember(u);
-                int8_t level=0;
-                if (retailGroupOutOfSlot(*group,member,true,3,(m.flags&0x4000000u)!=0)) {
-                    // Compare the goal's squared distance to the moving centre
-                    // and to the member (high words of the 16.16 products).
-                    const auto c=retailGroupCentre(*group,member,false,true);
-                    const auto square=[](int32_t d) { return int32_t((int64_t(d)*d)>>32); };
-                    const int32_t toCentre=square(goal.x.v-(int32_t(int16_t(c.x))<<16))+
-                                           square(goal.z.v-(int32_t(int16_t(c.z))<<16));
-                    const int32_t toMember=square(goal.x.v-u.x.v)+square(goal.z.v-u.z.v);
-                    if (toCentre>toMember) {
-                        // Ahead of the group: wait once; a repeat offender may
-                        // instead drop out of the moving centre and its orders.
-                        if ((m.flags&0x8000000u) && random(4)==0) {
-                            w.leaveRetailGroupCentre(u);
-                            w.cancelPath(u);u.orders.clear();u.routeStamp=-1;u.standbyActive=false;
-                            return 2;
-                        }
-                        m.flags|=0x8000000u;
-                    }
-                    level=-2;
-                } else if (retailGroupOutOfSlot(*group,member,false,4,false)) level=4;
+                // The formation goal's y terms are left at zero (see
+                // docs/pathfinding-port.md); x/z use the 16.16 positions.
+                const int check=retailGroundGroupCheck(*group,member,m.flags,{u.x.v,0,u.z.v},
+                    {goal.x.v,0,goal.z.v},[&](int n){return int(random(n));});
+                if (check==1) {
+                    // Ahead again: drop out of the moving centre and the orders.
+                    w.leaveRetailGroupCentre(u);
+                    w.cancelPath(u);u.orders.clear();u.routeStamp=-1;u.standbyActive=false;
+                    return 2;
+                }
+                const int8_t level=int8_t(check);
                 if (level) {
                     Order formation;
                     formation.x=u.x;formation.z=u.z;formation.goal=formation.groundMission=true;
