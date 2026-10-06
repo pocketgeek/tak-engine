@@ -69,6 +69,8 @@ def case(index, budget, retry):
     p.icd.hooks[0x4e4ea0] = receive
     p.icd.hooks[0x415f10] = finish
     p.uc.hook_add(UC_HOOK_CODE,lambda uc,a,s,d:uc.emu_stop(),begin=0x4166f1,end=0x4166f1)
+    # Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+    p.icd.allow_early_stop=True
     expected = []
     phase = 1
     for _ in range(10000):

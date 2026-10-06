@@ -801,19 +801,7 @@ Re-run at `87444e9` against the retail binary; no simulation code changed.
 
 Open findings:
 
-- **Embarked units' sight.** Retail's sight batch (`4f6a60..4f6ac0`) calls
-  `4c6c00` for every pool unit with `+0x130` bit `0x1000000`, without the
-  dying bit `0x1000`, and with build fraction `+0x108 == 0.0`. It does not
-  test attachment. The pool mover loop (`51f2b7..51f2dc`) still ticks attached
-  units, and `4dad30`'s attached branch (`4dad3e..4dadd2`) relocates them to the
-  host's attach piece (`4dd250`, then `51b3b0` writes `+0x68`). Captured
-  attached units sit at the attach-piece offset from their host. Transport
-  cargo therefore reveals exploration from the carrier, with the cargo's own
-  sight distance and height. `World::updateNavigationExploration` skips
-  `embarked()` units, and World tracks cargo at the carrier centre rather than
-  the attach piece. A faithful fix needs the attach-piece world position (a
-  port of `4dd250`) and is not made here. The shoreline fixture runs only the
-  carrier's producer for this reason.
+- **Embarked units' sight** was open here and is now ported; see "Retail audit: embarked cargo sight" below.
 - **VTOL landing-site predicate `509400` is not ported.** Every landing
   oracle (`check_landing_search`, `check_landing_mission`) supplies this
   predicate as a controlled input, and `World::flightLandingFree` is an
@@ -6460,3 +6448,120 @@ is both coherent and keeps a broad front.
   come back; median arrival moved from about 3,190 to 4,400 ticks. It is still a
   reportable outcome change.
 - Exploration at 2,000 units makes no progress in any mode.
+
+## Retail audit: embarked cargo sight (2026-10-06)
+
+**The sight pass now includes transport cargo, at the attach point, with the
+passenger's own sight.** This is a world-level change for every pathfinding mode.
+
+Binary evidence:
+
+- The sight batch `4f6a60..4f6ac0` calls `4c6c00` for every pool unit that has
+  `+0x130` bit `0x1000000`, lacks the dying bit `0x1000`, and has a zero build
+  fraction. It has no attachment test.
+- The pool mover loop (`51f2b7..51f2dc`) runs `4dc800` for every unit with a
+  mover. `4dc800` ends with `4dad30` (`4dc958`). The attached branch of `4dad30`
+  (`4dad3e..4dadd2`) works as follows:
+  - It takes the host's attach point from `4dd250(out, host, (int8)+0x112)`. That
+    point is the host's `+0x68` position plus the `4dd0f0` piece offset.
+    `4dd0f0` returns zero when the piece is negative, out of range, or has no
+    drawable; otherwise it is `retailPieceOrigin`, already verified by
+    `check_piece_origin`.
+  - For a floater (type `+0x260` bit `0x80000`), it raises y to
+    `(waterline(+0x248)*0xffff + sea) << 16`, which wraps to `(sea-waterline)<<16`.
+  - `51b3b0` stores the result as the cargo's own `+0x68`.
+- Both transport pickup handlers attach with piece -1. `408d00` (GROUND_PICKUP)
+  and `41add7` (VTOL_PICKUP) call `51b4f0(passenger, carrier, -1, 0, 1)`, and
+  `51b5a0` copies packet byte 5 to `+0x112` at `51b6b0`.
+- The only other piece source is COB ATTACH_UNIT (`50e04f`). A byte scan of all
+  204 shipped scripts finds no `0x10083000` opcode. Transport cargo therefore
+  sits exactly at the carrier position, at the carrier's height.
+- The build mission (`401f78`) also attaches with a piece, its build pad, but
+  units under construction are excluded from sight. World has no factory-pad
+  attachment, so that path is not modelled.
+
+Port:
+
+- `retailAttachPoint` (`4dd250`) and `retailAttachedPosition` (the `4dad30`
+  attached branch) live in `src/sim/retailtransport.h`.
+- World's per-unit cargo follow step now commits x, groundY and z from them,
+  with piece -1. Before this change it copied only x and z.
+- `updateNavigationExploration` no longer skips `embarked()` units.
+- The area-reclaim visibility pass (`World` reclaim area) and the display-only
+  effect visibility (`gameview_impl.cpp`) also stop excluding cargo footprints,
+  so all three readers agree on which footprints are live.
+- The commit runs in unit order inside the main unit loop, as retail's runs in
+  pool order. Cargo earlier in the pool therefore sees the carrier's previous
+  position, just as in retail.
+
+Mode decision: **world-level, all modes.** Exploration is shared simulation
+state (`navigationExplored_` is hashed and feeds search grades in every mode),
+and `updateNavigationExploration` has no mode branch. No mode document claims a
+different exploration rule, so retail fidelity applies.
+
+Verification:
+
+- `check_cargo_attach_position.py` (new) runs the native `4dad30` attached
+  segment (stopped at `4dadd7`, after the commit) for 20,000 randomized hosts,
+  heights, floater flags, waterlines, sea levels and pieces. It compares each
+  result with World's helpers through `transport_test --attach-position`. All
+  20,000 match: 4,917 floater clamps and 5,021 non-negative pieces on a host
+  without a drawable.
+- `check_surface_unload_map_route.py --native-exploration` now also runs the
+  passenger's native `4dad30` commit every step, in World's pool order relative
+  to the carrier. It requires the committed `+0x68` to equal World's cargo
+  position, then runs `4c6c00` for the passenger as well as the carrier.
+  - Lake Lokken Vertrans/Araarch: 2,216 commits and 1,800 revealed cells match
+    through release. Araarch's sight (180) is shorter than every carrier's, so
+    it reveals nothing new there.
+  - With the new `--cargo-sight 600`, the passenger reveals 4,027 cells. The
+    changed exploration alters the route itself (release at step 1,549 instead
+    of 2,217), and native and World still match on every step.
+  - The same command against a World build that still skips `embarked()`
+    cargo fails at step 1 (native reveals column 102/103 cells World does not).
+- ctest `transport` has a new `cargoSight` case covering cargo position and
+  height on a flying carrier, the extra exploration, and the floater-clamp edge
+  cases.
+
+Goldens:
+
+- The full debug ctest suite passes (199/199), including
+  `navigation_determinism`, which checks `tools/navigation_checkpoints.json` for
+  all modes, and `crowdbench_matrix`.
+- No checkpoint or crowdbench hash changes, since those scenarios carry no cargo.
+- The lockstep hash changes only for worlds with loaded transports: cargo
+  exploration, and cargo `groundY` while aboard.
+- The `--mpai` baseline was not re-run; it changes only if the skirmish AI loads
+  a transport within the run.
+
+Residual (not changed):
+
+- At boarding, World relocates the passenger to the carrier immediately.
+  Retail's `51b5a0` does not move it, and its next `4dad30` does. Cargo earlier
+  in the pool than its carrier therefore explores from the carrier one tick
+  early in World.
+- `51b3b0` also re-stamps the cargo's cells (`506aa0`/`5066f0`) when its cell or
+  state bits change. The harness observes only the committed point, and World
+  keeps cargo out of the occupancy tables. Whether retail stamps attached state
+  0 is unverified.
+- `4dadfc..4dae6e` copies the host orientation (`4dd370`) and mover velocity to
+  the cargo. World keeps cargo speed at zero; nothing here reads it.
+
+## Emulator early-stop guard (2026-10-06)
+
+`emu.Icd.call` used to return `(eax, None)` whenever unicorn stopped, including
+when its 5 s wall-clock `timeout` ran out mid-routine. A long native call under
+CPU load could therefore pass a check while half-run.
+
+- `Icd.call` now raises `EmulationIncomplete` when EIP is not at the return
+  magic, saying whether the budget ran out or the run was stopped early.
+- Callers that deliberately stop inside a call set `allow_early_stop=True` on
+  the instance or the call. Eight scripts use `emu_stop` hooks and now opt in on
+  their instance, which preserves their behaviour: `check_ai_patrol_points`,
+  `check_captured_tick`, `check_cost_search`, `check_entity_slots`,
+  `check_search_attempt`, `probe_campaign_chapter_art`, `probe_campaign_score`
+  and `probe_monarch_alarm`.
+- `emuphase.py` and `emupath.py` inserted the fixed path
+  `/home/pocket_geek/TAK/tools/re` at the front of `sys.path`. Every harness
+  that imports them in a worktree therefore loaded the **main checkout's**
+  `emu.py` and later modules, not its own. They now insert their own directory.

@@ -110,6 +110,8 @@ def case(index, slice_config=None, boat=False):
         p.icd.hooks[0x414450] = reconstruct
         p.icd.hooks[0x415f10] = lambda uc, args: (0, 0)
         p.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, d: uc.emu_stop(), begin=0x4166f1, end=0x4166f1)
+        # Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+        p.icd.allow_early_stop = True
     lines.append(' '.join(str(p.get(0x90 + i*4)) for i in range(8)))
     lines.append(' '.join(str(p.get(0x70 + i*4)) for i in range(8)))
     lines.append(' '.join(str(p.get(i)) for i in (0xc0, 0xc4, 0xbc, 0xc8, 0xb4, 0xb8)))

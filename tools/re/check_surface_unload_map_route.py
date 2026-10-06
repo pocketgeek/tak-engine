@@ -866,7 +866,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 always_on_route_search=False, native_worker_mission_retry=False,
                 native_worker_mission_collision=False,
                 probe_native_occupancy=False, native_detach_second=False,
-                native_exploration=False):
+                native_exploration=False, cargo_sight=None):
     if native_exploration and terrain_scan_after is None:
         raise ValueError('--native-exploration requires --terrain-scan-after')
     if (map_name.lower() == 'cairbray coast landing' and terrain_scan_after is not None
@@ -934,6 +934,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         env['TAK_MAP_SURFACE_BLOCK_SHORE'] = '1'
     if native_exploration:
         env['TAK_MAP_SURFACE_EXPLORATION'] = '1'
+    if cargo_sight is not None:
+        if not native_exploration:
+            raise ValueError('--cargo-sight requires --native-exploration')
+        env['TAK_MAP_SURFACE_CARGO_SIGHT'] = str(cargo_sight)
     if live_route_blocker_steps:
         env['TAK_MAP_SURFACE_ROUTE_BLOCKER'] = '1'
         env['TAK_MAP_SURFACE_SCAN_AFTER'] = '1'
@@ -1078,11 +1082,23 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         assert len(world_steps) == native_map_mover_steps, (
             len(world_steps), native_map_mover_steps)
     world_sight = None
+    world_cargo_sight = None
+    world_cargo_steps = {}
+    world_cargo_first = None
     world_exploration_init = {}
     world_exploration_deltas = {}
     if native_exploration:
         world_sight = tuple(map(int, next(line for line in stdout
                                           if line.startswith('WORLDSIGHT ')).split()[1:]))
+        cargo_line = next((line for line in stdout
+                           if line.startswith('WORLDCARGOSIGHT ')), None)
+        if cargo_line is not None:
+            world_cargo_sight = tuple(map(int, cargo_line.split()[1:]))
+        for line in stdout:
+            if line.startswith('WORLDCARGO '):
+                step, x, y, z, first = map(int, line.split()[1:])
+                world_cargo_steps[step] = (x, y, z)
+                world_cargo_first = bool(first)
         for line in stdout:
             if line.startswith('WORLDEXP_INIT '):
                 x, z, value = map(int, line.split()[1:])
@@ -2068,14 +2084,16 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         p.uc.mem_write(visibility, struct.pack('<' + 'H' * (width * height // 4),
             *([initial_visibility] * (width * height // 4))))
         native_explored = None
+        native_cargo = None
+        native_cargo_commits = 0
+        native_cargo_scratch_mover = [None]
         if native_exploration:
             # Retail's sight batch (4f6a60) calls 4c6c00 for every allocated,
             # living, complete unit after the simulation batch; 4c6a70/4c6800
             # OR the owner's bit into the exploration plane. Run the original
             # producer for the carrier after every native step instead of
-            # leaving the plane at its initial state. World's embarked cargo
-            # contributes no sight (see the audit report), so the passenger's
-            # producer is not run here either.
+            # leaving the plane at its initial state. The embarked passenger's
+            # producer runs too (see below).
             (sight_distance, sight_height, world_player, _world_cargo,
              cached_x, cached_z, cached_eye, cached_active) = world_sight
             from unicorn import UC_HOOK_CODE
@@ -2129,6 +2147,23 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                                if value >> world_player & 1}
             world_explored = set(native_explored)
             native_exploration_reveals = 0
+            # Retail's sight batch has no attachment test (4f6a60..4f6ac0): the
+            # embarked passenger explores with its own sight from the attach
+            # point its mover commits (4dad30 -> 4dd250 -> 51b3b0). Seed its
+            # native cache from World's exactly like the carrier's.
+            if native_live and world_cargo_sight is not None:
+                if native_cargo_count != 1:
+                    raise ValueError('--native-exploration cargo sight checks one passenger')
+                native_cargo = native_live.passenger
+                (cargo_distance, cargo_height, _cargo_y, cargo_x, cargo_z, cargo_eye,
+                 cargo_active, cargo_waterline) = world_cargo_sight
+                cargo_type = struct.unpack('<I', p.uc.mem_read(native_cargo + 0xb4, 4))[0]
+                p.uc.mem_write(cargo_type + 0x248, bytes((cargo_waterline & 0xff,)))
+                # Both pickup handlers attach with piece -1 (408d00/41add7).
+                p.uc.mem_write(native_cargo + 0x112, b'\xff')
+                p.uc.mem_write(native_cargo + 0x84, struct.pack('<I', owner))
+                p.uc.mem_write(native_cargo + 0x84 + 0x14, struct.pack('<hhihBB',
+                    cargo_x, cargo_z, cargo_eye, cargo_distance, cargo_height, cargo_active))
         p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick))
         p.uc.mem_write(0x64186c, struct.pack('<I', route_tick))
 
@@ -2333,6 +2368,53 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             # The surface mission's placement hook is a map-backed Araarch
             # release oracle. Keep retail's own carrier-footprint mover scan
             # active during 0x4dc800 rather than routing it through that hook.
+            def commit_native_cargo():
+                # 4dad30's attached branch for the passenger: 4dd250 attach
+                # point, floater clamp, then 51b3b0 stores +0x68. Observe the
+                # committed point; the cell restamp inside 51b3b0 is outside
+                # this check (World keeps cargo out of the occupancy tables).
+                committed = []
+
+                def position_commit(uc, sp):
+                    who, x, y, z, _flags = struct.unpack('<Iiiii', uc.mem_read(sp, 20))
+                    committed.append((x, y, z))
+                    uc.mem_write(who + 0x68, struct.pack('<iii', x, y, z))
+                    return 5, 0
+                saved_hooks = p.icd.hooks
+                p.icd.hooks = dict(saved_hooks)
+                p.icd.hooks[0x51b3b0] = position_commit
+                try:
+                    cargo_mover = struct.unpack('<I', p.uc.mem_read(native_cargo + 8, 4))[0]
+                    if not cargo_mover:
+                        # The release fixture gives the cargo no mover; the
+                        # position segment only reads its +0x36 state bits.
+                        if native_cargo_scratch_mover[0] is None:
+                            native_cargo_scratch_mover[0] = p._alloc(0x180)
+                            p.uc.mem_write(native_cargo_scratch_mover[0], bytes(0x180))
+                        cargo_mover = native_cargo_scratch_mover[0]
+                    # Stop after the position commit (4dadd7): the orientation
+                    # copy that follows (4dd370) reads the host's drawable,
+                    # which this fixture does not build, and is not sight input.
+                    stop = p.uc.hook_add(UC_HOOK_CODE, lambda uc, *_: uc.emu_stop(),
+                                         begin=0x4dadd7, end=0x4dadd7)
+                    try:
+                        _, cargo_error = p.icd.call(0x4dad30, (native_cargo,), ecx=cargo_mover,
+                                                    allow_early_stop=True)
+                    finally:
+                        p.uc.hook_del(stop)
+                    assert p.uc.reg_read(UC_X86_REG_EIP) == 0x4dadd7, (
+                        'native cargo position commit did not finish', step)
+                finally:
+                    p.icd.hooks = saved_hooks
+                assert cargo_error is None, ('native cargo position commit', step, cargo_error)
+                assert len(committed) == 1, ('native cargo commit count', step, committed)
+                return committed[0]
+            cargo_attached = (native_cargo is not None and
+                              native_live.get(native_cargo + 0xa8) == unit and
+                              step in world_cargo_steps)
+            native_cargo_point = None
+            if cargo_attached and world_cargo_first:
+                native_cargo_point = commit_native_cargo()
             placement_hooks = p.icd.hooks
             if native_live:
                 p.icd.hooks = {address: hook for address, hook in placement_hooks.items()
@@ -2342,6 +2424,13 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             finally:
                 p.icd.hooks = placement_hooks
             assert error is None, ('native map mover', step, error)
+            if cargo_attached and not world_cargo_first:
+                native_cargo_point = commit_native_cargo()
+            if native_cargo_point is not None:
+                if native_cargo_point != world_cargo_steps[step]:
+                    raise AssertionError(('native/World attached cargo position', step,
+                                          native_cargo_point, world_cargo_steps[step]))
+                native_cargo_commits += 1
             value, error = p.icd.call(0x51b2a0, (unit,), ecx=mover)
             assert error is None, ('native map route update', step, error)
             # The released passenger's own sight is not produced natively; stop
@@ -2349,6 +2438,9 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             if native_exploration and not (native_live and not native_live.get(unit + 0xAC)):
                 _, error = p.icd.call(0x4c6c00, (unit,))
                 assert error is None, ('native sight update', step, error)
+                if native_cargo_point is not None:
+                    _, error = p.icd.call(0x4c6c00, (native_cargo,))
+                    assert error is None, ('native cargo sight update', step, error)
                 plane = struct.unpack('<' + 'H' * (explore_w * explore_h),
                     p.uc.mem_read(visibility, explore_w * explore_h * 2))
                 now = {(i % explore_w, i // explore_w) for i, value in enumerate(plane)
@@ -2970,7 +3062,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                   (f' {native_scan_count} live terrain-scan deadlines matched.'
                    if terrain_scan_after is not None else '') +
                   (f' Retail 0x4c6c00 sight production matched World exploration through '
-                   f'release, {native_exploration_reveals} newly revealed cells.'
+                   f'release, {native_exploration_reveals} newly revealed cells'
+                   f'{"" if not native_cargo_commits else f", including the embarked passenger at {native_cargo_commits} native 0x4dad30 attach-point commits"}.'
                    if native_exploration else ''))
         final_row = world_steps[map_mover_count - 1]
         final_x, final_z = final_row[1], final_row[3]
@@ -3023,6 +3116,10 @@ def main():
                         help='unhook 0x51b4f0 for passenger 2 after preparing its native entity/sector records')
     parser.add_argument('--terrain-scan-after', type=int,
                         help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
+    parser.add_argument('--cargo-sight', type=int,
+                        help='override the passenger sight distance on the World side (the '
+                             'native cache is seeded from World) so embarked cargo reveals '
+                             'cells its carrier cannot; requires --native-exploration')
     parser.add_argument('--native-exploration', action='store_true',
                         help='run retail sight production (0x4c6c00) for the carrier after each '
                              'native step and compare the exploration plane with World; '
@@ -3088,7 +3185,8 @@ def main():
                 args.native_worker_mission_collision,
                 args.probe_native_occupancy,
                 args.native_detach_second,
-                native_exploration=args.native_exploration)
+                native_exploration=args.native_exploration,
+                cargo_sight=args.cargo_sight)
 
 
 if __name__ == '__main__':

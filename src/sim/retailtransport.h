@@ -5,8 +5,42 @@
 #include "fixed.h"
 #include "retailmission.h"
 #include "retailflight.h"
+#include "retailpiecepose.h"
 
 namespace tak::sim {
+
+// 4dd250: an attached unit's world point is the host's +0x68 position plus the
+// 4dd0f0 offset of the attach piece (retailPieceOrigin, which 4dd0f0 also
+// returns as zero for a negative or out-of-range piece). Both transport pickup
+// handlers attach with piece -1 (408d00 ground, 41add7 air, through 51b4f0 to
+// 51b5a0, which stores it at +0x112), and no shipped unit script issues
+// ATTACH_UNIT, so transport cargo sits exactly on its carrier.
+inline std::array<int32_t,3> retailAttachPoint(const std::array<int32_t,3>& host,
+        std::span<const RetailModelPiece> model,std::span<const cob::RetailPiece> poses,
+        int piece,uint16_t heading,uint16_t pitch=0,uint16_t roll=0) {
+    if (piece<0) return host;
+    const auto offset=retailPieceOrigin(model,poses,piece,heading,pitch,roll);
+    std::array<int32_t,3> result{};
+    for(size_t axis=0;axis<3;++axis)
+        result[axis]=std::bit_cast<int32_t>(uint32_t(host[axis])+uint32_t(offset[axis]));
+    return result;
+}
+
+// 4dad3e..4dadd2, the attached branch of the per-tick position commit 4dad30:
+// the cargo's +0x68 becomes the host attach point, except that a floater
+// (type +0x260 bit 0x80000) is held at or above (sea - waterline). The byte
+// arithmetic ((waterline*0xffff + sea) << 16) wraps to exactly that height.
+// 51b3b0 then stores the point as the cargo's own position.
+inline std::array<int32_t,3> retailAttachedPosition(const std::array<int32_t,3>& attach,
+        bool floater,uint8_t waterline,uint8_t sea) {
+    auto result=attach;
+    if (floater) {
+        const int32_t surface=std::bit_cast<int32_t>(
+            ((uint32_t(waterline)*0xffffu)+uint32_t(sea))<<16);
+        if (result[1]<=surface) result[1]=surface;
+    }
+    return result;
+}
 // 4034ec..4035e7: Move_Seek_Pickup after attachment, eligibility and
 // carrier mission-chain checks. The host copies the carrier position and owns
 // controller installation/removal; the dispatcher interprets the return code.

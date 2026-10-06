@@ -19,6 +19,8 @@ def main():
     p.hooks[0x5dc403]=lambda uc,args:(0,thread)
     for address in (0x512255,0x5121cd):
         uc.hook_add(UC_HOOK_CODE,lambda uc,a,s,d:uc.emu_stop(),begin=address,end=address)
+    # Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+    p.allow_early_stop=True
     rng=random.Random(0x5121d8); fixtures=[]; expected=[]
     for capacity in (1,4,31,500):
         for pattern in range(8):

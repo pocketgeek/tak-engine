@@ -14,6 +14,8 @@ def play(uc, args):
     return 4, 0
 p.hooks[0x50a720] = play
 p.uc.hook_add(UC_HOOK_CODE, lambda u,a,n,d: u.emu_stop(), begin=0x50ac28, end=0x50ac28)
+# Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+p.allow_early_stop = True
 # Enter after the native wall-clock conversion to integer milliseconds.
 for now, deadline, expected in [(0,0,True),(14999,15000,False),(15000,15000,True),
                                  (15001,15000,True),(100000,115000,False)]:

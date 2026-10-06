@@ -6,8 +6,9 @@ start, goal), runs init (0x415170), then steps the scheduler's phase machine
 (+0x5c): phase 1 = tracer (0x4146e0 via 0x415b10), phase 2 = best-first cost
 search (0x4142c0), until a route is produced. Observation only.
 """
-import sys, struct
-sys.path.insert(0, "/home/pocket_geek/TAK/tools/re")
+import os, sys, struct
+# This directory, not a fixed checkout: a worktree must import its own modules.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from emu import Icd, HEAP
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
 from unicorn.x86_const import UC_X86_REG_EIP, UC_X86_REG_FPCW
