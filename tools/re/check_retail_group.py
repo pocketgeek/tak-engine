@@ -86,8 +86,8 @@ class Harness:
     def put(self, fmt, address, *values): self.uc.mem_write(address, struct.pack('<' + fmt, *values))
     def get(self, fmt, address): return struct.unpack('<' + fmt, self.uc.mem_read(address, struct.calcsize(fmt)))
 
-    def call(self, address, args, ecx=None):
-        _, error = self.p.call(address, args, ecx=ecx)
+    def call(self, address, args, ecx=None, allow_early_stop=None):
+        _, error = self.p.call(address, args, ecx=ecx, allow_early_stop=allow_early_stop)
         if error and 'UC_ERR_OK' not in error: raise AssertionError(error)
 
     def load_record(self, group, rec):
@@ -184,6 +184,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--cases', type=int, default=400)
     ap.add_argument('--build', default=os.path.join(ROOT, 'build-dbg', 'tmp'))
     a = ap.parse_args()
+    os.makedirs(a.build, exist_ok=True)
     driver = os.path.join(a.build, 'retail_group_driver')
     subprocess.check_call(['g++', '-std=c++20', '-O1', '-I', os.path.join(ROOT, 'src'), '-o', driver,
                            os.path.join(ROOT, 'tools', 're', 'retail_group_driver.cpp')])
@@ -256,7 +257,8 @@ def main():
         ms = MISSIONS; gx, gz = rng.randrange(0, 400) << 16, rng.randrange(0, 400) << 16
         for k, v in zip((0x22, 0x26, 0x2a), (gx, 0, gz)): h.put('i', ms + k, v)
         h.put('i', ms + 0x52, 0); draw = rng.randrange(4); h.draws = [draw]; h.events.clear()
-        h.call(0x402b00, (addr, ms, 0))
+        # Deliberately stopped at the Move_Ground hand-off (0x402d53, _stop).
+        h.call(0x402b00, (addr, ms, 0), allow_early_stop=True)
         flags_after = h.get('I', ms + 0x5a)[0]
         kinds = [e[0] for e in h.events]
         if 'cancel' in kinds: want = 1

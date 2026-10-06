@@ -281,6 +281,7 @@ struct RetailReplayProbe {
         // Keep the fast script lookup coherent with the restored map node.
         if (world.unitScriptById_.size()<=size_t(id)) world.unitScriptById_.resize(size_t(id)+1,nullptr);
         world.unitScriptById_[size_t(id)]=&it->second;
+        if (world.scriptYardById_.size()<=size_t(id)) world.scriptYardById_.resize(size_t(id)+1,0);
         if (target) { unit->buildQueue.push_back(target); it->second.activated=true; }
         if (values) {
             it->second.activated=(*values)[0]!=0;
