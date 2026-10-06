@@ -2142,7 +2142,10 @@ struct LegionNavigator::Impl {
         const int reach=compAt(p,oz*W+ox);
         return reach>=0&&compAt(p,m.goal)==reach&&compAt(p,m.real)>=0&&compAt(p,m.real)!=reach;
     }
+    // The member whose contact arrival this update already refused.
+    const Member* contactRefused=nullptr;
     void move(Unit& u,Fixed maximum) {
+        contactRefused=nullptr;
         Member* found=member(u.id);
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const Kind kind=kindOf(u);
@@ -2296,6 +2299,9 @@ struct LegionNavigator::Impl {
                     : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
             if(left<m.progress) {m.progress=left;m.stalled=0;m.detourCount=0;} else ++m.stalled;
             if(m.stalled>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
+            // Nothing contactArrival reads changes before drive asks again
+            // in this update (no step was taken, no goal or slot changes).
+            contactRefused=&m;
         }
         Fixed aimX=gx,aimZ=gz;
         bool direct=false;
@@ -2491,7 +2497,10 @@ struct LegionNavigator::Impl {
         // A work/logistics leg never creeps a body that cannot accelerate (a
         // released passenger stands on its landing point, as natively).
         if(speed<=Fixed()&&(m.kind<=Kind::Guard||u.type->accel>Fixed()))speed=Fixed::raw(std::max(1,cap.v/8));
-        if(length>0) {
+        // A leader must be slower than this body and at least half its cap,
+        // so none exists unless this body is above half its cap (a held or
+        // starting body never is): the scan below is skipped then.
+        if(length>0&&int64_t(speed.v)*2>int64_t(cap.v)) {
             // Speed-matched following: keep station behind a slower body of
             // the same player moving the same way (heading within 45 deg) a
             // cell or two ahead -- match its speed, at most halving this
@@ -2589,7 +2598,7 @@ struct LegionNavigator::Impl {
             }
             if(!moved&&corner)moved=cornerStep();
             if(!moved) {
-                if(contactArrival(u,m)) {complete(u,m,true);return;}
+                if(contactRefused!=&m&&contactArrival(u,m)) {complete(u,m,true);return;}
                 if(f&&m.detour<0)sidestep(u,m,p,*f,ox,oz,nx,nz);
                 // A body walled in by STILL bodies (settled arrivals, a held
                 // queue, idle units) plans a short committed detour around
