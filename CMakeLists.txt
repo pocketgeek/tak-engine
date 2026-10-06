@@ -342,7 +342,7 @@ add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
 add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
-    slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield)
+    slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
