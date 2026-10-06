@@ -8,6 +8,7 @@
 #include "sim/retailmotion.h"
 #include "sim/retailpiecepose.h"
 #include "sim/retailprojectile.h"
+#include "sim/retailairgrid.h"
 #include "sim/retailflame.h"
 #include "sim/retailhweffect.h"
 #include "sim/retaileffectclock.h"
@@ -407,6 +408,10 @@ struct UnitType {
     int32_t minWaterDepth = 0;   // shallowest water a water unit needs (readInt)
     int32_t badSlope=-1,badWaterSlope=-1;
     int32_t badMaxWaterDepth=32768,badMinWaterDepth=32768;
+    // Retail type words read by the landing-site predicate 509400: the movement
+    // class's values, else the FBI keys with retail's defaults (4dfb10/4dfc40).
+    int16_t landMaxWaterDepth=10000,landMinWaterDepth=-10000;
+    uint8_t landMaxSlope=255;
     int32_t radar = 0;        // radardistance (readInt): fog-reveal radius (separate from sight)
     bool  noVeteran = false;  // noveteran: this unit can never gain veterancy
     float maxMana = 0;        // per-unit mana pool (casters); 0 = uses no personal mana
@@ -497,6 +502,10 @@ struct MoveClass {
     int32_t minWaterDepth = 0;
     int32_t badSlope=-1,badWaterSlope=-1;
     int32_t badMaxWaterDepth=32768,badMinWaterDepth=32768;
+    // Raw class words as retail stores them in the type (+0x192/+0x194/+0x23c),
+    // with the class constructor's defaults (4dfb10).
+    int16_t retailMaxWaterDepth=10000,retailMinWaterDepth=-10000;
+    uint8_t retailMaxSlope=255;
 };
 
 class TypeRegistry {
@@ -660,6 +669,7 @@ struct Unit {
     int32_t deadFor = -1;  // >= 0 once dead; counts up for death animation
     int inTransport = 0;   // id of carrying transport, 0 = none
     uint8_t flightGroundMode=1; // retail unit +130 low bits: 1 landed, 2 airborne
+    RetailAirOccupant airOccupant; // secondary occupancy list/origin (+0x117..+0x128)
     bool underConstruction = false;
     uint32_t missionEvents = 0;
     RetailMissionState standbyState;
@@ -1761,9 +1771,14 @@ public:
     // Native collision result: 0 clear/bounce, 1 outside map, 2 environmental hit.
     int projectileEnvironment(const std::array<int32_t,3>& point,int32_t& verticalSpeed,
                               uint32_t weaponFlags) const;
-    // Build once for the projectile update phase, in player/entity order.
-    RetailAirCollisionGrid projectileAirScratch_;
-    std::span<const int> projectileAirGrid();
+    // Retail's persistent secondary (airborne) occupant grid, map word +2.
+    // Rebuilt once per tick in player/entity order (51da76/51db36); read by
+    // projectiles and by the landing-site predicate 509400.
+    RetailAirOccupancy airOccupancy_;
+    int airRetiring_=0;
+    struct AirOccupancyHost;
+    std::span<const int> updateAirOccupancy();
+    void retireAirOccupant(Unit& u);
     struct ProjectileCollisionResult { int code=0,unitId=0; };
     ProjectileCollisionResult projectileCollision(const std::array<int32_t,3>& point,
         int32_t& verticalSpeed,uint32_t weaponFlags,int owner,std::span<const int> airGrid,
@@ -2234,6 +2249,7 @@ private:
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
+    std::pair<int,int> cellHeightRange(size_t cell) const;
     bool acquireTarget(Unit& u, bool missionPoll);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
     bool canCaptureTarget(int player, const Unit& target) const;

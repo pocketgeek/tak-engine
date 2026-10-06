@@ -1,3 +1,4 @@
+#include <functional>
 #include "client/retailquality.h"
 #include "client/retailmodellighting.h"
 #include "client/weaponanimationqueue.h"
@@ -14,6 +15,7 @@
 #include "client/retailglow.h"
 #include "client/retailblood.h"
 #include "sim/retailprojectile.h"
+#include "sim/retailairgrid.h"
 #include "sim/retailguided.h"
 #include "sim/retailballistic.h"
 #include "sim/retailstorm.h"
@@ -787,6 +789,89 @@ int main(int argc,char** argv) {
             std::printf("%d\n",int(tak::sim::retailProjectileProximity(point,target,uint16_t(radius))));
         return 0;
     }
+    if(argc==2 && std::strcmp(argv[1],"--air-occupancy")==0) {
+        // Persistent secondary occupancy over ticks: retirements (507050 mode 0),
+        // silent deaths, then the clear (507050 mode 1) and insert (506c40) passes.
+        int width,height,count,ticks;unsigned seed;
+        while(std::scanf("%d %d %d %d %u",&width,&height,&count,&ticks,&seed)==5) {
+            std::vector<tak::sim::RetailAirCollisionBody> bodies(static_cast<size_t>(count));
+            std::vector<tak::sim::RetailAirOccupant> states(static_cast<size_t>(count));
+            std::vector<int> live(static_cast<size_t>(count),1);
+            for(int i=0;i<count;++i)bodies[size_t(i)].id=i+1;
+            struct Host {
+                std::vector<tak::sim::RetailAirCollisionBody>& bodies;
+                std::vector<tak::sim::RetailAirOccupant>& states;
+                std::vector<int>& live;
+                tak::sim::RetailAirOccupant* state(int id) {
+                    return id>=1 && id<=int(bodies.size()) && live[size_t(id-1)] ? &states[size_t(id-1)] : nullptr;
+                }
+                bool footprint(int id,int& x,int& z,int& fx,int& fz) const {
+                    const auto& b=bodies[size_t(id-1)];x=b.x;z=b.z;fx=b.width;fz=b.height;return true;
+                }
+                bool airborne(int id) const { return bodies[size_t(id-1)].airborne; }
+                void forEachFlyer(const std::function<void(int)>& f) const { for(size_t i=0;i<bodies.size();++i)if(live[i])f(int(i)+1); }
+            } host{bodies,states,live};
+            tak::sim::RetailAirOccupancy grid;grid.reset(width,height);
+            unsigned calls=0;
+            auto random=[&](unsigned n){++calls;seed=seed*214013u+2531011u;return ((seed>>16)&32767u)*n/32768u;};
+            for(int tick=0;tick<ticks;++tick) {
+                std::vector<int> event(static_cast<size_t>(count));
+                for(int i=0;i<count;++i) {
+                    auto& b=bodies[size_t(i)];int airborne;
+                    if(std::scanf("%d %d %d %d %d %d",&b.x,&b.z,&b.width,&b.height,&airborne,&event[size_t(i)])!=6)return 2;
+                    b.airborne=airborne!=0;
+                }
+                for(int i=0;i<count;++i) {
+                    if(!live[size_t(i)])continue;
+                    if(event[size_t(i)]==1)grid.remove(i+1,host,random);
+                    if(event[size_t(i)])live[size_t(i)]=0;
+                }
+                for(int i=0;i<count;++i)grid.clear(i+1,host);
+                for(int i=0;i<count;++i)grid.insert(i+1,host,random);
+                std::printf("%u %u",seed,calls);
+                for(int cell:grid.cells())std::printf(" %d",cell);
+                std::puts("");
+            }
+        }
+        return 0;
+    }
+    if(argc==2 && std::strcmp(argv[1],"--landing-site")==0) {
+        int width,height,fx,fz,maxDepth,minDepth,maxSlope,canFly,floater,player,sea,self,pool,features,words;
+        int32_t x,z;
+        while(std::scanf("%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",&width,&height,&fx,&fz,&maxDepth,
+                &minDepth,&maxSlope,&canFly,&floater,&player,&sea,&x,&z,&self,&pool,&features,&words)==17) {
+            std::vector<int> alive(static_cast<size_t>(pool)+1),blocking(static_cast<size_t>(features)),exploration(static_cast<size_t>(words));
+            for(int i=1;i<=pool;++i)if(std::scanf("%d",&alive[size_t(i)])!=1)return 2;
+            for(auto& v:blocking)if(std::scanf("%d",&v)!=1)return 2;
+            for(auto& v:exploration)if(std::scanf("%d",&v)!=1)return 2;
+            struct Cell { int ground,air,high,low,feature,back,yard; };
+            std::vector<Cell> cells(static_cast<size_t>(width)*height);
+            for(auto& c:cells)if(std::scanf("%d %d %d %d %d %d %d",&c.ground,&c.air,&c.high,&c.low,&c.feature,&c.back,&c.yard)!=7)return 2;
+            struct Host {
+                int w,h,seaLevel,self;
+                std::vector<int>& alive;std::vector<int>& blocking;std::vector<int>& words;std::vector<Cell>& cells;
+                int width() const { return w; }
+                int height() const { return h; }
+                uint16_t exploration(size_t i) const { return i<words.size() ? uint16_t(words[i]) : 0; }
+                uint16_t feature(size_t c) const { return uint16_t(cells[c].feature); }
+                int featureBack(size_t c) const { return cells[c].back; }
+                int featureCount() const { return int(blocking.size()); }
+                bool featureBlocking(int i) const { return size_t(i)>=blocking.size() || blocking[size_t(i)]; }
+                bool yard(size_t c) const { return cells[c].yard; }
+                bool other(int id) const { return id>0 && id<int(alive.size()) && alive[size_t(id)] && id!=self; }
+                bool groundOther(size_t c) const { return other(cells[c].ground); }
+                bool airOther(size_t c) const { return cells[c].air!=0xffff && other(cells[c].air); }
+                int low(size_t c) const { return cells[c].low; }
+                int high(size_t c) const { return cells[c].high; }
+                int sea() const { return seaLevel; }
+            };
+            Host host{width,height,sea,self,alive,blocking,exploration,cells};
+            const tak::sim::RetailLandingLimits limits{int16_t(fx),int16_t(fz),int16_t(maxDepth),int16_t(minDepth),
+                uint8_t(maxSlope),canFly!=0,floater!=0,uint8_t(player)};
+            std::printf("%d\n",int(tak::sim::retailLandingSiteFree(x,z,limits,host)));
+        }
+        return 0;
+    }
     if(argc==2 && std::strcmp(argv[1],"--air-collision-grid")==0) {
         int width,height,count;unsigned seed;
         while(std::scanf("%d %d %d %u",&width,&height,&count,&seed)==4) {
@@ -1273,28 +1358,35 @@ int main(int argc,char** argv) {
         bodies={{1,7,2,1,1,true},{2,2,2,1,1,false}};
         const auto empty=tak::sim::retailAirCollisionGrid(8,8,bodies,[](unsigned){return 0;});
         if(std::any_of(empty.begin(),empty.end(),[](int cell){return cell!=0;}))return 1;
-        tak::sim::RetailAirCollisionGrid cached;
+        // The persistent grid (clear every live flyer's recorded footprint,
+        // then insert all) must equal a fresh build while every body stays live.
+        tak::sim::RetailAirOccupancy persistent;
+        std::vector<tak::sim::RetailAirOccupant> states;
         unsigned state=520640;
         auto next=[&] {state=state*214013u+2531011u;return state;};
         for(int frame=0;frame<200;++frame) {
-            // Move/remove bodies, change map shape (including equal area), and
-            // alternate empty frames with dense overlap/overflow frames.
-            const int width=frame%3==0 ? 8 : 12,height=frame%3==0 ? 12 : 8;
-            bodies.clear();
-            const int count=frame%5==0 ? 0 : int(next()%40);
-            for(int i=0;i<count;++i) {
-                const int x=frame%2 ? 2 : int(next()%16)-2;
-                const int z=frame%2 ? 2 : int(next()%16)-2;
-                bodies.push_back({i*3+100,x,z,1+int(next()%4),1+int(next()%4),next()%3!=0});
+            const int width=frame%40<20 ? 8 : 12,height=frame%40<20 ? 12 : 8;
+            if(frame%20==0) {
+                persistent.reset(width,height);
+                const int count=frame%40==0 ? 0 : 1+int(next()%39);
+                bodies.clear();states.assign(size_t(count),{});
+                for(int i=0;i<count;++i)bodies.push_back({i*3+100,0,0,1+int(next()%4),1+int(next()%4),true});
+            }
+            for(auto& body:bodies) {
+                body.x=frame%2 ? 2 : int(next()%16)-2;
+                body.z=frame%2 ? 2 : int(next()%16)-2;
+                body.airborne=next()%3!=0;
             }
             unsigned a=state,b=state;
             auto random=[](unsigned& seed,unsigned n) {
                 seed=seed*214013u+2531011u;return ((seed>>16)&32767u)*n/32768u;
             };
             const auto fresh=tak::sim::retailAirCollisionGrid(width,height,bodies,[&](unsigned n){return random(a,n);});
-            const auto& reused=cached.build(width,height,bodies,[&](unsigned n){return random(b,n);});
-            if(fresh!=reused || a!=b) {
-                std::fprintf(stderr,"air collision cache differs after frame %d\n",frame);return 1;
+            tak::sim::RetailAirCollisionHost host{bodies,states};
+            for(const auto& body:bodies)persistent.clear(body.id,host);
+            for(const auto& body:bodies)persistent.insert(body.id,host,[&](unsigned n){return random(b,n);});
+            if(!std::equal(fresh.begin(),fresh.end(),persistent.cells().begin(),persistent.cells().end()) || a!=b) {
+                std::fprintf(stderr,"persistent air occupancy differs after frame %d\n",frame);return 1;
             }
         }
         std::puts("PASS: airborne collision overflow, map-edge exclusion and grounded exclusion");
