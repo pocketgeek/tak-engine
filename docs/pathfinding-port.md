@@ -575,18 +575,11 @@ placement query `4db640`, which the native side answers from an empty map
 `check_world_grade.py`; and bypassed admission hands the navigator to any
 allocated slot, which picks the terrain fixture's blocker.
 
-### Same-cell destinations (open, navigator boundary)
+### Same-cell destinations (resolved: protocol 180)
 
-`World::requestPath` cancels instead of submitting when the goal is in the
-requester's own footprint cell. Retail's `setDestination` `4e54e0` submits
-whenever a controller exists (`4e5540 push 1; call 4e4f50`). Emulated
-(`probe_samecell` in the audit scratch): `415170` accepts the start at once,
-charges 500 work, notifies 0x1000 and delivers no points; `4e4ea0` then clears
-navigator activity, keeps the stored points, and emits no 0x200 while the
-controller accepts the unit (0..7 px off the point). World never charges that
-work or deactivates the navigator. The consequences belong to arrival and
-mission dispatch, so this is recorded rather than changed here. `fuzz_world_search.py
---same-cell` reproduces the boundary.
+`World::requestPath` used to cancel instead of submitting when the goal was in
+the requester's own footprint cell. Retail mode now submits as `4e54e0` does;
+see protocol 180 below. `fuzz_world_search.py --same-cell` is the differential.
 
 ### Corrections to earlier notes
 
@@ -862,6 +855,76 @@ Open findings:
   second, the nominal tick rate. World supplies the simulation tick. That rate
   matches at normal speed, but retail's phase is wall-clock, unsynchronized
   between peers, and cannot be reproduced exactly.
+
+### Protocol 180: same-cell destinations submit (Retail mode, audit 2026-10-06)
+
+Retail's `setDestination` `4e54e0` cancels the old work (`415f30`), installs
+the controller (`4e4de0`), clears the navigator's active bit and, whenever a
+controller exists, marks the navigator pending (`4e5540 push 1; call 4e4f50`).
+There is no distance or same-cell test. When the scheduler `416430` reaches
+such a request, `415170` accepts the start immediately: it charges 500 work
+(`retailtrace.h`, `Result::Complete, 500, 0x1000`) and notifies 0x1000; `4e4ea0`
+delivers no points, so the navigator becomes inactive, the stored points are
+kept, and 0x200 is raised only when the controller does not accept the unit
+(`4e4ead..4e4ed4`). `World::requestPath` cancelled such requests in every mode.
+Retail mode (`PathfindingMode::Retail`) now submits them. Retail+, Legion's
+Retail fallback, Flowfield and Cooperative keep the cancellation.
+
+What follows, established by emulating the dispatch path:
+
+- Per-unit order is `4d8450`, `4d85e0`, mover `4dc800`, height `51b2a0`
+  (`51e1e5..51e21b`). The scheduler runs afterwards (`5263aa` -> `51d3e0`, then
+  `526411` -> `4f6c70` -> `416430` at `4f6ca0`). `4dc800` calls the navigator
+  tick (vtable +8 = `4e5150`) unconditionally at `4dc869`.
+- `4e5150` checks the controller before anything else (`4e5154..4e5186`). A
+  satisfied controller notifies 0x100. Circle, ring and rectangle controllers
+  return 0 from vtable +0x2c, so `4e5186` calls `4e54e0(0)`. That detaches the
+  controller and its `4e4f50(0)` removes the pending request (0x400).
+- A circle controller compares footprint origins with the rounded radius
+  (`retailCircleRadiusSquared(4)` is 0 cells). Two points in the same
+  footprint cell share the origin, so a same-cell circle goal is always
+  accepted. The submission is therefore withdrawn in the same unit update,
+  before `416430` runs. No work is charged, and the Move_Ground mission
+  (`retailGroundMove` stage 2) retires on 0x100 with unchanged timing.
+- The submission reaches the scheduler only when the controller does not
+  accept the unit: for example a ring whose inner radius excludes the unit's
+  cell, or the retry ladder (`4e5268`) or a delayed admission (`4e54a0`) moving
+  the start onto the goal cell. In that case the 500-work charge, 0x1000, the
+  inactive navigator and the 0x200 failure apply. 0x200 is in the Move_Ground
+  wait mask 0x2700, so the mission widens its radius by `footX*32` and
+  re-dispatches (`retailmission.h` stage 2). World already ported each of
+  these steps. Only the submission was missing.
+
+Evidence:
+
+- `fuzz_world_search.py build/retail_trace_test --cases 1500 --seed 11 --same-cell`
+  compares World request -> PathService -> delivery against `416430`/`415170`/
+  `4e4ea0` for every tick. Same-cell goals now run by default (`--skip-same-cell`
+  restores the old exclusion). Before the change, every same-cell case failed
+  ("search fixture rejected"): 58 of 1,500 at seed 11. After it: 1,500 searches
+  over 55,153 ticks, 0 mismatches.
+- `check_crowd_arrival.py --world-tick` (full `World::tick` against native
+  `4d8450`/`4d85e0`/`4dc800`/`51b2a0`/`416430`). Two cases match on every field
+  and every tick: Hunters ordered 0, 4 and 7 px inside their own cell (`--blocker`,
+  `--mover 2048 1616 2052 1620`, `--mover 2608 2608 2615 2615`), and 10 Hunters
+  converging on a same-cell blocker. `TAK_PATHLOG` shows that World now queues
+  these requests (previously `NEAR-CANCEL`) and withdraws them on arrival.
+- `retail_trace_test --selftest` (ctest `retail_trace`) adds the following checks.
+  A Retail same-cell request is pending; it completes in its admitting tick
+  with exactly one 0x1000 for its controller, no points, an inactive navigator,
+  the stored point retained, no 0x200, and the admission stamp written.
+  Retail+, Flowfield and Cooperative still cancel. A full `World::order` +
+  `World::tick` same-cell move retires on the same tick in Retail and Retail+,
+  and nothing is left pending.
+
+Goldens: `tools/navigation_checkpoints.json` is unchanged (ctest
+`navigation_determinism` passes for all five modes). Crowdbench hashes for 6
+scenarios x 5 modes (24 units per player, 2 players, 900 ticks) are identical
+before and after, Retail included: accepted same-cell submissions are withdrawn
+before the scheduler runs. Retail hashes can change only where an unaccepted
+same-cell submission reaches `416430`, such as a ring goal or a retry or
+admission that lands on the goal cell. The `--mpai` and benchmark goldens were
+not re-measured.
 
 ### Protocol 179: honor nonblocking map features
 

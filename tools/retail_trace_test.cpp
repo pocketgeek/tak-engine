@@ -350,6 +350,57 @@ struct RetailReplayProbe {
         if (!world.requestPath(*world.unit(id),26*16+8,20*16+8)) return false;
         return world.paths_.priorityByPlayer_[size_t(player)]!=0;
     }
+    // A ground goal in the requester's own footprint cell. Retail 4e54e0 still
+    // submits (4e5540 push 1; call 4e4f50); 415170 accepts the start at once
+    // (500 work, event 0x1000) and 4e4ea0 delivers no points. Native: probe
+    // fuzz_world_search.py --same-cell. The other modes keep their cancel.
+    static bool sameCellRequest(PathfindingMode mode) {
+        World world;world.setPathService(true);world.setPlayerCount(2);
+        world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);world.setPathfindingMode(mode);
+        UnitType type;type.maxVel=Fixed::fromInt(1);type.footX=type.footZ=2;
+        const int id=world.spawn(&type,6*16+16,6*16+16);auto& u=*world.unit(id);u.routeStamp=0;
+        Order goal;goal.goal=goal.groundMission=true;goal.controller=9;
+        goal.x=Fixed::fromInt(6*16+21);goal.z=Fixed::fromInt(6*16+19);goal.missionTarget=std::pair{goal.x,goal.z};
+        goal.hasSegment=true;goal.segmentX=u.x;goal.segmentZ=u.z;u.orders={goal};
+        const bool submitted=world.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+        if (mode!=PathfindingMode::Retail) return !submitted && !world.paths_.pending(id);
+        if (!submitted || !world.paths_.pending(id)) return false;
+        world.tickCounter_=20;
+        world.paths_.tick([](int,int,int){return 0;},[&](int who,const std::vector<PathCell>& route,
+                Fixed x,Fixed z,bool failed,bool crowded,bool traffic,bool detour) {
+            world.deliverSearchRoute(who,route,x,z,failed,crowded,traffic,detour);
+        },[&](int who,PathCell& start,int& heading,RetailCostSearch::Costs& costs) {
+            world.refreshSearchRequest(who,start,heading,costs);
+        },20,[&](int who,uint32_t now) { return world.admitSearchRequest(who,now); });
+        const auto events=world.paths_.takeNotifications();
+        const auto& end=u.orders.front();
+        // Completed in the admitting tick: 0x1000 for this controller, no
+        // points, navigator inactive, stored point kept, no 0x200 for the
+        // accepting circle, admission stamped.
+        return !world.paths_.pending(id) && events.size()==1 && events[0].controller==9 &&
+               events[0].events==0x1000 && u.orders.size()==1 && end.navigationExhausted &&
+               end.x==goal.x && end.z==goal.z && end.controller==9 && !(end.mission.pending&0x200) &&
+               u.routeStamp==20;
+    }
+    // Full World::tick: the mover's 4e5150 arrival check runs before the
+    // scheduler 416430 (51e1e5..51e21b, then 4f6ca0), detaches the accepting
+    // controller with 0x100|0x400 and cancels the submission through 4e54e0(0),
+    // so the search never charges work. The order then retires on dispatch.
+    static bool sameCellOrder(PathfindingMode mode,uint32_t& retired) {
+        World world;world.setVisPlayer(-1);world.setPathfindingMode(mode);
+        world.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);world.setPathService(true);
+        UnitType type;type.id=type.name="same-cell";type.maxVel=Fixed::fromFloat(70.f/30);
+        type.turnRate=10000;type.maxHp=100;type.canMove=true;type.footX=type.footZ=2;
+        const int id=world.spawn(&type,6*16+16,6*16+16,0,0);
+        world.order(id,6*16+21,6*16+19,false);
+        if (world.paths_.pending(id)!=(mode==PathfindingMode::Retail)) return false;
+        for (int n=0;n<60;++n) {
+            world.tick(1.f/30);
+            if (world.paths_.pending(id)) return false;
+            if (world.unit(id)->orders.empty()) { retired=world.tickCounter_;return true; }
+        }
+        return false;
+    }
     static bool emptyDelivery(bool accepted) {
         World world;UnitType type;type.maxVel=Fixed::fromInt(1);
         const int id=world.spawn(&type,128,128);auto& u=*world.unit(id);
@@ -517,6 +568,17 @@ static int selfTest() {
         check(reset(168,0x10000000,false)==direct,"forced direct segment requires an inactive old navigator");
         check(reset(168,0x10000000,true)==std::vector<int>{0,3,80,96,136,104,168,104},
               "active old navigator does not take the forced-direct exception");
+    }
+    check(RetailReplayProbe::sameCellRequest(PathfindingMode::Retail),
+          "Retail submits a same-cell goal; it completes at once with 0x1000 and no points");
+    for (auto mode:{PathfindingMode::RetailPlus,PathfindingMode::Flowfield,PathfindingMode::Cooperative})
+        check(RetailReplayProbe::sameCellRequest(mode),"other modes keep the same-cell cancellation");
+    {
+        uint32_t retail=0,plus=0;
+        check(RetailReplayProbe::sameCellOrder(PathfindingMode::Retail,retail),
+              "Retail same-cell order: arrival cancels the submission and the order retires");
+        check(RetailReplayProbe::sameCellOrder(PathfindingMode::RetailPlus,plus) && retail==plus,
+              "same-cell arrival/retirement tick is unchanged by the submission");
     }
     check(RetailReplayProbe::emptyDelivery(false),
           "empty route disables navigation and notifies failure without discarding the mission queue");
