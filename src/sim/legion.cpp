@@ -2505,6 +2505,38 @@ struct LegionNavigator::Impl {
         // Inside the destination area bodies pack into their slots; passing
         // there only displaces them.
         if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=2*kPassCells)return false;
+        const int rx=-dz,rz=dx;
+        const uint16_t here=f?f->at(size_t(oz*W+ox)):kUnreached;
+        const std::array<std::array<int,2>,2> options{{{std::clamp(dx+rx,-1,1),std::clamp(dz+rz,-1,1)},{rx,rz}}};
+        // The lane scan only decides between the two outcomes below. When
+        // neither can commit a step -- no pass cell is open (a body in a
+        // queue or a packed block) and no committed lane is held -- the
+        // verdict is "no step" whatever the scan finds, so it is skipped.
+        // Every test here is a necessary condition of the step it guards
+        // (body occupancy only: stepFree's placement check comes after it).
+        auto occupied=[&](int x,int z) {
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=x+i,cz=z+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                if(o&&o!=u.id)return true;
+            }
+            return false;
+        };
+        auto mayStep=[&](int sx,int sz) {
+            if(!step(p,ox,oz,sx,sz))return false;
+            if(w.occW_<=0)return true;
+            return !occupied(ox+sx,oz+sz)&&(!sx||!sz||(!occupied(ox+sx,oz)&&!occupied(ox,oz+sz)));
+        };
+        auto passOpen=[&](const std::array<int,2>& d) {
+            if(!d[0]&&!d[1])return false;
+            const int cell=(oz+d[1])*W+ox+d[0];
+            if(f&&(f->at(size_t(cell))==kUnreached||(!direct&&f->at(size_t(cell))>uint32_t(here)+kDiagonal)))return false;
+            return mayStep(d[0],d[1]);
+        };
+        const bool laneHeld=direct&&m.passUntil>w.tickCounter_;
+        if(!passOpen(options[0])&&!passOpen(options[1])&&!(laneHeld&&mayStep(dx,dz))) {++stats.passScansSkipped;return false;}
+        ++stats.passScans;
         bool oncoming=false;
         // A body spans several scanned cells; the verdict on it depends only
         // on the body, so each one is judged once (the scan's hot cost was
@@ -2542,9 +2574,6 @@ struct LegionNavigator::Impl {
             drive(u,m,p,f,maximum,cx,cz,false,true);
             return true;
         }
-        const int rx=-dz,rz=dx;
-        const uint16_t here=f?f->at(size_t(oz*W+ox)):kUnreached;
-        const std::array<std::array<int,2>,2> options{{{std::clamp(dx+rx,-1,1),std::clamp(dz+rz,-1,1)},{rx,rz}}};
         for(const auto& d:options) {
             if(!d[0]&&!d[1])continue;
             if(!step(p,ox,oz,d[0],d[1]))continue;
