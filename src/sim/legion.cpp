@@ -1964,13 +1964,12 @@ struct LegionNavigator::Impl {
                 // bodies cell by cell: follow them one at a time (a pulled
                 // string could clip a body the search went around).
                 const int aim=m.route.front();
-                // A committed way around still bodies is purposeful travel:
-                // the body turns toward where it walks while it walks, at
-                // travel speed (it never stops to turn first, so the route
-                // and its timing are those of an unturned walk). Walking it
-                // unturned read as sliding sideways and backward.
+                // A short way around still bodies is walked without turning
+                // the body (a crowd shuffle), not as a U-turn and back.
+                // (Facing it while walking measured as spin in shared-goal
+                // crowds: 0 -> 10-22k unit-ticks in sharedgoal 2000.)
                 const auto [ax,az]=stepAim(u,aim);
-                drive(u,m,p,nullptr,maximum,ax,az,false,false,true,true);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
                 return;
             }
         }
