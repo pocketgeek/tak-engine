@@ -12,7 +12,7 @@ native 921 × 691 PNG resolution. No units, effects or UI were added afterward.
 | `gameplay.jpg` | Aramon base in the local development demo on Ulasem Arena, one simulated second in; camera follows the selected barracks at 2× zoom |
 | `naval.jpg` | Development naval demo on Cairbray Coast Landing, eight simulated seconds in; ships on water |
 | `lobby.jpg` | Skirmish creation with Ulasem Arena preview, four-mode pathfinding selector set to Retail and Allow Speed Change; live local-server connection |
-| `room.jpg` | Live local-server skirmish lobby with three Normal AIs, remembered example pack selections, and read-only rules with Retail+ selected; example pack folders are empty UI fixtures |
+| `room.jpg` | Live local-server skirmish lobby with three Normal AIs, remembered example pack selections, and read-only rules with Retail+ (a pathfinding mode removed on 2026-10-06) selected; example pack folders are empty UI fixtures |
 | `campaign.jpg` | Book of Darien campaign picker with a fresh progress profile |
 | `crusades.jpg` | Live authenticated local Darien Crusades server; imported 313-territory definition with Torcairn selected, no authored battle maps or inferred ownership |
 | `streaming.jpg` | Streaming setup with Max 3840 / 60 FPS defaults; no key or live broadcast |

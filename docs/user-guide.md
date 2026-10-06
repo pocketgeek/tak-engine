@@ -342,15 +342,12 @@ position updates.
   **Monarch Expendable** is the loss
   rule: *off* (the retail commander rule) means losing your Monarch loses you the
   game even if other units survive; *on* makes the Monarch just another unit. The
-  host also selects pathfinding at creation, in this order: **Retail** (the
-  default), **Retail+**, **Flowfield**, **Cooperative**. The three alternatives
-  are experimental.
-  Left-click cycles forward and right-click cycles backward. The preference is
-  saved for future games; the lobby reports the fixed choice. Campaigns always
-  use Retail. See [Cooperative pathfinding](cooperative-pathfinding.md) for
-  its scope, work limits and validation. [Retail+](retail-plus-pathfinding.md)
-  retains native long-distance routes with local crowd handling for ordinary
-  ground Move orders; special goals retain native movement. The
+  host also selects pathfinding at creation: **Retail** (the default) or
+  experimental **Legion**. Clicking the button switches between them. The
+  preference is saved for future games; the lobby reports the fixed choice.
+  Campaigns always use Retail. See [Legion pathfinding](legion-pathfinding.md)
+  for its scope and limits. (Retail+, Flowfield and Cooperative were removed on
+  2026-10-06; a saved preference for one of them falls back to Retail.) The
   **unit cap** is the per-player live-unit limit (250 / 500 / 1000 / 2000,
   default 2000; production and new builds stall a player once they reach it).
   The host can **allow in-game speed changes** so the host's **+/−**

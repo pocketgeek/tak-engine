@@ -9,7 +9,8 @@
   Move orders. Builders, transports, combat approaches, patrols, native
   production exits and other special goals retain native handling. Local
   coordination supports authored ground footprints up to 4×4; larger modified
-  units fall back to native movement. See [scope and measured limits](retail-plus-pathfinding.md).
+  units fall back to native movement. Its scope and measured limits were in `docs/retail-plus-pathfinding.md`,
+  removed with the mode on 2026-10-06 (see git history).
 - Cooperative adds shared arrival slots, bounded passage admission, committed
   local routes and validated follower movement. Flowfield group arrivals,
   terrain-route recovery and traffic also improve. Dense crowds and unexplored

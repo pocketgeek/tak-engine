@@ -1,17 +1,22 @@
 # Legion pathfinding (mode 4)
 
-Legion is a fifth ground-navigation mode built for how Total Annihilation:
+> **Note (2026-10-06):** Retail+, Flowfield and Cooperative were removed by user
+> decision; they remain in git history. Retail (mode 0, the default) and Legion
+> (mode 4) are the only pathfinding modes. Comparisons below that mention the
+> removed modes are kept as history.
+
+Legion is a ground-navigation mode, the alternative to Retail, built for how Total Annihilation:
 Kingdoms actually moves armies: a flat tile mosaic whose relief is baked into
 16 px placement cells, square-ish footprints (shipped ground movers are 1x1 to
 4x4, mostly 2x2 and 3x3), slope and water limits per unit type, features,
 walls and buildings as blockers, and right-click orders that send dozens to
 thousands of units at once. Code: `src/sim/legion.{h,cpp}`; hooks in
-`src/sim/sim.cpp` next to the Retail+/Flowfield/Cooperative dispatch, and the
+`src/sim/sim.cpp` next to the Retail dispatch, and the
 group right-click in `src/client/gameview_hud.cpp`.
 
-This document describes Legion as of 4edb009. The five-mode comparison
-(Retail, Retail+, Flowfield, Cooperative, Legion) and its tables are in
-`docs/navigation-comparison-2026-10-05.md`; they are not repeated here.
+This document describes Legion as of 4edb009. The historical five-mode
+comparison (Retail, Retail+, Flowfield, Cooperative, Legion) and its tables are
+in `docs/navigation-comparison-2026-10-05.md`; they are not repeated here.
 
 ## Goals (from the request)
 
@@ -474,8 +479,9 @@ transport legs of flying or water carriers, and boats/hovercraft on legacy
 terrain-only worlds. Flyers stay native: flight is not pathfinding. The
 interface for adding
 them is a `LegionMission` kind plus a `Policy` entry (see `legion.cpp`).
-Retail and Retail+ behaviour is bit-identical to builds without Legion:
-per-tick traces and hashes compared on each Legion change.
+Retail behaviour is bit-identical to builds without Legion: per-tick traces
+and hashes compared on each Legion change (Retail+ was also compared while it
+existed).
 
 The former corner hold at a wall's end (a single body or a 12-body column
 on a legacy nav-grid world, and the jammed rally column of the generated-maze
@@ -855,11 +861,12 @@ Acceptance:
 
 * Network protocol: `kNetVersion` 228 introduced Legion. The mode travels as
   the pathfinding-mode byte, value 4 (`PathfindingMode::Legion`); a peer that
-  does not know it is rejected by the version check.
-* Lobby: Legion is the fifth entry of the pathfinding cycle. Campaign
+  does not know it is rejected by the version check. Since protocol 231 the
+  bytes 1-3 (the removed modes) are invalid.
+* Lobby: the pathfinding button switches between Retail and Legion. Campaign
   missions and Crusades always run Retail movement, whatever the lobby says.
-* Retail, Retail+, Flowfield and Cooperative hashes and goldens are unchanged
-  by Legion. Legion state enters `World::stateHash` only in mode 4.
+* Retail hashes and goldens are unchanged by Legion (as were those of the
+  since-removed modes). Legion state enters `World::stateHash` only in mode 4.
 * Headless runs: the DEBUG client flag `TAK_LEGION=1` selects Legion for the
   `--mpai` harness and other headless games (release builds read no `TAK_*`
   variables).

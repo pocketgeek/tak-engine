@@ -1,5 +1,10 @@
 # Navigation comparison — 2026-10-05
 
+> **Note (2026-10-06):** Retail+, Flowfield and Cooperative were removed by user
+> decision and remain in git history. Only Retail (the default) and Legion are
+> left. This report is kept unchanged as the historical record; its Retail+
+> design document (`docs/retail-plus-pathfinding.md`) was removed with the mode.
+
 This report closes the navigation pass that started from main `86673b4` after
 review of `3255400`. It covers the four existing modes (Retail, Retail+,
 Flowfield, Cooperative) against a frozen baseline, and Legion, a fifth mode
@@ -167,8 +172,9 @@ no owner. Doorway results at 2,000 units:
 | 42 / 12,000 | 201 → 264 | 127 → 180 |
 
 Retail+ still crosses about half as many as Retail at the 2,000-unit door. It
-lost 4–11% of arrivals in recovery-1000×4 and 11–30% in sharedgoal-1000×4. See
-[Retail+](retail-plus-pathfinding.md).
+lost 4–11% of arrivals in recovery-1000×4 and 11–30% in sharedgoal-1000×4. (Its
+design document, `docs/retail-plus-pathfinding.md`, was removed with the mode and
+is in git history.)
 
 ### CPU-only, behaviour-equivalent
 

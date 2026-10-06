@@ -581,34 +581,33 @@ it from `OverrideCache/`; format 9 / protocol 212 remains readable.
 
 ### Match pathfinding selection
 
-Protocol 220 introduced the creation-time `Retail` (default) or `Flowfield` choice;
-protocol 226 adds the independent experimental `Cooperative` option, and 227
-adds experimental `Retail+`. Game options
+The creation-time choice is `Retail` (the default) or experimental `Legion`.
+Protocol 220 introduced the selection (then Retail or Flowfield); protocols
+225-227 added Cooperative and Retail+, and 228 added Legion. Protocol 231
+removed Retail+, Flowfield and Cooperative (2026-10-06, by user decision; they
+remain in git history). Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
 through shared match setup. Campaign missions and Crusades battle rooms remain
 Retail. The lobby reports the selected mode without changing it.
 
-Replay format 11 records the pathfinder. Version 0.7.24 requires the current
-simulation protocol for playback; older recordings require their original engine.
+Replay format 11 records the pathfinder. Playback requires the current
+simulation protocol; older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode. Saved
-`gameCreate.pathfindingMode` values and the wire byte retain `0=Retail` and
-`1=Flowfield`, `2=Cooperative`, and `3=Retail+`. Missing or unknown saved values default to
-Retail, while unknown network/replay mode bytes are rejected. Creation controls
-cycle forward or backward in display order Retail, Retail+, Flowfield, Cooperative.
-Debug-only `TAK_FLOWFIELD=1` selects Flowfield in the headless multiplayer test
-harness; `TAK_COOPERATIVE=1` selects Cooperative and takes precedence if both are
-set. `TAK_RETAIL_PLUS=1` takes precedence over both. The synthetic
-`flow_benchmark` accepts `0/1/2`; the extended `crowdbench` accepts `--mode
-retail`, `retail-plus`, or `flowfield` for direct comparisons. Retail+ owns no
-shared terrain fields; its local claims, work-budget cursors and queued command
-identities are part of the simulation checksum. Its addition changes neither
-the default nor existing mode identities. Replay format 11's byte layout is
-unchanged; the protocol bump prevents silently replaying old simulation rules.
+`gameCreate.pathfindingMode` values and the wire byte keep the stable identities
+`0=Retail` and `4=Legion`; `1`, `2` and `3` (the removed Flowfield, Cooperative
+and Retail+) are invalid. Missing, unknown or removed saved values default to
+Retail, while unknown network/replay mode bytes are rejected. The creation
+control switches between Retail and Legion. Debug-only `TAK_LEGION=1` selects
+Legion in the headless multiplayer test harness. `crowdbench` accepts `--mode
+retail` or `legion` for direct comparisons. Legion's groups and per-unit state
+are part of the simulation checksum only in mode 4. Replay format 11's byte
+layout is unchanged; the protocol bump prevents silently replaying old
+simulation rules.
 For `tools/desync-hunt-remote.sh`, `--minutes` limits simulated match time.
 `TAK_WALL_TIMEOUT=3600` grants each client up to one real hour for a dense
-Flowfield stress run; the default remains simulated seconds plus 300.
+stress run; the default remains simulated seconds plus 300.
 The same tick, completion and hash checks apply. `--only` retains each scenario's
 full-table seed so targeted retries reproduce its original map/start seed.
 
@@ -623,6 +622,9 @@ validates coordinates and command ownership; build-menu restrictions apply.
 New matches also enable automatic nearby repairs during builder patrols.
 Replay format 11 is unchanged. Defensive AI interception is server-local policy;
 its ordinary movement commands are sequenced and recorded as usual.
+
+(History: protocols 222-227 below concern the since-removed Flowfield,
+Cooperative and Retail+ modes.)
 
 Protocol 222 retains the same wire layout and replay format, while fixing
 Flowfield arrivals around parked formations at a shared rally point. The
