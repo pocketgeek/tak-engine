@@ -2191,9 +2191,43 @@ private:
         SearchGradeBatch(const SearchGradeBatch&)=delete;
         SearchGradeBatch& operator=(const SearchGradeBatch&)=delete;
     };
+    // Occupant per rectangle cell. Footprint-sized rectangles (the placement
+    // and grade queries made per step) stay inline instead of allocating.
+    class BodyCells {
+    public:
+        static constexpr size_t kInline=64;
+        BodyCells()=default;
+        explicit BodyCells(size_t count):size_(count) {
+            if (count>kInline) heap_.assign(count,nullptr);
+            else std::fill_n(inline_.begin(),count,nullptr);
+        }
+        BodyCells(const BodyCells& other):size_(other.size_),heap_(other.heap_) {
+            std::copy_n(other.inline_.begin(),other.size_>kInline ? 0 : other.size_,inline_.begin());
+        }
+        BodyCells& operator=(const BodyCells& other) {
+            size_=other.size_;heap_=other.heap_;
+            std::copy_n(other.inline_.begin(),other.size_>kInline ? 0 : other.size_,inline_.begin());
+            return *this;
+        }
+        size_t size() const { return size_; }
+        bool empty() const { return !size_; }
+        const Unit** begin() { return size_>kInline ? heap_.data() : inline_.data(); }
+        const Unit** end() { return begin()+size_; }
+        const Unit* const* begin() const { return size_>kInline ? heap_.data() : inline_.data(); }
+        const Unit* const* end() const { return begin()+size_; }
+        const Unit*& operator[](size_t i) { return begin()[i]; }
+        const Unit* operator[](size_t i) const { return begin()[i]; }
+        bool operator==(const BodyCells& other) const {
+            return std::equal(begin(),end(),other.begin(),other.end());
+        }
+    private:
+        size_t size_=0;
+        std::array<const Unit*,kInline> inline_;
+        std::vector<const Unit*> heap_;
+    };
     struct SearchBodyRect {
         int x=0,z=0,width=0,height=0;
-        std::vector<const Unit*> cells;
+        BodyCells cells;
     };
     // Tick-local broad phase. Buckets keep conservative candidates, including
     // dead/flying bodies; exact current eligibility and yards are checked below.
@@ -2470,6 +2504,12 @@ private:
     int winningTeam_ = -1;
     bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
     std::array<std::vector<uint16_t>,3> explorationScratch_; // derived worker-local reveal masks
+    // Derived, unhashed, rebuilt each exploration pass: per 8x8-cell block,
+    // the AND of navigationExplored_ (and of each worker's mask), so fully
+    // explored blocks are skipped.
+    static constexpr int kExplorationBlockShift=3;
+    std::vector<uint16_t> explorationBlocks_;
+    std::array<std::vector<uint16_t>,3> explorationBlockScratch_;
     bool serialThreads_ = false;
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
