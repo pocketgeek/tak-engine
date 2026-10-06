@@ -608,6 +608,41 @@ Open findings:
   the attach piece. A faithful fix needs the attach-piece world position (a
   port of `4dd250`) and is not made here. The shoreline fixture runs only the
   carrier's producer for this reason.
+- **VTOL landing-site predicate `509400` is not ported.** Every landing
+  oracle (`check_landing_search`, `check_landing_mission`) supplies this
+  predicate as a controlled input, and `World::flightLandingFree` is an
+  engine approximation: the legacy nav-class `fits`, `cellFree`, and a
+  grounded/descending-flyer overlap test. Retail
+  `509400(unit, point)` works as follows:
+  - It rounds the footprint origin (`(x - fx<<19 + 0x80000) >> 20`, kept as
+    int16) and rejects `x0<0`, `z0<0`, `x0+fx>=W` and `z0+fz>=H`.
+  - It reads the exploration word at coarse index
+    `(x0>>1)+(fx>>2) + ((z0>>1)+(fx>>2))*(W>>1)`; note that it uses `fx` on
+    both axes. If the bit `1<<unit+0xfd` is clear, the point is **landable
+    without any terrain or occupancy test**.
+  - Otherwise every footprint cell must pass several tests:
+    - Feature word `0xffff`; a valid index or `0xfffe` tail whose feature has
+      no blocking bit `0x20`; any other `0xfffa..0xfffd` value fails.
+    - No structure-yard flag (`+0xd` bit `0x10`). `5066f0` stamps it for every
+      non-`.` yard character (the `4c0f59` table gives all of
+      `c C o O S w f y Y` bit 0), and `506b39` clears it.
+    - No live other entity in the ground word `+0` or the airborne word `+2`.
+      The airborne word is the secondary occupant maintained by
+      `506c40`/`507050`, the same grid as `check_air_collision_grid`.
+    - `low >= sea - maxwaterdepth`. For `canfly` (`+0x260` bit `0x800`) and
+      non-`floater` (`0x200000`) types this bound is raised to `sea`, so a
+      flyer cannot land on water.
+    - `high <= sea - minwaterdepth` and `high-low <= maxslope` (`+0x23c`).
+      For every shipped flyer these are effectively unlimited: maxwaterdepth
+      is 0 or the default 10000, minwaterdepth is -10000 and maxslope is 255,
+      as the captured types confirm.
+
+  World differs in the unexplored shortcut, in yard cells (including open
+  ones), in which flyers block (retail: any airborne owner of the secondary
+  word; World: grounded or descending flyers), and in its terrain/water
+  sampling. A faithful port needs the persistent secondary-occupant grid and
+  its RNG-drawing maintenance cadence. World currently builds that grid only
+  as projectile scratch state, so this audit does not change it.
 - **TARCAN bobbing clock.** `51af48` reads `53ff20`: elapsed
   `QueryPerformanceCounter` seconds × 1000 × `[[0x641a48]+0x48]` / 1000.
   Both captures store 30 there, so retail's phase advances 30 per wall-clock
