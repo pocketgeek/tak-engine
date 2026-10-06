@@ -50,8 +50,15 @@ def main(travel=False,navigation=False,description=None):
               p.u32(addresses[u['id']]+0x130)&3==1]
     if not subjects: raise ValueError('no unattached surface subjects')
     fixture=args.fixture.read_text().splitlines();header=fixture[0].split()
+    if header[1]=='37':
+        # probe_saved_movement.py now writes version 37. Drop its surface and
+        # exploration tail; this check rebuilds both from the capture below.
+        count=int(header[4]);tail=2*count+4
+        if len(fixture)<=tail or fixture[-count-1]!=str(count) or fixture[-tail]!=str(count):
+            raise ValueError('invalid version-37 surface/exploration tail')
+        del fixture[-tail:];header[1]='34'
     if header[1]!='34' or int(header[2])!=p.frame['tick']:
-        raise ValueError('expected matching version-34 initial fixture')
+        raise ValueError('expected matching version-34 or version-37 initial fixture')
     header[1]='37' if navigation else '36';header[5]='0';header[-1]=str(int(args.balance=='crusades'))
     fixture[0]=' '.join(header);fixture.append(str(len(p.frame['units'])))
     for u in p.frame['units']:

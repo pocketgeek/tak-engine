@@ -516,6 +516,76 @@ behavior on every possible map or a claim of whole-game retail parity. AI
 strategy may differ, as agreed. Terrain-art occlusion and renderer ordering are
 separate from whether a unit can occupy a map position.
 
+### Retail group pacing: mapped, not ported (audit 2026-10-06)
+
+Retail mode's formation pacing is still our own rule, not retail's. The
+`squad < 0` branch in `World::tick` caps members at the slowest member's
+individual `baseSpeed`. Members more than 48 px behind the centroid toward the
+current leg are exempt, and idle members more than 140 px from the centroid are
+re-ordered to it. None of those constants or mechanisms appear in the icd.
+Retail's system, read statically and partly emulated:
+
+- **Groups** are per-player records (99 groups × 0xc4 bytes) at `player+0x84`.
+  A unit's group is `unit+0xc8`, assigned by `50b4f0`. That routine is called
+  for unit creation and death, save restore, the AI squad code (`40ac53..40feae`)
+  and the selection-to-group handler at `5221ce`. Record `+8` is the member list
+  (`50b760`), `+0x2c` is "active" (`50b7a0`/`50b800`), `+0x58` is the ground
+  group speed (`50bbc0`/`50bc20`), `+0x84` is the boat group speed
+  (`50bfe0`/`50c040`), `+0xa4` is the centre (`50c340`) and `+0xb0` is a changed
+  flag (`50c440`/`50c400`).
+- **Per-tick aggregation** happens in `51b890`, called from `526389` before
+  `51d3e0` (movers). It runs for players whose `+0xea` is 1, 2 or 3. For each
+  group with members, it walks alive, completed units with a mover. Navigator
+  `vt+0x30` sets formation bit `nav+0x114&0x10` exactly when the unit's current
+  mission has flag `0x2000000`; ordinary point moves (`0x3000400`) have it. The
+  routine sums centres per class: flyer (`type+0x260&0x800`), boat (`0x80000`
+  with minimum depth > 0) and ground. Non-flyers on missions with `0x1000000`
+  (but not `0x4000000`) contribute their terrain-scaled TYPE maximum
+  (`type+0x162` × road/water multiplier) to a per-class minimum. The routine
+  then writes centre, active flag and the two speeds (`51bfd6..51c39a`).
+  Next comes a straggler pass (`51c3bf..51c5fb`). Each formation member that
+  `51d1e0(unit,1,4)` reports out of its slot, with a type maximum below 1.5×
+  the group speed, multiplies that speed by `0xaa7e/65536` (≈2/3). Several
+  stragglers compound the reduction, so the group slows down; retail does not
+  let the straggler sprint. When the changed flag is set
+  (`51c612..51c6e1`, game `+0x3070&1`, owner kind 1/2), every member's
+  navigator gets `vt+0x38`, which sets `+0x114|8`.
+- **Slot geometry**: `51d1e0` compares the unit's distance from its slot
+  (`51c700`) against a radius from `51ce40`, scaled by level 1/2/4/5 and doubled
+  for flyers. The `Move_Ground_Formation` mission (handler `402880`) steers
+  units to their `51c700` slots. It is constructed by name inside the
+  `Move_Ground` handler (`402c99`) and in `4037ad`, `403e78`, `4048e1`,
+  `404ead` and `4080a0`; the conditions that trigger it have not been traced.
+  This is retail's re-forming mechanism; our 140 px centroid re-order stands
+  in for it.
+- **Mover cap** in `4d95f0` (`4d976a..4d9a2a`): it applies when navigator
+  `vt+0x34` (formation bit) is set, owner `[0]` is nonzero, owner `+0xea` is
+  1 or 2, and the group is active. Let F be `+0x84` for boats, otherwise
+  `+0x58`. Owner kind 3 instead uses navigator `vt+0x3c`, which is 0 for ground
+  navigators (`4e60d0`). For F > 0, the floor is
+  `ftol(0.25 × terrain-scaled type max)`. If F stays below the mode-scaled
+  terrain type max, the unit's maximum becomes
+  `(ftol(ownT/typeT × 65536) × F) >> 16`. Here ownT is the terrain-scaled
+  `unit+0x12b` and typeT is the terrain-scaled `type+0x162`. Notably the
+  speed-mode factor (`0xaac0`/`0x553f`) is not applied to the capped value.
+  `tools/re/probe_formation_speed.py` runs the original routine with a
+  hook at `4d9a2d`. It matches this written rule in 20,000 randomized cases
+  (3,543 capped), covering owner kinds, inactive groups, boats, road/water and
+  speed modes.
+
+Differences from our port: retail paces any grouped unit on a `0x2000000`
+mission, so ordinary Ctrl-groups included, not only a separate "formation"
+squad. Retail uses terrain-scaled type speeds, not individual base speeds, with
+a 25% floor. It slows the group for stragglers instead of speeding up the
+straggler. It also re-forms through slot standby missions. A faithful port
+needs `51b890`, `51c700`/`51ce40` and the `402880` mission together. Porting
+only the mover cap would drop our catch-up rule without retail's slowdown, the
+half-port trap. Squad semantics are also user-facing (`docs/user-guide.md`).
+The gap is therefore recorded rather than shipped. The same audit found that
+the AI's group order `50b5d0` gives every member the same point. The human UI's
+per-unit click offsets (`±60` px around the selection centroid in
+`gameview_hud.cpp`) have not been traced to a retail source.
+
 ### Protocol 179: honor nonblocking map features
 
 The shared movement obstacle overlay now blocks map features only when their
