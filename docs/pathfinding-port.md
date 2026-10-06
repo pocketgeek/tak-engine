@@ -586,6 +586,48 @@ the AI's group order `50b5d0` gives every member the same point. The human UI's
 per-unit click offsets (`±60` px around the selection centroid in
 `gameview_hud.cpp`) have not been traced to a retail source.
 
+### Whole-World Retail scenarios against native retail (2026-10-06)
+
+`check_crowd_arrival.py --world-tick` drives World only through its public
+entry points: `World::order` (queued legs with `queue=true`) and a full
+`World::tick` in Retail mode, instead of the probe's hand-assembled mission /
+mover / worker calls. The native side runs, per unit and in retail's order
+(`0x51e1e5..0x51e21b`): active dispatcher `0x4d8450`, queued dispatcher
+`0x4d85e0`, mover `0x4dc800`, height `0x51b2a0`; then scheduler `0x416430`
+once per tick (`0x5263aa` runs units before `0x526411 -> 0x4f6ca0`). New
+options: `--blocker X Z` (a Hunter ordered to its own position: a parked
+obstacle), `--mover X Z GX GZ` (opposing traffic), `--then GX GZ` (a queued
+second leg) and `--dump-map` (native 2x2 passability, for choosing routes).
+
+Every scenario matches on all 24 movement/mission fields on every tick
+(Ulasem capture, Crusades unless noted, 12,000 work budget):
+
+| scenario | units | ticks | settled |
+| --- | --- | --- | --- |
+| single unit routed around cliffs, through arrival | 1 | 900 | 1/1 |
+| group, 3-cell spacing | 10 | 600 | (en route) |
+| group of 10 through the walled north-east passage | 10 | 1,500 | 10/10 |
+| same, Standard balance, touching footprints | 10 | 1,200 | 10/10 |
+| 60 touching through the same passage | 60 | 1,500 | 38/60 |
+| 20 touching, one destination | 20 | 1,800 | 18/20 |
+| destination occupied by a parked unit | 1+1 | 1,200 | stops 70 px short |
+| parked unit directly on the route | 1+1 | 600 | detours, arrives |
+| head-on pair | 1+1 | 600 | 2/2 |
+| 8 north vs 6 south, crossing | 8+6 | 1,200 | 14/14 |
+| 16 through the choke vs 4 opposing | 16+4 | 1,500 | 13/20 |
+| 5 out and back on a queued leg | 5 | 1,200 | 5/5 |
+
+The World side removes unit scripts (also from the id index), disables
+wind and the player bookkeeping clock `0x411a90`: the native loop runs none of
+those, yet all three draw from the shared stream. Statically, retail runs them
+after the scheduler (`0x4f6c70` calls `0x416430` at `0x4f6ca0`, then
+`0x4121c0` at `0x4f6da2`), which is World's order too; their interleaving with
+movement draws is not covered by this comparison. Also not covered: the per-unit
+updater's other calls (`0x401160`, `0x429d90`, weapons), combat, formations
+(squads), AI orders and a seeded whole-game start. A live run of the retail
+executable on the same layouts was not possible on this host (no virtual
+display; the only display is the user's desktop session).
+
 ### Protocol 179: honor nonblocking map features
 
 The shared movement obstacle overlay now blocks map features only when their
