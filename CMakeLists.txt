@@ -342,7 +342,8 @@ add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
 add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
-    slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice)
+    slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice
+    navalclearance navalisland hovershore navalmissions)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
 # Visible motion of group orders with real unit types (measurement only, needs
@@ -687,6 +688,7 @@ if(TAK_TEST_DATA)
     add_test(NAME campaign_roster COMMAND campaign_test "${TAK_TEST_DATA}")
     add_test(NAME structure_combat COMMAND structure_combat_test "${TAK_TEST_DATA}")
     add_test(NAME naval_combat COMMAND naval_combat_test "${TAK_TEST_DATA}")
+    add_test(NAME legion_naval_combat COMMAND naval_combat_test "${TAK_TEST_DATA}" --legion)
     add_test(NAME transport_roster COMMAND transport_test "${TAK_TEST_DATA}")
     add_test(NAME transport_map_roundtrip COMMAND transport_test
         --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
