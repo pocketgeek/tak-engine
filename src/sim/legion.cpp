@@ -34,6 +34,7 @@ constexpr int kFieldMargin=32;                 // bounded field window margin (c
 constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
 constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
+constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close enough" settling at a crowd
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
 constexpr int kLaneSpan=8;                    // passage lane grid: strips narrower than this (origins)
@@ -190,6 +191,9 @@ struct LegionNavigator::Impl {
         std::vector<int> route;           // committed local detour around still bodies
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
+        // "Close enough": the start of the current no-progress window and the
+        // pixel distance to the requested point then (see crowdSettle).
+        uint32_t windowTick=0;int64_t windowDist=-1;uint8_t stillWindows=0;
     };
 
     World& w;
@@ -837,7 +841,7 @@ struct LegionNavigator::Impl {
         const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
-        Member m;m.controller=leg.controller;m.state=Waiting;
+        Member m;m.controller=leg.controller;m.state=Waiting;m.windowTick=w.tickCounter_;
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
         auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
         if(fresh) {
@@ -1956,6 +1960,31 @@ struct LegionNavigator::Impl {
             g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);
             m.state=Waiting;w.brakeGround(u);return;
         }
+        // Close enough: a body that gained less than half a body on its
+        // point over the last window, pressed against the settled crowd
+        // already standing there, settles where it is (see crowdSettle).
+        // Checked before detours and shuffles, which otherwise run forever.
+        if(w.tickCounter_-m.windowTick>=kCrowdWindow) {
+            const int64_t dx=(int64_t(u.x.v)-std::get<2>(m.point))>>16,dz=(int64_t(u.z.v)-std::get<3>(m.point))>>16;
+            const int64_t dist=isqrtFloor(uint64_t(dx*dx+dz*dz));
+            const int64_t body=int64_t(std::max(fx,fz))*16;
+            const bool still=m.windowDist>=0&&m.windowDist-dist<body/2;
+            m.windowTick=w.tickCounter_;m.windowDist=dist;
+            m.stillWindows=still?uint8_t(std::min(m.stillWindows+1,255)):uint8_t(0);
+            if(m.stillWindows>0) {
+                // A crowd of an earlier order (or idle bodies) already stands
+                // there: one window. A crowd of this same order is still
+                // forming, and the area logic (contactArrival) brings its
+                // late members in: only after twice the in-area wait.
+                const int crowd=crowdSettle(u,m,g,ox,oz,dist);
+                // Inside a formation's area (and its two-body margin) that
+                // logic decides alone; this only ends the wait outside it,
+                // where a late member otherwise never settles. (Settling
+                // there too cost sharedgoal 200 eight arrivals, seeds 0/7/42.)
+                const bool outside=!(m.pt&&m.pt->assigned&&m.pt->limit>0)||dist>m.pt->limit+2*body;
+                if(crowd==2||(crowd==1&&outside&&uint32_t(m.stillWindows)*kCrowdWindow>=2*kAreaSettle)) {complete(u,m,true);return;}
+            }
+        }
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
             if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&m.held>=30)) {m.route.clear();m.lineCell=-1;}
@@ -2425,6 +2454,80 @@ struct LegionNavigator::Impl {
             m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;return;
         }
     }
+    // "Close enough" settling (the user's rule: late bodies get close to the
+    // crowd already standing at their destination and are done). A body
+    // that stopped gaining on its point settles where it stands when
+    //  - it touches (within one body) a same-player body that already
+    //    settled for the same destination (a Legion arrival whose point lies
+    //    within two bodies of this one's, or an idle body) and stands nearer
+    //    that point;
+    //  - it is within the crowd's reach: four times the packed-disc radius
+    //    of the arrivals settled there (plus two bodies) from the point
+    //    (crowds pressed against terrain spread well past a disc);
+    //  - the way to the destination area is short: its group-field potential
+    //    is at most 1.4x the straight distance plus three bodies (never
+    //    across a wall or terrain from the crowd);
+    //  - it is not standing in a same-player factory's exit lane.
+    // Its own footprint is legal (checked by the caller). A body passing
+    // through a crowd on its way elsewhere is far from its own point and
+    // touches nobody settled for it, so it never settles here.
+    // Returns 0 (not here), 1 (touching only this same order's arrivals)
+    // or 2 (touching an earlier order's arrival or an idle body).
+    int crowdSettle(const Unit& u,const Member& m,const Group& g,int ox,int oz,int64_t dist) const {
+        if(m.approach||m.goal<0)return 0;
+        const int fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+        const int64_t body=int64_t(foot)*16;
+        const int64_t px=int64_t(std::get<2>(m.point)),pz=int64_t(std::get<3>(m.point));
+        auto sameDestination=[&](const Anchor& a) {
+            if(std::get<0>(a.point)!=u.player)return false;
+            const int64_t ax=(int64_t(std::get<2>(a.point))-px)>>16,az=(int64_t(std::get<3>(a.point))-pz)>>16;
+            return ax*ax+az*az<=4*body*body;
+        };
+        // Touching: a settled body of this destination within one body,
+        // nearer the point than this one.
+        int touching=0;
+        for(int j=-foot;j<fz+foot&&touching<2;++j)for(int i=-foot;i<fx+foot&&touching<2;++i) {
+            const int cx=ox+i,cz=oz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            if(!o||o==u.id)continue;
+            const Unit* other=w.unit(o);
+            if(!other||other->player!=u.player||!other->type||other->type->isStructure())continue;
+            // Settled for this destination: a Legion arrival there, or an
+            // idle body (standing nearer the point, so inside its crowd).
+            const auto a=anchors.find(o);
+            if(a!=anchors.end()?!sameDestination(a->second):!other->orders.empty())continue;
+            const int64_t qx=(int64_t(other->x.v)-px)>>16,qz=(int64_t(other->z.v)-pz)>>16;
+            if(qx*qx+qz*qz>=dist*dist)continue;
+            // Same order: same player and issue tick (a group's members may
+            // each name their own point of one lattice).
+            const bool own=a!=anchors.end()&&std::get<1>(a->second.point)==std::get<1>(m.point);
+            touching=std::max(touching,own?1:2);
+        }
+        if(!touching)return 0;
+        // Reach: four times the packed disc of everyone settled there (and
+        // this body), plus two bodies.
+        int64_t count=1;
+        for(const auto& [id,a]:anchors)if(sameDestination(a))++count;
+        const int64_t reach=4*body*isqrtFloor(uint64_t(count)*100000000/31416)/100+2*body;
+        if(dist>reach)return 0;
+        // Connected: the field's way to the destination area is not much
+        // longer than the straight line (no settling behind a wall).
+        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+        if(!f)return 0;
+        const uint16_t potential=f->at(size_t(oz*width()+ox));
+        if(potential==kUnreached||int64_t(potential)>(dist*kDiagonal)/16+int64_t(3*foot*kOrthogonal))return 0;
+        // Never in a same-player factory's exit lane: from the factory's
+        // centre to past where its output is put down.
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
+        for(const auto& s:w.units_) {
+            if(!s.alive()||s.player!=u.player||!s.type||!s.type->producesUnits())continue;
+            const int64_t sx=s.x.v>>16,sz=s.z.v>>16;
+            const int64_t half=int64_t(s.type->footX)*8+body;
+            if(ux>=sx-half&&ux<=sx+half&&uz>=sz&&uz<=sz+int64_t(s.type->footZ)*8+60+body)return 0;
+        }
+        return touching;
+    }
     // A body pressed against settled bodies inside its goal's area has
     // arrived: the destination is an area, and the cells nearer the point
     // are taken. Distinct-goal members use one body width; members sharing a
@@ -2545,7 +2648,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
-            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
+            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillWindows);
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
