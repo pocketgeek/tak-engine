@@ -19,7 +19,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 231;      // 231: Retail+, Flowfield and Cooperative pathfinding removed;
+constexpr uint32_t kNetVersion = 232;      // 232: Legion idle same-player bodies part a lane for held members
+                                           // 231: Retail+, Flowfield and Cooperative pathfinding removed;
                                            //      mode bytes 1-3 are now invalid (Retail 0, Legion 4)
                                            // 230: Legion routes all applicable movement commands (combat/escort,
                                            //      work/logistics, boats, hovercraft) + corner-step/column fix
