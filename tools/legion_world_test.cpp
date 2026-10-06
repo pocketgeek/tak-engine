@@ -388,6 +388,44 @@ void quota() {
     check(s.fieldEvictions>0,"fixture did not exercise eviction");
 }
 
+void pens() {
+    // More independent orders than the field budget holds whole-map fields,
+    // each penned in its own small walled region behind a wall stub: fields
+    // are sized to their region, so nobody is evicted mid-route or starved.
+    constexpr int P=24,N=12;   // pen size (cells), pens per side
+    Fixture f(P*N,P*N);
+    std::vector<int> ids;std::vector<std::pair<int,int>> goals;
+    const auto type=mover(2);
+    for(int j=0;j<N;++j)for(int i=0;i<N;++i) {
+        const int x=i*P,z=j*P;
+        f.rect(x,z,P,1);f.rect(x,z+P-1,P,1);f.rect(x,z,1,P);f.rect(x+P-1,z,1,P);
+        f.rect(x+P/2,z+4,2,P-8);
+    }
+    f.publish();
+    for(int j=0;j<N;++j)for(int i=0;i<N;++i) {ids.push_back(f.spawn(type,i*P+5,j*P+P/2));goals.push_back({i*P+P-5,j*P+P/2});}
+    f.start();
+    for(size_t i=0;i<ids.size();++i) {
+        f.world.order(ids[i],float(goals[i].first*16),float(goals[i].second*16),false);
+        f.world.tick(1.f/30);   // a separate issue tick: separate groups
+    }
+    int arrived=0,all=-1;
+    for(int t=0;t<3000&&all<0;++t) {
+        f.world.tick(1.f/30);
+        arrived=0;for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
+        if(arrived==int(ids.size()))all=t;
+    }
+    const auto s=f.world.legionStats();
+    std::printf("pens all_arrived_tick=%d arrived=%d/%zu fields=%llu evictions=%llu bytes=%zu\n",all,arrived,ids.size(),(unsigned long long)s.fieldsBuilt,
+        (unsigned long long)s.fieldEvictions,(unsigned long long)s.bytes);
+    check(ids.size()>48,"fixture does not exceed the whole-map field cap");
+    check(arrived==int(ids.size()),"penned orders starved under the field budget");
+    check(s.fieldEvictions==0,"small-region fields were evicted");
+    // Every group gets its field at once (242 ticks); waiting for whole-map
+    // field slots in waves took 609.
+    check(all>=0&&all<400,"penned orders waited for field slots");
+    for(int id:ids)check(f.legal(id),"illegal footprint in pens");
+}
+
 void formation() {
     // Open ground, a formation sent far (beyond the direct-line reach) to the
     // same lattice translated: every body should travel its own row, so the
@@ -697,7 +735,7 @@ void determinism() {
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
-        {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},
+        {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},{"pens",pens},
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
