@@ -29,6 +29,7 @@ import json
 import os
 import struct
 import subprocess
+import tempfile
 from pathlib import Path
 
 from emu import HEAP
@@ -61,6 +62,7 @@ def main():
     parser.add_argument('--park',action='store_true',help='dispatch a PARK ring around the gate instead of a point move')
     parser.add_argument('--park-target-loss-at',type=int,default=0,help='supply target-loss event 8 at this PARK tick')
     parser.add_argument('--park-follow-at',type=int,default=0,help='append an ordinary move at this PARK tick')
+    parser.add_argument('--ramp',action='store_true',help='authored relief beyond the gate: a bad-slope then good-slope ramp lane between impassable cliffs up to the destination plateau')
     parser.add_argument('--pair-close',action='store_true',help='closely spaced convoy; expects native expanded-radius arrival short of the requested point')
     args=parser.parse_args()
     for value in (args.park_target_loss_at,args.park_follow_at):
@@ -128,6 +130,21 @@ def main():
         if not g.x<=x<g.x+g.fx:write('H',g.cells+(g.z*64+x)*14+8,0xfffc)
     if args.rectangle_blocked:
         for x in range(64): write('H',g.cells+(40*64+x)*14+8,0xfffc)
+    heights=bytearray(64*64)
+    if args.ramp:
+        # Rows 35..39 climb 10 per cell (GROUND4/5 bad slope, grade 4), rows
+        # 40..42 climb 5 (grade 6) inside the x=24..39 lane; elsewhere rows
+        # 35..37 climb 22 per cell (above the hard slope limit). Both sides
+        # receive these heights; retail derives grades/height from the cells.
+        for z in range(64):
+            for x in range(64):
+                if 24<=x<40: h=10*min(max(z-34,0),5)+5*min(max(z-39,0),3)
+                else: h=22*min(max(z-34,0),3)
+                heights[z*64+x]=h
+        for z in range(64):
+            for x in range(64):
+                corners=[heights[min(z+dz,63)*64+min(x+dx,63)] for dz in (0,1) for dx in (0,1)]
+                p.uc.mem_write(g.cells+(z*64+x)*14+4,bytes((heights[z*64+x],max(corners),min(corners))))
     # World installs retail's projected map-edge blockers with feature inputs.
     scenario=HEAP+0x11b000
     write('2I',g.game+0x19e88,1024,1024);write('I',g.game+0x175dc,scenario)
@@ -281,8 +298,12 @@ def main():
     command=[args.binary,str(args.root),mode,args.gate,str(int(args.balance=='crusades')),str(args.rounds),str(read('i',unit+0x12b)[0])]
     if args.park: command.extend(map(str,(args.park_target_loss_at,args.park_follow_at)))
     if args.replace_at is not None: command.extend(map(str,(args.replace_at,*replacement_goal)))
-    result=subprocess.run(command,text=True,capture_output=True,check=True,
-        env=dict(os.environ,**({'TAK_SEARCH_DIAG':'1'} if args.diagnostic_dir else {})))
+    environment=dict(os.environ,**({'TAK_SEARCH_DIAG':'1'} if args.diagnostic_dir else {}))
+    with tempfile.NamedTemporaryFile(prefix='tak-gate-heights-') as relief:
+        if args.ramp:
+            relief.write(bytes(heights));relief.flush()
+            environment['TAK_GATE_HEIGHTS']=relief.name
+        result=subprocess.run(command,text=True,capture_output=True,check=True,env=environment)
     rows=[json.loads(line) for line in result.stdout.splitlines()]
     actual=[row['result'] for row in rows if row['kind']==('mission_movement' if args.missions else 'search_movement')]
     gates=[row['result'] for row in rows if row['kind']=='gate']
@@ -337,6 +358,11 @@ def main():
             assert expected[-2][15]==44 and abs(expected[-2][0]-512*65536)<16*65536 and abs(expected[-2][2]-800*65536)<16*65536, 'leader did not arrive and enter standby'
         if args.return_trip: assert any(state[2]>600*65536 for state in expected), 'mover skipped the outbound leg'
         if args.missions: assert expected[-1][15]==44, 'mover did not enter standby'
+        if args.ramp:
+            heights_seen={row[1]>>16 for row in expected[::2 if args.pair else 1]}
+            assert max(heights_seen)>=60 and len(heights_seen)>20, ('ramp lane was not climbed',sorted(heights_seen))
+            print(f'  ramp: {len(heights_seen)} distinct surface heights up to {max(heights_seen)}, '
+                  f'{len({row[5] for row in expected})} distinct pitches')
     else:
         assert any(row[23] for row in expected), 'ring controller never installed'
         if not args.park_follow_at:

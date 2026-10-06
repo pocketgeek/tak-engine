@@ -628,7 +628,15 @@ int main(int argc, char** argv) {
         UnitType reachableMover=*moverType;
         if (rectangleReachable) { reachableMover.buildDist=1024;moverType=&reachableMover; }
         World world;world.setVisPlayer(-1);
-        world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);world.buildNavClasses(registry);
+        // Optional authored relief (64x64 height bytes, sea 0) for ramp routes;
+        // the native harness writes the same heights into its cell records.
+        std::vector<uint8_t> gateHeights(64*64,0);
+        if (const char* path=std::getenv("TAK_GATE_HEIGHTS"); path && *path) {
+            std::ifstream relief(path,std::ios::binary);
+            if (!relief.read(reinterpret_cast<char*>(gateHeights.data()),std::streamsize(gateHeights.size())))
+                return 2;
+        }
+        world.setTerrain(gateHeights,64,64,0);world.buildNavClasses(registry);
         const int gx=(512-(gateType->footX-1)*8)/16,gz=(512-(gateType->footZ-1)*8)/16;
         std::vector<uint16_t> features(64*64,0xffff);
         for (int x=0;x<64;++x) if (x<gx || x>=gx+gateType->footX) features[size_t(gz)*64+x]=0xfffc;

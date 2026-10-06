@@ -569,6 +569,19 @@ Re-run at `87444e9` against the retail binary; no simulation code changed.
   Lake Lokken Aratrans with the live scan likewise matches 4,000 steps. Neither
   of those two releases its passenger within the trace, because the fixture
   disables the path service after the first route.
+- **Controlled ramp routes.** `check_gate_search_movement.py --missions
+  --ramp` gives both sides the same 64×64 relief beyond the gate. A lane at
+  x=24..39 climbs 10 height units per cell for five rows (above GROUND4/5's
+  soft slope 7, so grade 4) and then 5 per cell for three rows. Cliffs climbing
+  22 per cell (above the hard limit 15) flank it. Native cells carry the
+  heights and quad extrema, and `4e01d0` builds the cached grades from them;
+  World reads the same bytes through `TAK_GATE_HEIGHTS`. All 24 cases pass:
+  four gates × two balances × point (2,400 ticks), return trip downhill (4,000)
+  and pair (3,000). Each case climbs to height 64–65 through 46–91 distinct
+  pitches, with position, height, pitch/roll, speed, missions, search state,
+  RNG and gate state compared every tick. Adding 3 to one ramp row on the
+  World side only fails at tick 441 (height and pitch), so the comparison is
+  sensitive to the relief.
 - **Re-verified unchanged.** `check_ground_scan` (10,000),
   `check_ground_corners` (8,192), `check_world_search.py --terrain
   --exploration all --motion both` (1,440 searches, 86,948 ticks, including
