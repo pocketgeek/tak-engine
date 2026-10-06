@@ -369,8 +369,8 @@ blocked Legion army therefore never "arrives" because the circle grew.
   deaths, deathsshared, splitgoal, farclick, churn, approachhold,
   approachopen, churnfield, approachchurn, legacyyield. All pass.
 * `legion_acceptance_test`, five checks run in all five modes; Legion
-  asserts, the others report. singleunit, jagged and trapped pass for Legion.
-  group and crowdheld are known failures (below).
+  asserts, the others report. singleunit, jagged, trapped and group pass for
+  Legion; crowdheld is a known failure (below).
 * `navigation_determinism` and `legion_determinism`.
 
 ## Rejected approaches
@@ -467,12 +467,63 @@ parked outside the repository with the measurement notes.
 * Settling a walled-out formation member after 300 ticks: sharedgoal 200
   lost an average of 4 arrivals. The retained value is 600.
 
+## Round 3: lag spikes and group-move jank (2026-10-05)
+
+A user replay (8x speed, protocol 228, Legion, 49,000 ticks, generated
+768 x 768-cell map, up to 463 units) showed hitches on group moves. Profiling
+it found two Legion causes; both are fixed:
+
+- **Whole-map plane rebuilds.** Any static change (corpse placed or decayed,
+  feature change, structure built or destroyed, yard open/close) rebuilt every
+  footprint plane in use synchronously: 427 rebuilds in 168 ticks, about
+  10.6 ms each, up to three in one tick. World now records the rectangles of
+  changed feature cells; each plane recomputes only those cells and the
+  footprints covering them, and repairs region labels locally (union-find
+  merges compared by root; a bounded interleaved search settles possible
+  splits). A new static epoch starts only when some plane's legality actually
+  changes, so non-blocking corpses no longer trigger anything. A unit class's
+  first plane builds in the background at about 1 ms per tick. The
+  `planeincremental` test checks the plane and labels against a fresh rebuild
+  after every one of 1,600 random changes.
+- **Field work per tick.** The quota fell from 4M to 384k relaxations per
+  tick (about 2 ms worst case, measured). Fields grow outward from the group,
+  units may steer on a partly built field once their own cell is final, a
+  unit no field reaches yet follows a proven straight segment, and fields are
+  bounded to a box around the group and its goals. Group orders now start
+  moving on the first tick (p95 order-to-motion 1 tick, from 2–3).
+- **Livelock.** A unit blocked by settled same-player arrivals asks them to
+  yield before planning another detour away (test `lattice`); acceptance
+  `group` now passes 64/64.
+
+Replay result (whole-tick profiler, which now includes navigator upkeep):
+ticks over the 4.17 ms 8x budget fell from 127 (as first measured, without
+Legion's own upkeep) to 2, both match-start setup; p999 is 1.8 ms and only 8
+of 49,000 ticks exceed 2 ms. Cost: jagged-wall arrivals fall 1–6% (field
+builds finish later), and one unit in dynamicobstacle 2000 (one seed) is
+stuck against terrain for about 1,400 ticks.
+
+**Not fixed: sliding.** With real unit types (tools/legion_group_motion.cpp,
+60 units, 3,000 ticks), Legion units rarely change heading (793–5,693
+heading-change ticks against Retail's 112,000–121,000) but move sideways or
+backward relative to their facing more often: open ground 2,685 sideways /
+987 backward / 2,585 stop-go restarts (Retail 2,150 / 151 / 780); along a
+wall 10,729 sideways (Retail 4,115). Detours, blocked shuffles and passing
+steps deliberately do not turn, to avoid spinning. Every tested remedy —
+turning on detours or passing steps, a swerve, minimum restart holds, and
+seven gated variants of refusing backing-away detours — either reintroduced
+spinning, cost crossings, stranded units, or failed acceptance `group`.
+Patches and tables are archived with the session reports. The sliding comes
+mostly from late units that cannot reach their slot inside a packed settled
+crowd; the promising next step is upstream (claim slots in approach order,
+or let settled arrivals compact forward), not gating detours.
+
 ## Known weaknesses
 
-* **Packed distinct goals: two acceptance checks are registered DISABLED as
-  known failures.** `legion_acceptance_group_legion` reaches 61 of 64
-  arrived_settled, and `legion_acceptance_crowdheld_legion` reaches 58 of 64
-  in goal with 1 unit ever terrain-stuck (both spin checks pass at 0). The
+* **Packed distinct goals: one acceptance check is registered DISABLED as a
+  known failure.** `legion_acceptance_crowdheld_legion` reaches 59 of 64 in
+  goal with 1 unit ever terrain-stuck (spin passes at 0).
+  `legion_acceptance_group_legion` passed 61/64 before the round-3 livelock
+  fix and now passes 64/64. The
   thresholds are unchanged, and no other mode passes either check. The goals
   form an 8x8 lattice of 2x2 bodies at a 3-cell pitch, so the gaps between
   goals are one cell, narrower than a body. A goal can only be entered along

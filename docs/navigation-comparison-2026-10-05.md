@@ -296,6 +296,17 @@ cheapest in 8 of 30 cases, mostly at 200 units. At 2,000 units it costs
 **Real data.** Two headless 9,000-tick games on Inner Circle with Legion gave
 the same hash with no errors; the armies there were small.
 
+### Legion round 3 (after user play-testing)
+
+Play-testing at 8x found hitches on group moves. A whole-tick profile of the
+user's replay traced them to whole-map plane rebuilds on every static change
+and to up to 4M field relaxations in one tick. Both are fixed (incremental
+planes with local region repair; a 384k per-tick field quota with near-first
+growth); ticks over the 8x budget fell from 127 to 2 (match-start setup only).
+The `TAK_PHASE` profiler previously excluded navigator upkeep and zeroed burn
+time; it now times the whole tick. Visible sliding in group moves remains;
+see [Legion](legion-pathfinding.md#round-3-lag-spikes-and-group-move-jank-2026-10-05).
+
 ## Remaining weak scenarios
 
 - **Exploration at 2,000 units:** no mode settles anyone in 6,000 ticks.
