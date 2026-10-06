@@ -3,11 +3,11 @@
 | metric | legion >= best | legion worse |
 |---|---|---|
 | crossed_middle | 94 | 15 |
-| arrived_settled | 100 | 9 |
+| arrived_settled | 101 | 8 |
 | spin_unit_ticks | 109 | 0 |
-| class_terrain_stuck_unit_ticks | 105 | 4 |
+| class_terrain_stuck_unit_ticks | 107 | 2 |
 | final_terrain_stuck | 108 | 1 |
-| final_open_idle | 93 | 16 |
+| final_open_idle | 94 | 15 |
 | trapped_units_moving_after_grace | 91 | 18 |
 | path_optimality_ratio_mean | 17 | 0 |
 
@@ -67,10 +67,6 @@
 | recovery-passive | 1000x1@100 | 6000 | trapped_units_moving_after_grace | 1,000.0 | 0.0 (cooperative) |
 | recovery-passive | 2000x1@100 | 6000 | trapped_units_moving_after_grace | 2,000.0 | 0.0 (cooperative) |
 | sharedgoal | 500x1@100 | 6000 | final_open_idle | 31.0 | 4.0 (retail) |
-| singleunit | 200x1@100 | 6000 | class_terrain_stuck_unit_ticks | 5,830.3 | 0.0 (cooperative) |
-| singleunit | 500x1@100 | 6000 | class_terrain_stuck_unit_ticks | 5,830.3 | 54.0 (cooperative) |
-| singleunit | 1000x1@100 | 6000 | arrived_settled | 619.7 | 1,000.0 (cooperative) |
-| singleunit | 1000x1@100 | 6000 | final_open_idle | 331.0 | 0.0 (cooperative) |
 | trapped | 200x1@100 | 6000 | class_terrain_stuck_unit_ticks | 105.0 | 81.3 (retail) |
 | unreachable | 200x1@100 | 6000 | trapped_units_moving_after_grace | 200.0 | 0.0 (cooperative) |
 | unreachable | 250x8@50 | 6000 | trapped_units_moving_after_grace | 1,000.0 | 0.0 (cooperative) |

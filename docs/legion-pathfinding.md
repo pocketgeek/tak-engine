@@ -127,8 +127,14 @@ order. A field resumes across ticks until done. Groups with no field start
 before stale refreshes of older groups; served the other way round, constant
 churn restarted the refreshes every tick and starved new groups.
 
-At most 48 fields are live (a refresh in progress counts). A field that has
-served its group for 300 ticks can be displaced, oldest build first.
+A field covers only the bounding box of its seeds' static region, the only
+area it can ever reach; cells outside read as unreachable. Live fields
+(refreshes in progress included) are limited by total cells, equal to 48
+whole-map fields, and by a count of 1,024. A field that has served its group
+for 300 ticks can be displaced, oldest build first. Before regions bounded
+fields, 1,000 single-unit orders each in its own walled pen competed for 48
+whole-map slots: 633 evictions, 623 of 1,000 settled and 222 MB of fields.
+Bounded, all 1,000 settle by tick 548 with no evictions and 2.3 MB.
 Otherwise a new group waits for a slot; LRU eviction was tried first and
 thrashed. Group state is in `std::map`, so iteration order is deterministic.
 

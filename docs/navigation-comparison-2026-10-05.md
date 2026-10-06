@@ -223,16 +223,20 @@ Legion has no baseline to compare against, so it is scored against the
 **best of the four other modes' final results** for each case (mean over
 seeds 0, 7, 42; 2% tolerance). Final Legion matrix: 336 cases on the exact
 shipped code, candidate sha256 `5ca8e070…`; nine `singleunit` runs failed on
-the fixture limit described above.
+the fixture limit described above. The `singleunit` rows come from a rerun
+after the last Legion fix (region-bounded fields). That fix took 1,000
+separate orders from 623 to 1,000 settled, all by tick 548 (Cooperative's
+whole group settled at 1,346), and cut field memory there from 222 MB to
+2.3 MB. Every other Legion hash is unchanged by it.
 
 | Metric | Legion equal or better | Legion worse |
 |---|---|---|
 | Midpoint crossings | 94 | 15 |
-| Legal arrivals | 100 | 9 |
+| Legal arrivals | 101 | 8 |
 | Spinning unit-ticks | 109 | 0 |
-| Terrain-stuck unit-ticks | 105 | 4 |
+| Terrain-stuck unit-ticks | 107 | 2 |
 | Units ending terrain-stuck | 108 | 1 |
-| Units ending idle in the open | 93 | 16 |
+| Units ending idle in the open | 94 | 15 |
 | Units with no route still moving after grace | 91 | 18 |
 | Path length vs shortest legal path | 17 | 0 |
 
@@ -268,9 +272,6 @@ unit-ticks):
   leads by 10–30%; opposing columns at 2,000 × 1, 500 × 1 and 250 × 8 (half
   the units idle in the way); group-detour crossings by up to 12%.
 - Jagged walls with 8 players at 50% moving: the idle half blocks the lanes.
-- Single units around U-obstacles at 1,000 separate orders: 623 of 1,000
-  settle and 329 end idle with a free path (Cooperative settles all). This is
-  present in every Legion build of the pass.
 - Units ending idle in the open: up to 31 at shared-goal 500 × 1, a few
   elsewhere.
 - Two packed-goal acceptance checks are disabled as known failures.
@@ -324,9 +325,8 @@ removed. The third reviewed Legion; its findings were fixed or, in one case,
 disproved (dead units were already cancelled). Checks on the integrated
 candidate:
 
-- Full Release CTest on the integrated head: 277/279 passed before the two
-  Legion packed-goal checks were marked as known failures; after that, all 98
-  navigation, Legion, Flowfield, Cooperative, Retail+ and harness tests pass.
+- Full Release CTest on the final head: 281/281 enabled tests pass; the two
+  Legion packed-goal checks are disabled as documented known failures.
 - `navigation_determinism`: all five modes match their golden checkpoints,
   serial and worker runs agree. Retail's golden never changed.
 - Retail per-tick traces are byte-identical to the frozen baseline on every
