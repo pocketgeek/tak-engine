@@ -7,6 +7,8 @@
 // same placement plane a loaded match uses) and checks one requirement of
 // docs/legion-pathfinding.md.
 #include "sim/sim.h"
+#include "sim/matchsetup.h"
+#include <cmath>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -1296,6 +1298,63 @@ void navalmissions() {
         check(legion&&c.orders.empty()&&d<=160.f&&!e.orders.empty()&&e.orders.front().guard,"boat guard escort");
     }
 }
+// A control formation (Alt+N: squad -N) commanded through the real command
+// path (Cmd::SetSquad, then one shared-point Cmd::Move per member, as the
+// HUD issues it) across rocks and through a narrow gap. A formation is wider
+// than any fixed straggler radius, and it arrives one by one through the gap:
+// every member must settle legally near the point and stay settled (no
+// endless rejoin re-orders), with no spin.
+void squadformation() {
+    Fixture f(220,100);
+    f.rect(96,0,4,46);f.rect(96,52,4,48);           // a wall with a 6-cell gap
+    f.rect(150,38,3,3);f.rect(168,58,4,2);f.rect(140,60,2,5);f.rect(175,40,2,6); // rocks
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<120;++i)ids.push_back(f.spawn(type,14+(i%12)*3,32+(i/12)*4));
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd kind,int id,int target,float x,float z) {
+        tak::net::Command c;c.kind=kind;c.player=0;c.unitId=id;c.targetId=target;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    for(int id:ids)command(tak::net::Cmd::SetSquad,id,-1,0,0);
+    for(int t=0;t<600;++t)f.world.tick(1.f/30);      // assigning the formation gathers it
+    const float px=160*16,pz=50*16;
+    for(int id:ids)command(tak::net::Cmd::Move,id,0,px,pz);
+    Motion motion;
+    std::map<int,int> reorders;std::map<int,bool> idle;
+    int lastOrdered=-1;
+    constexpr int kTicks=12000;
+    for(int t=0;t<kTicks;++t) {
+        f.world.tick(1.f/30);
+        motion.observe(f.world,ids);
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            check(f.legal(id),"illegal footprint in a commanded formation");
+            const bool now=u.orders.empty();
+            if(idle.count(id)&&idle[id]&&!now) {++reorders[id];lastOrdered=t;}
+            if(!now)lastOrdered=std::max(lastOrdered,t);
+            idle[id]=now;
+        }
+    }
+    int settled=0,maxReorders=0;float far=0;
+    for(int id:ids) {
+        const auto& u=*f.world.unit(id);
+        settled+=u.orders.empty()&&u.speed==Fixed();
+        maxReorders=std::max(maxReorders,reorders[id]);
+        far=std::max(far,fxLen(u.x-Fixed::fromFloat(px),u.z-Fixed::fromFloat(pz)).toFloat());
+    }
+    printLeft(f,ids);
+    std::printf("squadformation settled=%d/%zu last_ordered=%d max_reorders=%d far=%.0f spins=%llu reversals=%llu\n",settled,ids.size(),
+        lastOrdered,maxReorders,far,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+    check(settled==int(ids.size()),"formation members never settled");
+    check(lastOrdered<kTicks-3000,"formation members kept being re-ordered");
+    check(maxReorders<=1,"a settled formation member was re-ordered repeatedly");
+    // Near its spot: inside the native formation radius (2*sqrt(area) cells).
+    check(far<=32.f*std::sqrt(float(ids.size()*4)),"a formation member settled far from the point");
+    check(motion.spins==0,"formation members turned in place");
+}
 }
 
 int main(int argc,char** argv) {
@@ -1306,7 +1365,7 @@ int main(int argc,char** argv) {
         {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
-        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions}};
+        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

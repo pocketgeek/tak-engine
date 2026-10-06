@@ -9784,9 +9784,11 @@ void World::tick(float dt) {
     // (relative to the goal) keep their own speed to catch up. Deterministic: the sums
     // accumulate in unit-index order and use only basic arithmetic + detmath::len.
     constexpr float kFormBehind = 48.0f;   // sprint if this far behind the group (goal-relative)
-    constexpr float kFormRejoin = 140.0f;  // an idle member this far from the centre rejoins
+    constexpr float kFormRejoin = 140.0f;  // an idle member at least this far from the centre may rejoin
     struct FormAgg {
         double sx = 0, sz = 0; int n = 0; float slowest = 1e9f;
+        int area = 0;   // footprint cells of its mobile members
+        int busy = 0;   // mobile members still carrying out an order
     };
     FormAgg forms[kMaxPlayers][11] = {};   // [player][1..10]; slot 0 unused
     auto formOf = [&](const Unit& u) -> FormAgg* {
@@ -9800,15 +9802,50 @@ void World::tick(float dt) {
             if (FormAgg* f = formOf(u)) {
                 f->sx += u.x.toFloat(); f->sz += u.z.toFloat(); ++f->n;
                 f->slowest = std::min(f->slowest, u.baseSpeed.toFloat());
+                if (!u.type->isStructure()) {
+                    f->area += u.type->footX * u.type->footZ;
+                    f->busy += !u.orders.empty();
+                }
             }
     if (pathfindingMode_==PathfindingMode::Retail) tickRetailGroups();
+    // An idle member standing against an idle same-player body that is nearer
+    // the centre is at the crowd's face already: walking in cannot bring it
+    // closer, and Legion would settle it there again at once (its "close
+    // enough" rule). Re-ordering it anyway looped forever.
+    auto pressedAgainstCrowd = [&](const Unit& u, float cx, float cz) {
+        const int fx = u.type->footX, fz = u.type->footZ, foot = std::max(fx, fz);
+        const int ox = footprintOrigin(u.x, fx), oz = footprintOrigin(u.z, fz);
+        const float ux = u.x.toFloat() - cx, uz = u.z.toFloat() - cz, own = ux * ux + uz * uz;
+        for (int j = -foot; j < fz + foot; ++j) for (int i = -foot; i < fx + foot; ++i) {
+            const int x = ox + i, z = oz + j;
+            if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
+            const int32_t o = occ_[size_t(z) * occW_ + x];
+            if (!o || o == u.id) continue;
+            const Unit* b = unit(o);
+            if (!b || !b->alive() || b->player != u.player || !b->type || b->type->isStructure() ||
+                !b->orders.empty()) continue;
+            const float bx = b->x.toFloat() - cx, bz = b->z.toFloat() - cz;
+            if (bx * bx + bz * bz < own) return true;
+        }
+        return false;
+    };
     for (auto& u : units_) {
         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
         if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
         FormAgg* f = formOf(u);
-        if (!f || f->n <= 1) continue;
+        // Only a formation at rest gathers. While members still walk an
+        // order, the ones already done are its front (a column through a gap
+        // arrives one by one), not stragglers: pulling them back to a centre
+        // that still trails behind the gap sent them into the column.
+        if (!f || f->n <= 1 || f->busy) continue;
         float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
-        if (detmath::len(u.x.toFloat() - cx, u.z.toFloat() - cz) > kFormRejoin) order(u.id, cx, cz, false);
+        // A straggler is outside the native formation radius (51d1e0 at level
+        // 3: twice the root of the members' footprint area, in cells), never
+        // nearer than kFormRejoin. A fixed radius alone called every outer
+        // body of a large formation a straggler wherever it settled.
+        const float d = detmath::len(u.x.toFloat() - cx, u.z.toFloat() - cz);
+        if (d > kFormRejoin && d * d > 1024.0f * float(f->area) && !pressedAgainstCrowd(u, cx, cz))
+            order(u.id, cx, cz, false);
     }
 
     for (size_t unitIndex=0;unitIndex<units_.size();++unitIndex) {
