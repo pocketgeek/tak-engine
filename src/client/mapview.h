@@ -68,10 +68,15 @@ public:
     void invalidateRenderTargets();
 
     void draw(int winW, int winH);
+    // Draw at an explicit camera into a w x h surface without clamping it (the
+    // caller already clamped the real camera). Sharp zoom smoothing uses it to draw
+    // the mosaic at an integer zoom into its intermediate target.
+    void drawView(float zoom, float offX, float offY, int w, int h);
 
     // Bilinear terrain scaling (retail's video option). Applies to already-built
     // chunk textures immediately and to every chunk composited afterwards.
     void setBilinear(bool b);
+    bool bilinear() const { return bilinear_; }
 
     float offX() const { return offX_; }
     float offY() const { return offY_; }
@@ -92,6 +97,7 @@ public:
     tak::TerrainChunks::Stats chunkStats() const { return chunks_.stats(); }
 
 private:
+    void drawUnclamped(int winW, int winH);
     static constexpr int kBlock = 32;   // one map cell = a 32px tile
 
     // Load a real map from the VFS, OR -- when mapPath is a "~gen1~" random-map id --

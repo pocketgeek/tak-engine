@@ -1670,8 +1670,9 @@ int main(int argc, char** argv) {
             lastPj=pj;lastSb=sb;lastSh=sh;lastAt=at;lastBd=bd;
         }
         if(renderStudy && ++studyFrame==studyFrameLimit) {
-            std::printf("RENDER_STUDY frames=%u hash=%016llx\n",studyFrame,
-                static_cast<unsigned long long>(gameView->worldHashPublic()));
+            std::printf("RENDER_STUDY frames=%u hash=%016llx gpu_textures=%.2fMiB world_filter_targets=%.2fMiB\n",studyFrame,
+                static_cast<unsigned long long>(gameView->worldHashPublic()),
+                double(gpuvram::bytes())/(1<<20),double(gameView->aaWork().bytes)/(1<<20));
             if(tak::devFlag("TAK_REQUIRE_GEOMETRY_REUSE")) {
                 std::printf("GEOMETRY_VERIFY checks=%llu animated_cross_tick=%llu\n",
                     static_cast<unsigned long long>(gameView->geometryChecks()),

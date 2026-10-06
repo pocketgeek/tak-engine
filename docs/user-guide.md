@@ -130,8 +130,9 @@ whose priests (`attractsgods` units) have channelled enough mana favour manifest
 
 Audio (master / music / SFX volumes, per-speaker trim, output device), display,
 camera, and interface preferences are set in the in-game **Options** screen
-(Esc → Options) and persisted per user: anti-aliasing, **bilinear filtering**
-(retail's smooth-scaling video option), **shadows**, swaying trees,
+(Esc → Options) and persisted per user: unit edge smoothing, **zoom smoothing**
+(Sharp, or Smooth for retail's bilinear video option), zoomed-out terrain,
+**shadows**, swaying trees,
 **health bars** (off / damaged / always), build-menu alignment and scale, UI
 scale, cursor size and **hardware cursor**, smooth motion, and edge scrolling.
 The shadow toggle controls unit, scenery, and projectile shadows. Shading baked
@@ -139,11 +140,26 @@ into terrain artwork remains visible; swaying trees also deform their shadows.
 The engine also adds boat shadows, an intentional enhancement
 over retail Glide, controlled by the same Shadows option.
 
-**Terrain AA** offers Off/2x/4x and **Model AA** offers Off/2x/4x/8x/16x.
-They operate independently and keep interface text and the cursor at native
-resolution. AA, bilinear filtering, Smooth GUI Art and Smooth Movies default
-off; saved choices apply. See [antialiasing](antialiasing.md) for capability
-fallbacks and resource limits.
+The three world-filtering options are separate. Interface text and the cursor
+always stay at native resolution.
+
+- **Unit Edge Smoothing** (Off/2x/4x/8x/16x, default Off) supersamples the
+  edges of units and buildings.
+- **Zoom Smoothing** controls how art looks when you zoom in past 100%:
+  - **Sharp** (the default) keeps each texel a crisp block and smooths only its
+    one-pixel boundary, so the 1999 art stays pixel-sharp without jagged steps.
+  - **Smooth** is retail's bilinear filter and softens everything.
+  - **Off** shows raw blocks.
+
+  At 100% zoom and below, Sharp and Off look identical.
+- **Zoomed-Out Terrain** (Auto/Off/2x/4x, default Auto) supersamples the terrain
+  only while zoomed out, where it would otherwise shimmer. Auto picks 4x, or 2x
+  on very wide displays such as 7680×2160, to save video memory.
+
+Older saved choices carry over: Model AA becomes Unit Edge Smoothing, Bilinear
+Filtering on becomes Smooth, and Terrain AA becomes Zoomed-Out Terrain. Smooth
+GUI Art and Smooth Movies default off. See [antialiasing](antialiasing.md) for
+capability fallbacks and resource limits.
 
 Two of those exist because the art is from 1999 and modern displays are not.
 **SMOOTH GUI ART** edge-directed-upscales the static interface art, faction

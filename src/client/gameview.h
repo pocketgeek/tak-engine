@@ -52,6 +52,7 @@
 #include "client/aascalereset.h"   // RAII 1:1 render-scale guard (extracted leaf)
 #include "client/distantmodels.h"
 #include "client/selectiveaa.h"
+#include "client/zoomsmooth.h"
 #include "client/geometrytiles.h"
 #include "client/featureindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
@@ -899,7 +900,7 @@ public:
             terrainAA_.clearPixels+modelAA_.clearPixels,
             terrainAA_.targetSwitches+modelAA_.targetSwitches,
             modelAA_.translatedVertices,modelAA_.culledVertices,
-            terrainAA_.bytes()+modelAA_.bytes()};
+            terrainAA_.bytes()+modelAA_.bytes()+terrainSharp_.bytes()+sharpSpriteBytes_};
     }
 #endif
 
@@ -1553,7 +1554,25 @@ public:
 private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
-    bool bilinear_ = false;     // smooth terrain/feature scaling (Options)
+    // Zoom smoothing (Options) resolved for the current zoom each frame; see
+    // updateZoomFiltering(). bilinear_ = sample terrain/feature art LINEAR now.
+    bool bilinear_ = false;
+    bool modelLinear_ = false;  // model-texture atlases sampled LINEAR (Smooth)
+    int sharpK_ = 1;            // integer prescale for Sharp scenery (1 = none)
+    uint64_t zoomOutSeenMs_ = 0, sharpModelsSeenMs_ = 0;   // hysteresis for releasing targets
+    tak::ZoomSharpTarget terrainSharp_;
+    // Sharp-bilinear copies of feature/scenery frames: each source texture drawn
+    // once at sharpK_ x its size with NEAREST, then sampled LINEAR. Bounded LRU,
+    // built on demand for visible frames only.
+    struct SharpSprite { SDL_Texture* tex = nullptr; int k = 0; uint64_t used = 0; size_t bytes = 0; };
+    std::unordered_map<SDL_Texture*, SharpSprite> sharpSprites_;
+    size_t sharpSpriteBytes_ = 0;
+    uint64_t sharpSpriteFrame_ = 0;
+    int sharpSpriteBuilds_ = 0;
+    static constexpr size_t kSharpSpriteBudget = 64u << 20;
+    SDL_Texture* zoomArt(SDL_Texture* t);
+    void clearSharpSprites();
+    void updateZoomFiltering(float zoom, int viewW, int viewH);
     bool smoothArt_ = tak::art::g_smoothArt; // how the current interface was built
     int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
     uint64_t statsSampleAt_ = 0, statsGpuAt_ = 0;

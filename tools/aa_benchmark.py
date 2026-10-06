@@ -60,8 +60,8 @@ def run(args, scene, samples, label, client, leg):
         # Hide wall-clock/CPU text so captures compare fixed world and UI state.
         "healthBars = 1\nstatsPanel = 0\nhardwareCursor = 1\n"
         "smoothMotion = 1\nedgeScroll = 0\nmasterVol = 0\n"
-        "bilinear = 0\nsmoothArt = 0\nvideoDeblock = 0\n"
-        f"terrainAA = {terrain}\nmodelAA = {model}\n"
+        "zoomSmoothing = off\nsmoothArt = 0\nvideoDeblock = 0\n"
+        f"zoomedOutTerrain = {terrain or 'off'}\nunitEdgeAA = {model}\n"
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith("TAK_")}
     env.update(
