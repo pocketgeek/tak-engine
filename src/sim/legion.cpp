@@ -186,6 +186,7 @@ struct LegionNavigator::Impl {
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
         std::vector<int> route;           // committed local detour around still bodies
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
+        int64_t detourBest=-1;            // progress when the last local detour was planned
     };
 
     World& w;
@@ -2159,8 +2160,15 @@ struct LegionNavigator::Impl {
                 // them; moving traffic is waited for, not planned around.
                 // A formation member held a long time is in a standing jam of
                 // crossing lanes (nobody ahead will move first): it plans too.
+                // Blocked by settled bodies again with no progress since the
+                // last detour: ask them to yield FIRST. A detour away from
+                // them is dropped when blocked and the body shuffles back,
+                // every ~250-400 ticks, never holding long enough to ask (a
+                // livelock).
+                const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,nx,nz);
+                if(settled&&int64_t(m.progress)==m.detourBest&&m.held>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);m.held=0;return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.held>=m.nextDetour&&
-                   (blockedBySettled(u,nx,nz)||(m.held>=60&&formationMember(m)))) {
+                   (settled||(m.held>=60&&formationMember(m)))) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling.
                     const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
@@ -2264,7 +2272,7 @@ struct LegionNavigator::Impl {
         std::vector<int> path;
         for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-R)*W+ox+c%S-R);
         std::reverse(path.begin(),path.end());
-        m.route=std::move(path);m.routeTicks=0;++stats.detours;
+        m.route=std::move(path);m.routeTicks=0;++stats.detours;m.detourBest=int64_t(m.progress);
         m.state=Holding;m.held=0;  // stopped this update; the route starts next
         return true;
     }
@@ -2420,7 +2428,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
-            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
+            h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
