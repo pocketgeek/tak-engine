@@ -1712,11 +1712,13 @@ struct LegionNavigator::Impl {
             dx=(int64_t(u.x.v)>>16)-(int64_t(std::get<2>(m.point))>>16);
             dz=(int64_t(u.z.v)>>16)-(int64_t(std::get<3>(m.point))>>16);
             const int64_t limit=pt->second.limit;
-            // Walled out at the ring edge by settled bodies: after the same
-            // long stand-still, within two bodies of the area, it settles
-            // (bounded: a formation member never waits forever).
+            // Walled out at the ring edge by settled bodies: after twice the
+            // in-area stand-still, within two bodies of the area, it settles
+            // (bounded: a formation member never waits forever). At the
+            // in-area wait (300) it settled bodies a re-choice would still
+            // have brought in: sharedgoal 200 lost 4 arrivals (seeds 0/7/42).
             if(dx*dx+dz*dz>limit*limit)
-                return m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(limit+2*body)*(limit+2*body);
+                return m.stalled>=2*kAreaSettle&&dx*dx+dz*dz<=(limit+2*body)*(limit+2*body);
             if(m.stalled>=kAreaSettle)return true;
         } else {
             if(count>1&&m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
