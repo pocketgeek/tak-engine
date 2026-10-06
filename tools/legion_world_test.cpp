@@ -609,6 +609,83 @@ void churn() {
     check(waits==0,"members lost their field to an unrelated static change");
 }
 
+// Constant static churn on a large map (a cell toggled EVERY tick, as
+// corpses and burning features do in a battle) while two classes move: the
+// plane rebuild debt must stay bounded, so a group ordered during the churn
+// still gets a field and moves (its goal is behind a wall, not in line).
+void churnfield() {
+    Fixture f(1024,1024);
+    f.rect(0,600,900,4);
+    f.publish();
+    const auto small=mover(1),large=mover(2);
+    std::vector<int> movers;
+    for(int i=0;i<4;++i) {movers.push_back(f.spawn(small,10+i*3,100));movers.push_back(f.spawn(large,10+i*4,200));}
+    const int late=f.spawn(large,50,500);
+    f.start();
+    for(size_t i=0;i<movers.size();++i)f.world.order(movers[i],float((1000-int(i)*4)*16),float((100+int(i)%2*100)*16),false);
+    for(int t=0;t<30;++t)f.world.tick(1.f/30);
+    auto* legion=f.world.legionNavigator();
+    const int32_t x0=f.world.unit(late)->x.v,z0=f.world.unit(late)->z.v;
+    int fieldAt=-1;
+    for(int t=0;t<330;++t) {
+        f.world.blockCells(1010,1010,1,1,t%2==0);
+        if(t==30)f.world.order(late,50*16,700*16,false);
+        f.world.tick(1.f/30);
+        if(t>30&&fieldAt<0&&legion->fieldPotential(late,footprintOrigin(f.world.unit(late)->x,2),
+                                                     footprintOrigin(f.world.unit(late)->z,2))>=0)fieldAt=t-30;
+    }
+    const auto& u=*f.world.unit(late);
+    const int64_t dx=int64_t(u.x.v-x0)>>16,dz=int64_t(u.z.v-z0)>>16;
+    std::printf("churnfield field_after=%d moved_px=%lld planes=%llu state=%d\n",fieldAt,(long long)isqrt64(uint64_t(dx*dx+dz*dz)),
+        (unsigned long long)f.world.legionStats().planeBuilds,legion->unitState(late));
+    check(fieldAt>=0,"group ordered during constant churn never got a field");
+    check(dx*dx+dz*dz>=64*64,"group ordered during constant churn did not move");
+}
+
+// An approach member under unrelated static churn (a far cell toggled every
+// 10 ticks) keeps its walk and its clock: it still reaches the approach
+// point, holds, and retires after the grace period counted from the order.
+void approachchurn() {
+    Fixture f(96,64);
+    f.rect(48,0,3,64);
+    f.publish();
+    const auto type=mover(2);
+    const int id=f.spawn(type,10,30);
+    f.start();
+    f.world.order(id,80*16,30*16,false);
+    const uint64_t registrations=f.world.legionStats().registrations;
+    int cleared=-1;
+    for(int t=0;t<9300&&cleared<0;++t) {
+        if(t%10==0)f.world.blockCells(2,60,1,1,(t/10)%2==0);
+        f.world.tick(1.f/30);
+        if(f.world.unit(id)->orders.empty())cleared=t;
+    }
+    const uint64_t again=f.world.legionStats().registrations-registrations;
+    std::printf("approachchurn cleared_at=%d reregistrations=%llu\n",cleared,(unsigned long long)again);
+    check(cleared>=8950&&cleared<=9100,"approach order not retired after the grace period under churn");
+    check(again<=2,"approach member re-registered on unrelated static changes");
+}
+
+// A legacy terrain-only world (no placement plane): a member blocked in a
+// corridor by a settled same-player arrival asks it to yield. The yield's
+// legality test must not need the placement plane (it threw before).
+void legacyyield() {
+    Fixture f(64,32);
+    f.rect(4,11,56,1);f.rect(4,15,56,1);   // corridor rows 12..14, no publish()
+    const auto type=mover(2);
+    const int settled=f.spawn(type,20,13),walker=f.spawn(type,8,13);
+    f.start();
+    f.world.order(settled,30*16,13*16,false);
+    for(int t=0;t<300;++t)f.world.tick(1.f/30);
+    check(f.world.unit(settled)->orders.empty(),"settler did not arrive");
+    f.world.order(walker,50*16,13*16,false);
+    for(int t=0;t<600;++t)f.world.tick(1.f/30);
+    const auto& u=*f.world.unit(walker);
+    std::printf("legacyyield walker x=%.1f orders=%zu slides=%llu\n",u.x.toFloat()/16,u.orders.size(),
+        (unsigned long long)f.world.legionStats().slides);
+    check(u.x.toFloat()/16>20,"walker did not reach the settled body");
+}
+
 void determinism() {
     const uint64_t a=scenario(true),b=scenario(true),c=scenario(false);
     std::printf("determinism serial=%016llx repeat=%016llx workers=%016llx\n",(unsigned long long)a,(unsigned long long)b,(unsigned long long)c);
@@ -623,7 +700,8 @@ int main(int argc,char** argv) {
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
-        {"approachhold",approachhold},{"approachopen",approachopen}};
+        {"approachhold",approachhold},{"approachopen",approachopen},
+        {"churnfield",churnfield},{"legacyyield",legacyyield},{"approachchurn",approachchurn}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
