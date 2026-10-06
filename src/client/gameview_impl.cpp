@@ -96,20 +96,11 @@
         uiScale_ = s.uiScale;
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
         buildBarScale_ = std::clamp(s.buildBarScale, 0.75f, 4.0f);
-        // Bilinear filtering (retail video option): smooth the terrain and the
-        // standalone feature/shadow sprites. The packed model-texture atlas stays
-        // NEAREST regardless (linear sampling would bleed neighbouring sprites),
-        // and fog/minimap are always linear by design.
-        bilinear_ = s.bilinear;
+        // Zoom smoothing is resolved per frame against the live zoom (it differs
+        // zoomed in/out); see updateZoomFiltering() in gameview_render.cpp.
         healthBars_ = std::clamp(s.healthBars, 0, 2);
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
-        mapView_.setBilinear(s.bilinear);
-        SDL_ScaleMode fm = s.bilinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
-        for (auto& [id, a] : featureArt_) {
-            for (SDL_Texture* t : a.frames) if (t) SDL_SetTextureScaleMode(t, fm);
-            for (SDL_Texture* t : a.shadowFrames) if (t) SDL_SetTextureScaleMode(t, fm);
-        }
     }
 
     void GameView::openOptions() {

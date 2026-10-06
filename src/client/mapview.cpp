@@ -198,8 +198,19 @@ void MapView::rebuildTileBatch(int winW, int winH) {
 
 }
 
+void MapView::drawView(float zoom, float offX, float offY, int w, int h) {
+    const float z = zoom_, x = offX_, y = offY_;
+    zoom_ = zoom; offX_ = offX; offY_ = offY;
+    drawUnclamped(w, h);
+    zoom_ = z; offX_ = x; offY_ = y;
+}
+
 void MapView::draw(int winW, int winH) {
     clampOffset(winW, winH);
+    drawUnclamped(winW, winH);
+}
+
+void MapView::drawUnclamped(int winW, int winH) {
 
     // Underlay first: stretch the overview across the whole map's screen rect. Tiles
     // draw on top at full detail; not-yet-uploaded sections fall back to this.
@@ -236,6 +247,7 @@ void MapView::invalidateRenderTargets() {
 }
 
 void MapView::setBilinear(bool b) {
+    if (b == bilinear_) return;
     bilinear_ = b;
     for (auto& [k, s] : sections_)
         if (s.tex) SDL_SetTextureScaleMode(s.tex, b ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);

@@ -1,4 +1,5 @@
 #include "client/options.h"
+#include "client/zoomsmooth.h"
 
 #include "client/blockfont.h"
 
@@ -239,20 +240,34 @@ void OptionsScreen::build(int channels) {
     slider("MAX FPS", 30, 240, [&] { return float(s_.maxFps); },
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
 
-    // GRAPHICS: independent world sampling and optional art filters.
+    // GRAPHICS: edge antialiasing and zoom filtering are separate questions (the
+    // Open Annihilation split). Unit edges are polygon silhouettes; the terrain and
+    // scenery are flat bitmaps whose only visible filtering issue is magnification
+    // (zoomed in) or minification shimmer (zoomed out). See docs/antialiasing.md.
     section("GRAPHICS");
-    auto aaSlider=[&](const char* label,int& preference,int& effective,int steps) {
-        slider(label,0,float(steps),[&preference]{return preference>=16?4.f:preference>=8?3.f:preference>=4?2.f:preference>=2?1.f:0.f;},
-            [&preference,steps](float v){int step=std::clamp(int(v+.5f),0,steps);preference=step?1<<step:0;},
-            [&effective](float v){int step=int(v+.5f);int wanted=step?1<<step:0;
-                std::string text=wanted?std::to_string(wanted)+"X":"OFF";
-                if(effective>=0 && effective!=wanted)text+=" (ACTIVE "+(effective?std::to_string(effective)+"X":std::string("OFF"))+")";
-                return text;});
-    };
-    aaSlider("TERRAIN AA",s_.terrainAA,s_.terrainAAEffective,2);
-    aaSlider("MODEL AA",s_.modelAA,s_.modelAAEffective,4);
-    toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
-           [&](float v) { s_.bilinear = v > 0.5f; });
+    auto note = [&](const char* text) { ctls_.push_back({Control::Note, text, 0, 0, {}, {}, {}, {}, {}}); };
+    slider("UNIT EDGE SMOOTHING",0,4,[this]{const int p=s_.unitEdgeAA;return p>=16?4.f:p>=8?3.f:p>=4?2.f:p>=2?1.f:0.f;},
+        [this](float v){int step=std::clamp(int(v+.5f),0,4);s_.unitEdgeAA=step?1<<step:0;},
+        [this](float v){int step=int(v+.5f);int wanted=step?1<<step:0;const int effective=s_.unitEdgeAAEffective;
+            std::string text=wanted?std::to_string(wanted)+"X":"OFF";
+            if(effective>=0 && effective!=wanted)text+=" (ACTIVE "+(effective?std::to_string(effective)+"X":std::string("OFF"))+")";
+            return text;});
+    note("SUPERSAMPLES UNIT AND BUILDING SILHOUETTES");
+    slider("ZOOM SMOOTHING",0,2,[this]{return float(std::clamp(s_.zoomSmoothing,0,2));},
+        [this](float v){s_.zoomSmoothing=std::clamp(int(v+.5f),0,2);},
+        [](float v){const int m=int(v+.5f);return std::string(m>=2?"SHARP":m>=1?"SMOOTH":"OFF");});
+    note("ZOOMED IN: SHARP KEEPS CRISP TEXELS, SMOOTH IS RETAIL BILINEAR");
+    // Slider order OFF / AUTO / 2X / 4X; stored as the ZoomOutTerrain values.
+    static constexpr int kOutOrder[4]={tak::kZoomOutOff,tak::kZoomOutAuto,tak::kZoomOut2x,tak::kZoomOut4x};
+    slider("ZOOMED-OUT TERRAIN",0,3,[this]{for(int i=0;i<4;++i)if(kOutOrder[i]==s_.zoomOutTerrain)return float(i);return 1.f;},
+        [this](float v){s_.zoomOutTerrain=kOutOrder[std::clamp(int(v+.5f),0,3)];},
+        [this](float v){const int choice=kOutOrder[std::clamp(int(v+.5f),0,3)];const int effective=s_.zoomOutTerrainEffective;
+            std::string text=choice==tak::kZoomOutOff?"OFF":choice==tak::kZoomOutAuto?"AUTO":std::to_string(choice)+"X";
+            // Only meaningful while zoomed out; at zoom >= 1 the pass is idle by design.
+            if(effective>=0 && choice!=tak::kZoomOutOff && (choice==tak::kZoomOutAuto || effective!=choice))
+                text+=" (ACTIVE "+(effective?std::to_string(effective)+"X":std::string("OFF"))+")";
+            return text;});
+    note("SUPERSAMPLES TERRAIN ONLY BELOW 100% ZOOM");
     // Projected unit shadows. Retail's Glide path casts these, so ON is the faithful
     // setting -- but it is the largest single cost in a crowded frame (measured ~3.2ms
     // of a ~12ms draw at ~1180 visible units), which is worth a switch on a slow machine.
@@ -319,7 +334,7 @@ void OptionsScreen::build(int channels) {
 
 void OptionsScreen::layout(int winW, int winH) {
     u_ = std::clamp(std::min(winW / 1280.0f, winH / 720.0f), 1.0f, 3.0f);
-    auto rowH = [&](Control::Kind k) { return (k == Control::Section) ? 30 * u_ : 36 * u_; };
+    auto rowH = [&](Control::Kind k) { return k == Control::Section ? 30 * u_ : k == Control::Note ? 20 * u_ : 36 * u_; };
     float panelW = std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
     float footerH = 52 * u_;    // SAVE / BACK buttons, fixed at the panel bottom
@@ -545,7 +560,9 @@ void OptionsScreen::render(int winW, int winH) {
     float fpx = 2.0f * u_;
     for (auto& c : ctls_) {
         if (c.row.y + c.row.h < clip.y || c.row.y > clip.y + clip.h) continue;   // off-screen
-        if (c.kind == Control::Section) {
+        if (c.kind == Control::Note) {
+            drawBlockText(ren_, c.label, c.row.x + 12 * u_, c.row.y + 2 * u_, 1.5f * u_, {140, 150, 170, 255});
+        } else if (c.kind == Control::Section) {
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, 2.2f * u_, {150, 200, 235, 255});
             SDL_SetRenderDrawColor(ren_, 70, 78, 96, 255);
             SDL_FRect ln{c.row.x, c.row.y + c.row.h - 3 * u_, c.row.w, 1.5f * u_};
