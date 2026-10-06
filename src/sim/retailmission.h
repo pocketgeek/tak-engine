@@ -150,6 +150,36 @@ int retailPlainGroundMove(RetailMissionState& m,uint32_t& radius,uint32_t tick,u
                             random,resetGoal,[]{return false;},[]{return false;});
 }
 
+// 402880: Move_Ground_Formation, pushed ahead of a Move_Ground by its two
+// group checks (402b00). Level < 0 walks to the moving members' centre with
+// a radius-4 circle; level > 0 stops and waits for the group. The mission
+// retires as soon as the member is back inside the level's radius. Stage 3's
+// target scan (40296c) runs only when the parent carries a response mode;
+// Respond owns it and returns true after installing an attack.
+template<class OutOfSlot,class Stop,class Centre,class Move,class Respond,class Random>
+int retailGroundFormation(RetailMissionState& m,uint32_t tick,int level,bool attached,int32_t responseMode,
+                          OutOfSlot outOfSlot,Stop stop,Centre centre,Move move,Respond respond,Random random) {
+    if (attached) return 7;
+    if (!outOfSlot()) return 5;
+    switch (m.stage) {
+    case 0:
+        if (level>0) stop();
+        return 1;
+    case 1:
+        centre();
+        if (level<0) move();
+        return 1;
+    case 2:
+        m.sleep(tick,random(5)+5);
+        return 1;
+    case 3:
+        m.stage=responseMode && respond() ? 0 : 1;
+        return 4;
+    default:
+        return 7;
+    }
+}
+
 // 40388d..403b91: Patrol after the host's diversion checks. Initialize owns
 // the return waypoint; ResetGoal owns the controller and weapon reset. Action
 // checks combat then assistance and returns 0 (none), 3 (inserted), or 8 (failed

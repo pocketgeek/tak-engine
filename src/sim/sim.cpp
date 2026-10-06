@@ -986,7 +986,8 @@ Fixed World::groundTerrainMultiplier(const Unit& u) const {
 void World::brakeGround(Unit& u,std::optional<Bam> facing) {
     const Fixed multiplier=groundTerrainMultiplier(u);
     u.turnReqBam=0;
-    u.speed=fxMin(retailGroundSpeedCap(u.baseSpeed*multiplier,u.groundPitch,u.groundSpeedMode),
+    u.speed=fxMin(retailGroupMaximum_>Fixed() ? retailGroundPitchCap(retailGroupMaximum_,u.groundPitch)
+                  : retailGroundSpeedCap(u.baseSpeed*multiplier,u.groundPitch,u.groundSpeedMode),
         fxMax(Fixed(),u.speed-u.type->brake*multiplier));
     if (facing && u.speed==Fixed()) {
         const int32_t diff=retailTurnRequest(*facing,u.heading);
@@ -1027,7 +1028,10 @@ SinCos World::steerGround(Unit& u,RetailSteeringPoint start,RetailSteeringPoint 
     const Fixed delta=retailGroundAcceleration(u.x,u.z,start,end,next,u.heading,u.speed,
         effectiveMaximum,u.type->accel*multiplier,u.type->brake*multiplier,uint16_t(rate),
         u.groundMovementMode==0 ? &aim : nullptr,u.groundMovementMode==0 ? direction : -1);
-    u.speed=fxMin(retailGroundSpeedCap(effectiveMaximum,u.groundPitch,u.groundSpeedMode),
+    // 4d95f0: a paced group member's capped maximum replaces the speed-mode
+    // scaled one (retail skips the mode factor there); pitch still applies.
+    u.speed=fxMin(retailGroupMaximum_>Fixed() ? retailGroundPitchCap(retailGroupMaximum_,u.groundPitch)
+                  : retailGroundSpeedCap(effectiveMaximum,u.groundPitch,u.groundSpeedMode),
                   fxMax(Fixed(),u.speed+delta));
     return retailGroundStep(u.heading,u.speed);
 }
@@ -1680,6 +1684,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.productionExit = tmpl.productionExit;
             o.nativeProductionExit = tmpl.nativeProductionExit;
             o.groundResponse = tmpl.groundResponse;
+            o.formationLevel = tmpl.formationLevel;
             o.controller = tmpl.controller;
             o.park = tmpl.park;
             o.buildType = tmpl.buildType;
@@ -2245,6 +2250,99 @@ std::pair<int,int> World::cellHeightRange(size_t cell) const {
     return {std::min(std::min(a,b),std::min(c,d)),std::max(std::max(a,b),std::max(c,d))};
 }
 
+// Retail group pacing (Retail mode only). A Ctrl-group (+N) is native group
+// N; our separate formation squads (-N) become groups 10+N, since retail has
+// a single kind of group (522170 assigns Ctrl+N from the selection).
+int World::retailGroupIndex(const Unit& u) {
+    return u.squad>0 ? u.squad : u.squad<0 ? 10-u.squad : 0;
+}
+
+RetailGroupMember World::retailGroupMember(const Unit& u) const {
+    RetailGroupMember m;
+    m.kind=u.type->canFly ? RetailGroupClass::Flyer
+         : u.type->floater && u.type->minWaterDepth>0 ? RetailGroupClass::Boat : RetailGroupClass::Ground;
+    m.position={u.x.floorInt(),0,u.z.floorInt()};
+    m.area=u.type->footX*u.type->footZ;
+    m.mover=!u.type->isStructure();
+    return m;
+}
+
+const RetailGroupRecord* World::retailGroupOf(const Unit& u) const {
+    const int group=retailGroupIndex(u);
+    if (pathfindingMode_!=PathfindingMode::Retail || group<1 || group>=100 ||
+        u.player<0 || u.player>=kMaxPlayers) return nullptr;
+    return &retailGroups_[size_t(u.player)][size_t(group)];
+}
+
+// Flags of the unit's current mission (+0x5a), for the missions this host
+// models: landing, ground missions and standby. Other orders report none.
+uint32_t World::retailMissionFlags(Unit& u) {
+    if (u.landing) return u.landing->mission.flags;
+    if (auto* o=groundMissionOrder(u,true))
+        return o->transportUnloadApproach ? o->transportMission.flags : o->mission.flags;
+    if (u.orders.empty() && u.standbyActive) return u.standbyState.flags;
+    return 0;
+}
+
+// 51b890: aggregate every group, set each member's navigator formation bit,
+// then apply the straggler slowdown. The changed-flag notification at
+// 51c612 (navigator vt+0x38) has no movement consumer and is not modelled.
+void World::tickRetailGroups() {
+    retailGroupPaced_.assign(units_.size(),0);
+    std::array<std::array<bool,100>,kMaxPlayers> members{};
+    std::array<std::vector<RetailGroupUnit>,kMaxPlayers> roster;
+    std::array<std::vector<size_t>,kMaxPlayers> index;
+    for (size_t i=0;i<units_.size();++i) {
+        Unit& u=units_[i];
+        if (!u.alive() || !u.type || u.player<0 || u.player>=kMaxPlayers) continue;
+        const int g=retailGroupIndex(u);
+        if (g<1 || g>=100) continue;
+        members[size_t(u.player)][size_t(g)]=true;
+        RetailGroupUnit entry;
+        entry.group=g;
+        entry.eligible=!u.underConstruction && !u.embarked() && !u.type->isStructure();
+        if (entry.eligible) {
+            entry.member=retailGroupMember(u);
+            entry.missionFlags=retailMissionFlags(u);
+            entry.typeMaximum=(u.type->maxVel*groundTerrainMultiplier(u)).v;
+        }
+        roster[size_t(u.player)].push_back(entry);index[size_t(u.player)].push_back(i);
+    }
+    std::vector<uint8_t> paced;
+    for (int player=0;player<kMaxPlayers;++player) {
+        retailGroupTick(roster[size_t(player)],members[size_t(player)],retailGroups_[size_t(player)],paced);
+        for (size_t k=0;k<paced.size();++k) retailGroupPaced_[index[size_t(player)][k]]=paced[k];
+    }
+}
+
+// 50c480: take a member out of its group's moving aggregate for the rest of
+// the tick. With fewer than two moving members only a flyer subset clears.
+void World::leaveRetailGroupCentre(const Unit& u) {
+    if (!retailGroupOf(u) || u.type->isStructure()) return;
+    retailGroupLeave(retailGroups_[size_t(u.player)][size_t(retailGroupIndex(u))],retailGroupMember(u));
+}
+
+// 4d95f0's group cap for the unit about to move, after terrain scaling and
+// the speed mode; zero leaves the unit at its own maximum.
+Fixed World::retailGroupLimit(const Unit& u) const {
+    const size_t index=size_t(&u-units_.data());
+    if (index>=retailGroupPaced_.size() || !retailGroupPaced_[index] || u.type->canFly) return Fixed();
+    const auto* record=retailGroupOf(u);
+    if (!record || !record->active) return Fixed();
+    // A computer player (owner +0xea == 3) takes navigator vt+0x3c instead,
+    // which is zero for ground navigators (4e60d0): no group cap. Our
+    // computer players are the slots with the AI's automatic gates.
+    if (players_[size_t(u.player)].automaticGates) return Fixed();
+    const Fixed multiplier=groundTerrainMultiplier(u);
+    const int32_t type=(u.type->maxVel*multiplier).v;
+    Fixed moded=Fixed::raw(type);
+    if (u.groundSpeedMode==1) moded=moded*Fixed::raw(0xaac0);
+    else if (u.groundSpeedMode==2) moded=moded*Fixed::raw(0x553f);
+    const bool boat=retailGroupMember(u).kind==RetailGroupClass::Boat;
+    return Fixed::raw(retailGroupSpeedCap(boat ? record->boatSpeed : record->groundSpeed,
+        (u.baseSpeed*multiplier).v,type,moded.v));
+}
+
 void World::tickGroundMission(Unit& u) {
     // Other mission kinds continue through their existing handlers.
     if (!u.orders.empty() && !u.orders.front().landing) {
@@ -2397,6 +2495,58 @@ void World::tickGroundMission(Unit& u) {
                 // alone loses this request until some later retry happens.
                 w.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
             };
+            // Retail group pacing: Move_Ground_Formation (402880) and the
+            // two group checks at the head of Move_Ground (402b00..402cd8).
+            const RetailGroupRecord* group=w.retailGroupOf(u);
+            if (goal.formationLevel) {
+                const int level=goal.formationLevel;
+                const bool all=(m.flags&0x4000000u)!=0;
+                return retailGroundFormation(m,w.tickCounter_,level,u.embarked(),response.mode,
+                    [&] { return group && (level>0
+                        ? retailGroupOutOfSlot(*group,w.retailGroupMember(u),false,level,all)
+                        : retailGroupOutOfSlot(*group,w.retailGroupMember(u),true,-level,all)); },
+                    [&] {
+                        // 4d4d40(mission,0): drop the controller; the mover brakes.
+                        w.cancelPath(u);goal.controller=0;goal.navigationExhausted=true;
+                        m.pending&=~0x3700u;
+                    },
+                    [&] {
+                        const auto c=retailGroupCentre(*group,w.retailGroupMember(u),all,level<=0);
+                        // 402918..40292f writes the centre to mission+0x22: the
+                        // mission point itself, which 4d4da0 then hands to the
+                        // controller. Retarget missionTarget too, or the reset
+                        // below would steer to the first cycle's stale centre.
+                        goal.x=Fixed::fromInt(int16_t(c.x));goal.z=Fixed::fromInt(int16_t(c.z));
+                        goal.missionTarget=std::pair{goal.x,goal.z};
+                    },
+                    [&] { resetGoal(4); },[] { return false; },[&](int n) { return random(n); });
+            }
+            if (group && w.pathfindingMode_==PathfindingMode::Retail && !goal.park) {
+                const auto member=w.retailGroupMember(u);
+                // The formation goal's y terms are left at zero (see
+                // docs/pathfinding-port.md); x/z use the 16.16 positions.
+                const int check=retailGroundGroupCheck(*group,member,m.flags,{u.x.v,0,u.z.v},
+                    {goal.x.v,0,goal.z.v},[&](int n){return int(random(n));});
+                if (check==1) {
+                    // Ahead again: drop out of the moving centre and the orders.
+                    w.leaveRetailGroupCentre(u);
+                    w.cancelPath(u);u.orders.clear();u.routeStamp=-1;u.standbyActive=false;
+                    return 2;
+                }
+                const int8_t level=int8_t(check);
+                if (level) {
+                    Order formation;
+                    formation.x=u.x;formation.z=u.z;formation.goal=formation.groundMission=true;
+                    formation.formationLevel=level;formation.mission.flags=0x11000000u;
+                    formation.groundResponse.mode=response.mode;
+                    formation.issuedTick=w.tickCounter_;
+                    // The parent restarts at stage 0 when the formation mission
+                    // retires; inserting invalidates m, so set it first.
+                    m.stage=0;
+                    u.orders.insert(u.orders.begin(),formation);
+                    return 4;
+                }
+            }
             // Fight-move and patrol used to bypass the ground mission host.
             // Partial routes then completed at their last corner and failed
             // controllers never received the native radius/rotation handling.
@@ -9910,7 +10060,9 @@ void World::tick(float dt) {
     };
     FormAgg forms[kMaxPlayers][11] = {};   // [player][1..10]; slot 0 unused
     auto formOf = [&](const Unit& u) -> FormAgg* {
-        if (u.squad >= 0 || u.player < 0 || u.player >= kMaxPlayers) return nullptr;
+        // Retail paces through the native group records instead.
+        if (u.squad >= 0 || u.player < 0 || u.player >= kMaxPlayers ||
+            pathfindingMode_==PathfindingMode::Retail) return nullptr;
         return &forms[u.player][-u.squad];
     };
     for (auto& u : units_)
@@ -9928,6 +10080,7 @@ void World::tick(float dt) {
                         (u.type->canFly?Fixed::fromInt(1):groundTerrainMultiplier(u)));
                 }
             }
+    if (pathfindingMode_==PathfindingMode::Retail) tickRetailGroups();
     if(isSharedPathfinding(pathfindingMode_))
         for(int player=0;player<kMaxPlayers;++player)for(int group=1;group<=10;++group)
             flowFormationCaps_[player][group]={forms[player][group].flowSpeed,forms[player][group].n>1};
@@ -10391,11 +10544,13 @@ void World::tick(float dt) {
                 }
             }
         }
+        if (pathfindingMode_==PathfindingMode::Retail) retailGroupMaximum_=retailGroupLimit(u);
         if (g_phase) {
             const auto start=std::chrono::steady_clock::now();
             tickNavigationMovement(u,target);
             g_moveMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
         } else tickNavigationMovement(u,target);
+        retailGroupMaximum_=Fixed();
 
     }
 
@@ -11122,6 +11277,7 @@ uint64_t World::stateHash() const {
             mix(order.mission.deadline);
             mix(order.mission.pending);
             mix(order.mission.flags);
+            if (order.formationLevel) mix(0x464f524d00000000ull|uint8_t(order.formationLevel));
         }
         // Order target + attack-move flag: two sims can hold the same order
         // COUNT while chasing different targets -- fold the head order in so a

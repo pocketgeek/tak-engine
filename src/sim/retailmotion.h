@@ -210,13 +210,16 @@ constexpr int32_t retailScaledCosine(uint16_t heading, int32_t magnitude) {
 
 // 4d95f0: movement speed mode scales the maximum, then signed pitch selects
 // a quantized ramp limit. The percentage is converted to Q16 before multiplying.
-inline Fixed retailGroundSpeedCap(Fixed maximum,uint16_t pitch,uint8_t mode=0) {
-    if (mode==1) maximum=maximum*Fixed::raw(65536*667/1000);
-    else if (mode==2) maximum=maximum*Fixed::raw(65536*333/1000);
+inline Fixed retailGroundPitchCap(Fixed maximum,uint16_t pitch) {
     const int band=std::clamp(int(std::bit_cast<int16_t>(pitch))>>11,-5,5);
     const int percent=band== -5?25:band< -1?115+15*band:
                       band<=0?100:band<=3?100-25*band:40-5*band;
     return maximum*Fixed::raw(percent*65536/100);
+}
+inline Fixed retailGroundSpeedCap(Fixed maximum,uint16_t pitch,uint8_t mode=0) {
+    if (mode==1) maximum=maximum*Fixed::raw(65536*667/1000);
+    else if (mode==2) maximum=maximum*Fixed::raw(65536*333/1000);
+    return retailGroundPitchCap(maximum,pitch);
 }
 constexpr SinCos retailGroundStep(Bam portHeading, Fixed speed) {
     const uint16_t heading = portHeadingToRetail(portHeading);

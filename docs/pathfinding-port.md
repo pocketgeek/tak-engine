@@ -752,7 +752,98 @@ behavior on every possible map or a claim of whole-game retail parity. AI
 strategy may differ, as agreed. Terrain-art occlusion and renderer ordering are
 separate from whether a unit can occupy a map position.
 
-### Retail group pacing: mapped, not ported (audit 2026-10-06)
+### Retail group pacing: ported to Retail mode (ra-formation, 2026-10-06)
+
+Branch `ra-formation` replaces the invented Retail-mode pacing (slowest
+`baseSpeed`, 48 px catch-up, 140 px re-order) with the native system, in
+Retail mode (PathfindingMode 0) only. Retail+, Flowfield, Cooperative and
+Legion keep the `squad < 0` code below unchanged. Ported, static reading
+(details below the mapping):
+
+- `51b890` -> `World::tickRetailGroups` (`src/sim/sim.cpp`): per player and
+  group 1..99, counts, footprint-area sums and integer centres for ground,
+  boat and flyer members, "all" and "moving" (`0x1000000` without
+  `0x4000000`); ground/boat speed = minimum terrain-scaled TYPE maximum over
+  members on any `0x1000000` mission (`51bdbc` tests only `0x1000000`; the
+  earlier note that `0x4000000` excludes them applied to the moving sums only);
+  centres of an emptied class are retained; navigator formation bit from the
+  current mission's `0x2000000`; straggler pass `51c3bf..51c5fb`
+  (`retailGroupStragglerSpeed`).
+- `51c700` / `51ce40` / `51d1e0` / `535e90` -> `retailGroupCentre`,
+  `retailGroupRadius`, `retailGroupOutOfSlot`, `retailOctDistance`
+  (`src/sim/retailgroup.h`). The "slot" is the class centre, not a per-member
+  slot: ground/boat use their own class (moving subset when asked and
+  non-empty, optionally counting the member itself; the ground self-inclusive
+  form copies x into y, `51cdcd`); a flyer uses the nearer surface group plus
+  itself. The test is `(octdist/16)^2/4 > area * level-scale` (levels 1..5 =
+  1/4,1/2,1,2,4; minimum 2; flyers doubled).
+- `4d95f0` cap -> `retailGroupSpeedCap` + `World::retailGroupLimit`; the
+  capped value replaces the speed-mode-scaled maximum in `steerGround` and
+  `brakeGround` (`retailGroundPitchCap` still applies). Owner kinds are not
+  distinguished (all players treated as `+0xea` 1/2).
+- `402b00` head (two group checks) and `402880` Move_Ground_Formation ->
+  `World::tickGroundMission` host + `retailGroundFormation`
+  (`src/sim/retailmission.h`). Registry flags (descriptor `+0x11`):
+  Move_Ground `0x3000400`, Move_Ground_Formation `0x11000400`, built with no
+  unit/goal so `0x11000000` -- no `0x2000000`, so a re-forming member is not
+  paced. Check 1: `51d1e0(unit,1,3)`; a member nearer the goal than the moving
+  centre sets `0x8000000`, and on a repeat draws `rand(4)==0` to call `50c480`
+  (remove itself from the moving aggregate) and `4d6a50(unit,0)` (cancel its
+  orders); otherwise level -2 (walk to the moving centre, circle radius 4).
+  Check 2: `51d1e0(unit,0,4)` -> level 4 (cancel the controller, wait). The
+  formation mission retires (5) once back in slot; stages 0..3 as `402880`;
+  the stage-3 target scan (`40296c`) runs only for a non-zero response mode
+  and is not ported (plain moves have mode 0).
+- Groups: human Ctrl+N assigns group N from the selection (`522170` ->
+  `50b4f0` at `5221ce`; a plain selection is never grouped). Our `+N` squads
+  map to group N and `-N` formations to group `10+N`.
+
+Also ported in the second pass: the changed flag (record `+0xb0`, set by
+`50b7a0`/`50bbc0`/`50bfe0` when the value differs) and its notification
+`51c612..51c6e1` as `retailGroupNotify` (the World does not consume the
+navigator bit it sets, `4e60f0` `nav+0x114|8`); `50c480` as
+`retailGroupLeave`; the `402b00` head as `retailGroundGroupCheck`; the same
+head in Patrol (`403600`, sites `4037ad`/`40383b`, identical structure), so
+grouped patrols re-form too; and computer players skip the cap (owner
+`+0xea` 3 uses navigator `vt+0x3c`, zero for ground navigators). In the
+World "computer" is a player with the AI's automatic gates; skirmish AI
+slots do not set it, but the skirmish AI issues no groups.
+
+**Differential check.** `tools/re/check_retail_group.py` loads randomized
+group records into the emulated binary through retail's own setters
+(`50b840`..`50c400`) and compares with the engine's helpers, via a small
+driver (`tools/re/retail_group_driver.cpp`) built from `retailgroup.h` and
+`retailmission.h`: 400 `51b890` ticks (records, navigator formation bits,
+straggler slowdown, change notifications incl. `game+0x3070` bit 0 and owner
+kind), 4,000 `51c700`/`51ce40`/`51d1e0` queries, 2,000 `402b00` heads
+(reform/wait/cancel, `0x8000000`, RNG draws, the `50c480` record update)
+and 2,000 `402880` calls over all four stages (return code, stage, stop /
+goal reset / centre / sleep). All PASS.
+
+**Straggler convergence.** The first port did not converge in
+`retail_group_test` `straggler`. The emulation showed the mission logic
+matched retail, and the World host was at fault: `402880` stage 1 writes the
+new centre to the mission point (`+0x22`), and `4d4da0` resets the controller
+to it. Our host updated `goal.x/z` but left `goal.missionTarget` at the
+first cycle's centre, and the controller reset (`resetGroundSegment`,
+`retainGroundRoute`) reads `missionTarget`, so every later cycle steered back
+to a stale point. Retargeting `missionTarget` fixes it: the scenario now
+completes (tick 3,703) with the straggler re-forming and its mission retiring.
+
+Not ported: Move_Ground_Formation's stage-3 target scan (`40296c`, attack
+via `4d8370`/`4de530`). It runs only when the parent move carries a response
+mode; human moves and fight-moves have mode 0, only an auxiliary
+return-to-origin order (mode 1) can reach it. The other construction sites
+are Attack_Chase (`403e78`), Attack_Melee (`4048e1`), Suppress (`404ead`) and
+Follow_Ground (`4080a0`), missions this World does not run as retail
+handlers. The formation goal's y terms are zero in the `402b00` comparison
+(the helper takes them; the host passes 0). Mission flags of orders the
+ground host does not model (attack/build) read as 0. Retail AI squads
+(`players_[].retailAi`) are not group members. The human UI's `+-60 px`
+click offsets (`gameview_hud.cpp`) remain untraced; Ctrl+N group assignment
+is `522170` (`50b4f0` at `5221ce`), and a plain selection is never grouped.
+
+Original mapping (audit 2026-10-06):
 
 Retail mode's formation pacing is still our own rule, not retail's. The
 `squad < 0` branch in `World::tick` caps members at the slowest member's
