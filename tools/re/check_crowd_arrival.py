@@ -30,8 +30,20 @@ def main():
     ap.add_argument('--spacing',type=int,default=3,help='initial grid spacing in map cells; minimum 2')
     ap.add_argument('--goal',type=int,nargs=2,default=(2000,1600))
     ap.add_argument('--start',type=int,nargs=2,default=(2000,2400))
+    ap.add_argument('--blocker',type=int,nargs=2,action='append',default=[],metavar=('X','Z'),
+                    help='extra Hunter ordered to its own position (a parked obstacle); repeatable')
+    ap.add_argument('--mover',type=int,nargs=4,action='append',default=[],metavar=('X','Z','GX','GZ'),
+                    help='extra Hunter at X,Z ordered to GX,GZ (e.g. opposing traffic); repeatable')
+    ap.add_argument('--then',type=int,nargs=2,metavar=('GX','GZ'),
+                    help='queue a second Move_Ground for the main group after the first goal')
+    ap.add_argument('--dump-map',type=int,nargs=5,metavar=('X0','Z0','X1','Z1','STEP'),
+                    help='print native 2x2 footprint passability over a region and exit')
+    ap.add_argument('--world-tick',action='store_true',
+                    help='drive World through World::order and full World::tick (Retail mode) instead of the composed probe calls')
     ap.add_argument('--output',type=Path,required=True)
     args=ap.parse_args()
+    extras=[(x,z,x,z) for x,z in args.blocker]+[tuple(m) for m in args.mover]
+    total=args.count+len(extras)
     if not 1<=args.count<=1000 or not 1<=args.rounds<=5000 or args.budget<1 or args.spacing<2:ap.error('invalid bounds')
     args.output.mkdir(parents=True,exist_ok=True)
     capture=json.loads(args.capture.read_text());p=CapturedProcess(capture)
@@ -57,14 +69,14 @@ def main():
     data=bytearray(p.uc.mem_read(cells,width*height*14))
     for i in range(width*height):struct.pack_into('<H',data,i*14,0)
     p.put(cells,bytes(data))
-    pool=alloc((args.count+1)*312)
-    write('I',p.game+0x14e84,pool);write('I',p.game+0x14e88,pool+args.count*312)
+    pool=alloc((total+1)*312)
+    write('I',p.game+0x14e84,pool);write('I',p.game+0x14e88,pool+total*312)
     owner=p.game+0x2404
     write('I',owner,1);write('B',owner+0xea,2);write('B',owner+0xeb,0);write('B',owner+0xe3,0)
-    write('2I',owner+0x74,pool+312,pool+args.count*312)
+    write('2I',owner+0x74,pool+312,pool+total*312)
     ai=alloc(0x200);write('I',ai,owner);write('B',ai+0x1a5,1);write('I',owner+0x80,ai)
     for i in range(1,10):write('I',p.game+0x2404+i*0x110,0)
-    write('I',p.u32(p.u32(0x62d558)+8)+12,args.count)
+    write('I',p.u32(p.u32(0x62d558)+8)+12,total)
     write('B',p.game+0x306f,0)
     visibility=alloc((width//2)*(height//2)*2)
     p.put(visibility,struct.pack('<H',0xffff)*((width//2)*(height//2)))
@@ -81,12 +93,19 @@ def main():
     nav_vtable=struct.unpack_from('<I',nav_template)[0]
     p.icd.hooks[p.u32(nav_vtable+0x34)]=lambda uc,a:(0,0)
     p.icd.freeze_hooks()
+    if args.dump_map:
+        x0,z0,x1,z1,step=args.dump_map
+        print(f'map {width}x{height} cells; grades of a 2x2 footprint, {step}px step, origin ({x0},{z0}); "#" impassable (<6)')
+        for z in range(z0,z1,step):
+            print(f'{z:5d} '+''.join('.' if call(0x5088f0,(grid,x//16-1,z//16-1,2,2))>=6 else '#' for x in range(x0,x1,step)),flush=True)
+        return
     # Grid-aligned, nonoverlapping footprints, nearest first to a supplied center.
     candidates=[(x*16+16,z*16+16) for z in range(max(2,args.start[1]//16-64),min(height-4,args.start[1]//16+64),args.spacing)
                 for x in range(max(2,args.start[0]//16-64),min(width-4,args.start[0]//16+64),args.spacing)]
     candidates.sort(key=lambda q:((q[0]-args.start[0])**2+(q[1]-args.start[1])**2,q[1],q[0]))
     positions=[]
     for x,z in candidates:
+        if any(abs(x-bx)<48 and abs(z-bz)<48 for bx,bz,_,_ in extras):continue
         if call(0x5088f0,(grid,x//16-1,z//16-1,2,2))>=6:
             positions.append((x,z))
             if len(positions)==args.count:break
@@ -96,9 +115,13 @@ def main():
            for x in range(max(2,gx//16-32),min(width-4,gx//16+32),2)]
     goals.sort(key=lambda q:((q[0]-gx)**2+(q[1]-gz)**2,q[1],q[0]))
     gx,gz=next((x,z) for x,z in goals if call(0x5088f0,(grid,x//16-1,z//16-1,2,2))>=6)
-    point=alloc(12);write('3i',point,gx*65536,0,gz*65536)
+    for bx,bz,_,_ in extras:
+        if bx%16 or bz%16 or call(0x5088f0,(grid,bx//16-1,bz//16-1,2,2))<6:raise ValueError(('extra footprint not clear/aligned',bx,bz))
+    goal_of=[(gx,gz)]*len(positions)+[(a,b) for _,_,a,b in extras]
+    positions=positions+[(x,z) for x,z,_,_ in extras]
     actors=[]
     for identity,(x,z) in enumerate(positions,1):
+        point=alloc(12);write('3i',point,goal_of[identity-1][0]*65536,0,goal_of[identity-1][1]*65536)
         unit=pool+identity*312;mover=alloc(56);nav=alloc(277);mission=alloc(0x72)
         p.put(unit,unit_template);p.put(mover,mover_template);p.put(nav,nav_template)
         write('H',unit+2,identity);write('I',unit+8,mover);write('I',mover,nav);write('I',mover+4,grid)
@@ -112,6 +135,10 @@ def main():
         write('I',nav+8,unit);write('I',nav+4,0);write('I',nav+0x10c,0);write('I',nav+0x110,0);write('B',nav+0x114,0)
         call(0x4d6c40,(28,0,point,0,0,0,0,0,0,0,0,0),mission)
         write('I',mission+0xe,unit);write('I',unit+0x60,mission)
+        if args.then and identity<=args.count:
+            second=alloc(0x72);write('3i',point,args.then[0]*65536,0,args.then[1]*65536)
+            call(0x4d6c40,(28,0,point,0,0,0,0,0,0,0,0,0),second)
+            write('I',second+0xe,unit);write('I',mission+0x66,second)
         for cz in range(z//16-1,z//16+1):
             for cx in range(x//16-1,x//16+1):write('H',cells+(cz*width+cx)*14,identity)
         actors.append((unit,mover,nav,mission))
@@ -119,15 +146,21 @@ def main():
     write('I',0x64186c,1);write('I',p.game+0x19f44,0)
     for unit,mover,nav,mission in actors:call(0x4d4da0,(mission+0x22,4),mission)
     command=args.output/'input.txt';world_output=args.output/'world.jsonl'
-    command.write_text(f'{args.count} {args.rounds} {args.budget} {gx} {gz} {base}\n'+''.join(f'{x} {z}\n' for x,z in positions))
-    print(f'World: {args.count} Hunters, goal={(gx,gz)}, budget={args.budget}, rounds={args.rounds}',flush=True)
-    subprocess.run([args.binary,str(args.root),'--crowd-movement','ulasem arena',str(int(args.balance=='crusades')),str(command),str(world_output)],check=True)
+    if args.world_tick:
+        command.write_text(f'{total} {args.rounds} {args.budget} {base}\n'+''.join(f'{x} {z} {2 if args.then and i<args.count else 1} {a} {b}'+(f' {args.then[0]} {args.then[1]}' if args.then and i<args.count else '')+'\n'
+                for i,((x,z),(a,b)) in enumerate(zip(positions,goal_of))))
+    else:
+        if extras or args.then:ap.error('--blocker/--mover/--then require --world-tick')
+        command.write_text(f'{args.count} {args.rounds} {args.budget} {gx} {gz} {base}\n'+''.join(f'{x} {z}\n' for x,z in positions))
+    print(f'World: {args.count} Hunters + {len(args.blocker)} blockers + {len(args.mover)} movers, goal={(gx,gz)}, budget={args.budget}, rounds={args.rounds}, world_tick={args.world_tick}',flush=True)
+    subprocess.run([args.binary,str(args.root),'--crowd-world' if args.world_tick else '--crowd-movement','ulasem arena',str(int(args.balance=='crusades')),str(command),str(world_output)],check=True)
     stats=[{'blocked_ticks':0,'longest_blocked_run':0,'run':0,'arrival_tick':None,'previous':(x*65536,z*65536)} for x,z in positions]
     with world_output.open() as port:
         for clock in range(1,args.rounds+1):
             write('I',p.game+0x19f44,clock)
             for unit,mover,nav,mission in actors:
-                call(0x4d8450,(unit,));call(0x4dc800,(unit,),mover);call(0x51b2a0,(unit,),mover)
+                # 51e1e5..51e21b: active dispatcher, queued dispatcher, mover, height.
+                call(0x4d8450,(unit,));call(0x4d85e0,(unit,));call(0x4dc800,(unit,),mover);call(0x51b2a0,(unit,),mover)
             call(0x416430,(1,),obj)
             for identity,(unit,mover,nav,mission) in enumerate(actors,1):
                 flags=read('H',mover+0x36)[0];nf=read('B',nav+0x114)[0];head=p.u32(unit+0x60)
@@ -146,7 +179,7 @@ def main():
                 if kind==44 and state['arrival_tick'] is None:state['arrival_tick']=clock
             if clock%100==0:print(f'PASS through tick {clock}; settled={sum(s["arrival_tick"] is not None for s in stats)}',flush=True)
         if port.read():raise AssertionError('extra World output')
-    summary={'units':args.count,'ticks':args.rounds,'spacing_cells':args.spacing,'goal':[gx,gz],'balance':args.balance,'all_fields_match':True,'units_stationary_with_retained_speed':sum(s['blocked_ticks']>0 for s in stats),'maximum_blocked_ticks':max(s['longest_blocked_run'] for s in stats),'settled':sum(s['arrival_tick'] is not None for s in stats),'units_detail':stats}
+    summary={'units':args.count,'then':args.then,'blockers':args.blocker,'movers':args.mover,'world_tick':args.world_tick,'start':list(args.start),'ticks':args.rounds,'spacing_cells':args.spacing,'goal':[gx,gz],'balance':args.balance,'all_fields_match':True,'units_stationary_with_retained_speed':sum(s['blocked_ticks']>0 for s in stats),'maximum_blocked_ticks':max(s['longest_blocked_run'] for s in stats),'settled':sum(s['arrival_tick'] is not None for s in stats),'units_detail':stats}
     (args.output/'summary.json').write_text(json.dumps(summary,indent=2))
     print('PASS',json.dumps({k:v for k,v in summary.items() if k!='units_detail'}),flush=True)
 

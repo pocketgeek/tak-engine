@@ -66,6 +66,29 @@ struct RetailReplayProbe {
             world.order(id,float(gx),float(gz),false);
         }
     }
+    // Whole-World composition: the same initial state as crowdStart, but the
+    // orders enter through World::order and every tick is a full World::tick,
+    // so the comparison covers the real Retail-mode call order rather than a
+    // hand-assembled one. Unit scripts are removed on both sides.
+    static void crowdWorldStart(World& world,const std::vector<int>& ids,const std::vector<std::vector<std::pair<int,int>>>& goals,
+                                int32_t base,int budget) {
+        world.setPathService(true);world.gameRng_=1;world.tickCounter_=0;
+        world.navigationExplored_.assign(size_t(world.hW_/2)*(world.hH_/2),0xffff);
+        // World::tick reaches scripts through the id index; drop both.
+        world.unitScripts_.clear();world.unitScriptById_.clear();world.scriptYardById_.clear();
+        // The native harness runs neither the wind update nor player
+        // bookkeeping (411a90), both of which draw from the shared stream;
+        // each is compared by its own check.
+        world.windEnabled_=false;
+        for (auto& player:world.players_) player.cacheClock.enabled=false;
+        for (int id:ids) { auto& u=*world.unit(id);gateMoverStart(u,base);u.groundY=Fixed(); }
+        world.rebuildOccupancy();
+        world.paths_.clear();world.paths_.restoreTraversal(0,{},{});
+        world.paths_.setEntityPool(world.unit(ids.front())->player,1,int(ids.size()));world.setPathBudget(budget);
+        for (size_t i=0;i<ids.size();++i)
+            for (size_t leg=0;leg<goals[i].size();++leg)
+                world.order(ids[i],float(goals[i][leg].first),float(goals[i][leg].second),leg!=0);
+    }
     static void crowdTick(World& world,const std::vector<int>& ids,uint32_t tick) {
         world.tickCounter_=tick;world.rebuildOccupancy();
         for (int id:ids) {
@@ -602,6 +625,37 @@ int main(int argc, char** argv) {
         FILE* output=std::fopen(argv[6],"w");if (!output) return 2;
         for (int tick=1;tick<=rounds;++tick) {
             RetailReplayProbe::crowdTick(world,ids,uint32_t(tick));
+            for (int id:ids) RetailReplayProbe::composedMissionState(output,world,*world.unit(id));
+        }
+        std::fclose(output);return 0;
+    }
+    if (argc==7 && std::string(argv[2])=="--crowd-world") {
+        // Input: count rounds budget base, then "x z legs gx gz..." per unit;
+        // legs after the first are queued.
+        auto vfs=hpi::mountRetailRoot(argv[1],hpi::OverridePolicy::None);
+        TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
+        MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,argv[3]);config.slots.resize(1);
+        config.pathfindingMode=PathfindingMode::Retail;
+        World world;setupMatch(world,registry,config);world.setVisPlayer(-1);
+        std::ifstream input(argv[5]);
+        int count,rounds,budget;int32_t base;
+        if (!(input>>count>>rounds>>budget>>base) || count<1 || count>1000 || rounds<1 || rounds>5000 || budget<1) return 2;
+        const auto* type=registry.find("zonter");if (!type) return 2;
+        std::vector<int> ids;std::vector<std::vector<std::pair<int,int>>> goals;
+        for (int i=0;i<count;++i) {
+            int x,z,legs;if (!(input>>x>>z>>legs) || legs<1 || legs>8) return 2;
+            ids.push_back(world.spawn(type,float(x),float(z)));goals.emplace_back();
+            for (int leg=0;leg<legs;++leg) { int gx,gz;if (!(input>>gx>>gz)) return 2;goals.back().emplace_back(gx,gz); }
+        }
+        if (std::getenv("TAK_CROWD_RNG")) world.setRngObserver([](const World::RngObservation& o) {
+            std::fprintf(stderr,"RNG tick=%u bound=%d before=%u after=%u ret=%x %s:%u %s\n",o.tick,o.bound,o.seedBefore,o.seedAfter,
+                o.retailReturnAddress,o.caller.file_name(),unsigned(o.caller.line()),o.caller.function_name());
+        });
+        RetailReplayProbe::crowdWorldStart(world,ids,goals,base,budget);
+        FILE* output=std::fopen(argv[6],"w");if (!output) return 2;
+        for (int tick=1;tick<=rounds;++tick) {
+            world.tick(1.f/30);
+            if (world.tickCount()!=uint32_t(tick)) return 3;
             for (int id:ids) RetailReplayProbe::composedMissionState(output,world,*world.unit(id));
         }
         std::fclose(output);return 0;
