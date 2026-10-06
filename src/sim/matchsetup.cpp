@@ -1150,10 +1150,11 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
         // Only a STRATEGIC player gets a brain. A "passive neutral" is scenery --
         // villagers, wildlife, props -- and must stay inert.
         if (strategic && out) out->aiSlots.push_back(slot);
-        if (strategic) budgetClasses |= 1u << slot;
+        if (strategic && def.find("passive") == std::string::npos) budgetClasses |= 1u << slot;
     }
     // Retail's 5x path-budget class: a mission's computer players carry it only
-    // when "strategic" (0x4c83fb -> 0x4d2a12); the human keeps 0x4f6379's 1.
+    // when "strategic" (0x4c83fb; a later "passive" match clears it again at
+    // 0x4c8419) and 0x4d2a12 stores it; the human keeps 0x4f6379's 1.
     budgetClasses |= 1u << human;
     if (slots.empty()) { slots.push_back(MatchSlot{}); otaToWorld[1] = 0; }   // at least the human
     auto mapPlayer = [&](int otaP) {
