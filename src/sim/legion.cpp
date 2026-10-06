@@ -75,6 +75,7 @@ struct LegionNavigator::Impl {
         std::vector<uint16_t> run;
         std::vector<int> column;
         std::vector<std::array<int,4>> pending;   // static changes during the build
+        std::array<int,4> box{};                  // box of the component being flooded
     };
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
@@ -1120,13 +1121,7 @@ struct LegionNavigator::Impl {
             } else {   // labelPlane's flood, resumable
                 if(p.head>=p.queue.size()) {
                     if(!p.queue.empty()) {
-                        std::array<int,4> box{W,H,-1,-1};
-                        for(int c:p.queue) {
-                            box[0]=std::min(box[0],c%W);box[1]=std::min(box[1],c/W);
-                            box[2]=std::max(box[2],c%W);box[3]=std::max(box[3],c/W);
-                        }
-                        budget-=std::min(budget,uint64_t(p.queue.size()));
-                        p.compSize.push_back(int(p.queue.size()));p.compBox.push_back(box);
+                        p.compSize.push_back(int(p.queue.size()));p.compBox.push_back(p.box);
                         ++p.nextLabel;p.queue.clear();p.head=0;
                     }
                     while(budget>0&&p.cursor<W*H&&(!p.legal[size_t(p.cursor)]||p.comp[size_t(p.cursor)]>=0)) {++p.cursor;--budget;}
@@ -1140,13 +1135,17 @@ struct LegionNavigator::Impl {
                     }
                     if(!budget)break;
                     p.comp[size_t(p.cursor)]=p.nextLabel;p.queue.assign(1,p.cursor);
+                    p.box={p.cursor%W,p.cursor/W,p.cursor%W,p.cursor/W};
                 }
                 for(;p.head<p.queue.size()&&budget>0;++p.head) {
                     const int x=p.queue[p.head]%W,z=p.queue[p.head]/W;
                     for(const auto& d:kDirections) {
                         if(!step(p,x,z,d[0],d[1]))continue;
                         const int c=(z+d[1])*W+x+d[0];
-                        if(p.comp[size_t(c)]<0) {p.comp[size_t(c)]=p.nextLabel;p.queue.push_back(c);}
+                        if(p.comp[size_t(c)]<0) {
+                            p.comp[size_t(c)]=p.nextLabel;p.queue.push_back(c);
+                            p.box={std::min(p.box[0],x+d[0]),std::min(p.box[1],z+d[1]),std::max(p.box[2],x+d[0]),std::max(p.box[3],z+d[1])};
+                        }
                     }
                     budget-=std::min<uint64_t>(budget,4);
                 }
