@@ -2,7 +2,7 @@
 import struct
 import unittest
 
-from emureload import CapturedProcess
+from emureload import CapturedProcess, initial_fixture
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
 
 
@@ -40,6 +40,34 @@ class AllocationTests(unittest.TestCase):
     def test_zero_size_realloc_does_not_read_old_storage(self):
         self.p.put(0x10000, struct.pack('<II', 0x12340000, 0))
         self.assertEqual(self.p.reallocate(self.p.uc, 0x10000), (0, 0))
+
+
+class InitialFixtureTests(unittest.TestCase):
+    PREFIX = ['TAK_MOVEMENT_PROBE 37 100 7 2 3 1 "map" 1', '0', '5 1 0 0 1', 'body']
+    HEIGHTS = ['2', '4 0 0 0 0 0', '9 0 0 0 0 0']
+    EXPLORATION = ['8 8 0', ' '.join(['0'] * 64), '2', '4 1 2 3', '9 1 2 3']
+
+    def test_version_37_drops_heights_and_exploration(self):
+        got = initial_fixture(self.PREFIX + self.HEIGHTS + self.EXPLORATION, 100)
+        self.assertEqual(got, ['TAK_MOVEMENT_PROBE 34 100 7 2 3 1 "map" 1', *self.PREFIX[1:]])
+
+    def test_version_36_drops_heights_only(self):
+        lines = [self.PREFIX[0].replace(' 37 ', ' 36 '), *self.PREFIX[1:], *self.HEIGHTS]
+        self.assertEqual(initial_fixture(lines, 100)[1:], self.PREFIX[1:])
+
+    def test_version_34_is_unchanged(self):
+        lines = [self.PREFIX[0].replace(' 37 ', ' 34 '), *self.PREFIX[1:]]
+        self.assertEqual(initial_fixture(lines, 100), lines)
+
+    def test_rejects_other_tick_or_version(self):
+        with self.assertRaises(ValueError):
+            initial_fixture(self.PREFIX + self.HEIGHTS + self.EXPLORATION, 101)
+        with self.assertRaises(ValueError):
+            initial_fixture([self.PREFIX[0].replace(' 37 ', ' 33 '), *self.PREFIX[1:]], 100)
+
+    def test_rejects_missing_sections(self):
+        with self.assertRaises(ValueError):
+            initial_fixture(self.PREFIX + self.EXPLORATION, 100)
 
 
 if __name__ == '__main__':
