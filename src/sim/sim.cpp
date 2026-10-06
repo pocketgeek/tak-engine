@@ -5185,7 +5185,7 @@ void World::updateBodyIndex(const Unit& u) const {
 }
 
 World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId) const {
-    SearchBodyRect result{x,z,w,h,std::vector<const Unit*>(size_t(w)*h,nullptr)};
+    SearchBodyRect result{x,z,w,h,BodyCells(size_t(w)*h)};
     auto stamp=[&](const Unit& u,const std::array<int,4>* bounds=nullptr) {
         if (u.id==ignoreId || !u.alive() || u.embarked() || !u.type || (u.type->canFly && u.flightGroundMode!=1)) return;
         const int ux=bounds ? (*bounds)[0] : footprintOrigin(u.x,u.type->footX);
@@ -7749,6 +7749,25 @@ void World::visPump() {
 void World::updateNavigationExploration() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
+    constexpr int blockShift=kExplorationBlockShift;
+    const int blocksW=(width+(1<<blockShift)-1)>>blockShift;
+    const int blocksH=(height+(1<<blockShift)-1)>>blockShift;
+    // Derived per-block AND of the owner masks: a block whose every cell
+    // already holds a unit's viewer bits needs no per-cell traversal.
+    auto summarize=[&](const std::vector<uint16_t>& mask,std::vector<uint16_t>& blocks,int bx,int bz) {
+        uint16_t all=0xffff;
+        const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
+        for (int z=bz<<blockShift;z<zh;++z)
+            for (int x=bx<<blockShift;x<xh;++x) all&=mask[size_t(z)*width+x];
+        blocks[size_t(bz)*blocksW+bx]=all;
+    };
+    auto summarizeAll=[&](const std::vector<uint16_t>& mask,std::vector<uint16_t>& blocks) {
+        blocks.assign(size_t(blocksW)*blocksH,0);
+        for (int bz=0;bz<blocksH;++bz) for (int bx=0;bx<blocksW;++bx) summarize(mask,blocks,bx,bz);
+    };
+    // Rebuilt every pass (one linear read of the plane) so writes to the
+    // plane from outside this function can never leave it stale.
+    summarizeAll(navigationExplored_,explorationBlocks_);
     std::vector<uint16_t> playerViewers(players_.size(),0);
     for (size_t owner=0;owner<players_.size();++owner)
         for (size_t viewer=0;viewer<players_.size() && viewer<16;++viewer)
@@ -7757,8 +7776,11 @@ void World::updateNavigationExploration() {
     const unsigned workers=std::min({4u,available,unsigned(std::max(size_t(1),units_.size()/2048))});
     // Seed private masks before starting workers: each can skip cells already
     // explored without reading another worker's writes.
-    for (unsigned k=1;k<workers;++k) explorationScratch_[k-1]=navigationExplored_;
-    auto explore=[&](size_t begin,size_t end,std::vector<uint16_t>& revealed) {
+    for (unsigned k=1;k<workers;++k) {
+        explorationScratch_[k-1]=navigationExplored_;
+        explorationBlockScratch_[k-1]=explorationBlocks_;
+    }
+    auto explore=[&](size_t begin,size_t end,std::vector<uint16_t>& revealed,std::vector<uint16_t>& blocks) {
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
             // 4f6a60..4f6ac0 has no attachment test: transport cargo explores
@@ -7772,16 +7794,14 @@ void World::updateNavigationExploration() {
             }
             const uint16_t viewers=size_t(u.player)<playerViewers.size() ? playerViewers[size_t(u.player)] : 0;
             const Fixed y=u.type->canFly?u.flightY:u.groundY;
-            retailUpdateSight(u.sightFootprint,u.x,y,u.z,uint8_t(seaLevel_),true,width,height,uint8_t(u.player),
+            // Exploration only adds bits. Already revealed blocks and cells
+            // need no terrain calculation, and removal never changes this map.
+            retailUpdateExploration(u.sightFootprint,u.x,y,u.z,uint8_t(seaLevel_),width,height,blockShift,
                 [&](int x,int z){return explorationHeights_[size_t(z)*width+x];},
-                [&](int x,int z,int delta,uint16_t) {
-                    if (delta>0) revealed[size_t(z)*width+x]|=viewers;
-                },
-                [&](int x,int z,bool active) {
-                    // Exploration only adds bits. Already revealed cells need
-                    // no terrain calculation, and removal never changes this map.
-                    return active && (revealed[size_t(z)*width+x]&viewers)!=viewers;
-                });
+                [&](int bx,int bz){return (blocks[size_t(bz)*blocksW+bx]&viewers)==viewers;},
+                [&](int x,int z){return (revealed[size_t(z)*width+x]&viewers)!=viewers;},
+                [&](int x,int z){revealed[size_t(z)*width+x]|=viewers;},
+                [&](int bx,int bz){summarize(revealed,blocks,bx,bz);});
         }
     };
     // Each worker owns distinct unit footprints and an independent reveal mask.
@@ -7796,9 +7816,10 @@ void World::updateNavigationExploration() {
     for (unsigned k=1;k<workers;++k) {
         const size_t begin=std::min(units_.size(),size_t(k)*chunk);
         const size_t end=std::min(units_.size(),begin+chunk);
-        threads.emplace_back([&,k,begin,end]{explore(begin,end,explorationScratch_[k-1]);});
+        threads.emplace_back([&,k,begin,end]{
+            explore(begin,end,explorationScratch_[k-1],explorationBlockScratch_[k-1]);});
     }
-    explore(0,std::min(units_.size(),chunk),navigationExplored_);
+    explore(0,std::min(units_.size(),chunk),navigationExplored_,explorationBlocks_);
     for (auto& thread:threads) thread.join();
     for (unsigned k=1;k<workers;++k)
         for (size_t i=0;i<navigationExplored_.size();++i)
