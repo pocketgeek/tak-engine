@@ -72,7 +72,7 @@ def main():
     pool=alloc((total+1)*312)
     write('I',p.game+0x14e84,pool);write('I',p.game+0x14e88,pool+total*312)
     owner=p.game+0x2404
-    write('I',owner,1);write('B',owner+0xea,2);write('B',owner+0xeb,0);write('B',owner+0xe3,0)
+    write('I',owner,1);write('B',owner+0xea,2);write('B',owner+0xeb,0);write('B',owner+0xe3,1)
     write('2I',owner+0x74,pool+312,pool+total*312)
     ai=alloc(0x200);write('I',ai,owner);write('B',ai+0x1a5,1);write('I',owner+0x80,ai)
     for i in range(1,10):write('I',p.game+0x2404+i*0x110,0)

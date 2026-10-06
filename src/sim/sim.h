@@ -1348,6 +1348,8 @@ public:
     void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};} }
     // Path search work units per tick, shared across all pending requests.
     void setPathBudget(int b) { paths_.setBudget(b); }
+    // Bit p: player p is in retail's 5x path-budget class (see pathBudgetClassMask_).
+    void setPathBudgetClasses(uint32_t mask) { pathBudgetClassMask_ = mask; }
     void setPathProfiling(bool enabled) { paths_.setProfiling(enabled); }
     void resetPathDiagnostics() { paths_.resetDiagnostics();searchGradeBodyRebuilds_=0; }
     PathService::Diagnostics pathDiagnostics() const {
@@ -2364,13 +2366,14 @@ private:
     bool retailAllocation_=false;
     std::optional<std::array<std::pair<int,int>,10>> retailEntityPools_;
     uint64_t spawnGeneration_=0; // transient mutation detection; not gameplay state
-    // Which player slots are seated HUMANS -- the 5x path-budget class. Retail flags
-    // it per player (+0x24e7); the evidence for "human" is circumstantial (the flag's
-    // other consumers are all local-feedback paths) but a LOCAL-player reading would
-    // desync a lockstep sim, so human -- a lobby fact every peer shares -- is the
-    // only lockstep-safe candidate. Empty mask = everyone weight 1 (the all-AI
-    // harness), which is also every game until the lobby wires the mask through.
-    uint32_t humanMask_ = 0;
+    // Retail's per-player path-budget class (player +0x24e7): a flagged player
+    // draws five scheduler shares (0x4164a0-0x416517). 0x4f6290 sets the byte
+    // for EVERY player it initializes (0x4f6379), so in skirmish and multiplayer
+    // every seat -- human or AI -- is flagged; every saved retail capture shows
+    // it set for all ten slots. Only a campaign mission overrides it, from its
+    // Player<N> entry (0x4c83fb: "strategic" -> 1, else 0; stored at 0x4d2a12);
+    // the human, player 0, keeps 1. Consumed in PathfindingMode::Retail only.
+    uint32_t pathBudgetClassMask_ = ~0u;
     // Builders whose queued build order has come due this tick. startBuild spawns
     // the site, which can REALLOCATE units_, so it must never be called while the
     // per-unit loop holds a Unit& -- that reference dangles the moment it returns.

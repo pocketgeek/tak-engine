@@ -588,6 +588,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 
     // Players + teams.
     world.setPlayerCount(int(cfg.slots.size()));
+    // 0x4f6379 puts every initialized player in retail's 5x path-budget class;
+    // only a campaign mission (setupMission) narrows it afterwards.
+    world.setPathBudgetClasses(~0u);
     for (int i = 0; i < int(cfg.slots.size()); ++i) {
         world.setTeam(i, cfg.slots[i].team);
         world.player(i).cacheClock.enabled=true;
@@ -1126,6 +1129,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     std::vector<MatchSlot> slots;
     int human = 0;
     bool foundHuman = false;
+    uint32_t budgetClasses = 0;
     const char* kingdoms[5] = {"aramon", "taros", "veruna", "zhon", "creon"};
     for (int n = 1; n <= 16 && int(slots.size()) < kMaxPlayers; ++n) {
         const std::string* v = gh->value("player" + std::to_string(n));
@@ -1146,7 +1150,12 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
         // Only a STRATEGIC player gets a brain. A "passive neutral" is scenery --
         // villagers, wildlife, props -- and must stay inert.
         if (strategic && out) out->aiSlots.push_back(slot);
+        if (strategic && def.find("passive") == std::string::npos) budgetClasses |= 1u << slot;
     }
+    // Retail's 5x path-budget class: a mission's computer players carry it only
+    // when "strategic" (0x4c83fb; a later "passive" match clears it again at
+    // 0x4c8419) and 0x4d2a12 stores it; the human keeps 0x4f6379's 1.
+    budgetClasses |= 1u << human;
     if (slots.empty()) { slots.push_back(MatchSlot{}); otaToWorld[1] = 0; }   // at least the human
     auto mapPlayer = [&](int otaP) {
         if (otaP >= 1 && otaP <= 16 && otaToWorld[size_t(otaP)] >= 0) return otaToWorld[size_t(otaP)];
@@ -1161,6 +1170,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     cfg.slots = slots;                 // no used slots -> setupMatch spawns no monarchs
     cfg.unitCap = int(gh->numberOr("maxunits", 500));
     setupMatch(world, reg, cfg);       // terrain + features + player teams
+    world.setPathBudgetClasses(budgetClasses);
     if (gh->numberOr("waterdoesdamage", 0) != 0)
         world.setWaterDamage(float(gh->numberOr("waterdamage", 0)));
 

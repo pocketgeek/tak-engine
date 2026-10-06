@@ -2542,13 +2542,14 @@ bool World::requestPath(Unit& u, float x, float z) {
     }
     if (kPqLog) std::printf("[pq] t=%u id=%d QUEUED to=(%.0f,%.0f)\n", tickCounter_, u.id, x, z);
     // The 5x budget class is the PLAYER's, not the request's: retail flags player
-    // slots (+0x24e7) and the scheduler weighs whole players. `commander` stood here
-    // as our stand-in for that flag and is gone with it.
+    // slots (+0x24e7) and the scheduler weighs whole players. Only Retail mode
+    // carries retail's classes; the other modes keep their unweighted split.
     const int32_t tolerance = mission ? std::bit_cast<int32_t>(mission->missionRadius + 4u) : 4;
     const bool newlyPending=!paths_.pending(u.id);
     paths_.request(u.id, from, to, g.width(), g.height(),
                    target.first, target.second,
-                   u.player, /*priority=*/(humanMask_ >> (unsigned(u.player) & 31)) & 1,
+                   u.player, /*priority=*/pathfindingMode_==PathfindingMode::Retail &&
+                       ((pathBudgetClassMask_ >> (unsigned(u.player) & 31)) & 1),
                    /*tolCells=*/u.type->halfCellTicks > 0 ? 50 / u.type->halfCellTicks : 0,
                    portHeadingToRetail(u.heading),searchCosts(u),{u.type->footX/2,u.type->footZ/2},
                    tolerance, mission ? mission->controller : 0,

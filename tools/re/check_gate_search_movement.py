@@ -113,7 +113,7 @@ def main():
     owner=g.game+0x2404
     p.put(owner,bytes(p.uc.mem_read(p.u32(source+0xb8),0x110)))
     write('I',owner,1);write('B',owner+0xea,2);write('B',owner+0xeb,0)
-    write('B',owner+0xe3,0)  # authored AI player has ordinary scheduler priority
+    write('B',owner+0xe3,1)  # 4f6379: every non-campaign player is in the 5x budget class
     write('2I',owner+0x74,g.gate,unit);write('I',unit+0xb8,owner)
     for n in range(1,10):write('I',g.game+0x2404+n*0x110,0)
     write('I',g.game+0x14e88,unit);write('I',p.u32(p.u32(0x62d558)+8)+12,2)

@@ -425,7 +425,7 @@ struct RetailReplayProbe {
         int cursor;
         if (!(input>>cursor)) throw std::runtime_error("missing scheduler cursor");
         std::array<int,10> slots{},wraps{};
-        world.humanMask_=0;
+        world.pathBudgetClassMask_=0;
         auto& pools=world.retailEntityPools_.emplace();
         for (int player=0;player<players;++player) {
             int first,count,priority;
@@ -438,7 +438,7 @@ struct RetailReplayProbe {
             }
             world.paths_.setEntityPool(player,first,count);
             pools[size_t(player)]={first,count};
-            world.humanMask_|=uint32_t(priority)<<player;
+            world.pathBudgetClassMask_|=uint32_t(priority)<<player;
         }
         world.paths_.restoreTraversal(cursor,slots,wraps);
     }
