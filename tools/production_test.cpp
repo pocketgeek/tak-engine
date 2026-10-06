@@ -524,10 +524,7 @@ static void defensiveBodyStaysFixed() {
 }
 
 int main(int argc,char** argv) {
-    if(argc==2 && !std::strcmp(argv[1],"--flow"))g_pathfinding=PathfindingMode::Flowfield;
-    else if(argc==2 && !std::strcmp(argv[1],"--cooperative"))g_pathfinding=PathfindingMode::Cooperative;
-    else if(argc==2 && !std::strcmp(argv[1],"--retail-plus"))g_pathfinding=PathfindingMode::RetailPlus;
-    else if(argc==2 && !std::strcmp(argv[1],"--legion"))g_pathfinding=PathfindingMode::Legion;
+    if(argc==2 && !std::strcmp(argv[1],"--legion"))g_pathfinding=PathfindingMode::Legion;
     else if(argc!=1)return 2;
     std::printf("production_test\n");
     {

@@ -79,10 +79,6 @@ struct RetailReplayProbe {
     static bool pending(const World& world,int id) {return world.pathPending(id);}
     static void telemetry(World& world,NavigationTelemetry* observer) {
         world.paths_.setTelemetry(observer);
-        if(isSharedPathfinding(world.pathfindingMode_)) {
-            if(!world.flow_)world.flow_=std::make_unique<FlowNavigator>(world);
-            world.flow_->setTelemetry(observer);
-        }
     }
 };
 }
@@ -127,8 +123,8 @@ inline Options parse(int argc,char** argv) {
         }
         else throw std::runtime_error("unknown option: "+std::string(key));
     }
-    if(o.mode!="retail"&&o.mode!="retail-plus"&&o.mode!="flowfield"&&o.mode!="cooperative"&&o.mode!="legion")
-        throw std::runtime_error("mode must be retail, retail-plus, flowfield, cooperative, or legion");
+    if(o.mode!="retail"&&o.mode!="legion")
+        throw std::runtime_error("mode must be retail or legion");
     constexpr std::array names{"open","doors","bridges","maze","opposingcolumns","sharedgoal",
         "mixedfootprints","exploration","dynamicobstacle","rapidreplacement","unreachable","recovery","recovery-passive",
         "jagged","trapped","crowdtrap","singleunit","groupdetour"};
@@ -190,10 +186,6 @@ template<class W> void profiling(W& world,bool enabled) {
         world.setPathProfiling(enabled);world.resetPathDiagnostics();
     } else if(enabled)throw std::runtime_error("path profiling is unavailable in this build");
 }
-template<class W> size_t retailPlusBytes(const W& world) {
-    if constexpr(requires {world.retailPlusStats().bytes;})return world.retailPlusStats().bytes;
-    else return 0;
-}
 // Build identity carried in the result itself, so a debug or unoptimized
 // executable cannot silently stand in for a Release benchmark binary.
 inline void printBuild() {
@@ -231,29 +223,6 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
             (unsigned long long)d.preparationNanoseconds,(unsigned long long)d.executionNanoseconds,d.scratchBytes,
             (unsigned long long)d.bodySnapshotRebuilds,d.bodySnapshotBytes,d.gradePlaneBytes);
     } else std::printf("\"path_profiling\":false,\"search_scratch_bytes\":null,");
-    if constexpr(requires {world.retailPlusStats();}) {
-        const auto s=world.retailPlusStats();
-        std::printf("\"retail_plus_bytes\":%zu,\"retail_plus_proof_cells\":%llu,",s.bytes,(unsigned long long)s.proofCells);
-        if constexpr(requires {s.bodyEntries;s.bodyDeferrals;})
-            std::printf("\"retail_plus_body_entries\":%llu,\"retail_plus_body_deferrals\":%llu,",(unsigned long long)s.bodyEntries,(unsigned long long)s.bodyDeferrals);
-        if constexpr(requires {s.traffic.searches;s.traffic.routes;s.traffic.waits;})
-            std::printf("\"retail_plus_searches\":%llu,\"retail_plus_routes\":%llu,\"retail_plus_waits\":%llu,",(unsigned long long)s.traffic.searches,(unsigned long long)s.traffic.routes,(unsigned long long)s.traffic.waits);
-        if constexpr(requires {s.traffic.deferredSearches;s.traffic.retrySkips;}) {
-            metric("retail_plus_deferred_searches",s.traffic.deferredSearches);
-            metric("retail_plus_retry_skips",s.traffic.retrySkips);
-            metric("retail_plus_complete_failures",s.traffic.completeFailures);
-            metric("retail_plus_probes",s.traffic.probes);
-            metric("retail_plus_conflicts",s.traffic.conflicts);
-        }
-        if constexpr(requires {s.contextNanoseconds;s.fastUpdates;}) {
-            metric("retail_plus_context_ns",s.contextNanoseconds);
-            metric("retail_plus_setup_ns",s.setupNanoseconds);
-            metric("retail_plus_policy_ns",s.policyNanoseconds);
-            metric("retail_plus_maintenance_ns",s.maintenanceNanoseconds);
-            metric("retail_plus_fast_updates",s.fastUpdates);
-            metric("retail_plus_full_updates",s.fullUpdates);
-        }
-    }
     if constexpr(requires {world.legionStats();}) {
         const auto l=world.legionStats();
         metric("legion_plane_builds",l.planeBuilds);metric("legion_field_work",l.fieldWork);
@@ -262,52 +231,6 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
         metric("legion_holds",l.holds);metric("legion_slides",l.slides);metric("legion_arrivals",l.arrivals);
         metric("legion_contact_arrivals",l.contactArrivals);metric("legion_trapped",l.trapped);
         metric("legion_escapes",l.escapes);metric("legion_bytes",l.bytes);
-    }
-    const auto f=world.flowStats();
-    metric("flow_snapshot_work",f.snapshotWork);metric("flow_field_work",f.fieldWork);
-    metric("flow_local_work",f.localWork);metric("flow_local_deliveries",f.localDeliveries);
-    metric("flow_failures",f.failures);metric("flow_profiles",f.profiles);metric("flow_fields",f.fields);
-    metric("flow_profile_evictions",f.profileEvictions);metric("flow_snapshot_failures",f.snapshotFailures);
-    metric("flow_prepared_tiles",f.preparedTiles);metric("flow_tile_cache_hits",f.tileCacheHits);
-    metric("flow_tile_cache_evictions",f.tileCacheEvictions);metric("flow_cached_tiles",f.cachedTiles);
-    metric("flow_arrival_cells",f.arrivalCells);
-    metric("cooperative_probes",f.cooperativeProbes);metric("cooperative_searches",f.cooperativeSearches);
-    metric("cooperative_routes",f.cooperativeRoutes);metric("cooperative_waits",f.cooperativeWaits);
-    metric("cooperative_conflicts",f.cooperativeConflicts);
-    metric("cooperative_complete_failures",f.cooperativeCompleteFailures);
-    metric("cooperative_deferred_searches",f.cooperativeDeferredSearches);
-    metric("cooperative_retry_skips",f.cooperativeRetrySkips);
-    metric("cooperative_records",f.cooperativeRecords);metric("cooperative_reservations",f.cooperativeReservations);
-    metric("cooperative_bytes",f.cooperativeBytes);metric("cooperative_passage_probes",f.cooperativePassageProbes);
-    metric("cooperative_passage_hits",f.cooperativePassageHits);
-    metric("cooperative_passage_screening_cells",f.cooperativePassageScreeningCells);
-    metric("cooperative_clearance_hits",f.cooperativeClearanceHits);
-    metric("cooperative_clearance_rebuilds",f.cooperativeClearanceRebuilds);
-    // Shared-field invalidation diagnostics (agent "routing"); absent in older builds.
-    if constexpr(requires {f.serviceInvalidations;f.tickNs;}) {
-        metric("flow_dirty_events",f.dirtyEvents);metric("flow_dirty_profile_tiles",f.dirtyProfileTiles);
-        metric("flow_snapshot_starts",f.snapshotStarts);metric("flow_topology_publications",f.topologyPublications);
-        metric("flow_unchanged_publications",f.unchangedPublications);
-        metric("flow_service_destinations",f.serviceDestinations);metric("flow_service_destination_work",f.serviceDestinationWork);
-        metric("flow_service_fields_built",f.serviceFieldsBuilt);metric("flow_service_field_work",f.serviceFieldWork);
-        metric("flow_service_invalidations",f.serviceInvalidations);
-        metric("flow_service_invalidated_destinations",f.serviceInvalidatedDestinations);
-        metric("flow_service_invalidated_fields",f.serviceInvalidatedFields);
-        metric("flow_service_invalidated_builders",f.serviceInvalidatedBuilders);
-        metric("flow_service_invalidated_bindings",f.serviceInvalidatedBindings);
-        metric("flow_service_evicted_groups",f.serviceEvictedGroups);metric("flow_service_evicted_fields",f.serviceEvictedFields);
-        metric("flow_unbound_requests",f.unboundRequests);metric("flow_stale_delivery_blocks",f.staleDeliveryBlocks);
-        metric("flow_shared_fields_built",f.serviceSharedFieldsBuilt);metric("flow_shared_resolutions",f.serviceSharedResolutions);
-        metric("flow_shared_reuses",f.serviceSharedReuses);metric("flow_retained_fields",f.serviceRetainedFields);
-        metric("flow_service_ns",f.serviceNs);metric("flow_snapshot_ns",f.snapshotNs);
-        metric("flow_deliver_ns",f.deliverNs);metric("flow_tick_ns",f.tickNs);
-    }
-    if constexpr(requires {world.cooperativeMovementStats();}) {
-        const auto m=world.cooperativeMovementStats();
-        metric("cooperative_movement_queued",m.queued);metric("cooperative_movement_attempted",m.attempted);
-        metric("cooperative_movement_moved",m.moved);metric("cooperative_movement_blocked",m.blocked);
-        metric("cooperative_movement_cycle",m.cycle);metric("cooperative_movement_deferred",m.deferred);
-        metric("cooperative_movement_invalid",m.invalid);metric("cooperative_movement_probes",m.probes);
     }
 }
 inline void barriers(World& world,int width,int height,const std::vector<Rect>& previous,
@@ -443,7 +366,9 @@ inline int run(const Options& o) {
     const int movingPerPlayer=o.units*o.movingPercent/100,totalMoving=movingPerPlayer*o.players;
     LatencyObserver latency;
     World world;world.setGameSeed(o.seed);world.setVisPlayer(-1);world.setSerialThreads(!o.workers);world.setPathService(true);
-    world.setPathfindingMode(PathfindingMode(o.mode=="retail"?0:o.mode=="flowfield"?1:o.mode=="cooperative"?2:o.mode=="retail-plus"?3:4));
+    // Numeric identities (Retail 0, Legion 4) so the frozen baseline, which
+    // predates the Legion enumerator, builds this harness unchanged.
+    world.setPathfindingMode(PathfindingMode(o.mode=="legion"?4:0));
     world.setPlayerCount(o.players);for(int p=0;p<o.players;++p)world.setTeam(p,0);
     world.setTerrain(std::vector<uint8_t>(size_t(width)*height,100),width,height,64);
     std::vector<Rect> walls;if(accept)walls=acc.walls;
@@ -678,19 +603,19 @@ inline int run(const Options& o) {
         if(!trace||!unitTrace||!wallTrace)throw std::runtime_error("cannot create trace output");
         wallTrace<<"tick,kind,x,z,w,h\n0,map,0,0,"<<width<<','<<height<<'\n';
         traceWalls(0);
-        trace<<"tick,world_tick,hash,retail_requests,retail_completions,retail_failures,retail_work,retail_pending,flow_requests,flow_deliveries,flow_pending\n";
+        trace<<"tick,world_tick,hash,retail_requests,retail_completions,retail_failures,retail_work,retail_pending\n";
         unitTrace<<"tick,id,epoch,x_raw,z_raw,speed_raw,orders,route_stamp,control_hash,front_x_raw,front_z_raw,controller,segment,exhausted,consumed,goal_x,goal_z,goal_radius,foot_x,foot_z,pending,heading_bam,turn_request_bam,blocked,route_failed,mission_events,leg_controller,leg_x_raw,leg_z_raw,leg_exhausted,leg_consumed,mission_stage,mission_pending,mission_wait_mask,mission_radius,mission_target_x_raw,mission_target_z_raw,next_x_raw,next_z_raw\n";
     }
     const double setupMs=millis(setupStart,Clock::now());
     std::vector<double> times;times.reserve(size_t(o.ticks));
-    uint64_t illegalSamples=0,peakPending=0;size_t navigationBytes=0,retailPlusPeakBytes=0;
+    uint64_t illegalSamples=0,peakPending=0;
     double eventMs=0;int allAt=-1,firstCross=-1,lastCross=-1;
     auto observeTrace=[&](int tick) {
         if(!trace.is_open())return;
-        const auto flow=world.flowStats();const auto& retail=world.pathStats();
+        const auto& retail=world.pathStats();
         trace<<tick<<','<<world.tickCount()<<','<<std::hex<<world.stateHash()<<std::dec<<','
             <<retail.requests()<<','<<retail.completions()<<','<<retail.failures()<<','<<retail.workSpent()<<','
-            <<retail.pendingCount()<<','<<flow.requests<<','<<flow.deliveries<<','<<flow.pending<<'\n';
+            <<retail.pendingCount()<<'\n';
         for(auto& m:members) {
             const auto& u=*world.unit(m.id);const uint64_t hash=mix(control(u),m.pending);
             if(hash==m.traceControl&&tick%30!=0)continue;
@@ -742,12 +667,7 @@ inline int run(const Options& o) {
         const auto begin=Clock::now();world.tick(1.f/30);const auto end=Clock::now();
         crowdbench_allocation::enabled.store(false,std::memory_order_relaxed);
         times.push_back(millis(begin,end));
-        const auto flow=world.flowStats();const auto& retail=world.pathStats();
-        navigationBytes=std::max(navigationBytes,flow.bytes);
-        // Shared modes can still queue native searches for unsupported
-        // movers, and Retail modes report no flow requests: count both.
-        peakPending=std::max(peakPending,uint64_t(flow.pending)+uint64_t(retail.pendingCount()));
-        if(tick%60==0||tick==o.ticks)retailPlusPeakBytes=std::max(retailPlusPeakBytes,retailPlusBytes(world));
+        peakPending=std::max(peakPending,uint64_t(world.pathStats().pendingCount()));
         int arrived=0;
         for(auto& m:members) {
             const auto& u=*world.unit(m.id);
@@ -812,7 +732,7 @@ inline int run(const Options& o) {
     peakRss/=1024; // Darwin reports bytes; Linux reports KiB.
 #endif
 #endif
-    const auto flow=world.flowStats();const auto& retail=world.pathStats();double sum=0;for(double t:times)sum+=t;
+    const auto& retail=world.pathStats();double sum=0;for(double t:times)sum+=t;
     std::printf("{\"schema\":2,\"mode\":\"%s\",\"scenario\":\"%s\",\"units_per_player\":%d,\"players\":%d,\"total_units\":%zu,\"moving_percent\":%d,\"moving_units\":%d,\"ticks\":%d,\"workers\":%s,\"map_cells\":[%d,%d],",
         o.mode.c_str(),o.scenario.c_str(),o.units,o.players,members.size(),o.movingPercent,totalMoving,o.ticks,o.workers?"true":"false",width,height);
     std::printf("\"seed\":%u,\"latency_observation\":%s,",o.seed,o.latency?"true":"false");
@@ -844,10 +764,9 @@ inline int run(const Options& o) {
         milestone(firstPendingClears,totalMoving,.95),(unsigned long long)stalled,totalPath,totalStraight>0?totalPath/totalStraight:0);
     std::printf("\"crossed_middle\":%d,\"first_cross_tick\":%d,\"last_cross_tick\":%d,\"crossings_per_sim_second\":%.6f,\"illegal_footprint_samples\":%llu,\"illegal_final_movers\":%d,\"peak_pending\":%llu,",
         crossed,firstCross,lastCross,crossed*30.0/o.ticks,(unsigned long long)illegalSamples,illegalFinal,(unsigned long long)peakPending);
-    std::printf("\"retail_work_sum\":%llu,\"retail_requests\":%llu,\"retail_completions\":%llu,\"retail_failures\":%llu,\"flow_requests\":%llu,\"flow_deliveries\":%llu,\"flow_work\":%llu,\"flow_navigation_peak_bytes\":%zu,\"process_peak_rss_kib\":%ld,",
+    std::printf("\"retail_work_sum\":%llu,\"retail_requests\":%llu,\"retail_completions\":%llu,\"retail_failures\":%llu,\"process_peak_rss_kib\":%ld,",
         (unsigned long long)retail.workSpent(),(unsigned long long)retail.requests(),(unsigned long long)retail.completions(),(unsigned long long)retail.failures(),
-        (unsigned long long)flow.requests,(unsigned long long)flow.deliveries,(unsigned long long)(flow.snapshotWork+flow.fieldWork+flow.localWork),navigationBytes,peakRss);
-    std::printf("\"retail_plus_peak_bytes_sampled\":%zu,",retailPlusPeakBytes);
+        peakRss);
     {
         uint64_t spinning=0,everTerrain=0,everCrowd=0,everTrapped=0,trappedMovers=0,reachableMovers=0,optimalUnits=0;
         int settleMax=-1;uint64_t finals[ca::ClassCount]{};double ratioSum=0,ratioMax=0;
@@ -888,7 +807,7 @@ inline int run(const Options& o) {
 }
 inline int main(int argc,char** argv) {
     if(argc==2&&std::string_view(argv[1])=="--help") {
-        std::puts("crowdbench [legacy-scenario...]\ncrowdbench --mode retail|retail-plus|flowfield|cooperative|legion --units N --players N --moving-percent N --ticks N --scenario NAME [--seed N] [--workers] [--allocations] [--profile] [--latency] [--trace PATH]\n"
+        std::puts("crowdbench [legacy-scenario...]\ncrowdbench --mode retail|legion --units N --players N --moving-percent N --ticks N --scenario NAME [--seed N] [--workers] [--allocations] [--profile] [--latency] [--trace PATH]\n"
             "Scenarios: open doors bridges maze opposingcolumns sharedgoal mixedfootprints exploration dynamicobstacle rapidreplacement unreachable recovery recovery-passive\n"
             "Acceptance scenarios: jagged trapped crowdtrap singleunit groupdetour (see tools/crowdbench_acceptance.h for metric definitions)\n"
             "units is per player; movement percentage rounds down per player. Default execution is serial.\n"

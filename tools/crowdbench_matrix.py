@@ -28,8 +28,9 @@ SCENARIOS = (
 # out of SCENARIOS so default matrices and their runtime estimates are unchanged.
 ACCEPTANCE_SCENARIOS = ("jagged", "trapped", "crowdtrap", "singleunit", "groupdetour")
 ALL_SCENARIOS = SCENARIOS + ACCEPTANCE_SCENARIOS
-# The frozen baseline predates Retail+ telemetry parity and has no Legion mode.
-LEGACY_MODES = ("retail", "retail-plus", "flowfield", "cooperative")
+# The frozen baseline has no Legion mode. (Retail+, Flowfield and Cooperative
+# were removed on 2026-10-06.)
+LEGACY_MODES = ("retail",)
 MODES = LEGACY_MODES + ("legion",)
 CASE_KEYS = ("build_role", "mode", "scenario", "units_per_player", "players",
              "moving_percent", "ticks", "seed", "workers", "allocation_counting",

@@ -237,12 +237,9 @@ namespace {
                 voice(selection_.front(), "attack");
             } else {
                 voice(selection_.front(), "move");
-                const bool sharedPaths=tak::sim::isSharedPathfinding(world_.pathfindingMode());
                 // Legion packs one shared destination into arrival slots for the
                 // surface movers it plans (ground units, boats, hovercraft).
                 const bool legion=tak::sim::isLegionPathfinding(world_.pathfindingMode());
-                const bool retailPlus=world_.pathfindingMode()==tak::sim::PathfindingMode::RetailPlus;
-                tak::sim::Order plainMove;plainMove.goal=plainMove.groundMission=true;
                 float cx = 0, cz = 0;
                 int n = 0;
                 for (int id : selection_)
@@ -254,19 +251,16 @@ namespace {
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Move;
                     c.unitId = id;
-                    // Shared pathfinding owns footprint-aware group spreading. Per-unit
-                    // click offsets split one selection into unrelated goals,
-                    // bypassing shared arrivals and wasting destination fields.
+                    // Legion owns footprint-aware group spreading. Per-unit click
+                    // offsets would split one selection into unrelated goals.
                     // Flying units retain their independent flight controller.
-                    const bool shared=u->type && ((sharedPaths&&!u->type->canFly)||
-                        // Legion plans only footprints up to 8 on a fresh plain
-                        // Move, in every surface domain; a leg queued behind
-                        // other orders may start behind a non-plain leg Retail
-                        // steers, so it keeps its offset.
-                        (legion&&!u->type->canFly&&
-                         u->type->footX>=1&&u->type->footZ>=1&&u->type->footX<=8&&u->type->footZ<=8&&
-                         (!queue||u->orders.empty()))||
-                        (retailPlus&&tak::sim::retailplus::Traffic::supports(*u->type,plainMove)));
+                    // Legion plans only footprints up to 8 on a fresh plain
+                    // Move, in every surface domain; a leg queued behind other
+                    // orders may start behind a non-plain leg Retail steers, so
+                    // it keeps its offset.
+                    const bool shared=u->type && legion&&!u->type->canFly&&
+                        u->type->footX>=1&&u->type->footZ>=1&&u->type->footX<=8&&u->type->footZ<=8&&
+                        (!queue||u->orders.empty());
                     c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
                     c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);
                     c.queue = queue;

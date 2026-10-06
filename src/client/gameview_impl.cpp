@@ -681,9 +681,7 @@
             pendingCmd_=0;
             const auto savedPathfinding=world_.pathfindingMode();
             selection_={builder,soldier};mouseX_=mouseY_=-1000;
-            for(const auto mode:{tak::sim::PathfindingMode::Retail,tak::sim::PathfindingMode::Flowfield,
-                                 tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Cooperative,
-                                 tak::sim::PathfindingMode::Legion}) {
+            for(const auto mode:{tak::sim::PathfindingMode::Retail,tak::sim::PathfindingMode::Legion}) {
                 world_.setPathfindingMode(mode);publish();
                 rightClickOrder(2400,2400,false);
                 for(const int id:selection_) {
@@ -692,8 +690,7 @@
                     const auto& order=u->orders.back();
                     const auto target=order.missionTarget.value_or(std::pair{order.x,order.z});
                     // Legion gives every unit it plans one shared point (docs/legion-pathfinding.md).
-                    const bool shared=tak::sim::isSharedPathfinding(mode)||mode==tak::sim::PathfindingMode::Legion||
-                        (mode==tak::sim::PathfindingMode::RetailPlus&&id==soldier);
+                    const bool shared=mode==tak::sim::PathfindingMode::Legion;
                     const float expected=shared?2400.f:
                         (id==builder?2460.f:2340.f);
                     if(target.first.toFloat()!=expected || target.second.toFloat()!=2400.f)

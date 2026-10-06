@@ -1,20 +1,14 @@
-#include "cooperative_test_common.h"
+#include "navigation_test_common.h"
 #include "crowdbench_telemetry.h"
-#include "sim/flowmemory.h"
 #include <tuple>
 
-using namespace cooperative_test;
+using namespace navigation_test;
 using crowdbench_matrix::LatencyObserver;
 namespace tak::sim {
 struct RetailReplayProbe {
     static void observe(World& world,NavigationTelemetry* observer) {
         world.paths_.setTelemetry(observer);
-        if(isSharedPathfinding(world.pathfindingMode_)) {
-            if(!world.flow_)world.flow_=std::make_unique<FlowNavigator>(world);
-            world.flow_->setTelemetry(observer);
-        }
     }
-    static FlowNavigator& flow(World& world) {return *world.flow_;}
 };
 }
 namespace {
@@ -92,7 +86,7 @@ void callbackObserverGuard() {
     require(threw&&!service.pendingCount()&&other.pending.empty(),"callback exception fixture did not deliver");
     service.setTelemetry(nullptr); // The guard must unwind after callback failure.
 }
-using Snapshot=std::tuple<uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t>;
+using Snapshot=std::tuple<uint64_t,uint64_t,uint64_t,uint64_t>;
 std::vector<Snapshot> worldRun(PathfindingMode selected,bool enabled,bool serial) {
     LatencyObserver observer;World world;setup(world,selected,serial,false,128);
     auto type=mover();std::vector<int> ids;
@@ -105,8 +99,8 @@ std::vector<Snapshot> worldRun(PathfindingMode selected,bool enabled,bool serial
         if(tick==40)for(int id:ids)world.order(id,70*16,64*16,false);
         if(tick==80)world.stop(ids.front());
         world.tick(1.f/30);
-        const auto f=world.flowStats();const auto& p=world.pathStats();
-        state.emplace_back(world.stateHash(),p.requests(),p.completions(),p.workSpent(),f.requests,f.deliveries);
+        const auto& p=world.pathStats();
+        state.emplace_back(world.stateHash(),p.requests(),p.completions(),p.workSpent());
     }
     if(enabled) {
         require(observer.sequence>0&&!observer.deliveries.empty()&&!observer.unknown,"World telemetry missed real events");
@@ -116,44 +110,11 @@ std::vector<Snapshot> worldRun(PathfindingMode selected,bool enabled,bool serial
     }
     return state;
 }
-void sharedLifecycle(PathfindingMode selected) {
-    LatencyObserver observer,other;World world;setup(world,selected,true,false,128);
-    auto type=mover();const int id=world.spawn(&type,24*16,24*16);
-    known(world);RetailReplayProbe::observe(world,&observer);
-    world.order(id,96*16,96*16,false);auto& nav=RetailReplayProbe::flow(world);
-    auto& unit=*world.unit(id);
-    require(nav.request(unit,Fixed::fromInt(96*16),Fixed::fromInt(96*16)),"shared request refused");
-    const auto count=observer.sequence;
-    nav.request(unit,Fixed::fromInt(96*16),Fixed::fromInt(96*16));
-    require(observer.sequence==count,"shared duplicate request restarted latency");
-    bool rejected=false;
-    try{nav.setTelemetry(&other);}catch(const std::logic_error&){rejected=true;}
-    require(rejected,"shared observer detached outstanding request");
-    unit.orders.clear();observer.tick=1;nav.tick();
-    require(observer.cancellations[2]==1&&observer.pending.empty(),"stale shared request counted as delivery");
-    // Exercise deterministic admission capacity without spending a map search
-    // quantum or requiring 16K physical bodies. Invalid IDs are removed later
-    // by normal stale-result validation; they occupy real request records here.
-    for(size_t i=0;i<flow::MemoryPlan::maxRequests;++i) {
-        unit.id=int(i+100);
-        require(nav.request(unit,Fixed::fromInt(96*16),Fixed::fromInt(96*16)),"capacity rejected too early");
-    }
-    const auto atCapacity=observer.sequence;unit.id=20000;
-    require(!nav.request(unit,Fixed::fromInt(96*16),Fixed::fromInt(96*16))&&observer.sequence==atCapacity,
-            "capacity refusal invented an admitted latency request");
-    unit.id=id;
-    for(size_t i=0;i<flow::MemoryPlan::maxRequests;++i)nav.cancel(int(i+100));
-    require(observer.pending.empty()&&!observer.unknown,"capacity cancellation orphaned observer tokens");
-}
 }
 int main() {try {
     queueLifecycle();failedDelivery();callbackObserverGuard();
-    for(const auto selected:{PathfindingMode::Retail,PathfindingMode::RetailPlus,
-                             PathfindingMode::Flowfield,PathfindingMode::Cooperative}) {
-        const auto reference=worldRun(selected,false,true);
-        require(reference==worldRun(selected,true,true),"telemetry changed per-tick serial simulation");
-        require(reference==worldRun(selected,true,false),"telemetry or worker execution changed simulation");
-    }
-    sharedLifecycle(PathfindingMode::Flowfield);sharedLifecycle(PathfindingMode::Cooperative);
+    const auto reference=worldRun(PathfindingMode::Retail,false,true);
+    require(reference==worldRun(PathfindingMode::Retail,true,true),"telemetry changed per-tick serial simulation");
+    require(reference==worldRun(PathfindingMode::Retail,true,false),"telemetry or worker execution changed simulation");
     std::puts("navigation telemetry passed");return 0;
 }catch(const std::exception& error){std::fprintf(stderr,"navigation telemetry: %s\n",error.what());return 1;}}

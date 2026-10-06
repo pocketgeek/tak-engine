@@ -826,7 +826,7 @@ struct LegionNavigator::Impl {
         if(o.targetId&&!(own&(WLoad|WPickup)))return false;
         return !o.unload&&!o.attackMove&&!o.patrol&&!o.guard&&!o.autoTarget&&!o.reclaimArea&&!o.manaBuildArea&&
             !o.wait&&!o.waitAttack&&!o.landing&&!o.flightGoal&&!o.transportUnloadReleasePending&&
-            !o.transportUnloadTransferDeferred&&!o.transportPassenger&&!o.patrolRepair&&!o.nativeProductionExit;
+            !o.transportUnloadTransferDeferred&&!o.transportPassenger&&!o.patrolRepair;
     }
     // The work/logistics kind of a leg (None if it is not one).
     static Kind workKind(const Order& leg) {

@@ -85,9 +85,8 @@ void identityAndHeader(const fs::path& root){
         if(kind==3)header.crusades=0;
         if(kind==4)header.overridePolicy=1;
         if(kind==5)header.mission="camp01";
-        if(kind==12)header.pathfindingMode=tak::sim::PathfindingMode::Flowfield;
-        if(kind==13)header.pathfindingMode=tak::sim::PathfindingMode::Cooperative;
-        if(kind==14)header.pathfindingMode=tak::sim::PathfindingMode::RetailPlus;
+        // 1-3: the removed Flowfield, Cooperative and Retail+ identities.
+        if(kind>=12&&kind<=14)header.pathfindingMode=tak::sim::PathfindingMode(kind-11);
         if(kind==15)header.pathfindingMode=tak::sim::PathfindingMode::Legion;
         if(kind==9)header.mapId=std::string(9000,'m');
         auto data=recording(header,kind==6?n::kNetVersion+1:kind==10?210u:kind==11?211u:n::kNetVersion);

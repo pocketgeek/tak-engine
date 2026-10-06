@@ -18,28 +18,23 @@ int main() {
         s.hostOverridePacks={"Sound Pack #1","Textures", "Accents-é"};
         s.cosmeticOverridePacks={"My local art"};
         using PathMode=tak::sim::PathfindingMode;
-        static_assert(uint8_t(PathMode::Retail)==0&&uint8_t(PathMode::Flowfield)==1&&uint8_t(PathMode::Cooperative)==2&&
-                      uint8_t(PathMode::RetailPlus)==3&&uint8_t(PathMode::Legion)==4);
-        for(auto mode:{PathMode::Retail,PathMode::Flowfield,PathMode::Cooperative,PathMode::RetailPlus,PathMode::Legion}) {
-            auto next=tak::sim::cyclePathfindingMode(mode,1);
-            auto around=next;for(int i=0;i<4;++i)around=tak::sim::cyclePathfindingMode(around,1);
-            if(tak::sim::cyclePathfindingMode(next,-1)!=mode || around!=mode)
-                throw std::runtime_error("pathfinding choices do not cycle in both directions");
-        }
-        // Display order: Retail, Retail+, Flowfield, Cooperative, Legion (and back to Retail).
-        if(tak::sim::cyclePathfindingMode(PathMode::Retail,-1)!=PathMode::Legion ||
-           tak::sim::cyclePathfindingMode(PathMode::Legion,-1)!=PathMode::Cooperative ||
-           tak::sim::cyclePathfindingMode(PathMode::Retail,1)!=PathMode::RetailPlus ||
-           tak::sim::cyclePathfindingMode(PathMode::RetailPlus,1)!=PathMode::Flowfield ||
-           tak::sim::cyclePathfindingMode(PathMode::Flowfield,1)!=PathMode::Cooperative ||
-           tak::sim::cyclePathfindingMode(PathMode::Cooperative,1)!=PathMode::Legion ||
+        // Stable identities: 1-3 belonged to the removed Flowfield,
+        // Cooperative and Retail+ modes and are invalid.
+        static_assert(uint8_t(PathMode::Retail)==0&&uint8_t(PathMode::Legion)==4);
+        for(int value=0;value<256;++value)
+            if(tak::sim::validPathfindingMode(uint8_t(value))!=(value==0||value==4))
+                throw std::runtime_error("only Retail (0) and Legion (4) are valid pathfinder bytes");
+        // Display order: Retail <-> Legion, in both directions.
+        if(tak::sim::cyclePathfindingMode(PathMode::Retail,1)!=PathMode::Legion ||
+           tak::sim::cyclePathfindingMode(PathMode::Retail,-1)!=PathMode::Legion ||
            tak::sim::cyclePathfindingMode(PathMode::Legion,1)!=PathMode::Retail ||
-           std::string(tak::sim::pathfindingModeName(PathMode::Cooperative))!="Cooperative" ||
+           tak::sim::cyclePathfindingMode(PathMode::Legion,-1)!=PathMode::Retail ||
+           std::string(tak::sim::pathfindingModeName(PathMode::Retail))!="Retail" ||
            std::string(tak::sim::pathfindingModeName(PathMode::Legion))!="Legion")
             throw std::runtime_error("pathfinder choice order or display name missing");
         if(s.gameCreate.pathfindingMode!=PathMode::Retail)
             throw std::runtime_error("new create preferences must default to Retail");
-        s.gameCreate.pathfindingMode=PathMode::Flowfield;
+        s.gameCreate.pathfindingMode=PathMode::Legion;
         s.gameCreate.overrides=0;
         s.uiScale=0.75f;s.scorecardScale=1.75f;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
@@ -48,22 +43,21 @@ int main() {
             throw std::runtime_error("pack selections did not survive save/load while off");
         if(loaded.uiScale!=0.75f || loaded.scorecardScale!=1.75f)
             throw std::runtime_error("independent scorecard scale did not persist");
-        if(loaded.gameCreate.pathfindingMode!=PathMode::Flowfield)
-            throw std::runtime_error("Flowfield create preference did not persist");
-        auto cooperative=s;cooperative.gameCreate.pathfindingMode=PathMode::Cooperative;
-        if(cooperative==s || !tak::saveSettings(cooperative) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Cooperative)
-            throw std::runtime_error("Cooperative create preference did not persist independently");
-        auto retailPlus=s;retailPlus.gameCreate.pathfindingMode=PathMode::RetailPlus;
-        if(retailPlus==s || !tak::saveSettings(retailPlus) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::RetailPlus)
-            throw std::runtime_error("Retail+ create preference did not persist independently");
-        auto legion=s;legion.gameCreate.pathfindingMode=PathMode::Legion;
-        if(legion==s || !tak::saveSettings(legion) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Legion)
-            throw std::runtime_error("Legion create preference did not persist independently");
+        if(loaded.gameCreate.pathfindingMode!=PathMode::Legion)
+            throw std::runtime_error("Legion create preference did not persist");
+        auto retail=s;retail.gameCreate.pathfindingMode=PathMode::Retail;
+        if(retail==s || !tak::saveSettings(retail) || tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
+            throw std::runtime_error("Retail create preference did not persist independently");
         std::ofstream(path)<<"gameCreate.pathfindingMode = 4\n";
         if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Legion)
             throw std::runtime_error("saved value 4 did not load as Legion");
-        if(std::string(tak::sim::pathfindingModeName(PathMode::RetailPlus))!="Retail+")
-            throw std::runtime_error("Retail+ display name changed");
+        // Saved Flowfield (1), Cooperative (2) and Retail+ (3) preferences
+        // fall back to Retail now that those modes are gone.
+        for(const char* removed:{"1","2","3"}) {
+            std::ofstream(path)<<"gameCreate.pathfindingMode = "<<removed<<"\n";
+            if(tak::loadSettings().gameCreate.pathfindingMode!=PathMode::Retail)
+                throw std::runtime_error("a removed pathfinding preference did not fall back to Retail");
+        }
         auto modeChanged=s;modeChanged.gameCreate.pathfindingMode=PathMode::Retail;
         if(modeChanged==s)throw std::runtime_error("pathfinding preference changes not detected");
         std::ofstream(path)<<"gameCreate.crusades = true\ngameCreate.doubleSight = true\ngameCreate.unitCap = 2000\n";

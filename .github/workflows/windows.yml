@@ -176,8 +176,8 @@ jobs:
 
       - name: Rendering, navigation and validation regressions
         run: |
-          cmake --build build --target selective_aa_test tdf_limits_test validationworker_test geometry_tiles_test order_trail_test retail_search_scratch_test retailplus_traffic_test retailplus_world_test cooperative_traffic_test cooperative_movement_test cooperative_followers_test cooperative_corridor_test cooperative_passages_test cooperative_freshness_test cooperative_clearance_test cooperative_group_test cooperative_memory_test cooperative_progress_test cooperative_checkpoint_test flow_routing_compare flow_mission_test flow_shared_field_test navigation_telemetry_test flow_group_commands_test replay_test
-          bash tools/run-ctest-selection.sh build selective_aa tdf_limits validationworker geometry_tiles order_trail retail_search_scratch retailplus_traffic retailplus_world cooperative_traffic cooperative_movement cooperative_followers cooperative_corridor cooperative_passages cooperative_freshness cooperative_clearance cooperative_group cooperative_memory 'cooperative_progress_*' navigation_determinism crowdbench_matrix flow_routing_compare flow_mission_traffic flow_shared_field navigation_telemetry flow_group_commands replay
+          cmake --build build --target selective_aa_test tdf_limits_test validationworker_test geometry_tiles_test order_trail_test retail_search_scratch_test navigation_checkpoint_test navigation_telemetry_test replay_test
+          bash tools/run-ctest-selection.sh build selective_aa tdf_limits validationworker geometry_tiles order_trail retail_search_scratch navigation_determinism crowdbench_matrix navigation_telemetry replay
 
       - name: Verify fully static (only system DLL imports)
         run: |

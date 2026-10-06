@@ -10,7 +10,8 @@
 using namespace tak::sim;
 namespace {
 int failures=0;
-PathfindingMode sharedMode=PathfindingMode::Flowfield;
+// Retail by default; --legion selects Legion.
+PathfindingMode selectedMode=PathfindingMode::Retail;
 void check(bool ok,const char* message) {
     std::printf("%s %s\n",ok?"PASS":"FAIL",message);failures+=!ok;
 }
@@ -76,7 +77,7 @@ void patrolLaps(PathfindingMode mode) {
               order.missionTarget==std::pair{Fixed::fromInt(1280),Fixed::fromInt(640)},"patrol endpoints stay canonical after repeated laps");
 }
 uint64_t production(bool mobile,bool rally,bool serial) {
-    World w;setup(w,sharedMode,serial);auto type=soldier(),producer=soldier();
+    World w;setup(w,selectedMode,serial);auto type=soldier(),producer=soldier();
     producer.id=producer.name="producer-test";producer.isBuilder=true;producer.workerTime=1000;
     producer.footX=6;producer.footZ=8;if(!mobile)producer.maxVel=Fixed();
     const int id=w.spawn(&producer,600,600,0,0);w.player(0).mana=1e9;
@@ -109,12 +110,12 @@ uint64_t production(bool mobile,bool rally,bool serial) {
     check(stopped&&built>=24,"infinite queue produced the requested observation cohort");
     check(!rally||controllerSeen,"produced rally points receive a ground controller");
     check(idle==built,"all completed outputs stop after their exit/rally move");
-    if(isSharedPathfinding(sharedMode))
+    if(selectedMode==PathfindingMode::Legion)
         check(birthplaceClear&&births.size()==size_t(built),"every produced output clears its full birthplace before stopping");
     return w.stateHash();
 }
 void mobileFightRally() {
-    World w;setup(w,sharedMode);auto type=soldier(),builder=soldier();builder.isBuilder=true;
+    World w;setup(w,selectedMode);auto type=soldier(),builder=soldier();builder.isBuilder=true;
     const int id=w.spawn(&builder,320,640,0,0);w.setRepeat(id,&type);w.attackMove(id,1600,640,false);
     check(w.unit(id)->orders.empty()&&w.unit(id)->rally.size()==1&&w.unit(id)->rally.front().attackMove,
         "infinite mobile producer retains the fight-move rally flag");
@@ -130,51 +131,15 @@ void exitRally(PathfindingMode mode,bool rally) {
         for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction){child=u.id;break;}
     }
     check(child!=0,"exit/rally fixture produced an output");if(!child)return;
-    const bool flexible=isSharedPathfinding(mode);
-    check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit.has_value()==(flexible||mode==PathfindingMode::Legion),
-          "only automatic shared-navigation and Legion exits receive birthplace clearance");
+    check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit.has_value()==(mode==PathfindingMode::Legion),
+          "only automatic Legion exits receive birthplace clearance");
     w.stop(id);
-    if(flexible) {
-        auto* u=w.unit(child);const auto exit=u->orders[World::currentLeg(u->orders)];
-        w.deliverSearchRoute(child,{{38,40},{exit.x.floorInt()/16,exit.z.floorInt()/16}},exit.x,exit.z,false,false,false,true);
-        check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit==exit.productionExit,
-              "route replacement preserves the production birthplace");
-        u=w.unit(child);u->x=exit.productionExit->first;u->z=exit.productionExit->second;u->bodyBlockStreak=2;
-        ticks(w,1);
-        check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit.has_value(),
-              "blocked output cannot skip its exit while still at its birthplace");
-    }
     auto* u=w.unit(child);u->x=Fixed::fromInt(1000);u->z=Fixed::fromInt(900);u->bodyBlockStreak=2;
     ticks(w,5);
     bool rallyActive=false;
     for(const auto& order:w.unit(child)->orders)
         if(order.goal){rallyActive=order.missionTarget==std::pair{Fixed::fromInt(1600),Fixed::fromInt(640)};break;}
-    check(rallyActive==(flexible&&rally),"blocked exit hands over to its rally only after shared-navigation birthplace clearance");
-    if(flexible&&!rally)check(w.unit(child)->orders.empty(),"blocked automatic parking finishes after clearing its birthplace without a rally");
-}
-void queuedRally() {
-    World w;setup(w,sharedMode);auto type=soldier(),producer=soldier();
-    producer.isBuilder=true;producer.workerTime=1000;
-    const int id=w.spawn(&producer,600,600,0,0);w.player(0).mana=1e9;
-    w.setRepeat(id,&type);w.order(id,1600,640,false);int child=0;
-    for(int tick=0;tick<600&&!child;++tick) {
-        w.tick(1.f/30);
-        for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction){child=u.id;break;}
-    }
-    check(child!=0,"queued rally fixture produced an output");if(!child)return;
-    w.stop(id);const int anchor=w.spawn(&type,1600,640,0,0);w.order(anchor,1600,640,false);
-    ticks(w,10);check(w.unit(anchor)->orders.empty(),"rally anchor finished its original move");
-    w.order(child,1600,1400,true);
-    auto* u=w.unit(child);u->x=Fixed::fromInt(1640);u->z=Fixed::fromInt(640);u->bodyBlockStreak=2;
-    ticks(w,10);bool later=false,earlier=false;
-    for(const auto& o:w.unit(child)->orders)if(o.goal) {
-        const auto point=o.missionTarget.value_or(std::pair{o.x,o.z});
-        later|=point==std::pair{Fixed::fromInt(1600),Fixed::fromInt(1400)};
-        earlier|=point==std::pair{Fixed::fromInt(1600),Fixed::fromInt(640)};
-    }
-    check(later&&!earlier,"filled rally arrival retires its exit/point while preserving the next queued move");
-    ticks(w,1600);check(w.unit(child)->orders.empty()&&w.unit(child)->z>Fixed::fromInt(1300),
-        "output follows its preserved later rally command");
+    check(!rallyActive,"a blocked exit does not hand over to its rally early");
 }
 void combatResume(PathfindingMode mode,bool patrol) {
     World w;setup(w,mode);auto type=soldier(),enemy=soldier();enemy.maxVel=Fixed();
@@ -307,7 +272,7 @@ void mazeProduction(const char* data) {
     for(bool mobile:{false,true})for(bool rally:{false,true}) {
         World w;w.setSerialThreads(true);w.setVisPlayer(-1);
         MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath="maps/orders-maze.tnt";cfg.loadCrt=false;
-        cfg.pathfindingMode=sharedMode;cfg.slots.resize(1);setupMatch(w,registry,cfg);
+        cfg.pathfindingMode=selectedMode;cfg.slots.resize(1);setupMatch(w,registry,cfg);
         auto hunter=*registry.find("zonter");hunter.weapons.clear();hunter.weapon.damage=0;
         // Keep authored Hunter movement/footprints/scripts; accelerate production
         // so this fixture measures exit/rally behavior rather than the economy.
@@ -336,9 +301,9 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
     World w;w.setSerialThreads(serial);w.setVisPlayer(-1);
     if(maze) {
         MatchConfig cfg;cfg.vfs=maze;cfg.mapPath="maps/orders-troll-maze.tnt";cfg.loadCrt=false;
-        cfg.pathfindingMode=sharedMode;cfg.slots.resize(1);setupMatch(w,registry,cfg);
+        cfg.pathfindingMode=selectedMode;cfg.slots.resize(1);setupMatch(w,registry,cfg);
     } else {
-        w.setPathfindingMode(sharedMode);
+        w.setPathfindingMode(selectedMode);
         w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
         w.buildNavClasses(registry);w.setPathService(true);
     }
@@ -366,7 +331,7 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
         std::printf("unsettled Troll id=%d at=%.1f,%.1f orders=%zu legion=%d\n",u.id,u.x.toFloat(),u.z.toFloat(),u.orders.size(),
             w.legionNavigator()?int(w.legionNavigator()->mission(u)):-1);
     check(stopped&&built==count&&idle==built,"all Beast Handler Trolls finish their exit and shared rally orders");
-    if(sharedMode==PathfindingMode::Legion)check(legionExit,"Legion routes the Trolls' production exits");
+    if(selectedMode==PathfindingMode::Legion)check(legionExit,"Legion routes the Trolls' production exits");
     if(!maze)for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction) {
         const int64_t dx=u.x.floorInt()-1600,dz=u.z.floorInt()-640;
         const int64_t radius=int64_t(count)*48+32;
@@ -403,11 +368,9 @@ void trollProduction(const char* data,bool open=false,bool mazeOnly=false) {
 }
 }
 int main(int argc,char** argv) {
-    bool onlyShared=false;
-    if(argc>1&&(std::string(argv[1])=="--cooperative"||std::string(argv[1])=="--flow"||std::string(argv[1])=="--legion")) {
-        sharedMode=std::string(argv[1])=="--cooperative"?PathfindingMode::Cooperative:
-            std::string(argv[1])=="--legion"?PathfindingMode::Legion:PathfindingMode::Flowfield;
-        onlyShared=true;--argc;++argv;
+    if(argc>1&&std::string(argv[1])=="--legion") {
+        selectedMode=PathfindingMode::Legion;
+        --argc;++argv;
     }
     if((argc==3||(argc==4&&(std::string(argv[3])=="open"||std::string(argv[3])=="maze")))&&std::string(argv[1])=="--trolls") {
         try {trollProduction(argv[2],argc==4&&std::string(argv[3])=="open",argc==4&&std::string(argv[3])=="maze");return failures?1:0;}
@@ -418,28 +381,24 @@ int main(int argc,char** argv) {
         catch(const std::exception& e){std::fprintf(stderr,"FAIL %s\n",e.what());return 1;}
     }
     if(argc!=1)return 2;
-    const std::vector<PathfindingMode> modes=onlyShared?std::vector{sharedMode}:
-        std::vector{PathfindingMode::Retail,PathfindingMode::Flowfield};
+    const std::vector<PathfindingMode> modes{selectedMode};
     for(auto mode:modes) {
         for(bool patrol:{false,true})for(bool clipped:{false,true})partial(mode,patrol,clipped);
         group(mode,false,true);group(mode,true,true);patrolLaps(mode);
         combatResume(mode,false);combatResume(mode,true);
         // Mission-goal routing (attack, chase, guard, group patrol): the
         // default run covers Retail, --legion covers Legion.
-        if(mode==PathfindingMode::Retail||mode==PathfindingMode::Legion) {
-            attackChase(mode,false);attackChase(mode,true);guardFollow(mode);workApproach(mode);
-            const auto patrolHash=groupPatrol(mode,true);
-            check(patrolHash==groupPatrol(mode,false),"group patrol hashes match serial and threaded preparation");
-        }
+        attackChase(mode,false);attackChase(mode,true);guardFollow(mode);workApproach(mode);
+        const auto patrolHash=groupPatrol(mode,true);
+        check(patrolHash==groupPatrol(mode,false),"group patrol hashes match serial and threaded preparation");
     }
-    const auto serial=group(sharedMode,false,true);
-    check(serial==group(sharedMode,false,false),"shared-navigation group hashes match serial and threaded preparation");
+    const auto serial=group(selectedMode,false,true);
+    check(serial==group(selectedMode,false,false),"shared-navigation group hashes match serial and threaded preparation");
     for(bool mobile:{false,true})for(bool rally:{false,true}) {
         const auto hash=production(mobile,rally,true);
         check(hash==production(mobile,rally,false),"production hashes match serial and threaded preparation");
     }
     for(auto mode:modes)
         for(bool far:{false,true})exitRally(mode,far);
-    if(isSharedPathfinding(sharedMode))queuedRally();
     mobileFightRally();std::printf("movement orders: %d failures\n",failures);return failures?1:0;
 }

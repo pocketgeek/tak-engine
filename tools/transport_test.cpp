@@ -2971,13 +2971,7 @@ static void airUnloadMapFlightTraceFixture(const char* retailRoot,const char* ma
 int main(int argc,char** argv) {
     // Optional backend run reuses the same placement/mission assertions. The
     // default and every retail trace command retain their existing backend.
-    if(argc>1 && !std::strcmp(argv[1],"--flow")) {
-        g_pathfinding=tak::sim::PathfindingMode::Flowfield;--argc;++argv;
-    } else if(argc>1 && !std::strcmp(argv[1],"--cooperative")) {
-        g_pathfinding=tak::sim::PathfindingMode::Cooperative;--argc;++argv;
-    } else if(argc>1 && !std::strcmp(argv[1],"--retail-plus")) {
-        g_pathfinding=tak::sim::PathfindingMode::RetailPlus;--argc;++argv;
-    } else if(argc>1 && !std::strcmp(argv[1],"--legion")) {
+    if(argc>1 && !std::strcmp(argv[1],"--legion")) {
         g_pathfinding=tak::sim::PathfindingMode::Legion;--argc;++argv;
     }
     if(argc==2 && !std::strcmp(argv[1],"--attach-position")) {

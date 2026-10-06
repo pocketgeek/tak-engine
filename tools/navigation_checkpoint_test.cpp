@@ -1,9 +1,10 @@
-// Run this unchanged against the saved pre-Cooperative library and the current
-// library. Retail and Flowfield checkpoint output must remain byte-identical.
-#include "cooperative_test_common.h"
-using namespace cooperative_test;
+// Lockstep checkpoints for each navigation mode: a fixed mixed-order cohort,
+// hashed every 300 ticks. tools/navigation_determinism_test.py compares the
+// output with tools/navigation_checkpoints.json, serial and with workers.
+#include "navigation_test_common.h"
+using namespace navigation_test;
 int main(int argc,char** argv) {
-    if(argc<2||argc>3){std::fprintf(stderr,"usage: cooperative_checkpoint_test MODE [serial|workers]\n");return 2;}
+    if(argc<2||argc>3){std::fprintf(stderr,"usage: navigation_checkpoint_test MODE [serial|workers]\n");return 2;}
     try {
         const auto selected=mode(argv[1]);const bool serial=argc==2||std::string_view(argv[2])=="serial";
         for(bool boat:{false,true}) {

@@ -7,8 +7,9 @@
 #   1. Every file of BASE_REVISION (default: main 86673b4, the pre-investigation
 #      simulation) exported with `git archive` -- no working-tree state.
 #   2. tools/navigation_baseline_telemetry.patch: the observation-only route
-#      lifecycle hooks in PathService (Retail/Retail+ native searches) and
-#      FlowNavigator (Flowfield/Cooperative). Tokens are never read by the
+#      lifecycle hooks in PathService (native searches) and in the base
+#      revision's FlowNavigator (its since-removed Flowfield/Cooperative modes,
+#      which the harness no longer selects). Tokens are never read by the
 #      simulation, saved, or hashed; the patch is taken from the candidate tree.
 #   3. The CANDIDATE's harness, copied verbatim so both binaries measure with
 #      identical code: tools/crowdbench.cpp, tools/crowdbench_matrix.h,

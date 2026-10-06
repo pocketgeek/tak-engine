@@ -16,7 +16,7 @@ def main():
     parser.add_argument("golden", type=Path)
     args = parser.parse_args()
     expected = json.loads(args.golden.read_text())
-    for mode in ("retail", "retail-plus", "flowfield", "cooperative", "legion"):
+    for mode in ("retail", "legion"):
         outputs = {}
         for execution in ("serial", "workers"):
             run = subprocess.run([str(args.binary.resolve()), mode, execution],

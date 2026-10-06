@@ -2,7 +2,7 @@
 // unit types (retail turn rates, speeds and footprints), any path mode.
 //
 //   legion_group_motion DATA MODE SCENARIO UNITS [TICKS]
-//     MODE      retail | retail-plus | flowfield | cooperative | legion
+//     MODE      retail | legion
 //     SCENARIO  open (straight across open ground) | wall (around a wall)
 //               | cross (two groups ordered through each other)
 //
@@ -37,7 +37,7 @@ int main(int argc,char** argv) {
     }
     const int W=256,H=256;
     World world;world.setGameSeed(1);world.setVisPlayer(-1);world.setSerialThreads(true);world.setPathService(true);
-    world.setPathfindingMode(PathfindingMode(mode=="retail"?0:mode=="flowfield"?1:mode=="cooperative"?2:mode=="retail-plus"?3:4));
+    world.setPathfindingMode(mode=="legion"?PathfindingMode::Legion:PathfindingMode::Retail);
     world.setPlayerCount(1);world.setTeam(0,0);
     world.setTerrain(std::vector<uint8_t>(size_t(W)*H,100),W,H,64);
     std::vector<crowdbench_matrix::Rect> walls;

@@ -88,20 +88,7 @@ add_library(tak-formats
   src/cob/cob.cpp
   src/cob/vm.cpp
   src/sim/sim.cpp
-  src/sim/flowsnapshot.cpp
-  src/sim/flowlocal.cpp
-  src/sim/flowtraffic.cpp
-  src/sim/cooperative.cpp
-  src/sim/cooperativemovement.cpp
-  src/sim/cooperativepassages.cpp
-  src/sim/flowobstacles.cpp
-  src/sim/flownavigator.cpp
-  src/sim/flowworkers.cpp
-  src/sim/flowservice.cpp
-  src/sim/flowfield.cpp
   src/sim/pathsearch.cpp
-  src/sim/retailplus.cpp
-  src/sim/retailplusnavigator.cpp
   src/sim/legion.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
@@ -291,45 +278,9 @@ add_executable(navblock_test tools/navblock_test.cpp)
 add_executable(reclaimarea_test tools/reclaimarea_test.cpp)
 add_executable(campaign_test tools/campaign_test.cpp)
 add_executable(campaign_conditions_test tools/campaign_conditions_test.cpp)
-add_executable(flow_matchsetup_test tools/flow_matchsetup_test.cpp)
-target_link_libraries(flow_matchsetup_test PRIVATE tak-formats)
-add_test(NAME flow_matchsetup COMMAND flow_matchsetup_test)
-add_executable(flow_snapshot_test tools/flow_snapshot_test.cpp)
-target_link_libraries(flow_snapshot_test PRIVATE tak-formats)
-add_test(NAME flow_snapshot COMMAND flow_snapshot_test)
-add_executable(flow_memory_test tools/flow_memory_test.cpp)
-target_include_directories(flow_memory_test PRIVATE src)
-add_test(NAME flow_memory COMMAND flow_memory_test)
-add_executable(flow_cache_world_test tools/flow_cache_world_test.cpp)
-target_link_libraries(flow_cache_world_test PRIVATE tak-formats)
-add_executable(flow_actions_test tools/flow_actions_test.cpp)
-target_link_libraries(flow_actions_test PRIVATE tak-formats)
-add_executable(flow_combat_admission_test tools/flow_combat_admission_test.cpp)
-target_link_libraries(flow_combat_admission_test PRIVATE tak-formats)
-add_executable(flow_benchmark tools/flow_benchmark.cpp)
-target_link_libraries(flow_benchmark PRIVATE tak-formats)
-add_executable(flow_routing_compare tools/flow_routing_compare.cpp)
-target_link_libraries(flow_routing_compare PRIVATE tak-formats)
-add_test(NAME flow_routing_compare COMMAND flow_routing_compare)
-add_executable(flow_shared_field_test tools/flow_shared_field_test.cpp)
-target_link_libraries(flow_shared_field_test PRIVATE tak-formats)
-add_test(NAME flow_shared_field COMMAND flow_shared_field_test)
-add_executable(flow_admission_test tools/flow_admission_test.cpp)
-target_link_libraries(flow_admission_test PRIVATE tak-formats)
-add_executable(flow_profile_maze_test tools/flow_profile_maze_test.cpp)
-target_link_libraries(flow_profile_maze_test PRIVATE tak-formats)
-add_executable(flow_mission_test tools/flow_mission_test.cpp)
-target_link_libraries(flow_mission_test PRIVATE tak-formats)
-add_test(NAME flow_mission_traffic COMMAND flow_mission_test --traffic-only)
-add_executable(flow_world_test tools/flow_world_test.cpp)
-target_link_libraries(flow_world_test PRIVATE tak-formats)
-add_executable(flow_maze_world_test tools/flow_maze_world_test.cpp)
-target_link_libraries(flow_maze_world_test PRIVATE tak-formats)
-add_executable(flow_group_maze_test tools/flow_group_maze_test.cpp)
-target_link_libraries(flow_group_maze_test PRIVATE tak-formats)
-add_executable(flowfield_test tools/flowfield_test.cpp)
-target_link_libraries(flowfield_test PRIVATE tak-formats)
-add_test(NAME flowfield COMMAND flowfield_test)
+add_executable(pathfinding_matchsetup_test tools/pathfinding_matchsetup_test.cpp)
+target_link_libraries(pathfinding_matchsetup_test PRIVATE tak-formats)
+add_test(NAME pathfinding_matchsetup COMMAND pathfinding_matchsetup_test)
 
 add_executable(pathsearch_test tools/pathsearch_test.cpp)
 add_executable(pathgeom_test tools/pathgeom_test.cpp)
@@ -351,33 +302,27 @@ endforeach()
 add_executable(legion_group_motion tools/legion_group_motion.cpp)
 target_link_libraries(legion_group_motion PRIVATE tak-formats)
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
-# Legion asserts; the other modes run the same checks with --report (comparison
+# Legion asserts; Retail runs the same checks with --report (comparison
 # evidence, never failing).
 add_executable(legion_acceptance_test tools/legion_acceptance_test.cpp)
 target_link_libraries(legion_acceptance_test PRIVATE tak-formats)
 foreach(legion_check singleunit group jagged trapped crowdheld)
   add_test(NAME legion_acceptance_${legion_check}_legion COMMAND legion_acceptance_test legion ${legion_check})
   set_tests_properties(legion_acceptance_${legion_check}_legion PROPERTIES TIMEOUT 600)
-  foreach(legion_mode retail retail-plus flowfield cooperative)
-    add_test(NAME legion_acceptance_${legion_check}_${legion_mode}
-             COMMAND legion_acceptance_test ${legion_mode} ${legion_check} --report)
-    set_tests_properties(legion_acceptance_${legion_check}_${legion_mode} PROPERTIES TIMEOUT 600)
-  endforeach()
+  add_test(NAME legion_acceptance_${legion_check}_retail
+           COMMAND legion_acceptance_test retail ${legion_check} --report)
+  set_tests_properties(legion_acceptance_${legion_check}_retail PROPERTIES TIMEOUT 600)
 endforeach()
 # KNOWN FAILURE, thresholds unchanged: on a packed per-unit goal grid (one-cell
 # gaps) behind a gated door, late units find every approach lane walled by
-# settled bodies. Legion reaches 59/64 in goal with 1 terrain-stuck unit; no
-# other mode passes. See docs/legion-pathfinding.md "Known weaknesses".
+# settled bodies. Legion reaches 59/64 in goal with 1 terrain-stuck unit;
+# Retail does not pass either. See docs/legion-pathfinding.md "Known weaknesses".
 # (legion_acceptance_group_legion passes since the yield-before-redetour fix.)
 set_tests_properties(legion_acceptance_crowdheld_legion PROPERTIES DISABLED TRUE)
 add_executable(retail_search_scratch_test tools/retail_search_scratch_test.cpp)
 target_include_directories(retail_search_scratch_test PRIVATE src)
-add_executable(retailplus_traffic_test tools/retailplus_traffic_test.cpp)
-target_link_libraries(retailplus_traffic_test PRIVATE tak-formats)
 add_executable(retail_group_test tools/retail_group_test.cpp)
 target_link_libraries(retail_group_test PRIVATE tak-formats)
-add_executable(retailplus_world_test tools/retailplus_world_test.cpp)
-target_link_libraries(retailplus_world_test PRIVATE tak-formats)
 add_executable(cobanim_test tools/cobanim_test.cpp)
 add_executable(unit_gift_test tools/unit_gift_test.cpp)
 target_link_libraries(unit_gift_test PRIVATE tak-formats)
@@ -487,37 +432,8 @@ add_test(NAME retail_visual COMMAND retail_visual_test)
 add_executable(order_trail_test tools/order_trail_test.cpp src/client/ordertrail.cpp)
 target_link_libraries(order_trail_test PRIVATE tak-formats)
 add_test(NAME order_trail COMMAND order_trail_test)
-add_executable(flow_group_commands_test tools/flow_group_commands_test.cpp)
-target_link_libraries(flow_group_commands_test PRIVATE tak-formats)
-add_test(NAME flow_group_commands COMMAND flow_group_commands_test)
-add_executable(flow_group_obstacle_test tools/flow_group_obstacle_test.cpp)
-target_link_libraries(flow_group_obstacle_test PRIVATE tak-formats)
-add_test(NAME flow_group_obstacle COMMAND flow_group_obstacle_test)
-add_executable(cooperative_corridor_test tools/cooperative_corridor_test.cpp)
-target_link_libraries(cooperative_corridor_test PRIVATE tak-formats)
-add_test(NAME cooperative_corridor COMMAND cooperative_corridor_test)
-foreach(cooperative_tool checkpoint group memory maze traffic passages freshness clearance movement followers progress)
-  add_executable(cooperative_${cooperative_tool}_test tools/cooperative_${cooperative_tool}_test.cpp)
-  target_link_libraries(cooperative_${cooperative_tool}_test PRIVATE tak-formats)
-endforeach()
-add_executable(cooperative_benchmark tools/cooperative_benchmark.cpp)
-target_link_libraries(cooperative_benchmark PRIVATE tak-formats)
-add_test(NAME cooperative_memory COMMAND cooperative_memory_test)
-add_test(NAME cooperative_group COMMAND cooperative_group_test)
-add_test(NAME cooperative_traffic COMMAND cooperative_traffic_test)
-add_test(NAME cooperative_passages COMMAND cooperative_passages_test)
-add_test(NAME cooperative_freshness COMMAND cooperative_freshness_test)
-add_test(NAME cooperative_clearance COMMAND cooperative_clearance_test)
-add_test(NAME cooperative_movement COMMAND cooperative_movement_test)
-add_test(NAME cooperative_followers COMMAND cooperative_followers_test)
-foreach(cooperative_case east diagonal turn corridor corridor-far)
-  add_test(NAME cooperative_progress_${cooperative_case} COMMAND cooperative_progress_test cooperative ${cooperative_case} 64 12000 complete)
-endforeach()
-add_test(NAME cooperative_production COMMAND production_test --cooperative)
-add_test(NAME cooperative_transport COMMAND transport_test --cooperative)
-add_test(NAME retailplus_production COMMAND production_test --retail-plus)
-add_test(NAME retailplus_transport COMMAND transport_test --retail-plus)
-add_test(NAME cooperative_movement_orders COMMAND movement_orders_test --cooperative)
+add_executable(navigation_checkpoint_test tools/navigation_checkpoint_test.cpp)
+target_link_libraries(navigation_checkpoint_test PRIVATE tak-formats)
 # Legion mission goals (attack, chase, guard, fight-move, patrol, group patrol,
 # repair and build approaches).
 add_test(NAME legion_movement_orders COMMAND movement_orders_test --legion)
@@ -525,9 +441,6 @@ add_test(NAME legion_movement_orders COMMAND movement_orders_test --legion)
 # approaches and PARK rings (each asserts Legion served the leg).
 add_test(NAME legion_production COMMAND production_test --legion)
 add_test(NAME legion_transport COMMAND transport_test --legion)
-set_tests_properties(flow_group_commands PROPERTIES TIMEOUT 180)
-add_test(NAME flow_group_arrival_large COMMAND flow_group_commands_test large)
-set_tests_properties(flow_group_arrival_large PROPERTIES TIMEOUT 600)
 add_executable(retail_movement_animation_test tools/retail_movement_animation_test.cpp)
 target_link_libraries(retail_movement_animation_test PRIVATE tak-formats)
 add_test(NAME retail_movement_animation COMMAND retail_movement_animation_test)
@@ -598,10 +511,7 @@ add_test(NAME pathsearch COMMAND pathsearch_test)
 add_test(NAME retail_scheduler COMMAND retail_scheduler_test)
 add_test(NAME retail_trace COMMAND retail_trace_test --selftest)
 add_test(NAME retail_search_scratch COMMAND retail_search_scratch_test)
-add_test(NAME retailplus_traffic COMMAND retailplus_traffic_test)
 add_test(NAME retail_group COMMAND retail_group_test)
-add_test(NAME retailplus_world COMMAND retailplus_world_test)
-set_tests_properties(retailplus_world PROPERTIES TIMEOUT 180)
 add_test(NAME auth COMMAND authtest)
 add_test(NAME unit_gift COMMAND unit_gift_test)
 add_test(NAME cmdflow COMMAND cmdflow_test)
@@ -611,10 +521,8 @@ add_test(NAME campaign_conditions COMMAND campaign_conditions_test)
 add_test(NAME conn COMMAND conn_test)
 add_test(NAME featgen COMMAND featgen_test)
 add_test(NAME transport COMMAND transport_test)
-add_test(NAME flow_transport COMMAND transport_test --flow)
 add_test(NAME explode_capture COMMAND cobanim_test --explode-capture)
 add_test(NAME production COMMAND production_test)
-add_test(NAME flow_production COMMAND production_test --flow)
 add_test(NAME replay COMMAND replay_test)
 add_test(NAME pathblock COMMAND pathblock_test)
 add_test(NAME movement_orders COMMAND movement_orders_test)
@@ -658,36 +566,13 @@ if(TAK_TEST_DATA)
     set_tests_properties(movement_orders_maze PROPERTIES TIMEOUT 300)
     add_test(NAME movement_orders_trolls COMMAND movement_orders_test --trolls "${TAK_TEST_DATA}")
     set_tests_properties(movement_orders_trolls PROPERTIES TIMEOUT 300)
-    add_test(NAME cooperative_movement_orders_maze COMMAND movement_orders_test --cooperative "${TAK_TEST_DATA}")
     add_test(NAME legion_movement_orders_maze COMMAND movement_orders_test --legion "${TAK_TEST_DATA}")
     set_tests_properties(legion_movement_orders_maze PROPERTIES TIMEOUT 600)
-    add_test(NAME retailplus_maze_known COMMAND flow_maze_world_test "${TAK_TEST_DATA}" --retail-plus-known)
-    add_test(NAME retailplus_maze_groups COMMAND cooperative_maze_test "${TAK_TEST_DATA}" retail-plus known)
-    set_tests_properties(retailplus_maze_known retailplus_maze_groups PROPERTIES TIMEOUT 180)
-    add_test(NAME cooperative_movement_orders_trolls COMMAND movement_orders_test --cooperative --trolls "${TAK_TEST_DATA}")
     # Open-ground cohorts, and (separately, serial == workers) the 100-Troll
     # rally cohort on the generated maze.
     add_test(NAME legion_movement_orders_trolls COMMAND movement_orders_test --legion --trolls "${TAK_TEST_DATA}" open)
     add_test(NAME legion_movement_orders_trolls_maze COMMAND movement_orders_test --legion --trolls "${TAK_TEST_DATA}" maze)
     set_tests_properties(legion_movement_orders_trolls legion_movement_orders_trolls_maze PROPERTIES TIMEOUT 900)
-    add_test(NAME cooperative_maze_known COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative known)
-    add_test(NAME cooperative_maze_discovery COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative discovery)
-    set_tests_properties(cooperative_movement_orders_maze cooperative_movement_orders_trolls
-        cooperative_maze_known cooperative_maze_discovery PROPERTIES TIMEOUT 600)
-    add_test(NAME flow_cache_world COMMAND flow_cache_world_test "${TAK_TEST_DATA}")
-    add_test(NAME flow_actions COMMAND flow_actions_test "${TAK_TEST_DATA}")
-    add_test(NAME flow_combat_admission COMMAND flow_combat_admission_test "${TAK_TEST_DATA}")
-    add_test(NAME flow_admission COMMAND flow_admission_test "${TAK_TEST_DATA}")
-    add_test(NAME flow_profile_maze COMMAND flow_profile_maze_test "${TAK_TEST_DATA}")
-    set_tests_properties(flow_profile_maze PROPERTIES TIMEOUT 600)
-    add_test(NAME flow_mission COMMAND flow_mission_test "${TAK_TEST_DATA}")
-    add_test(NAME flow_world COMMAND flow_world_test "${TAK_TEST_DATA}")
-    add_test(NAME flow_maze_world COMMAND flow_maze_world_test "${TAK_TEST_DATA}")
-    set_tests_properties(flow_maze_world PROPERTIES TIMEOUT 1800)
-    add_test(NAME flow_group_maze COMMAND flow_group_maze_test "${TAK_TEST_DATA}")
-    # This data-backed 64x64 regression executes bounded multi-unit progress
-    # windows; unoptimized builds need extra wall time under a parallel sweep.
-    set_tests_properties(flow_group_maze PROPERTIES TIMEOUT 600)
     add_test(NAME map_transfer_data COMMAND map_transfer_test "${TAK_TEST_DATA}")
     add_test(NAME mapgen_roster COMMAND mapgen_test "${TAK_TEST_DATA}")
     add_test(NAME mapgen_mana COMMAND mapgen_test "${TAK_TEST_DATA}" --mana)
@@ -704,12 +589,6 @@ if(TAK_TEST_DATA)
         --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
         "Lake Lokken" vertrans araarch 240 120 240 350)
     add_test(NAME transport_map_roundtrip_crusades COMMAND transport_test
-        --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
-        "Lake Lokken" vertrans araarch 240 120 240 350 1)
-    add_test(NAME flow_transport_map_roundtrip COMMAND transport_test --flow
-        --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
-        "Lake Lokken" vertrans araarch 240 120 240 350)
-    add_test(NAME flow_transport_map_roundtrip_crusades COMMAND transport_test --flow
         --surface-transport-map-roundtrip-type "${TAK_TEST_DATA}"
         "Lake Lokken" vertrans araarch 240 120 240 350 1)
     add_test(NAME animation_roster COMMAND animation_roster_test "${TAK_TEST_DATA}")
@@ -1328,7 +1207,7 @@ if(Python3_Interpreter_FOUND)
     "${CMAKE_SOURCE_DIR}/tools/crowdbench_matrix_test.py")
   add_test(NAME navigation_determinism COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/navigation_determinism_test.py"
-    "$<TARGET_FILE:cooperative_checkpoint_test>"
+    "$<TARGET_FILE:navigation_checkpoint_test>"
     "${CMAKE_SOURCE_DIR}/tools/navigation_checkpoints.json")
   set_tests_properties(navigation_determinism PROPERTIES TIMEOUT 1200)
   add_test(NAME crusades_admin_cli COMMAND "${Python3_EXECUTABLE}"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Visual review sheets for the four navigation modes (observed positions only).
+# Visual review sheets for the navigation modes (observed positions only).
 #
 #   tools/navigation_visual.sh CROWDBENCH OUT_DIR [CPU_LIST] [TICKS] [SCENARIOS...]
 #
 # For every scenario (default: doors maze opposingcolumns sharedgoal exploration)
 # and population (VISUAL_UNITS, default "200 2000"; one player, all moving, seed
-# VISUAL_SEED=0), runs Retail, Retail+, Flowfield and Cooperative with --trace,
+# VISUAL_SEED=0), runs Retail and Legion (MODES overrides) with --trace,
 # then writes OUT_DIR/<scenario>-<units>.png: one row per mode, columns at fixed
 # ticks plus a time-in-place heatmap (tools/navigation_plot.py). Per-tick traces
 # are large (~100 MB at 2000 units) and are deleted after plotting unless
@@ -27,7 +27,7 @@ for part in "${parts[@]}"; do
   if [[ "$part" == *-* ]]; then for ((c=${part%-*}; c<=${part#*-}; c++)); do cpu_list+=("$c"); done
   else cpu_list+=("$part"); fi
 done
-modes=(${MODES:-retail retail-plus flowfield cooperative})
+modes=(${MODES:-retail legion})
 jobs=()
 for scenario in "${scenarios[@]}"; do
   for units in ${VISUAL_UNITS:-200 2000}; do

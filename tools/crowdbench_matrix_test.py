@@ -19,7 +19,7 @@ SPEC.loader.exec_module(matrix)
 
 class MatrixTests(unittest.TestCase):
     def test_variability_and_censored_completion(self):
-        rows = [dict(mode="cooperative", seed=7, hash="fixed", tick_ms_mean=value,
+        rows = [dict(mode="legion", seed=7, hash="fixed", tick_ms_mean=value,
                      all_arrived_tick=-1, arrived_settled=4) for value in (1, 2, 3)]
         summary, = matrix.summarize(rows)
         self.assertTrue(summary["outcomes_deterministic"])
@@ -58,7 +58,7 @@ class MatrixTests(unittest.TestCase):
             self.assertIn("src/new.h", second["source_files_sha256"])
             self.assertIn("modified", second["tracked_diff"])
 
-    def test_runner_checks_identity_and_writes_all_five_modes(self):
+    def test_runner_checks_identity_and_writes_both_modes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             binary = root / "fake-crowdbench"
@@ -83,10 +83,10 @@ class MatrixTests(unittest.TestCase):
                     matrix.subprocess, "run", side_effect=fake_run), contextlib.redirect_stdout(io.StringIO()):
                 matrix.main()
             manifest = json.loads((out / "manifest.json").read_text())
-            self.assertEqual(len(manifest["runs"]), 20)
+            self.assertEqual(len(manifest["runs"]), 8)
             self.assertTrue(manifest["binary_unchanged"])
             summaries = json.loads((out / "summary.json").read_text())
-            self.assertEqual(len(summaries), 10)
+            self.assertEqual(len(summaries), 4)
             self.assertEqual({row["mode"] for row in summaries}, set(matrix.MODES))
             self.assertTrue(all(row["runs"] == 2 for row in summaries))
 
@@ -186,7 +186,7 @@ class FinalMatrixTests(unittest.TestCase):
             calls = []
             with self.assertRaises(SystemExit):
                 self.invoke(["run", "--phase", "outcome", "--binary", f"checkpoint={a}", "--cpus", "0-1",
-                             "--scenarios", "doors", "maze", "--populations", "10:1:100", "--modes", "cooperative",
+                             "--scenarios", "doors", "maze", "--populations", "10:1:100", "--modes", "legion",
                              "--seeds", "0", "7", "--ticks", "5", "--long-ticks", "9", "--long-population",
                              "20:1:100", "--output", str(root / "outcome")],
                             {str(a.resolve())}, calls, broken="maze")

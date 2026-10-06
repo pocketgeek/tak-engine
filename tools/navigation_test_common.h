@@ -8,19 +8,16 @@
 #include <string_view>
 #include <vector>
 
-namespace cooperative_test {
+namespace navigation_test {
 using namespace tak::sim;
 inline void require(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 inline PathfindingMode mode(std::string_view value) {
-    if(value=="retail")return PathfindingMode(0);
-    if(value=="flowfield")return PathfindingMode(1);
-    if(value=="cooperative")return PathfindingMode(2);
-    if(value=="retail-plus")return PathfindingMode(3);
-    if(value=="legion")return PathfindingMode(4);
-    throw std::runtime_error("mode must be retail, retail-plus, flowfield, cooperative, or legion");
+    if(value=="retail")return PathfindingMode::Retail;
+    if(value=="legion")return PathfindingMode::Legion;
+    throw std::runtime_error("mode must be retail or legion");
 }
 inline UnitType mover(int kind=0,bool boat=false) {
-    UnitType type{};type.id=type.name="cooperative-mover-"+std::to_string(kind);
+    UnitType type{};type.id=type.name="navigation-mover-"+std::to_string(kind);
     type.canMove=true;type.maxHp=100;type.footX=type.footZ=2;type.sight=4096;
     type.maxVel=Fixed::raw(std::array{117964,65536,91750}[size_t(kind%3)]);
     type.accel=type.brake=Fixed::fromInt(10);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Final four-mode navigation matrix: frozen baseline versus candidate crowdbench.
+"""Final navigation matrix: frozen baseline versus candidate crowdbench.
 
 Two phases, deliberately separate:
 
@@ -45,7 +45,7 @@ import crowdbench_matrix as cm  # noqa: E402  (provenance/hardware/sha256 helper
 SCENARIOS = cm.SCENARIOS
 ALL_SCENARIOS = cm.ALL_SCENARIOS
 MODES = cm.MODES
-# Default: the four modes the frozen baseline can run. Add Legion with --modes.
+# Default: the mode the frozen baseline can run. Add Legion with --modes.
 DEFAULT_MODES = cm.LEGACY_MODES
 FULL_POPULATIONS = ("200:1:100", "500:1:100", "1000:1:100", "2000:1:100", "500:4:100", "250:8:50")
 LONG_SCENARIOS = ("doors", "maze", "sharedgoal", "opposingcolumns")
@@ -56,8 +56,7 @@ TIMING_POPULATIONS = ("200:1:100", "2000:1:100", "500:4:100")
 # checkpoint outcome matrix (23,376 process-seconds) on an i9-275HX running 20
 # pinned processes on cpus 4-23 while other agents loaded the host (load ~40):
 # conservative. An idle P-core should need roughly half. Estimates only.
-COST_PER_MUNIT_TICK = {"retail": 3.2, "retail-plus": 5.1, "flowfield": 2.9, "cooperative": 2.1,
-                       "legion": 5.1}  # Legion: uncalibrated, assumed Retail+-like
+COST_PER_MUNIT_TICK = {"retail": 3.2, "legion": 5.1}  # Legion: uncalibrated
 DIAGNOSTIC_OVERHEAD = 1.15
 
 # Deterministic outcome fields: identical across repeats of one binary. Also the
@@ -69,10 +68,6 @@ OUTCOME_FIELDS = (
     "path_length_px", "path_to_initial_straight_ratio", "illegal_footprint_samples",
     "illegal_final_movers", "first_cross_tick", "last_cross_tick", "peak_pending",
     "retail_work_sum", "retail_requests", "retail_completions", "retail_failures",
-    "flow_requests", "flow_deliveries", "flow_work", "flow_local_work",
-    "retail_plus_searches", "retail_plus_deferred_searches", "retail_plus_waits",
-    "cooperative_searches", "cooperative_deferred_searches", "cooperative_waits",
-    "cooperative_movement_deferred", "local_deferred_work",
     "route_requests_observed", "route_deliveries_observed", "route_delivery_failures",
     "route_requests_still_pending", "route_request_cancelled", "route_request_replaced",
     "route_request_stale", "route_request_cleared",
@@ -81,7 +76,6 @@ OUTCOME_FIELDS = (
     "route_request_to_delivery_ticks_received_only_p99",
     "route_pending_age_ticks_max",
     "tick_cpp_allocation_calls", "tick_cpp_allocation_requested_bytes",
-    "flow_navigation_peak_bytes", "retail_plus_bytes", "cooperative_bytes",
 )
 TIMING_FIELDS = ("tick_ms_mean", "tick_ms_p50", "tick_ms_p95", "tick_ms_p99", "process_peak_rss_kib")
 CSV_LEAD = ("phase", "role", "mode", "scenario", "units_per_player", "players", "moving_percent",
@@ -158,8 +152,6 @@ def run_one(command, cpu, timeout):
 
 def derived(data):
     """Fields computed from raw counters, identical for every binary."""
-    data["local_deferred_work"] = sum(int(data.get(key) or 0) for key in (
-        "retail_plus_deferred_searches", "cooperative_deferred_searches", "cooperative_movement_deferred"))
     return data
 
 
@@ -426,8 +418,7 @@ def report(out):
                 if field == "all_arrived_tick":
                     cells.append(f"{sum(1 for r in sel if r.get(field, -1) >= 0)}/{len(sel)}")
                 elif field == "work":
-                    cells.append(fmt(sum((r.get("retail_work_sum") or 0) + (r.get("flow_work") or 0) +
-                                         (r.get("retail_plus_searches") or 0) for r in sel)))
+                    cells.append(fmt(sum((r.get("retail_work_sum") or 0) for r in sel)))
                 elif field == "lat":
                     values = [r.get("route_request_to_delivery_ticks_received_only_p95") for r in sel]
                     values = [v for v in values if isinstance(v, (int, float)) and v >= 0]
@@ -458,7 +449,7 @@ def report(out):
                         values = [r.get(field) for r in sel]
                         values = [v for v in values if isinstance(v, (int, float)) and v >= 0]
                         return fmt(statistics.median(values)) if values else "–"
-                    work = stats([(r.get("retail_work_sum") or 0) + (r.get("flow_work") or 0) for r in sel])
+                    work = stats([(r.get("retail_work_sum") or 0) for r in sel])
                     canc = sum((r.get("route_request_cancelled") or 0) + (r.get("route_request_replaced") or 0) +
                                (r.get("route_request_stale") or 0) + (r.get("route_request_cleared") or 0)
                                for r in sel)

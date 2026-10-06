@@ -2,7 +2,6 @@
 #include "sim/matchsetup.h"
 
 #include "sim/detmath.h"
-#include "sim/navigationmemory.h"
 #include "gaf/featureburntiming.h"
 #include "sim/footprint.h"
 #include <algorithm>
@@ -539,14 +538,10 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     } else {
         map = tak::tnt::Map::load(vfs.read(cfg.mapPath), cfg.mapPath);
     }
-    // Validate the incoming pair before replacing terrain. A reused World may
-    // still carry the previous replay's mode/dimensions: neither may constrain
-    // the new match (large Retail -> small shared pathfinder, or the reverse).
+    // Validate the incoming mode before replacing terrain. A reused World may
+    // still carry the previous replay's mode; it must not constrain the new match.
     if(!validPathfindingMode(uint8_t(cfg.pathfindingMode)))
         throw std::invalid_argument("invalid pathfinding mode");
-    if(isSharedPathfinding(cfg.pathfindingMode) &&
-       !navigationMemoryPlan(cfg.pathfindingMode,map.width,map.height).supported)
-        throw std::invalid_argument(std::string(pathfindingModeName(cfg.pathfindingMode))+" supports maps up to 64x64 within its storage budget");
     world.setPathfindingMode(PathfindingMode::Retail);
     world.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     world.setNoSeaLevelTrigger(noSeaLevelTrigger);

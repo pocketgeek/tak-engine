@@ -34,9 +34,6 @@
 #include <thread>
 #include "sim/pathsearch.h"
 #include "sim/pathmode.h"
-#include "sim/flownavigator.h"
-#include "sim/cooperativemovement.h"
-#include "sim/retailplusnavigator.h"
 #include "sim/legion.h"
 #include <cstdint>
 #include <deque>
@@ -605,15 +602,11 @@ struct Order {
     bool landing = false; // controller owned by the VTOL landing mission
     // Tick this order was issued, for the order-line beads: retail phases the
     // trail by (now - orderCreationTick) so each segment's dots crawl toward the
-    // destination independently (icd 0x4d5747 reading order+0x5e). Flowfield also
-    // uses this to retain arrival progress across retries of the same mission.
+    // destination independently (icd 0x4d5747 reading order+0x5e).
     uint32_t issuedTick = 0;
-    // Automatic Flowfield production exit. A blocked generated parking point
+    // Automatic Legion production exit. A blocked generated parking point
     // may retire once the child has cleared this original birthplace.
     std::optional<std::pair<Fixed,Fixed>> productionExit;
-    // Retail+ keeps automatic exits in the native mission handler; unlike
-    // productionExit, this does not authorize shared-area early acceptance.
-    bool nativeProductionExit=false;
     // Where the player actually CLICKED, when that differs from x/z. order()
     // snaps a destination the unit cannot stand on to the nearest cell it fits
     // in, so x/z is where the unit will END UP -- but the on-map marker belongs
@@ -1317,8 +1310,6 @@ struct BenchStage { uint32_t tick = 0; std::vector<BenchSpawn> units; };
 class World {
     // Offline diagnostic importer; not a supported game-save load interface.
     friend struct RetailReplayProbe;
-    friend class FlowNavigator;
-    friend class RetailPlusNavigator;
     friend class LegionNavigator;
 public:
     int spawn(const UnitType* type, float x, float z, std::optional<float> heading = {}, int player = 0);
@@ -1346,9 +1337,6 @@ public:
     const PathService& pathStats() const { return paths_; }
     void setPathfindingMode(PathfindingMode mode);
     PathfindingMode pathfindingMode() const { return pathfindingMode_; }
-    FlowNavigator::Stats flowStats() const;
-    cooperative::MovementBatch::Stats cooperativeMovementStats() const {return cooperativeMovementStats_;}
-    RetailPlusNavigator::Stats retailPlusStats() const {return retailPlus_?retailPlus_->stats():RetailPlusNavigator::Stats{};}
     // Retail mode's native group record for a unit (null outside Retail or ungrouped).
     const RetailGroupRecord* retailGroupRecord(int unitId) const {
         const Unit* u=unit(unitId);return u?retailGroupOf(*u):nullptr;
@@ -1364,7 +1352,7 @@ public:
     int cellScore(const UnitType* t, int cx, int cz, int selfId) const;
 
     // Enable retail's background pathfinder for this world (default off).
-    void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};} }
+    void setPathService(bool on) { pathService_ = on; if (!on) {paths_.clear();legion_.reset();} }
     // Path search work units per tick, shared across all pending requests.
     void setPathBudget(int b) { paths_.setBudget(b); }
     // Bit p: player p is in retail's 5x path-budget class (see pathBudgetClassMask_).
@@ -1482,8 +1470,6 @@ public:
     Fixed groundTerrainMultiplier(const Unit& subject) const;
     void brakeGround(Unit& subject,std::optional<Bam> facing=std::nullopt);
     void tickNavigationMovement(Unit& subject,Fixed maximum);
-    void followGroundLeader(Unit& subject,Fixed maximum);
-    void flushGroundFollowers();
     SinCos steerGround(Unit& subject,RetailSteeringPoint start,RetailSteeringPoint end,
                        RetailSteeringPoint next,Fixed maximum);
     bool featureReclaimable(const Feature& f) const {
@@ -1615,7 +1601,7 @@ public:
         clearScenarioState();
         scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
-        paths_.clear();flow_.reset();retailPlus_.reset();legion_.reset();cooperativeMovement_.reset();cooperativeMovementStats_={};
+        paths_.clear();legion_.reset();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         projectiles_.clear();flames_.clear();
@@ -2501,7 +2487,6 @@ private:
                                  // (deterministic: derived from the live-unit count)
     PathService paths_;          // retail's request queue + budget scheduler
     PathfindingMode pathfindingMode_=PathfindingMode::Retail;
-    std::unique_ptr<RetailPlusNavigator> retailPlus_;
     std::unique_ptr<LegionNavigator> legion_; // Legion mode only
     // Bumped whenever terrain/feature placement legality may change. Derived
     // planes compare it; never hashed (it is a cache key, not state).
@@ -2517,13 +2502,6 @@ private:
         if(placementDirty_.size()>=1024) {placementDirtyAll_=true;placementDirty_.clear();return;}
         placementDirty_.push_back({x,z,w,h});
     }
-    std::unique_ptr<FlowNavigator> flow_; // never instantiated by Retail matches
-    std::unique_ptr<cooperative::MovementBatch> cooperativeMovement_;
-    cooperative::MovementBatch::Stats cooperativeMovementStats_;
-    // Derived before unit updates, reused by every flight-body entry path.
-    // Not persistent state: the formation aggregation rebuilds it each tick.
-    struct FlowFormationCap { Fixed maximum; bool active=false; };
-    FlowFormationCap flowFormationCaps_[kMaxPlayers][11] = {};
     // Retail mode only: the native group records (51b890), rebuilt before
     // missions and movers each tick. Centres persist when a class empties,
     // as retail's setters leave them. groupPaced_ is the per-unit navigator
@@ -2538,7 +2516,7 @@ private:
     void tickRetailGroups();
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
-    bool pathPending(int id) const {return flow_?flow_->pending(id):paths_.pending(id);}
+    bool pathPending(int id) const {return paths_.pending(id);}
 
     struct UnitScript {
         cob::RetailScriptState state;

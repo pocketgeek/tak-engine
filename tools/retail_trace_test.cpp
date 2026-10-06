@@ -515,7 +515,6 @@ static int selfTest() {
         check(RetailReplayProbe::budgetClass(PathfindingMode::Retail,false,player),"retail player in 5x budget class");
     check(RetailReplayProbe::budgetClass(PathfindingMode::Retail,true,0),"campaign human keeps 5x budget class");
     check(!RetailReplayProbe::budgetClass(PathfindingMode::Retail,true,3),"non-strategic campaign player has 1x budget class");
-    check(!RetailReplayProbe::budgetClass(PathfindingMode::RetailPlus,false,0),"Retail+ keeps the unweighted budget split");
     check(RetailReplayProbe::gateGrade(true,false,false,3,2,1,1)==3,"closed gate c passage has special grade");
     check(RetailReplayProbe::gateGrade(true,false,false,4,2,1,1)==3,"closed gate C passage has special grade");
     check(RetailReplayProbe::gateGrade(true,false,false,2,2,1,1)==0,"gate frame remains blocked");
@@ -571,14 +570,10 @@ static int selfTest() {
     }
     check(RetailReplayProbe::sameCellRequest(PathfindingMode::Retail),
           "Retail submits a same-cell goal; it completes at once with 0x1000 and no points");
-    for (auto mode:{PathfindingMode::RetailPlus,PathfindingMode::Flowfield,PathfindingMode::Cooperative})
-        check(RetailReplayProbe::sameCellRequest(mode),"other modes keep the same-cell cancellation");
     {
-        uint32_t retail=0,plus=0;
+        uint32_t retail=0;
         check(RetailReplayProbe::sameCellOrder(PathfindingMode::Retail,retail),
               "Retail same-cell order: arrival cancels the submission and the order retires");
-        check(RetailReplayProbe::sameCellOrder(PathfindingMode::RetailPlus,plus) && retail==plus,
-              "same-cell arrival/retirement tick is unchanged by the submission");
     }
     check(RetailReplayProbe::emptyDelivery(false),
           "empty route disables navigation and notifies failure without discarding the mission queue");

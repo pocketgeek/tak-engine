@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 230;      // 230: Legion routes all applicable movement commands (combat/escort,
+constexpr uint32_t kNetVersion = 231;      // 231: Retail+, Flowfield and Cooperative pathfinding removed;
+                                           //      mode bytes 1-3 are now invalid (Retail 0, Legion 4)
+                                           // 230: Legion routes all applicable movement commands (combat/escort,
                                            //      work/logistics, boats, hovercraft) + corner-step/column fix
                                            // 229: Legion lag/settle/follow/lane changes; Retail audit (5x budget
                                            //      class, same-cell submit, group pacing, cargo sight, exact

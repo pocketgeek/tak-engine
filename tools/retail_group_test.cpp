@@ -1,10 +1,9 @@
 // Retail mode group pacing (51b890 / 4d95f0 / 402880): slowest type speed,
-// straggler slowdown, and re-forming through Move_Ground_Formation. Retail+
-// keeps its own documented pacing and must not see any of this.
-#include "cooperative_test_common.h"
+// straggler slowdown, and re-forming through Move_Ground_Formation.
+#include "navigation_test_common.h"
 #include <cstdlib>
 
-using namespace cooperative_test;
+using namespace navigation_test;
 namespace {
 bool formationMission(const Unit& u) {
     return std::any_of(u.orders.begin(),u.orders.end(),[](const Order& o){return o.formationLevel!=0;});
@@ -108,7 +107,7 @@ void geometry() {
 int main() {
     try {
         geometry();slowest();
-        straggler(PathfindingMode::Retail);straggler(PathfindingMode::RetailPlus);
+        straggler(PathfindingMode::Retail);
     } catch(const std::exception& error) {std::fprintf(stderr,"FAIL: %s\n",error.what());return 1;}
     std::puts("retail group pacing: PASS");
     return 0;

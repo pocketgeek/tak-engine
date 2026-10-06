@@ -39,7 +39,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
     auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
     base.weapon.damage=0;base.weapons.clear();
     auto builder=soldier;builder.isBuilder=true;builder.commander=true;
-    for (auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Flowfield}) {
+    for (auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Legion}) {
         sim::World w;terrain(w);w.setPathfindingMode(mode);w.player(0).defensiveAi=true;
         w.spawn(&base,400,800,0,0);
         std::vector<int> army;

@@ -102,7 +102,7 @@ int main() {
     }
 
     std::printf("pathfinding mode and incompatible recordings:\n");
-    for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Flowfield, tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Legion}) {
+    for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Legion}) {
         auto in = sample(); in.mission.clear(); in.pathfindingMode = mode;
         Writer w; writeReplayHeader(w, in);
         const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 2;
@@ -110,18 +110,19 @@ int main() {
         Reader r(w.b.data()+4,w.b.size()-4);
         check(readReplayHeader(r,out,fmt,proto) && out.pathfindingMode==mode,
               "explicit skirmish pathfinder survives recording");
-        for (uint8_t unknown : {uint8_t(5), uint8_t(255)}) {
+        // 1-3 were the removed Flowfield, Cooperative and Retail+ identities.
+        for (uint8_t unknown : {uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(5), uint8_t(255)}) {
             auto bad = w.b; bad[modeAt] = unknown;
             Reader invalid(bad.data()+4,bad.size()-4);
             check(!readReplayHeader(invalid,out,fmt,proto), "unknown pathfinder is refused");
         }
         w.b.erase(w.b.begin()+modeAt); w.b[4]=10; w.b[8]=219;
         Reader old(w.b.data()+4,w.b.size()-4);
-        out.pathfindingMode=tak::sim::PathfindingMode::Flowfield;
+        out.pathfindingMode=tak::sim::PathfindingMode::Legion;
         check(readReplayHeader(old,out,fmt,proto) && out.pathfindingMode==tak::sim::PathfindingMode::Retail &&
               !supportedReplayProtocol(fmt,proto), "old header is readable but incompatible playback is refused");
     }
-    for(auto mode:{tak::sim::PathfindingMode::Flowfield,tak::sim::PathfindingMode::Cooperative,tak::sim::PathfindingMode::RetailPlus,tak::sim::PathfindingMode::Legion}) {
+    for(auto mode:{tak::sim::PathfindingMode::Legion}) {
         auto in=sample(); in.pathfindingMode=mode;
         Writer w; writeReplayHeader(w,in);
         Reader r(w.b.data()+4,w.b.size()-4); ReplayHeader out; uint32_t fmt=0,proto=0;
@@ -136,7 +137,7 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 230, "replay format 11 is kept under protocol 230");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 231, "replay format 11 is kept under protocol 231");
     check(!supportedReplayProtocol(11, 224), "previous two-pathfinder simulation protocol is refused");
     check(!supportedReplayProtocol(11, 219), "old protocol cannot claim a flow-capable format");
     check(!supportedReplayProtocol(9, 212), "older simulation protocol is refused");

@@ -122,7 +122,7 @@ void repairPolicy() {
     check(!w.unit(id)->repairId,"patrol repair does not resurrect a dying target");
 }
 void repairEligibility() {
-    for(auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Flowfield,sim::PathfindingMode::RetailPlus}) {
+    for(auto mode:{sim::PathfindingMode::Retail}) {
         sim::World w;setup(w,mode);auto builder=worker();builder.sight=200;
         auto target=lodestone();target.onMana=false;target.footX=target.footZ=2;
         const int id=w.spawn(&builder,256,512,0,0);
@@ -145,7 +145,7 @@ void repairEligibility() {
     }
 }
 void movingRepair() {
-    for(auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Flowfield,sim::PathfindingMode::RetailPlus})
+    for(auto mode:{sim::PathfindingMode::Retail})
         for(bool air:{false,true}) {
             sim::World w;setup(w,mode);auto builder=worker(air);builder.sight=300;builder.workerTime=10;
             auto allyType=worker();allyType.buildTime=100;allyType.buildCost=10;
@@ -200,7 +200,7 @@ void realLodestones(const char* install) {
             }
             check(basic && divine && builder,"all factions have an authorized Divine lodestone builder");
             if (!builder) continue;
-            for(auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Flowfield,sim::PathfindingMode::RetailPlus}) {
+            for(auto mode:{sim::PathfindingMode::Retail}) {
                 sim::World w;setup(w,mode);w.buildNavClasses(registry);
                 w.setManaSpots({{512,512},{896,512}});
                 w.setSacredSites({{31,31,2,2,1},{55,31,2,2,1}});
@@ -229,11 +229,11 @@ void realLodestones(const char* install) {
 }
 }
 int main(int argc,char** argv) {
-    for(auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Flowfield,sim::PathfindingMode::RetailPlus})
+    for(auto mode:{sim::PathfindingMode::Retail})
         for(bool air:{false,true}) {areaBuild(mode,air);patrolRepair(mode,air);}
-    check(areaBuild(sim::PathfindingMode::Flowfield,false,true)==areaBuild(sim::PathfindingMode::Flowfield,false,false),
+    check(areaBuild(sim::PathfindingMode::Retail,false,true)==areaBuild(sim::PathfindingMode::Retail,false,false),
           "area build serial/threaded hashes agree");
-    check(patrolRepair(sim::PathfindingMode::Flowfield,false,true)==patrolRepair(sim::PathfindingMode::Flowfield,false,false),
+    check(patrolRepair(sim::PathfindingMode::Retail,false,true)==patrolRepair(sim::PathfindingMode::Retail,false,false),
           "patrol repair serial/threaded hashes agree");
     areaPolicy();repairPolicy();repairEligibility();movingRepair();
     net::Command c;c.kind=net::Cmd::BuildManaArea;c.unitId=1;c.x=100;c.z=200;c.x2=800;c.z2=900;

@@ -6,7 +6,7 @@
 # `ctest -R` passes silently for a pattern that matches nothing: a renamed test,
 # or one CMake skipped (the Python-driven navigation tests are registered only
 # when CMake finds an interpreter) would quietly drop out of CI. Each NAME is an
-# exact test name or a prefix ending in `*` (e.g. cooperative_progress_*), which
+# exact test name or a prefix ending in `*` (e.g. legion_acceptance_*), which
 # must match at least one registered test. Portable to bash 3.2 (macOS) and MSYS2.
 set -euo pipefail
 build=${1:?usage: run-ctest-selection.sh BUILD_DIR NAME [NAME...]}
