@@ -50,12 +50,16 @@ def main():
     parser.add_argument('--balance', choices=('standard','crusades'))
     parser.add_argument('--save', type=Path, help='matching save, required for controlled balance inputs')
     parser.add_argument('--cases', type=int, help='default: every captured unit in all three modes')
+    parser.add_argument('--synthesize-missing-corpses', action='store_true',
+                        help='append a native record for a controlled corpse the capture never loaded, '
+                             'cloned from a record with identical placement inputs')
     args = parser.parse_args()
     capture=json.loads(args.capture.read_text())
     p = CapturedProcess(capture)
     if args.balance:
         if not args.save: raise ValueError('--save is required for --balance')
-        set_balance_inputs(p,capture,args.save,args.retail_root,args.balance=='crusades',corpses=True)
+        set_balance_inputs(p,capture,args.save,args.retail_root,args.balance=='crusades',corpses=True,
+                           synthesize_corpses=args.synthesize_missing_corpses)
     read = lambda address, size: bytes(p.uc.mem_read(address, size))
     unpack = lambda fmt, address: struct.unpack('<'+fmt, read(address, struct.calcsize('<'+fmt)))
     base, table = p.u32(p.game+0x19f04), p.u32(p.game+0x19edc)
@@ -130,7 +134,9 @@ def main():
     print(f'PASS: {args.cases} native corpse/stone/frozen placements ({placed_count} accepted), '
           f'{args.cases} retirements, {changed_count} changed feature cells; '
           f'crusades={bool(read(0x641144,1)[0])}, controlled_balance={bool(args.balance)}; '
-          'timing and combat excluded')
+          'timing and combat excluded'
+          +(f"; synthesized native records: {', '.join(getattr(p,'synthesized_features',[]))}"
+            if getattr(p,'synthesized_features',None) else ''))
 
 
 if __name__ == '__main__':

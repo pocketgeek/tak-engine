@@ -44,8 +44,78 @@ def class_record(fields):
         dry,min(soft_dry,dry),wet,min(soft_wet,wet))
 
 
+# Feature loader 493920: footprintx/z -> +0xb0/+0xb2 (4939cf/4939e4), height ->
+# +0x138 (493a0e), sacredsite float -> +0x134 (494074) and the boolean keys
+# below -> +0x13c bits (494088..4942de). Bit 0 marks a feature without an
+# `object` model (493b21/493c04). Destructible features also receive 0x20000
+# (4941a5..4941b3); 4945bb..494854 may later clear it through the
+# featuredead/featureburnt chain. These are the record fields read by corpse
+# placement/removal (495360/496380) and the raw grade's feature branch.
+FEATURE_FLAG_BITS=(('animating',1,0),('animtrans',2,0),('shadtrans',3,0),('flamable',4,0),
+    ('blocking',5,0),('reclaimable',6,0),('autoreclaimable',7,1),('indestructible',8,0),
+    ('nodisplayinfo',9,0),('nodrawundergray',10,0),('resurrectable',11,0),
+    ('animatable',12,0),('noshadow',13,0))
+# Bits consumed by 495360/496380/512ee0 and the 5088f0 feature branch.
+FEATURE_PLACEMENT_MASK=0x1|0x20|0x40|0x80|0x100|0x800|0x1000|0x20000
+
+
+def feature_record_inputs(fields):
+    """Source TDF -> (footprint, height, sacredsite, placement flag bits)."""
+    number=lambda key,default=0: int(float(fields.get(key,default)))
+    flags=0 if fields.get('object') else 1
+    for key,bit,default in FEATURE_FLAG_BITS:
+        flags|=(number(key,default)&1)<<bit
+    if not flags&0x100: flags|=0x20000
+    if fields.get('featuredead') or fields.get('featureburnt'):
+        raise ValueError('synthesized feature records do not model replacement chains')
+    return (number('footprintx'),number('footprintz'),number('height')&255,
+            float(fields.get('sacredsite',0)),flags&FEATURE_PLACEMENT_MASK)
+
+
+def synthesize_feature(process, name, fields):
+    """Append a native feature-table record for a definition the capture never loaded.
+
+    Retail resolves corpse names on demand through 494480 -> 493920, which parses
+    a startup TDF database the capture did not retain. Clone a loaded record whose
+    placement inputs equal the source definition, then rename it and set its
+    decomposeTime. Only display pointers (model, palette, animation) remain the
+    donor's; corpse placement and retirement do not read them for cell state.
+    Returns the new index.
+    """
+    table,count=process.u32(process.game+0x19edc),process.u32(process.game+0x19ec0)
+    wanted=feature_record_inputs(fields)
+    read=lambda address,size: bytes(process.uc.mem_read(address,size))
+    donor=None
+    for index in range(count):
+        record=table+index*320
+        fx,fz=struct.unpack('<2h',read(record+0xb0,4))
+        height=read(record+0x138,1)[0]
+        sacred=struct.unpack('<f',read(record+0x134,4))[0]
+        flags=struct.unpack('<I',read(record+0x13c,4))[0]&FEATURE_PLACEMENT_MASK
+        chain=struct.unpack('<2H',read(record+0x12c,4))
+        if (fx,fz,height,sacred,flags)==wanted and chain==(0xffff,0xffff):
+            donor=index;break
+    if donor is None:
+        raise ValueError(f'no loaded feature record has the placement inputs of {name}: {wanted}')
+    data=bytearray(read(table,count*320))
+    clone=bytearray(data[donor*320:(donor+1)*320])
+    clone[0:32]=name.encode('ascii')[:31].ljust(32,b'\0')
+    # 494332..494353: decomposeTime * [5f0398] truncated to 16 bits; it seeds
+    # the corpse lifetime, not cell state, but should not be the donor's.
+    scale=struct.unpack('<d',read(0x5f0398,8))[0]
+    struct.pack_into('<I',clone,0x130,int(float(fields.get('decomposetime',0))*scale)&0xffff)
+    address=process.brk
+    process.brk=(address+(count+1)*320+15)&~15
+    process.put(address,bytes(data)+bytes(clone))
+    process.allocations[address]=(count+1)*320
+    process.uc.mem_write(process.game+0x19edc,struct.pack('<I',address))
+    process.uc.mem_write(process.game+0x19ec0,struct.pack('<I',count+1))
+    return count
+
+
 def set_balance_inputs(process, capture, save_path, retail_root, crusades,
-                       hpitool=Path('build-dbg/hpitool'), corpses=False, surface=False, motion=False):
+                       hpitool=Path('build-dbg/hpitool'), corpses=False, surface=False, motion=False,
+                       synthesize_corpses=False):
     saved=decode(save_path.read_bytes())
     if saved['source_sha256'] != capture['source_sha256']:
         raise ValueError('balance input save does not belong to capture')
@@ -80,6 +150,7 @@ def set_balance_inputs(process, capture, save_path, retail_root, crusades,
     written=set()
     corpse_written=set()
     feature_names={}
+    synthesized=[]
     if corpses:
         table=process.u32(process.game+0x19edc)
         for index in range(process.u32(process.game+0x19ec0)):
@@ -102,7 +173,15 @@ def set_balance_inputs(process, capture, save_path, retail_root, crusades,
             for key,offset in (('corpse',0x24e),('stone',0x250),('frozen',0x252)):
                 feature=fields.get(key,'').lower()
                 if feature and feature not in feature_names:
-                    raise ValueError(f'controlled corpse feature is not loaded in capture: {feature}')
+                    if not synthesize_corpses:
+                        raise ValueError(f'controlled corpse feature is not loaded in capture: {feature}')
+                    source=asset(f'features/corpses/{feature}.tdf',True)
+                    if source is None: raise ValueError(f'corpse feature source unavailable: {feature}')
+                    sections={match.group(1).lower():properties(match.group(2)) for match in
+                              re.finditer(r'\[([^]]+)\]\s*\{([^{}]*)\}',source)}
+                    if feature not in sections: raise ValueError(f'source lacks [{feature}]')
+                    feature_names[feature]=synthesize_feature(process,feature,sections[feature])
+                    synthesized.append(feature)
                 process.uc.mem_write(unit['type_address']+offset,
                     struct.pack('<H',feature_names[feature] if feature else 0xffff))
             adjustment=tuple(int(fields.get(key,0)) for key in ('corpseadjustx','corpseadjustz'))
@@ -151,4 +230,5 @@ def set_balance_inputs(process, capture, save_path, retail_root, crusades,
             process.uc.mem_write(mover+4,struct.pack('<I',grid))
             selected[unit['id']]=grid
     process.uc.mem_write(0x641144,bytes([int(crusades)]))
+    process.synthesized_features=synthesized
     return selected

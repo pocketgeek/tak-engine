@@ -516,6 +516,92 @@ behavior on every possible map or a claim of whole-game retail parity. AI
 strategy may differ, as agreed. Terrain-art occlusion and renderer ordering are
 separate from whether a unit can occupy a map position.
 
+### Retail audit: special terrain and domains (2026-10-06, no protocol change)
+
+Re-run at `87444e9` against the retail binary; no simulation code changed.
+
+- **Gates and yards.** All controlled gate oracles pass (`check_gate_grade`
+  1,800, `check_gate_activation` 3,136, `check_gate_active_bit` 512,
+  `check_gate_capability` 216+36, `check_gate_owner` 10,800,
+  `check_yard_transition` 192), as do `check_gate_lifecycle` for all four gates
+  in both balances (8 × 2,600 boundaries). The composed traversal matrix
+  `check_gate_search_movement.py --missions` passes 64/64 cases: four gates ×
+  two balances × point, return trip, pair, close convoy, PARK, rectangle,
+  replacement at tick 16 and changed-goal replacement at tick 400. The older
+  statement that animated-gate traversal is unverified is superseded.
+- **Nonblocking features (protocol 179) have binary evidence.** Loader
+  `493920` parses `blocking` at `494108..49412d` into feature flag `+0x13c` bit
+  `0x20`, default 0. Every movement consumer of a feature cell gates on that
+  bit before the `0x20000` clearability test: raw grade `5088f0`
+  (`508a7b`, `508ade`), the raters `508660` (`508739`, `5087a6`) and `509020`
+  (`5090fd`, `50916a`), live grades `4dd780` (`4dd97f`, `4dd9f3`) and `4de530`
+  (`4de6db`, `4de744`), and site placement `404d70` (`404ff9`..`40541c`). A
+  `blocking=0` feature therefore never obstructs retail movement, matching
+  `World::mapFeatureGrade` (`blocking ? (clearable ? 1 : 0) : 7`) and the
+  protocol-179 overlay rule.
+- **Standard zombie corpse.** `check_corpse_features.py --balance standard
+  --synthesize-missing-corpses` closes the `tarzom_dead` gap. Retail resolves
+  corpse names through `494480` → `493920`, which parses a startup TDF database
+  the capture did not keep, so the harness appends a native feature record
+  cloned from a loaded record with identical placement inputs (footprint
+  `+0xb0/+0xb2`, height `+0x138`, sacredsite `+0x134`, flag bits read by
+  `495360`/`496380`/`512ee0` and no replacement chain), renamed to the source
+  definition. Only display pointers stay the donor's: a field-access trace of
+  all 507 captured placements, whose replacements also run `496380`, reads
+  only those inputs, decomposeTime (`+0x130`, also set from the source) and
+  the model pointers (`+0x110`, `+0x11c`, passed to the display constructor
+  `4ee290`). Late
+  capture, standard: 507 placements (248 accepted, two more than Crusades,
+  i.e. the TARZOM corpses), 507 retirements and 5,100 changed cells all match.
+- **Shoreline routes with live exploration.** `check_surface_unload_map_route.py
+  --native-exploration` now runs retail's own sight producer: original
+  `50e740`/`50ea58` builds the coarse height pairs and `4c6c00` runs for the
+  carrier after every native step, as the sight batch `4f6a60` does. Each
+  step's exploration plane must equal World's. The native sight cache starts
+  from World's cached footprint because the fixture teleports the carrier.
+  With `--native-map-grades --native-live-unload --terrain-scan-after 1`,
+  Lake Lokken passes for all nine releasing carriers (Vertrans, VerScout,
+  VerMan, Creiron, Arawar, Crester, NpcBotl, NpcRixx, VerHarp) and Sea Dragon
+  Spine Arawar, in both balances (20 traces; for example Vertrans: 2,217 steps,
+  550 scan deadlines, 1,800 newly revealed cells). Cairbray Coast Landing,
+  previously excluded because its forward scan reached cells World explored
+  during the trace (step 129), now matches every step of a 4,000-step trace.
+  Lake Lokken Aratrans with the live scan likewise matches 4,000 steps. Neither
+  of those two releases its passenger within the trace, because the fixture
+  disables the path service after the first route.
+- **Re-verified unchanged.** `check_ground_scan` (10,000),
+  `check_ground_corners` (8,192), `check_world_search.py --terrain
+  --exploration all --motion both` (1,440 searches, 86,948 ticks, including
+  ramps and cliffs), `check_exploration` (19,456), `check_landing_search`
+  (1,024), `check_landing_mission` (2,048), `check_flight_motion` (4,000),
+  `check_flight_patrol` (4,000), `check_hover_attack` (4,096),
+  `check_air_collision_grid` (1,024), `check_animation_flight_attitude`
+  (8,192), and the air traces `check_air_flight_motion_trace` (600 and 128
+  unload ticks), `check_air_unload_heightstep` (480), `check_air_map_height_scan`
+  (480) and `check_air_unload_integrated_trace` (500).
+
+Open findings:
+
+- **Embarked units' sight.** Retail's sight batch (`4f6a60..4f6ac0`) calls
+  `4c6c00` for every pool unit with `+0x130` bit `0x1000000`, without the
+  dying bit `0x1000`, and with build fraction `+0x108 == 0.0`. It does not
+  test attachment. The pool mover loop (`51f2b7..51f2dc`) still ticks attached
+  units, and `4dad30`'s attached branch (`4dad3e..4dadd2`) relocates them to the
+  host's attach piece (`4dd250`, then `51b3b0` writes `+0x68`). Captured
+  attached units sit at the attach-piece offset from their host. Transport
+  cargo therefore reveals exploration from the carrier, with the cargo's own
+  sight distance and height. `World::updateNavigationExploration` skips
+  `embarked()` units, and World tracks cargo at the carrier centre rather than
+  the attach piece. A faithful fix needs the attach-piece world position (a
+  port of `4dd250`) and is not made here. The shoreline fixture runs only the
+  carrier's producer for this reason.
+- **TARCAN bobbing clock.** `51af48` reads `53ff20`: elapsed
+  `QueryPerformanceCounter` seconds × 1000 × `[[0x641a48]+0x48]` / 1000.
+  Both captures store 30 there, so retail's phase advances 30 per wall-clock
+  second, the nominal tick rate. World supplies the simulation tick. That rate
+  matches at normal speed, but retail's phase is wall-clock, unsynchronized
+  between peers, and cannot be reproduced exactly.
+
 ### Protocol 179: honor nonblocking map features
 
 The shared movement obstacle overlay now blocks map features only when their

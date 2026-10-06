@@ -864,7 +864,14 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                 native_worker_repath=False, native_worker_mission_repath=False,
                 always_on_route_search=False, native_worker_mission_retry=False,
                 native_worker_mission_collision=False,
-                probe_native_occupancy=False, native_detach_second=False):
+                probe_native_occupancy=False, native_detach_second=False,
+                native_exploration=False):
+    if native_exploration and terrain_scan_after is None:
+        raise ValueError('--native-exploration requires --terrain-scan-after')
+    if (map_name.lower() == 'cairbray coast landing' and terrain_scan_after is not None
+            and not native_exploration):
+        raise ValueError('Cairbray live scans require --native-exploration: its forward '
+                         'probes reach cells revealed during the trace')
     if native_live_unload and (not carrier or not native_map_mover_steps):
         raise ValueError('--native-live-unload requires a carrier and map mover steps')
     if not 1 <= native_cargo_count <= 16:
@@ -885,6 +892,9 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                         ('npcrixx', 'araarch'), ('verharp', 'araarch')},
         'per mare per terras': {('vertrans', 'araarch')},
         'sea dragon spine': {('vertrans', 'araarch'), ('arawar', 'araarch')},
+        # Cairbray's live scan reaches cells World explores during the trace;
+        # it requires --native-exploration when the scan is live.
+        'cairbray coast landing': {('vertrans', 'araarch')},
     }
     if native_live_unload and (not carrier or not passenger or
             (carrier.lower(), passenger.lower()) not in
@@ -921,6 +931,8 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         env['TAK_MAP_SURFACE_SCAN_AFTER'] = str(terrain_scan_after)
     if shore_blocker:
         env['TAK_MAP_SURFACE_BLOCK_SHORE'] = '1'
+    if native_exploration:
+        env['TAK_MAP_SURFACE_EXPLORATION'] = '1'
     if live_route_blocker_steps:
         env['TAK_MAP_SURFACE_ROUTE_BLOCKER'] = '1'
         env['TAK_MAP_SURFACE_SCAN_AFTER'] = '1'
@@ -1064,6 +1076,19 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                        if line.startswith('WORLDSTEP ')]
         assert len(world_steps) == native_map_mover_steps, (
             len(world_steps), native_map_mover_steps)
+    world_sight = None
+    world_exploration_init = {}
+    world_exploration_deltas = {}
+    if native_exploration:
+        world_sight = tuple(map(int, next(line for line in stdout
+                                          if line.startswith('WORLDSIGHT ')).split()[1:]))
+        for line in stdout:
+            if line.startswith('WORLDEXP_INIT '):
+                x, z, value = map(int, line.split()[1:])
+                world_exploration_init[(x, z)] = value
+            elif line.startswith('WORLDEXP_DELTA '):
+                step, x, z, value = map(int, line.split()[1:])
+                world_exploration_deltas.setdefault(step, []).append((x, z, value))
     world_blockers = {}
     if shore_blocker:
         for line in stdout:
@@ -1707,6 +1732,7 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                             'arawar', 'crester', 'npcbotl', 'npcrixx', 'verharp'},
             'per mare per terras': {'vertrans'},
             'sea dragon spine': {'vertrans', 'arawar'},
+            'cairbray coast landing': {'vertrans'},
         }
         supported_carriers = native_grade_profiles.get(map_name.lower(), set())
         if not carrier or carrier.lower() not in supported_carriers:
@@ -2040,6 +2066,68 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
         initial_visibility = 0 if terrain_scan_after is not None else 0xffff
         p.uc.mem_write(visibility, struct.pack('<' + 'H' * (width * height // 4),
             *([initial_visibility] * (width * height // 4))))
+        native_explored = None
+        if native_exploration:
+            # Retail's sight batch (4f6a60) calls 4c6c00 for every allocated,
+            # living, complete unit after the simulation batch; 4c6a70/4c6800
+            # OR the owner's bit into the exploration plane. Run the original
+            # producer for the carrier after every native step instead of
+            # leaving the plane at its initial state. World's embarked cargo
+            # contributes no sight (see the audit report), so the passenger's
+            # producer is not run here either.
+            (sight_distance, sight_height, world_player, _world_cargo,
+             cached_x, cached_z, cached_eye, cached_active) = world_sight
+            from unicorn import UC_HOOK_CODE
+            from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EIP
+            explore_w, explore_h = width // 2, height // 2
+            # Original coarse 32px height pairs (50ea58..50ed53), skipping the
+            # sector-grid prefix this fixture authors itself.
+            def coarse_entry(uc, _address, _size, _data):
+                sp = uc.reg_read(UC_X86_REG_ESP) - 12
+                uc.mem_write(sp, bytes(12))
+                uc.reg_write(UC_X86_REG_ESP, sp)
+                uc.reg_write(UC_X86_REG_EIP, 0x50ea58)
+            coarse_hook = p.uc.hook_add(UC_HOOK_CODE, coarse_entry,
+                                        begin=0x50e746, end=0x50e746)
+            try:
+                # A whole map exceeds Icd.call's default wall-clock budget, which
+                # would stop emulation silently; run unbounded and require return.
+                _, error = p.icd.call(0x50e740, timeout=0)
+            finally:
+                p.uc.hook_del(coarse_hook)
+            assert error is None, ('native coarse exploration heights', error)
+            assert p.uc.reg_read(UC_X86_REG_EIP) == 0x6FFFF000, 'native coarse construction did not return'
+            assert struct.unpack('<2I', p.uc.mem_read(GS + 0x19f0c, 8)) == (
+                explore_w, explore_h), 'native coarse exploration geometry'
+            counts = p._alloc(explore_w * explore_h)
+            p.uc.mem_write(counts, bytes(explore_w * explore_h))
+            p.uc.mem_write(owner + 0x88, struct.pack('<I', counts))
+            # 4c6a70 reads [[0x62d558]+8]+0x15/+0x16: fog removal and exploration.
+            options = struct.unpack('<I', p.uc.mem_read(GS + 0x600000 + 8, 4))[0]
+            if not options:
+                options = p._alloc(0x100)
+                p.uc.mem_write(options, bytes(0x100))
+                p.uc.mem_write(GS + 0x600000 + 8, struct.pack('<I', options))
+            p.uc.mem_write(options + 0x15, b'\x01\x01')
+            # Initial World plane, translated from World's player bit to the
+            # fixture's single native player bit.
+            initial = [0] * (explore_w * explore_h)
+            for (x, z), value in world_exploration_init.items():
+                if value >> world_player & 1:
+                    initial[z * explore_w + x] = 1 << player
+            p.uc.mem_write(visibility, struct.pack('<' + 'H' * len(initial), *initial))
+            sight = unit + 0x84
+            p.uc.mem_write(sight, struct.pack('<I', owner))
+            # Start from World's cached footprint (4c6a70 keeps it until the
+            # 32px cell changes or eye height moves by more than five). The
+            # fixture teleports the carrier to its seed, so this cache is part
+            # of the identical initial state rather than a later result.
+            p.uc.mem_write(sight + 0x14, struct.pack('<hhihBB', cached_x, cached_z,
+                cached_eye, sight_distance, sight_height, cached_active))
+            native_explored = {(x, z) for (x, z), value in world_exploration_init.items()
+                               if value >> world_player & 1}
+            world_explored = set(native_explored)
+            native_exploration_reveals = 0
         p.uc.mem_write(GS + 0x19f44, struct.pack('<I', route_tick))
         p.uc.mem_write(0x64186c, struct.pack('<I', route_tick))
 
@@ -2255,6 +2343,23 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
             assert error is None, ('native map mover', step, error)
             value, error = p.icd.call(0x51b2a0, (unit,), ecx=mover)
             assert error is None, ('native map route update', step, error)
+            # The released passenger's own sight is not produced natively; stop
+            # comparing exploration on the release step.
+            if native_exploration and not (native_live and not native_live.get(unit + 0xAC)):
+                _, error = p.icd.call(0x4c6c00, (unit,))
+                assert error is None, ('native sight update', step, error)
+                plane = struct.unpack('<' + 'H' * (explore_w * explore_h),
+                    p.uc.mem_read(visibility, explore_w * explore_h * 2))
+                now = {(i % explore_w, i // explore_w) for i, value in enumerate(plane)
+                       if value >> player & 1}
+                for x, z, value in world_exploration_deltas.get(step, ()):
+                    if value >> world_player & 1:
+                        world_explored.add((x, z))
+                if now != world_explored:
+                    raise AssertionError(('native/World exploration after step', step,
+                        sorted(now - world_explored)[:16], sorted(world_explored - now)[:16]))
+                native_exploration_reveals += len(now - native_explored)
+                native_explored = now
             move_flags = struct.unpack('<H', p.uc.mem_read(mover + 0x36, 2))[0]
             if terrain_scan_after is not None:
                 native_scan_deadline = struct.unpack('<I',
@@ -2862,7 +2967,10 @@ def check_route(world_binary, retail_root, map_name, start_cell, target_cell, fo
                   f'{len(native_placement_results)} native map-backed passenger placement '
                   f'checks ran.' +
                   (f' {native_scan_count} live terrain-scan deadlines matched.'
-                   if terrain_scan_after is not None else ''))
+                   if terrain_scan_after is not None else '') +
+                  (f' Retail 0x4c6c00 sight production matched World exploration through '
+                   f'release, {native_exploration_reveals} newly revealed cells.'
+                   if native_exploration else ''))
         final_row = world_steps[map_mover_count - 1]
         final_x, final_z = final_row[1], final_row[3]
         dx = final_x - target_x * 65536
@@ -2914,6 +3022,10 @@ def main():
                         help='unhook 0x51b4f0 for passenger 2 after preparing its native entity/sector records')
     parser.add_argument('--terrain-scan-after', type=int,
                         help='compare live native/World terrain scans after route delivery; requires --native-live-unload (0..2500 ticks)')
+    parser.add_argument('--native-exploration', action='store_true',
+                        help='run retail sight production (0x4c6c00) for the carrier after each '
+                             'native step and compare the exploration plane with World; '
+                             'requires --terrain-scan-after')
     parser.add_argument('--shore-blocker', action='store_true',
                         help='move one live Araarch away after it blocks map-backed unload placement')
     parser.add_argument('--live-route-blocker-steps', type=int, default=0,
@@ -2974,7 +3086,8 @@ def main():
                 args.native_worker_mission_retry,
                 args.native_worker_mission_collision,
                 args.probe_native_occupancy,
-                args.native_detach_second)
+                args.native_detach_second,
+                native_exploration=args.native_exploration)
 
 
 if __name__ == '__main__':
