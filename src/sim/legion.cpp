@@ -56,6 +56,17 @@ constexpr int kReseedCells=2;
 // A production exit without headway for this many crowd windows, its
 // birthplace clear, is done (twice as many hand it over to a rally).
 constexpr uint8_t kExitWindows=1;
+// Static bodies (see scanStill): a ground body that has not moved over
+// kStillScans consecutive scans kStillScan ticks apart, and is not a Legion
+// member on its way, is a soft obstacle. A field charges kSoftFactor times
+// the step cost to enter an origin it covers (kSoftNear within a cell of
+// one), so a group plans round a standing block of bodies (idle, settled,
+// building, any player) instead of walking into it and waiting at its
+// face; direct lines refuse to cross one.
+constexpr uint32_t kStillScan=30;
+constexpr uint16_t kStillScans=2;
+constexpr uint32_t kSoftFactor=4;
+constexpr uint32_t kSoftNear=3;                // ... within a cell of one
 constexpr std::array<std::array<int,2>,8> kDirections{{
     {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
 
@@ -114,8 +125,9 @@ struct LegionNavigator::Impl {
             return inside(x,z)?potential[local(x,z)]:kUnreached;
         }
         // Buckets keyed by potential + heuristic (see advance); the key of a
-        // relaxed neighbour is at most 2*kDiagonal above the popped one.
-        std::array<std::vector<int>,16> buckets;
+        // relaxed neighbour is at most (kSoftFactor+1)*kDiagonal above the
+        // popped one.
+        std::array<std::vector<int>,64> buckets;
         uint32_t current=0;
         int tx=0,tz=0;bool aimed=false;    // heuristic target: the group's bodies
         std::vector<std::pair<uint32_t,int>> seedKeys;size_t seedNext=0;   // seeds by key, enqueued in order
@@ -138,6 +150,11 @@ struct LegionNavigator::Impl {
         // most the current key can never improve again, so a half-built
         // field already steers the bodies it has reached (descent only
         // visits lower potentials, which always end at a seed).
+        // The command (player, issue tick) the field serves: its own
+        // settled arrivals are its destination crowd, never soft obstacles.
+        uint64_t command=~0ull;int softCounts=-1;
+        bool ownArrivals=true;   // a settled arrival of `command` stood soft when the build started
+        bool softened=false;   // some step was charged as a soft obstacle
         bool settled(size_t cell,uint16_t v) const {
             if(done)return v!=kUnreached;
             return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))<=current;
@@ -162,6 +179,11 @@ struct LegionNavigator::Impl {
         bool full=false;
         uint32_t waited=~0u-1;           // last tick a member stood still waiting for the field
         bool approach=false;             // seeds are approach points of unreachable goals
+        // The command its members belong to (player, the point's issue
+        // tick): their own settled arrivals are never soft obstacles to it.
+        // A wanderer's stroll (wildlife, villagers milling about inside a
+        // crowd) plans on terrain alone: soft=false.
+        uint64_t command=~0ull;bool soft=true;
         LegionMission kind=LegionMission::Move;   // members' mission kind (never mixed)
         std::unique_ptr<Field> field;    // the field members steer by (done or building)
         // After a static change the finished field keeps steering (the mover
@@ -323,6 +345,157 @@ struct LegionNavigator::Impl {
     struct Yield {int cell=-1;uint32_t ticks=0;};
     std::map<int,Yield> yielding;
     static constexpr uint8_t kMaxYields=3;
+    // ---- static bodies (soft obstacles) ---------------------------------
+    // The route field is static terrain only, so a standing block of bodies
+    // sits right on every member's shortest way and each one walks into it
+    // and then has to wait or detour locally (the local detour cannot see
+    // round a block wider than its window). Every kStillScan ticks the
+    // ground bodies are sampled; one at the same exact position on
+    // kStillScans consecutive scans is still. A still body that is not a
+    // Legion member, or is a settled Legion arrival, stamps its cells into
+    // `soft` (any player: idle, building, guarding, an enemy's). Moving
+    // crowds never qualify: every Legion member on its way (moving, held,
+    // waiting, trapped behind a gate) is excluded, and anything else must
+    // not have moved at all for a whole scan. A body that sets off as a
+    // Legion member stops counting at once (registerMove clears its cells);
+    // one ordered off otherwise stops at the next scan. A field already
+    // built keeps its route: no re-planning when the block starts to move.
+    struct Still {int32_t x=0,z=0;uint16_t scans=0;};
+    std::vector<std::pair<int,Still>> stills;   // unit id -> last sampled position, ascending ids
+    std::vector<int32_t> soft;           // per cell: a soft body covering it (0 none)
+    std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival (see softCell)
+    std::vector<int> softCells;          // cells set in `soft`, ascending
+    // Per unit id: the command (player, issue tick) a settled Legion arrival
+    // belongs to, else ~0: a field never treats its own arrivals as soft.
+    std::vector<uint64_t> softOwner;
+    uint64_t softSerial=0,softHash=0;    // bumped whenever `soft` changes; its content hash
+    static uint64_t commandKey(int player,uint32_t issue) {return uint64_t(uint32_t(player))<<32|issue;}
+    static constexpr uint64_t kNoSoft=~0ull-1;   // a field / line that ignores soft obstacles
+    // Is soft cell c an obstacle to `command`? Kind 1 stands for every
+    // field; kind 2 (a settled Legion arrival) not for its own command.
+    bool softCell(size_t c,uint64_t command) const {
+        const uint8_t k=softKind[c];
+        if(k!=2)return k!=0;
+        const int32_t o=soft[c];
+        return !(size_t(o)<softOwner.size()&&softOwner[size_t(o)]==command);
+    }
+    // Does a footprint at origin (x,z) cover a soft body other than the
+    // command's own arrivals?
+    bool softAt(int x,int z,int fx,int fz,uint64_t command) const {
+        if(softCells.empty()||command==kNoSoft)return false;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int cx=x+i,cz=z+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            if(softCell(size_t(cz)*w.occW_+cx,command))return true;
+        }
+        return false;
+    }
+    // The field's charge for entering origin (x,z): 2 covers a soft body,
+    // 1 passes within a cell of one (a stream keeps a lane off the block's
+    // face instead of filing along it), 0 clear.
+    int softLevel(int x,int z,int fx,int fz,uint64_t command,int counts,bool own=true) const {
+        if(softCells.empty()||command==kNoSoft)return 0;
+        // The field asks this for every improving relaxation: answered from
+        // the footprint's window counts, walking the window only near a
+        // settled arrival (whose command matters).
+        if(counts>=0) {
+            const uint32_t k=softCounts[size_t(counts)].at[size_t(z)*w.occW_+x];
+            if(!k)return 0;
+            // No settled arrival of this command stands anywhere: every
+            // counted cell is an obstacle to it.
+            if(!own||!(k&kArrivalCount))return k&kCoverCount?2:1;
+        }
+        int level=0;
+        for(int j=-1;j<=fz;++j)for(int i=-1;i<=fx;++i) {
+            const int cx=x+i,cz=z+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            if(!softCell(size_t(cz)*w.occW_+cx,command))continue;
+            if(i>=0&&j>=0&&i<fx&&j<fz)return 2;
+            level=1;
+        }
+        return level;
+    }
+    // Per footprint class of a plane fields are built on, one word per
+    // origin (one load per relaxation): byte 0 the soft cells (either kind)
+    // its footprint covers, byte 1 those in the footprint grown by one
+    // cell, byte 2 the settled-arrival cells among the latter (a window
+    // holds at most 49 cells). Derived from `soft`/`softKind` and kept up
+    // to date cell by cell, never hashed.
+    struct SoftCounts {int fx=0,fz=0;std::vector<uint32_t> at;};
+    static constexpr uint32_t kCoverCount=0xff,kArrivalCount=0xff0000;
+    std::vector<SoftCounts> softCounts;
+    void countCell(SoftCounts& k,int c,uint8_t kind,int delta) {
+        const int W=w.occW_,H=w.occH_,cx=c%W,cz=c/W;
+        for(int oz=std::max(0,cz-k.fz);oz<=std::min(H-1,cz+1);++oz)for(int ox=std::max(0,cx-k.fx);ox<=std::min(W-1,cx+1);++ox) {
+            uint32_t& word=k.at[size_t(oz)*W+ox];
+            if(kind==2)word=uint32_t(int64_t(word)+(int64_t(delta)<<16));
+            word=uint32_t(int64_t(word)+(int64_t(delta)<<8));
+            if(ox>cx-k.fx&&ox<=cx&&oz>cz-k.fz&&oz<=cz)word=uint32_t(int64_t(word)+delta);
+        }
+    }
+    void countAll(int c,uint8_t kind,int delta) {for(auto& k:softCounts)countCell(k,c,kind,delta);}
+    int softCountsFor(int fx,int fz) {
+        if(w.occW_<=0)return -1;
+        for(size_t i=0;i<softCounts.size();++i)if(softCounts[i].fx==fx&&softCounts[i].fz==fz)return int(i);
+        SoftCounts k;k.fx=fx;k.fz=fz;
+        const size_t n=size_t(w.occW_)*w.occH_;
+        k.at.assign(n,0);
+        for(int c:softCells)if(softKind[size_t(c)])countCell(k,c,softKind[size_t(c)],1);
+        softCounts.push_back(std::move(k));
+        return int(softCounts.size()-1);
+    }
+    void scanStill() {
+        if(w.tickCounter_%kStillScan!=0||w.occW_<=0)return;
+        std::vector<std::pair<int,Still>> next;next.reserve(stills.size()+16);
+        std::vector<int> cells;
+        std::vector<uint64_t> owner;
+        const size_t n=size_t(w.occW_)*w.occH_;
+        if(soft.size()!=n) {
+            soft.assign(n,0);softKind.assign(n,0);softCells.clear();softCounts.clear();
+        }
+        std::vector<std::pair<int,int32_t>> stamps;
+        for(const auto& u:w.units_) {
+            if(!u.alive()||u.embarked()||!u.type||u.type->canFly||u.type->isStructure())continue;
+            const Member* m=member(u.id);
+            if(m&&m->state!=Arrived)continue;
+            Still s;s.x=u.x.v;s.z=u.z.v;
+            const auto old=std::lower_bound(stills.begin(),stills.end(),u.id,[](const auto& e,int id) {return e.first<id;});
+            if(old!=stills.end()&&old->first==u.id&&old->second.x==s.x&&old->second.z==s.z)
+                s.scans=uint16_t(std::min<int>(old->second.scans+1,kStillScans));
+            next.push_back({u.id,s});
+            if(s.scans<kStillScans)continue;
+            const int fx=u.type->footX,fz=u.type->footZ;
+            const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=ox+i,cz=oz+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                stamps.push_back({cz*w.occW_+cx,u.id});
+            }
+            if(isAnchor(u.id)) {
+                const auto a=anchors.find(u.id);
+                if(size_t(u.id)>=owner.size())owner.resize(size_t(u.id)+1,~0ull);
+                owner[size_t(u.id)]=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
+            }
+        }
+        std::sort(next.begin(),next.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
+        stills.swap(next);
+        std::sort(stamps.begin(),stamps.end());
+        for(int c:softCells) {
+            if(softKind[size_t(c)])countAll(c,softKind[size_t(c)],-1);
+            soft[size_t(c)]=0;softKind[size_t(c)]=0;
+        }
+        uint64_t h=0x736f6674;
+        for(const auto& [c,id]:stamps)if(!soft[size_t(c)]) {
+            soft[size_t(c)]=id;softKind[size_t(c)]=size_t(id)<owner.size()&&owner[size_t(id)]!=~0ull?2:1;
+            countAll(c,softKind[size_t(c)],1);
+            cells.push_back(c);h=mix(h,uint64_t(c)<<32|uint32_t(id));
+        }
+        for(size_t i=0;i<owner.size();++i)if(owner[i]!=~0ull)h=mix(mix(h,i),owner[i]);
+        const bool changed=h!=softHash;
+        softHash=h;
+        softCells.swap(cells);softOwner.swap(owner);
+        if(changed)++softSerial;
+    }
     // Cells claimed by arrival slots of every group sent to one point in one
     // command (mixed footprints form one group per class but share the area).
     // A shared point's members get their slots all at once, by formation:
@@ -1024,6 +1197,17 @@ struct LegionNavigator::Impl {
         };
         leave(u.id);
         anchors.erase(u.id);markAnchor(u.id,false);yielding.erase(u.id);
+        // A body setting off is no soft obstacle any more (its own group's
+        // first field is built right now, before the next scan).
+        if(!softCells.empty()&&u.type) {
+            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+            for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+                const int cx=ox+i,cz=oz+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const size_t c=size_t(cz)*w.occW_+cx;
+                if(soft[c]==u.id&&softKind[c]) {countAll(int(c),softKind[c],-1);softKind[c]=0;}
+            }
+        }
         const Kind kind=kindOf(u);
         if(kind==Kind::None) {unpin();return;}
         const Policy rule=policy(kind);
@@ -1116,6 +1300,7 @@ struct LegionNavigator::Impl {
         }
         if(!joined) {
             Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=issue;g.compCell=m.goal;g.approach=m.approach;g.kind=kind;
+            g.command=commandKey(u.player,std::get<1>(m.point));g.soft=!u.type->wanders;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             joined=&groups.emplace(g.id,std::move(g)).first->second;
             ++stats.groups;
@@ -1179,7 +1364,8 @@ struct LegionNavigator::Impl {
         }
         g.built=w.tickCounter_;
         auto f=std::make_unique<Field>();
-        f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;
+        f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;f->command=g.soft?g.command:kNoSoft;f->softCounts=softCountsFor(planes[size_t(g.plane)].footX,planes[size_t(g.plane)].footZ);
+        f->ownArrivals=std::find(softOwner.begin(),softOwner.end(),f->command)!=softOwner.end();
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
         {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
@@ -1194,17 +1380,18 @@ struct LegionNavigator::Impl {
         return true;
     }
     // Dial's algorithm on key = potential + heuristic (A*; consistent, so
-    // a key never drops below its parent's and rises by at most 2*kDiagonal:
-    // sixteen circular buckets suffice). Seeds enter in key order.
+    // a key never drops below its parent's and rises by at most
+    // (kSoftFactor+1)*kDiagonal: 64 circular buckets suffice). Seeds enter
+    // in key order.
     uint64_t advance(Field& f,uint64_t budget) {
         const auto& p=planes[size_t(f.plane)];
         const int W=width();uint64_t spent=0;
         while((f.queued||f.seedNext<f.seedKeys.size())&&spent<budget) {
             if(!f.queued&&f.seedKeys[f.seedNext].first>f.current)f.current=f.seedKeys[f.seedNext].first;
             while(f.seedNext<f.seedKeys.size()&&f.seedKeys[f.seedNext].first==f.current) {
-                f.buckets[f.current&15].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
+                f.buckets[f.current&63].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
             }
-            auto& bucket=f.buckets[f.current&15];
+            auto& bucket=f.buckets[f.current&63];
             if(bucket.empty()) {++f.current;continue;}
             const int cell=bucket.back();bucket.pop_back();--f.queued;
             const int x=cell%W,z=cell/W;
@@ -1213,15 +1400,19 @@ struct LegionNavigator::Impl {
             for(const auto& d:kDirections) {
                 ++spent;
                 if(!step(p,x,z,d[0],d[1]))continue;
-                const uint32_t next=g+(d[0]&&d[1]?kDiagonal:kOrthogonal);
-                if(next>=kUnreached)continue;   // saturated: beyond the field's range
+                const uint32_t base=d[0]&&d[1]?kDiagonal:kOrthogonal;
                 // Outside the window only after a static change mid-build
                 // (the field is then stale and rebuilt on the new plane).
                 if(!f.inside(x+d[0],z+d[1]))continue;
                 auto& slot=f.potential[f.local(x+d[0],z+d[1])];
+                if(g+base>=slot)continue;   // no charge can improve it
+                const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals);
+                f.softened|=level>0;
+                const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base);
+                if(next>=kUnreached)continue;   // saturated: beyond the field's range
                 if(next<slot) {
                     slot=uint16_t(next);
-                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&15].push_back((z+d[1])*W+x+d[0]);++f.queued;
+                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&63].push_back((z+d[1])*W+x+d[0]);++f.queued;
                 }
             }
         }
@@ -1460,6 +1651,7 @@ struct LegionNavigator::Impl {
     }
     void tick() {
         syncStatic();
+        scanStill();
         prebuildStep();
         prune();
         // Yields run even while no Legion member remains (a committed yield
@@ -1798,10 +1990,14 @@ struct LegionNavigator::Impl {
     // (x0,z0) to (x1,z1) must be legal; an exact corner crossing must clear
     // both side cells. Raw 16.16 coordinates shifted to origin space.
     bool sweep(const Plane& p,const Unit& u,Fixed x0,Fixed z0,Fixed x1,Fixed z1) const {
+        return trace(u,x0,z0,x1,z1,[&](int x,int z) {return this->legal(p,x,z);});
+    }
+    template<class Ok>
+    bool trace(const Unit& u,Fixed x0,Fixed z0,Fixed x1,Fixed z1,const Ok& legal) const {
         const int64_t bx=int64_t(u.type->footX-1)*8*Fixed::kOne,bz=int64_t(u.type->footZ-1)*8*Fixed::kOne;
         const int64_t ax=int64_t(x0.v)-bx,az=int64_t(z0.v)-bz,ex=int64_t(x1.v)-bx,ez=int64_t(z1.v)-bz;
         int cx=int(ax>>20),cz=int(az>>20);const int tx=int(ex>>20),tz=int(ez>>20);
-        if(!legal(p,cx,cz))return false;
+        if(!legal(cx,cz))return false;
         const int64_t dx=ex-ax,dz=ez-az;
         const int sx=dx>0?1:-1,sz=dz>0?1:-1;
         for(int guard=0;(cx!=tx||cz!=tz)&&guard<4*kFormationLineCells+8;++guard) {
@@ -1817,10 +2013,10 @@ struct LegionNavigator::Impl {
                 order=lx<lz?-1:lx>lz?1:0;
             }
             if(order==0) {
-                if(!legal(p,cx+sx,cz)||!legal(p,cx,cz+sz)||!legal(p,cx+sx,cz+sz))return false;
+                if(!legal(cx+sx,cz)||!legal(cx,cz+sz)||!legal(cx+sx,cz+sz))return false;
                 cx+=sx;cz+=sz;
-            } else if(order<0) {cx+=sx;if(!legal(p,cx,cz))return false;}
-            else {cz+=sz;if(!legal(p,cx,cz))return false;}
+            } else if(order<0) {cx+=sx;if(!legal(cx,cz))return false;}
+            else {cz+=sz;if(!legal(cx,cz))return false;}
         }
         return cx==tx&&cz==tz;
     }
@@ -2420,7 +2616,12 @@ struct LegionNavigator::Impl {
                 // A formation member walks its own straight lane from farther out:
                 // descending the shared field first funnels the crowd into a file.
                 const int reach=m.slot>=0&&formationMember(m)?kFormationLineCells:kLineCells;
-                m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz);
+                // A line across a soft block (bodies standing still, not
+                // this command's own arrivals) is refused: the field plans
+                // round it.
+                const uint64_t command=g.soft?g.command:kNoSoft;
+                m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz)&&
+                    (softCells.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command);}));
             }
             direct=m.line;
         }
@@ -2981,7 +3182,10 @@ struct LegionNavigator::Impl {
         const Field* f=g.field&&g.field->done?g.field.get():nullptr;
         if(!f)return 0;
         const uint16_t potential=f->at(size_t(oz*width()+ox));
-        if(potential==kUnreached||int64_t(potential)>(dist*kDiagonal)/16+int64_t(3*foot*kOrthogonal))return 0;
+        // Soft obstacles (an idle crowd standing there) charge kSoftFactor
+        // per step in a softened field.
+        const int64_t factor=f->softened?kSoftFactor:1;
+        if(potential==kUnreached||int64_t(potential)>factor*((dist*kDiagonal)/16+int64_t(3*foot*kOrthogonal)))return 0;
         // Never in a same-player factory's exit lane: from the factory's
         // centre to past where its output is put down.
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
@@ -3080,7 +3284,7 @@ struct LegionNavigator::Impl {
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
             h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
-            h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);
+            h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);h=mix(h,g.command);h=mix(h,g.soft);
             if(g.kind!=Kind::Move)h=mix(h,uint64_t(g.kind));
             for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
             if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);}
@@ -3109,6 +3313,8 @@ struct LegionNavigator::Impl {
             h=mix(h,uint32_t(std::get<2>(a.point)));h=mix(h,uint32_t(std::get<3>(a.point)));
         }
         for(const auto& [id,y]:yielding) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(y.cell));h=mix(h,y.ticks);}
+        h=mix(h,softSerial);h=mix(h,softHash);
+        for(const auto& [id,st]:stills) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(st.x))<<32|uint32_t(st.z));h=mix(h,st.scans);}
         for(const auto& [id,n]:parts) {h=mix(h,uint64_t(id));h=mix(h,n.count);h=mix(h,uint64_t(uint8_t(n.sx))|uint64_t(uint8_t(n.sz))<<8);}
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
