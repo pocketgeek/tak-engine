@@ -2494,6 +2494,9 @@
             SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
             SDL_SetTextureAlphaMod(t, 255);
             ok = SDL_RenderCopy(ren_, t, nullptr, nullptr) == 0;   // exact k x k texel blocks
+            // Texture scale mode is applied immediately, but the copy is batched:
+            // flush before restoring LINEAR, or the copy samples bilinearly.
+            SDL_RenderFlush(ren_);
             SDL_SetTextureBlendMode(t, blend);
             SDL_SetTextureScaleMode(t, scale);
             SDL_SetTextureAlphaMod(t, alpha);
@@ -2525,6 +2528,7 @@
         SDL_ScaleMode scale; SDL_GetTextureScaleMode(src, &scale);
         SDL_SetTextureScaleMode(src, SDL_ScaleModeNearest);
         for (const auto& e : edges) SDL_RenderCopy(r, src, &e[0], &e[1]);
+        SDL_RenderFlush(r);   // batched copies must run before the scale mode changes back
         SDL_SetTextureScaleMode(src, scale);
     }
 

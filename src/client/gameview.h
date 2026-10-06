@@ -900,7 +900,7 @@ public:
             terrainAA_.clearPixels+modelAA_.clearPixels,
             terrainAA_.targetSwitches+modelAA_.targetSwitches,
             modelAA_.translatedVertices,modelAA_.culledVertices,
-            terrainAA_.bytes()+modelAA_.bytes()};
+            terrainAA_.bytes()+modelAA_.bytes()+terrainSharp_.bytes()+sharpSpriteBytes_};
     }
 #endif
 

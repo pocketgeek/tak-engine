@@ -737,7 +737,7 @@
             noFog_=!tak::devFlag("TAK_PROFILE_FOG");edgeScrollOn_=false;
             float zoom=std::min(1.5f,std::min(1400.f/(columns*40),760.f/(rows*40)));
             if(const char* requested=tak::devEnv("TAK_PROFILE_ZOOM"))
-                zoom=std::clamp(float(std::atof(requested)),0.05f,1.5f);
+                zoom=std::clamp(float(std::atof(requested)),0.05f,4.0f);   // the game's zoom range
             mapView_.setZoom(zoom);
             mapView_.setOffset(5000-760/zoom,5000-terrainLift(5000,5000)-420/zoom);
             std::fprintf(stderr,"shadow benchmark: requested=%d spawned=%d columns=%d zoom=%.3f type=%s\n",
