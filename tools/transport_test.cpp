@@ -2369,7 +2369,18 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             std::vector<uint16_t> previousExploration;
             const int explorationWidth=map.width/2;
             const int explorationHeight=map.height/2;
-            if(liveRouteBlocker) {
+            // Exploration deltas for native sight-producer comparisons; the
+            // route-blocker trace always needs them.
+            const char* explorationTrace=std::getenv("TAK_MAP_SURFACE_EXPLORATION");
+            const bool traceExploration=liveRouteBlocker ||
+                (explorationTrace && *explorationTrace && *explorationTrace!='0');
+            if(traceExploration)
+                std::printf("WORLDSIGHT %d %u %d %d %d %d %d %d\n",w.sightDistance(*stepped->type),
+                    unsigned(stepped->type->sightHeight),int(stepped->player),
+                    int(stepped->cargo.size()),int(stepped->sightFootprint.x),
+                    int(stepped->sightFootprint.z),int(stepped->sightFootprint.eyeHeight),
+                    int(stepped->sightFootprint.active));
+            if(traceExploration) {
                 const auto& exploration=w.navigationExploration();
                 if(exploration.size()!=size_t(explorationWidth)*size_t(explorationHeight))
                     throw std::runtime_error("surface route trace exploration dimensions do not match map");
@@ -2382,7 +2393,7 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
             bool routeAttemptReported=false;
             for(unsigned step=1;step<=stepLimit;++step) {
                 w.tick(1.f/30);
-                if(liveRouteBlocker) {
+                if(traceExploration) {
                     const auto& exploration=w.navigationExploration();
                     for(size_t i=0;i<exploration.size();++i)
                         if(exploration[i]!=previousExploration[i]) {

@@ -729,6 +729,140 @@ updater's other calls (`0x401160`, `0x429d90`, weapons), combat, formations
 executable on the same layouts was not possible on this host (no virtual
 display; the only display is the user's desktop session).
 
+### Retail audit: special terrain and domains (2026-10-06, no protocol change)
+
+Re-run at `87444e9` against the retail binary; no simulation code changed.
+
+- **Gates and yards.** All controlled gate oracles pass (`check_gate_grade`
+  1,800, `check_gate_activation` 3,136, `check_gate_active_bit` 512,
+  `check_gate_capability` 216+36, `check_gate_owner` 10,800,
+  `check_yard_transition` 192), as do `check_gate_lifecycle` for all four gates
+  in both balances (8 × 2,600 boundaries). The composed traversal matrix
+  `check_gate_search_movement.py --missions` passes 64/64 cases: four gates ×
+  two balances × point, return trip, pair, close convoy, PARK, rectangle,
+  replacement at tick 16 and changed-goal replacement at tick 400. The older
+  statement that animated-gate traversal is unverified is superseded.
+- **Nonblocking features (protocol 179) have binary evidence.** Loader
+  `493920` parses `blocking` at `494108..49412d` into feature flag `+0x13c` bit
+  `0x20`, default 0. Every movement consumer of a feature cell gates on that
+  bit before the `0x20000` clearability test: raw grade `5088f0`
+  (`508a7b`, `508ade`), the raters `508660` (`508739`, `5087a6`) and `509020`
+  (`5090fd`, `50916a`), live grades `4dd780` (`4dd97f`, `4dd9f3`) and `4de530`
+  (`4de6db`, `4de744`), and site placement `404d70` (`404ff9`..`40541c`). A
+  `blocking=0` feature therefore never obstructs retail movement, matching
+  `World::mapFeatureGrade` (`blocking ? (clearable ? 1 : 0) : 7`) and the
+  protocol-179 overlay rule.
+- **Standard zombie corpse.** `check_corpse_features.py --balance standard
+  --synthesize-missing-corpses` closes the `tarzom_dead` gap. Retail resolves
+  corpse names through `494480` → `493920`, which parses a startup TDF database
+  the capture did not keep, so the harness appends a native feature record
+  cloned from a loaded record with identical placement inputs (footprint
+  `+0xb0/+0xb2`, height `+0x138`, sacredsite `+0x134`, flag bits read by
+  `495360`/`496380`/`512ee0` and no replacement chain), renamed to the source
+  definition. Only display pointers stay the donor's: a field-access trace of
+  all 507 captured placements, whose replacements also run `496380`, reads
+  only those inputs, decomposeTime (`+0x130`, also set from the source) and
+  the model pointers (`+0x110`, `+0x11c`, passed to the display constructor
+  `4ee290`). Late
+  capture, standard: 507 placements (248 accepted, two more than Crusades,
+  i.e. the TARZOM corpses), 507 retirements and 5,100 changed cells all match.
+- **Shoreline routes with live exploration.** `check_surface_unload_map_route.py
+  --native-exploration` now runs retail's own sight producer: original
+  `50e740`/`50ea58` builds the coarse height pairs and `4c6c00` runs for the
+  carrier after every native step, as the sight batch `4f6a60` does. Each
+  step's exploration plane must equal World's. The native sight cache starts
+  from World's cached footprint because the fixture teleports the carrier.
+  With `--native-map-grades --native-live-unload --terrain-scan-after 1`,
+  Lake Lokken passes for all nine releasing carriers (Vertrans, VerScout,
+  VerMan, Creiron, Arawar, Crester, NpcBotl, NpcRixx, VerHarp) and Sea Dragon
+  Spine Arawar, in both balances (20 traces; for example Vertrans: 2,217 steps,
+  550 scan deadlines, 1,800 newly revealed cells). Cairbray Coast Landing,
+  previously excluded because its forward scan reached cells World explored
+  during the trace (step 129), now matches every step of a 4,000-step trace.
+  Lake Lokken Aratrans with the live scan likewise matches 4,000 steps. Neither
+  of those two releases its passenger within the trace, because the fixture
+  disables the path service after the first route.
+- **Controlled ramp routes.** `check_gate_search_movement.py --missions
+  --ramp` gives both sides the same 64×64 relief beyond the gate. A lane at
+  x=24..39 climbs 10 height units per cell for five rows (above GROUND4/5's
+  soft slope 7, so grade 4) and then 5 per cell for three rows. Cliffs climbing
+  22 per cell (above the hard limit 15) flank it. Native cells carry the
+  heights and quad extrema, and `4e01d0` builds the cached grades from them;
+  World reads the same bytes through `TAK_GATE_HEIGHTS`. All 24 cases pass:
+  four gates × two balances × point (2,400 ticks), return trip downhill (4,000)
+  and pair (3,000). Each case climbs to height 64–65 through 46–91 distinct
+  pitches, with position, height, pitch/roll, speed, missions, search state,
+  RNG and gate state compared every tick. Adding 3 to one ramp row on the
+  World side only fails at tick 441 (height and pitch), so the comparison is
+  sensitive to the relief.
+- **Re-verified unchanged.** `check_ground_scan` (10,000),
+  `check_ground_corners` (8,192), `check_world_search.py --terrain
+  --exploration all --motion both` (1,440 searches, 86,948 ticks, including
+  ramps and cliffs), `check_exploration` (19,456), `check_landing_search`
+  (1,024), `check_landing_mission` (2,048), `check_flight_motion` (4,000),
+  `check_flight_patrol` (4,000), `check_hover_attack` (4,096),
+  `check_air_collision_grid` (1,024), `check_animation_flight_attitude`
+  (8,192), and the air traces `check_air_flight_motion_trace` (600 and 128
+  unload ticks), `check_air_unload_heightstep` (480), `check_air_map_height_scan`
+  (480) and `check_air_unload_integrated_trace` (500).
+
+Open findings:
+
+- **Embarked units' sight.** Retail's sight batch (`4f6a60..4f6ac0`) calls
+  `4c6c00` for every pool unit with `+0x130` bit `0x1000000`, without the
+  dying bit `0x1000`, and with build fraction `+0x108 == 0.0`. It does not
+  test attachment. The pool mover loop (`51f2b7..51f2dc`) still ticks attached
+  units, and `4dad30`'s attached branch (`4dad3e..4dadd2`) relocates them to the
+  host's attach piece (`4dd250`, then `51b3b0` writes `+0x68`). Captured
+  attached units sit at the attach-piece offset from their host. Transport
+  cargo therefore reveals exploration from the carrier, with the cargo's own
+  sight distance and height. `World::updateNavigationExploration` skips
+  `embarked()` units, and World tracks cargo at the carrier centre rather than
+  the attach piece. A faithful fix needs the attach-piece world position (a
+  port of `4dd250`) and is not made here. The shoreline fixture runs only the
+  carrier's producer for this reason.
+- **VTOL landing-site predicate `509400` is not ported.** Every landing
+  oracle (`check_landing_search`, `check_landing_mission`) supplies this
+  predicate as a controlled input, and `World::flightLandingFree` is an
+  engine approximation: the legacy nav-class `fits`, `cellFree`, and a
+  grounded/descending-flyer overlap test. Retail
+  `509400(unit, point)` works as follows:
+  - It rounds the footprint origin (`(x - fx<<19 + 0x80000) >> 20`, kept as
+    int16) and rejects `x0<0`, `z0<0`, `x0+fx>=W` and `z0+fz>=H`.
+  - It reads the exploration word at coarse index
+    `(x0>>1)+(fx>>2) + ((z0>>1)+(fx>>2))*(W>>1)`; note that it uses `fx` on
+    both axes. If the bit `1<<unit+0xfd` is clear, the point is **landable
+    without any terrain or occupancy test**.
+  - Otherwise every footprint cell must pass several tests:
+    - Feature word `0xffff`; a valid index or `0xfffe` tail whose feature has
+      no blocking bit `0x20`; any other `0xfffa..0xfffd` value fails.
+    - No structure-yard flag (`+0xd` bit `0x10`). `5066f0` stamps it for every
+      non-`.` yard character (the `4c0f59` table gives all of
+      `c C o O S w f y Y` bit 0), and `506b39` clears it.
+    - No live other entity in the ground word `+0` or the airborne word `+2`.
+      The airborne word is the secondary occupant maintained by
+      `506c40`/`507050`, the same grid as `check_air_collision_grid`.
+    - `low >= sea - maxwaterdepth`. For `canfly` (`+0x260` bit `0x800`) and
+      non-`floater` (`0x200000`) types this bound is raised to `sea`, so a
+      flyer cannot land on water.
+    - `high <= sea - minwaterdepth` and `high-low <= maxslope` (`+0x23c`).
+      For every shipped flyer these are effectively unlimited: maxwaterdepth
+      is 0 or the default 10000, minwaterdepth is -10000 and maxslope is 255,
+      as the captured types confirm.
+
+  World differs in the unexplored shortcut, in yard cells (including open
+  ones), in which flyers block (retail: any airborne owner of the secondary
+  word; World: grounded or descending flyers), and in its terrain/water
+  sampling. A faithful port needs the persistent secondary-occupant grid and
+  its RNG-drawing maintenance cadence. World currently builds that grid only
+  as projectile scratch state, so this audit does not change it.
+- **TARCAN bobbing clock.** `51af48` reads `53ff20`: elapsed
+  `QueryPerformanceCounter` seconds × 1000 × `[[0x641a48]+0x48]` / 1000.
+  Both captures store 30 there, so retail's phase advances 30 per wall-clock
+  second, the nominal tick rate. World supplies the simulation tick. That rate
+  matches at normal speed, but retail's phase is wall-clock, unsynchronized
+  between peers, and cannot be reproduced exactly.
+
 ### Protocol 179: honor nonblocking map features
 
 The shared movement obstacle overlay now blocks map features only when their
