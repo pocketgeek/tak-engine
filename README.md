@@ -49,16 +49,21 @@ the GOG edition, supplies the game data.
 
 ## New in 0.7.24
 
-- **Four pathfinding choices:** Retail remains the default. Experimental
+- **Five pathfinding choices:** Retail remains the default. Experimental
   **Retail+** keeps native long-distance routes and adds bounded local traffic
   handling for ordinary ground moves. **Flowfield** and **Cooperative** offer
-  shared routes and group coordination. Each has scene-dependent costs and
-  limitations; none is uniformly faster or more reliable in every crowd.
+  shared routes and group coordination. Experimental **Legion** plans one route
+  per army on the exact footprint-legality rule the mover uses, so units slide
+  along jagged walls, hold still when a crowd blocks them, and stop when they
+  are genuinely trapped. Each has scene-dependent costs and limitations; none
+  is uniformly faster or more reliable in every crowd. See the
+  [five-mode comparison](docs/navigation-comparison-2026-10-05.md).
 - **Movement and route work:** improve group arrivals, local yielding, narrow
   passages and route recovery. Retail search reuses scratch storage without
   changing its route decisions. See [Retail+](docs/retail-plus-pathfinding.md),
-  [Flowfield](docs/pathfinding-port.md), and
-  [Cooperative](docs/cooperative-pathfinding.md) for scope and measurements.
+  [Flowfield](docs/pathfinding-port.md),
+  [Cooperative](docs/cooperative-pathfinding.md), and
+  [Legion](docs/legion-pathfinding.md) for scope and measurements.
 - **Graphics controls restored:** independently select Terrain AA and Model AA,
   bilinear filtering, Smooth GUI Art and Smooth Movies. All default off and
   remember your choices; Smooth GUI Art updates the current interface immediately.
@@ -71,7 +76,9 @@ the GOG edition, supplies the game data.
   per player, subject to balanced placement space. `takserver --status` reports
   local game and connection counts as JSON, including on TLS servers.
 
-Version **0.7.24 uses protocol 227 and replay format 11**. Update clients and
+Version **0.7.24 uses protocol 227 and replay format 11**. The current
+development branch uses **protocol 228** (navigation changes and the Legion
+mode); clients and servers built from it must match each other. Update clients and
 servers together. Replays require the current simulation protocol; older
 recordings need the engine that recorded them. No new dynamic runtime
 dependencies or retail assets are included. See the
@@ -864,9 +871,9 @@ See [unit gifting](docs/unit-gifting.md) for eligibility details and the
 
 Choose the per-player unit limit on the game-creation screen: the button cycles
 through 250, 500, 1,000, and 2,000. The lobby displays this value without allowing
-it to change. **Pathfinding** also belongs to game creation: choose **Retail** (the default), **Retail+**, **Flowfield**, and **Cooperative** for skirmish and
+it to change. **Pathfinding** also belongs to game creation: choose **Retail** (the default), **Retail+**, **Flowfield**, **Cooperative**, and **Legion** for skirmish and
 multiplayer. Left-click cycles forward and right-click cycles backward through
-the four choices. The choice is saved for future games; the lobby displays it
+the five choices. The choice is saved for future games; the lobby displays it
 as read-only information. Cooperative is an additional experimental option.
 It includes bounded follower movement and shared clearance proofs. Arrival time
 and CPU cost vary by scene, and it remains slower than existing modes in some
@@ -876,6 +883,11 @@ Retail+ retains Retail's long-distance search and adds bounded local traffic
 handling for ordinary ground Move orders. Builders, transports, combat
 approaches, patrols and special goals retain native movement. See its
 [scope and measurements](docs/retail-plus-pathfinding.md).
+Legion is experimental. Each right-click plans one integer route field per
+army and footprint size on the same legality rule the mover enforces; it
+handles ordinary ground Move orders and leaves combat, patrol, guard,
+construction, transports, flyers and boats to Retail behavior. See its
+[design, limits and measurements](docs/legion-pathfinding.md).
 Campaigns retain Retail pathfinding regardless of the saved create preference.
 Flowfield is experimental. It shares prepared terrain tiles, prepares large tile
 jobs in parallel, and delivers detailed routes as their required connectivity

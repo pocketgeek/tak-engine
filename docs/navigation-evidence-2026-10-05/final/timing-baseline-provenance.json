@@ -1,0 +1,26 @@
+{
+  "base_revision": "86673b413a4747e2b19a128777c2223656cd0681",
+  "overlay_applied": true,
+  "candidate_source": "/home/pocket_geek/TAK",
+  "candidate_revision": "d9d2999c34aa84b76783a0a3bc260758b58145c4",
+  "candidate_harness_or_patch_dirty": false,
+  "telemetry_patch": "/home/pocket_geek/TAK/tools/navigation_baseline_telemetry.patch",
+  "telemetry_patch_sha256": "08add3e9901fae43530ff20dbeb34ea9763a5bd022122601a19587c81d3061d1",
+  "harness_sha256": {
+    "tools/crowdbench.cpp": "3075e1654b6bc2cedce1d75221455842736c8227f9798db4fd3cf5a23b3b4feb",
+    "tools/crowdbench_matrix.h": "e5e724546a80a593dc09f017ef842c065ff539c5d5f3487081fc67777848b50d",
+    "tools/crowdbench_telemetry.h": "4d6212464e3af0d2e204196ec1a1a3b2a118e1e453c8f387634a847851c14eaa",
+    "tools/crowdbench_acceptance.h": "41b7b212123184c7781c1529da2818611f58c58b2c1e1b8dc00dfa4906786c5c",
+    "src/sim/navigationtelemetry.h": "1948fb69a53aecd9bdad3514e364c25f84fccff441f000d1a95cb05fddac14ad"
+  },
+  "compiler": "c++ (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)",
+  "cmake_build_type": "Release",
+  "cmake_cxx_flags": "-ffile-prefix-map=/tmp/claude-1000/-home-pocket-geek-TAK/2f0721e8-108f-45c9-aefa-bdb7478f7de8/scratchpad/final-base2/src=.",
+  "cmake_cxx_flags_release": "-O3 -DNDEBUG",
+  "crowdbench_build_commands": [
+    ": && /usr/bin/cmake -E rm -f libtak-formats.a && /usr/bin/ar qc libtak-formats.a  CMakeFiles/tak-formats.dir/src/hpi/hpi.cpp.o CMakeFiles/tak-formats.dir/src/gaf/gaf.cpp.o CMakeFiles/tak-formats.dir/src/tnt/tnt.cpp.o CMakeFiles/tak-formats.dir/src/tnt/ota.cpp.o CMakeFiles/tak-formats.dir/src/tnt/mapgen.cpp.o CMakeFiles/tak-formats.dir/src/tnt/mapgen_balanced.cpp.o CMakeFiles/tak-formats.dir/src/tdo/tdo.cpp.o CMakeFiles/tak-formats.dir/src/tdf/tdf.cpp.o CMakeFiles/tak-formats.dir/src/cob/cob.cpp.o CMakeFiles/tak-formats.dir/src/cob/vm.cpp.o CMakeFiles/tak-formats.dir/src/sim/sim.cpp.o CMakeFiles/tak-formats.dir/src/sim/flowsnapshot.cpp.o CMakeFiles/tak-formats.dir/src/sim/flowlocal.cpp.o CMakeFiles/tak-formats.dir/src/sim/flowtraffic.cpp.o CMakeFiles/tak-formats.dir/src/sim/cooperative.cpp.o CMakeFiles/tak-formats.dir/src/sim/cooperativemovement.cpp.o CMakeFiles/tak-formats.dir/src/sim/cooperativepassages.cpp.o CMakeFiles/tak-formats.dir/src/sim/flowobstacles.cpp.o CMakeFiles/tak-formats.dir/src/sim/flownavigator.cpp.o CMakeFiles/tak-formats.dir/src/sim/flowworkers.cpp.o CMakeFiles/tak-formats.dir/src/sim/flowservice.cpp.o CMakeFiles/tak-formats.dir/src/sim/flowfield.cpp.o CMakeFiles/tak-formats.dir/src/sim/pathsearch.cpp.o CMakeFiles/tak-formats.dir/src/sim/retailplus.cpp.o CMakeFiles/tak-formats.dir/src/sim/retailplusnavigator.cpp.o CMakeFiles/tak-formats.dir/src/sim/detmath.cpp.o CMakeFiles/tak-formats.dir/src/sim/matchsetup.cpp.o CMakeFiles/tak-formats.dir/src/sim/mission.cpp.o CMakeFiles/tak-formats.dir/src/sim/scenario.cpp.o CMakeFiles/tak-formats.dir/src/campaign/campaign.cpp.o CMakeFiles/tak-formats.dir/src/crt/crt.cpp.o CMakeFiles/tak-formats.dir/src/gui/gui.cpp.o CMakeFiles/tak-formats.dir/src/net/protocol.cpp.o CMakeFiles/tak-formats.dir/src/net/crusades.cpp.o CMakeFiles/tak-formats.dir/src/net/conn.cpp.o CMakeFiles/tak-formats.dir/src/net/client.cpp.o CMakeFiles/tak-formats.dir/src/net/mappackage.cpp.o CMakeFiles/tak-formats.dir/src/net/overridepackage.cpp.o CMakeFiles/tak-formats.dir/src/net/auth.cpp.o CMakeFiles/tak-formats.dir/src/util/png.cpp.o CMakeFiles/tak-formats.dir/src/util/appicon.cpp.o CMakeFiles/tak-formats.dir/src/util/jpeg.cpp.o CMakeFiles/tak-formats.dir/src/terrain/terrain.cpp.o && /usr/bin/ranlib libtak-formats.a && :",
+    ": && /usr/bin/c++ -ffile-prefix-map=/tmp/claude-1000/-home-pocket-geek-TAK/2f0721e8-108f-45c9-aefa-bdb7478f7de8/scratchpad/final-base2/src=. -O3 -DNDEBUG -static-libgcc -static-libstdc++ -Wl,--dependency-file=CMakeFiles/crowdbench.dir/link.d CMakeFiles/crowdbench.dir/tools/crowdbench.cpp.o -o crowdbench  libtak-formats.a  /home/pocket_geek/TAK/third_party/static-deps/lib/libz.a  /home/pocket_geek/TAK/third_party/static-deps/lib64/libjpeg.a  libtak-crypto.a  libtak_tls.a  /home/pocket_geek/TAK/third_party/ffmpeg-bink/lib/libssl.a  /home/pocket_geek/TAK/third_party/ffmpeg-bink/lib/libcrypto.a  -ldl && :"
+  ],
+  "binary": "/tmp/claude-1000/-home-pocket-geek-TAK/2f0721e8-108f-45c9-aefa-bdb7478f7de8/scratchpad/final-base2/crowdbench-baseline",
+  "binary_sha256": "cc1bf6f27da8551d09d3579074855ecd7036058302ed88b56ef5fa3329d44cd3"
+}
