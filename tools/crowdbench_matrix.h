@@ -231,6 +231,7 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
         metric("legion_holds",l.holds);metric("legion_slides",l.slides);metric("legion_arrivals",l.arrivals);
         metric("legion_contact_arrivals",l.contactArrivals);metric("legion_trapped",l.trapped);
         metric("legion_escapes",l.escapes);metric("legion_bytes",l.bytes);
+        metric("legion_pass_scans",l.passScans);metric("legion_pass_scans_skipped",l.passScansSkipped);
     }
 }
 inline void barriers(World& world,int width,int height,const std::vector<Rect>& previous,
