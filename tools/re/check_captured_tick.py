@@ -190,6 +190,8 @@ def replay(capture, count, crt_seed=None, render_batches=False, native_render=No
             boundary_hits[0] += 1
             if boundary_hits[0] == 2: uc.emu_stop()
         p.uc.hook_add(UC_HOOK_CODE,stop_at_next_tick,begin=0x526351,end=0x526351)
+        # Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+        p.icd.allow_early_stop=True
     if clock:
         report['limitations'].extend(['recorded external clocks replayed in strict caller/tick order',
                                      'native thread alerts report success without running workers',

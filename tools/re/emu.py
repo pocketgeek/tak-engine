@@ -15,6 +15,7 @@ Loads the PE's sections at their virtual addresses, sets up a stack, and calls a
 function with the __thiscall/stdcall conventions the binary uses.
 """
 import struct
+import time
 from unicorn import *
 from unicorn.x86_const import *
 
@@ -28,6 +29,13 @@ STACK = 0x70000000
 STACK_SZ = 0x100000
 HEAP = 0x71000000
 HEAP_SZ = 0x400000
+
+
+RETURN_MAGIC = 0x6FFFF000
+
+
+class EmulationIncomplete(RuntimeError):
+    """A native call ended before reaching its return address."""
 
 
 def page(a):
@@ -76,25 +84,46 @@ class Icd:
         uc.reg_write(UC_X86_REG_ESP, esp + 4 + nargs * 4)
         uc.reg_write(UC_X86_REG_EIP, ret)
 
-    def call(self, addr, args=(), ecx=None, timeout=5_000_000):
-        """stdcall: args pushed right to left. ecx set for __thiscall."""
+    # Scripts that deliberately end a native call early -- an emu_stop hook
+    # inside the routine, or a deliberately bounded run -- set this on their
+    # instance (or pass allow_early_stop=True) to keep the old behaviour of
+    # returning whatever state the routine reached.
+    allow_early_stop = False
+
+    def call(self, addr, args=(), ecx=None, timeout=5_000_000, allow_early_stop=None):
+        """stdcall: args pushed right to left. ecx set for __thiscall.
+
+        `timeout` is unicorn's wall-clock budget in microseconds (0 = none).
+        Unicorn ends a run that exhausts it, or one an emu_stop hook ends,
+        exactly as if it had finished, so a routine that did not reach its
+        return address raises EmulationIncomplete unless the caller opted into
+        early stops."""
         uc = self.uc
         sp = STACK + STACK_SZ - 0x1000
         for a in reversed(args):
             sp -= 4
             uc.mem_write(sp, struct.pack("<i", a))
-        magic = 0x6FFFF000
+        magic = RETURN_MAGIC
         sp -= 4
         uc.mem_write(sp, struct.pack("<I", magic))
         uc.reg_write(UC_X86_REG_ESP, sp)
         if ecx is not None:
             uc.reg_write(UC_X86_REG_ECX, ecx)
+        started = time.monotonic()
         try:
             uc.emu_start(addr, magic, timeout=timeout)
         except UcError as e:
             return None, "UC error %s at eip=%#x" % (e, uc.reg_read(UC_X86_REG_EIP))
+        if allow_early_stop is None:
+            allow_early_stop = self.allow_early_stop
+        eip = uc.reg_read(UC_X86_REG_EIP)
+        if eip != magic and not allow_early_stop:
+            elapsed = time.monotonic() - started
+            reason = ("exhausted its %.1f s wall-clock budget" % (timeout / 1e6)
+                      if timeout and elapsed * 1e6 >= timeout * 0.9 else "was stopped early")
+            raise EmulationIncomplete("call %#x %s at eip=%#x after %.2f s without returning"
+                                      % (addr, reason, eip, elapsed))
         return uc.reg_read(UC_X86_REG_EAX), None
-
 
 if __name__ == "__main__":
     icd = Icd()

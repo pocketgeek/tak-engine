@@ -25,6 +25,8 @@ p.hooks.update({0x4a6680:lambda u,s:(0,camp),0x4a5da0:lambda u,s:(0,mission),
  0x572840:find,0x5d5bb0:compare,0x572e80:setframe})
 p.freeze_hooks()
 p.uc.hook_add(UC_HOOK_CODE,lambda u,a,n,d:u.emu_stop(),begin=0x4a9740,end=0x4a9740)
+# Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+p.allow_early_stop=True
 cases=0
 for name in ('book of darien.tdf','the iron plague.tdf','IPalt.tdf','custom.tdf'):
  for chapter in (0,1,23,24,47,48,90):

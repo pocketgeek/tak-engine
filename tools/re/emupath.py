@@ -5,8 +5,9 @@ Builds a minimal game state: cell grid, unit table, one unit-under-test, and an
 optional occupant, then enumerates configurations -> the exact grade table.
 Observation only; nothing is copied out of the binary.
 """
-import struct, sys
-sys.path.insert(0, "/home/pocket_geek/TAK/tools/re")
+import os, struct, sys
+# This directory, not a fixed checkout: a worktree must import its own modules.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from emu import Icd, HEAP
 
 U = None

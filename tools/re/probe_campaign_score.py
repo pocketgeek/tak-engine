@@ -12,6 +12,8 @@ p=Icd();game,unit,kind=HEAP,HEAP+0x40000,HEAP+0x50000
 p.uc.mem_write(0x62d55c,struct.pack('<I',game))
 p.uc.mem_write(unit+0xb4,struct.pack('<I',kind))
 for stop in (0x512c6b,0x512c9c):p.uc.hook_add(UC_HOOK_CODE,lambda u,a,n,d:u.emu_stop(),begin=stop,end=stop)
+# Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+p.allow_early_stop=True
 cases=0
 for attacker,owner,remaining,disabled,xp,prior in itertools.product((0,1,10),(0,1),(0.,.25),(0,4),(0,666,5000),(0,123,0x7ffffff0)):
  p.uc.mem_write(unit+0xfc,bytes([attacker,owner]));p.uc.mem_write(unit+0x108,struct.pack('<f',remaining))

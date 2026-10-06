@@ -46,6 +46,8 @@ def main():
             uc.emu_stop()
 
     p.hooks[0x507d10] = placement
+    # Deliberate early stop: opt into emu.Icd.call returning without reaching the return address.
+    p.allow_early_stop = True
     p.freeze_hooks()
     for address in (0x535cc0, 0x40db3f, 0x40d732):
         p.uc.hook_add(UC_HOOK_CODE, observe, begin=address, end=address)
