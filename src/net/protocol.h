@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 229;      // 229: Legion lag/settle/follow/lane changes; Retail audit (5x budget
+constexpr uint32_t kNetVersion = 230;      // 230: Legion routes all applicable movement commands (combat/escort,
+                                           //      work/logistics, boats, hovercraft) + corner-step/column fix
+                                           // 229: Legion lag/settle/follow/lane changes; Retail audit (5x budget
                                            //      class, same-cell submit, group pacing, cargo sight, exact
                                            //      flyer landing + airborne occupancy)
                                            // 228: Legion group pathfinding mode (value 4); shared far-tile flow
