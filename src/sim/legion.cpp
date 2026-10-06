@@ -1196,6 +1196,9 @@ struct LegionNavigator::Impl {
         // Travel octant (tan 22.5 ~ 0.414 ~ 2/5).
         const int dx=aax*5>=aaz*2?(ax>0?1:-1):0,dz=aaz*5>=aax*2?(az>0?1:-1):0;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        // Inside the destination area bodies pack into their slots; passing
+        // there only displaces them.
+        if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=2*kPassCells)return false;
         bool oncoming=false;
         for(int k=1;k<=kPassCells&&!oncoming;++k)for(int j=0;j<fz&&!oncoming;++j)for(int i=0;i<fx&&!oncoming;++i) {
             const int cx=ox+k*dx+i,cz=oz+k*dz+j;
@@ -1212,6 +1215,7 @@ struct LegionNavigator::Impl {
             // oncoming traffic.
             const int64_t odx=peer->second.goal%W-footprintOrigin(other->x,other->type->footX);
             const int64_t odz=peer->second.goal/W-footprintOrigin(other->z,other->type->footZ);
+            if(std::max(std::abs(odx),std::abs(odz))<=2*kPassCells)continue;
             const int64_t dot=odx*dx+odz*dz;
             oncoming=dot<0&&100*dot*dot>kOncomingCos2*(odx*odx+odz*odz)*(dx*dx+dz*dz);
         }
@@ -1221,8 +1225,6 @@ struct LegionNavigator::Impl {
             // line, which would cross the lane just left and read as a
             // left-right shuffle in dense traffic.
             if(!direct||m.passUntil<=w.tickCounter_)return false;
-            // Near the goal the body heads for it (no walking past it).
-            if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=2*kPassCells)return false;
             if(!step(p,ox,oz,dx,dz)||!stepFree(u,ox,oz,ox+dx,oz+dz))return false;
             const auto [cx,cz]=stepAim(u,(oz+dz)*W+ox+dx);
             drive(u,m,p,f,maximum,cx,cz,false,true);
