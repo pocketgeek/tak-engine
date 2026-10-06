@@ -102,6 +102,7 @@ struct LegionNavigator::Impl {
     struct Field {
         int plane=-1;
         uint64_t epoch=0;
+        uint64_t serial=0;                // unique per field built (identifies it to the aim memo)
         int W=0,x0=0,z0=0,fw=0,fh=0;      // map width; window origin and size (cells)
         std::vector<uint16_t> potential;  // fw*fh, row-major within the window
         bool inside(int x,int z) const {return x>=x0&&z>=z0&&x<x0+fw&&z<z0+fh;}
@@ -274,6 +275,14 @@ struct LegionNavigator::Impl {
         // field was last seeded at). Only hashed for non-Move kinds.
         Kind kind=Kind::Move;
         int seedX=0,seedZ=0;uint32_t seededAt=0;
+        // Memo of the field-descent aim (see aimCell): a pure function of
+        // the exact position, goal, footprint, the finished field and the
+        // static plane, so a held body (same inputs) reuses it. Derived:
+        // never hashed, and a peer without it computes the same cell.
+        struct Aim {
+            int32_t x=0,z=0;int goal=-1;const UnitType* type=nullptr;
+            uint64_t field=0,epoch=~0ull;int cell=-1;
+        } aim;
     };
 
     World& w;
@@ -299,6 +308,15 @@ struct LegionNavigator::Impl {
     // whose own goal it walls in. Capped per body: no endless shuffling.
     struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
     std::map<int,Anchor> anchors;
+    // Unit id -> whether it has an entry in `anchors` (a dense mirror): the
+    // yield and crowd checks reject a non-anchor body without a tree walk.
+    std::vector<uint8_t> anchorMark;
+    bool isAnchor(int id) const {return id>=0&&size_t(id)<anchorMark.size()&&anchorMark[size_t(id)];}
+    void markAnchor(int id,bool on) {
+        if(id<0)return;
+        if(size_t(id)>=anchorMark.size()) {if(!on)return;anchorMark.resize(size_t(id)+1,0);}
+        anchorMark[size_t(id)]=on;
+    }
     // Committed yield steps in progress: unit id -> target origin cell.
     struct Yield {int cell=-1;uint32_t ticks=0;};
     std::map<int,Yield> yielding;
@@ -331,6 +349,7 @@ struct LegionNavigator::Impl {
     }
     int nextGroup=1;
     uint64_t structureSignature=0,epoch=0,lastWorldEpoch=~0ull;
+    uint64_t fieldSerial=0;   // fields built so far (Field::serial)
     // Plane rebuild work (cells) not yet charged to the per-tick quota.
     uint64_t planeDebt=0;
     int pruneCursor=0;
@@ -1002,7 +1021,7 @@ struct LegionNavigator::Impl {
             if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
         };
         leave(u.id);
-        anchors.erase(u.id);yielding.erase(u.id);
+        anchors.erase(u.id);markAnchor(u.id,false);yielding.erase(u.id);
         const Kind kind=kindOf(u);
         if(kind==Kind::None) {unpin();return;}
         const Policy rule=policy(kind);
@@ -1158,7 +1177,7 @@ struct LegionNavigator::Impl {
         }
         g.built=w.tickCounter_;
         auto f=std::make_unique<Field>();
-        f->plane=g.plane;f->epoch=epoch;
+        f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
         {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
@@ -1521,7 +1540,7 @@ struct LegionNavigator::Impl {
             // (The completed leg itself lingers until World retires it.)
             const Unit* u=w.unit(it->first);
             if(!u||!u->alive()||(!u->orders.empty()&&!(u->orders[World::currentLeg(u->orders)].mission.pending&0x500)))
-                {yielding.erase(it->first);it=anchors.erase(it);}
+                {yielding.erase(it->first);markAnchor(it->first,false);it=anchors.erase(it);}
             else ++it;
         }
         for(auto it=yielding.begin();it!=yielding.end();) {
@@ -1595,6 +1614,9 @@ struct LegionNavigator::Impl {
             ids[size_t(count++)]=o;
         }
         if(!count)return false;
+        // Every blocker must be a settled arrival (checked below with the
+        // rest); most bodies in a crowd are not, so reject them first.
+        for(int k=0;k<count;++k)if(!isAnchor(ids[size_t(k)]))return false;
         std::sort(ids.begin(),ids.begin()+count);
         std::array<int,16> cells{};
         std::array<int,16> feetX{},feetZ{};
@@ -1743,7 +1765,7 @@ struct LegionNavigator::Impl {
         ++stats.arrivals;if(contact)++stats.contactArrivals;
         if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
-        anchors[u.id]=Anchor{m.goal,0,m.point};
+        anchors[u.id]=Anchor{m.goal,0,m.point};markAnchor(u.id,true);
         leave(u.id);
     }
     void trapped(Unit& u,Member& m) {
@@ -2120,7 +2142,10 @@ struct LegionNavigator::Impl {
         const int reach=compAt(p,oz*W+ox);
         return reach>=0&&compAt(p,m.goal)==reach&&compAt(p,m.real)>=0&&compAt(p,m.real)!=reach;
     }
+    // The member whose contact arrival this update already refused.
+    const Member* contactRefused=nullptr;
     void move(Unit& u,Fixed maximum) {
+        contactRefused=nullptr;
         Member* found=member(u.id);
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const Kind kind=kindOf(u);
@@ -2274,6 +2299,9 @@ struct LegionNavigator::Impl {
                     : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
             if(left<m.progress) {m.progress=left;m.stalled=0;m.detourCount=0;} else ++m.stalled;
             if(m.stalled>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
+            // Nothing contactArrival reads changes before drive asks again
+            // in this update (no step was taken, no goal or slot changes).
+            contactRefused=&m;
         }
         Fixed aimX=gx,aimZ=gz;
         bool direct=false;
@@ -2305,36 +2333,52 @@ struct LegionNavigator::Impl {
             }
             const uint16_t potential=f->at(size_t(here));
             if(potential==kUnreached) {trapped(u,m);return;}
-            // String-pull along the descent chain: aim at the farthest of the
-            // next few cells reachable in a straight legal line.
-            int cell=descend(p,*f,ox,oz,m.goal,fx,fz);
-            if(cell<0) {
-                // Inside the goal region the field is flat (potential 0) but
-                // this member's own goal is not in line: walk its seed set by
-                // re-entering the goal's neighbourhood through the nearest
-                // legal neighbour that reduces octile distance to the goal.
-                int best=-1;int64_t bestD=int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz);
-                for(const auto& d:kDirections) {
-                    if(!step(p,ox,oz,d[0],d[1]))continue;
-                    const int64_t dd=int64_t(goalX-ox-d[0])*(goalX-ox-d[0])+int64_t(goalZ-oz-d[1])*(goalZ-oz-d[1]);
-                    if(dd<bestD) {bestD=dd;best=(oz+d[1])*W+ox+d[0];}
-                }
-                if(best<0) {hold(u,m);return;}
-                cell=best;
-            } else {
-                int chain=cell;
-                for(int k=0;k<3;++k) {
-                    const int next=descend(p,*f,chain%W,chain/W,m.goal,fx,fz);
-                    if(next<0)break;
-                    if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
-                    chain=next;
-                }
-                cell=chain;
-            }
+            const int cell=aimCell(u,m,p,*f,ox,oz);
+            if(cell<0) {hold(u,m);return;}
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
         }
         if(here!=m.goal&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct))return;
         drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
+    }
+    // The cell a field follower at origin (ox,oz) aims at; -1 when no
+    // legal neighbour is nearer its goal (it holds). String-pull along the
+    // descent chain: the farthest of the next few cells reachable in a
+    // straight legal line. Every input is fixed while the body stands still
+    // on one field and plane (the field is finished, the plane changes only
+    // with the static epoch), so a held body reuses its last answer: the
+    // descent and line sweeps were the largest share of a held update.
+    int aimCell(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz) {
+        auto& a=m.aim;
+        const bool memo=f.done&&f.serial;
+        if(memo&&a.x==u.x.v&&a.z==u.z.v&&a.goal==m.goal&&a.type==u.type&&a.field==f.serial&&a.epoch==epoch)
+            return a.cell;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int goalX=m.goal%W,goalZ=m.goal/W;
+        int cell=descend(p,f,ox,oz,m.goal,fx,fz);
+        if(cell<0) {
+            // Inside the goal region the field is flat (potential 0) but
+            // this member's own goal is not in line: walk its seed set by
+            // re-entering the goal's neighbourhood through the nearest
+            // legal neighbour that reduces octile distance to the goal.
+            int best=-1;int64_t bestD=int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz);
+            for(const auto& d:kDirections) {
+                if(!step(p,ox,oz,d[0],d[1]))continue;
+                const int64_t dd=int64_t(goalX-ox-d[0])*(goalX-ox-d[0])+int64_t(goalZ-oz-d[1])*(goalZ-oz-d[1]);
+                if(dd<bestD) {bestD=dd;best=(oz+d[1])*W+ox+d[0];}
+            }
+            cell=best;
+        } else {
+            int chain=cell;
+            for(int k=0;k<3;++k) {
+                const int next=descend(p,f,chain%W,chain/W,m.goal,fx,fz);
+                if(next<0)break;
+                if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
+                chain=next;
+            }
+            cell=chain;
+        }
+        if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,cell};
+        return cell;
     }
     // Lane discipline for opposing traffic: a mover that sees an oncoming
     // Legion mover in its own swept lane a few cells ahead moves over one
@@ -2453,7 +2497,10 @@ struct LegionNavigator::Impl {
         // A work/logistics leg never creeps a body that cannot accelerate (a
         // released passenger stands on its landing point, as natively).
         if(speed<=Fixed()&&(m.kind<=Kind::Guard||u.type->accel>Fixed()))speed=Fixed::raw(std::max(1,cap.v/8));
-        if(length>0) {
+        // A leader must be slower than this body and at least half its cap,
+        // so none exists unless this body is above half its cap (a held or
+        // starting body never is): the scan below is skipped then.
+        if(length>0&&int64_t(speed.v)*2>int64_t(cap.v)) {
             // Speed-matched following: keep station behind a slower body of
             // the same player moving the same way (heading within 45 deg) a
             // cell or two ahead -- match its speed, at most halving this
@@ -2551,7 +2598,7 @@ struct LegionNavigator::Impl {
             }
             if(!moved&&corner)moved=cornerStep();
             if(!moved) {
-                if(contactArrival(u,m)) {complete(u,m,true);return;}
+                if(contactRefused!=&m&&contactArrival(u,m)) {complete(u,m,true);return;}
                 if(f&&m.detour<0)sidestep(u,m,p,*f,ox,oz,nx,nz);
                 // A body walled in by STILL bodies (settled arrivals, a held
                 // queue, idle units) plans a short committed detour around
@@ -2767,7 +2814,7 @@ struct LegionNavigator::Impl {
             if(!other||other->player!=u.player||!other->type||other->type->isStructure())continue;
             // Settled for this destination: a Legion arrival there, or an
             // idle body (standing nearer the point, so inside its crowd).
-            const auto a=anchors.find(o);
+            const auto a=isAnchor(o)?anchors.find(o):anchors.end();
             if(a!=anchors.end()?!sameDestination(a->second):!other->orders.empty())continue;
             const int64_t qx=(int64_t(other->x.v)-px)>>16,qz=(int64_t(other->z.v)-pz)>>16;
             if(qx*qx+qz*qz>=dist*dist)continue;
