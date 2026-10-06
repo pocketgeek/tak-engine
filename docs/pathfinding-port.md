@@ -516,7 +516,72 @@ behavior on every possible map or a claim of whole-game retail parity. AI
 strategy may differ, as agreed. Terrain-art occlusion and renderer ordering are
 separate from whether a unit can occupy a map position.
 
-### Retail group pacing: mapped, not ported (audit 2026-10-06)
+### Retail group pacing: ported to Retail mode, re-form convergence open (ra-formation, 2026-10-06)
+
+Branch `ra-formation` replaces the invented Retail-mode pacing (slowest
+`baseSpeed`, 48 px catch-up, 140 px re-order) with the native system, in
+Retail mode (PathfindingMode 0) only. Retail+, Flowfield, Cooperative and
+Legion keep the `squad < 0` code below unchanged. Ported, static reading
+(details below the mapping):
+
+- `51b890` -> `World::tickRetailGroups` (`src/sim/sim.cpp`): per player and
+  group 1..99, counts, footprint-area sums and integer centres for ground,
+  boat and flyer members, "all" and "moving" (`0x1000000` without
+  `0x4000000`); ground/boat speed = minimum terrain-scaled TYPE maximum over
+  members on any `0x1000000` mission (`51bdbc` tests only `0x1000000`; the
+  earlier note that `0x4000000` excludes them applied to the moving sums only);
+  centres of an emptied class are retained; navigator formation bit from the
+  current mission's `0x2000000`; straggler pass `51c3bf..51c5fb`
+  (`retailGroupStragglerSpeed`).
+- `51c700` / `51ce40` / `51d1e0` / `535e90` -> `retailGroupCentre`,
+  `retailGroupRadius`, `retailGroupOutOfSlot`, `retailOctDistance`
+  (`src/sim/retailgroup.h`). The "slot" is the class centre, not a per-member
+  slot: ground/boat use their own class (moving subset when asked and
+  non-empty, optionally counting the member itself; the ground self-inclusive
+  form copies x into y, `51cdcd`); a flyer uses the nearer surface group plus
+  itself. The test is `(octdist/16)^2/4 > area * level-scale` (levels 1..5 =
+  1/4,1/2,1,2,4; minimum 2; flyers doubled).
+- `4d95f0` cap -> `retailGroupSpeedCap` + `World::retailGroupLimit`; the
+  capped value replaces the speed-mode-scaled maximum in `steerGround` and
+  `brakeGround` (`retailGroundPitchCap` still applies). Owner kinds are not
+  distinguished (all players treated as `+0xea` 1/2).
+- `402b00` head (two group checks) and `402880` Move_Ground_Formation ->
+  `World::tickGroundMission` host + `retailGroundFormation`
+  (`src/sim/retailmission.h`). Registry flags (descriptor `+0x11`):
+  Move_Ground `0x3000400`, Move_Ground_Formation `0x11000400`, built with no
+  unit/goal so `0x11000000` -- no `0x2000000`, so a re-forming member is not
+  paced. Check 1: `51d1e0(unit,1,3)`; a member nearer the goal than the moving
+  centre sets `0x8000000`, and on a repeat draws `rand(4)==0` to call `50c480`
+  (remove itself from the moving aggregate) and `4d6a50(unit,0)` (cancel its
+  orders); otherwise level -2 (walk to the moving centre, circle radius 4).
+  Check 2: `51d1e0(unit,0,4)` -> level 4 (cancel the controller, wait). The
+  formation mission retires (5) once back in slot; stages 0..3 as `402880`;
+  the stage-3 target scan (`40296c`) runs only for a non-zero response mode
+  and is not ported (plain moves have mode 0).
+- Groups: human Ctrl+N assigns group N from the selection (`522170` ->
+  `50b4f0` at `5221ce`; a plain selection is never grouped). Our `+N` squads
+  map to group N and `-N` formations to group `10+N`.
+
+Not ported: the changed-flag pass (`51c612..51c6e1`, navigator `vt+0x38`);
+the other Move_Ground_Formation construction sites (`4037ad`, `40383b`,
+`403e78`, `4048e1`, `404ead`, `4080a0`, other handlers); the formation goal's
+y term in the 402b00 distance comparison (taken as 0); mission flags of
+orders our ground host does not model (attack/build report 0); retail AI
+squads (`players_[].retailAi`) are not group members. The human UI's
+`+-60 px` click offsets (`gameview_hud.cpp`) remain untraced (only the
+group assignment path `522170` was found).
+
+**Open:** in `tools/retail_group_test.cpp` (`straggler`), a 4-member group
+with one member 600 px behind does not finish within 12,000 ticks: leaders
+walk back to the centre, one cancels its orders, and the re-forming members
+keep re-requesting routes every 5..9 ticks (stage 1 resets the controller
+each cycle) without converging. Whether that is retail behaviour or a host
+mismatch (route-request latency vs retail's synchronous 4d4da0 reset) has
+not been established. No emulation differential exists yet for `51b890`,
+`51c700`/`51ce40`/`51d1e0` or `402880`; only the `4d95f0` cap is
+emulation-verified (`probe_formation_speed.py`).
+
+Original mapping (audit 2026-10-06):
 
 Retail mode's formation pacing is still our own rule, not retail's. The
 `squad < 0` branch in `World::tick` caps members at the slowest member's

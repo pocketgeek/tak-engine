@@ -19,6 +19,7 @@
 #include "sim/retailweapon.h"
 #include "sim/retailmission.h"
 #include "sim/retailpark.h"
+#include "sim/retailgroup.h"
 #include "sim/retailplayer.h"
 #include "sim/retailconstruction.h"
 #include "sim/retailconstructionparticles.h"
@@ -638,6 +639,10 @@ struct Order {
     RetailMissionState mission;
     uint32_t missionRadius = 0;
     RetailGroundResponse groundResponse;
+    // Retail Move_Ground_Formation (402880) pushed ahead of a Move_Ground:
+    // its mission+0x56 level. Negative = move to the moving members' centre
+    // until within that level; positive = stop and wait for the group.
+    int8_t formationLevel = 0;
     uint64_t controller = 0;
     std::optional<RetailParkState> park;
     // Restored MobileBuild approach; production after arrival still uses the
@@ -1334,6 +1339,10 @@ public:
     FlowNavigator::Stats flowStats() const;
     cooperative::MovementBatch::Stats cooperativeMovementStats() const {return cooperativeMovementStats_;}
     RetailPlusNavigator::Stats retailPlusStats() const {return retailPlus_?retailPlus_->stats():RetailPlusNavigator::Stats{};}
+    // Retail mode's native group record for a unit (null outside Retail or ungrouped).
+    const RetailGroupRecord* retailGroupRecord(int unitId) const {
+        const Unit* u=unit(unitId);return u?retailGroupOf(*u):nullptr;
+    }
     LegionNavigator::Stats legionStats() const {return legion_?legion_->stats():LegionNavigator::Stats{};}
     LegionNavigator* legionNavigator() {return legion_.get();}
 
@@ -2496,6 +2505,20 @@ private:
     // Not persistent state: the formation aggregation rebuilds it each tick.
     struct FlowFormationCap { Fixed maximum; bool active=false; };
     FlowFormationCap flowFormationCaps_[kMaxPlayers][11] = {};
+    // Retail mode only: the native group records (51b890), rebuilt before
+    // missions and movers each tick. Centres persist when a class empties,
+    // as retail's setters leave them. groupPaced_ is the per-unit navigator
+    // formation bit (vt+0x30): the current mission has 0x2000000.
+    std::array<std::array<RetailGroupRecord,100>,kMaxPlayers> retailGroups_{};
+    std::vector<uint8_t> retailGroupPaced_;
+    Fixed retailGroupMaximum_;   // 4d95f0 cap for the unit being moved; 0 = none
+    static int retailGroupIndex(const Unit& u);
+    RetailGroupMember retailGroupMember(const Unit& u) const;
+    const RetailGroupRecord* retailGroupOf(const Unit& u) const;
+    uint32_t retailMissionFlags(Unit& u);
+    void tickRetailGroups();
+    void leaveRetailGroupCentre(const Unit& u);
+    Fixed retailGroupLimit(const Unit& u) const;
     bool pathPending(int id) const {return flow_?flow_->pending(id):paths_.pending(id);}
 
     struct UnitScript {
