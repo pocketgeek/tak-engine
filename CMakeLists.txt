@@ -517,6 +517,8 @@ add_test(NAME cooperative_transport COMMAND transport_test --cooperative)
 add_test(NAME retailplus_production COMMAND production_test --retail-plus)
 add_test(NAME retailplus_transport COMMAND transport_test --retail-plus)
 add_test(NAME cooperative_movement_orders COMMAND movement_orders_test --cooperative)
+# Legion mission goals (attack, chase, guard, fight-move, patrol, group patrol).
+add_test(NAME legion_movement_orders COMMAND movement_orders_test --legion)
 set_tests_properties(flow_group_commands PROPERTIES TIMEOUT 180)
 add_test(NAME flow_group_arrival_large COMMAND flow_group_commands_test large)
 set_tests_properties(flow_group_arrival_large PROPERTIES TIMEOUT 600)

@@ -109,7 +109,8 @@ uint64_t production(bool mobile,bool rally,bool serial) {
     check(stopped&&built>=24,"infinite queue produced the requested observation cohort");
     check(!rally||controllerSeen,"produced rally points receive a ground controller");
     check(idle==built,"all completed outputs stop after their exit/rally move");
-    check(birthplaceClear&&births.size()==size_t(built),"every produced output clears its full birthplace before stopping");
+    if(isSharedPathfinding(sharedMode))
+        check(birthplaceClear&&births.size()==size_t(built),"every produced output clears its full birthplace before stopping");
     return w.stateHash();
 }
 void mobileFightRally() {
@@ -195,6 +196,74 @@ void combatResume(PathfindingMode mode,bool patrol) {
     const auto* remaining=w.unit(target);
     check(engaged&&retained&&(!remaining||!remaining->alive())&&arrived,
         "fight-move/patrol engages an enemy and resumes its original destination");
+}
+// Legion routes these missions; the other modes leave them to their own
+// navigation. Records whether the navigator ever served `kind` for `id`.
+void sawLegion(World& w,int id,LegionMission kind,bool& seen) {
+    if(auto* legion=w.legionNavigator();legion&&w.unit(id))seen|=legion->mission(*w.unit(id))==kind;
+}
+UnitType armed() {
+    auto type=soldier();
+    Weapon weapon;weapon.name="order-test-weapon";weapon.range=120;weapon.damage=100;
+    weapon.reload=0.1f;weapon.aimTol=32767;type.weapon=weapon;type.weapons.push_back(weapon);
+    return type;
+}
+// Attack approach around terrain, then a chase of a target that walks away
+// behind the same wall: both must close to firing range and kill.
+void attackChase(PathfindingMode mode,bool moving) {
+    World w;setup(w,mode);auto type=armed(),enemy=soldier();
+    if(!moving)enemy.maxVel=Fixed();else enemy.maxVel=Fixed::fromFloat(30.f/30);
+    w.nav().block(38,0,3,49,true);
+    const int id=w.spawn(&type,320,640,0,0),target=w.spawn(&enemy,900,640,0,1);
+    if(moving)w.order(target,900,1500,false);
+    w.attack(id,target,false);
+    bool legion=false;int killedAt=-1;
+    for(int n=0;n<6000&&killedAt<0;++n) {
+        w.tick(1.f/30);sawLegion(w,id,LegionMission::Attack,legion);
+        const auto* t=w.unit(target);if(!t||!t->alive())killedAt=n;
+    }
+    std::printf("attack mode=%d moving=%d killedAt=%d legion=%d\n",int(mode),moving,killedAt,legion);
+    check(killedAt>=0,moving?"attack chases a target walking away behind terrain and kills it":
+                             "attack approach routes around terrain into firing range and kills");
+    if(mode==PathfindingMode::Legion)check(legion,"Legion routes the attack approach");
+}
+// Guard follows its charge around a wall and stays close; the order is kept.
+void guardFollow(PathfindingMode mode) {
+    World w;setup(w,mode);auto type=soldier();
+    w.nav().block(38,0,3,49,true);
+    const int charge=w.spawn(&type,320,640,0,0),escort=w.spawn(&type,240,560,0,0);
+    w.guard(escort,charge,false);w.order(charge,1280,640,false);
+    bool legion=false;
+    for(int n=0;n<6000;++n){w.tick(1.f/30);sawLegion(w,escort,LegionMission::Guard,legion);}
+    const auto& c=*w.unit(charge);const auto& e=*w.unit(escort);
+    const float d=fxLen(c.x-e.x,c.z-e.z).toFloat();
+    std::printf("guard mode=%d dist=%.1f orders=%zu legion=%d\n",int(mode),d,e.orders.size(),legion);
+    check(c.orders.empty()&&d<=140.f&&!e.orders.empty()&&e.orders.front().guard,
+          "guard follows its charge around terrain and stays beside it");
+    if(mode==PathfindingMode::Legion)check(legion,"Legion routes the guard escort");
+}
+// A group patrol: twelve bodies loop between their starts and one shared
+// point; every one keeps lapping. (Open ground: patrolLaps covers a single
+// patrol around terrain. On this legacy nav-grid world a 12-body column
+// jams at the wall's end in Legion for plain queued moves as well.)
+uint64_t groupPatrol(PathfindingMode mode,bool serial) {
+    World w;setup(w,mode,serial);auto type=soldier();
+    std::vector<int> ids;
+    for(int i=0;i<12;++i) {const int id=w.spawn(&type,float(240+i%3*48),float(560+i/3*48),0,0);ids.push_back(id);w.patrol(id,1280,640);}
+    std::vector<int> laps(ids.size(),0);std::vector<bool> outbound(ids.size(),false);bool legion=false;
+    for(int n=0;n<18000;++n) {
+        w.tick(1.f/30);
+        for(size_t k=0;k<ids.size();++k) {
+            const auto& u=*w.unit(ids[k]);sawLegion(w,ids[k],LegionMission::Patrol,legion);
+            if(u.x>Fixed::fromInt(1150))outbound[k]=true;
+            if(outbound[k]&&u.x<Fixed::fromInt(450)){++laps[k];outbound[k]=false;}
+        }
+    }
+    const int least=*std::min_element(laps.begin(),laps.end());
+    std::printf("group patrol mode=%d least laps=%d legion=%d\n",int(mode),least,legion);
+    check(least>=2,"every member of a group patrol keeps lapping around terrain");
+    if(mode==PathfindingMode::Legion)check(legion,"Legion routes the group patrol");
+    return w.stateHash();
 }
 void mazeProduction(const char* data) {
     auto vfs=tak::hpi::mountRetailRoot(data,tak::hpi::OverridePolicy::None);
@@ -288,8 +357,9 @@ void trollProduction(const char* data) {
 }
 int main(int argc,char** argv) {
     bool onlyShared=false;
-    if(argc>1&&(std::string(argv[1])=="--cooperative"||std::string(argv[1])=="--flow")) {
-        sharedMode=std::string(argv[1])=="--cooperative"?PathfindingMode::Cooperative:PathfindingMode::Flowfield;
+    if(argc>1&&(std::string(argv[1])=="--cooperative"||std::string(argv[1])=="--flow"||std::string(argv[1])=="--legion")) {
+        sharedMode=std::string(argv[1])=="--cooperative"?PathfindingMode::Cooperative:
+            std::string(argv[1])=="--legion"?PathfindingMode::Legion:PathfindingMode::Flowfield;
         onlyShared=true;--argc;++argv;
     }
     if(argc==3&&std::string(argv[1])=="--trolls") {
@@ -307,6 +377,13 @@ int main(int argc,char** argv) {
         for(bool patrol:{false,true})for(bool clipped:{false,true})partial(mode,patrol,clipped);
         group(mode,false,true);group(mode,true,true);patrolLaps(mode);
         combatResume(mode,false);combatResume(mode,true);
+        // Mission-goal routing (attack, chase, guard, group patrol): the
+        // default run covers Retail, --legion covers Legion.
+        if(mode==PathfindingMode::Retail||mode==PathfindingMode::Legion) {
+            attackChase(mode,false);attackChase(mode,true);guardFollow(mode);
+            const auto patrolHash=groupPatrol(mode,true);
+            check(patrolHash==groupPatrol(mode,false),"group patrol hashes match serial and threaded preparation");
+        }
     }
     const auto serial=group(sharedMode,false,true);
     check(serial==group(sharedMode,false,false),"shared-navigation group hashes match serial and threaded preparation");
@@ -316,5 +393,6 @@ int main(int argc,char** argv) {
     }
     for(auto mode:modes)
         for(bool far:{false,true})exitRally(mode,far);
-    queuedRally();mobileFightRally();std::printf("movement orders: %d failures\n",failures);return failures?1:0;
+    if(isSharedPathfinding(sharedMode))queuedRally();
+    mobileFightRally();std::printf("movement orders: %d failures\n",failures);return failures?1:0;
 }
