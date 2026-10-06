@@ -36,6 +36,7 @@ constexpr size_t kGroupSeeds=256;              // distinct goal origins per grou
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
+constexpr int kLaneSpan=8;                    // passage lane grid: strips narrower than this (origins)
 constexpr int kPassCells=6;                    // oncoming-traffic look-ahead (cells)
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
@@ -1559,6 +1560,34 @@ struct LegionNavigator::Impl {
         // A refused escape step is a stop, not a turn in place.
         if(u.x==x&&u.z==z) {u.heading=heading;u.speed=Fixed();u.turnReqBam=0;}
     }
+    // Passage lanes: in a strip narrower than kLaneSpan origins across (a
+    // door, a bridge), footprint-wide lanes anchored on the low wall pack the
+    // most files side by side (a 6-cell door holds three 2-cell lanes, but
+    // only two when the files drift off that grid). True when (x,z) is in
+    // such a strip on either axis and off its lane grid.
+    bool offLane(const Plane& p,int x,int z,int fx,int fz) const {
+        auto bounds=[&](int cx,int cz,int dx,int dz,int& lo,int& hi)->bool {
+            lo=0;hi=0;
+            if(!legal(p,cx,cz))return false;
+            while(lo<kLaneSpan&&legal(p,cx-dx*(lo+1),cz-dz*(lo+1)))++lo;
+            if(lo>=kLaneSpan)return false;
+            while(lo+hi<kLaneSpan&&legal(p,cx+dx*(hi+1),cz+dz*(hi+1)))++hi;
+            return lo+hi<kLaneSpan;
+        };
+        auto across=[&](int dx,int dz,int foot)->bool {
+            int lo,hi;
+            // A strip only one footprint wide is a single lane.
+            if(!bounds(x,z,dx,dz,lo,hi)||lo+hi<foot||lo%foot==0)return false;
+            // Only a straight-walled section (the same strip one cell along
+            // it, either way) has lanes: on ragged walls the grid shifts
+            // every cell and keeping to it only zig-zags bodies into them.
+            int l,h;
+            const int ax=x+dz,az=z+dx;   // one cell along the strip
+            return (bounds(ax,az,dx,dz,l,h)&&l==lo&&h==hi)||
+                   (bounds(2*x-ax,2*z-az,dx,dz,l,h)&&l==lo&&h==hi);
+        };
+        return across(0,1,fz)||across(1,0,fx);
+    }
     // Steepest legal descent, measured per unit of path length (an
     // orthogonal drop of 5 and a diagonal drop of 7 are equally steep).
     // Ties -- common on open ground, where a region field is "distance to the
@@ -1566,10 +1595,11 @@ struct LegionNavigator::Impl {
     // OWN goal, then direction order. Plain first-found tie breaking pulled
     // bodies toward other members' goals and folded formations into a file.
     // Potential strictly decreases, so no step can cycle.
-    int descend(const Plane& p,const Field& f,int x,int z,int goal) const {
+    int descend(const Plane& p,const Field& f,int x,int z,int goal,int fx=0,int fz=0) const {
         const int W=width(),gx=goal%W,gz=goal/W;
         const uint16_t here=f.at(size_t(z)*W+x);
         int best=-1;int64_t bestSlope=0,bestD=0;
+        std::array<std::pair<int,int64_t>,8> down{};int count=0;
         for(const auto& d:kDirections) {
             if(!step(p,x,z,d[0],d[1]))continue;
             const int cell=(z+d[1])*W+x+d[0];
@@ -1577,7 +1607,19 @@ struct LegionNavigator::Impl {
             if(v>=here)continue;
             const int64_t slope=int64_t(here-v)*(d[0]&&d[1]?kOrthogonal:kDiagonal);
             const int64_t dx=gx-x-d[0],dz=gz-z-d[1],dd=dx*dx+dz*dz;
+            down[size_t(count++)]={cell,slope};
             if(best<0||slope>bestSlope||(slope==bestSlope&&dd<bestD)) {best=cell;bestSlope=slope;bestD=dd;}
+        }
+        // In a passage, keep to its lane grid: a descending cell on a lane
+        // beats a steeper one off it (best stays first among equals).
+        if(fx>0&&best>=0&&offLane(p,best%W,best/W,fx,fz)) {
+            int lane=-1;int64_t laneSlope=0;
+            for(int i=0;i<count;++i) {
+                const auto [cell,slope]=down[size_t(i)];
+                if(cell==best||(lane>=0&&slope<=laneSlope))continue;
+                if(!offLane(p,cell%W,cell/W,fx,fz)) {lane=cell;laneSlope=slope;}
+            }
+            if(lane>=0)return lane;   // still strictly descending
         }
         return best;
     }
@@ -1993,7 +2035,7 @@ struct LegionNavigator::Impl {
             if(potential==kUnreached) {trapped(u,m);return;}
             // String-pull along the descent chain: aim at the farthest of the
             // next few cells reachable in a straight legal line.
-            int cell=descend(p,*f,ox,oz,m.goal);
+            int cell=descend(p,*f,ox,oz,m.goal,fx,fz);
             if(cell<0) {
                 // Inside the goal region the field is flat (potential 0) but
                 // this member's own goal is not in line: walk its seed set by
@@ -2010,7 +2052,7 @@ struct LegionNavigator::Impl {
             } else {
                 int chain=cell;
                 for(int k=0;k<3;++k) {
-                    const int next=descend(p,*f,chain%W,chain/W,m.goal);
+                    const int next=descend(p,*f,chain%W,chain/W,m.goal,fx,fz);
                     if(next<0)break;
                     if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
                     chain=next;
