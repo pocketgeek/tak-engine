@@ -131,8 +131,8 @@ void exitRally(PathfindingMode mode,bool rally) {
     }
     check(child!=0,"exit/rally fixture produced an output");if(!child)return;
     const bool flexible=isSharedPathfinding(mode);
-    check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit.has_value()==flexible,
-          "only automatic shared-navigation exits receive birthplace clearance");
+    check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit.has_value()==(flexible||mode==PathfindingMode::Legion),
+          "only automatic shared-navigation and Legion exits receive birthplace clearance");
     w.stop(id);
     if(flexible) {
         auto* u=w.unit(child);const auto exit=u->orders[World::currentLeg(u->orders)];
@@ -242,6 +242,39 @@ void guardFollow(PathfindingMode mode) {
           "guard follows its charge around terrain and stays beside it");
     if(mode==PathfindingMode::Legion)check(legion,"Legion routes the guard escort");
 }
+// Work approaches around the same wall: a builder repairs a damaged ally,
+// then walks to and puts up a site. The work handlers keep reach, start and
+// retirement; Legion (in --legion) only routes the approaches.
+void workApproach(PathfindingMode mode) {
+    World w;setup(w,mode);auto worker=soldier(),ally=soldier();
+    worker.isBuilder=true;worker.workerTime=1000;worker.buildDist=48;
+    ally.buildTime=1;ally.buildCost=0;ally.maxVel=Fixed();ally.canMove=false;
+    UnitType site{};site.id=site.name="work-site";site.maxVel=Fixed();site.footX=site.footZ=4;
+    site.maxHp=100;site.buildTime=1;site.buildCost=0;
+    // A water wall on the placement plane (on the legacy nav-grid plane
+    // Legion holds a body, a plain Move as well, at a blocked wall's end:
+    // docs/legion-pathfinding.md "Scope").
+    std::vector<uint8_t> heights(size_t(128)*128,100);
+    for(int z=0;z<49;++z)for(int x=38;x<41;++x)heights[size_t(z)*128+x]=0;
+    w.setTerrain(heights,128,128,40);w.setMapPlacementFeatures(std::vector<uint16_t>(size_t(128)*128,0xffff),{});
+    w.player(0).mana=1e9;
+    const int builder=w.spawn(&worker,240,560,0,0),hurt=w.spawn(&ally,1100,400,0,0);
+    w.unit(hurt)->hp=Fixed::fromInt(10);
+    w.repair(builder,hurt,false);w.queueBuild(builder,&site,1100,700,true);
+    bool repaired=false,legionRepair=false,legionBuild=false;int built=0;
+    for(int n=0;n<9000&&!(built&&!w.unit(built)->underConstruction);++n) {
+        w.tick(1.f/30);
+        sawLegion(w,builder,LegionMission::Repair,legionRepair);sawLegion(w,builder,LegionMission::Build,legionBuild);
+        repaired|=w.unit(hurt)->hp>=Fixed::fromFloat(ally.maxHp);
+        for(const auto& u:w.units())if(u.type==&site&&u.alive())built=u.id;
+    }
+    std::printf("work mode=%d repaired=%d built=%d tick=%u legion=%d/%d\n",int(mode),repaired,built,w.tickCount(),legionRepair,legionBuild);
+    if(auto* legion=w.legionNavigator())
+        check(!legion->staticLegal(*w.unit(builder),39,20),"Legion plans around the wall (not through it)");
+    check(repaired,"builder walks around terrain and repairs its ally");
+    check(built&&!w.unit(built)->underConstruction,"builder walks around terrain and finishes its queued site");
+    if(mode==PathfindingMode::Legion)check(legionRepair&&legionBuild,"Legion routes the repair and build approaches");
+}
 // A group patrol: twelve bodies loop between their starts and one shared
 // point; every one keeps lapping. (Open ground: patrolLaps covers a single
 // patrol around terrain. On this legacy nav-grid world a 12-body column
@@ -319,18 +352,21 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
     w.order(id,maze?4864:1600,maze?16640:640,false);
     w.updateNavigationExploration();auto& known=const_cast<std::vector<uint16_t>&>(w.navigationExploration());
     std::fill(known.begin(),known.end(),0xffff);
-    bool stopped=false;int built=0,idle=0;
+    bool stopped=false,legionExit=false;int built=0,idle=0;
     for(int tick=0;tick<90000;++tick) {
         w.tick(1.f/30);built=idle=0;
-        for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction){++built;idle+=u.orders.empty();}
+        for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction){++built;idle+=u.orders.empty();
+            sawLegion(w,u.id,LegionMission::Exit,legionExit);}
         if(!stopped&&built>=count){w.stop(id);stopped=true;}
         if(stopped&&built==idle)break;
     }
     std::printf("Troll rally maze=%d serial=%d tick=%u built=%d idle=%d hash=%016llx\n",
         maze!=nullptr,serial,w.tickCount(),built,idle,(unsigned long long)w.stateHash());
     for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction&&!u.orders.empty())
-        std::printf("unsettled Troll id=%d at=%.1f,%.1f orders=%zu\n",u.id,u.x.toFloat(),u.z.toFloat(),u.orders.size());
+        std::printf("unsettled Troll id=%d at=%.1f,%.1f orders=%zu legion=%d\n",u.id,u.x.toFloat(),u.z.toFloat(),u.orders.size(),
+            w.legionNavigator()?int(w.legionNavigator()->mission(u)):-1);
     check(stopped&&built==count&&idle==built,"all Beast Handler Trolls finish their exit and shared rally orders");
+    if(sharedMode==PathfindingMode::Legion)check(legionExit,"Legion routes the Trolls' production exits");
     if(!maze)for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction) {
         const int64_t dx=u.x.floorInt()-1600,dz=u.z.floorInt()-640;
         const int64_t radius=int64_t(count)*48+32;
@@ -338,7 +374,9 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
     }
     return w.stateHash();
 }
-void trollProduction(const char* data) {
+// `open`: only the open-ground cohorts (the maze cohort is a plain-Move
+// column on the generated maze; see docs/legion-pathfinding.md "Scope").
+void trollProduction(const char* data,bool open=false) {
     auto vfs=tak::hpi::mountRetailRoot(data,tak::hpi::OverridePolicy::None);
     for(bool crusades:{false,true}) {
         TypeRegistry registry;setupRegistry(registry,vfs,crusades);
@@ -350,7 +388,7 @@ void trollProduction(const char* data) {
             constexpr auto recipe="~gen1~0800f0a981b8b476a2cb010008000808ffffff67ff034a616e6b204d617a65207631";
             auto generated=tak::mapgen::generate(tak::mapgen::decodeMapId(recipe),vfs);
             auto files=std::make_shared<tak::hpi::Vfs::Files>();(*files)["maps/orders-troll-maze.tnt"]=generated.map.save();
-            vfs.setMapFiles(files);trollRally(registry,true,&vfs);
+            if(!open){vfs.setMapFiles(files);trollRally(registry,true,&vfs);}
         }
     }
 }
@@ -362,8 +400,8 @@ int main(int argc,char** argv) {
             std::string(argv[1])=="--legion"?PathfindingMode::Legion:PathfindingMode::Flowfield;
         onlyShared=true;--argc;++argv;
     }
-    if(argc==3&&std::string(argv[1])=="--trolls") {
-        try {trollProduction(argv[2]);return failures?1:0;}
+    if((argc==3||(argc==4&&std::string(argv[3])=="open"))&&std::string(argv[1])=="--trolls") {
+        try {trollProduction(argv[2],argc==4);return failures?1:0;}
         catch(const std::exception& e){std::fprintf(stderr,"FAIL %s\n",e.what());return 1;}
     }
     if(argc==2) {
@@ -380,7 +418,7 @@ int main(int argc,char** argv) {
         // Mission-goal routing (attack, chase, guard, group patrol): the
         // default run covers Retail, --legion covers Legion.
         if(mode==PathfindingMode::Retail||mode==PathfindingMode::Legion) {
-            attackChase(mode,false);attackChase(mode,true);guardFollow(mode);
+            attackChase(mode,false);attackChase(mode,true);guardFollow(mode);workApproach(mode);
             const auto patrolHash=groupPatrol(mode,true);
             check(patrolHash==groupPatrol(mode,false),"group patrol hashes match serial and threaded preparation");
         }

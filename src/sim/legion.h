@@ -12,7 +12,11 @@ struct Unit;
 
 // The ground missions whose goal Legion routes (docs/legion-pathfinding.md
 // "Mission goals"). None: the leg is Retail's (native search and mover).
-enum class LegionMission : uint8_t {None=0,Move,Fight,Patrol,Attack,Guard};
+// Build..Park are the work/logistics approaches: build sites, repair and
+// reclaim targets, transport boarding/drop circles, production exits and
+// PARK rings.
+enum class LegionMission : uint8_t {None=0,Move,Fight,Patrol,Attack,Guard,
+    Build,Repair,Reclaim,Load,Unload,Exit,Park};
 
 class LegionNavigator {
 public:
@@ -23,6 +27,9 @@ public:
         uint64_t groups=0,registrations=0,moves=0,holds=0,slides=0;
         uint64_t arrivals=0,contactArrivals=0,trapped=0,escapes=0;
         uint64_t detours=0,detourCells=0;
+        // Per LegionMission: legs (unit, order) Legion took on, arrivals it
+        // raised (0x500) and failed approaches it handed back (0x200).
+        uint64_t missionLegs[16]={},missionArrivals[16]={},missionFailures[16]={};
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;

@@ -23,6 +23,7 @@
 // and runs the path service rather than reusing the flat map.
 
 #include "sim/sim.h"
+#include "sim/legion.h"
 #include "sim/matchsetup.h"
 #include "hpi/hpi.h"
 #include "sim/retailtransport.h"
@@ -237,6 +238,43 @@ static bool runUntilUnloaded(World& w, int tid, int ticks = 4000) {
 // ---------------------------------------------------------------------------
 // 1. Open ground: the queue shape, in isolation.
 // ---------------------------------------------------------------------------
+// --legion: Legion (not the native mover) routes a ground passenger walking to
+// its carrier, the ground carrier's unload approach and the released
+// passenger's PARK ring; the missions themselves stay native.
+static bool legionSaw(World& w,tak::sim::LegionMission kind) {
+    const auto* legion=w.legionNavigator();bool seen=false;
+    if(legion)for(const auto& u:w.units())seen|=legion->mission(u)==kind;
+    return seen;
+}
+static void legionLogistics() {
+    if(g_pathfinding!=tak::sim::PathfindingMode::Legion)return;
+    std::printf("legion routes boarding, unload approach and parking:\n");
+    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setPathService(true);
+    w.setTerrain(std::vector<uint8_t>(size_t(128)*128,100),128,128,20);
+    UnitType carrier=boatType(),passenger=footType();
+    const int tid=w.spawn(&carrier,300,600),cid=w.spawn(&passenger,1100,600);
+    w.loadInto(cid,tid);
+    bool load=false,boarded=false;
+    for(int tick=0;tick<3000&&!boarded;++tick) {
+        w.tick(1.f/30);load|=legionSaw(w,tak::sim::LegionMission::Load);
+        boarded=w.unit(cid)->inTransport==tid;
+    }
+    check(load,"Legion routes the passenger's walk to its carrier");
+    check(boarded,"the passenger boards after a Legion approach");
+    w.unloadAt(tid,1500,1200);
+    bool unload=false,released=false;
+    for(int tick=0;tick<4000&&!released;++tick) {
+        w.tick(1.f/30);unload|=legionSaw(w,tak::sim::LegionMission::Unload);
+        released=w.unit(tid)->cargo.empty();
+    }
+    check(unload,"Legion routes the ground carrier's unload approach");
+    check(released,"the carrier unloads after a Legion approach");
+    bool park=false;
+    for(int tick=0;tick<900;++tick) {w.tick(1.f/30);park|=legionSaw(w,tak::sim::LegionMission::Park);}
+    check(park,"Legion routes the released passenger's PARK ring");
+    check(w.unit(cid)->orders.empty() && !w.unit(cid)->embarked(),"the released passenger finishes parking");
+}
+
 static void openGround() {
     std::printf("open ground -- the order queue unloadAt builds:\n");
     const int W = 64, H = 64;
@@ -1288,6 +1326,11 @@ static void surfacePickupNavigation() {
         std::vector<uint8_t> heights(96*96,100);
         for(int z=0;z<45;++z)for(int x=35;x<45;++x)heights[size_t(z)*96+x]=0;
         w.setTerrain(heights,96,96,40);w.setPathService(true);
+        // Legion plans on the placement plane: on the legacy nav-grid plane a
+        // body (a plain Move as well) holds at the water's corner, the known
+        // gap in docs/legion-pathfinding.md "Scope".
+        const bool legion=g_pathfinding==tak::sim::PathfindingMode::Legion;
+        if(legion)w.setMapPlacementFeatures(std::vector<uint16_t>(size_t(96)*96,0xffff),{});
         UnitType carrier=boatType(),passenger=footType();
         carrier.maxVel=tak::sim::Fixed::raw(1);
         passenger.brake=tak::sim::Fixed::fromFloat(0.1f);
@@ -1298,7 +1341,11 @@ static void surfacePickupNavigation() {
             w.tick(1.f/30);
             const auto& orders=w.unit(cid)->orders;
             size_t end=0;while(end<orders.size() && !orders[end].goal)++end;
-            if(end>0 && end<orders.size()) {
+            // Legion installs no native waypoints: the route is Legion's
+            // while it serves this pickup leg.
+            if(legion ? w.legionNavigator() && w.legionNavigator()->mission(*w.unit(cid))==tak::sim::LegionMission::Load &&
+                        end<orders.size() && orders[end].controller :
+                        end>0 && end<orders.size()) {
                 sawRoute=true;
                 for(size_t i=0;i<=end;++i)
                     preserved=preserved && orders[i].load && !orders[i].transportPickup &&
@@ -2930,6 +2977,8 @@ int main(int argc,char** argv) {
         g_pathfinding=tak::sim::PathfindingMode::Cooperative;--argc;++argv;
     } else if(argc>1 && !std::strcmp(argv[1],"--retail-plus")) {
         g_pathfinding=tak::sim::PathfindingMode::RetailPlus;--argc;++argv;
+    } else if(argc>1 && !std::strcmp(argv[1],"--legion")) {
+        g_pathfinding=tak::sim::PathfindingMode::Legion;--argc;++argv;
     }
     if(argc==2 && !std::strcmp(argv[1],"--attach-position")) {
         // check_cargo_attach_position.py: host x y z, floater, waterline, sea, piece.
@@ -3214,6 +3263,7 @@ int main(int argc,char** argv) {
     pickupNearbySelection(true);
     exactLandingSites();
     airAcrossWater();
+    legionLogistics();
     openGround();
     alreadyInRange();
     coastline();

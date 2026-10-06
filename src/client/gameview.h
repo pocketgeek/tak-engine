@@ -621,6 +621,8 @@ public:
     size_t replayLength() const { return replayBundles_.size(); }
 
     uint64_t worldHashPublic() const { return world_.stateHash(); }
+    // Headless harness telemetry (observation only): Legion's counters.
+    const tak::sim::LegionNavigator* legionPublic() { return world_.legionNavigator(); }
     int missionOutcomePublic() const { return world_.missionOutcome(); }
     // Did this game resolve, and how? +1 win, -1 loss, 0 still running. Unlike
     // missionOutcomePublic this also covers a skirmish/MP last-team-standing result.

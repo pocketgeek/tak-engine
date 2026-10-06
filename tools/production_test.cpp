@@ -27,6 +27,7 @@
 // keeps that from regressing.
 
 #include "sim/sim.h"
+#include "sim/legion.h"
 
 #include <cmath>
 #include <cstdio>
@@ -76,8 +77,15 @@ static std::unique_ptr<World> makeWorld(int W, int H) {
     return w;
 }
 
+// Legion mission kinds that served some unit during a run() (--legion proves
+// Legion, not the native mover, routed the production exits and rallies).
+static bool g_legionSaw[16] = {};
 static void run(World& w, float seconds) {
-    for (int i = 0; i < int(seconds * 30.0f); ++i) w.tick(1.0f / 30.0f);
+    for (int i = 0; i < int(seconds * 30.0f); ++i) {
+        w.tick(1.0f / 30.0f);
+        if (auto* legion = w.legionNavigator())
+            for (const auto& u : w.units()) g_legionSaw[size_t(legion->mission(u))] = true;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +527,7 @@ int main(int argc,char** argv) {
     if(argc==2 && !std::strcmp(argv[1],"--flow"))g_pathfinding=PathfindingMode::Flowfield;
     else if(argc==2 && !std::strcmp(argv[1],"--cooperative"))g_pathfinding=PathfindingMode::Cooperative;
     else if(argc==2 && !std::strcmp(argv[1],"--retail-plus"))g_pathfinding=PathfindingMode::RetailPlus;
+    else if(argc==2 && !std::strcmp(argv[1],"--legion"))g_pathfinding=PathfindingMode::Legion;
     else if(argc!=1)return 2;
     std::printf("production_test\n");
     {
@@ -554,6 +563,13 @@ int main(int argc,char** argv) {
     rallyIsAdopted();
     rallyReplaces();
     mobileRallyIsAdopted();
+    if (g_pathfinding == PathfindingMode::Legion) {
+        std::printf("Legion routed:");
+        for (size_t k = 0; k < 16; ++k) if (g_legionSaw[k]) std::printf(" %zu", k);
+        std::printf("\n");
+        check(g_legionSaw[size_t(LegionMission::Exit)], "Legion routes production exits");
+        check(g_legionSaw[size_t(LegionMission::Move)], "Legion routes the produced units' rally moves");
+    }
     std::printf(g_fail ? "production_test: %d FAILURE(S)\n" : "production_test: all passed\n",
                 g_fail);
     return g_fail ? 1 : 0;
