@@ -179,7 +179,7 @@ struct Track {
     int filled=0,head=0;uint32_t turnSum=0;int headingFlips=0,travelFlips=0;
     int lastTurnSign=0;int32_t lastStepX=0,lastStepZ=0;int32_t lastHeading=0;bool started=false;
     uint64_t spinTicks=0;
-    int trappedSince=-1,trappedLastMotion=-1,settleMax=0;bool everTrapped=false,movingAfterGrace=false;
+    int trappedSince=-1,trappedLastMotion=-1,settleMax=0,lastTrapped=-1;bool everTrapped=false,movingAfterGrace=false;
     bool everTerrainStuck=false,everCrowdHeld=false;
     int finalClass=-1;double optimal=-1,pathAtGoal=-1;int side=-1;
     void init() {xs.assign(window+1,0);zs.assign(window+1,0);turn.assign(window+1,0);

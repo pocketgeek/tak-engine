@@ -541,6 +541,13 @@ inline int run(const Options& o) {
             if(m.near)cls=ca::AtGoal;
             else if(!reachable(m,u))cls=ca::Trapped;
             else if(tick-m.commandTick<ca::window)cls=ca::Warmup;
+            // The no-progress test looks back one window. Right after a unit
+            // stops being trapped (a gate opens, a wall is removed) that window
+            // still spans the trapped period, so a unit already moving at full
+            // speed would read as stationary. Judge it only after one full
+            // window of being reachable, as after a new command. (User
+            // decision, 2026-10-06; applies identically to every mode.)
+            else if(t.lastTrapped>=0&&tick-t.lastTrapped<ca::window)cls=ca::Warmup;
             else if(!step.stationary)cls=ca::Progressing;
             else if(const auto* field=observer.direction(f,int(m.gx),int(m.gz),int(m.radius));!field||field->at(ox,oz)==ca::far)cls=ca::Unclassified;
             else {
@@ -567,6 +574,7 @@ inline int run(const Options& o) {
             t.everTerrainStuck|=cls==ca::TerrainStuck;t.everCrowdHeld|=cls==ca::CrowdHeld;
             if(cls==ca::CrowdHeld&&step.spinning)++totals.spinCrowdHeld;
             if(cls==ca::Trapped) {
+                t.lastTrapped=tick;
                 if(t.trappedSince<0)t.trappedSince=tick;
                 t.everTrapped=true;
                 if(step.spinning)++totals.spinTrapped;

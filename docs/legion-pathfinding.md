@@ -786,8 +786,11 @@ Acceptance:
 
 * **Packed distinct goals: one acceptance check is registered DISABLED as a
   known failure.** `legion_acceptance_crowdheld_legion` reaches 62 of 64 in
-  goal with 2 units ever terrain-stuck (spin passes at 0; 59 and 1 before
-  speed-matched following).
+  goal with 1 unit ever terrain-stuck (spin passes at 0; 59 and 1 before
+  speed-matched following). Since 2026-10-06 the observer gives a unit one
+  progress window after it stops being trapped (as after a command), so the
+  gate's front unit, already moving at full speed, no longer counts; the
+  remaining unit is a real stall at the end of the run.
   `legion_acceptance_group_legion` passed 61/64 before the round-3 livelock
   fix and now passes 64/64. The
   thresholds are unchanged, and no other mode passes either check. The goals
