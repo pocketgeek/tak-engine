@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 
 from balance_inputs import set_balance_inputs
-from emureload import CapturedProcess
+from emureload import CapturedProcess, initial_fixture
 
 
 def main():
@@ -36,10 +36,8 @@ def main():
     subjects=[u for u in p.frame['units'] if u.get('mover_address') and p.u32(u['mover_address']+4) in grids]
     if not subjects: raise ValueError('no surface subjects')
     addresses={u['id']:u['address'] for u in p.runtime['units']}
-    fixture=args.fixture.read_text().splitlines()
+    fixture=initial_fixture(args.fixture.read_text().splitlines(),p.frame['tick'])
     header=fixture[0].split()
-    if header[1]!='34' or int(header[2])!=p.frame['tick']:
-        raise ValueError('expected matching version-34 initial fixture')
     header[1]='36';header[5]='0'
     if args.balance: header[-1]=str(int(args.balance=='crusades'))
     fixture[0]=' '.join(header)

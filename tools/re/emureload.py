@@ -20,6 +20,36 @@ from unicorn.x86_const import (UC_X86_REG_EIP, UC_X86_REG_ESP, UC_X86_REG_FPCW,
                               UC_X86_REG_ESI, UC_X86_REG_EDI, UC_X86_REG_EAX)
 
 
+def initial_fixture(lines, tick):
+    """Return a probe fixture as its version-34 initial-state prefix.
+
+    Checks that author their own surface heights (probe 35/36) and exploration
+    (probe 37) from the capture need the fixture without those trailing sections.
+    probe_saved_movement.py now writes version 37, so strip them here rather
+    than requiring a separately kept version-34 file.
+    """
+    header = lines[0].split()
+    if len(header) < 5 or header[0] != 'TAK_MOVEMENT_PROBE' or int(header[2]) != tick:
+        raise ValueError('expected matching version-34 initial fixture')
+    version, end = int(header[1]), len(lines)
+    if not 34 <= version <= 37:
+        raise ValueError('expected matching version-34 initial fixture')
+    if version >= 37:
+        # width/height/viewer, explored masks, sight count, then one row per sight cache.
+        rows = next((n for n in range(end) if end-n-1 >= 2 and lines[end-n-1] == str(n)), None)
+        if rows is None or len(lines[end-rows-3].split()) != 3:
+            raise ValueError('malformed version-37 exploration section')
+        end -= rows + 3
+    if version >= 35:
+        # One surface-height row per captured unit, preceded by their count.
+        count = int(header[4])
+        if end-count-1 < 1 or lines[end-count-1] != str(count):
+            raise ValueError('malformed surface-height section')
+        end -= count + 1
+    header[1] = '34'
+    return [' '.join(header), *lines[1:end]]
+
+
 class CapturedProcess:
     def __init__(self, capture):
         if capture['status'] != 'captured':
