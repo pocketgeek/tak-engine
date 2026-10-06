@@ -691,7 +691,8 @@
                     if(u->orders.empty())throw std::runtime_error("group right-click lost a selected mover");
                     const auto& order=u->orders.back();
                     const auto target=order.missionTarget.value_or(std::pair{order.x,order.z});
-                    const bool shared=tak::sim::isSharedPathfinding(mode)||
+                    // Legion gives every unit it plans one shared point (docs/legion-pathfinding.md).
+                    const bool shared=tak::sim::isSharedPathfinding(mode)||mode==tak::sim::PathfindingMode::Legion||
                         (mode==tak::sim::PathfindingMode::RetailPlus&&id==soldier);
                     const float expected=shared?2400.f:
                         (id==builder?2460.f:2340.f);
