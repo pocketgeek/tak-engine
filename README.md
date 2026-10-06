@@ -67,9 +67,8 @@ the GOG edition, supplies the game data.
   [five-mode comparison](docs/navigation-comparison-2026-10-05.md).
 - **Movement and route work:** improve group arrivals, local yielding, narrow
   passages and route recovery. Retail search reuses scratch storage without
-  changing its route decisions. See [Flowfield](docs/pathfinding-port.md),
-  [Cooperative](docs/cooperative-pathfinding.md), and
-  [Legion](docs/legion-pathfinding.md) for scope and measurements.
+  changing its route decisions. See [Legion](docs/legion-pathfinding.md) and
+  the [Retail port notes](docs/pathfinding-port.md) for scope and measurements.
 - **Graphics controls restored:** independently select Terrain AA and Model AA,
   bilinear filtering, Smooth GUI Art and Smooth Movies. All default off and
   remember your choices; Smooth GUI Art updates the current interface immediately.
@@ -890,8 +889,7 @@ logistics approaches; flyers and unsupported legs keep Retail behavior. See its
 Campaigns retain Retail pathfinding regardless of the saved create preference.
 The experimental Retail+, Flowfield and Cooperative modes were removed on
 2026-10-06; a saved preference for one of them now falls back to Retail. Their
-history is in git and in the
-[Cooperative design notes](docs/cooperative-pathfinding.md).
+history is in git.
 
 Use the **same engine build and compatible game data** on every participant.
 The development branch uses **protocol 231**; version **0.7.24 uses protocol 227**, including authoritative pathfinding

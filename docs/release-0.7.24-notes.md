@@ -15,8 +15,8 @@
   local routes and validated follower movement. Flowfield group arrivals,
   terrain-route recovery and traffic also improve. Dense crowds and unexplored
   mazes can still be slow, and the alternatives do not outperform Retail in
-  every scene. See [Cooperative](cooperative-pathfinding.md) and
-  [Flowfield](pathfinding-port.md) for physical progress measurements and limits.
+  every scene. (Retail+, Flowfield and Cooperative were removed on 2026-10-06;
+  their design notes and measurements remain in git history.)
 - Reuse scratch storage in Retail's search and tracer without changing route
   decisions. Preserve native diagonal-route semantics while requiring full
   footprint clearance for the new local detours.

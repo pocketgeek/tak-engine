@@ -15,7 +15,7 @@ server status queries. See [release notes](release-0.7.24-notes.md).
 Retail remains the default; alternatives are experimental. Retail+ applies new
 crowd behavior only to ordinary ground Move orders. It is not a general
 large-army performance upgrade: some arrival/recovery cases improve and some
-saturated bottlenecks regress. The [Retail+ report](retail-plus-pathfinding.md)
+saturated bottlenecks regress. The Retail+ report (removed with the mode on 2026-10-06; see git history)
 includes all 120 matched timing cases, baseline equivalence, physical outcomes,
 memory observations and explicit limits. Its older timing binary is identified
 by SHA-256; the version bump does not turn those measurements into new timings.
