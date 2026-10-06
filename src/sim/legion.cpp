@@ -1922,10 +1922,13 @@ struct LegionNavigator::Impl {
                 // bodies cell by cell: follow them one at a time (a pulled
                 // string could clip a body the search went around).
                 const int aim=m.route.front();
-                // A short way around still bodies is walked without turning
-                // the body (a crowd shuffle), not as a U-turn and back.
+                // A committed way around still bodies is purposeful travel:
+                // the body turns toward where it walks while it walks, at
+                // travel speed (it never stops to turn first, so the route
+                // and its timing are those of an unturned walk). Walking it
+                // unturned read as sliding sideways and backward.
                 const auto [ax,az]=stepAim(u,aim);
-                drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
+                drive(u,m,p,nullptr,maximum,ax,az,false,false,true,true);
                 return;
             }
         }
@@ -1936,7 +1939,8 @@ struct LegionNavigator::Impl {
             else {
                 // Lateral shuffles keep facing the route: no heading thrash.
                 // Side-steps do not turn the body either (measured: turning
-                // 90 degrees and back in a jam reads as spinning). A
+                // 90 degrees and back in a jam reads as spinning); only a
+                // pass committed with the lane ahead clear faces its step. A
                 // lane-discipline pass keeps travel speed; the facing cap
                 // that made non-turning keep-right steps crawl (and
                 // gridlocked opposing columns) does not apply to it.
@@ -2084,10 +2088,23 @@ struct LegionNavigator::Impl {
             if(f&&(f->at(size_t(cell))==kUnreached||(!direct&&f->at(size_t(cell))>uint32_t(here)+kDiagonal)))continue;
             if(!stepFree(u,ox,oz,ox+d[0],oz+d[1]))continue;
             ++stats.slides;
-            m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=true;m.lineCell=-1;
+            // A pass made with the lane ahead nearly clear is a committed
+            // manoeuvre around oncoming traffic: the body faces it (unturned
+            // it read as sliding sideways). Inside a dense opposing block it
+            // is a one-cell dodge and stays unturned: turning there and back
+            // reads as spinning.
+            int busy=0;
+            for(int k=1;k<=3;++k)for(int j=-1;j<=fz;++j)for(int i=-1;i<=fx;++i) {
+                const int bx=ox+k*dx+i,bz=oz+k*dz+j;
+                if(bx<0||bz<0||bx>=w.occW_||bz>=w.occH_)continue;
+                const int32_t o=w.occ_[size_t(bz)*w.occW_+bx];
+                if(o&&o!=u.id)++busy;
+            }
+            const bool face=busy<=fx*fz;
+            m.detour=cell;m.detourTicks=0;m.detourFace=face;m.detourPass=true;m.lineCell=-1;
             m.passUntil=w.tickCounter_+kPassHold;m.passRX=int8_t(rx);m.passRZ=int8_t(rz);
             const auto [cx,cz]=stepAim(u,cell);
-            drive(u,m,p,nullptr,maximum,cx,cz,false,false,false,true);
+            drive(u,m,p,nullptr,maximum,cx,cz,false,false,face,true);
             return true;
         }
         return false;
