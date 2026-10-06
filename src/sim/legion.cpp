@@ -40,6 +40,8 @@ constexpr int kDetourCells=12;                 // local detour search radius    
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
 constexpr int kLaneSpan=8;                    // passage lane grid: strips narrower than this (origins)
 constexpr int kPassCells=6;                    // oncoming-traffic look-ahead (cells)
+constexpr int kPartCells=16;                   // lane parting through idle bodies: look-ahead (cells)
+constexpr uint8_t kMaxParts=3;                 // parting steps per idle body
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
@@ -1543,6 +1545,11 @@ struct LegionNavigator::Impl {
                 {yielding.erase(it->first);markAnchor(it->first,false);it=anchors.erase(it);}
             else ++it;
         }
+        // A parted body that gets an order (or dies) forgets its partings.
+        for(auto it=parts.begin();it!=parts.end();) {
+            const Unit* u=w.unit(it->first);
+            if(!u||!u->alive()||!u->orders.empty())it=parts.erase(it);else ++it;
+        }
         for(auto it=yielding.begin();it!=yielding.end();) {
             Unit* u=w.unit(it->first);
             if(!u||!u->alive()||!u->orders.empty()) {it=yielding.erase(it);continue;}
@@ -1583,6 +1590,107 @@ struct LegionNavigator::Impl {
             const auto& d=kDirections[size_t(options[size_t(i)].second)];
             if(!requestYield(u,ox+d[0],oz+d[1]))continue;
             m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
+            return true;
+        }
+        return false;
+    }
+    // Idle bodies of the same player that never moved for Legion (no anchor:
+    // units standing where they were left) part a lane for a held member:
+    // each body in the member's way, along its axis of travel up to the
+    // first free footprint past them (at most kPartCells), steps one or two
+    // cells across the lane, away from its centre, without turning. The
+    // lane may be the member's own or one cell to either side (the member
+    // then shuffles over first): in a lattice of bodies with one-cell gaps
+    // that lines it up with a gap, so one-cell steps open it. Every body
+    // must find a legal target clear of the lane, the member and the other
+    // targets, or none moves. A body never steps back the way it last
+    // parted (to and fro reads as spinning), and parts at most kMaxParts
+    // times. Opposing columns 250x8 at 50% moving, where idle bodies stand
+    // between the movers and their goals: crossed 680 -> 894 and settled
+    // 328 -> 644 (Retail 1000 / 475), means of seeds 0/7/42.
+    struct Part {uint8_t count=0;int8_t sx=0,sz=0;};
+    std::map<int,Part> parts;
+    bool partable(const Unit& u,int id) const {
+        const Unit* b=w.unit(id);
+        if(!b||!b->alive()||b->player!=u.player||!b->orders.empty()||b->speed!=Fixed()||!b->type||b->type->isStructure())return false;
+        if(anchors.count(id)||yielding.count(id))return false;
+        const auto part=parts.find(id);
+        return part==parts.end()||part->second.count<kMaxParts;
+    }
+    bool partLane(const Unit& u,Member& m,const Plane& p,int ox,int oz,int nx,int nz) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        int dx=std::clamp(nx-ox,-1,1),dz=std::clamp(nz-oz,-1,1);
+        if(dx&&dz) {
+            // A diagonal step: part along the axis the goal lies farther along.
+            const int gx=m.goal%W-ox,gz=m.goal/W-oz;
+            if(std::abs(gx)>=std::abs(gz))dz=0;else dx=0;
+        }
+        if(!dx&&!dz)return false;
+        const int px=dz?1:0,pz=dx?1:0;          // across the lane
+        const int along=dx?fx:fz,across=dx?fz:fx;
+        for(int off:{0,1,-1}) {
+            const int sx=ox+off*px,sz=oz+off*pz;
+            // The bodies in the lane, up to the first free footprint past them.
+            std::array<int,16> ids{};int count=0,last=-1,end=-1;bool blocked=false;
+            for(int k=1;k<=kPartCells&&!blocked;++k) {
+                const int lx=sx+k*dx,lz=sz+k*dz;
+                if(!legal(p,lx,lz)) {blocked=true;break;}
+                bool any=false;
+                for(int j=0;j<fz&&!blocked;++j)for(int i=0;i<fx&&!blocked;++i) {
+                    const int cx=lx+i,cz=lz+j;
+                    if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                    const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                    if(!o||o==u.id)continue;
+                    any=true;
+                    bool seen=false;for(int q=0;q<count;++q)seen|=ids[size_t(q)]==o;
+                    if(seen)continue;
+                    if(count==16||!partable(u,o)) {blocked=true;break;}
+                    ids[size_t(count++)]=o;
+                }
+                if(blocked)break;
+                if(any)last=k;
+                else if(count&&k>=last+along) {end=k;break;}
+            }
+            if(blocked||!count||end<0)continue;
+            // (Checked after the scan: most lanes fail on a moving body at once.)
+            if(off&&(!step(p,ox,oz,off*px,off*pz)||!stepFree(u,ox,oz,sx,sz)))continue;
+            std::sort(ids.begin(),ids.begin()+count);
+            const int l0=dx?sz:sx;
+            std::array<int,16> cells{},feetX{},feetZ{};bool ok=true;
+            for(int q=0;q<count&&ok;++q) {
+                const Unit& b=*w.unit(ids[size_t(q)]);
+                const int bfx=b.type->footX,bfz=b.type->footZ;
+                const int bx=footprintOrigin(b.x,bfx),bz=footprintOrigin(b.z,bfz);
+                const int b0=dx?bz:bx,bw=dx?bfz:bfx;
+                const int side=2*b0+bw>=2*l0+across?1:-1;
+                const auto part=parts.find(ids[size_t(q)]);
+                int best=-1;
+                for(int shift:{side,-side,2*side,-2*side}) {
+                    if(b0+shift<l0+across&&l0<b0+shift+bw)continue;   // still in the lane
+                    if(part!=parts.end()&&part->second.sx*shift*px+part->second.sz*shift*pz<0)continue;
+                    const int tx=bx+shift*px,tz=bz+shift*pz;
+                    if(tx<ox+fx&&ox<tx+bfx&&tz<oz+fz&&oz<tz+bfz)continue;
+                    bool reserved=false;
+                    for(int r=0;r<q&&!reserved;++r) {
+                        const int rx=cells[size_t(r)]%W,rz=cells[size_t(r)]/W;
+                        reserved=tx<rx+feetX[size_t(r)]&&rx<tx+bfx&&tz<rz+feetZ[size_t(r)]&&rz<tz+bfz;
+                    }
+                    if(reserved||!yieldFree(b,tx,tz))continue;
+                    if(std::abs(shift)==2&&!yieldFree(b,bx+shift/2*px,bz+shift/2*pz))continue;
+                    best=tz*W+tx;break;
+                }
+                if(best<0)ok=false;
+                else {cells[size_t(q)]=best;feetX[size_t(q)]=bfx;feetZ[size_t(q)]=bfz;}
+            }
+            if(!ok)continue;
+            for(int q=0;q<count;++q) {
+                const Unit& b=*w.unit(ids[size_t(q)]);
+                const int bx=footprintOrigin(b.x,b.type->footX),bz=footprintOrigin(b.z,b.type->footZ);
+                auto& part=parts[ids[size_t(q)]];++part.count;
+                part.sx=int8_t(std::clamp(cells[size_t(q)]%W-bx,-1,1));part.sz=int8_t(std::clamp(cells[size_t(q)]/W-bz,-1,1));
+                yielding[ids[size_t(q)]]=Yield{cells[size_t(q)],0};
+            }
+            if(off) {m.detour=sz*W+sx;m.detourTicks=0;m.detourFace=false;m.detourPass=false;}
             return true;
         }
         return false;
@@ -2622,6 +2730,7 @@ struct LegionNavigator::Impl {
                     m.nextDetour=m.held+wait;
                 }
                 if(f&&m.detour<0&&m.route.empty()&&m.held>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);m.held=0;return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.held>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);m.held=0;return;}
                 hold(u,m);return;
             }
         }
@@ -2971,6 +3080,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint32_t(std::get<2>(a.point)));h=mix(h,uint32_t(std::get<3>(a.point)));
         }
         for(const auto& [id,y]:yielding) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(y.cell));h=mix(h,y.ticks);}
+        for(const auto& [id,n]:parts) {h=mix(h,uint64_t(id));h=mix(h,n.count);h=mix(h,uint64_t(uint8_t(n.sx))|uint64_t(uint8_t(n.sz))<<8);}
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
