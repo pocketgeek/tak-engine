@@ -952,6 +952,352 @@ void penstale() {
 }
 }
 
+// ---- boats and hovercraft ------------------------------------------------
+// Legion plans boats (Domain::Water) and hovercraft (Domain::Hover) on the
+// same footprint-origin plane, built from mobilePlacement's own predicate
+// with the type's water-depth and slope limits. Sea level is 64 in these
+// fixtures; a height below it is water that deep.
+namespace {
+UnitType boat(int foot,int minDepth=13) {
+    auto t=mover(foot);t.id=t.name="legion-boat-"+std::to_string(foot)+"-"+std::to_string(minDepth);
+    t.domain=UnitType::Domain::Water;t.floater=true;t.minWaterDepth=minDepth;t.maxWaterDepth=10000;
+    // Ships specify only a travel turn rate.
+    t.turnRate=900;t.turnInPlaceRate=0;
+    return t;
+}
+UnitType hover(int foot) {
+    auto t=mover(foot);t.id=t.name="legion-hover-"+std::to_string(foot);
+    t.domain=UnitType::Domain::Hover;t.maxSlope=10;t.maxWaterSlope=24;
+    return t;
+}
+Weapon gun() {
+    Weapon weapon;weapon.name="legion-naval-gun";weapon.range=120;weapon.damage=100;
+    weapon.reload=0.1f;weapon.aimTol=32767;return weapon;
+}
+// An archipelago: deep sea (height 20), an island with a shallow shelf (56:
+// too shallow for a 13-deep keel, fine for hover) and jagged cliffs, a land
+// barrier east of it pierced by one narrow strait, a river mouth cut into the
+// north shore, and a gentle beach on the south shore.
+constexpr int kSeaW=176,kSeaH=104;
+std::vector<uint8_t> archipelago() {
+    std::vector<uint8_t> h(size_t(kSeaW)*kSeaH,20);
+    auto at=[&](int x,int z)->uint8_t&{return h[size_t(z)*kSeaW+x];};
+    for(int z=0;z<kSeaH;++z)for(int x=0;x<kSeaW;++x) {
+        const int dx=x-70,dz=z-52,d2=dx*dx+dz*dz;
+        if(d2<=14*14)at(x,z)=uint8_t(120+(x*5+z*3)%9);     // island, jagged cliffs
+        else if(d2<=19*19)at(x,z)=56;                       // shelf
+        // North shore with a river mouth (x 30..37) running inland.
+        if(z<10&&!(x>=30&&x<=37))at(x,z)=110;
+        // South beach: an 8-per-cell ramp from the sea to land (z 74..85),
+        // leaving a 6-cell channel south of the island's shelf. (Its bottom
+        // rows are off the map: retailMapBoundary cuts high southern land.)
+        if(z>=74)at(x,z)=uint8_t(std::min(110,20+(z-74)*8));
+        // Barrier at x 116..123, sea to land, with a strait z 47..56 (10
+        // cells): the only water between the two seas.
+        if(x>=116&&x<=123&&(z<47||z>56))at(x,z)=110;
+    }
+    return h;
+}
+}
+
+namespace {
+void navalclearance() {
+    // Boats with several keel depths and footprints, hovercraft with slope
+    // limits: the plane equals mobilePlacement at every origin, on shores,
+    // shelves, the strait, the river mouth and the beach; and after random
+    // static churn (piers, blocking features, docks with yards) the
+    // incremental plane equals a whole-map rebuild.
+    Fixture f(kSeaW,kSeaH,true,archipelago());
+    for(int i=0;i<20;++i)f.wall(40+i,30+(i%3));            // a jagged reef of features
+    f.publish();
+    std::vector<UnitType> types;
+    types.push_back(boat(2));types.push_back(boat(3,4));types.push_back(boat(4,30));types.push_back(boat(3,13));
+    types.back().footZ=2;types.back().id=types.back().name="legion-boat-rect";
+    types.push_back(hover(2));types.push_back(hover(3));types.back().maxWaterSlope=6;
+    std::vector<int> ids;
+    for(size_t i=0;i<types.size();++i)ids.push_back(f.spawn(types[i],6,40+int(i)*6));
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    check(legion!=nullptr,"legion navigator not created in Legion mode");
+    for(int id:ids)check(legion->mission(*f.world.unit(id))==LegionMission::None,"idle unit has a mission");
+    for(int id:ids) {
+        f.world.order(id,float(150*16),float(52*16),false);
+        check(legion->mission(*f.world.unit(id))==LegionMission::Move,"Legion does not route "+f.world.unit(id)->type->id);
+    }
+    f.world.tick(1.f/30);
+    uint64_t compared=0,legalCount=0;
+    for(int id:ids) {
+        const auto& u=*f.world.unit(id);
+        uint64_t mine=0;
+        for(int z=-1;z<=kSeaH;++z)for(int x=-1;x<=kSeaW;++x) {
+            bool nearBody=false;
+            for(int other:ids)if(other!=id) {
+                const auto& o=*f.world.unit(other);
+                const int ox=footprintOrigin(o.x,o.type->footX),oz=footprintOrigin(o.z,o.type->footZ);
+                if(x<ox+o.type->footX&&x+u.type->footX>ox&&z<oz+o.type->footZ&&z+u.type->footZ>oz)nearBody=true;
+            }
+            if(nearBody)continue;
+            const bool a=legion->staticLegal(u,x,z),b=f.world.mobilePlacement(u,x,z,false);
+            if(a!=b)throw std::runtime_error("plane differs from mobilePlacement for "+u.type->id+" at "+
+                std::to_string(x)+","+std::to_string(z)+" plane="+std::to_string(a));
+            ++compared;legalCount+=a;mine+=a;
+        }
+        check(mine>500&&mine<uint64_t(kSeaW)*kSeaH*9/10,"degenerate plane for "+u.type->id);
+    }
+    // Spot checks of the domains themselves.
+    const auto& keel=*f.world.unit(ids[0]);const auto& skim=*f.world.unit(ids[4]);
+    check(!legion->staticLegal(keel,70,52),"island interior is land");
+    check(legion->staticLegal(skim,70,52)&&!legion->staticLegal(skim,70,52-15),"hover: the island top is open, its cliff is not");
+    check(!legion->staticLegal(keel,70,35)&&legion->staticLegal(skim,70,35),"shelf: too shallow for a keel, fine for hover");
+    check(legion->staticLegal(keel,119,51)&&legion->staticLegal(keel,10,60),"strait and open sea are navigable");
+    check(legion->staticLegal(skim,20,88)&&legion->staticLegal(skim,20,80),"hover climbs the beach");
+    check(!legion->staticLegal(keel,20,88)&&!legion->staticLegal(keel,20,80),"boat stays off the beach");
+    // Static churn: piers (blocking features), buoys (non-blocking) and
+    // docks with yards. The incremental plane must equal a rebuild.
+    UnitType yard{};yard.id=yard.name="legion-dock";yard.maxHp=100;yard.footX=4;yard.footZ=3;yard.buildTime=1;
+    yard.yardMap="o..oo..ooooo";
+    uint32_t r=97531u;
+    auto rnd=[&](int n) {r=r*1103515245u+12345u;return int((r>>8)%uint32_t(n));};
+    std::vector<int> structures;
+    for(int step=0;step<240;++step) {
+        const int kind=rnd(10);
+        if(kind<6) {
+            const int fx=1+rnd(3),fz=1+rnd(3),x=4+rnd(kSeaW-10),z=4+rnd(kSeaH-10);
+            f.world.addFeature(z*kSeaW+x,float(x*16+fx*8),float(z*16+fz*8),0,1,fx,fz,rnd(3)!=0,-1,true);
+        } else if(kind<7) {
+            const int x=6+rnd(kSeaW-14),z=6+rnd(kSeaH-14);
+            structures.push_back(f.world.spawn(&yard,float(x*16+32),float(z*16+24),std::nullopt,1));
+        } else if(kind<8&&!structures.empty()) {
+            const size_t i=size_t(rnd(int(structures.size())));
+            f.world.destroy(structures[i]);structures.erase(structures.begin()+long(i));
+        } else f.world.tick(1.f/30);
+        if(step%3==0||kind>=8)for(int id:ids)
+            check(legion->planeMatchesRebuild(*f.world.unit(id)),"incremental naval plane differs from a rebuild at step "+
+                std::to_string(step)+" for "+f.world.unit(id)->type->id);
+    }
+    std::printf("navalclearance compared=%llu legal=%llu refreshes=%llu\n",(unsigned long long)compared,
+        (unsigned long long)legalCount,(unsigned long long)f.world.legionStats().planeRefreshes);
+}
+
+// A fleet crosses the archipelago: around the island and its shelf, then
+// through the 10-cell strait, to a point beyond it. Every body stays legal
+// every tick, Legion serves the move, everyone arrives, no spinning, and
+// serial == workers.
+uint64_t navalislandRun(bool serial,int foot,int count,bool print) {
+    Fixture f(kSeaW,kSeaH,serial,archipelago());
+    f.publish();
+    const auto type=boat(foot);
+    std::vector<int> ids;
+    for(int i=0;i<count;++i)ids.push_back(f.spawn(type,6+(i%4)*(foot+1),34+(i/4)*(foot+1)));
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float(150*16),float(52*16),false);
+    for(int id:ids)check(legion->mission(*f.world.unit(id))==LegionMission::Move,"Legion does not route the fleet");
+    Motion motion;int last=-1;
+    std::map<int,bool> passedStrait;
+    for(int t=0;t<9000;++t) {
+        f.world.tick(1.f/30);
+        motion.observe(f.world,ids);
+        bool all=true;
+        for(int id:ids) {
+            check(f.legal(id),"boat "+std::to_string(id)+" on an illegal origin at tick "+std::to_string(t));
+            const auto& u=*f.world.unit(id);
+            if(u.x>Fixed::fromInt(116*16)&&u.x<Fixed::fromInt(124*16))passedStrait[id]=true;
+            all&=u.orders.empty();
+        }
+        if(all) {last=t;break;}
+    }
+    int arrived=0,east=0;
+    for(int id:ids) {arrived+=f.world.unit(id)->orders.empty();east+=f.world.unit(id)->x>Fixed::fromInt(124*16);}
+    if(print)printLeft(f,ids);
+    if(print)std::printf("navalisland foot=%d count=%d arrived=%d east=%d strait=%zu tick=%d spins=%llu reversals=%llu hash=%016llx\n",
+        foot,count,arrived,east,passedStrait.size(),last,(unsigned long long)motion.spins,
+        (unsigned long long)motion.reversals,(unsigned long long)f.world.stateHash());
+    check(arrived==count&&east==count,"fleet did not cross the strait");
+    check(int(passedStrait.size())==count,"a boat bypassed the strait");
+    check(motion.spins==0,"a boat spun in place");
+    return f.world.stateHash();
+}
+void navalisland() {
+    const uint64_t a=navalislandRun(true,3,12,true);
+    navalislandRun(true,4,8,true);
+    navalislandRun(true,2,24,true);
+    check(a==navalislandRun(false,3,12,false),"serial and workers differ");
+}
+
+// Hovercraft cross the beach from land into the sea and back onto land;
+// boats go up a narrow river mouth, and boats sent onto the beach stop at
+// the water's edge. Everyone stays legal every tick.
+void hovershore() {
+    Fixture f(kSeaW,kSeaH,true,archipelago());
+    f.publish();
+    const auto skim=hover(2);const auto keel=boat(3);
+    std::vector<int> hovers,boats;
+    for(int i=0;i<10;++i)hovers.push_back(f.spawn(skim,20+(i%5)*3,87+(i/5)*3));
+    for(int i=0;i<4;++i)boats.push_back(f.spawn(keel,96+i*5,64));
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    // Out to sea past the island (land -> beach -> water).
+    for(int id:hovers)f.world.order(id,float(100*16),float(30*16),false);
+    for(int id:hovers)check(legion->mission(*f.world.unit(id))==LegionMission::Move,"Legion does not route hovercraft");
+    auto run=[&](const std::vector<int>& ids,int limit) {
+        Motion motion;
+        for(int t=0;t<limit;++t) {
+            f.world.tick(1.f/30);motion.observe(f.world,ids);
+            bool all=true;
+            for(int id:hovers)check(f.legal(id),"hovercraft "+std::to_string(id)+" on an illegal origin at "+
+                std::to_string(f.world.unit(id)->x.toFloat()/16)+","+std::to_string(f.world.unit(id)->z.toFloat()/16)+" tick "+std::to_string(t));
+            for(int id:boats)check(f.legal(id),"boat on an illegal origin");
+            for(int id:ids)all&=f.world.unit(id)->orders.empty();
+            if(all)return std::pair{t,motion.spins};
+        }
+        return std::pair{-1,motion.spins};
+    };
+    const auto out=run(hovers,6000);
+    std::printf("hovershore out tick=%d spins=%llu\n",out.first,(unsigned long long)out.second);
+    printLeft(f,hovers);
+    check(out.first>=0,"hovercraft did not reach the sea");
+    for(int id:hovers)check(f.world.unit(id)->z<Fixed::fromInt(50*16),"hovercraft not at sea");
+    // Back onto land up the beach further east; the boats go up the narrow
+    // river mouth in the north shore.
+    for(int id:hovers)f.world.order(id,float(140*16),float(84*16),false);
+    for(int id:boats)f.world.order(id,float(34*16),float(3*16),false);
+    for(int id:boats)check(legion->mission(*f.world.unit(id))==LegionMission::Move,"Legion does not route boats");
+    std::vector<int> both=hovers;both.insert(both.end(),boats.begin(),boats.end());
+    const auto back=run(both,6000);
+    printLeft(f,both);
+    int landed=0,river=0;
+    for(int id:hovers)landed+=f.world.unit(id)->z>Fixed::fromInt(80*16);
+    for(int id:boats)river+=f.world.unit(id)->z<Fixed::fromInt(12*16);
+    std::printf("hovershore back tick=%d spins=%llu landed=%d river=%d\n",back.first,(unsigned long long)back.second,landed,river);
+    check(back.first>=0&&landed==int(hovers.size()),"hovercraft did not land up the beach");
+    check(river==int(boats.size()),"boats did not enter the river mouth");
+    // Boats sent onto the beach: the goal resolves to the nearest water
+    // they can float in (within 24 cells), so they stop at the water's edge.
+    for(int id:boats)f.world.order(id,float(100*16),float(88*16),false);
+    for(int t=0;t<3600;++t) {
+        f.world.tick(1.f/30);
+        for(int id:boats)check(f.legal(id),"boat on an illegal origin");
+    }
+    int held=0;
+    for(int id:boats) {
+        const auto& u=*f.world.unit(id);
+        std::printf("  boat %d at %.1f,%.1f orders=%zu state=%d\n",id,u.x.toFloat()/16,u.z.toFloat()/16,u.orders.size(),legion->unitState(id));
+        held+=u.z>Fixed::fromInt(66*16)&&std::abs((u.x-Fixed::fromInt(100*16)).toFloat())<24*16&&u.speed==Fixed();
+    }
+    std::printf("hovershore beach held=%d\n",held);
+    check(held==int(boats.size()),"boats sent onto the beach did not stop at the water's edge");
+    // A mixed selection (ground units, hovercraft, boats) ordered to one sea
+    // point just off the beach: one group per class sharing the point's
+    // area; boats and hovercraft arrive, ground units stop at the shore.
+    auto foot=mover(2);foot.maxWaterDepth=4;
+    std::vector<int> walkers;
+    for(int i=0;i<4;++i)walkers.push_back(f.spawn(foot,130+i*3,88));
+    for(int t=0;t<2;++t)f.world.tick(1.f/30);
+    std::vector<int> mixed=walkers;mixed.insert(mixed.end(),hovers.begin(),hovers.begin()+4);
+    mixed.insert(mixed.end(),boats.begin(),boats.end());
+    for(int id:mixed)f.world.order(id,float(100*16),float(68*16),false);
+    for(int t=0;t<3600;++t) {
+        f.world.tick(1.f/30);
+        for(int id:mixed)check(f.legal(id),"mixed selection: illegal origin for "+std::to_string(id));
+    }
+    int done=0,ashore=0;
+    for(int id:mixed) {
+        const auto& u=*f.world.unit(id);done+=u.orders.empty()&&u.speed==Fixed();
+        if(std::find(walkers.begin(),walkers.end(),id)!=walkers.end())ashore+=u.z>Fixed::fromInt(74*16);
+    }
+    printLeft(f,mixed);
+    std::printf("hovershore mixed done=%d/%zu ashore=%d\n",done,mixed.size(),ashore);
+    check(done==int(mixed.size())&&ashore==int(walkers.size()),"mixed selection did not settle by class");
+    check(out.second==0&&back.second==0,"a hovercraft spun in place");
+}
+
+// The mission families on water: patrol laps around the island, fight-move
+// across it, an attack approach around it and a guard escort. Each must be
+// served by Legion and do its job.
+void navalmissions() {
+    auto armed=[] {auto t=boat(3);t.weapon=gun();t.weapons.push_back(t.weapon);return t;};
+    {   // Patrol: around the island and back, several laps.
+        Fixture f(kSeaW,kSeaH,true,archipelago());f.publish();
+        const auto t=boat(3);
+        std::vector<int> ids;for(int i=0;i<6;++i)ids.push_back(f.spawn(t,30+(i%3)*4,48+(i/3)*4));
+        f.start();
+        for(int id:ids)f.world.patrol(id,float(104*16),float(52*16));
+        std::vector<int> laps(ids.size(),0);std::vector<bool> out(ids.size(),false);bool legion=false;
+        for(int n=0;n<9000;++n) {
+            f.world.tick(1.f/30);
+            for(size_t k=0;k<ids.size();++k) {
+                const auto& u=*f.world.unit(ids[k]);check(f.legal(ids[k]),"patrol boat illegal");
+                legion|=f.world.legionNavigator()->mission(u)==LegionMission::Patrol;
+                // A lap: the outbound leg ends (the current goal flips from
+                // the patrol point back to the start) east of the island.
+                const bool outbound=u.orders[World::currentLeg(u.orders)].x>Fixed::fromInt(80*16);
+                if(out[k]&&!outbound&&u.x>Fixed::fromInt(80*16))++laps[k];
+                out[k]=outbound;
+            }
+        }
+        const int least=*std::min_element(laps.begin(),laps.end());
+        for(size_t k=0;k<ids.size();++k) {
+            const auto& u=*f.world.unit(ids[k]);
+            std::printf("  patrol %d at %.1f,%.1f laps=%d orders=%zu state=%d\n",ids[k],u.x.toFloat()/16,u.z.toFloat()/16,
+                laps[k],u.orders.size(),f.world.legionNavigator()->unitState(ids[k]));
+        }
+        std::printf("navalmissions patrol least=%d legion=%d\n",least,legion);
+        check(legion&&least>=2,"boat patrol around the island");
+    }
+    {   // Fight-move across the island.
+        Fixture f(kSeaW,kSeaH,true,archipelago());f.publish();
+        const auto t=armed();
+        std::vector<int> ids;for(int i=0;i<6;++i)ids.push_back(f.spawn(t,30+(i%3)*4,48+(i/3)*4));
+        f.start();
+        for(int id:ids)f.world.attackMove(id,float(104*16),float(52*16),false);
+        bool legion=false;int done=-1;
+        for(int n=0;n<6000&&done<0;++n) {
+            f.world.tick(1.f/30);bool all=true;
+            for(int id:ids) {
+                const auto& u=*f.world.unit(id);check(f.legal(id),"fight-move boat illegal");
+                legion|=f.world.legionNavigator()->mission(u)==LegionMission::Fight;all&=u.orders.empty();
+            }
+            if(all)done=n;
+        }
+        std::printf("navalmissions fight done=%d legion=%d\n",done,legion);
+        check(legion&&done>=0,"boat fight-move across the island");
+    }
+    {   // Attack approach: the target sits behind the island.
+        Fixture f(kSeaW,kSeaH,true,archipelago());f.publish();
+        const auto t=armed();auto target=boat(3);target.maxVel=Fixed();
+        const int id=f.spawn(t,40,52),enemy=f.spawn(target,100,52,1);
+        f.start();
+        f.world.attack(id,enemy,false);
+        bool legion=false;int killed=-1;
+        for(int n=0;n<6000&&killed<0;++n) {
+            f.world.tick(1.f/30);
+            legion|=f.world.legionNavigator()->mission(*f.world.unit(id))==LegionMission::Attack;
+            check(f.legal(id),"attacking boat illegal");
+            const auto* e=f.world.unit(enemy);if(!e||!e->alive())killed=n;
+        }
+        std::printf("navalmissions attack killed=%d legion=%d\n",killed,legion);
+        check(legion&&killed>=0,"boat attack approach around the island");
+    }
+    {   // Guard: an escort follows its charge around the island.
+        Fixture f(kSeaW,kSeaH,true,archipelago());f.publish();
+        const auto t=boat(3);
+        const int charge=f.spawn(t,40,52),escort=f.spawn(t,34,44);
+        f.start();
+        f.world.guard(escort,charge,false);f.world.order(charge,float(104*16),float(52*16),false);
+        bool legion=false;
+        for(int n=0;n<6000;++n) {
+            f.world.tick(1.f/30);check(f.legal(escort),"escort illegal");
+            legion|=f.world.legionNavigator()->mission(*f.world.unit(escort))==LegionMission::Guard;
+        }
+        const auto& c=*f.world.unit(charge);const auto& e=*f.world.unit(escort);
+        const float d=fxLen(c.x-e.x,c.z-e.z).toFloat();
+        std::printf("navalmissions guard dist=%.1f legion=%d\n",d,legion);
+        check(legion&&c.orders.empty()&&d<=160.f&&!e.orders.empty()&&e.orders.front().guard,"boat guard escort");
+    }
+}
+}
+
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
@@ -959,7 +1305,8 @@ int main(int argc,char** argv) {
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
-        {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend}};
+        {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
+        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
