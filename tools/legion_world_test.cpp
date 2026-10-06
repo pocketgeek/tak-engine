@@ -530,6 +530,59 @@ void farclick() {
     check(cleared>=0&&u.x.toFloat()/16>50,"far click did not walk to the nearest reachable point");
 }
 
+// A goal behind a full wall, from a region with room to move: the body walks
+// to the region's nearest point to the goal, then holds there -- order kept,
+// zero speed, constant heading, no pushing against the wall.
+void approachhold() {
+    Fixture f(96,64);
+    f.rect(48,0,3,64);
+    f.publish();
+    const int id=f.spawn(mover(2),10,30);
+    f.start();
+    f.world.order(id,80*16,30*16,false);
+    Motion motion;
+    int stillFrom=-1;int32_t x=f.world.unit(id)->x.v,z=f.world.unit(id)->z.v,heading=f.world.unit(id)->heading.v;
+    uint64_t movedAfter=0,turnedAfter=0;
+    for(int t=0;t<3000;++t) {
+        f.world.tick(1.f/30);motion.observe(f.world,{id});
+        const auto& u=*f.world.unit(id);
+        if(stillFrom<0&&f.world.legionNavigator()->unitState(id)==5)stillFrom=t;
+        if(stillFrom>=0&&t>stillFrom) {movedAfter+=u.x.v!=x||u.z.v!=z;turnedAfter+=u.heading.v!=heading;}
+        x=u.x.v;z=u.z.v;heading=u.heading.v;
+    }
+    const auto& u=*f.world.unit(id);
+    std::printf("approachhold held_at=%d x=%.1f z=%.1f moved_after=%llu turned_after=%llu spins=%llu speed=%d\n",stillFrom,
+        u.x.toFloat()/16,u.z.toFloat()/16,(unsigned long long)movedAfter,(unsigned long long)turnedAfter,
+        (unsigned long long)motion.spins,u.speed.v);
+    check(stillFrom>=0,"approaching unit never held");
+    check(u.x.toFloat()/16>44&&u.x.toFloat()/16<48.5f&&std::abs(u.z.toFloat()/16-30)<2,"unit did not walk to the nearest reachable point");
+    check(movedAfter==0&&turnedAfter==0&&motion.spins==0,"held unit moved, turned or spun");
+    check(u.speed.v==0,"held unit has speed");
+    check(!u.orders.empty(),"approach order dropped before the grace period");
+    check(f.legal(id),"illegal footprint at the approach point");
+}
+
+// The wall comes down while the body holds at its approach point: the kept
+// order resumes and the body arrives at the real goal, no re-issued order.
+void approachopen() {
+    Fixture f(96,64);
+    f.rect(48,0,3,64);
+    f.publish();
+    const int id=f.spawn(mover(2),10,30);
+    f.start();
+    f.world.order(id,80*16,30*16,false);
+    for(int t=0;t<1500;++t)f.world.tick(1.f/30);
+    const float heldX=f.world.unit(id)->x.toFloat()/16;
+    check(heldX>44&&!f.world.unit(id)->orders.empty(),"unit did not approach the wall with its order kept");
+    f.open(48,0,3,64);f.publish();
+    int arrived=-1;
+    for(int t=0;t<1500&&arrived<0;++t) {f.world.tick(1.f/30);if(f.world.unit(id)->orders.empty())arrived=t;}
+    const auto& u=*f.world.unit(id);
+    std::printf("approachopen held_x=%.1f arrived_after=%d at %.1f,%.1f\n",heldX,arrived,u.x.toFloat()/16,u.z.toFloat()/16);
+    check(arrived>=0&&arrived<600,"unit did not resume promptly after the wall opened");
+    check(std::abs(u.x.toFloat()-80*16)<20&&std::abs(u.z.toFloat()-30*16)<20,"resumed unit did not reach its real goal");
+}
+
 // Static changes away from a moving group (a corpse-like cell toggled every
 // few ticks) must not drop its finished field: no member goes back to
 // waiting for a field, and the group still arrives.
@@ -569,7 +622,8 @@ int main(int argc,char** argv) {
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
-        {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn}};
+        {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
+        {"approachhold",approachhold},{"approachopen",approachopen}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

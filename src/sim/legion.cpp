@@ -32,6 +32,7 @@ constexpr int kDetourCells=12;                 // local detour search radius    
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
+constexpr int kApproachRegion=256;             // origins a region needs before an unreachable goal is approached
 constexpr std::array<std::array<int,2>,8> kDirections{{
     {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
 
@@ -53,6 +54,9 @@ struct LegionNavigator::Impl {
         // Static connected component of every legal origin (-1 if illegal),
         // under the same step rule the field and the mover use.
         std::vector<int32_t> comp;
+        // Per component: origin count and bounding box {minX,minZ,maxX,maxZ}.
+        std::vector<int> compSize;
+        std::vector<std::array<int,4>> compBox;
         uint64_t lastUse=0;
     };
     // Integer distance field from a group's goal origins, built with a
@@ -76,6 +80,7 @@ struct LegionNavigator::Impl {
         std::map<int,int> peak;          // goal origin -> most members it ever had (area size)
         int members=0;
         int comp=-1;                     // static component of every seed
+        bool approach=false;             // seeds are approach points of unreachable goals
         std::unique_ptr<Field> field;    // the field members steer by (done or building)
         // After a static change the finished field keeps steering (the mover
         // re-proves every step) while its replacement builds in `next`.
@@ -99,6 +104,10 @@ struct LegionNavigator::Impl {
         uint16_t best=kUnreached;         // best potential reached
         uint32_t held=0,stalled=0,progress=0xffffffffu;
         uint32_t trappedSince=0;uint64_t trappedEpoch=0;
+        // The order's goal is statically unreachable from this body's region:
+        // `goal` is the nearest reachable point to it, walked to and held
+        // (order kept) until a static change re-resolves the real goal.
+        bool approach=false;uint32_t approachSince=0;uint64_t approachEpoch=0;
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
         int detour=-1;                    // committed side-step cell
@@ -278,6 +287,7 @@ struct LegionNavigator::Impl {
     void labelPlane(Plane& p) {
         const int W=width(),H=height();
         p.comp.assign(p.legal.size(),-1);
+        p.compSize.clear();p.compBox.clear();
         std::vector<int> queue;int next=0;
         for(int start=0;start<W*H;++start) {
             if(!p.legal[size_t(start)]||p.comp[size_t(start)]>=0)continue;
@@ -290,6 +300,12 @@ struct LegionNavigator::Impl {
                     if(p.comp[size_t(c)]<0) {p.comp[size_t(c)]=next;queue.push_back(c);}
                 }
             }
+            std::array<int,4> box{W,H,-1,-1};
+            for(int c:queue) {
+                box[0]=std::min(box[0],c%W);box[1]=std::min(box[1],c/W);
+                box[2]=std::max(box[2],c%W);box[3]=std::max(box[3],c/W);
+            }
+            p.compSize.push_back(int(queue.size()));p.compBox.push_back(box);
             ++next;
         }
     }
@@ -372,6 +388,37 @@ struct LegionNavigator::Impl {
             }
         return best;
     }
+    // Nearest origin of component `comp` to (x,z): minimum squared distance,
+    // ties to the lower cell index. Square rings outward, clipped to the
+    // component's bounding box and starting at its Chebyshev distance; stops
+    // once no farther ring can beat the best found (exact, bounded work).
+    int nearestReachable(const Plane& p,int x,int z,int comp) const {
+        if(comp<0||size_t(comp)>=p.compBox.size())return -1;
+        const auto& b=p.compBox[size_t(comp)];
+        const int W=width();
+        const int r0=std::max({0,b[0]-x,x-b[2],b[1]-z,z-b[3]});
+        const int far=std::max({x-b[0],b[2]-x,z-b[1],b[3]-z});
+        int best=-1;int64_t bestD=0;
+        for(int r=r0;r<=far;++r) {
+            if(best>=0&&int64_t(r)*r>bestD)break;
+            auto visit=[&](int cx,int cz) {
+                const int index=cz*W+cx;
+                if(p.comp[size_t(index)]!=comp)return;
+                const int64_t d=int64_t(cx-x)*(cx-x)+int64_t(cz-z)*(cz-z);
+                if(best<0||d<bestD||(d==bestD&&index<best)) {best=index;bestD=d;}
+            };
+            const int z0=std::max(z-r,b[1]),z1=std::min(z+r,b[3]);
+            for(int cz=z0;cz<=z1;++cz) {
+                if(std::abs(cz-z)==r) {
+                    for(int cx=std::max(x-r,b[0]);cx<=std::min(x+r,b[2]);++cx)visit(cx,cz);
+                } else {
+                    if(x-r>=b[0]&&x-r<=b[2])visit(x-r,cz);
+                    if(r&&x+r>=b[0]&&x+r<=b[2])visit(x+r,cz);
+                }
+            }
+        }
+        return best;
+    }
     void leave(int id) {
         auto found=members.find(id);
         if(found==members.end())return;
@@ -406,7 +453,16 @@ struct LegionNavigator::Impl {
         const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
-        Member m;m.controller=leg.controller;m.goal=nearestLegal(p,gx,gz,reach);m.state=Waiting;m.requested=m.goal;
+        Member m;m.controller=leg.controller;m.goal=nearestLegal(p,gx,gz,reach);m.state=Waiting;
+        // A goal outside this body's static region, while the region still
+        // leaves room to move: walk to the region's nearest point to it and
+        // hold there, order kept, as Retail does (a small sealed pocket holds
+        // where it stands). A static change re-resolves the real goal.
+        if(reach>=0&&m.goal>=0&&compAt(p,m.goal)!=reach&&p.compSize[size_t(reach)]>=kApproachRegion) {
+            const int near=nearestReachable(p,gx,gz,reach);
+            if(near>=0) {m.goal=near;m.approach=true;m.approachSince=w.tickCounter_;m.approachEpoch=epoch;}
+        }
+        m.requested=m.goal;
         m.point={u.player,leg.issuedTick,tx.v,tz.v};++points[m.point].refs;
         if(m.goal<0) {members[u.id]=m;return;}   // trapped on first move
         const int x=m.goal%width(),z=m.goal/width();
@@ -418,6 +474,10 @@ struct LegionNavigator::Impl {
             // member whose goal it cannot reach would descend to a
             // teammate's seed and hold there forever instead of retiring.
             if(g.comp!=goalComp)continue;
+            // Approach points never share a field with real goals: a member
+            // would descend to a stand-in point beside an obstacle instead
+            // of its own goal behind it.
+            if(g.approach!=m.approach)continue;
             if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)continue;
             const bool seeded=std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
             // A field in progress or complete is never re-seeded.
@@ -431,7 +491,7 @@ struct LegionNavigator::Impl {
             joined=&g;break;
         }
         if(!joined) {
-            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;g.comp=goalComp;
+            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;g.comp=goalComp;g.approach=m.approach;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             joined=&groups.emplace(g.id,std::move(g)).first->second;
             ++stats.groups;
@@ -745,6 +805,9 @@ struct LegionNavigator::Impl {
         m.state=Holding;++m.held;
     }
     void complete(Unit& u,Member& m,bool contact) {
+        // The nearest reachable point to an unreachable goal is held, not
+        // completed: the order waits there for the terrain to open.
+        if(m.approach) {trapped(u,m);return;}
         auto& leg=u.orders[World::currentLeg(u.orders)];
         u.speed=Fixed();u.turnReqBam=0;
         leg.mission.pending|=0x500;
@@ -761,7 +824,9 @@ struct LegionNavigator::Impl {
         // period so a gate opening or a wall coming down (a new static
         // epoch) resumes it; after that the leg is retired as Retail retires
         // an unreachable goal. Later queued legs proceed.
-        if(m.state!=Trapped) {m.state=Trapped;m.trappedSince=w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;}
+        if(m.state!=Trapped) {
+            m.state=Trapped;m.trappedSince=m.approach?m.approachSince:w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;
+        }
         u.speed=Fixed();u.turnReqBam=0;
         if(w.tickCounter_-m.trappedSince<kTrappedRetire)return;
         leave(u.id);
@@ -1012,6 +1077,10 @@ struct LegionNavigator::Impl {
     }
     void claimSlot(const Unit& u,Member& m,Group& g,const Plane& p,int here) {
         if(m.requested<0)return;
+        // An approach point is a stand-in, not a destination area: bodies
+        // queue up to it in the order they come (keeping their formation,
+        // so the deepest goals lead when the way opens) and hold on contact.
+        if(m.approach)return;
         if(formationSlot(u,m,g,p))return;
         bool nearest=false;
         if(m.slot>=0) {
@@ -1066,13 +1135,16 @@ struct LegionNavigator::Impl {
         // A new controller, or terrain that changed since this body was
         // found trapped, means a fresh registration (new goal resolution).
         if(found==members.end()||found->second.controller!=leg.controller||
-           (found->second.state==Trapped&&found->second.trappedEpoch!=epoch)) {
+           (found->second.state==Trapped&&found->second.trappedEpoch!=epoch)||
+           (found->second.approach&&found->second.approachEpoch!=epoch)) {
             registerMove(u);found=members.find(u.id);
             if(found==members.end()) {w.brakeGround(u);return;}
         }
         auto& m=found->second;
         ++stats.moves;
         if(m.goal<0) {trapped(u,m);return;}
+        // Holding at the approach point, or out of grace while walking to it.
+        if(m.approach&&(m.state==Trapped||w.tickCounter_-m.approachSince>=kTrappedRetire)) {trapped(u,m);return;}
         auto group=groups.find(m.group);
         if(group==groups.end()) {registerMove(u);w.brakeGround(u);return;}
         auto& g=group->second;g.lastUse=w.tickCounter_;
@@ -1476,7 +1548,7 @@ struct LegionNavigator::Impl {
         for(const auto& [id,g]:groups) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
             h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
-            h=mix(h,uint64_t(uint32_t(g.comp)));h=mix(h,g.stale);
+            h=mix(h,uint64_t(uint32_t(g.comp)));h=mix(h,g.stale);h=mix(h,g.approach);
             for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
             if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);}
             h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
@@ -1505,6 +1577,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);
+            h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
