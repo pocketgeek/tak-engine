@@ -246,22 +246,31 @@ struct RetailReplayProbe {
         goal.mission.stage=0;goal.mission.waitMask=0;
         world.tickGroundMission(u);
     }
+    // Extended inputs (start cell, initial heading, type turn/road/water
+    // multipliers) default to the fixed check_world_search.py fixture; the
+    // randomized fuzz_world_search.py supplies them through --world-search2.
+    struct SearchVariant { int sx=6,sz=6,heading=0,turn=-1,road=-1,water=-1; };
     static void search(int fx,int fz,bool boat,int budget,int gx,int gz,int exploration,bool admission,bool moving,bool terrain,
                        const std::vector<int>& grades) {
+        search(fx,fz,boat,budget,gx,gz,exploration,admission,moving,terrain,grades,SearchVariant{});
+    }
+    static void search(int fx,int fz,bool boat,int budget,int gx,int gz,int exploration,bool admission,bool moving,bool terrain,
+                       const std::vector<int>& grades,SearchVariant v) {
         World world;world.setPathService(true);world.setPathBudget(budget);
         std::vector<uint8_t> heights(32*32,0);
         if (terrain) heights.assign(grades.begin(),grades.end());
         world.setTerrain(heights,32,32,boat?32:0);
         UnitType type;type.footX=fx;type.footZ=fz;type.maxVel=Fixed::fromInt(1);
-        type.turnRate=moving?700:30;
-        type.roadMult=Fixed::raw(moving?98304:65536);type.waterMult=Fixed::raw(moving?49152:65536);
+        type.turnRate=v.turn>=0?v.turn:moving?700:30;
+        type.roadMult=Fixed::raw(v.road>=0?v.road:moving?98304:65536);
+        type.waterMult=Fixed::raw(v.water>=0?v.water:moving?49152:65536);
         type.floater=boat;type.minWaterDepth=boat?13:-10000;type.maxWaterDepth=boat?10000:20;
         type.domain=boat?UnitType::Domain::Water:UnitType::Domain::Ground;
-        const int id=world.spawn(&type,6*16+fx*8,6*16+fz*8);
+        const int id=world.spawn(&type,v.sx*16+fx*8,v.sz*16+fz*8);
         UnitType blocker=type;blocker.footX=blocker.footZ=2;
         if (terrain) world.spawn(&blocker,20*16+16,18*16+16);
         auto& u=*world.unit(id);
-        u.heading=retailHeadingToPort(0);u.groundTerrainFlags=0;u.routeStamp=0;u.baseSpeed=Fixed::fromInt(1);
+        u.heading=retailHeadingToPort(uint16_t(v.heading));u.groundTerrainFlags=0;u.routeStamp=0;u.baseSpeed=Fixed::fromInt(1);
         Order goal;goal.goal=goal.groundMission=true;goal.controller=1;
         goal.x=Fixed::fromInt(gx*16+fx*8);goal.z=Fixed::fromInt(gz*16+fz*8);
         goal.missionRadius=uint32_t(-4);goal.missionTarget=std::pair{goal.x,goal.z};
@@ -296,7 +305,7 @@ struct RetailReplayProbe {
         for (int tick=1;tick<=5000 && world.paths_.pending(id);++tick) {
             world.tickCounter_=uint32_t(tick);
             if (moving) {
-                const int x=tick<5?6:tick<12?7:tick<18?8:7,z=tick<10?6:7;
+                const int x=v.sx+(tick<5?0:tick<12?1:tick<18?2:1),z=v.sz+(tick<10?0:1);
                 u.x=Fixed::fromInt(x*16+fx*8);u.z=Fixed::fromInt(z*16+fz*8);
                 u.heading=retailHeadingToPort(tick<12?0:tick<18?16384:32768);
                 u.groundTerrainFlags=tick<10?0:tick<18?0x800:0x1000;
@@ -329,6 +338,17 @@ struct RetailReplayProbe {
         }
         if (world.paths_.pending(id)) throw std::runtime_error("search fixture did not finish");
         std::cout<<"END\n";
+    }
+    // Whether a ground request from `player` joins retail's 5x budget class.
+    static bool budgetClass(PathfindingMode mode,bool narrowed,int player) {
+        World world;world.setPathService(true);world.setPlayerCount(4);
+        world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
+        world.setPathfindingMode(mode);
+        if (narrowed) world.setPathBudgetClasses(1u);
+        UnitType type;type.maxVel=Fixed::fromInt(1);
+        const int id=world.spawn(&type,6*16+8,6*16+8,{},player);
+        if (!world.requestPath(*world.unit(id),26*16+8,20*16+8)) return false;
+        return world.paths_.priorityByPlayer_[size_t(player)]!=0;
     }
     static bool emptyDelivery(bool accepted) {
         World world;UnitType type;type.maxVel=Fixed::fromInt(1);
@@ -438,6 +458,13 @@ static int selfTest() {
         if (!condition) { std::cerr << "FAIL: " << label << '\n'; ++failures; }
     };
     check(profilingPreservesSearch(),"opt-in stage timings preserve every query, delivery tick, notification and work charge");
+    // 0x4f6379: every player is in retail's 5x path-budget class unless a
+    // campaign mission narrows it; only Retail mode applies the classes.
+    for (int player:{0,3})
+        check(RetailReplayProbe::budgetClass(PathfindingMode::Retail,false,player),"retail player in 5x budget class");
+    check(RetailReplayProbe::budgetClass(PathfindingMode::Retail,true,0),"campaign human keeps 5x budget class");
+    check(!RetailReplayProbe::budgetClass(PathfindingMode::Retail,true,3),"non-strategic campaign player has 1x budget class");
+    check(!RetailReplayProbe::budgetClass(PathfindingMode::RetailPlus,false,0),"Retail+ keeps the unweighted budget split");
     check(RetailReplayProbe::gateGrade(true,false,false,3,2,1,1)==3,"closed gate c passage has special grade");
     check(RetailReplayProbe::gateGrade(true,false,false,4,2,1,1)==3,"closed gate C passage has special grade");
     check(RetailReplayProbe::gateGrade(true,false,false,2,2,1,1)==0,"gate frame remains blocked");
@@ -759,6 +786,17 @@ int main(int argc, char** argv) {
             if (exploration< -1 || exploration>2 || (terrain && exploration<0)) return 2;
             std::vector<int> grades(32*32);for (auto& grade:grades) if (!(std::cin>>grade)) return 2;
             tak::sim::RetailReplayProbe::search(fx,fz,boat!=0,budget,gx,gz,exploration,admission!=0,moving!=0,terrain!=0,grades);
+        }
+        return 0;
+    }
+    if (argc==2 && std::string(argv[1])=="--world-search2") {
+        int fx,fz,boat,budget,gx,gz,exploration,admission,moving,terrain;
+        tak::sim::RetailReplayProbe::SearchVariant v;
+        while (std::cin>>fx>>fz>>boat>>budget>>gx>>gz>>exploration>>admission>>moving>>terrain
+                       >>v.sx>>v.sz>>v.heading>>v.turn>>v.road>>v.water) {
+            if (exploration< -1 || exploration>2 || (terrain && exploration<0)) return 2;
+            std::vector<int> grades(32*32);for (auto& grade:grades) if (!(std::cin>>grade)) return 2;
+            tak::sim::RetailReplayProbe::search(fx,fz,boat!=0,budget,gx,gz,exploration,admission!=0,moving!=0,terrain!=0,grades,v);
         }
         return 0;
     }

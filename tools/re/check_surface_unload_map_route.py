@@ -577,6 +577,7 @@ def replay_native_worker_repath(width, height, base_cached_grades,
     pool_first = unit - 0x138
     put(owner, 1)
     phase.uc.mem_write(owner + 0xea, b'\x01\x00')
+    phase.uc.mem_write(owner + 0xe3, b'\x01')  # 4f6379: 5x path-budget class
     put(owner + 0x74, pool_first)
     put(owner + 0x78, pool_first + 3 * 0x138)
     put(OBJ + 0x115, pool_first)

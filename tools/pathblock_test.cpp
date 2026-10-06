@@ -323,7 +323,9 @@ int main() {
         w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(20 * 20, 100), 20, 20, 20);
         w.setPathService(true);
-        w.setPathBudget(1);
+        // The smallest budget that still runs: every Retail player is in the
+        // 5x budget class (0x4f6379), so a budget below 5 has a zero quantum.
+        w.setPathBudget(5);
         w.blockCells(10, 0, 1, 20, true);
         UnitType s = soldier();
         // Failure notification requires knowing that the wall cuts off the goal.

@@ -44,6 +44,7 @@ def case(fx,fz,boat,budget,kind,exploration=-1,admission=True,moving=False,terra
     put(config+8,config+0x100);put(config+0x10c,4)
     p.uc.mem_write(GS+0x3068,b'\x01\x00')
     player=GS+0x2404;put(player,1);p.uc.mem_write(player+0xea,b'\x01\x00')
+    p.uc.mem_write(player+0xe3,b'\x01')  # 4f6379: every skirmish player is in the 5x budget class
     first=unit-0x138;put(player+0x74,first);put(player+0x78,first+3*0x138)
     put(OBJ+0x115,first);put(OBJ+0x58,0);put(OBJ+0x225,budget)
     p.uc.mem_write(unit+0x78,struct.pack('<hh',fx,fz))

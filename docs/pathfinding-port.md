@@ -506,6 +506,107 @@ at the same rate. Ordinary physical collision and flyer flight rules remain in
 force. Flowfield is experimental and is not guaranteed to be faster in every
 scene.
 
+## Retail audit: search, scheduler and budget classes (2026-10-06)
+
+A fidelity audit of the Retail-mode search layer (scheduler `416430`, init
+`415170`, tracer `4146e0`, cost search `4142c0`, reconstruction `414450`,
+grades `4139d0`/`413c80`, goal controllers, delivery `4e4ea0`). The existing
+fixed-fixture comparisons were extended to randomized and adversarial inputs.
+One discrepancy was found and fixed; two older doc claims are corrected.
+
+### Path-budget class: every player, not "humans" (Retail behavior change)
+
+The scheduler's 5x class byte, player `+0xe3` (`[game+0x24e7+p*0x110]`), is
+set to 1 by the player initializer `4f6290` for **every** player it creates
+(`4f6379 mov byte [esi+0xe3],1`). Its only other writer is `4d2a12`, reached
+only when the session-mode object `[game+0x175dc]` reports 1, which is a
+campaign mission (`4a5633..4a5673` read `Mission`/`Campaign`; skirmish is
+mode 2 via `QuickStart.tdf`/`Map`, multiplayer mode 3). There it copies
+byte 1 of the mission's `Player%i` entry for players 1..9, and the mission
+parser sets that byte only for `strategic` (`4c83fb`); `passive` and
+unspecified entries leave 0. Player 0, the human, keeps the initializer's 1.
+The other stores to `+0xe3` in the image (`44febb`..`45086e`) are
+`vsnprintf` overflow terminators in unrelated buffers.
+
+Ground truth: every saved retail capture (four skirmish save directories,
+human type 1 and AI type 2) has the byte set for all ten slots.
+
+The port treated the byte as "seated human" and never set its mask, so every
+Retail game split the frame budget with weight 1. Because the quantum is
+`(budget/divisor)/weights`, all-ones and all-fives differ only by truncation,
+but they do differ: at the default 12000, 7 pending players get 1714 each
+instead of retail's `(12000/35)*5 = 1710`, and 9 get 1333 instead of 1330.
+Campaign missions differ materially: passive players draw one share against
+the human's and strategic players' five. `World::pathBudgetClassMask_`
+replaces `humanMask_`; `setupMatch` sets every bit and `setupMission` keeps
+only the human and `strategic` slots. Only `PathfindingMode::Retail` applies
+it; Retail+, Legion's Retail fallback, Flowfield and Cooperative keep their
+unweighted split. `retail_trace_test --selftest` checks the classes per mode.
+The captured-replay probe already restored the captured byte (all ones), so
+captured-movement comparisons are unaffected.
+
+### Randomized differential tests
+
+- `tools/re/fuzz_search_worker.py` drives the real scheduler/init/tracer/cost
+  search/retries/reconstruction lifecycle against `RetailSearchWorker` on
+  generated maps (6x6 to 111x95): mazes, one-cell and diagonal-only gaps,
+  combs, spirals, slope/traffic/road bands and noise, sealed goals, goals inside
+  walls, blocked or off-map starts, start == goal, budgets 1..12000 and forced
+  node-cap exhaustion. 6,095 lifecycles and 767,049 scheduler ticks match
+  (every cell flag/direction, ordered grade query, work remainder, retry, event
+  and delivered waypoint), including 78 routes clipped at 64 points. Ten cases
+  whose retail run did not finish within 5,000 ticks were skipped.
+- `tools/re/fuzz_world_search.py` (runner mode `--world-search2`) drives the
+  production World request -> PathService -> delivery path with random start
+  and goal cells, headings, turn rates around the 200/1000 boundaries, road
+  multipliers around 81920, water multipliers, 10 footprints up to 4x4,
+  boats, walled rooms, exploration masks, moving requesters and the
+  `--terrain` cache built by the original routines. Seven seeds, 10,031
+  searches, 386,000 ticks: zero mismatches (the last seed and the fixed
+  `check_world_search.py`, with and without `--terrain`, after the budget-class
+  fix, with the native player byte authored as retail's 1).
+- The existing randomized checks were re-run under different seeds
+  (scheduler, grades, goals, trace, attempt, route, init, weight, cost search).
+
+Two harness boundaries were found and excluded rather than "fixed": in the
+non-terrain World fixture a cached grade 2 makes `4139d0` call the live
+placement query `4db640`, which the native side answers from an empty map
+(-1 everywhere), so cached grade 2 is only compared in terrain mode and
+`check_world_grade.py`; and bypassed admission hands the navigator to any
+allocated slot, which picks the terrain fixture's blocker.
+
+### Same-cell destinations (open, navigator boundary)
+
+`World::requestPath` cancels instead of submitting when the goal is in the
+requester's own footprint cell. Retail's `setDestination` `4e54e0` submits
+whenever a controller exists (`4e5540 push 1; call 4e4f50`). Emulated
+(`probe_samecell` in the audit scratch): `415170` accepts the start at once,
+charges 500 work, notifies 0x1000 and delivers no points; `4e4ea0` then clears
+navigator activity, keeps the stored points, and emits no 0x200 while the
+controller accepts the unit (0..7 px off the point). World never charges that
+work or deactivates the navigator. The consequences belong to arrival and
+mission dispatch, so this is recorded rather than changed here. `fuzz_world_search.py
+--same-cell` reproduces the boundary.
+
+### Corrections to earlier notes
+
+- "The tracer's reverse march runs over a recentering local-window grade
+  system" (phase-2 section below) is not retail behavior. Every grade plane is
+  map-sized: `4e098e` passes `[game+0x19e98]`/`[game+0x19e9c]` to `4dfdd0`,
+  which stores width/height at `+0x340/+0x344` and allocates the packed plane;
+  `4139d0` indexes it as `width*(z>>3)+x`. `+4/+6` of the grade object are the
+  footprint used by the unexplored-cell cross around the search start
+  (`413a16..413a46`), which explains the old harness observation.
+- `0x634674` is not cleared per frame: `4e5080` runs only when the search
+  singleton is created (`4e6088`) or destroyed (`4e60c0`). It is a live count of
+  queued navigators, incremented/decremented by `4e4f50` and decremented on
+  delivery (`4e4f17`), exactly like `PathService::pendingByPlayer_`.
+- Phase-2 composition (`416668..4166a6`): phase 2 runs only while the heap is
+  non-empty and `+0x191 < +0xec`; each pop charges 10, arrival 50 more, and the
+  fan is `2 + (retry > 0)` after the first pop; otherwise `4166f1` retries up to
+  three times and then runs the 9x9 diagnostic scan. `RetailCostSearch::runSlice`
+  and `RetailSearchWorker::dispatch` match this and the fuzzers above exercise it.
+
 ## Current status: scoped pathfinding work complete (protocol 179)
 
 The requested scope is retail-compatible surface navigation and valid map
@@ -5423,7 +5524,8 @@ distance, exactly as the emulated costs dictate.
 
 **Honest scope.** The cost model and the Dijkstra algorithm are emulation-exact.
 What could NOT be observed end to end is a complete retail ROUTE: the tracer's
-reverse-march runs over a recentering local-window grade system, and driving it
+reverse-march runs over a recentering local-window grade system (CORRECTED 2026-10-06:
+there is no such window; see the retail audit section), and driving it
 to a produced route needs that subsystem replicated (the harness gets the tracer
 to arrive and phase 2 to expand nodes, then hits a node-pool plumbing wall). So
 route fidelity is by CONSTRUCTION -- a correct Dijkstra over the exact cost model
@@ -5492,6 +5594,8 @@ identical cost -- no behavioural or determinism gain (our peers already agree
 with each other; phase 2 only fires on the ~20% short-trip case). Left as a
 documented cosmetic residual, now with the exact heap shape on record.
 
+(SUPERSEDED 2026-10-06 -- the byte is set for every player outside campaign
+missions; see "Retail audit: search, scheduler and budget classes".)
 **+0x24e7 is the human/privileged-player flag; humans get a 5x path-budget
 share (CONFIRMED, was inferred).** The scheduler's budget split (0x4164a0-
 0x416517) walks the player table, and for each active slot reads the byte at
