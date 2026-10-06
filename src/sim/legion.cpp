@@ -21,12 +21,17 @@ namespace tak::sim {
 namespace {
 constexpr uint16_t kUnreached=0xffff;
 constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
-constexpr uint64_t kFieldQuota=4'000'000;      // relaxations per tick, all fields
+// Relaxations per tick, all fields: about 1.5 ms (4.4 ns each, measured on
+// the jank replay), a third of a tick at 8x game speed (4.17 ms). A field
+// still steers the bodies its frontier has passed while it builds.
+constexpr uint64_t kFieldQuota=384'000;
 constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
 constexpr int kClusterCells=16;
+constexpr int kFieldMargin=32;                 // bounded field window margin (cells), at least
+constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
 constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
@@ -79,11 +84,35 @@ struct LegionNavigator::Impl {
             const int x=int(cell%size_t(W)),z=int(cell/size_t(W));
             return inside(x,z)?potential[local(x,z)]:kUnreached;
         }
-        std::array<std::vector<int>,8> buckets;
+        // Buckets keyed by potential + heuristic (see advance); the key of a
+        // relaxed neighbour is at most 2*kDiagonal above the popped one.
+        std::array<std::vector<int>,16> buckets;
         uint32_t current=0;
+        int tx=0,tz=0;bool aimed=false;    // heuristic target: the group's bodies
+        std::vector<std::pair<uint32_t,int>> seedKeys;size_t seedNext=0;   // seeds by key, enqueued in order
+        uint32_t heuristic(int x,int z) const {
+            if(!aimed)return 0;
+            const int dx=std::abs(x-tx),dz=std::abs(z-tz);
+            return uint32_t(kOrthogonal*std::max(dx,dz)+(kDiagonal-kOrthogonal)*std::min(dx,dz));
+        }
         size_t queued=0;
         bool done=false;
+        // The window is a margin around the group's bodies and seeds, not
+        // its whole static component: a body outside it (or cut off from
+        // the seeds inside it) widens the group's next field.
+        bool bounded=false;
         uint64_t work=0;
+        // The build is A* toward the group's bodies with a consistent
+        // (octile) heuristic, run to exhaustion: the finished potentials are
+        // the exact distances, the same as plain Dijkstra, but the frontier
+        // reaches the bodies first. A cell whose potential + heuristic is at
+        // most the current key can never improve again, so a half-built
+        // field already steers the bodies it has reached (descent only
+        // visits lower potentials, which always end at a seed).
+        bool settled(size_t cell,uint16_t v) const {
+            if(done)return v!=kUnreached;
+            return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))<=current;
+        }
     };
     struct Group {
         int id=0,player=0,plane=-1;
@@ -97,6 +126,12 @@ struct LegionNavigator::Impl {
         // component labels are renumbered on every plane rebuild, so the
         // region is compared live through this cell (see groupComp).
         int compCell=-1;
+        // Bounding box of the members' origins when they joined, and whether
+        // a bounded field already failed to cover a member (fields of this
+        // group then span the whole component).
+        int bodyMinX=0,bodyMinZ=0,bodyMaxX=-1,bodyMaxZ=-1;
+        bool full=false;
+        uint32_t waited=~0u-1;           // last tick a member stood still waiting for the field
         bool approach=false;             // seeds are approach points of unreachable goals
         std::unique_ptr<Field> field;    // the field members steer by (done or building)
         // After a static change the finished field keeps steering (the mover
@@ -573,6 +608,8 @@ struct LegionNavigator::Impl {
         if(!std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal))
             g.seeds.insert(std::upper_bound(g.seeds.begin(),g.seeds.end(),m.goal),m.goal);
         g.minX=std::min(g.minX,x);g.maxX=std::max(g.maxX,x);g.minZ=std::min(g.minZ,z);g.maxZ=std::max(g.maxZ,z);
+        if(g.bodyMaxX<g.bodyMinX) {g.bodyMinX=g.bodyMaxX=sx;g.bodyMinZ=g.bodyMaxZ=sz;}
+        else {g.bodyMinX=std::min(g.bodyMinX,sx);g.bodyMaxX=std::max(g.bodyMaxX,sx);g.bodyMinZ=std::min(g.bodyMinZ,sz);g.bodyMaxZ=std::max(g.bodyMaxZ,sz);}
         {const int n=++g.sharing[m.goal];int& top=g.peak[m.goal];top=std::max(top,n);}++g.members;g.lastUse=w.tickCounter_;
         m.group=g.id;
         members[u.id]=m;
@@ -587,7 +624,7 @@ struct LegionNavigator::Impl {
     }
     // The window a new field for `g` needs: the union of its seeds' static
     // component boxes (the whole map if a seed is unlabelled).
-    std::array<int,4> fieldWindow(const Group& g) const {
+    std::array<int,4> fieldWindow(const Group& g,bool whole=false) const {
         const auto& p=planes[size_t(g.plane)];
         std::array<int,4> box{width(),height(),-1,-1};
         for(int s:g.seeds) {
@@ -597,7 +634,17 @@ struct LegionNavigator::Impl {
             box={std::min(box[0],b[0]),std::min(box[1],b[1]),std::max(box[2],b[2]),std::max(box[3],b[3])};
         }
         if(box[2]<box[0])return {0,0,width()-1,height()-1};
-        return box;
+        if(whole||g.full||g.bodyMaxX<g.bodyMinX)return box;
+        // Bound it to the seeds and bodies plus a margin of half their
+        // span (at least kFieldMargin): the shortest way rarely leaves it,
+        // and a group crossing a corner of a big map no longer pays for the
+        // whole map. A member it fails to cover widens the next build.
+        const int x0=std::min(g.minX,g.bodyMinX),z0=std::min(g.minZ,g.bodyMinZ);
+        const int x1=std::max(g.maxX,g.bodyMaxX),z1=std::max(g.maxZ,g.bodyMaxZ);
+        const int margin=std::max(kFieldMargin,std::max(x1-x0,z1-z0)/2);
+        const std::array<int,4> bounded{std::max(box[0],x0-margin),std::max(box[1],z0-margin),
+                                        std::min(box[2],x1+margin),std::min(box[3],z1+margin)};
+        return bounded;
     }
     // At the cap a new field may only displace one that has served its
     // group for a while (oldest build first); otherwise the group waits for
@@ -619,36 +666,52 @@ struct LegionNavigator::Impl {
         f->plane=g.plane;f->epoch=epoch;
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
+        {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
+        if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
             if(!f->inside(s%f->W,s/f->W))continue;
-            f->potential[f->local(s%f->W,s/f->W)]=0;f->buckets[0].push_back(s);++f->queued;
+            f->potential[f->local(s%f->W,s/f->W)]=0;f->seedKeys.push_back({f->heuristic(s%f->W,s/f->W),s});
         }
+        std::sort(f->seedKeys.begin(),f->seedKeys.end());
+        f->current=f->seedKeys.empty()?0:f->seedKeys.front().first;
         if(g.field)g.next=std::move(f);else g.field=std::move(f);
         return true;
     }
-    // Dial's algorithm: edge costs <= 7 so eight circular buckets suffice.
+    // Dial's algorithm on key = potential + heuristic (A*; consistent, so
+    // a key never drops below its parent's and rises by at most 2*kDiagonal:
+    // sixteen circular buckets suffice). Seeds enter in key order.
     uint64_t advance(Field& f,uint64_t budget) {
         const auto& p=planes[size_t(f.plane)];
         const int W=width();uint64_t spent=0;
-        while(f.queued&&spent<budget) {
-            auto& bucket=f.buckets[f.current&7];
+        while((f.queued||f.seedNext<f.seedKeys.size())&&spent<budget) {
+            if(!f.queued&&f.seedKeys[f.seedNext].first>f.current)f.current=f.seedKeys[f.seedNext].first;
+            while(f.seedNext<f.seedKeys.size()&&f.seedKeys[f.seedNext].first==f.current) {
+                f.buckets[f.current&15].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
+            }
+            auto& bucket=f.buckets[f.current&15];
             if(bucket.empty()) {++f.current;continue;}
             const int cell=bucket.back();bucket.pop_back();--f.queued;
-            if(f.at(size_t(cell))!=f.current)continue;   // stale entry
             const int x=cell%W,z=cell/W;
+            const uint32_t g=f.at(size_t(cell));
+            if(g+f.heuristic(x,z)!=f.current)continue;   // stale entry
             for(const auto& d:kDirections) {
                 ++spent;
                 if(!step(p,x,z,d[0],d[1]))continue;
-                const uint32_t next=f.current+(d[0]&&d[1]?kDiagonal:kOrthogonal);
+                const uint32_t next=g+(d[0]&&d[1]?kDiagonal:kOrthogonal);
                 if(next>=kUnreached)continue;   // saturated: beyond the field's range
                 // Outside the window only after a static change mid-build
                 // (the field is then stale and rebuilt on the new plane).
                 if(!f.inside(x+d[0],z+d[1]))continue;
                 auto& slot=f.potential[f.local(x+d[0],z+d[1])];
-                if(next<slot) {slot=uint16_t(next);f.buckets[next&7].push_back((z+d[1])*W+x+d[0]);++f.queued;}
+                if(next<slot) {
+                    slot=uint16_t(next);
+                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&15].push_back((z+d[1])*W+x+d[0]);++f.queued;
+                }
             }
         }
-        if(!f.queued) {f.done=true;for(auto& b:f.buckets)std::vector<int>().swap(b);}
+        if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
+            f.done=true;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
+        }
         f.work+=spent;
         return spent;
     }
@@ -698,9 +761,21 @@ struct LegionNavigator::Impl {
             budget-=std::min(budget,spent);stats.fieldWork+=spent;
             if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);g.stale=false;restaleSlots(g);}}
         };
+        // Groups with a member standing still for want of a field come
+        // first (their field starts, or its frontier advances toward them),
+        // then first fields whose members all steer already, then refreshes
+        // (members still steer by the finished stale field).
         for(auto& [id,g]:groups) {
             if(budget==0)break;
-            Field* f=g.next?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
+            if(w.tickCounter_-g.waited>1||g.next||(g.field&&g.field->done))continue;
+            plane(g.plane);settle();
+            if(budget==0)break;
+            if(!g.field&&!startField(g))continue;
+            finish(g,*g.field,advance(*g.field,budget));
+        }
+        for(int pass=0;pass<2;++pass)for(auto& [id,g]:groups) {
+            if(budget==0)break;
+            Field* f=pass==1?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
             if(!f)continue;
             plane(g.plane);settle();
             if(budget==0)break;
@@ -1331,6 +1406,20 @@ struct LegionNavigator::Impl {
         const int here=oz*W+ox;
         const Field* f=g.field&&g.field->done?g.field.get():nullptr;
         if(f)claimSlot(u,m,g,p,here);
+        // A first field still building already steers a body its frontier
+        // has passed (see Field::settled): no standing still for the rest
+        // of the build. Slots wait for the finished field.
+        else if(g.field&&g.field->settled(size_t(here),g.field->at(size_t(here))))f=g.field.get();
+        // A bounded field that cannot reach this body (it walked or joined
+        // outside the window, or the way out leaves it): widen the group's
+        // field to the whole component and wait for it, never trapped. It
+        // restarts as a first field (members already passed by its frontier
+        // steer by it half built), not as a refresh: refreshes restart on
+        // every static change and never finish under constant churn.
+        if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
+            g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);
+            m.state=Waiting;w.brakeGround(u);return;
+        }
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
             if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&m.held>=30)) {m.route.clear();m.lineCell=-1;}
@@ -1388,7 +1477,20 @@ struct LegionNavigator::Impl {
             direct=m.line;
         }
         if(!direct) {
-            if(!f) {m.state=Waiting;w.brakeGround(u);return;}
+            if(!f||(f->at(size_t(here))==kUnreached&&f->bounded)) {
+                g.waited=w.tickCounter_;
+                // No field reaches this body yet: head toward the goal along
+                // a short proven straight segment (kHeadingCells) instead of
+                // standing still; the field takes over as soon as its
+                // frontier passes here. Blocked: wait.
+                const int dx=goalX-ox,dz=goalZ-oz,span=std::max(std::abs(dx),std::abs(dz));
+                const int hx=ox+dx*kHeadingCells/span,hz=oz+dz*kHeadingCells/span;
+                if(span>kHeadingCells&&sweep(p,u,u.x,u.z,centre(hx,fx),centre(hz,fz))) {
+                    drive(u,m,p,nullptr,maximum,centre(hx,fx),centre(hz,fz),false,false);
+                    return;
+                }
+                m.state=Waiting;w.brakeGround(u);return;
+            }
             const uint16_t potential=f->at(size_t(here));
             if(potential==kUnreached) {trapped(u,m);return;}
             // String-pull along the descent chain: aim at the farthest of the
@@ -1440,11 +1542,17 @@ struct LegionNavigator::Impl {
         // there only displaces them.
         if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=2*kPassCells)return false;
         bool oncoming=false;
+        // A body spans several scanned cells; the verdict on it depends only
+        // on the body, so each one is judged once (the scan's hot cost was
+        // the repeated member lookups).
+        std::array<int32_t,8> seen{};size_t seenCount=0;
         for(int k=1;k<=kPassCells&&!oncoming;++k)for(int j=0;j<fz&&!oncoming;++j)for(int i=0;i<fx&&!oncoming;++i) {
             const int cx=ox+k*dx+i,cz=oz+k*dz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
             const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
             if(!o||o==u.id)continue;
+            if(std::find(seen.begin(),seen.begin()+seenCount,o)!=seen.begin()+seenCount)continue;
+            if(seenCount<seen.size())seen[seenCount++]=o;
             const auto peer=members.find(o);
             if(peer==members.end()||peer->second.state==Arrived||peer->second.state==Trapped)continue;
             const Unit* other=w.unit(o);
@@ -1813,7 +1921,8 @@ struct LegionNavigator::Impl {
             for(const auto& [seed,n]:g.peak) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(n));}
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
-            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);}
+            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);}
+            h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             for(const auto& [seed,slot]:g.slots) {
                 h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);h=mix(h,slot.stale);
                 for(size_t i=0;i<slot.cells.size();++i)h=mix(h,uint64_t(slot.cells[i])<<1|slot.taken[i]);
