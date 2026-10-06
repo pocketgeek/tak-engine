@@ -628,6 +628,15 @@ had an airborne unit. Retail's grid persists, and so does World's now
   flyer lands clear of it, and a ground unit entering the site does not
   interrupt a descent that has already begun.
 
+Hashes: the Debug `--mpai` harness (Inner Circle, `--seed 1`, `--time 60`,
+`takserver --local`, empty `XDG_DATA_HOME`) gives the same hash before and
+after the change in all five modes: Retail `56cfcbf8ef57181e`, Retail+
+`79d2aed53aea2158`, Flowfield `41811497213fffb7`, Cooperative
+`e649bc36fe02765a` and Legion `a265fb6f8db7dae5`. No flyer lands or retires
+while overlapping another flyer in that minute, so the harness does not
+exercise this change. Hashes change only in games where flyers land or die
+while overlapping other flyers. All 199 Debug ctests pass.
+
 Residual approximations:
 
 - World removes dying units from occupancy at death, whereas retail keeps a
