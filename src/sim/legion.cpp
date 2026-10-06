@@ -26,6 +26,7 @@ constexpr size_t kMaxFields=48,kMaxPlanes=24;
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
 constexpr int kClusterCells=16;
+constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr int kLineCells=160;                  // direct-line probe reach
@@ -308,7 +309,16 @@ struct LegionNavigator::Impl {
     }
     Plane& plane(int index) {
         auto& p=planes[size_t(index)];
-        if(p.epoch!=epoch) {p.epoch=epoch;buildPlane(p);labelPlane(p);planeDebt+=2*uint64_t(width())*height();}
+        if(p.epoch!=epoch) {
+            // Only REbuilds (static churn) are charged to the field quota. A
+            // class's first build is one-time setup; charging it delayed the
+            // first fields by a tick, which changed how the order's members
+            // split into groups (a started field takes no new seeds) and cost
+            // jagged 2000 about 30% of its arrivals (seeds 0/7/42).
+            const bool first=p.epoch==~0ull;
+            p.epoch=epoch;buildPlane(p);labelPlane(p);
+            if(!first)planeDebt+=2*uint64_t(width())*height();
+        }
         p.lastUse=w.tickCounter_;
         return p;
     }
@@ -412,6 +422,12 @@ struct LegionNavigator::Impl {
             const bool seeded=std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
             // A field in progress or complete is never re-seeded.
             if(g.field&&!seeded)continue;
+            // A field is "distance to the nearest seed of anyone": over a
+            // whole army's goal lattice it pulls every body to the lattice's
+            // near edge, where they jam and then thread between settled goals.
+            // Groups of at most kGroupSeeds goals keep each field aimed at its
+            // own block of the destination.
+            if(!seeded&&g.seeds.size()>=kGroupSeeds)continue;
             joined=&g;break;
         }
         if(!joined) {
