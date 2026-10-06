@@ -255,7 +255,9 @@ def main():
     parser.add_argument('--cases', type=int, default=100)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--only', type=int, default=-1)
-    parser.add_argument('--same-cell', action='store_true', help='also run goals in the start cell')
+    parser.add_argument('--same-cell', action='store_true',
+                        help='accepted for compatibility; same-cell goals always run (protocol 180)')
+    parser.add_argument('--skip-same-cell', action='store_true', help='skip goals in the start cell')
     args = parser.parse_args()
     rng = random.Random(args.seed)
     failures = passed = ticks = skipped = same = 0
@@ -264,11 +266,10 @@ def main():
     for index in range(args.cases):
         params, kind = generate(rng, index)
         if args.only >= 0 and index != args.only: continue
-        if params['start'] == params['goal'] and not args.same_cell:
-            # World::requestPath does not submit a search for a goal in the
-            # requester's own footprint cell; retail 4e54e0 always submits and
-            # 415170 completes it at once (0x1000, empty route). That boundary
-            # is reported separately (--same-cell reproduces it).
+        if params['start'] == params['goal'] and args.skip_same_cell:
+            # Retail 4e54e0 submits a goal in the requester's own cell and
+            # 415170 completes it at once (500 work, 0x1000, empty route).
+            # Retail-mode World::requestPath submits it too (protocol 180).
             same += 1; continue
         data, expected = case(**params)
         if data is None:

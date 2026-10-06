@@ -2531,7 +2531,13 @@ bool World::requestPath(Unit& u, float x, float z) {
     // Distance alone says nothing about intervening terrain or bodies. Even a
     // two-cell move may need a detour; cancelling those requests also cancelled
     // every retry after the mover hit the obstacle.
-    if (from.x == to.x && from.z == to.z) {
+    // Retail's setDestination 4e54e0 submits whenever a controller exists
+    // (4e5540 push 1; call 4e4f50), even inside the requester's own cell:
+    // 415170 then accepts the start at once (500 work, event 0x1000) and
+    // 4e4ea0 delivers no points, deactivating the navigator and raising
+    // 0x200 only for an unsatisfied controller. Retail mode keeps that
+    // submission; the other modes keep their in-cell cancellation.
+    if (from.x == to.x && from.z == to.z && pathfindingMode_!=PathfindingMode::Retail) {
         if (kPqLog) std::printf("[pq] t=%u id=%d NEAR-CANCEL to=(%.0f,%.0f)\n",
                                 tickCounter_, u.id, x, z);
         if(flow_)flow_->cancel(u.id);else paths_.cancel(u.id); return false;
