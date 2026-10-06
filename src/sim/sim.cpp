@@ -6366,7 +6366,8 @@ void World::tickReclaimArea(Unit& b) {
     const int width=hW_/2,height=hH_/2;
     std::vector<uint8_t> visible(size_t(width)*height,0);
     for (const auto& u:units_) {
-        if (!u.alive() || !u.type || u.underConstruction || u.embarked() || !allied(u.player,b.player)) continue;
+        // Cargo footprints are live too (4f6a60 has no attachment test).
+        if (!u.alive() || !u.type || u.underConstruction || !allied(u.player,b.player)) continue;
         RetailSightFootprint sight=u.sightFootprint;
         sight.active=false;
         // Before the first exploration pass, initialize the same authored sight.
@@ -7730,7 +7731,9 @@ void World::updateNavigationExploration() {
     auto explore=[&](size_t begin,size_t end,std::vector<uint16_t>& revealed,unsigned worker) {
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
-            if (!u.alive() || !u.type || u.underConstruction || u.embarked()) continue;
+            // 4f6a60..4f6ac0 has no attachment test: transport cargo explores
+            // with its own sight from the attach point its mover committed.
+            if (!u.alive() || !u.type || u.underConstruction) continue;
             const int16_t distance=int16_t(sightDistance(*u.type));
             if (u.sightFootprint.distance!=distance || u.sightFootprint.sightHeight!=u.type->sightHeight) {
                 u.sightFootprint={};
@@ -10158,7 +10161,17 @@ void World::tick(float dt) {
             if((reloadAll || int(slot)==u.weaponSlot) && u.reloads[slot]>0)--u.reloads[slot];
         if (u.embarked()) {                  // riding a transport
             Unit* t = unit(u.inTransport);
-            if (t && t->alive()) { u.x = t->x; u.z = t->z; updateBodyIndex(u); }
+            if (t && t->alive()) {
+                // 4dad30's attached branch commits the host attach point as the
+                // cargo's own +0x68 every mover tick, height included; the sight
+                // batch then reads it (see updateNavigationExploration).
+                const Fixed hostY=t->type->canFly?t->flightY:t->groundY;
+                const auto point=retailAttachedPosition(
+                    retailAttachPoint({t->x.v,hostY.v,t->z.v},{},{},-1,0),
+                    u.type->floater,uint8_t(u.type->waterline),uint8_t(seaLevel_));
+                u.x=Fixed::raw(point[0]);u.groundY=Fixed::raw(point[1]);u.z=Fixed::raw(point[2]);
+                updateBodyIndex(u);
+            }
             else { if (mission_ || scenario_) justDied_.push_back(u.id); u.deadFor = 0; }  // transport lost with all hands
             continue;
         }

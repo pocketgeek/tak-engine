@@ -1098,6 +1098,58 @@ static void pickupBraking() {
     check(w.unit(cid)->inTransport==tid,"stopped passenger completes pickup after its beam interval");
 }
 
+// Retail's sight batch 4f6a60 has no attachment test, and 4dad30 commits the
+// host attach point (4dd250, piece -1 for every pickup) as the cargo's own
+// position, height included. A short-sighted flying carrier therefore reveals
+// what its long-sighted passenger sees from the carrier's altitude.
+static void cargoSight() {
+    std::printf("embarked cargo sight:\n");
+    auto explored=[](const World& w) {
+        size_t count=0;
+        for(uint16_t cell:w.navigationExploration()) count+=cell!=0;
+        return count;
+    };
+    UnitType carrier=boatType(),passenger=footType();
+    carrier.canFly=true;carrier.cruiseAlt=100;carrier.sight=40;passenger.sight=400;
+    auto run=[&](bool withCargo,int& cargoId,int& carrierId) {
+        auto w=std::make_unique<World>();setTestPathfinding(*w);w->setVisPlayer(-1);
+        w->setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
+        carrierId=w->spawn(&carrier,1000,1000);
+        cargoId=withCargo ? w->spawn(&passenger,1000,1000) : 0;
+        if(withCargo) board(*w,carrierId,cargoId);
+        w->order(carrierId,1400.f,1000.f,false);
+        for(int tick=0;tick<60;++tick) w->tick(1.f/30);
+        return w;
+    };
+    int cargoId=0,carrierId=0,unusedCargo=0,emptyCarrier=0;
+    auto loaded=run(true,cargoId,carrierId);
+    auto empty=run(false,unusedCargo,emptyCarrier);
+    const auto* cargo=loaded->unit(cargoId);
+    const auto* host=loaded->unit(carrierId);
+    check(cargo && host && cargo->embarked(),"the passenger stays aboard the moving carrier");
+    if(cargo && host) {
+        check(cargo->x==host->x && cargo->z==host->z,
+              "the cargo sits on the carrier (attach piece -1, 4dd250)");
+        check(cargo->groundY==host->flightY && host->flightY.floorInt()>100,
+              "the cargo height is the carrier's flight height (4dad30 -> 51b3b0)");
+        check(cargo->sightFootprint.distance==400 && cargo->sightFootprint.x>=0,
+              "the cargo keeps its own live sight footprint");
+    } else {
+        g_fail+=3;
+    }
+    check(explored(*loaded)>explored(*empty)+100,
+          "the passenger's own sight explores beyond the carrier's");
+    // The floater clamp in 4dad3e..4dadd2 wraps its byte arithmetic to sea-waterline.
+    const auto low=tak::sim::retailAttachedPosition({1,3<<16,2},true,5,20);
+    check(low[1]==15<<16 && low[0]==1 && low[2]==2,"a floater cargo is held at sea minus waterline");
+    check(tak::sim::retailAttachedPosition({1,3<<16,2},false,5,20)[1]==3<<16,
+          "a non-floater cargo takes the attach height unchanged");
+    check(tak::sim::retailAttachedPosition({0,-400*65536,0},true,200,10)[1]==-190*65536,
+          "the floater clamp wraps (waterline*0xffff+sea)<<16 to (sea-waterline)<<16");
+    check(tak::sim::retailAttachPoint({7,8,9},{},{},-1,0)==std::array<int32_t,3>{7,8,9},
+          "attach piece -1 is the host position");
+}
+
 static void airPickupTransfer() {
     World w;setTestPathfinding(w);w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
@@ -2251,6 +2303,10 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
         passengerType=registry->find(passengerName);
         if(!carrierType || !passengerType)
             throw std::runtime_error("retail carrier or passenger unit type not found");
+        // Sensitivity fixture for the cargo sight check: a passenger that sees
+        // farther than its carrier reveals cells only its own sight reaches.
+        if(const char* sight=std::getenv("TAK_MAP_SURFACE_CARGO_SIGHT");sight && *sight)
+            const_cast<UnitType*>(passengerType)->sight=std::atoi(sight);
         if(!carrierType->canTransport || carrierType->domain!=UnitType::Domain::Water ||
            !passengerType->canMove || passengerType->domain==UnitType::Domain::Water)
             throw std::runtime_error("retail unit profiles are not a surface carrier and land passenger");
@@ -2380,6 +2436,14 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                     int(stepped->cargo.size()),int(stepped->sightFootprint.x),
                     int(stepped->sightFootprint.z),int(stepped->sightFootprint.eyeHeight),
                     int(stepped->sightFootprint.active));
+            // 4f6a60 also runs each attached passenger's sight from its attach
+            // point; publish the first passenger's cached footprint too.
+            if(traceExploration && !stepped->cargo.empty())
+                if(const auto* cargo=w.unit(stepped->cargo.front()))
+                    std::printf("WORLDCARGOSIGHT %d %u %d %d %d %d %d %d\n",w.sightDistance(*cargo->type),
+                        unsigned(cargo->type->sightHeight),cargo->groundY.v,int(cargo->sightFootprint.x),
+                        int(cargo->sightFootprint.z),int(cargo->sightFootprint.eyeHeight),
+                        int(cargo->sightFootprint.active),int(cargo->type->waterline));
             if(traceExploration) {
                 const auto& exploration=w.navigationExploration();
                 if(exploration.size()!=size_t(explorationWidth)*size_t(explorationHeight))
@@ -2461,6 +2525,10 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
                     int(tak::sim::portHeadingToRetail(after->heading)),after->speed.v,
                     unsigned(after->groundMovementMode),unsigned(after->groundSpeedMode),
                     unsigned(after->groundTerrainFlags),after->turnReqBam,after->groundScanTick);
+                if(traceExploration)
+                    if(const auto* cargo=w.unit(cid);cargo && cargo->inTransport==tid)
+                        std::printf("WORLDCARGO %u %d %d %d %d\n",step,cargo->x.v,cargo->groundY.v,
+                            cargo->z.v,int(cargo<w.unit(tid)));
                 if(shoreBlocker) {
                     const auto& orders=w.unit(tid)->orders;
                     auto mission=std::find_if(orders.begin(),orders.end(),
@@ -2863,6 +2931,17 @@ int main(int argc,char** argv) {
     } else if(argc>1 && !std::strcmp(argv[1],"--retail-plus")) {
         g_pathfinding=tak::sim::PathfindingMode::RetailPlus;--argc;++argv;
     }
+    if(argc==2 && !std::strcmp(argv[1],"--attach-position")) {
+        // check_cargo_attach_position.py: host x y z, floater, waterline, sea, piece.
+        long long hx,hy,hz;int floater,waterline,sea,piece;
+        while(std::scanf("%lld %lld %lld %d %d %d %d",&hx,&hy,&hz,&floater,&waterline,&sea,&piece)==7) {
+            const auto point=tak::sim::retailAttachedPosition(
+                tak::sim::retailAttachPoint({int32_t(hx),int32_t(hy),int32_t(hz)},{},{},piece,0),
+                floater!=0,uint8_t(waterline),uint8_t(sea));
+            std::printf("%d %d %d\n",point[0],point[1],point[2]);
+        }
+        return 0;
+    }
     if(argc==3 && !std::strcmp(argv[1],"--air-flight-trace")) {
         airFlightTraceFixture(unsigned(std::clamp(std::atoi(argv[2]),1,10000)));
         return 0;
@@ -3120,6 +3199,7 @@ int main(int argc,char** argv) {
     pickupRangeBoundary();
     pickupBraking();
     airPickupTransfer();
+    cargoSight();
     surfacePickupQueue(false);
     surfacePickupQueue(true);
     pickupMissionOwnership();

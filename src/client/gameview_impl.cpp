@@ -1995,8 +1995,9 @@
         }
         effectVisibility_->expire(world_.tickCount());
         for (const auto& unit:world_.units()) {
+            // Transport cargo keeps a live footprint (4f6a60 has no attachment test).
             const bool eligible=unit.type && unit.alive() && !unit.underConstruction &&
-                                !unit.embarked() && alliedToLocal(unit.player);
+                                alliedToLocal(unit.player);
             effectVisibility_->track(unit.id,unit.player,localPlayer_,eligible,unit.alive(),
                                      unit.sightFootprint,world_.tickCount());
         }
