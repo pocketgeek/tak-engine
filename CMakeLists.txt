@@ -345,6 +345,10 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
+# Visible motion of group orders with real unit types (measurement only, needs
+# a retail install): tools/legion_group_motion.cpp.
+add_executable(legion_group_motion tools/legion_group_motion.cpp)
+target_link_libraries(legion_group_motion PRIVATE tak-formats)
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; the other modes run the same checks with --report (comparison
 # evidence, never failing).
