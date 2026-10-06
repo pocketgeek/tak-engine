@@ -724,6 +724,50 @@ void legacyyield() {
     check(u.x.toFloat()/16>20,"walker did not reach the settled body");
 }
 
+// A member whose own goal lies inside a lattice of settled same-player
+// arrivals (2x2 bodies at a 3-cell stride: the 1-cell gaps fit no body). The
+// way in exists only if the settled bodies yield. It must ask them to, and
+// get there, not plan detours away and shuffle back forever.
+void latticeRun(int sx,int sz,int gi,int gj) {
+    Fixture f(96,64);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> settlers;
+    std::vector<std::pair<int,int>> sites;
+    for(int j=0;j<7;++j)for(int i=0;i<7;++i) {
+        if(i==gi&&j==gj)continue;                    // the walker's slot
+        const int x=40+3*i,z=20+3*j;
+        sites.push_back({x,z});settlers.push_back(f.spawn(type,x,z));
+    }
+    const int walker=f.spawn(type,sx,sz);
+    f.start();
+    for(size_t k=0;k<settlers.size();++k)f.world.order(settlers[k],sites[k].first*16,sites[k].second*16,false);
+    for(int t=0;t<200;++t)f.world.tick(1.f/30);
+    for(int id:settlers)check(f.world.unit(id)->orders.empty(),"settler did not arrive");
+    f.world.order(walker,(40+3*gi)*16,(20+3*gj)*16,false);
+    Motion motion;
+    int arrivedAt=-1;
+    for(int t=0;t<2400&&arrivedAt<0;++t) {
+        f.world.tick(1.f/30);
+        motion.observe(f.world,{walker});
+        if(f.world.unit(walker)->orders.empty())arrivedAt=t;
+    }
+    const auto& u=*f.world.unit(walker);
+    std::printf("lattice arrived_at=%d at %.1f,%.1f reversals=%llu spins=%llu\n",arrivedAt,u.x.toFloat()/16,
+        u.z.toFloat()/16,(unsigned long long)motion.reversals,(unsigned long long)motion.spins);
+    check(arrivedAt>=0,"walker never reached the lattice slot");
+    check(motion.reversals<=4,"walker oscillated against settled arrivals");
+    for(int id:settlers)check(f.legal(id),"illegal settler footprint");
+}
+
+void lattice() {
+    latticeRun(49,50,3,3);
+    // Approaches from the side and from below that at 4cc95ba never arrived:
+    // the walker planned a detour away, dropped it and shuffled back, every
+    // ~450 ticks, without asking the settled bodies to yield.
+    latticeRun(75,25,3,4);latticeRun(50,55,3,2);
+}
+
 void determinism() {
     const uint64_t a=scenario(true),b=scenario(true),c=scenario(false);
     std::printf("determinism serial=%016llx repeat=%016llx workers=%016llx\n",(unsigned long long)a,(unsigned long long)b,(unsigned long long)c);
@@ -739,7 +783,7 @@ int main(int argc,char** argv) {
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
-        {"churnfield",churnfield},{"legacyyield",legacyyield},{"approachchurn",approachchurn}};
+        {"churnfield",churnfield},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
