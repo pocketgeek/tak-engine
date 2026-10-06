@@ -347,20 +347,61 @@ which GCC, Clang and MinGW all provide.
 ## Scope
 
 Supported: ground units (`Domain::Ground`, footprint 1..8, plus non-square
-footprints when a placement plane is present) on **plain Move legs**,
-including group right-clicks and queued Move legs. A leg is supported only if
-it and every leg ahead of it are plain moves.
+footprints when a placement plane is present) whose current leg is one of
+these **mission goals** (`LegionMission`):
 
-Delegated unchanged to Retail (the native search service and retry ladder
-also run in Legion mode): attack, fight-move, patrol, guard, build, repair,
-reclaim, load/unload and transports, production exits, parking, flying units,
-boats and hovercraft. Retail and Retail+ behaviour is bit-identical to builds
-without Legion: per-tick traces and hashes compared on each Legion change.
+| Kind | Legs | Goal | Ends by |
+|---|---|---|---|
+| Move | plain Move legs, group right-clicks, queued legs | the point | Legion arrival raises `0x500` |
+| Fight | fight-move (`attackMove`) legs | the point, shared area per command | Legion arrival, or the native circle (`groundMissionAccepts`), raises `0x500` |
+| Patrol | patrol legs, single or group | the waypoint, shared area per command | as Fight; the body passes through (no anchor, cells released) |
+| Attack | explicit and auto-acquired attacks, chases | the target unit, re-seeded | combat: `tickCombat` stops the body in range; Legion never completes it |
+| Guard | guard/follow | the guarded unit, re-seeded | guard: stops within 70 px; Legion never completes it |
 
-Mission integration: arrival sets the native mission's `0x500` event, as
-Retail does, so `retailGroundMove` retires the leg. Legion masks the
-search-failure events (`0x2600`) that make Retail enlarge the goal circle. A
-blocked Legion army therefore never "arrives" because the circle grew.
+Legion is the route provider only. The mission handlers keep every mission
+rule: when to fire, when the unit is in range, target acquisition during a
+fight-move, patrol rotation, retirement. Legion replaces the native search
+and steering for these legs; the native mover never runs for them.
+
+* **Arrival.** A kind that completes raises the same `0x500` event on the
+  leg's mission that the native mover does. Attack and guard never complete
+  in Legion: reaching the goal or a crowd there is a hold (zero speed, order
+  kept), and combat or guard ends the approach. Legion never declares arrival
+  outside the rules of section 4/5 or the native goal predicate.
+* **Moving goals.** Attack and guard goals follow a unit. The member is keyed
+  by (kind, target id) instead of a controller. The field is re-seeded when
+  the tick crosses a 16-tick grid line and the target's origin has moved at
+  least 2 cells (Chebyshev). Every chaser of one target that re-seeds in the
+  same 16-tick window joins one group and shares one field.
+* **Groups and areas.** Groups never mix kinds. Fight-move shares a
+  destination area (formation slots) per command, as Move does. Each patrol
+  lap gets its own group and field, because the outbound and return legs of
+  one patrol share an issue tick and a field seeded at both ends would pull
+  bodies toward the wrong end; the waypoint area is still shared per command,
+  and an arriving patrol body releases its cells. Attack and guard take no
+  area and no packed slots.
+* **Events.** Legion masks the search-failure events (`0x2600`) that make
+  Retail enlarge the goal circle, for Move, Fight and Patrol. A blocked
+  Legion army therefore never "arrives" because the circle grew.
+
+A leg is supported only if the legs ahead of it are route corners (for Move,
+plain corners exactly as before). Plain Move behaviour and hashes are
+unchanged by the mission interface: crowdbench Legion hashes are identical on
+all 18 scenarios. New member and group state is folded into the checksum
+only for non-Move kinds.
+
+Still delegated to Retail (the native search service and retry ladder also
+run in Legion mode): build, repair, reclaim, area reclaim, mana build area,
+load/unload and transports, production exits, parking, boats and hovercraft.
+Flyers stay native: flight is not pathfinding. The interface for adding
+them is a `LegionMission` kind plus a `Policy` entry (see `legion.cpp`).
+Retail and Retail+ behaviour is bit-identical to builds without Legion:
+per-tick traces and hashes compared on each Legion change.
+
+Known gap: on legacy nav-grid test worlds (no placement plane) a 12-body
+column jams at the end of a `nav().block` wall in Legion, for plain queued
+moves as well as patrols; the bodies hold with a finite potential. This
+predates the mission interface.
 
 ## Tests
 
@@ -372,6 +413,10 @@ blocked Legion army therefore never "arrives" because the circle grew.
   asserts, the others report. singleunit, jagged, trapped and group pass for
   Legion; crowdheld is a known failure (below).
 * `navigation_determinism` and `legion_determinism`.
+* `legion_movement_orders` (`movement_orders_test --legion`): attack approach
+  around terrain, chase of a moving target, guard follow, group patrol,
+  fight-move and patrol laps, combat resume, partial routes; each case also
+  checks that Legion actually served the mission (`LegionNavigator::mission`).
 
 ## Rejected approaches
 

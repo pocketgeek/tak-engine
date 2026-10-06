@@ -44,6 +44,12 @@ constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr int kApproachRegion=256;             // origins a region needs before an unreachable goal is approached
+// Moving mission goals (chase, guard) re-seed their field at most once per
+// this many ticks, on a shared tick grid so every chaser of one target that
+// re-seeds in the same window shares one group and field, and only once the
+// target has left the seeded origin by kReseedCells (Chebyshev).
+constexpr uint32_t kReseedTicks=16;
+constexpr int kReseedCells=2;
 constexpr std::array<std::array<int,2>,8> kDirections{{
     {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
 
@@ -149,6 +155,7 @@ struct LegionNavigator::Impl {
         bool full=false;
         uint32_t waited=~0u-1;           // last tick a member stood still waiting for the field
         bool approach=false;             // seeds are approach points of unreachable goals
+        LegionMission kind=LegionMission::Move;   // members' mission kind (never mixed)
         std::unique_ptr<Field> field;    // the field members steer by (done or building)
         // After a static change the finished field keeps steering (the mover
         // re-proves every step) while its replacement builds in `next`.
@@ -163,6 +170,47 @@ struct LegionNavigator::Impl {
         std::map<int,Slots> slots;
     };
     enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5};
+    // ---- mission goals ------------------------------------------------
+    // Legion is the route provider for the goal of any supported ground
+    // mission; the mission's own handler keeps its semantics (when to fire,
+    // when in range, when to build, retirement events). A kind's Policy says
+    // how its goal is served. See docs/legion-pathfinding.md "Mission goals".
+    using Kind=LegionMission;
+    struct Policy {
+        // Legion arrival raises the native arrival event (0x500 on the leg's
+        // mission). Otherwise the owner (combat, guard) ends the approach and
+        // Legion only ever holds at the goal.
+        bool completes=true;
+        // The goal follows a unit: re-seeded every kReseedTicks once the
+        // target has moved kReseedCells.
+        bool moving=false;
+        // Members of one command sent to one point share a destination area
+        // (formation slots, per-goal packed slots).
+        bool area=true;
+        // The leg's native goal predicate (World::groundMissionAccepts) also
+        // completes it, exactly as the native mover would.
+        bool nativeAccept=false;
+        // Group identity: the order's issue tick (one command), or the
+        // leg's controller (every patrol lap gets its own field: the legs of
+        // one patrol share an issue tick, and a field seeded at both ends
+        // would pull a body toward the wrong end). The destination area is
+        // still shared by the command's issue tick.
+        bool perController=false;
+        // The body leaves its goal at once (a patrol waypoint): arrival
+        // releases its cells instead of standing on them as an anchor.
+        bool passThrough=false;
+    };
+    static Policy policy(Kind k) {
+        Policy p;
+        switch(k) {
+        case Kind::Move:break;
+        case Kind::Fight:p.nativeAccept=true;break;
+        case Kind::Patrol:p.nativeAccept=true;p.perController=true;p.passThrough=true;break;
+        case Kind::Attack:case Kind::Guard:p.completes=false;p.moving=true;p.area=false;break;
+        default:break;
+        }
+        return p;
+    }
     struct Point;
     struct Member {
         uint64_t controller=0;
@@ -194,6 +242,10 @@ struct LegionNavigator::Impl {
         // "Close enough": the start of the current no-progress window and the
         // pixel distance to the requested point then (see crowdSettle).
         uint32_t windowTick=0;int64_t windowDist=-1;uint8_t stillWindows=0;
+        // Mission goal (kind, and for moving goals the origin and tick the
+        // field was last seeded at). Only hashed for non-Move kinds.
+        Kind kind=Kind::Move;
+        int seedX=0,seedZ=0;uint32_t seededAt=0;
     };
 
     World& w;
@@ -723,20 +775,60 @@ struct LegionNavigator::Impl {
             !front.transportUnloadReleasePending&&!front.transportUnloadTransferDeferred&&!front.transportPassenger&&
             !front.productionExit;
     }
-    bool supports(const Unit& u) const {
-        if(!u.alive()||u.embarked()||u.underConstruction||!u.type||u.orders.empty())return false;
+    // A leg Legion routes, apart from the combat flags its mission kind
+    // allows (fight/patrol) and the target it chases (attack/guard).
+    static bool routedLeg(const Order& o,bool combat,bool chase) {
+        if(!chase&&(o.targetId||o.guard||o.autoTarget))return false;
+        if(!combat&&(o.attackMove||o.patrol))return false;
+        return !o.load&&!o.unload&&!o.buildType&&!o.reclaimFeat&&
+            !o.reclaimArea&&!o.manaBuildArea&&!o.repairTarget&&!o.wait&&!o.waitAttack&&
+            !o.landing&&!o.park&&!o.buildRectangle&&!o.flightGoal&&!o.transportPickup&&
+            !o.transportUnloadApproach&&!o.transportUnloadReleasePending&&
+            !o.transportUnloadTransferDeferred&&!o.transportPassenger&&!o.productionExit;
+    }
+    // The mission goal of the unit's current leg, or None. Move keeps its
+    // original rule exactly (plain Move legs and plain corners ahead of it).
+    // The other kinds accept route corners (non-goal legs) ahead of the goal,
+    // which a native route delivered before the leg became Legion's.
+    Kind kindOf(const Unit& u) const {
+        if(!u.alive()||u.embarked()||u.underConstruction||!u.type||u.orders.empty())return Kind::None;
         const auto& t=*u.type;
         if(t.canFly||t.isStructure()||t.domain!=UnitType::Domain::Ground||t.footX<1||t.footZ<1||
-           t.footX>8||t.footZ>8)return false;
-        if(!placementPlane()&&t.footX!=t.footZ)return false;
-        if(width()<2||height()<2)return false;
-        const auto& leg=u.orders[World::currentLeg(u.orders)];
-        if(!leg.groundMission||!leg.goal)return false;
-        for(size_t i=0;i<=World::currentLeg(u.orders);++i)if(!plainMove(u.orders[i]))return false;
-        return true;
+           t.footX>8||t.footZ>8)return Kind::None;
+        if(!placementPlane()&&t.footX!=t.footZ)return Kind::None;
+        if(width()<2||height()<2)return Kind::None;
+        const size_t current=World::currentLeg(u.orders);
+        const auto& leg=u.orders[current];
+        if(!leg.goal)return Kind::None;
+        auto corners=[&](bool combat,bool chase) {
+            for(size_t i=0;i<current;++i)if(u.orders[i].goal||!routedLeg(u.orders[i],combat,chase))return false;
+            return true;
+        };
+        if(leg.groundMission) {
+            bool plain=true;
+            for(size_t i=0;i<=current&&plain;++i)plain=plainMove(u.orders[i]);
+            if(plain)return Kind::Move;
+            if((leg.attackMove||leg.patrol)&&routedLeg(leg,true,false)&&corners(true,false))
+                return leg.patrol?Kind::Patrol:Kind::Fight;
+            return Kind::None;
+        }
+        // Attack and guard: tickCombat owns the front order's target and
+        // writes its position into the leg every tick.
+        const auto& front=u.orders.front();
+        if(front.targetId&&leg.targetId==front.targetId&&front.guard==leg.guard&&
+           routedLeg(leg,false,true)&&corners(false,true)&&u.type->canMove)
+            return leg.guard?Kind::Guard:Kind::Attack;
+        return Kind::None;
     }
+    bool supports(const Unit& u) const {return kindOf(u)!=Kind::None;}
     std::pair<Fixed,Fixed> target(const Order& leg) const {
         return leg.missionTarget.value_or(std::pair{leg.x,leg.z});
+    }
+    // A leg's identity for a member: its controller, or for a moving goal
+    // (no controller) the chased unit.
+    static uint64_t legKey(const Order& leg,Kind kind) {
+        if(policy(kind).moving)return 0xC000000000000000ull|uint64_t(uint8_t(kind))<<48|uint32_t(leg.targetId);
+        return leg.controller;
     }
     // Nearest statically legal origin to a requested one. Past the near
     // search radius, like Retail, settle for the nearest origin the unit can
@@ -832,7 +924,9 @@ struct LegionNavigator::Impl {
         };
         leave(u.id);
         anchors.erase(u.id);yielding.erase(u.id);
-        if(!supports(u)) {unpin();return;}
+        const Kind kind=kindOf(u);
+        if(kind==Kind::None) {unpin();return;}
+        const Policy rule=policy(kind);
         ++stats.registrations;
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const int planeIndex=planeFor(*u.type);
@@ -841,7 +935,12 @@ struct LegionNavigator::Impl {
         const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
-        Member m;m.controller=leg.controller;m.state=Waiting;m.windowTick=w.tickCounter_;
+        Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;
+        m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
+        // The command a member belongs to: the order's issue tick; every
+        // patrol lap on its own; moving goals on the shared re-seed grid.
+        const uint32_t issue=rule.moving?w.tickCounter_-w.tickCounter_%kReseedTicks:
+            rule.perController?uint32_t(leg.controller):leg.issuedTick;
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
         auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
         if(fresh) {
@@ -863,7 +962,9 @@ struct LegionNavigator::Impl {
             }
         }
         m.requested=m.goal;
-        m.point={u.player,leg.issuedTick,tx.v,tz.v};
+        // A kind without a shared destination area gets a point of its own
+        // (keyed by the unit), so no formation or area logic joins it.
+        m.point={rule.area?u.player:-1-u.id,rule.area?leg.issuedTick:issue,tx.v,tz.v};
         {auto& pt=points[m.point];++pt.refs;m.pt=&pt;}
         unpin();
         if(m.goal<0) {putMember(u.id,m);return;}   // trapped on first move
@@ -871,7 +972,7 @@ struct LegionNavigator::Impl {
         const int goalComp=compAt(p,m.goal);
         Group* joined=nullptr;
         for(auto& [id,g]:groups) {
-            if(g.player!=u.player||g.issuedTick!=leg.issuedTick||g.plane!=planeIndex)continue;
+            if(g.player!=u.player||g.issuedTick!=issue||g.plane!=planeIndex||g.kind!=kind)continue;
             // Seeds in different static components never share a field: a
             // member whose goal it cannot reach would descend to a
             // teammate's seed and hold there forever instead of retiring.
@@ -893,7 +994,7 @@ struct LegionNavigator::Impl {
             joined=&g;break;
         }
         if(!joined) {
-            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=leg.issuedTick;g.compCell=m.goal;g.approach=m.approach;
+            Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=issue;g.compCell=m.goal;g.approach=m.approach;g.kind=kind;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             joined=&groups.emplace(g.id,std::move(g)).first->second;
             ++stats.groups;
@@ -1527,12 +1628,16 @@ struct LegionNavigator::Impl {
         // The nearest reachable point to an unreachable goal is held, not
         // completed: the order waits there for the terrain to open.
         if(m.approach) {trapped(u,m);return;}
+        // A goal its owner ends (combat in range, guard within reach) is
+        // never declared reached by Legion: the body holds there, order kept.
+        if(!policy(m.kind).completes) {hold(u,m);return;}
         auto& leg=u.orders[World::currentLeg(u.orders)];
         u.speed=Fixed();u.turnReqBam=0;
         leg.mission.pending|=0x500;
         leg.controller=0;leg.navigationExhausted=true;
         if(uint32_t(u.routeStamp)<=w.tickCounter_-6u)u.routeStamp=0;
         ++stats.arrivals;if(contact)++stats.contactArrivals;
+        if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
         anchors[u.id]=Anchor{m.goal,0,m.point};
         leave(u.id);
@@ -1849,6 +1954,9 @@ struct LegionNavigator::Impl {
         // queue up to it in the order they come (keeping their formation,
         // so the deepest goals lead when the way opens) and hold on contact.
         if(m.approach)return;
+        // Kinds without a destination area (patrol laps, chases) never claim
+        // slots: a chaser's goal is a unit, ended by its owner, not a spot.
+        if(!policy(m.kind).area)return;
         if(formationSlot(u,m,g,p))return;
         bool nearest=false;
         if(m.slot>=0) {
@@ -1911,19 +2019,33 @@ struct LegionNavigator::Impl {
     void move(Unit& u,Fixed maximum) {
         Member* found=member(u.id);
         const auto& leg=u.orders[World::currentLeg(u.orders)];
-        if(leg.mission.pending&0x500||!leg.controller) {w.brakeGround(u);return;}
+        const Kind kind=kindOf(u);
+        const Policy rule=policy(kind);
+        const uint64_t key=legKey(leg,kind);
+        if(!rule.moving&&(leg.mission.pending&0x500||!leg.controller)) {w.brakeGround(u);return;}
+        // A moving goal re-seeds on the shared tick grid once its unit has
+        // left the seeded origin (bounded, deterministic cadence).
+        if(found&&rule.moving&&found->controller==key&&
+           w.tickCounter_/kReseedTicks!=found->seededAt/kReseedTicks) {
+            const auto [tx,tz]=target(leg);
+            const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
+            if(std::max(std::abs(gx-found->seedX),std::abs(gz-found->seedZ))>=kReseedCells) {
+                registerMove(u);found=member(u.id);
+                if(!found) {w.brakeGround(u);return;}
+            }
+        }
         // A new controller, or terrain that changed since this body was
         // found trapped, means a fresh registration (new goal resolution).
         // An approach member re-resolves only when its own reachability
         // changed (see approachValid), not on every unrelated static change:
         // re-registering reset its walk, detours and timers each time.
-        if(found&&found->controller==leg.controller&&found->approach&&
+        if(found&&found->controller==key&&found->approach&&
            (found->approachEpoch!=epoch||(found->state==Trapped&&found->trappedEpoch!=epoch))&&
            approachValid(u,*found)) {
             found->approachEpoch=epoch;
             if(found->state==Trapped)found->trappedEpoch=epoch;
         }
-        if(!found||found->controller!=leg.controller||
+        if(!found||found->controller!=key||found->kind!=kind||
            (found->state==Trapped&&found->trappedEpoch!=epoch)||
            (found->approach&&found->approachEpoch!=epoch)) {
             registerMove(u);found=member(u.id);
@@ -1931,6 +2053,9 @@ struct LegionNavigator::Impl {
         }
         auto& m=*found;
         ++stats.moves;
+        // The native goal predicate (the circle the native mover would test)
+        // also ends the leg, with the same event.
+        if(rule.nativeAccept&&!m.approach&&World::groundMissionAccepts(u,leg)) {complete(u,m,false);return;}
         if(m.goal<0) {trapped(u,m);return;}
         // Holding at the approach point, or out of grace while walking to it.
         if(m.approach&&(m.state==Trapped||w.tickCounter_-m.approachSince>=kTrappedRetire)) {trapped(u,m);return;}
@@ -2616,6 +2741,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(g.player));h=mix(h,g.issuedTick);
             h=mix(h,uint64_t(uint32_t(g.minX))<<32|uint32_t(g.minZ));h=mix(h,uint64_t(uint32_t(g.maxX))<<32|uint32_t(g.maxZ));
             h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);
+            if(g.kind!=Kind::Move)h=mix(h,uint64_t(g.kind));
             for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
             if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);}
             h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
@@ -2653,6 +2779,9 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
+            if(m.kind!=Kind::Move) {
+                h=mix(h,uint64_t(m.kind));h=mix(h,uint64_t(uint32_t(m.seedX))<<32|uint32_t(m.seedZ));h=mix(h,m.seededAt);
+            }
         }
         return h;
     }
@@ -2661,6 +2790,7 @@ struct LegionNavigator::Impl {
 LegionNavigator::LegionNavigator(World& w):impl_(std::make_unique<Impl>(w)) {}
 LegionNavigator::~LegionNavigator()=default;
 bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
+LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindOf(u);}
 void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
 void LegionNavigator::cancel(int id) {impl_->leave(id);}
 void LegionNavigator::tick() {impl_->tick();}

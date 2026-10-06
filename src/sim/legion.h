@@ -10,6 +10,10 @@ namespace tak::sim {
 class World;
 struct Unit;
 
+// The ground missions whose goal Legion routes (docs/legion-pathfinding.md
+// "Mission goals"). None: the leg is Retail's (native search and mover).
+enum class LegionMission : uint8_t {None=0,Move,Fight,Patrol,Attack,Guard};
+
 class LegionNavigator {
 public:
     // Deterministic work/outcome counters. Observation only: never hashed and
@@ -25,9 +29,12 @@ public:
     };
     explicit LegionNavigator(World&);
     ~LegionNavigator();
-    // Plain ground Move legs of ground units; everything else stays Retail.
+    // Ground units whose current leg is a mission Legion routes (see
+    // mission()); everything else stays Retail.
     bool supports(const Unit&) const;
-    // A Move leg became current (order, queued leg, controller reset).
+    // Which mission goal Legion would route for this unit (None: Retail).
+    LegionMission mission(const Unit&) const;
+    // A supported leg became current (order, queued leg, controller reset).
     void registerMove(Unit&);
     void cancel(int id);
     // Start-of-tick service: static plane freshness and field work quota.

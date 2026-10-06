@@ -2551,6 +2551,10 @@ void World::tickGroundMission(Unit& u) {
             // Partial routes then completed at their last corner and failed
             // controllers never received the native radius/rotation handling.
             // Combat acquisition still runs through tickCombat below.
+            // A Legion-routed patrol never relaxes its goal circle either
+            // (see the Move mask below); Legion owns its arrival.
+            if (goal.patrol && w.legion_ && isLegionPathfinding(w.pathfindingMode_) && w.legion_->supports(u))
+                events&=~0x2600u;
             if (goal.patrol)
                 return retailGroundPatrol(m,goal.missionRadius,w.tickCounter_,events,
                     int16_t(u.type->footX),true,[&](int n){return random(n);},
