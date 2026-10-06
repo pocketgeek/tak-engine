@@ -1734,18 +1734,43 @@ int main(int argc, char** argv) {
         if (fly && fly->vtolStandby) {
             sim::World w;
             sim::MatchConfig cfg;
-            cfg.vfs = &vfs; cfg.mapPath = kMap;
+            cfg.vfs = &vfs; cfg.mapPath = "maps/Lake Lokken.tnt";   // needs open water
             cfg.slots = {sim::MatchSlot{}, sim::MatchSlot{}};
             cfg.slots[0].team = 0; cfg.slots[1].team = 1;
             sim::setupMatch(w, reg, cfg);
-            // Park it over a cell it could not land on (water or blocked).
+            // Park it over open water. Retail's landing-site predicate 509400 has
+            // no movement-class terrain test: an explored site is refused only for
+            // features, yards, occupants, and the type's own depth/slope words,
+            // and arafly (no movementclass, no maxslope) keeps the default
+            // maxslope 255 (4dfb10/4dfc40 -> type +0x23c), so cliffs are landable.
+            // What it does refuse a non-floater flyer is any cell whose quad low
+            // lies below sea level (5094e3..509539), so water is the retail test.
+            const auto& hm = w.mapHeights();
+            const int mw = w.mapW(), mh = w.mapH(), sea = w.mapSea();
+            auto wet = [&](int cx, int cz) {
+                auto at = [&](int x, int z) {
+                    return int(hm[size_t(std::min(z, mh - 1)) * mw + std::min(x, mw - 1)]);
+                };
+                return std::min(std::min(at(cx, cz), at(cx + 1, cz)),
+                                std::min(at(cx, cz + 1), at(cx + 1, cz + 1))) < sea;
+            };
+            auto footprintWet = [&](float x, float z) {
+                const int x0 = sim::footprintOrigin(x, fly->footX), z0 = sim::footprintOrigin(z, fly->footZ);
+                for (int dz = 0; dz < fly->footZ; ++dz)
+                    for (int dx = 0; dx < fly->footX; ++dx)
+                        if (x0 + dx < 0 || z0 + dz < 0 || x0 + dx >= mw || z0 + dz >= mh || wet(x0 + dx, z0 + dz))
+                            return true;
+                return false;
+            };
             float bx = 0, bz = 0; bool bad = false;
-            for (int z = 200; z < 3000 && !bad; z += 16)
-                for (int x = 200; x < 3000; x += 16)
-                    if (!w.navFor(fly).walkable(x / 16, z / 16)) {
-                        bx = float(x); bz = float(z); bad = true; break;
-                    }
-            check(bad, "the map has a cell no flyer could land on");
+            for (int cz = 12; cz < mh - 12 && !bad; ++cz)
+                for (int cx = 12; cx < mw - 12 && !bad; ++cx) {
+                    bool open = true;   // offshore: a 4x4 block of water cells
+                    for (int dz = -2; dz < 2 && open; ++dz)
+                        for (int dx = -2; dx < 2 && open; ++dx) open = wet(cx + dx, cz + dz);
+                    if (open) { bx = float(cx * 16); bz = float(cz * 16); bad = true; }
+                }
+            check(bad, "the map has open water no flyer could land on");
             if (bad) {
                 int id = w.spawn(fly, bx, bz, 0, 0);
                 // This fixture parks an airborne unit over an invalid landing
@@ -1754,10 +1779,11 @@ int main(int argc, char** argv) {
                 w.unit(id)->flightY+=sim::Fixed::fromInt(fly->cruiseAlt);
                 for (int i = 0; i < 30 * 20; ++i) w.tick(1.0f / 30.0f);
                 const sim::Unit* u = w.unit(id);
-                bool ok = u && w.navFor(fly).walkable(int(u->x.toFloat()) / 16, int(u->z.toFloat()) / 16);
-                check(ok, "an idle flyer relocates off a spot it cannot land on",
+                bool ok = u && u->flightGroundMode == 1 && !footprintWet(u->x.toFloat(), u->z.toFloat());
+                check(ok, "an idle flyer relocates off water and lands on dry ground",
                       u ? "ended at " + std::to_string(int(u->x.toFloat())) + "," +
-                              std::to_string(int(u->z.toFloat())) : "gone");
+                              std::to_string(int(u->z.toFloat())) + " mode " + std::to_string(int(u->flightGroundMode))
+                        : "gone");
                 // And then it STAYS: the search must not re-trigger every tick and
                 // leave the thing shuffling for the rest of the game.
                 float sx = u ? u->x.toFloat() : 0, sz = u ? u->z.toFloat() : 0;
