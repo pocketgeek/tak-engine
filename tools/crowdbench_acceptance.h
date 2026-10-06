@@ -9,6 +9,18 @@
 // walls and no bodies, queried through World::mobilePlacement: the exact rule
 // the arrival check uses. Nothing here touches the measured World's state.
 // Include from crowdbench_matrix.h only.
+//
+// A unit with no progress over the window (< progressPx in `window` ticks)
+// is classified (crowdbench_matrix.h): crowd_held if another body stands on
+// its static-field path (foot+2 steps), else terrain_stuck if it touches
+// terrain, else open_idle. NARROWED 2026-10-06 BY USER DECISION: a unit that
+// would be terrain_stuck but is queued behind a moving leader is crowd_held
+// instead. Leader = a same-player mobile member whose centre is within two
+// body widths ((foot + leader foot) * 16 px), lies within 60 degrees of the
+// unit's goal direction or its static-field travel direction, and itself
+// made >= progressPx of progress over the same window. A unit against a wall
+// with nobody moving ahead of it is still terrain_stuck. The rule is
+// observation only, identical for every mode, and changes no sim hash.
 #include "sim/sim.h"
 #include <algorithm>
 #include <cstdint>

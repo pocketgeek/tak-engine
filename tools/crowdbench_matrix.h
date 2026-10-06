@@ -561,18 +561,52 @@ inline int run(const Options& o) {
         tracks[i].optimal=observer.optimalPx(u.type->footX,ox,oz,int(members[i].gx),int(members[i].gz),int(members[i].radius));
     }
     std::vector<size_t> stamped;
+    std::vector<uint32_t> occMember(size_t(width)*height,0); // cell -> member index + 1 (0 = none)
+    std::vector<ca::Step> steps(members.size());
     auto observeAcceptance=[&](int tick) {
-        for(size_t c:stamped)observer.occupancy[c]=0;
+        for(size_t c:stamped)observer.occupancy[c]=0,occMember[c]=0;
         stamped.clear();
-        for(const auto& m:members) {
+        for(size_t i=0;i<members.size();++i) {
+            const auto& m=members[i];
             const auto& u=*world.unit(m.id);if(!u.alive())continue;
             const auto [ox,oz]=originOf(u);
             for(int z=oz;z<oz+u.type->footZ;++z)for(int x=ox;x<ox+u.type->footX;++x)
-                if(x>=0&&z>=0&&x<width&&z<height) {const size_t c=size_t(z)*width+x;observer.occupancy[c]=m.id;stamped.push_back(c);}
+                if(x>=0&&z>=0&&x<width&&z<height) {
+                    const size_t c=size_t(z)*width+x;observer.occupancy[c]=m.id;occMember[c]=uint32_t(i+1);stamped.push_back(c);
+                }
         }
+        // Advance every window first, so a leader's progress over this same
+        // window is known when a follower behind it is classified.
+        for(size_t i=0;i<members.size();++i) {
+            const auto& u=*world.unit(members[i].id);
+            steps[i]=ca::advance(tracks[i],u.x.v,u.z.v,u.heading.v);
+        }
+        // Queued behind a moving leader (user decision, 2026-10-06; see
+        // crowdbench_acceptance.h): a same-player mobile member whose centre
+        // is within two body widths and within 60 degrees of this body's goal
+        // or static travel direction, and which itself made progress over the
+        // same window.
+        auto queuedBehindMover=[&](size_t i,const Unit& u,int ox,int oz,int tx,int tz) {
+            const auto& m=members[i];const int f=u.type->footX;
+            const double ux=u.x.v/65536.0,uz=u.z.v/65536.0;
+            const double gx=m.gx-ux,gz=m.gz-uz,gl=std::sqrt(gx*gx+gz*gz),tl=std::sqrt(double(tx*tx+tz*tz));
+            for(int z=oz-2*f;z<oz+3*f;++z)for(int x=ox-2*f;x<ox+3*f;++x) {
+                if(x<0||z<0||x>=width||z>=height)continue;
+                const uint32_t k=occMember[size_t(z)*width+x];
+                if(!k||k-1==i)continue;
+                const size_t j=k-1;const auto& lm=members[j];const auto& l=*world.unit(lm.id);
+                if(lm.player!=m.player||l.type->maxVel<=Fixed()||tracks[j].filled<=ca::window||steps[j].stationary)continue;
+                const double vx=l.x.v/65536.0-ux,vz=l.z.v/65536.0-uz,vl=std::sqrt(vx*vx+vz*vz);
+                if(vl<=0||vl>(f+l.type->footX)*16.0)continue;
+                const bool goalAhead=gl>0&&vx*gx+vz*gz>=0.5*vl*gl;
+                const bool travelAhead=tl>0&&vx*tx+vz*tz>=0.5*vl*tl;
+                if(goalAhead||travelAhead)return true;
+            }
+            return false;
+        };
         for(size_t i=0;i<members.size();++i) {
             const auto& m=members[i];auto& t=tracks[i];const auto& u=*world.unit(m.id);
-            const auto step=ca::advance(t,u.x.v,u.z.v,u.heading.v);
+            const auto& step=steps[i];
             if(step.stationary) {totals.headingStationaryBam+=step.turnAbs;totals.travelReversals+=step.reversed;}
             if(step.spinning) {++t.spinTicks;++totals.spinTicks;}
             if(!m.moving)continue;
@@ -587,18 +621,20 @@ inline int run(const Options& o) {
                 // Follow the static distance field for foot+2 steps; any other
                 // body on those footprint cells means the crowd holds the unit.
                 const auto& p=observer.prints.at(f);
-                int cx=ox,cz=oz;bool crowd=false;
+                int cx=ox,cz=oz;bool crowd=false;int tx=0,tz=0;
                 for(int s=0;s<f+2&&!crowd;++s) {
                     int best=-1;uint16_t bestD=field->at(cx,cz);
                     observer.forNeighbours(p,cx,cz,[&](int n,int){const uint16_t d=field->at(n%width,n/width);if(d<bestD){bestD=d;best=n;}});
                     if(best<0)break;
                     cx=best%width;cz=best/width;
+                    if(s==0)tx=cx-ox,tz=cz-oz;
                     for(int z=cz;z<cz+f;++z)for(int x=cx;x<cx+f;++x) {
                         const int32_t id=observer.occupancy[size_t(z)*width+x];crowd|=id&&id!=m.id;
                     }
                 }
                 bool terrain=false;
                 for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)terrain|=!observer.legalAt(p,ox+dx,oz+dz);
+                if(!crowd&&terrain&&queuedBehindMover(i,u,ox,oz,tx,tz))crowd=true;
                 cls=crowd?ca::CrowdHeld:terrain?ca::TerrainStuck:ca::OpenIdle;
             }
             ++totals.classTicks[cls];t.finalClass=cls;
