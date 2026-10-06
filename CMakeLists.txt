@@ -517,8 +517,13 @@ add_test(NAME cooperative_transport COMMAND transport_test --cooperative)
 add_test(NAME retailplus_production COMMAND production_test --retail-plus)
 add_test(NAME retailplus_transport COMMAND transport_test --retail-plus)
 add_test(NAME cooperative_movement_orders COMMAND movement_orders_test --cooperative)
-# Legion mission goals (attack, chase, guard, fight-move, patrol, group patrol).
+# Legion mission goals (attack, chase, guard, fight-move, patrol, group patrol,
+# repair and build approaches).
 add_test(NAME legion_movement_orders COMMAND movement_orders_test --legion)
+# Legion work/logistics goals: production exits and rallies, boarding, unload
+# approaches and PARK rings (each asserts Legion served the leg).
+add_test(NAME legion_production COMMAND production_test --legion)
+add_test(NAME legion_transport COMMAND transport_test --legion)
 set_tests_properties(flow_group_commands PROPERTIES TIMEOUT 180)
 add_test(NAME flow_group_arrival_large COMMAND flow_group_commands_test large)
 set_tests_properties(flow_group_arrival_large PROPERTIES TIMEOUT 600)
@@ -659,6 +664,10 @@ if(TAK_TEST_DATA)
     add_test(NAME retailplus_maze_groups COMMAND cooperative_maze_test "${TAK_TEST_DATA}" retail-plus known)
     set_tests_properties(retailplus_maze_known retailplus_maze_groups PROPERTIES TIMEOUT 180)
     add_test(NAME cooperative_movement_orders_trolls COMMAND movement_orders_test --cooperative --trolls "${TAK_TEST_DATA}")
+    # Open-ground cohorts only: the maze cohort's plain-Move rally column still
+    # jams in Legion (docs/legion-pathfinding.md "Scope").
+    add_test(NAME legion_movement_orders_trolls COMMAND movement_orders_test --legion --trolls "${TAK_TEST_DATA}" open)
+    set_tests_properties(legion_movement_orders_trolls PROPERTIES TIMEOUT 600)
     add_test(NAME cooperative_maze_known COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative known)
     add_test(NAME cooperative_maze_discovery COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative discovery)
     set_tests_properties(cooperative_movement_orders_maze cooperative_movement_orders_trolls

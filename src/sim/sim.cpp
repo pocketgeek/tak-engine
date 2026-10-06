@@ -9084,7 +9084,9 @@ void World::tickProduction(Unit& u, float dt) {
                 nu->orders.back().issuedTick = tickCounter_;
             }
         }
-    if(hasExitStep && isSharedPathfinding(pathfindingMode_) && !t->canFly) {
+    // Legion routes the automatic exit as its own mission (LegionMission::
+    // Exit): the birthplace lets a held-up exit finish once clear of it.
+    if(hasExitStep && (isSharedPathfinding(pathfindingMode_) || isLegionPathfinding(pathfindingMode_)) && !t->canFly) {
         auto& orders=unit(id)->orders;const size_t end=currentLeg(orders);
         orders[end].productionExit=std::pair{Fixed::fromFloat(sx),Fixed::fromFloat(sz)};
     }

@@ -50,6 +50,9 @@ constexpr int kApproachRegion=256;             // origins a region needs before 
 // target has left the seeded origin by kReseedCells (Chebyshev).
 constexpr uint32_t kReseedTicks=16;
 constexpr int kReseedCells=2;
+// A production exit without headway for this many crowd windows, its
+// birthplace clear, is done (twice as many hand it over to a rally).
+constexpr uint8_t kExitWindows=1;
 constexpr std::array<std::array<int,2>,8> kDirections{{
     {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
 
@@ -199,6 +202,25 @@ struct LegionNavigator::Impl {
         // The body leaves its goal at once (a patrol waypoint): arrival
         // releases its cells instead of standing on them as an anchor.
         bool passThrough=false;
+        // The mission's own goal geometry (build rectangle, transport
+        // circle, park ring: see accepts) is the only arrival. Legion
+        // reaching its seed, or settling against a crowd, outside it raises
+        // the native failed-approach event (0x200) and the mission handler
+        // decides (build within reach, re-roll the park ring, retry the
+        // pickup), exactly as after a failed native search.
+        bool exact=false;
+        // The arrival event belongs to the leg's transport mission (boarding
+        // and surface-unload approaches), as in the native mover.
+        bool transport=false;
+        // The leg has no movement controller (repair, reclaim: the work
+        // handler polls reach itself); the member key is the leg's target.
+        bool keyed=false;
+        // Never shares a group/field: each body's goal is its own (a teammate's
+        // seed is not on this body's rectangle or within its reach).
+        bool solo=false;
+        // A generated production exit point: a body without headway and
+        // with its whole birthplace clear is done (never blocks the lane).
+        bool exitClear=false;
     };
     static Policy policy(Kind k) {
         Policy p;
@@ -207,6 +229,11 @@ struct LegionNavigator::Impl {
         case Kind::Fight:p.nativeAccept=true;break;
         case Kind::Patrol:p.nativeAccept=true;p.perController=true;p.passThrough=true;break;
         case Kind::Attack:case Kind::Guard:p.completes=false;p.moving=true;p.area=false;break;
+        case Kind::Build:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;break;
+        case Kind::Repair:case Kind::Reclaim:p.completes=false;p.keyed=true;p.area=false;p.solo=true;break;
+        case Kind::Load:case Kind::Unload:p.nativeAccept=true;p.exact=true;p.transport=true;p.area=false;p.solo=true;break;
+        case Kind::Park:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;break;
+        case Kind::Exit:p.area=false;p.solo=true;p.exitClear=true;break;
         default:break;
         }
         return p;
@@ -786,6 +813,39 @@ struct LegionNavigator::Impl {
             !o.transportUnloadApproach&&!o.transportUnloadReleasePending&&
             !o.transportUnloadTransferDeferred&&!o.transportPassenger&&!o.productionExit;
     }
+    // A work/logistics leg: no flags but the ones its kind owns.
+    enum Work : uint32_t {WBuild=1,WRepair=2,WReclaim=4,WLoad=8,WPickup=16,WUnloadApproach=32,WPark=64,WExit=128};
+    static bool workLeg(const Order& o,uint32_t own) {
+        if(bool(o.buildType)!=bool(own&WBuild)||bool(o.buildRectangle)!=bool(own&WBuild))return false;
+        if(bool(o.repairTarget)!=bool(own&WRepair)||bool(o.reclaimFeat)!=bool(own&WReclaim))return false;
+        if(o.load!=bool(own&(WLoad|WPickup))||o.transportPickup!=bool(own&WPickup))return false;
+        if(o.transportUnloadApproach!=bool(own&WUnloadApproach)||bool(o.park)!=bool(own&WPark))return false;
+        if(bool(o.productionExit)!=bool(own&WExit))return false;
+        if(o.targetId&&!(own&(WLoad|WPickup)))return false;
+        return !o.unload&&!o.attackMove&&!o.patrol&&!o.guard&&!o.autoTarget&&!o.reclaimArea&&!o.manaBuildArea&&
+            !o.wait&&!o.waitAttack&&!o.landing&&!o.flightGoal&&!o.transportUnloadReleasePending&&
+            !o.transportUnloadTransferDeferred&&!o.transportPassenger&&!o.patrolRepair&&!o.nativeProductionExit;
+    }
+    // The work/logistics kind of a leg (None if it is not one).
+    static Kind workKind(const Order& leg) {
+        if(leg.groundMission) {
+            if(workLeg(leg,WPark))return leg.park->ring?Kind::Park:Kind::None;
+            if(workLeg(leg,WUnloadApproach))return Kind::Unload;
+            if(workLeg(leg,WExit))return Kind::Exit;
+            return Kind::None;
+        }
+        if(workLeg(leg,WBuild))return Kind::Build;
+        if(workLeg(leg,WRepair))return Kind::Repair;
+        if(workLeg(leg,WReclaim))return Kind::Reclaim;
+        if(leg.targetId&&(workLeg(leg,WLoad)||workLeg(leg,WPickup)))return Kind::Load;
+        return Kind::None;
+    }
+    // The mission's own arrival geometry for an exact kind.
+    static bool accepts(const Unit& u,const Order& leg,Kind kind) {
+        if(kind==Kind::Build)
+            return leg.buildRectangle->accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+        return World::groundMissionAccepts(u,leg);
+    }
     // The mission goal of the unit's current leg, or None. Move keeps its
     // original rule exactly (plain Move legs and plain corners ahead of it).
     // The other kinds accept route corners (non-goal legs) ahead of the goal,
@@ -810,8 +870,10 @@ struct LegionNavigator::Impl {
             if(plain)return Kind::Move;
             if((leg.attackMove||leg.patrol)&&routedLeg(leg,true,false)&&corners(true,false))
                 return leg.patrol?Kind::Patrol:Kind::Fight;
+            if(const Kind work=workKind(leg);work!=Kind::None&&corners(false,false))return work;
             return Kind::None;
         }
+        if(const Kind work=workKind(leg);work!=Kind::None&&corners(false,false))return work;
         // Attack and guard: tickCombat owns the front order's target and
         // writes its position into the leg every tick.
         const auto& front=u.orders.front();
@@ -828,6 +890,9 @@ struct LegionNavigator::Impl {
     // (no controller) the chased unit.
     static uint64_t legKey(const Order& leg,Kind kind) {
         if(policy(kind).moving)return 0xC000000000000000ull|uint64_t(uint8_t(kind))<<48|uint32_t(leg.targetId);
+        // A repair or reclaim leg: its target and order (no controller).
+        if(policy(kind).keyed)return 0xA000000000000000ull|uint64_t(uint8_t(kind))<<48|
+            uint64_t(uint16_t(leg.issuedTick))<<32|uint32_t(kind==Kind::Repair?leg.repairTarget:leg.reclaimFeat);
         return leg.controller;
     }
     // Nearest statically legal origin to a requested one. Past the near
@@ -907,7 +972,9 @@ struct LegionNavigator::Impl {
         // unreachable, not from the latest static change.
         int priorReal=-1;uint64_t priorController=0;uint32_t priorSince=0;
         std::tuple<int,uint32_t,int32_t,int32_t> pinned{};bool pin=false;
+        uint64_t priorKey=0;Kind priorKind=Kind::None;bool hadPrior=false;
         if(const auto prior=members.find(u.id);prior!=members.end()) {
+            priorKey=prior->second.controller;priorKind=prior->second.kind;hadPrior=true;
             if(prior->second.approach) {
                 priorReal=prior->second.real;priorController=prior->second.controller;priorSince=prior->second.approachSince;
             }
@@ -929,12 +996,32 @@ struct LegionNavigator::Impl {
         const Policy rule=policy(kind);
         ++stats.registrations;
         const auto& leg=u.orders[World::currentLeg(u.orders)];
+        if(!hadPrior||priorKey!=legKey(leg,kind)||priorKind!=kind)++stats.missionLegs[size_t(kind)];
         const int planeIndex=planeFor(*u.type);
         auto& p=plane(planeIndex);
         const auto [tx,tz]=target(leg);
-        const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
+        int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
+        if(kind==Kind::Build) {
+            // The build rectangle's own approach cell (as requestPath asks
+            // the controller); if the static plane rejects it, the nearest
+            // perimeter origin this body can stand on and reach. Arrival is
+            // the rectangle itself (accepts), never a point beside it.
+            const auto& rect=*leg.buildRectangle;
+            const auto [cx,cz]=rect.navigationCell(sx,sz);
+            gx=cx;gz=cz;
+            if(!legal(p,cx,cz)) {
+                int best=-1;int64_t bestD=0;
+                rect.enumerate([&](int16_t x,int16_t z) {
+                    if(!legal(p,x,z)||(reach>=0&&compAt(p,z*width()+x)!=reach))return;
+                    const int64_t d=int64_t(x-cx)*(x-cx)+int64_t(z-cz)*(z-cz);
+                    const int index=z*width()+x;
+                    if(best<0||d<bestD||(d==bestD&&index<best)) {best=index;bestD=d;}
+                });
+                if(best>=0) {gx=best%width();gz=best/width();}
+            }
+        }
         Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
         // The command a member belongs to: the order's issue tick; every
@@ -972,6 +1059,7 @@ struct LegionNavigator::Impl {
         const int goalComp=compAt(p,m.goal);
         Group* joined=nullptr;
         for(auto& [id,g]:groups) {
+            if(rule.solo)break;
             if(g.player!=u.player||g.issuedTick!=issue||g.plane!=planeIndex||g.kind!=kind)continue;
             // Seeds in different static components never share a field: a
             // member whose goal it cannot reach would descend to a
@@ -1632,8 +1720,13 @@ struct LegionNavigator::Impl {
         // never declared reached by Legion: the body holds there, order kept.
         if(!policy(m.kind).completes) {hold(u,m);return;}
         auto& leg=u.orders[World::currentLeg(u.orders)];
+        const Policy rule=policy(m.kind);
         u.speed=Fixed();u.turnReqBam=0;
-        leg.mission.pending|=0x500;
+        // An exact goal is reached only on its own geometry; anywhere else
+        // the approach failed and the mission handler decides (0x200).
+        const uint32_t event=rule.exact&&!accepts(u,leg,m.kind)?0x200u:0x500u;
+        (rule.transport?leg.transportMission:leg.mission).pending|=event;
+        ++(event==0x500u?stats.missionArrivals:stats.missionFailures)[size_t(m.kind)];
         leg.controller=0;leg.navigationExhausted=true;
         if(uint32_t(u.routeStamp)<=w.tickCounter_-6u)u.routeStamp=0;
         ++stats.arrivals;if(contact)++stats.contactArrivals;
@@ -2022,7 +2115,8 @@ struct LegionNavigator::Impl {
         const Kind kind=kindOf(u);
         const Policy rule=policy(kind);
         const uint64_t key=legKey(leg,kind);
-        if(!rule.moving&&(leg.mission.pending&0x500||!leg.controller)) {w.brakeGround(u);return;}
+        if(!rule.moving&&!rule.keyed&&((rule.transport?leg.transportMission:leg.mission).pending&0x500||!leg.controller))
+            {w.brakeGround(u);return;}
         // A moving goal re-seeds on the shared tick grid once its unit has
         // left the seeded origin (bounded, deterministic cadence).
         if(found&&rule.moving&&found->controller==key&&
@@ -2055,7 +2149,20 @@ struct LegionNavigator::Impl {
         ++stats.moves;
         // The native goal predicate (the circle the native mover would test)
         // also ends the leg, with the same event.
-        if(rule.nativeAccept&&!m.approach&&World::groundMissionAccepts(u,leg)) {complete(u,m,false);return;}
+        if(rule.nativeAccept&&!m.approach&&(rule.exact?accepts(u,leg,kind):World::groundMissionAccepts(u,leg))) {complete(u,m,false);return;}
+        // A production exit without headway and with its birthplace already
+        // clear is done: the point was generated, and pressing on would
+        // block the factory lane behind it. Still on its birthplace, a body
+        // with a rally behind the exit hands over to it after a second
+        // window: it walks off the lane with the rally instead of holding
+        // there against the crowd.
+        if(rule.exitClear&&m.stillWindows>=kExitWindows&&leg.productionExit) {
+            const int64_t dx=int64_t(u.x.floorInt())-leg.productionExit->first.floorInt();
+            const int64_t dz=int64_t(u.z.floorInt())-leg.productionExit->second.floorInt();
+            const bool clear=std::abs(dx)>=u.type->footX*16||std::abs(dz)>=u.type->footZ*16;
+            const bool rally=World::currentLeg(u.orders)+1<u.orders.size();
+            if(clear||(rally&&m.stillWindows>=2*kExitWindows)) {complete(u,m,true);return;}
+        }
         if(m.goal<0) {trapped(u,m);return;}
         // Holding at the approach point, or out of grace while walking to it.
         if(m.approach&&(m.state==Trapped||w.tickCounter_-m.approachSince>=kTrappedRetire)) {trapped(u,m);return;}
@@ -2331,7 +2438,9 @@ struct LegionNavigator::Impl {
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
         if(u.speed>cap)speed=fxMax(cap,u.speed-u.type->brake*multiplier);
-        if(speed<=Fixed())speed=Fixed::raw(std::max(1,cap.v/8));
+        // A work/logistics leg never creeps a body that cannot accelerate (a
+        // released passenger stands on its landing point, as natively).
+        if(speed<=Fixed()&&(m.kind<=Kind::Guard||u.type->accel>Fixed()))speed=Fixed::raw(std::max(1,cap.v/8));
         if(length>0) {
             // Speed-matched following: keep station behind a slower body of
             // the same player moving the same way (heading within 45 deg) a

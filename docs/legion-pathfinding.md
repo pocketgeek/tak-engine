@@ -357,6 +357,13 @@ these **mission goals** (`LegionMission`):
 | Patrol | patrol legs, single or group | the waypoint, shared area per command | as Fight; the body passes through (no anchor, cells released) |
 | Attack | explicit and auto-acquired attacks, chases | the target unit, re-seeded | combat: `tickCombat` stops the body in range; Legion never completes it |
 | Guard | guard/follow | the guarded unit, re-seeded | guard: stops within 70 px; Legion never completes it |
+| Build | MobileBuild approaches (`buildRectangle`): single, queued, mana build area | the rectangle's `navigationCell`, else its nearest legal reachable perimeter origin | the rectangle itself (`accepts`): `0x500`; anywhere else `0x200` |
+| Repair | repair legs | the target's point | work: `tickRepair` starts at reach; Legion never completes it |
+| Reclaim | feature and corpse reclaims (also those an area reclaim queues) | the feature's point | work: `tickReclaim` starts at reach; Legion never completes it |
+| Load | passenger to its carrier, ground carrier to its passenger | the transport circle's centre | the native circle: `0x500` on `transportMission`; elsewhere `0x200` |
+| Unload | ground carrier's surface-unload approach | the drop point | as Load |
+| Exit | automatic production exit step | the generated exit point | arrival `0x500`; or, without headway for a crowd window, once the whole birthplace is clear (or after two windows when a rally follows) |
+| Park | PARK sequences (factory output, released cargo) | the ring's navigation point | the ring (`park->ring`): `0x500`; elsewhere `0x200` |
 
 Legion is the route provider only. The mission handlers keep every mission
 rule: when to fire, when the unit is in range, target acquisition during a
@@ -383,6 +390,23 @@ and steering for these legs; the native mover never runs for them.
 * **Events.** Legion masks the search-failure events (`0x2600`) that make
   Retail enlarge the goal circle, for Move, Fight and Patrol. A blocked
   Legion army therefore never "arrives" because the circle grew.
+* **Work and logistics.** Build, Load, Unload and Park are *exact*: the only
+  arrival is the mission's own geometry (build rectangle, transport circle,
+  park ring). Reaching Legion's seed or settling against a crowd outside it
+  raises the native failed-approach event `0x200` instead, and the handler
+  decides exactly as after a failed native search (build if within reach,
+  re-roll the park ring, retry the pickup). Load/Unload events go to the
+  leg's `transportMission`, as in the native mover. Repair and reclaim legs
+  have no movement controller; the member is keyed by (kind, issue tick,
+  target). These kinds are *solo*: each body gets its own group and field
+  (a teammate's seed is not on this body's rectangle or within its reach).
+  Embarked units are never members. A work/logistics body that cannot
+  accelerate (accel 0) is not crept forward, so a released passenger stays on
+  its landing point. Production exits carry their birthplace
+  (`Order::productionExit`) in Legion mode too, so a held-up exit never
+  blocks the factory lane: it ends only once clear of the birthplace, or
+  hands over to its rally. Mission semantics (build start, placement, reach,
+  park rotation, transfers, retirement) stay in the handlers.
 
 A leg is supported only if the legs ahead of it are route corners (for Move,
 plain corners exactly as before). Plain Move behaviour and hashes are
@@ -390,10 +414,11 @@ unchanged by the mission interface: crowdbench Legion hashes are identical on
 all 18 scenarios. New member and group state is folded into the checksum
 only for non-Move kinds.
 
-Still delegated to Retail (the native search service and retry ladder also
-run in Legion mode): build, repair, reclaim, area reclaim, mana build area,
-load/unload and transports, production exits, parking, boats and hovercraft.
-Flyers stay native: flight is not pathfinding. The interface for adding
+Area reclaim and the mana build area need no kind of their own: their
+approach steps are plain Moves and the work they queue is Reclaim/Build.
+Still delegated to Retail: boats and hovercraft (a separate change), and
+transport legs of flying or water carriers. Flyers stay native: flight is not
+pathfinding. The interface for adding
 them is a `LegionMission` kind plus a `Policy` entry (see `legion.cpp`).
 Retail and Retail+ behaviour is bit-identical to builds without Legion:
 per-tick traces and hashes compared on each Legion change.
@@ -401,7 +426,14 @@ per-tick traces and hashes compared on each Legion change.
 Known gap: on legacy nav-grid test worlds (no placement plane) a 12-body
 column jams at the end of a `nav().block` wall in Legion, for plain queued
 moves as well as patrols; the bodies hold with a finite potential. This
-predates the mission interface.
+predates the mission interface. The same corner hold stops a single body
+going round a wall's end on a legacy plane (a plain Move, a repair approach
+and a passenger boarding all hold at the same cell), which is why the work
+and boarding tests use a placement plane with a water wall. On the
+generated maze the Troll rally cohort (plain Moves) still leaves a jammed
+column (`movement_orders_test --legion --trolls` maze case: 64 of 100
+unsettled; 36 before production exits were Legion's, when fewer bodies
+reached the column at once); the open-ground cohorts all settle.
 
 ## Tests
 
@@ -415,8 +447,14 @@ predates the mission interface.
 * `navigation_determinism` and `legion_determinism`.
 * `legion_movement_orders` (`movement_orders_test --legion`): attack approach
   around terrain, chase of a moving target, guard follow, group patrol,
-  fight-move and patrol laps, combat resume, partial routes; each case also
-  checks that Legion actually served the mission (`LegionNavigator::mission`).
+  fight-move and patrol laps, combat resume, partial routes, repair and build
+  approaches around a water wall; each case also checks that Legion actually
+  served the mission (`LegionNavigator::mission`).
+* `legion_production` (`production_test --legion`), `legion_transport`
+  (`transport_test --legion`: boarding, ground unload approach, PARK of the
+  released passenger), `legion_movement_orders_trolls` (100 and 256 Trolls
+  on open ground) and `clear_build` (Legion mode: reclaim then build) assert
+  that Legion served the leg.
 
 ## Rejected approaches
 

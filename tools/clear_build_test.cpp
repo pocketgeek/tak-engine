@@ -1,6 +1,7 @@
 // Exercise actual reclaim -> queued construction, including cancellation/refusals.
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
+#include "sim/legion.h"
 #include <cstdio>
 using namespace tak;
 int main(int argc,char** argv) {
@@ -13,7 +14,7 @@ int main(int argc,char** argv) {
     for (bool balance:{false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,balance);
         for (const char* worker:{"araking","zonhunt"})
-        for (int pathMode:{0,1,2})
+        for (int pathMode:{0,1,2,3})
         for (bool queued:{false,true}) {
             const bool paths=pathMode!=0;
             const auto* builder=registry.find(worker);
@@ -22,6 +23,8 @@ int main(int argc,char** argv) {
             site.maxHp=100;site.buildTime=20;site.buildCost=10;
             sim::World w;w.setVisPlayer(-1);w.setPathService(paths);
             if(pathMode==2)w.setPathfindingMode(sim::PathfindingMode::Flowfield);
+            if(pathMode==3)w.setPathfindingMode(sim::PathfindingMode::Legion);
+            bool legionBuild=false,legionReclaim=false;
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int bid=w.spawn(builder,512,624,std::nullopt,0);
             w.player(0).mana=1000;
@@ -51,6 +54,10 @@ int main(int argc,char** argv) {
             int built=0;
             for (int i=0;i<1800;++i) {
                 w.tick(1.f/30);
+                if (const auto* legion=w.legionNavigator()) {
+                    legionBuild|=legion->mission(*w.unit(bid))==sim::LegionMission::Build;
+                    legionReclaim|=legion->mission(*w.unit(bid))==sim::LegionMission::Reclaim;
+                }
                 for (const auto& u:w.units()) if (u.type==&site && u.alive()) built=u.id;
                 if (built) {
                     check(!w.feature(101)->alive && !w.feature(102)->alive,"foundation waits for all clearing");
@@ -63,6 +70,9 @@ int main(int argc,char** argv) {
                 for (const auto& o:b->orders) std::fprintf(stderr,"  order goal=%d reclaim=%d build=%p pos=%.1f,%.1f\n",o.goal,o.reclaimFeat,(void*)o.buildType,o.x.toFloat(),o.z.toFloat());
             }
             check(built && !w.unit(built)->underConstruction,"builder clears and finishes construction");
+            // Flying builders (zonhunt) stay native: flight is not pathfinding.
+            if (pathMode==3)
+                check((legionBuild && legionReclaim)!=builder->canFly,"Legion routes the ground reclaim and build approaches");
             check(w.feature(103)->alive,"nearby tree outside footprint survives");
             w.addFeature(104,760,760,50,20,1,1,true,1);
             check(!w.clearableForPlacement(&site,768,768,clearing,0),"nonreclaimable feature refuses");

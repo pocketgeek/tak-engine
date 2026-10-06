@@ -39,6 +39,7 @@
 #include "ai/ai.h"          // Difficulty <-> aiLevel + incomeMultFor (header-only helpers)
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
+#include "sim/legion.h"
 #include "tdf/tdf.h"
 #include "tdo/tdo.h"
 #include "terrain/terrain.h"
@@ -1303,6 +1304,18 @@ int main(int argc, char** argv) {
                      gameView->aliveUnits(),
                      gameView->netError().empty() ? "none" : gameView->netError().c_str(),
                      endOutcome != 0 ? "concluded" : "timelimit");
+        if (const auto* legion = gameView->legionPublic()) {
+            // Which mission goals Legion routed in this game (legs taken on,
+            // arrivals raised, failed approaches handed back), by kind.
+            static const char* const kinds[] = {"none","move","fight","patrol","attack","guard",
+                "build","repair","reclaim","load","unload","exit","park"};
+            const auto s = legion->stats();
+            std::string line;
+            for (size_t k = 1; k < std::size(kinds); ++k)
+                line += std::string(" ") + kinds[k] + "=" + std::to_string(s.missionLegs[k]) + "/" +
+                        std::to_string(s.missionArrivals[k]) + "/" + std::to_string(s.missionFailures[k]);
+            std::fprintf(stderr, "legion missions (legs/arrivals/failed):%s\n", line.c_str());
+        }
         if (mpHeadless == 8)
             std::fprintf(stderr, "mission %s outcome=%d (%s)\n", missionStem.c_str(),
                          gameView->missionOutcomePublic(),
