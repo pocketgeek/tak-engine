@@ -308,6 +308,15 @@ struct LegionNavigator::Impl {
     // whose own goal it walls in. Capped per body: no endless shuffling.
     struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
     std::map<int,Anchor> anchors;
+    // Unit id -> whether it has an entry in `anchors` (a dense mirror): the
+    // yield and crowd checks reject a non-anchor body without a tree walk.
+    std::vector<uint8_t> anchorMark;
+    bool isAnchor(int id) const {return id>=0&&size_t(id)<anchorMark.size()&&anchorMark[size_t(id)];}
+    void markAnchor(int id,bool on) {
+        if(id<0)return;
+        if(size_t(id)>=anchorMark.size()) {if(!on)return;anchorMark.resize(size_t(id)+1,0);}
+        anchorMark[size_t(id)]=on;
+    }
     // Committed yield steps in progress: unit id -> target origin cell.
     struct Yield {int cell=-1;uint32_t ticks=0;};
     std::map<int,Yield> yielding;
@@ -1012,7 +1021,7 @@ struct LegionNavigator::Impl {
             if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
         };
         leave(u.id);
-        anchors.erase(u.id);yielding.erase(u.id);
+        anchors.erase(u.id);markAnchor(u.id,false);yielding.erase(u.id);
         const Kind kind=kindOf(u);
         if(kind==Kind::None) {unpin();return;}
         const Policy rule=policy(kind);
@@ -1531,7 +1540,7 @@ struct LegionNavigator::Impl {
             // (The completed leg itself lingers until World retires it.)
             const Unit* u=w.unit(it->first);
             if(!u||!u->alive()||(!u->orders.empty()&&!(u->orders[World::currentLeg(u->orders)].mission.pending&0x500)))
-                {yielding.erase(it->first);it=anchors.erase(it);}
+                {yielding.erase(it->first);markAnchor(it->first,false);it=anchors.erase(it);}
             else ++it;
         }
         for(auto it=yielding.begin();it!=yielding.end();) {
@@ -1605,6 +1614,9 @@ struct LegionNavigator::Impl {
             ids[size_t(count++)]=o;
         }
         if(!count)return false;
+        // Every blocker must be a settled arrival (checked below with the
+        // rest); most bodies in a crowd are not, so reject them first.
+        for(int k=0;k<count;++k)if(!isAnchor(ids[size_t(k)]))return false;
         std::sort(ids.begin(),ids.begin()+count);
         std::array<int,16> cells{};
         std::array<int,16> feetX{},feetZ{};
@@ -1753,7 +1765,7 @@ struct LegionNavigator::Impl {
         ++stats.arrivals;if(contact)++stats.contactArrivals;
         if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
-        anchors[u.id]=Anchor{m.goal,0,m.point};
+        anchors[u.id]=Anchor{m.goal,0,m.point};markAnchor(u.id,true);
         leave(u.id);
     }
     void trapped(Unit& u,Member& m) {
@@ -2793,7 +2805,7 @@ struct LegionNavigator::Impl {
             if(!other||other->player!=u.player||!other->type||other->type->isStructure())continue;
             // Settled for this destination: a Legion arrival there, or an
             // idle body (standing nearer the point, so inside its crowd).
-            const auto a=anchors.find(o);
+            const auto a=isAnchor(o)?anchors.find(o):anchors.end();
             if(a!=anchors.end()?!sameDestination(a->second):!other->orders.empty())continue;
             const int64_t qx=(int64_t(other->x.v)-px)>>16,qz=(int64_t(other->z.v)-pz)>>16;
             if(qx*qx+qz*qz>=dist*dist)continue;
