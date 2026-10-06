@@ -517,6 +517,65 @@ mostly from late units that cannot reach their slot inside a packed settled
 crowd; the promising next step is upstream (claim slots in approach order,
 or let settled arrivals compact forward), not gating detours.
 
+## Round 4: CPU, chokepoints and sliding (2026-10-05)
+
+- **CPU (behaviour-equivalent).** The hot path was ordered-map lookups on every
+  unit's move update (own member, neighbours in the lane scan, shared points),
+  not the line checks or searches. A flat id-indexed member table pointing into
+  the existing map (which still drives ordered iteration) and a cached point
+  pointer per member cut Legion's tick cost 10–29% at 2,000 units. Traces and
+  hashes are byte-identical.
+- **Passage lanes.** In straight-walled passages narrower than 8 cells, units
+  following the field prefer cells on a lane grid set by one wall, so a 6-cell
+  door carries three 2x2 lanes instead of two. Doors 2000: 400/188 to 435/215
+  crossed/arrived (12,000 ticks: 397 to 526 arrived, now above Cooperative's
+  487); bridges 2000: 361 to 394 crossed (above Cooperative's 380); doors 500:
+  371/166 to 408/200 (Flowfield 419/197). A 16-cell span cost maze 15%.
+- **Side-steps only for real oncoming traffic.** A unit steps right only when
+  the blocker is genuinely heading the other way and neither is inside its
+  destination area; it now waits behind same-way units.
+- **Pass-facing.** A pass turns the unit toward its step while it walks, but
+  only when the lane ahead is nearly empty; in dense opposing blocks it stays
+  an unturned one-cell dodge.
+
+Five-mode timing, same binary, 2,000 units, 3,000 ticks, median of three
+pinned runs on idle P-cores (ms/tick; crossed in parentheses):
+
+| Scenario | Retail | Retail+ | Flowfield | Cooperative | Legion |
+|---|---|---|---|---|---|
+| open | 2.16 (2,000) | 2.28 (2,000) | 2.61 (1,711) | 2.68 (1,267) | 2.48 (2,000) |
+| doors | 1.96 (96) | 2.75 (41) | 2.35 (111) | 2.47 (127) | 2.15 (182) |
+| shared goal | 3.41 (377) | 6.50 (245) | 2.52 (2,000) | 2.65 (2,000) | 2.16 (1,499) |
+| opposing columns | 1.98 (773) | 3.47 (761) | 2.06 (823) | 2.77 (918) | 2.37 (922) |
+| maze | 1.20 (0) | 2.18 (0) | 2.38 (0) | 2.00 (0) | 1.77 (0) |
+
+Legion is now cheaper than Retail+, Flowfield and Cooperative in every case
+and the cheapest overall on shared goals; Retail remains 10–48% cheaper on the
+others.
+
+**Sliding: partly fixed.** Measured with real unit types, motion counts summed
+over 52/56/60/64/68 units (single runs vary ±40%), sideways / backward /
+stop-go:
+
+| Case | Retail | Before round 4 | After round 4 |
+|---|---|---|---|
+| open | 12,426 / 755 / 4,774 | 10,487 / 3,193 / 14,087 | 9,528 / 3,388 / 13,913 |
+| wall | 18,849 / 729 / 6,265 | 52,294 / 3,015 / 4,091 | 51,118 / 2,895 / 4,039 |
+| cross | 18,681 / 858 / 6,342 | 27,575 / 5,675 / 6,320 | 17,926 / 3,710 / 6,154 |
+
+Crossing traffic now slides less than Retail; open ground and walls do not.
+Rejected this round (patches archived with the session reports): approach-
+order slot claiming with facing (spin rose to about 159k unit-ticks in packed
+shared-goal crowds), settled-crowd compaction (worse motion and arrivals; late
+units are not short of spots — units of different speeds arrive out of order),
+facing during shuffles (that is visible spinning), facing on detour routes
+(spin about 77k in shared-goal crowds), idle units stepping aside (cost
+opposing traffic). **Speed-matched following** fixes stop-go — below Retail
+in all three cases — but every variant leaves 1–5 units flagged terrain-stuck
+by acceptance `group`: a follower held behind a leader on a different path,
+next to a wall, with no body on its own direct line, trips that check. Whether
+to change that check or the mechanism is an open decision.
+
 ## Known weaknesses
 
 * **Packed distinct goals: one acceptance check is registered DISABLED as a

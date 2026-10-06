@@ -307,6 +307,17 @@ The `TAK_PHASE` profiler previously excluded navigator upkeep and zeroed burn
 time; it now times the whole tick. Visible sliding in group moves remains;
 see [Legion](legion-pathfinding.md#round-3-lag-spikes-and-group-move-jank-2026-10-05).
 
+### Legion round 4
+
+Legion's per-tick cost fell 10–29% at 2,000 units with identical behaviour
+(flat member lookups); it is now cheaper than Retail+, Flowfield and
+Cooperative in all five timed 2,000-unit cases and cheapest overall on shared
+goals, with Retail 10–48% cheaper elsewhere. A passage lane grid lets doors
+carry three lanes: Legion now beats every mode on doors and bridges at 2,000
+units and on doors at 12,000 ticks. Sliding is reduced in crossing traffic but
+not on open ground or along walls; see
+[Legion](legion-pathfinding.md#round-4-cpu-chokepoints-and-sliding-2026-10-05).
+
 ## Remaining weak scenarios
 
 - **Exploration at 2,000 units:** no mode settles anyone in 6,000 ticks.
