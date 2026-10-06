@@ -2291,8 +2291,25 @@ struct LegionNavigator::Impl {
             if(o&&o!=u.id)blocker=o;
         }
         const Unit* other=blocker?w.unit(blocker):nullptr;
-        const bool opposing=other&&!other->orders.empty()&&
+        bool opposing=other&&!other->orders.empty()&&
             std::abs(retailTurnRequest(other->heading,u.heading))>16384;
+        // Opposing by intent too: the blocker's way to its own goal points
+        // back against this body's, and neither is inside its destination
+        // area (there bodies head for their own slots in every direction;
+        // as passAhead). A same-way body that merely faces elsewhere is
+        // queued behind, not passed: a sideways step there makes no
+        // progress and read as sliding.
+        if(opposing) {
+            const auto peer=members.find(blocker);
+            if(peer==members.end()||peer->second.goal<0)opposing=false;
+            else {
+                const int64_t odx=peer->second.goal%W-footprintOrigin(other->x,other->type->footX);
+                const int64_t odz=peer->second.goal/W-footprintOrigin(other->z,other->type->footZ);
+                const int64_t mdx=m.goal%W-ox,mdz=m.goal/W-oz;
+                opposing=odx*mdx+odz*mdz<0&&std::max(std::abs(mdx),std::abs(mdz))>2*kPassCells&&
+                    std::max(std::abs(odx),std::abs(odz))>2*kPassCells;
+            }
+        }
         // Same-direction queues never side-step: they drain by themselves.
         // (Purposeful side-steps for them cost opposing-column throughput.)
         if(!opposing)return;
