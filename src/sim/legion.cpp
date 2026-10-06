@@ -755,7 +755,8 @@ struct LegionNavigator::Impl {
         return -1;
     }
     const NavGrid* legacyGrid(const Plane& p) const {
-        for(const auto& u:w.units_)if(u.type&&u.type->footX==p.footX&&u.type->footZ==p.footZ&&!u.type->canFly)
+        for(const auto& u:w.units_)if(u.type&&u.type->footX==p.footX&&u.type->footZ==p.footZ&&!u.type->canFly&&
+            u.type->domain==UnitType::Domain::Ground)
             return &w.navFor(u.type);
         return nullptr;
     }
@@ -846,16 +847,26 @@ struct LegionNavigator::Impl {
             return leg.buildRectangle->accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
         return World::groundMissionAccepts(u,leg);
     }
+    // The mobility classes Legion plans for: surface movers with a 1..8
+    // footprint. Ground units always; boats (Domain::Water) and hovercraft
+    // (Domain::Hover) when the map has a placement plane, where the plane is
+    // built from the mover's own predicate with the type's water-depth and
+    // slope limits (planeFor), so a domain is just another mobility class.
+    // Legacy terrain-only worlds key their nav-grid plane by footprint
+    // alone, which cannot tell a boat from a ground unit: those stay Retail.
+    // Non-square footprints also need the placement plane. Flyers are native.
+    bool routedType(const UnitType& t) const {
+        if(t.canFly||t.isStructure()||t.footX<1||t.footZ<1||t.footX>8||t.footZ>8)return false;
+        if(t.domain!=UnitType::Domain::Ground&&!placementPlane())return false;
+        return placementPlane()||t.footX==t.footZ;
+    }
     // The mission goal of the unit's current leg, or None. Move keeps its
     // original rule exactly (plain Move legs and plain corners ahead of it).
     // The other kinds accept route corners (non-goal legs) ahead of the goal,
     // which a native route delivered before the leg became Legion's.
     Kind kindOf(const Unit& u) const {
         if(!u.alive()||u.embarked()||u.underConstruction||!u.type||u.orders.empty())return Kind::None;
-        const auto& t=*u.type;
-        if(t.canFly||t.isStructure()||t.domain!=UnitType::Domain::Ground||t.footX<1||t.footZ<1||
-           t.footX>8||t.footZ>8)return Kind::None;
-        if(!placementPlane()&&t.footX!=t.footZ)return Kind::None;
+        if(!routedType(*u.type))return Kind::None;
         if(width()<2||height()<2)return Kind::None;
         const size_t current=World::currentLeg(u.orders);
         const auto& leg=u.orders[current];
@@ -1348,8 +1359,7 @@ struct LegionNavigator::Impl {
             for(const auto& u:w.units_) {
                 if(!u.alive()||u.embarked()||!u.type)continue;
                 const auto& t=*u.type;
-                if(t.canFly||t.isStructure()||t.domain!=UnitType::Domain::Ground||t.footX<1||t.footZ<1||
-                   t.footX>8||t.footZ>8||findPlane(t)>=0)continue;
+                if(!routedType(t)||findPlane(t)>=0)continue;
                 p=&planes[size_t(planeFor(t))];
                 break;
             }

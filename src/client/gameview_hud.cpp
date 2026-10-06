@@ -239,7 +239,7 @@ namespace {
                 voice(selection_.front(), "move");
                 const bool sharedPaths=tak::sim::isSharedPathfinding(world_.pathfindingMode());
                 // Legion packs one shared destination into arrival slots for the
-                // ground movers it plans; boats/hover keep Retail offsets.
+                // surface movers it plans (ground units, boats, hovercraft).
                 const bool legion=tak::sim::isLegionPathfinding(world_.pathfindingMode());
                 const bool retailPlus=world_.pathfindingMode()==tak::sim::PathfindingMode::RetailPlus;
                 tak::sim::Order plainMove;plainMove.goal=plainMove.groundMission=true;
@@ -260,10 +260,10 @@ namespace {
                     // Flying units retain their independent flight controller.
                     const bool shared=u->type && ((sharedPaths&&!u->type->canFly)||
                         // Legion plans only footprints up to 8 on a fresh plain
-                        // Move; a leg queued behind other orders may start
-                        // behind a non-plain leg Retail steers, so it keeps
-                        // its offset.
-                        (legion&&!u->type->canFly&&u->type->domain==tak::sim::UnitType::Domain::Ground&&
+                        // Move, in every surface domain; a leg queued behind
+                        // other orders may start behind a non-plain leg Retail
+                        // steers, so it keeps its offset.
+                        (legion&&!u->type->canFly&&
                          u->type->footX>=1&&u->type->footZ>=1&&u->type->footX<=8&&u->type->footZ<=8&&
                          (!queue||u->orders.empty()))||
                         (retailPlus&&tak::sim::retailplus::Traffic::supports(*u->type,plainMove)));

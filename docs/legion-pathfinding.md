@@ -321,8 +321,8 @@ footprint class (mixed footprints form one group per class but share one
   queue to their stand-in point in the order they come.
 
 The in-game right-click in Legion mode sends one shared point for ground
-units with footprints up to 8 whose order is not queued behind existing
-orders. Boats, hover units, flyers and queued legs keep Retail's per-unit
+units, boats and hovercraft with footprints up to 8 whose order is not
+queued behind existing orders. Flyers and queued legs keep Retail's per-unit
 offsets.
 
 ### 6. Determinism
@@ -346,9 +346,42 @@ which GCC, Clang and MinGW all provide.
 
 ## Scope
 
-Supported: ground units (`Domain::Ground`, footprint 1..8, plus non-square
-footprints when a placement plane is present) whose current leg is one of
-these **mission goals** (`LegionMission`):
+Supported: surface movers with a footprint of 1..8 whose current leg is one
+of the **mission goals** below: ground units (`Domain::Ground`), and, on maps
+with a placement plane (every real map), boats (`Domain::Water`) and
+hovercraft (`Domain::Hover`). Non-square footprints also need the placement
+plane. Flyers stay native: flight is not pathfinding.
+
+**Boats and hovercraft** are mobility classes like any other. The plane is
+built from `World::mobilePlacement`'s own predicate with the type's limits:
+a boat needs `minWaterDepth` (default 13) under every footprint cell and has
+no maximum depth; a hovercraft has no depth limit either way and uses
+`maxWaterSlope` over wet cells and `maxSlope` over dry ones. So a keel never
+enters a shelf, a beach or a river mouth too shallow for it, and a hovercraft
+crosses a shoreline wherever the slope allows. Everything else is shared with
+ground units unchanged: incremental plane updates (piers, docks and their
+yards), static components (two seas joined only by a strait are one
+component; a lake is its own), goal resolution (a boat ordered onto land
+stops at the nearest water it can float in, or approaches the nearest
+reachable point of its own sea), fields, formation slots, settling,
+following and passage lanes. Groups are per plane, so a mixed selection of
+ground units, boats and hovercraft ordered to one point forms one group per
+class sharing the point's area. Legacy terrain-only test worlds key their
+nav-grid plane by footprint alone and cannot tell a keel from a foot, so
+there boats and hovercraft stay Retail. Tests: `legion_navalclearance`
+(plane equals `mobilePlacement` for keels of depth 4/13/30, footprints 2..4
+and 3x2, and hovercraft with two water-slope limits, on an archipelago with
+shelves, a strait, a river mouth and a beach; then 240 steps of piers,
+buoys and docks with yards, incremental plane equal to a rebuild),
+`legion_navalisland` (fleets of 12 3x3, 8 4x4 and 24 2x2 boats round an
+island and its shelf and through a 10-cell strait: all arrive, legal every
+tick, no spin, serial == workers), `legion_hovershore` (ten hovercraft from
+land down a beach to sea and back up another beach; boats up a narrow river
+mouth; boats ordered onto the beach stop at the water's edge) and
+`legion_navalmissions` (boat patrol laps round the island, fight-move across
+it, an attack approach and a guard escort, each served by Legion).
+
+The mission goals (`LegionMission`):
 
 | Kind | Legs | Goal | Ends by |
 |---|---|---|---|
@@ -416,9 +449,10 @@ only for non-Move kinds.
 
 Area reclaim and the mana build area need no kind of their own: their
 approach steps are plain Moves and the work they queue is Reclaim/Build.
-Still delegated to Retail: boats and hovercraft (a separate change), and
-transport legs of flying or water carriers. Flyers stay native: flight is not
-pathfinding. The interface for adding
+Boats and hovercraft are routed too (see above). Still delegated to Retail:
+transport legs of flying or water carriers, and boats/hovercraft on legacy
+terrain-only worlds. Flyers stay native: flight is not pathfinding. The
+interface for adding
 them is a `LegionMission` kind plus a `Policy` entry (see `legion.cpp`).
 Retail and Retail+ behaviour is bit-identical to builds without Legion:
 per-tick traces and hashes compared on each Legion change.
@@ -440,7 +474,9 @@ reached the column at once); the open-ground cohorts all settle.
 * `legion_world_test`, 21 cases: clearance, groupreuse, jagged, trapped,
   crowdhold, replace, unreachable, quota, determinism, formation, slotblock,
   deaths, deathsshared, splitgoal, farclick, churn, approachhold,
-  approachopen, churnfield, approachchurn, legacyyield. All pass.
+  approachopen, churnfield, approachchurn, legacyyield. All pass. Boats and
+  hovercraft: navalclearance, navalisland, hovershore, navalmissions (see
+  "Scope").
 * `legion_acceptance_test`, five checks run in all five modes; Legion
   asserts, the others report. singleunit, jagged, trapped and group pass for
   Legion; crowdheld is a known failure (below).

@@ -1,13 +1,30 @@
 // Naval sight must not confuse water depth with a wall, including shore attacks.
+// With --legion the moving cases (attack-move, attack, melee closing) run in
+// Legion mode on a placement plane, as a loaded map has, and must be routed
+// by Legion.
 #include "hpi/hpi.h"
+#include "sim/legion.h"
 #include "sim/matchsetup.h"
 #include <algorithm>
 #include <cstdio>
+#include <string_view>
 
 int main(int argc,char**argv) {
-    if (argc!=2) return 2;
+    if (argc!=2 && argc!=3) return 2;
+    const bool legion=argc==3 && std::string_view(argv[2])=="--legion";
+    if (argc==3 && !legion) return 2;
     auto vfs=tak::hpi::mountRetailRoot(argv[1]);
     int failures=0,cases=0;
+    // Legion plans boats on the map's placement plane (feature-free here).
+    auto legionMode=[&](tak::sim::World& w,int width,int height) {
+        if (!legion) return;
+        w.setPathfindingMode(tak::sim::PathfindingMode::Legion);w.setPathService(true);
+        w.setMapPlacementFeatures(std::vector<uint16_t>(size_t(width)*height,0xffff),{});
+    };
+    auto served=[&](tak::sim::World& w,int id,bool& seen) {
+        if (auto* l=w.legionNavigator(); l && w.unit(id))
+            seen|=l->mission(*w.unit(id))!=tak::sim::LegionMission::None;
+    };
     auto check=[&](bool ok,const char* label) {
         std::printf("[%s] %s\n",ok?"PASS":"FAIL",label);
         if (!ok) ++failures;
@@ -29,7 +46,7 @@ int main(int argc,char**argv) {
             std::vector<uint8_t> heights(512*256,10);
             if (shore) for (int z=0;z<256;++z) for (int x=256;x<512;++x)
                 heights[size_t(z)*512+x]=70;
-            w.setTerrain(heights,512,256,64);w.buildNavClasses(registry);
+            w.setTerrain(heights,512,256,64);w.buildNavClasses(registry);legionMode(w,512,256);
             auto victim=*registry.find(shore?"arakeep":"aratrans");
             victim.maxHp=30000;victim.healTime=0;victim.weapon.damage=0;
             victim.weapons.clear();victim.maxVel={};
@@ -39,15 +56,16 @@ int main(int argc,char**argv) {
             w.player(0).mana=30000;
             if (order==1) w.attackMove(a,shore?4048.f:tx,tz,false);
             if (order==2) w.attack(a,b,false);
-            bool fired=false;
+            bool fired=false,routed=false;
             for (int tick=0;tick<1800 && !fired;++tick) {
-                w.tick(1.f/30.f);fired=w.unit(a)->justFired;
+                w.tick(1.f/30.f);fired=w.unit(a)->justFired;served(w,a,routed);
             }
             const float actual=tak::sim::fxLen(w.unit(a)->x-w.unit(b)->x,w.unit(a)->z-w.unit(b)->z).toFloat();
             std::printf("balance=%d unit=%s shore=%d order=%d fired=%d distance=%.1f range=%d\n",
                 crusades,name.c_str(),shore,order,fired,actual,type->weapon.range);
             ++cases;check(fired,"ship acquires, attack-moves, and attacks across open water/shore");
             if (order==0) check(actual>=distance-20,"in-range ship turns and fires without charging the target");
+            if (legion && order>0) check(routed,"Legion routes the ship's approach");
         }
         // Melee water creatures still close to adjacency rather than using their
         // misleading authored ranged radius. No shoreline target beyond reach.
@@ -56,17 +74,18 @@ int main(int argc,char**argv) {
                 type.weapon.damage<=0 || !type.weapon.melee) continue;
             for (int order=0;order<3;++order) {
                 tak::sim::World w;w.setVisPlayer(-1);
-                w.setTerrain(std::vector<uint8_t>(128*128,10),128,128,64);w.buildNavClasses(registry);
+                w.setTerrain(std::vector<uint8_t>(128*128,10),128,128,64);w.buildNavClasses(registry);legionMode(w,128,128);
                 auto victim=*registry.find("aratrans");victim.maxHp=30000;victim.healTime=0;
                 victim.weapon.damage=0;victim.weapons.clear();victim.maxVel={};
                 const float distance=order==0?40.f:500.f;
                 const int a=w.spawn(&type,1000-distance,1000,0,0),b=w.spawn(&victim,1000,1000,0,1);
                 if (order==1) w.attackMove(a,1000,1000,false);
                 if (order==2) w.attack(a,b,false);
-                bool fired=false;
-                for (int tick=0;tick<1800 && !fired;++tick) { w.tick(1.f/30.f);fired=w.unit(a)->justFired; }
+                bool fired=false,routed=false;
+                for (int tick=0;tick<1800 && !fired;++tick) { w.tick(1.f/30.f);fired=w.unit(a)->justFired;served(w,a,routed); }
                 std::printf("melee balance=%d unit=%s order=%d fired=%d\n",crusades,name.c_str(),order,fired);
                 ++cases;check(fired,"melee water creature closes and attacks");
+                if (legion && order>0) check(routed,"Legion routes the water creature's approach");
             }
         }
         // Shore defenders must also be able to see and fire at ships. Face the
