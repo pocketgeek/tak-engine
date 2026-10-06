@@ -732,6 +732,141 @@ void determinism() {
 }
 }
 
+namespace {
+void planeincrementalSeed(uint32_t seed) {
+    // Random static churn (features of every size placed over each other,
+    // blocking and not, walls that split regions and reopen, structures with
+    // yards built and destroyed): the incrementally maintained plane must
+    // equal a whole-map rebuild after every change, labels included.
+    const int W=96,H=80;
+    std::vector<uint8_t> heights(size_t(W)*H);
+    for(int z=0;z<H;++z)for(int x=0;x<W;++x)
+        heights[size_t(z)*W+x]=uint8_t(std::clamp(100+int((x*7+z*3)%40)-(x>60&&z>50?70:0),0,255));
+    Fixture f(W,H,true,heights);
+    for(int i=0;i<40;++i)f.wall(10+i,20+(i%3));
+    f.publish();
+    std::vector<UnitType> types;
+    for(int foot=1;foot<=4;++foot) {auto t=mover(foot);t.maxSlope=8+foot*4;types.push_back(t);}
+    types.push_back(mover(2));types.back().footX=3;types.back().id=types.back().name="legion-rect";
+    UnitType yard{};yard.id=yard.name="legion-yard";yard.maxHp=100;yard.footX=4;yard.footZ=3;yard.buildTime=1;
+    yard.yardMap="o..oo..ooooo";
+    std::vector<int> ids;
+    for(auto& t:types)ids.push_back(f.spawn(t,2,2));
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    check(legion!=nullptr,"legion navigator not created in Legion mode");
+    uint32_t r=seed;
+    auto rnd=[&](int n) {r=r*1103515245u+12345u;return int((r>>8)%uint32_t(n));};
+    std::vector<int> structures;
+    const uint64_t builds0=f.world.legionStats().planeBuilds;
+    for(int step=0;step<400;++step) {
+        const int kind=rnd(10);
+        if(kind<5) {
+            const int fx=1+rnd(3),fz=1+rnd(3),x=4+rnd(W-10),z=4+rnd(H-10);
+            f.world.addFeature(z*W+x,float(x*16+fx*8),float(z*16+fz*8),0,1,fx,fz,rnd(3)!=0,-1,true);
+        } else if(kind<7) {
+            // A wall line across the map (splits), later overwritten open.
+            const bool across=rnd(2),blocks=rnd(3)!=0;const int at=6+rnd(across?H-12:W-12);
+            for(int i=0;i<(across?W:H)-4;++i) {
+                const int x=across?2+i:at,z=across?at:2+i;
+                f.world.addFeature(z*W+x,float(x*16+8),float(z*16+8),0,1,1,1,blocks,-1,true);
+            }
+        } else if(kind<8) {
+            const int x=6+rnd(W-14),z=6+rnd(H-14);
+            structures.push_back(f.world.spawn(&yard,float(x*16+32),float(z*16+24),std::nullopt,1));
+        } else if(kind<9&&!structures.empty()) {
+            const size_t i=size_t(rnd(int(structures.size())));
+            f.world.destroy(structures[i]);structures.erase(structures.begin()+long(i));
+        } else f.world.tick(1.f/30);
+        if(step%3==0||kind>=9)for(int id:ids)
+            check(legion->planeMatchesRebuild(*f.world.unit(id)),"incremental plane differs from a rebuild at step "+
+                std::to_string(step)+" for "+f.world.unit(id)->type->id);
+    }
+    const auto stats=f.world.legionStats();
+    std::printf("planeincremental refreshes=%llu relabels=%llu\n",(unsigned long long)stats.planeRefreshes,
+        (unsigned long long)stats.planeRelabels);
+    (void)builds0;
+    check(stats.planeRefreshes>50,"churn never exercised the incremental path");
+}
+void planeincremental() {for(uint32_t seed:{987654321u,7u,42u,2026u})planeincrementalSeed(seed);}
+}
+
+namespace {
+void planeprebuild() {
+    // Planes of classes already on the map build in the background, a
+    // bounded slice per tick, while features change under them; the result
+    // must equal a whole-map rebuild, and no synchronous build may happen.
+    const int W=384,H=320;
+    std::vector<uint8_t> heights(size_t(W)*H);
+    for(int z=0;z<H;++z)for(int x=0;x<W;++x)
+        heights[size_t(z)*W+x]=uint8_t(std::clamp(100+int((x*7+z*3)%40)-(x>260&&z>200?70:0),0,255));
+    Fixture f(W,H,true,heights);
+    for(int i=0;i<300;++i)f.wall(10+i,120+(i%3));
+    f.publish();
+    std::vector<UnitType> types;
+    for(int foot=1;foot<=4;++foot) {auto t=mover(foot);t.maxSlope=8+foot*4;types.push_back(t);}
+    types.push_back(mover(2));types.back().footX=3;types.back().id=types.back().name="legion-rect";
+    std::vector<int> ids;
+    for(auto& t:types)ids.push_back(f.spawn(t,2,2));
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    check(legion!=nullptr,"legion navigator not created in Legion mode");
+    uint32_t r=24680u;
+    auto rnd=[&](int n) {r=r*1103515245u+12345u;return int((r>>8)%uint32_t(n));};
+    for(int step=0;step<400;++step) {
+        if(step%2==0) {
+            const int fx=1+rnd(3),fz=1+rnd(3),x=4+rnd(W-10),z=4+rnd(H-10);
+            f.world.addFeature(z*W+x,float(x*16+fx*8),float(z*16+fz*8),0,1,fx,fz,rnd(3)!=0,-1,true);
+        }
+        if(step%37==0) {
+            const int at=6+rnd(H-12),blocks=rnd(2);
+            for(int x=2;x<W-2;++x)f.world.addFeature(at*W+x,float(x*16+8),float(at*16+8),0,1,1,1,blocks,-1,true);
+        }
+        f.world.tick(1.f/30);
+    }
+    const uint64_t built=f.world.legionStats().planeBuilds;
+    check(built==types.size(),"expected one background build per class, got "+std::to_string(built));
+    for(int id:ids)check(legion->planeMatchesRebuild(*f.world.unit(id)),"background plane differs from a rebuild for "+
+        f.world.unit(id)->type->id);
+    std::printf("planeprebuild built=%llu\n",(unsigned long long)built);
+}
+}
+
+namespace {
+void penstale() {
+    // A static change in one walled region leaves another region's field
+    // valid (it cannot reach any step inside it); a change inside the
+    // region stales the field and it is rebuilt.
+    constexpr int P=40;
+    Fixture f(2*P+8,P+8);
+    auto pen=[&](int x,int z) {f.rect(x,z,P,1);f.rect(x,z+P-1,P,1);f.rect(x,z,1,P);f.rect(x+P-1,z,1,P);};
+    pen(0,0);pen(P+4,0);
+    f.publish();
+    const auto type=mover(2);
+    const int id=f.spawn(type,4,P/2);
+    f.start();
+    f.world.order(id,float((P-5)*16),float((P/2)*16),false);
+    for(int t=0;t<20;++t)f.world.tick(1.f/30);
+    const auto before=f.world.legionStats();
+    check(before.fieldsBuilt>=1,"no field for the penned order");
+    for(int t=0;t<40;++t) {
+        const int x=P+4+10+t%8,z=10;
+        f.world.addFeature(z*f.width+x,float(x*16+8),float(z*16+8),0,1,1,1,t%2==0,-1,true);
+        f.world.tick(1.f/30);
+    }
+    const auto other=f.world.legionStats();
+    check(other.planeRefreshes>before.planeRefreshes,"the other region's changes never reached the plane");
+    check(other.fieldsBuilt==before.fieldsBuilt,"a change in another region rebuilt the field");
+    check(!f.world.unit(id)->orders.empty(),"arrived before the in-region change");
+    f.world.addFeature(30*f.width+20,float(20*16+8),float(30*16+8),0,1,1,1,true,-1,true);
+    for(int t=0;t<10;++t)f.world.tick(1.f/30);
+    const auto inside=f.world.legionStats();
+    check(inside.fieldsBuilt>other.fieldsBuilt,"a change inside the region did not refresh its field");
+    std::printf("penstale fields=%llu/%llu/%llu refreshes=%llu\n",(unsigned long long)before.fieldsBuilt,
+        (unsigned long long)other.fieldsBuilt,(unsigned long long)inside.fieldsBuilt,(unsigned long long)inside.planeRefreshes);
+}
+}
+
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
@@ -739,7 +874,7 @@ int main(int argc,char** argv) {
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
-        {"churnfield",churnfield},{"legacyyield",legacyyield},{"approachchurn",approachchurn}};
+        {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

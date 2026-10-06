@@ -2478,6 +2478,17 @@ private:
     // Bumped whenever terrain/feature placement legality may change. Derived
     // planes compare it; never hashed (it is a cache key, not state).
     uint64_t placementEpoch_=0;
+    // Placement-cell rectangles {x,z,w,h} changed since Legion last consumed
+    // them (its static planes update only those cells). Recorded only while a
+    // Legion navigator exists; `All` stands for "everything" (map load, or an
+    // overflowing list). Derived-cache bookkeeping, never hashed.
+    std::vector<std::array<int,4>> placementDirty_;
+    bool placementDirtyAll_=false;
+    void notePlacementDirty(int x,int z,int w,int h) {
+        if(!legion_||placementDirtyAll_)return;
+        if(placementDirty_.size()>=1024) {placementDirtyAll_=true;placementDirty_.clear();return;}
+        placementDirty_.push_back({x,z,w,h});
+    }
     std::unique_ptr<FlowNavigator> flow_; // never instantiated by Retail matches
     std::unique_ptr<cooperative::MovementBatch> cooperativeMovement_;
     cooperative::MovementBatch::Stats cooperativeMovementStats_;

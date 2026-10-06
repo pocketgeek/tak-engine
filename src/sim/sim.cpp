@@ -1217,7 +1217,7 @@ bool World::mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) co
 void World::setMapPlacementFeatures(const std::vector<uint16_t>& raw,
                                     std::vector<RetailMapFeatureType> types) {
     mapPlacementTypes_=std::move(types);
-    ++placementEpoch_;
+    ++placementEpoch_;placementDirtyAll_=true;placementDirty_.clear();
     mapPlacementCells_.assign(size_t(hW_)*hH_,{});
     if (raw.size()!=mapPlacementCells_.size())
         throw std::runtime_error("map placement feature dimensions differ from terrain");
@@ -6134,7 +6134,7 @@ void World::removeMapFeature(int cx,int cz) {
     if (index>=mapPlacementTypes_.size()) return;
     const auto& type=mapPlacementTypes_[index];
     if(flow_)flow_->dirty(cx,cz,type.footX,type.footZ);
-    ++placementEpoch_;
+    ++placementEpoch_;notePlacementDirty(cx,cz,type.footX,type.footZ);
     forgetCorpseAt(cx,cz);
     retailMapRemove(cx,cz,type,[&](int x,int z)->RetailMapFeatureCell& {
         return mapPlacementCells_.at(size_t(z)*hW_+x);
@@ -6182,6 +6182,7 @@ bool World::placeMapFeature(const Feature& f) {
             replaced=true;
             forgetCorpseAt(x,z);
             const auto& oldType=mapPlacementTypes_[previous];
+            notePlacementDirty(x,z,oldType.footX,oldType.footZ);
             if (oldType.blocking) blockCells(x,z,oldType.footX,oldType.footZ,false);
             for (auto& plane:searchGrades_) refreshSearchRect(plane,x,z,oldType.footX,oldType.footZ);
             auto it=featureIdx_.find(z*hW_+x);
@@ -6191,6 +6192,7 @@ bool World::placeMapFeature(const Feature& f) {
     // Feature grades can change without changing the legacy obstacle bit (for
     // example, clearable -> indestructible). Refresh the actual search cache.
     if(placed||replaced)++placementEpoch_;
+    if(placed)notePlacementDirty(cx,cz,f.fx,f.fz);
     if(placed && flow_)flow_->dirty(cx,cz,f.fx,f.fz);
     if (placed) for (auto& plane:searchGrades_) refreshSearchRect(plane,cx,cz,f.fx,f.fz);
     return placed;

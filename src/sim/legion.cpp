@@ -67,6 +67,20 @@ struct LegionNavigator::Impl {
         std::vector<int> compSize;
         std::vector<std::array<int,4>> compBox;
         uint64_t lastUse=0;
+        // 1x1 cell legality (terrain, features, structure yards) the origin
+        // plane is the footprint-rectangle test of; kept so a static change
+        // recomputes only its rectangle (see refreshPlanes).
+        std::vector<uint8_t> cell;
+        int liveComps=0;    // labels with compSize>0 (dead labels are reused never)
+        // Background first build (prebuildStep): 0 idle, 1 cells, 2 row
+        // runs, 3 column runs, 4 labels; epoch stays ~0 until it completes.
+        int stage=0,cursor=0,nextLabel=0;
+        size_t head=0;
+        std::vector<int> queue;
+        std::vector<uint16_t> run;
+        std::vector<int> column;
+        std::vector<std::array<int,4>> pending;   // static changes during the build
+        std::array<int,4> box{};                  // box of the component being flooded
     };
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
@@ -286,45 +300,9 @@ struct LegionNavigator::Impl {
                 p.legal[size_t(z)*W+x]=grid->fits(x+foot/2,z+foot/2,foot);
             return;
         }
-        std::vector<uint8_t> cell(size_t(W)*H,0);
-        auto cellAt=[&](int cx,int cz) {
-            const auto& source=w.mapPlacementCells_[size_t(cz)*W+cx];
-            RetailPlacementCell result;
-            result.low=source.low;
-            result.high=std::max({w.heights_[size_t(cz)*W+cx],w.heights_[size_t(cz)*W+cx+1],
-                                 w.heights_[size_t(cz+1)*W+cx],w.heights_[size_t(cz+1)*W+cx+1]});
-            result.feature=source.feature;
-            if(source.feature<0xfffa||source.feature==0xfffe) {
-                const int ox=cx-(source.feature==0xfffe?source.backX:0);
-                const int oz=cz-(source.feature==0xfffe?source.backZ:0);
-                const auto index=w.mapPlacementCells_[size_t(oz)*W+ox].feature;
-                const bool blocking=index<w.mapPlacementTypes_.size()&&w.mapPlacementTypes_[index].blocking;
-                result.feature=blocking?0:0xffff;
-            }
-            return result;
-        };
-        for(int z=0;z+1<H;++z)for(int x=0;x+1<W;++x)
-            cell[size_t(z)*W+x]=retailMobilePlacement(x,z,1,1,W,H,w.seaLevel_,p.maxDepth,p.minDepth,
-                p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
-                [](uint16_t){return RetailPlacementEntity{};});
-        // Structures are static bodies: stamp them with their yard maps by
-        // the mover's rule (World::mobilePlacement): '.' is open, a closable
-        // 'c' yard is open while the script holds it open. The yard state is
-        // part of the static epoch, so opening or closing one rebuilds.
-        for(const auto& u:w.units_) {
-            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
-            const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
-            const bool opened=yardOpen(u.id);
-            for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
-                const int cx=ux+i,cz=uz+j;
-                if(cx<0||cz<0||cx>=W||cz>=H)continue;
-                if(!u.type->yardMap.empty()) {
-                    const char yard=u.type->yardMap[size_t(j)*u.type->footX+i];
-                    if(yard=='.'||(opened&&(yard=='c'||yard=='C')))continue;
-                }
-                cell[size_t(cz)*W+cx]=0;
-            }
-        }
+        p.cell.assign(size_t(W)*H,0);
+        auto& cell=p.cell;
+        computeCells(p,0,0,W-1,H-1);
         // Separable rectangle test: run of legal cells to the right >= footX
         // on footZ consecutive rows, and the footprint's bounds (x+fx<W).
         std::vector<uint16_t> run(size_t(W)*H,0);
@@ -342,6 +320,53 @@ struct LegionNavigator::Impl {
                 p.legal[size_t(z)*W+x]=r>=p.footZ&&x+p.footX<W&&z+p.footZ<H;
             }
         }
+    }
+    // 1x1 cell legality over the inclusive cell rectangle [x0,x1]x[z0,z1]:
+    // the mover's per-cell rule with the entity slot empty, then structures
+    // stamped with their yard maps by the mover's rule
+    // (World::mobilePlacement): '.' is open, a closable 'c' yard is open
+    // while the script holds it open. Returns the cells visited (work).
+    uint64_t computeCells(Plane& p,int x0,int z0,int x1,int z1) {
+        const int W=width(),H=height();
+        x0=std::max(x0,0);z0=std::max(z0,0);x1=std::min(x1,W-1);z1=std::min(z1,H-1);
+        if(x0>x1||z0>z1)return 0;
+        auto cellAt=[&](int cx,int cz) {
+            const auto& source=w.mapPlacementCells_[size_t(cz)*W+cx];
+            RetailPlacementCell result;
+            result.low=source.low;
+            result.high=std::max({w.heights_[size_t(cz)*W+cx],w.heights_[size_t(cz)*W+cx+1],
+                                 w.heights_[size_t(cz+1)*W+cx],w.heights_[size_t(cz+1)*W+cx+1]});
+            result.feature=source.feature;
+            if(source.feature<0xfffa||source.feature==0xfffe) {
+                const int ox=cx-(source.feature==0xfffe?source.backX:0);
+                const int oz=cz-(source.feature==0xfffe?source.backZ:0);
+                const auto index=w.mapPlacementCells_[size_t(oz)*W+ox].feature;
+                const bool blocking=index<w.mapPlacementTypes_.size()&&w.mapPlacementTypes_[index].blocking;
+                result.feature=blocking?0:0xffff;
+            }
+            return result;
+        };
+        for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
+            p.cell[size_t(z)*W+x]=x+1<W&&z+1<H&&retailMobilePlacement(x,z,1,1,W,H,w.seaLevel_,p.maxDepth,p.minDepth,
+                p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
+                [](uint16_t){return RetailPlacementEntity{};});
+        uint64_t work=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
+        for(const auto& u:w.units_) {
+            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+            const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+            if(ux>x1||uz>z1||ux+u.type->footX<=x0||uz+u.type->footZ<=z0)continue;
+            const bool opened=yardOpen(u.id);
+            for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
+                const int cx=ux+i,cz=uz+j;
+                if(cx<x0||cz<z0||cx>x1||cz>z1)continue;
+                if(!u.type->yardMap.empty()) {
+                    const char yard=u.type->yardMap[size_t(j)*u.type->footX+i];
+                    if(yard=='.'||(opened&&(yard=='c'||yard=='C')))continue;
+                }
+                p.cell[size_t(cz)*W+cx]=0;++work;
+            }
+        }
+        return work;
     }
     bool yardOpen(int id) const {
         const auto script=w.unitScripts_.find(id);
@@ -372,6 +397,253 @@ struct LegionNavigator::Impl {
             p.compSize.push_back(int(queue.size()));p.compBox.push_back(box);
             ++next;
         }
+        p.liveComps=next;
+    }
+    // ---- incremental static change ------------------------------------
+    // A static change (feature placed/removed, corpse, structure built or
+    // gone, yard opened/closed) touches a few cells. Recompute the cell layer
+    // there, the origins whose footprint covers it, and repair the component
+    // labels locally; whole-map rebuilds were 10 ms spikes several times a
+    // tick in a battle. Exactly equal to buildPlane+labelPlane up to label
+    // numbering (labels are only ever compared, sized and boxed); the
+    // legion_planeincremental test checks that after random changes.
+    // Returns the work done (cells), 0 if no origin changed legality.
+    uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,std::array<int,4>* box=nullptr) {
+        const int W=width(),H=height();
+        uint64_t work=0;
+        for(const auto& r:rects)work+=computeCells(p,r[0],r[1],r[0]+r[2]-1,r[1]+r[3]-1);
+        std::vector<int> added,removed;
+        int bx0=W,bz0=H,bx1=-1,bz1=-1;
+        for(const auto& r:rects) {
+            const int x0=std::max(0,r[0]-p.footX+1),z0=std::max(0,r[1]-p.footZ+1);
+            const int x1=std::min(W-1,r[0]+r[2]-1),z1=std::min(H-1,r[1]+r[3]-1);
+            for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
+                bool ok=x+p.footX<W&&z+p.footZ<H;
+                for(int j=0;ok&&j<p.footZ;++j)for(int i=0;ok&&i<p.footX;++i)ok=p.cell[size_t(z+j)*W+x+i]!=0;
+                work+=uint64_t(p.footX)*p.footZ;
+                const size_t c=size_t(z)*W+x;
+                if(bool(p.legal[c])==ok)continue;
+                p.legal[c]=ok;(ok?added:removed).push_back(int(c));
+                bx0=std::min(bx0,x);bz0=std::min(bz0,z);bx1=std::max(bx1,x);bz1=std::max(bz1,z);
+            }
+        }
+        if(added.empty()&&removed.empty())return work;
+        changedAny=true;
+        if(box)*box={bx0,bz0,bx1,bz1};
+        return work+relabel(p,added,removed,bx0,bz0,bx1,bz1);
+    }
+    void emptyBox(std::array<int,4>& b) const {b={width(),height(),-1,-1};}
+    // Scratch marks for splitSearch (a cache, never state).
+    std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
+    // Interleaved searches of the current plane from `reps` (one cell each),
+    // one cell per search per round. Searches that meet are one component.
+    // A class of searches that runs dry has visited a whole component cut
+    // off from the rest: it takes a fresh label (sizes, boxes and `touched`
+    // kept exact). Stops once at most one class is still open; that one
+    // keeps its labels. ~0 if the work passes a whole map (caller relabels).
+    uint64_t splitSearch(Plane& p,const std::vector<int>& reps,std::set<int>& touched) {
+        const int W=width();const size_t n=p.legal.size();
+        if(seenGen.size()!=n) {seenGen.assign(n,0);seenBy.assign(n,0);markGen=0;}
+        if(++markGen==0) {std::fill(seenGen.begin(),seenGen.end(),0);markGen=1;}
+        const int k=int(reps.size());
+        std::vector<std::vector<int>> q(static_cast<size_t>(k));std::vector<size_t> head(static_cast<size_t>(k),0);
+        std::vector<int> parent(static_cast<size_t>(k));std::vector<char> done(static_cast<size_t>(k),0);
+        for(int i=0;i<k;++i) {parent[size_t(i)]=i;q[size_t(i)].push_back(reps[size_t(i)]);
+            seenGen[size_t(reps[size_t(i)])]=markGen;seenBy[size_t(reps[size_t(i)])]=i;}
+        auto find=[&](int i) {while(parent[size_t(i)]!=i)i=parent[size_t(i)]=parent[size_t(parent[size_t(i)])];return i;};
+        uint64_t work=0;
+        for(;;) {
+            int open=0;
+            for(int i=0;i<k;++i)if(find(i)==i&&!done[size_t(i)])++open;
+            if(open<=1)break;
+            for(int i=0;i<k;++i) {
+                if(done[size_t(find(i))]||head[size_t(i)]>=q[size_t(i)].size())continue;
+                const int c=q[size_t(i)][head[size_t(i)]++],x=c%W,z=c/W;
+                ++work;
+                for(const auto& d:kDirections) {
+                    if(!step(p,x,z,d[0],d[1]))continue;
+                    const size_t nc=size_t((z+d[1])*W+x+d[0]);
+                    if(seenGen[nc]!=markGen) {seenGen[nc]=markGen;seenBy[nc]=i;q[size_t(i)].push_back(int(nc));continue;}
+                    const int a=find(i),b=find(seenBy[nc]);
+                    if(a!=b)parent[size_t(std::max(a,b))]=std::min(a,b);
+                }
+            }
+            if(work>n)return ~0ull;
+            for(int r=0;r<k;++r) {
+                if(find(r)!=r||done[size_t(r)])continue;
+                bool dry=true;
+                for(int i=0;i<k&&dry;++i)if(find(i)==r&&head[size_t(i)]<q[size_t(i)].size())dry=false;
+                if(!dry)continue;
+                done[size_t(r)]=1;
+                const int label=int(p.compSize.size());
+                p.compSize.push_back(0);p.compBox.emplace_back();emptyBox(p.compBox.back());++p.liveComps;
+                auto& b=p.compBox.back();
+                for(int i=0;i<k;++i) {
+                    if(find(i)!=r)continue;
+                    for(int c:q[size_t(i)]) {
+                        const int old=p.comp[size_t(c)];
+                        if(old>=0) {--p.compSize[size_t(old)];touched.insert(old);}
+                        p.comp[size_t(c)]=label;++p.compSize[size_t(label)];
+                        b={std::min(b[0],c%W),std::min(b[1],c/W),std::max(b[2],c%W),std::max(b[3],c/W)};
+                    }
+                    work+=q[size_t(i)].size();
+                }
+            }
+        }
+        return work;
+    }
+    // Shrink a component's box to its cells after removals (exact).
+    uint64_t shrinkBox(Plane& p,int label) {
+        const int W=width();
+        auto& b=p.compBox[size_t(label)];
+        if(p.compSize[size_t(label)]<=0) {emptyBox(b);return 0;}
+        uint64_t work=0;
+        auto row=[&](int z) {for(int x=b[0];x<=b[2];++x) {++work;if(p.comp[size_t(z)*W+x]==label)return true;}return false;};
+        auto col=[&](int x) {for(int z=b[1];z<=b[3];++z) {++work;if(p.comp[size_t(z)*W+x]==label)return true;}return false;};
+        while(!row(b[1]))++b[1];
+        while(!row(b[3]))--b[3];
+        while(!col(b[0]))++b[0];
+        while(!col(b[2]))--b[2];
+        return work;
+    }
+    uint64_t relabel(Plane& p,const std::vector<int>& added,const std::vector<int>& removed,int bx0,int bz0,int bx1,int bz1) {
+        const int W=width(),H=height();
+        uint64_t work=0;
+        std::set<int> touched;   // labels that lost cells (box may shrink)
+        for(int c:removed) {
+            const int l=p.comp[size_t(c)];
+            p.comp[size_t(c)]=-1;
+            if(l>=0) {--p.compSize[size_t(l)];touched.insert(l);}
+        }
+        // Local window: the change's bounding box plus a margin. Every edge
+        // the change added or removed joins two legal cells within one cell
+        // of a changed origin (N), so local connectivity decides merges
+        // exactly and proves "no split" when each old label's N-cells meet.
+        constexpr int kMargin=8;
+        const int wx0=std::max(0,bx0-kMargin),wz0=std::max(0,bz0-kMargin);
+        const int wx1=std::min(W-1,bx1+kMargin),wz1=std::min(H-1,bz1+kMargin);
+        const int ww=wx1-wx0+1,wh=wz1-wz0+1;
+        std::vector<int> group(size_t(ww)*wh,-1);
+        auto local=[&](int c) {return size_t(c/W-wz0)*ww+size_t(c%W-wx0);};
+        std::vector<int> near;
+        auto addNear=[&](int c) {
+            const int x=c%W,z=c/W;
+            for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)
+                if(legal(p,x+dx,z+dz))near.push_back((z+dz)*W+x+dx);
+        };
+        for(int c:added)addNear(c);
+        for(int c:removed)addNear(c);
+        std::sort(near.begin(),near.end());near.erase(std::unique(near.begin(),near.end()),near.end());
+        // Flood local groups from N in cell order; each group's old labels.
+        std::vector<std::vector<int>> labels;   // per group, sorted unique
+        std::vector<int> queue;
+        for(int start:near) {
+            if(group[local(start)]>=0)continue;
+            const int id=int(labels.size());
+            labels.emplace_back();
+            group[local(start)]=id;queue.assign(1,start);
+            for(size_t head=0;head<queue.size();++head) {
+                const int c=queue[head],x=c%W,z=c/W;
+                if(p.comp[size_t(c)]>=0)labels.back().push_back(p.comp[size_t(c)]);
+                for(const auto& d:kDirections) {
+                    const int nx=x+d[0],nz=z+d[1];
+                    if(nx<wx0||nz<wz0||nx>wx1||nz>wz1||!step(p,x,z,d[0],d[1]))continue;
+                    auto& g=group[local(nz*W+nx)];
+                    if(g<0) {g=id;queue.push_back(nz*W+nx);}
+                }
+            }
+            work+=queue.size()*8;
+            auto& l=labels.back();
+            std::sort(l.begin(),l.end());l.erase(std::unique(l.begin(),l.end()),l.end());
+        }
+        // No split if every old label's N-cells lie in one local group. A
+        // label whose N-cells lie in several may have split (a wall closing
+        // a passage) or join beyond the window: settle it with one search
+        // per local group (splitSearch), bounded by the cut-off side or the
+        // way around, not the map.
+        std::map<int,std::vector<int>> reps;   // label -> one N-cell per local group
+        {
+            std::map<int,std::set<int>> seen;
+            for(int c:near) {
+                const int l=p.comp[size_t(c)];
+                if(l>=0&&seen[l].insert(group[local(c)]).second)reps[l].push_back(c);
+            }
+        }
+        bool split=false;
+        for(const auto& [l,cells]:reps) {
+            if(cells.size()<2)continue;
+            const uint64_t spent=splitSearch(p,cells,touched);
+            if(spent==~0ull) {labelPlane(p);++stats.planeRelabels;return work+uint64_t(W)*H*2;}
+            work+=spent;split=true;
+        }
+        if(split) {
+            for(auto& l:labels)l.clear();
+            for(int z=wz0;z<=wz1;++z)for(int x=wx0;x<=wx1;++x) {
+                const int g=group[local(z*W+x)],c=p.comp[size_t(z)*W+x];
+                if(g>=0&&c>=0)labels[size_t(g)].push_back(c);
+            }
+            for(auto& l:labels) {std::sort(l.begin(),l.end());l.erase(std::unique(l.begin(),l.end()),l.end());}
+        }
+        // Groups sharing a label are one component: union the labels of
+        // every group, merge each class into its largest label (ties: lowest),
+        // and a group with no label is a new component of added cells only.
+        std::map<int,int> parent;
+        auto find=[&](int l) {
+            int r=l;
+            while(parent.at(r)!=r)r=parent.at(r);
+            while(parent.at(l)!=r) {const int n=parent.at(l);parent[l]=r;l=n;}
+            return r;
+        };
+        for(const auto& l:labels)for(int c:l)parent.try_emplace(c,c);
+        for(const auto& l:labels)for(size_t i=1;i<l.size();++i) {
+            const int a=find(l[0]),b=find(l[i]);
+            if(a!=b)parent[std::max(a,b)]=std::min(a,b);
+        }
+        std::map<int,int> target;   // class root -> surviving label
+        for(const auto& [c,unused]:parent) {
+            const int r=find(c);
+            const auto [it,fresh]=target.try_emplace(r,c);
+            if(!fresh&&p.compSize[size_t(c)]>p.compSize[size_t(it->second)])it->second=c;
+        }
+        for(const auto& [c,unused]:parent) {
+            const int t=target.at(find(c));
+            if(c==t)continue;
+            auto& tb=p.compBox[size_t(t)];
+            const auto b=p.compBox[size_t(c)];
+            for(int z=b[1];z<=b[3];++z)for(int x=b[0];x<=b[2];++x)
+                if(p.comp[size_t(z)*W+x]==c)p.comp[size_t(z)*W+x]=t;
+            if(b[2]>=0)work+=uint64_t(b[2]-b[0]+1)*uint64_t(b[3]-b[1]+1);
+            p.compSize[size_t(t)]+=p.compSize[size_t(c)];p.compSize[size_t(c)]=0;
+            if(b[2]>=0)tb={std::min(tb[0],b[0]),std::min(tb[1],b[1]),std::max(tb[2],b[2]),std::max(tb[3],b[3])};
+            if(b[2]>=0)--p.liveComps;
+            emptyBox(p.compBox[size_t(c)]);
+            if(touched.erase(c))touched.insert(t);
+        }
+        for(auto& l:labels) {
+            if(!l.empty()) {l.assign(1,target.at(find(l[0])));continue;}
+            l.assign(1,int(p.compSize.size()));
+            p.compSize.push_back(0);p.compBox.emplace_back();emptyBox(p.compBox.back());
+            ++p.liveComps;
+        }
+        for(int c:added) {
+            if(p.comp[size_t(c)]>=0)continue;   // already in a component splitSearch labelled
+            const int id=group[local(c)];
+            const int target=labels[size_t(id)][0];
+            p.comp[size_t(c)]=target;++p.compSize[size_t(target)];
+            auto& b=p.compBox[size_t(target)];
+            const int x=c%W,z=c/W;
+            b={std::min(b[0],x),std::min(b[1],z),std::max(b[2],x),std::max(b[3],z)};
+        }
+        for(int l:touched) {
+            if(p.compSize[size_t(l)]<=0&&p.compBox[size_t(l)][2]>=0)--p.liveComps;
+            work+=shrinkBox(p,l);
+        }
+        // Dead labels are never reused; renumber once they dominate.
+        if(p.compSize.size()>4*size_t(std::max(p.liveComps,1))+1024) {
+            labelPlane(p);++stats.planeRelabels;work+=uint64_t(W)*H*2;
+        }
+        (void)H;
+        return work;
     }
     int compAt(const Plane& p,int cell) const {
         return cell>=0&&size_t(cell)<p.comp.size()?p.comp[size_t(cell)]:-1;
@@ -403,7 +675,7 @@ struct LegionNavigator::Impl {
             // split into groups (a started field takes no new seeds) and cost
             // jagged 2000 about 30% of its arrivals (seeds 0/7/42).
             const bool first=p.epoch==~0ull;
-            p.epoch=epoch;buildPlane(p);labelPlane(p);
+            p.epoch=epoch;buildPlane(p);labelPlane(p);clearStage(p);
             // The carried debt is clamped to half a tick's quota: under
             // constant churn (corpses, burning features) every epoch rebuilds
             // every plane in use, and an unbounded debt starved all field
@@ -715,19 +987,98 @@ struct LegionNavigator::Impl {
         f.work+=spent;
         return spent;
     }
-    void tick() {
-        // Structures are bodies the mover always refuses: fold their layout
-        // into the static epoch so the plane follows construction/death.
-        uint64_t sig=0x6c6567696f6e;
+    // Structure footprints as last stamped into the planes (id order).
+    struct Stamp {
+        int x=0,z=0,fx=0,fz=0;bool open=false;
+        bool operator==(const Stamp&) const=default;
+    };
+    std::map<int,Stamp> stamps;
+    // Bring the static planes up to date with the world. On a placement map
+    // only the changed rectangles are recomputed (refreshPlane), and a new
+    // static epoch starts only when some built plane's legality actually
+    // changed: a non-blocking corpse, a feature swapped for one of the same
+    // blocking, or a structure moving nothing leave every plane, field and
+    // slot valid. Legacy (nav-grid) worlds keep the whole-epoch rebuild.
+    void syncStatic() {
+        if(!placementPlane()) {
+            // Structures are bodies the mover always refuses: fold their layout
+            // into the static epoch so the plane follows construction/death.
+            uint64_t sig=0x6c6567696f6e;
+            for(const auto& u:w.units_) {
+                if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+                sig=mix(sig,uint64_t(u.id));sig=mix(sig,uint64_t(uint32_t(u.x.v))<<32|uint32_t(u.z.v));
+                sig=mix(sig,yardOpen(u.id));
+            }
+            structureSignature=sig;
+            const uint64_t e=worldEpoch();
+            if(e!=lastWorldEpoch) {lastWorldEpoch=e;staticChanged();}
+            return;
+        }
+        std::vector<std::array<int,4>> rects;
+        std::map<int,Stamp> now;
         for(const auto& u:w.units_) {
             if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
-            sig=mix(sig,uint64_t(u.id));sig=mix(sig,uint64_t(uint32_t(u.x.v))<<32|uint32_t(u.z.v));
-            sig=mix(sig,yardOpen(u.id));
+            now[u.id]={footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
+                       u.type->footX,u.type->footZ,yardOpen(u.id)};
         }
-        structureSignature=sig;
-        const uint64_t e=worldEpoch();
-        if(e!=lastWorldEpoch) {
-            lastWorldEpoch=e;++epoch;
+        auto a=stamps.begin();auto b=now.begin();
+        auto rect=[&](const Stamp& t) {rects.push_back({t.x,t.z,t.fx,t.fz});};
+        while(a!=stamps.end()||b!=now.end()) {
+            if(b==now.end()||(a!=stamps.end()&&a->first<b->first)) {rect(a->second);++a;}
+            else if(a==stamps.end()||b->first<a->first) {rect(b->second);++b;}
+            else {if(!(a->second==b->second)) {rect(a->second);rect(b->second);}++a;++b;}
+        }
+        stamps.swap(now);
+        const bool all=w.placementDirtyAll_;
+        rects.insert(rects.end(),w.placementDirty_.begin(),w.placementDirty_.end());
+        w.placementDirty_.clear();w.placementDirtyAll_=false;
+        bool changed=false;
+        if(lastWorldEpoch==~0ull) {lastWorldEpoch=0;changed=true;}   // the first epoch, as before
+        if(all||!rects.empty()) {
+            std::vector<Plane*> refreshed;
+            touch.assign(planes.size(),{0,0,-1,-1});
+            for(auto& p:planes) {
+                // A background build keeps going on what it has read and
+                // applies the changes incrementally once complete (exact:
+                // every cell read before a change is in a pending rectangle).
+                if(p.stage>0) {
+                    if(all||p.pending.size()+rects.size()>4096) {clearStage(p);startBuild(p);continue;}
+                    p.pending.insert(p.pending.end(),rects.begin(),rects.end());
+                    continue;
+                }
+                // Unbuilt planes build fresh; stale ones rebuild on use.
+                if(p.legacy||p.epoch==~0ull||p.epoch!=epoch)continue;
+                if(all) {changed=true;touch[size_t(&p-planes.data())]={0,0,width()-1,height()-1};continue;}
+                bool any=false;
+                const uint64_t work=refreshPlane(p,rects,any,&touch[size_t(&p-planes.data())]);
+                planeDebt=std::min(planeDebt+work,kFieldQuota/2);
+                if(any) {changed=true;++stats.planeRefreshes;}
+                refreshed.push_back(&p);
+            }
+            if(changed)for(auto* p:refreshed)p->epoch=epoch+1;
+        }
+        if(changed)staticChanged(touch.empty()?nullptr:&touch);
+        touch.clear();
+    }
+    // Per plane, the bounding box of origins whose legality changed in this
+    // sync ({0,0,-1,-1}: none).
+    std::vector<std::array<int,4>> touch;
+    // Does a static change box (on the group's plane) reach the group's
+    // fields? A field covers its seeds' component box; a change farther
+    // than one cell from every cell of that box cannot alter any step
+    // inside it (a step reads its target and the two orthogonal cells), nor
+    // merge another region into it.
+    bool fieldTouched(const Group& g,const std::array<int,4>& b) const {
+        if(b[2]<0)return false;
+        for(const Field* f:{g.field.get(),g.next.get()}) {
+            if(!f)continue;
+            if(b[0]<=f->x0+f->fw&&b[2]>=f->x0-1&&b[1]<=f->z0+f->fh&&b[3]>=f->z0-1)return true;
+        }
+        return false;
+    }
+    void staticChanged(const std::vector<std::array<int,4>>* changes=nullptr) {
+        {
+            ++epoch;
             // Terrain changed. A finished field keeps steering its group
             // (a stale potential can only misdirect, never make a step legal:
             // the plane and commitGroundStep decide legality) until its
@@ -737,12 +1088,136 @@ struct LegionNavigator::Impl {
             // a group ordered during constant churn (corpses every tick)
             // never got any field. Arrival slots were proven on the old
             // plane: they are rebuilt (see restaleSlots).
+            // Only the groups a change reaches (all, without per-plane boxes).
             for(auto& [id,g]:groups) {
+                if(changes&&(g.plane<0||size_t(g.plane)>=changes->size()||!fieldTouched(g,(*changes)[size_t(g.plane)])))continue;
                 g.next.reset();
                 g.stale=g.field!=nullptr;
                 restaleSlots(g);
             }
         }
+    }
+    // ---- background first builds ---------------------------------------
+    // A class's first plane build is a whole-map pass (15 ms on 768x768,
+    // charged to nobody). Build planes for classes already on the map ahead
+    // of their first order, a bounded number of cells per tick; the result
+    // is identical to buildPlane+labelPlane (same order, same labels), so
+    // this only moves work earlier: plane() still builds synchronously if a
+    // plane is needed before its background build finished.
+    static constexpr uint64_t kPrebuildCells=24576;   // cells of work per tick (~1 ms)
+    static constexpr size_t kPrebuildPlanes=12;       // never crowd the plane budget
+    void clearStage(Plane& p) {
+        p.stage=0;p.cursor=0;p.nextLabel=0;p.head=0;
+        std::vector<int>().swap(p.queue);std::vector<uint16_t>().swap(p.run);std::vector<int>().swap(p.column);
+        std::vector<std::array<int,4>>().swap(p.pending);
+    }
+    void startBuild(Plane& p) {
+        const size_t n=size_t(width())*height();
+        p.cell.assign(n,0);p.legal.assign(n,0);p.comp.assign(n,-1);
+        p.compSize.clear();p.compBox.clear();p.liveComps=0;
+        p.run.assign(n,0);p.column.assign(size_t(width()),0);
+        p.stage=1;p.cursor=0;
+    }
+    int findPlane(const UnitType& t) const {
+        const int maxDepth=t.canFly||t.domain!=UnitType::Domain::Ground?10000:(t.maxWaterDepth>0?t.maxWaterDepth:20);
+        const int minDepth=t.domain==UnitType::Domain::Water?(t.minWaterDepth>0?t.minWaterDepth:13):-10000;
+        for(size_t i=0;i<planes.size();++i) {
+            const auto& p=planes[i];
+            if(!p.legacy&&p.footX==t.footX&&p.footZ==t.footZ&&p.maxDepth==maxDepth&&p.minDepth==minDepth&&
+               p.maxSlope==t.maxSlope&&p.maxWaterSlope==t.maxWaterSlope)return int(i);
+        }
+        return -1;
+    }
+    void prebuildStep() {
+        if(!placementPlane()||width()<2||height()<2)return;
+        Plane* p=nullptr;
+        for(auto& q:planes)if(q.stage>0) {p=&q;break;}
+        if(!p) {
+            if(planes.size()>=kPrebuildPlanes||w.tickCounter_%30!=0)return;
+            for(const auto& u:w.units_) {
+                if(!u.alive()||u.embarked()||!u.type)continue;
+                const auto& t=*u.type;
+                if(t.canFly||t.isStructure()||t.domain!=UnitType::Domain::Ground||t.footX<1||t.footZ<1||
+                   t.footX>8||t.footZ>8||findPlane(t)>=0)continue;
+                p=&planes[size_t(planeFor(t))];
+                break;
+            }
+            if(!p)return;
+            startBuild(*p);
+        }
+        advanceBuild(*p,kPrebuildCells);
+    }
+    void advanceBuild(Plane& p,uint64_t budget) {
+        const int W=width(),H=height();
+        while(budget>0&&p.stage>0) {
+            if(p.stage==1) {   // cell layer, rows ascending
+                const int rows=std::max(1,int(budget/uint64_t(W)));
+                const int z1=std::min(H,p.cursor+rows);
+                computeCells(p,0,p.cursor,W-1,z1-1);
+                budget-=std::min(budget,uint64_t(z1-p.cursor)*W);
+                p.cursor=z1;
+                if(p.cursor>=H) {p.stage=2;p.cursor=0;}
+            } else if(p.stage==2) {   // runs of legal cells to the right
+                const int rows=std::max(1,int(budget/uint64_t(W)));
+                const int z1=std::min(H,p.cursor+rows);
+                for(int z=p.cursor;z<z1;++z) {
+                    int r=0;
+                    for(int x=W-1;x>=0;--x) {
+                        r=p.cell[size_t(z)*W+x]?std::min(r+1,0xffff):0;
+                        p.run[size_t(z)*W+x]=uint16_t(r);
+                    }
+                }
+                budget-=std::min(budget,uint64_t(z1-p.cursor)*W);
+                p.cursor=z1;
+                if(p.cursor>=H) {p.stage=3;p.cursor=H-1;std::fill(p.column.begin(),p.column.end(),0);}
+            } else if(p.stage==3) {   // footZ consecutive rows, rows descending
+                const int rows=std::max(1,int(budget/uint64_t(W)));
+                const int z1=std::max(-1,p.cursor-rows);
+                for(int z=p.cursor;z>z1;--z)for(int x=0;x<W;++x) {
+                    int& r=p.column[size_t(x)];
+                    r=p.run[size_t(z)*W+x]>=p.footX?r+1:0;
+                    p.legal[size_t(z)*W+x]=r>=p.footZ&&x+p.footX<W&&z+p.footZ<H;
+                }
+                budget-=std::min(budget,uint64_t(p.cursor-z1)*W);
+                p.cursor=z1;
+                if(p.cursor<0) {p.stage=4;p.cursor=0;p.head=0;p.queue.clear();std::vector<uint16_t>().swap(p.run);}
+            } else {   // labelPlane's flood, resumable
+                if(p.head>=p.queue.size()) {
+                    if(!p.queue.empty()) {
+                        p.compSize.push_back(int(p.queue.size()));p.compBox.push_back(p.box);
+                        ++p.nextLabel;p.queue.clear();p.head=0;
+                    }
+                    while(budget>0&&p.cursor<W*H&&(!p.legal[size_t(p.cursor)]||p.comp[size_t(p.cursor)]>=0)) {++p.cursor;--budget;}
+                    if(p.cursor>=W*H) {
+                        p.liveComps=p.nextLabel;p.epoch=epoch;++stats.planeBuilds;
+                        const auto pending=std::move(p.pending);
+                        clearStage(p);
+                        bool changed=false;
+                        if(!pending.empty())refreshPlane(p,pending,changed);
+                        break;
+                    }
+                    if(!budget)break;
+                    p.comp[size_t(p.cursor)]=p.nextLabel;p.queue.assign(1,p.cursor);
+                    p.box={p.cursor%W,p.cursor/W,p.cursor%W,p.cursor/W};
+                }
+                for(;p.head<p.queue.size()&&budget>0;++p.head) {
+                    const int x=p.queue[p.head]%W,z=p.queue[p.head]/W;
+                    for(const auto& d:kDirections) {
+                        if(!step(p,x,z,d[0],d[1]))continue;
+                        const int c=(z+d[1])*W+x+d[0];
+                        if(p.comp[size_t(c)]<0) {
+                            p.comp[size_t(c)]=p.nextLabel;p.queue.push_back(c);
+                            p.box={std::min(p.box[0],x+d[0]),std::min(p.box[1],z+d[1]),std::max(p.box[2],x+d[0]),std::max(p.box[3],z+d[1])};
+                        }
+                    }
+                    budget-=std::min<uint64_t>(budget,4);
+                }
+            }
+        }
+    }
+    void tick() {
+        syncStatic();
+        prebuildStep();
         prune();
         // Yields run even while no Legion member remains (a committed yield
         // must finish or time out, never freeze until the next order).
@@ -1982,8 +2457,31 @@ LegionNavigator::Stats LegionNavigator::stats() const {
 }
 bool LegionNavigator::staticLegal(const Unit& u,int x,int z) {
     if(!u.type)return false;
+    impl_->syncStatic();
     const int index=impl_->planeFor(*u.type);
     return impl_->legal(impl_->plane(index),x,z);
+}
+bool LegionNavigator::planeMatchesRebuild(const Unit& u) {
+    if(!u.type)return false;
+    impl_->syncStatic();
+    const int index=impl_->planeFor(*u.type);
+    const auto& p=impl_->plane(index);
+    Impl::Plane fresh=p;
+    impl_->buildPlane(fresh);impl_->labelPlane(fresh);
+    if(fresh.legal!=p.legal)return false;
+    // Same partition up to numbering, and the same size and box per part.
+    std::map<int,int> to,from;
+    for(size_t c=0;c<p.comp.size();++c) {
+        const int a=p.comp[c],b=fresh.comp[c];
+        if((a<0)!=(b<0))return false;
+        if(a<0)continue;
+        if(to.try_emplace(a,b).first->second!=b||from.try_emplace(b,a).first->second!=a)return false;
+    }
+    for(const auto& [a,b]:to)
+        if(p.compSize[size_t(a)]!=fresh.compSize[size_t(b)]||p.compBox[size_t(a)]!=fresh.compBox[size_t(b)])return false;
+    int live=0;
+    for(int n:p.compSize)live+=n>0;
+    return live==int(to.size())&&live==p.liveComps&&fresh.liveComps==int(to.size());
 }
 int LegionNavigator::unitState(int id) const {
     const auto found=impl_->members.find(id);
