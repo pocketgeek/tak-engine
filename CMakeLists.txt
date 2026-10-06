@@ -342,7 +342,7 @@ add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
 add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
-    slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice)
+    slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
 # Visible motion of group orders with real unit types (measurement only, needs
@@ -664,10 +664,11 @@ if(TAK_TEST_DATA)
     add_test(NAME retailplus_maze_groups COMMAND cooperative_maze_test "${TAK_TEST_DATA}" retail-plus known)
     set_tests_properties(retailplus_maze_known retailplus_maze_groups PROPERTIES TIMEOUT 180)
     add_test(NAME cooperative_movement_orders_trolls COMMAND movement_orders_test --cooperative --trolls "${TAK_TEST_DATA}")
-    # Open-ground cohorts only: the maze cohort's plain-Move rally column still
-    # jams in Legion (docs/legion-pathfinding.md "Scope").
+    # Open-ground cohorts, and (separately, serial == workers) the 100-Troll
+    # rally cohort on the generated maze.
     add_test(NAME legion_movement_orders_trolls COMMAND movement_orders_test --legion --trolls "${TAK_TEST_DATA}" open)
-    set_tests_properties(legion_movement_orders_trolls PROPERTIES TIMEOUT 600)
+    add_test(NAME legion_movement_orders_trolls_maze COMMAND movement_orders_test --legion --trolls "${TAK_TEST_DATA}" maze)
+    set_tests_properties(legion_movement_orders_trolls legion_movement_orders_trolls_maze PROPERTIES TIMEOUT 900)
     add_test(NAME cooperative_maze_known COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative known)
     add_test(NAME cooperative_maze_discovery COMMAND cooperative_maze_test "${TAK_TEST_DATA}" cooperative discovery)
     set_tests_properties(cooperative_movement_orders_maze cooperative_movement_orders_trolls

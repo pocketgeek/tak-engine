@@ -34,6 +34,7 @@ constexpr int kFieldMargin=32;                 // bounded field window margin (c
 constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
 constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
 constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
+constexpr uint32_t kFarSettle=1800;            // still ticks before a body pressed against its crowd beyond the crowd's reach settles there
 constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close enough" settling at a crowd
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
@@ -2214,7 +2215,8 @@ struct LegionNavigator::Impl {
                 // where a late member otherwise never settles. (Settling
                 // there too cost sharedgoal 200 eight arrivals, seeds 0/7/42.)
                 const bool outside=!(m.pt&&m.pt->assigned&&m.pt->limit>0)||dist>m.pt->limit+2*body;
-                if(crowd==2||(crowd==1&&outside&&uint32_t(m.stillWindows)*kCrowdWindow>=2*kAreaSettle)) {complete(u,m,true);return;}
+                const uint32_t still=uint32_t(m.stillWindows)*kCrowdWindow;
+                if(crowd==2||(crowd==1&&outside&&still>=2*kAreaSettle)||(crowd==3&&outside&&still>=kFarSettle)) {complete(u,m,true);return;}
             }
         }
         if(!m.route.empty()) {
@@ -2469,7 +2471,31 @@ struct LegionNavigator::Impl {
         };
         auto [sx,sz]=proposal(dx,dz,length,travel);
         int nx=footprintOrigin(u.x+sx,fx),nz=footprintOrigin(u.z+sz,fz);
-        if(!stepFree(u,ox,oz,nx,nz)) {
+        // A step that changes both origins at once must clear both side
+        // origins (the mover's corner rule). Near a wall's end a proven line
+        // can pass the corner a fraction of a pixel away: it crosses one axis
+        // first, then the other, through a legal side cell, but a whole
+        // update's step jumps both at once onto the illegal one. That step
+        // is blocked (as by a body; on a legacy plane the mover refuses it);
+        // if nothing else frees the body, it crosses only the legal axis
+        // (the other coordinate stops at its origin's edge), as the line
+        // does, instead of holding there forever.
+        const bool corner=nx!=ox&&nz!=oz&&!step(p,ox,oz,nx-ox,nz-oz);
+        const Fixed sx0=sx,sz0=sz;const int nx0=nx,nz0=nz;
+        auto cornerStep=[&]()->bool {
+            auto edge=[](Fixed at,Fixed by,int origin,int foot) {
+                const int64_t offset=int64_t(foot-1)*8*Fixed::kOne;
+                const int64_t lo=(int64_t(origin)<<20)+offset,hi=lo+(int64_t(1)<<20)-1;
+                return Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(at.v)+by.v,lo,hi)-at.v));
+            };
+            Fixed cx=sx0,cz=sz0;int kx=nx0,kz=nz0;
+            if(legal(p,ox,nz0)) {cx=edge(u.x,sx0,ox,fx);kx=ox;}
+            else if(legal(p,nx0,oz)) {cz=edge(u.z,sz0,oz,fz);kz=oz;}
+            else return false;
+            if(!stepFree(u,ox,oz,kx,kz))return false;
+            sx=cx;sz=cz;nx=kx;nz=kz;return true;
+        };
+        if(corner||!stepFree(u,ox,oz,nx,nz)) {
             // Blocked by a body. Flow around it through any other free cell
             // that is strictly closer to the goal (field descent), committing
             // to that neighbour for this update; otherwise hold still.
@@ -2513,6 +2539,7 @@ struct LegionNavigator::Impl {
                     }
                 }
             }
+            if(!moved&&corner)moved=cornerStep();
             if(!moved) {
                 if(contactArrival(u,m)) {complete(u,m,true);return;}
                 if(f&&m.detour<0)sidestep(u,m,p,*f,ox,oz,nx,nz);
@@ -2705,8 +2732,9 @@ struct LegionNavigator::Impl {
     // Its own footprint is legal (checked by the caller). A body passing
     // through a crowd on its way elsewhere is far from its own point and
     // touches nobody settled for it, so it never settles here.
-    // Returns 0 (not here), 1 (touching only this same order's arrivals)
-    // or 2 (touching an earlier order's arrival or an idle body).
+    // Returns 0 (not here), 1 (touching only this same order's arrivals),
+    // 2 (touching an earlier order's arrival or an idle body) or 3 (beyond
+    // the reach, touching an arrival of this destination).
     int crowdSettle(const Unit& u,const Member& m,const Group& g,int ox,int oz,int64_t dist) const {
         if(m.approach||m.goal<0)return 0;
         const int fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
@@ -2719,8 +2747,8 @@ struct LegionNavigator::Impl {
         };
         // Touching: a settled body of this destination within one body,
         // nearer the point than this one.
-        int touching=0;
-        for(int j=-foot;j<fz+foot&&touching<2;++j)for(int i=-foot;i<fx+foot&&touching<2;++i) {
+        int touching=0;bool anchored=false;
+        for(int j=-foot;j<fz+foot&&(touching<2||!anchored);++j)for(int i=-foot;i<fx+foot&&(touching<2||!anchored);++i) {
             const int cx=ox+i,cz=oz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
             const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
@@ -2737,6 +2765,7 @@ struct LegionNavigator::Impl {
             // each name their own point of one lattice).
             const bool own=a!=anchors.end()&&std::get<1>(a->second.point)==std::get<1>(m.point);
             touching=std::max(touching,own?1:2);
+            anchored=anchored||a!=anchors.end();
         }
         if(!touching)return 0;
         // Reach: four times the packed disc of everyone settled there (and
@@ -2744,7 +2773,14 @@ struct LegionNavigator::Impl {
         int64_t count=1;
         for(const auto& [id,a]:anchors)if(sameDestination(a))++count;
         const int64_t reach=4*body*isqrtFloor(uint64_t(count)*100000000/31416)/100+2*body;
-        if(dist>reach)return 0;
+        // Out to twice that, a body touching a settled ARRIVAL of this
+        // destination (a link of the crowd itself, not merely an idle body)
+        // also counts, after a much longer wait (3): a crowd stretched along
+        // the way in (arrivals from one side settle on its near face) left
+        // its late arrivals pressed against it, orders held forever, standing
+        // exactly where a settled body would stand.
+        const bool far=dist>reach;
+        if(far&&(!anchored||dist>2*reach))return 0;
         // Connected: the field's way to the destination area is not much
         // longer than the straight line (no settling behind a wall).
         const Field* f=g.field&&g.field->done?g.field.get():nullptr;
@@ -2760,7 +2796,7 @@ struct LegionNavigator::Impl {
             const int64_t half=int64_t(s.type->footX)*8+body;
             if(ux>=sx-half&&ux<=sx+half&&uz>=sz&&uz<=sz+int64_t(s.type->footZ)*8+60+body)return 0;
         }
-        return touching;
+        return far?3:touching;
     }
     // A body pressed against settled bodies inside its goal's area has
     // arrived: the destination is an area, and the cells nearer the point

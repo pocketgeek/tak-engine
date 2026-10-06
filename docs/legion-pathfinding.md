@@ -182,7 +182,19 @@ Each update a supported unit:
   step. A lane-discipline pass (section 4) is exempt from the cap.
 
 The step is committed with `commitGroundStep(..., strictDiagonal=true)`, the
-authority Retail uses. Before committing, Legion checks the destination origin,
+authority Retail uses. An update's step that would change both origins at
+once where one side origin is illegal (a proven line passing a wall's end a
+fraction of a pixel from the corner) is blocked like a body; when neither
+flow-around nor anything else frees the unit, it crosses only the legal axis
+that update, the other coordinate stopping at its origin's edge, exactly as
+the line itself passes. Before this, a body at such a corner held forever: on
+a placement plane the corner step read as a body block with no way round, on
+a legacy plane the mover refused it every update (`legion_wallend`). Applied
+first instead of last, the same clip changed motion at corners that
+flow-around already resolves (bridges and crowdtrap 2000 lost about 30
+crossings, maze 200 lost 12, seeds 0/7/42).
+
+Before committing, Legion checks the destination origin,
 and both orthogonal origins on a diagonal, against occupancy and
 `mobilePlacement`. Every Legion motion path, including pass steps, shuffles,
 detour routes and yield steps, goes through `commitGroundStep`; none writes a
@@ -313,6 +325,14 @@ footprint class (mixed footprints form one group per class but share one
   against still members of the same point. A member walled out at the ring
   edge settles after 600 still ticks if it is within the limit plus two body
   widths.
+* **Close enough** (`crowdSettle`): a body that stopped gaining on its point
+  settles where it stands when it touches a same-player body already settled
+  for that destination (or idle) and nearer the point, within four packed-disc
+  radii of that crowd plus two bodies, on a field-connected spot outside any
+  factory exit lane. Out to twice that reach, touching a settled arrival of
+  the destination (not merely an idle body) also settles it, after 1800
+  still ticks (`kFarSettle`): a crowd fed from one side grows toward its
+  arrivals, and its last ones otherwise held forever against its face.
 * The older per-goal packed slots (built inside-out by field potential,
   claimed back to front along each member's approach) remain as the fallback
   when no formation applies. Claims skip slots that are now illegal or
@@ -423,24 +443,24 @@ them is a `LegionMission` kind plus a `Policy` entry (see `legion.cpp`).
 Retail and Retail+ behaviour is bit-identical to builds without Legion:
 per-tick traces and hashes compared on each Legion change.
 
-Known gap: on legacy nav-grid test worlds (no placement plane) a 12-body
-column jams at the end of a `nav().block` wall in Legion, for plain queued
-moves as well as patrols; the bodies hold with a finite potential. This
-predates the mission interface. The same corner hold stops a single body
-going round a wall's end on a legacy plane (a plain Move, a repair approach
-and a passenger boarding all hold at the same cell), which is why the work
-and boarding tests use a placement plane with a water wall. On the
-generated maze the Troll rally cohort (plain Moves) still leaves a jammed
-column (`movement_orders_test --legion --trolls` maze case: 64 of 100
-unsettled; 36 before production exits were Legion's, when fewer bodies
-reached the column at once); the open-ground cohorts all settle.
+The former corner hold at a wall's end (a single body or a 12-body column
+on a legacy nav-grid world, and the jammed rally column of the generated-maze
+Troll cohort, 64 of 100 unsettled) was the one-update corner step described
+in section 3; it is fixed for every plane. The maze cohort's last 17 bodies
+then stood pressed against the west face of a rally crowd that had grown
+toward them, just past the "close enough" reach; they now settle there after
+1800 still ticks (section 5). All 100 settle (tick 32,966), serial ==
+workers (`legion_movement_orders_trolls_maze`).
 
 ## Tests
 
-* `legion_world_test`, 21 cases: clearance, groupreuse, jagged, trapped,
+* `legion_world_test`, 27 cases: clearance, groupreuse, jagged, trapped,
   crowdhold, replace, unreachable, quota, determinism, formation, slotblock,
   deaths, deathsshared, splitgoal, farclick, churn, approachhold,
-  approachopen, churnfield, approachchurn, legacyyield. All pass.
+  approachopen, churnfield, approachchurn, legacyyield, planeincremental,
+  planeprebuild, penstale, lattice, wallend (one body and a 12-body column
+  round a `nav().block` wall's end on a legacy plane, without turning in
+  place). All pass.
 * `legion_acceptance_test`, five checks run in all five modes; Legion
   asserts, the others report. singleunit, jagged, trapped and group pass for
   Legion; crowdheld is a known failure (below).

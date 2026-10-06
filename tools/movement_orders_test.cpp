@@ -374,21 +374,30 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
     }
     return w.stateHash();
 }
-// `open`: only the open-ground cohorts (the maze cohort is a plain-Move
-// column on the generated maze; see docs/legion-pathfinding.md "Scope").
-void trollProduction(const char* data,bool open=false) {
+// `open`: only the open-ground cohorts. `maze`: only the generated-maze
+// cohort, serial and threaded.
+void trollProduction(const char* data,bool open=false,bool mazeOnly=false) {
     auto vfs=tak::hpi::mountRetailRoot(data,tak::hpi::OverridePolicy::None);
     for(bool crusades:{false,true}) {
         TypeRegistry registry;setupRegistry(registry,vfs,crusades);
-        const auto serial=trollRally(registry,true);
-        check(serial==trollRally(registry,false),"authored Troll arrivals match serial and threaded preparation");
+        if(mazeOnly&&!crusades)continue;
+        if(!mazeOnly) {
+            const auto serial=trollRally(registry,true);
+            check(serial==trollRally(registry,false),"authored Troll arrivals match serial and threaded preparation");
+        }
         if(crusades) {
-            const auto large=trollRally(registry,true,nullptr,256);
-            check(large==trollRally(registry,false,nullptr,256),"256-Troll arrivals match serial and threaded preparation");
+            if(!mazeOnly) {
+                const auto large=trollRally(registry,true,nullptr,256);
+                check(large==trollRally(registry,false,nullptr,256),"256-Troll arrivals match serial and threaded preparation");
+            }
             constexpr auto recipe="~gen1~0800f0a981b8b476a2cb010008000808ffffff67ff034a616e6b204d617a65207631";
             auto generated=tak::mapgen::generate(tak::mapgen::decodeMapId(recipe),vfs);
             auto files=std::make_shared<tak::hpi::Vfs::Files>();(*files)["maps/orders-troll-maze.tnt"]=generated.map.save();
-            if(!open){vfs.setMapFiles(files);trollRally(registry,true,&vfs);}
+            if(!open) {
+                vfs.setMapFiles(files);
+                const auto serial=trollRally(registry,true,&vfs);
+                if(mazeOnly)check(serial==trollRally(registry,false,&vfs),"maze Troll arrivals match serial and threaded preparation");
+            }
         }
     }
 }
@@ -400,8 +409,8 @@ int main(int argc,char** argv) {
             std::string(argv[1])=="--legion"?PathfindingMode::Legion:PathfindingMode::Flowfield;
         onlyShared=true;--argc;++argv;
     }
-    if((argc==3||(argc==4&&std::string(argv[3])=="open"))&&std::string(argv[1])=="--trolls") {
-        try {trollProduction(argv[2],argc==4);return failures?1:0;}
+    if((argc==3||(argc==4&&(std::string(argv[3])=="open"||std::string(argv[3])=="maze")))&&std::string(argv[1])=="--trolls") {
+        try {trollProduction(argv[2],argc==4&&std::string(argv[3])=="open",argc==4&&std::string(argv[3])=="maze");return failures?1:0;}
         catch(const std::exception& e){std::fprintf(stderr,"FAIL %s\n",e.what());return 1;}
     }
     if(argc==2) {

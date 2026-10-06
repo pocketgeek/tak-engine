@@ -724,6 +724,47 @@ void legacyyield() {
     check(u.x.toFloat()/16>20,"walker did not reach the settled body");
 }
 
+// Legacy nav-grid world (no placement plane): bodies sent past the end of a
+// blocked wall must round it, alone and as a queued column. The proven line
+// passed the wall's corner a fraction of a pixel away; one update's step
+// jumped both origins at once onto the illegal side cell, was refused, and
+// the body held there forever.
+void wallendRun(int count) {
+    Fixture f(64,64);
+    f.rect(0,30,40,1);   // wall row 30, open end at x>=40; no publish()
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<count;++i)ids.push_back(f.spawn(type,10+(i%4)*3,40+(i/4)*3));
+    f.start();
+    for(int id:ids)f.world.order(id,12*16,18*16,false);
+    Motion motion;
+    int done=-1;
+    for(int t=0;t<3000;++t) {
+        f.world.tick(1.f/30);motion.observe(f.world,ids);
+        bool all=true;for(int id:ids)all=all&&f.world.unit(id)->orders.empty();
+        if(all){done=t;break;}
+    }
+    int left=0;for(int id:ids)left+=!f.world.unit(id)->orders.empty();
+    std::printf("wallend count=%d done=%d left=%d spins=%llu reversals=%llu\n",count,done,left,
+        (unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+    if(left) {
+        printLeft(f,ids);
+        auto* n=f.world.legionNavigator();
+        for(int id:ids)if(!f.world.unit(id)->orders.empty()) {
+            const auto& u=*f.world.unit(id);
+            const int ox=footprintOrigin(u.x,2),oz=footprintOrigin(u.z,2);
+            std::printf("   id=%d origin %d,%d pot:",id,ox,oz);
+            for(int j=-1;j<=1;++j)for(int i=-1;i<=1;++i)std::printf(" %d",n->fieldPotential(id,ox+i,oz+j));
+            std::printf(" staticLegal:");
+            for(int j=-1;j<=1;++j)for(int i=-1;i<=1;++i)std::printf("%d",int(n->staticLegal(u,ox+i,oz+j)));
+            std::printf("\n");
+        }
+    }
+    check(left==0,"bodies did not round the wall end");
+    check(motion.spins==0,"bodies turned in place at the wall end");
+}
+void wallend() {wallendRun(1);wallendRun(12);}
+
 // A member whose own goal lies inside a lattice of settled same-player
 // arrivals (2x2 bodies at a 3-cell stride: the 1-cell gaps fit no body). The
 // way in exists only if the settled bodies yield. It must ask them to, and
@@ -918,7 +959,7 @@ int main(int argc,char** argv) {
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
         {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
-        {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice}};
+        {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
