@@ -637,6 +637,18 @@ while overlapping another flyer in that minute, so the harness does not
 exercise this change. Hashes change only in games where flyers land or die
 while overlapping other flyers. All 199 Debug ctests pass.
 
+`retailgap`'s VTOL_standby case used to pick a cell that is not walkable in
+the flyer's movement-class nav grid, and it required the flyer to relocate. That
+was the old `flightLandingFree` approximation. `509400` has no movement-class
+test. arafly has no movementclass and no maxslope key, so its slope word is the
+default 255 (`4dfcc8..4dfcdb` passes the constructor's `0xff` as the key
+default, and `4c0eb4` stores it at type `+0x23c`). The original routine,
+emulated with the test site's quads (lows 116..163, highs 163..213, spread 56,
+sea 58, explored), reports **landable**: it refuses only when maxslope is 55.
+The case now parks the flyer over open water on Lake Lokken, which retail does
+refuse to a non-floater flyer, and requires it to land on a dry footprint and
+stay there.
+
 Residual approximations:
 
 - World removes dying units from occupancy at death, whereas retail keeps a
