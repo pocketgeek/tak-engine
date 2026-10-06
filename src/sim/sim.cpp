@@ -46,7 +46,7 @@ bool gInstantBuild = false;
 // race-free and correctly attributed.
 static const bool g_phase = getenv("TAK_PHASE") != nullptr;
 static thread_local double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
-static thread_local double g_tcomb = 0, g_scriptMs = 0, g_moveMs = 0;
+static thread_local double g_tcomb = 0, g_scriptMs = 0, g_moveMs = 0, g_navMs = 0;
 
 namespace {
 
@@ -9345,12 +9345,23 @@ void World::tick(float dt) {
     struct BodyIndexScope { bool& enabled; ~BodyIndexScope(){enabled=false;} } bodyIndexScope{bodyIndexEnabled_};
     if (retailAllocation_)
         std::sort(units_.begin(),units_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
+    // The profiled tick starts here, so navigator upkeep (Retail+/Legion
+    // field and plane work) and feature burning are inside the total.
+    std::chrono::steady_clock::time_point _tk0, _sep0;
+    if (g_phase) { _tk0 = std::chrono::steady_clock::now();
+                   g_tcomb = g_scriptMs = g_moveMs = g_navMs = 0;
+                   g_visMs = g_burnMs = g_gridMs = 0; }
     if (!tickCounter_) updateNavigationExploration();
     ++tickCounter_;
-    if(retailPlus_)retailPlus_->tick();
-    if(isLegionPathfinding(pathfindingMode_)&&pathService_) {
-        if(!legion_)legion_=std::make_unique<LegionNavigator>(*this);
-        legion_->tick();
+    {
+        const auto _n0 = g_phase ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        if(retailPlus_)retailPlus_->tick();
+        if(isLegionPathfinding(pathfindingMode_)&&pathService_) {
+            if(!legion_)legion_=std::make_unique<LegionNavigator>(*this);
+            legion_->tick();
+        }
+        if (g_phase) g_navMs += std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - _n0).count();
     }
     // 51b890 runs before unit updates. Active squads publish whether they
     // contain any completed mobile members (50b7a0), dirtying only on change.
@@ -9389,10 +9400,6 @@ void World::tick(float dt) {
             if (!atTypeCap(bs.player,bs.type)) spawn(bs.type, bs.x, bs.z, 0, bs.player);
         ++benchCursor_;
     }
-    std::chrono::steady_clock::time_point _tk0, _sep0;
-    if (g_phase) { _tk0 = std::chrono::steady_clock::now();
-                   g_tcomb = g_scriptMs = g_moveMs = 0;
-                   g_visMs = g_burnMs = g_gridMs = 0; }
     // Cap repaths per tick: a big group that jams while moving can trip the
     // blocked/stuck watchdogs en masse, and hundreds of path searches in one tick
     // stall the sim. Deferred units retry a later tick. Deterministic (fixed budget,
@@ -10603,9 +10610,9 @@ void World::tick(float dt) {
             int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
             // flow= and path= used to sit here; the flow fields and the inline
             // A* are both gone, so the counters were always zero.
-            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f vis=%.1f burn=%.1f grid=%.1f scripts=%.1f movement=%.1f other=%.1f units=%d\n",
-                         ttot, g_tcomb, tsep, g_visMs, g_burnMs, g_gridMs, g_scriptMs, g_moveMs,
-                         ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs - g_scriptMs - g_moveMs, alive);
+            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f vis=%.1f burn=%.1f grid=%.1f scripts=%.1f movement=%.1f nav=%.1f other=%.1f units=%d\n",
+                         ttot, g_tcomb, tsep, g_visMs, g_burnMs, g_gridMs, g_scriptMs, g_moveMs, g_navMs,
+                         ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs - g_scriptMs - g_moveMs - g_navMs, alive);
         }
     }
     // Campaign mission runner: feed this tick's build/death events into the "god"
