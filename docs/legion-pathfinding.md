@@ -790,7 +790,13 @@ Acceptance:
   speed-matched following). Since 2026-10-06 the observer gives a unit one
   progress window after it stops being trapped (as after a command), so the
   gate's front unit, already moving at full speed, no longer counts; the
-  remaining unit is a real stall at the end of the run.
+  remaining unit is sealed out: the door lets a shallower unit of the same
+  goal row through first, and once it settles the deeper goal is reachable
+  only through neighbouring goals. Shifting goals into one-body aisles reached
+  64/64 but added spin and aisle deadlocks and regressed rapid replacement and
+  doors; having settled bodies step aside peaked at 63/64 and was unstable.
+  Group right-clicks use a shared point with re-choosable slots instead of
+  fixed packed goals, so this layout does not arise from player orders.
   `legion_acceptance_group_legion` passed 61/64 before the round-3 livelock
   fix and now passes 64/64. The
   thresholds are unchanged, and no other mode passes either check. The goals

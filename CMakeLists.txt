@@ -313,11 +313,13 @@ foreach(legion_check singleunit group jagged trapped crowdheld)
            COMMAND legion_acceptance_test retail ${legion_check} --report)
   set_tests_properties(legion_acceptance_${legion_check}_retail PROPERTIES TIMEOUT 600)
 endforeach()
-# KNOWN FAILURE, thresholds unchanged: on a packed per-unit goal grid behind
-# a gated door, Legion settles 62/64 in goal; one late unit ends stationary
-# against terrain with a free path (a real stall, not the release-window
-# artifact: the observer now gives units one window after release, like after
-# a command). See docs/legion-pathfinding.md "Known weaknesses".
+# KNOWN FAILURE, thresholds unchanged: 64 distinct goals packed at a 3-cell
+# pitch (1-cell gaps) behind a gated door. The block leaves deepest-first, but
+# the door reorders a pair in one row; the shallower unit settles first and
+# seals the deeper goal, which is reachable only through neighbouring goals.
+# Legion reaches 62/64 in goal; the sealed unit counts as terrain-stuck. Group
+# right-clicks use a shared point with re-choosable slots and do not create
+# this layout. See docs/legion-pathfinding.md "Known weaknesses".
 set_tests_properties(legion_acceptance_crowdheld_legion PROPERTIES DISABLED TRUE)
 add_executable(retail_search_scratch_test tools/retail_search_scratch_test.cpp)
 target_include_directories(retail_search_scratch_test PRIVATE src)
