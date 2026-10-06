@@ -574,13 +574,76 @@ opposing traffic). **Speed-matched following** fixes stop-go — below Retail
 in all three cases — but every variant leaves 1–5 units flagged terrain-stuck
 by acceptance `group`: a follower held behind a leader on a different path,
 next to a wall, with no body on its own direct line, trips that check. Whether
-to change that check or the mechanism is an open decision.
+to change that check or the mechanism is an open decision. (Decided: see the
+follow-up below.)
+
+### Round 4 follow-up: speed-matched following ships (2026-10-06)
+
+**User decision:** ship speed-matched following, and narrow the acceptance
+terrain-stuck classification it tripped.
+
+- **Following (Legion only).** In `drive()`, a body that has a slower body of
+  the same player one or two cells ahead along its step, heading within 45° of
+  its own, matches that body's speed (never below half its own) instead of
+  running up and stopping dead. A leader slower than half this body's speed
+  cap is not followed: matching a creeping body chained whole queues down to a
+  crawl at door corners (acceptance `group` then counted 4 terrain-stuck units,
+  and maze 200 lost 15% of its arrivals with a quarter-cap floor). The parked
+  "close-up within the cell" half of the old patch is NOT shipped: it alone
+  kept 1–4 units creeping at a door corner. Route facing and shuffle facing
+  stay rejected (spin). No new state; nothing to fold into the checksum.
+- **Narrowed terrain-stuck verdict (all modes; observation only).** In
+  `tools/crowdbench_matrix.h` / `crowdbench_acceptance.h`, a unit that would be
+  terrain-stuck (no progress, free static path, no body on its static line,
+  touching terrain) is now crowd-held when it is queued behind a moving leader.
+  A leader is a same-player mobile member whose centre is within two body
+  widths, lies within 60° of the unit's goal or static travel direction, and
+  made at least 16 px of progress over the same 90-tick window. A unit against
+  a wall with nobody moving ahead of it is still terrain-stuck. A temporary
+  mutation that froze every Legion body touching a wall still failed `group`
+  with 1 unit terrain-stuck. Every crowdbench hash in every mode is unchanged,
+  and so is every mode's acceptance verdict. Other modes' terrain-stuck
+  unit-ticks fall a little on doors/sharedgoal/jagged/groupdetour/crowdtrap
+  at 300 units (Retail 993→881, Retail+ 799→440, Flowfield 320→296,
+  Cooperative 295→284). The shipped following also passes `group` under the
+  OLD verdict, so the verdict change is not what lets it pass.
+
+Motion (52–68 units summed; sideways / backward / stop-go / tool arrivals):
+
+| Case | Retail | Before | After |
+|---|---|---|---|
+| open | 12,426 / 755 / 4,774 / 137 | 9,528 / 3,388 / 13,913 / 86 | 5,860 / 1,636 / 391 / 80 |
+| wall | 18,849 / 729 / 6,265 / 41 | 51,118 / 2,895 / 4,039 / 66 | 33,105 / 1,984 / 1,992 / 55 |
+| cross | 18,681 / 858 / 6,342 / 141 | 17,926 / 3,710 / 6,154 / 182 | 17,567 / 4,084 / 1,106 / 166 |
+
+Stop-go is now well below Retail in all three cases, and open/wall sliding
+roughly halves. Backward remains above Retail everywhere. The motion tool's own
+arrival count falls 7–17% in these 3,000-tick runs. The crowdbench scoreboard
+does not show that drop. Across 18 scenarios × 200 / 2,000 / 500x4 × seeds
+0/7/42 at 6,000 ticks, against 0f577f5:
+
+- crossed: +2.1%
+- arrived: +4.8% (bridges, doors, crowdtrap, sharedgoal and mixedfootprints
+  gain 8–34%)
+- spin: −41% (5,075 → 2,984 unit-ticks)
+
+Two cases rose in spin on every seed but stay small: opposingcolumns 2000 went
+688 → 932 (inside the base's 398–1,106 seed range) and mixedfootprints 500x4
+went 6 → 82. The worst arrival change is maze/exploration 200 at 86.7 → 82.0,
+inside the base seed range of 78–93.
+
+Acceptance:
+
+- `legion_acceptance` group 64/64, terrain-stuck 0.
+- crowdheld (still disabled) now reaches 62 of 64 in goal, up from 59, with 2
+  units ever terrain-stuck, up from 1.
 
 ## Known weaknesses
 
 * **Packed distinct goals: one acceptance check is registered DISABLED as a
-  known failure.** `legion_acceptance_crowdheld_legion` reaches 59 of 64 in
-  goal with 1 unit ever terrain-stuck (spin passes at 0).
+  known failure.** `legion_acceptance_crowdheld_legion` reaches 62 of 64 in
+  goal with 2 units ever terrain-stuck (spin passes at 0; 59 and 1 before
+  speed-matched following).
   `legion_acceptance_group_legion` passed 61/64 before the round-3 livelock
   fix and now passes 64/64. The
   thresholds are unchanged, and no other mode passes either check. The goals

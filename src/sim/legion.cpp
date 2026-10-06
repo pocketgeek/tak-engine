@@ -2178,6 +2178,28 @@ struct LegionNavigator::Impl {
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
         if(u.speed>cap)speed=fxMax(cap,u.speed-u.type->brake*multiplier);
         if(speed<=Fixed())speed=Fixed::raw(std::max(1,cap.v/8));
+        if(length>0) {
+            // Speed-matched following: keep station behind a slower body of
+            // the same player moving the same way (heading within 45 deg) a
+            // cell or two ahead -- match its speed, at most halving this
+            // body's -- instead of running up to it and stopping dead (the
+            // stop-go of a mixed-speed column). A leader below half of
+            // this body's cap is creeping, not travelling: matching it would
+            // chain a whole queue down to a crawl, so it is not followed.
+            const int64_t adx=std::abs(dx),adz=std::abs(dz);
+            const int sdx=adx*5>=adz*2?(dx>0?1:-1):0,sdz=adz*5>=adx*2?(dz>0?1:-1):0;
+            const Unit* lead=nullptr;
+            for(int k=1;k<=2&&!lead;++k)for(int j=0;j<fz&&!lead;++j)for(int i=0;i<fx&&!lead;++i) {
+                const int cx=ox+k*sdx+i,cz=oz+k*sdz+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                if(!o||o==u.id)continue;
+                const Unit* other=w.unit(o);
+                if(other&&other->player==u.player&&other->speed>Fixed()&&other->speed<speed&&int64_t(other->speed.v)*2>=cap.v&&
+                   std::abs(retailTurnRequest(other->heading,u.heading))<8192)lead=other;
+            }
+            if(lead)speed=fxMax(lead->speed,Fixed::raw(std::max(1,speed.v/2)));
+        }
         int64_t travel=std::min<int64_t>(speed.v,length);
         auto proposal=[&](int64_t ax,int64_t az,int64_t len,int64_t along) {
             return std::pair{Fixed::raw(int32_t(len?ax*along/len:0)),Fixed::raw(int32_t(len?az*along/len:0))};
