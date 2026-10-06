@@ -1077,6 +1077,10 @@ struct LegionNavigator::Impl {
     }
     void claimSlot(const Unit& u,Member& m,Group& g,const Plane& p,int here) {
         if(m.requested<0)return;
+        // An approach point is a stand-in, not a destination area: bodies
+        // queue up to it in the order they come (keeping their formation,
+        // so the deepest goals lead when the way opens) and hold on contact.
+        if(m.approach)return;
         if(formationSlot(u,m,g,p))return;
         bool nearest=false;
         if(m.slot>=0) {
