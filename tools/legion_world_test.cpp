@@ -296,6 +296,49 @@ void crowdhold() {
     for(int id:ids)check(f.legal(id),"illegal footprint in held crowd");
 }
 
+// A group sent across open ground with a large standing block of idle
+// bodies on its straight way (of the same player, then of another): it
+// must plan round the block, not walk into it and wait against its face.
+// Every member arrives in about the time of the way round, nobody spins.
+int staticblockRun(int owner) {
+    Fixture f(200,100);f.publish();
+    const auto type=mover(2);
+    std::vector<int> block,ids;
+    if(owner>=0)for(int c=0;c<10;++c)for(int r=0;r<12;++r)block.push_back(f.spawn(type,92+c*3,32+r*3,owner));
+    for(int i=0;i<40;++i)ids.push_back(f.spawn(type,20+(i%8)*3,44+(i/8)*3));
+    f.start();
+    for(int t=0;t<90;++t)f.world.tick(1.f/30);   // the block has stood still a while
+    for(int id:ids)f.world.order(id,160*16,50*16,false);
+    Motion motion;
+    int t=0,arrived=0,half=-1;
+    for(;t<4000&&arrived<int(ids.size());++t) {
+        f.world.tick(1.f/30);motion.observe(f.world,ids);
+        arrived=0;for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
+        if(half<0&&2*arrived>=int(ids.size()))half=t;
+    }
+    arrived=0;for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
+    for(int id:ids)check(f.legal(id),"illegal footprint");
+    const auto s=f.world.legionStats();
+    std::printf("staticblock owner=%d arrived=%d/%zu ticks=%d half=%d holds=%llu detours=%llu spins=%llu reversals=%llu\n",owner,arrived,ids.size(),t,half,
+        (unsigned long long)s.holds,(unsigned long long)s.detours,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+    if(std::getenv("STATIC_VERBOSE"))printLeft(f,ids);
+    if(std::getenv("STATIC_REPORT"))return t;   // measure only (e.g. on an older build)
+    check(arrived==int(ids.size()),"group did not get round the standing block");
+    check(motion.spins==0,"group spun at the standing block");
+    // The way round the block (by one side, clear of its face) is barely
+    // longer than the straight 140 cells. On open ground (no block) half the
+    // group arrives at 1226 ticks and all of it at 1803; round the block it
+    // streams by one side in a narrower file, so the tail is longer. Without
+    // soft obstacles only 11 of 40 had arrived after 4000 ticks.
+    check(half<=1800,"half the group took far longer than the way round");
+    check(t<=3600,"group took far longer than the way round");
+    return t;
+}
+void staticblock() {
+    if(std::getenv("STATIC_OPEN"))staticblockRun(-1);   // reference: no block
+    staticblockRun(0);staticblockRun(1);
+}
+
 void replace() {
     Fixture f(128,96);
     f.rect(60,0,4,40);f.rect(60,48,4,48);
@@ -1362,7 +1405,7 @@ int main(int argc,char** argv) {
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
         {"crowdhold",crowdhold},{"replace",replace},{"unreachable",unreachable},{"quota",quota},{"pens",pens},
         {"determinism",determinism},{"formation",formation},{"slotblock",slotblock},
-        {"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
+        {"staticblock",staticblock},{"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation}};
