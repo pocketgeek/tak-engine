@@ -294,6 +294,7 @@ void OptionsScreen::build(int channels) {
     slider("TACTICAL DOTS ZOOM", 0, 100, [&] { return float(s_.tacticalDotsZoom); },
            [&](float v) { s_.tacticalDotsZoom = std::clamp(int(v + 0.5f), 0, 100); },
            [](float v) { return pctOf(v, 100); });
+    ctls_.back().enabled = [&] { return s_.tacticalDots; };   // only meaningful with dots on
     // OS-tracked cursor: the pointer keeps moving smoothly even when a heavy frame
     // stalls the render loop (the retail Direct3D "hardware cursor" option).
     toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },
@@ -533,7 +534,10 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             if (c.kind == Control::Toggle) {
                 c.set(c.get() > 0.5f ? 0.0f : 1.0f); dirty_ = true; if (onChange_) onChange_(); return false;
             }
-            if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
+            if (c.kind == Control::Slider) {
+                if (c.enabled && !c.enabled()) return false;   // greyed out: ignore
+                drag_ = int(i); commit(c, mx); return false;
+            }
             if (c.kind == Control::Button) { if (c.action) c.action(); return false; }
             if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list
         }
@@ -648,11 +652,14 @@ void OptionsScreen::render(int winW, int winH) {
             }
         } else if (c.kind == Control::Slider) {
             float val = c.get();
-            drawBlockText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx, {225, 230, 240, 255});
+            const bool on = !c.enabled || c.enabled();   // greyed out when its toggle is off
+            drawBlockText(ren_, c.label, c.row.x, c.row.y + 4 * u_, fpx,
+                          on ? SDL_Color{225, 230, 240, 255} : SDL_Color{105, 110, 122, 255});
             if (c.fmt) {
                 std::string vs = c.fmt(val);
                 drawBlockText(ren_, vs, c.row.x + c.row.w - blockTextWidth(vs, fpx),
-                              c.row.y + 4 * u_, fpx, {150, 195, 235, 255});
+                              c.row.y + 4 * u_, fpx,
+                              on ? SDL_Color{150, 195, 235, 255} : SDL_Color{90, 100, 115, 255});
             }
             // track + fill + handle
             float ty = c.row.y + 22 * u_, th = 7 * u_;
@@ -660,9 +667,13 @@ void OptionsScreen::render(int winW, int winH) {
             SDL_SetRenderDrawColor(ren_, 48, 52, 66, 255); SDL_RenderFillRectF(ren_, &track);
             float frac = std::clamp((val - c.lo) / std::max(0.0001f, c.hi - c.lo), 0.0f, 1.0f);
             SDL_FRect fill{c.row.x, ty, c.row.w * frac, th};
-            SDL_SetRenderDrawColor(ren_, 80, 140, 225, 255); SDL_RenderFillRectF(ren_, &fill);
+            if (on) SDL_SetRenderDrawColor(ren_, 80, 140, 225, 255);
+            else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
+            SDL_RenderFillRectF(ren_, &fill);
             SDL_FRect handle{c.row.x + c.row.w * frac - 4 * u_, ty - 4 * u_, 8 * u_, th + 8 * u_};
-            SDL_SetRenderDrawColor(ren_, 205, 215, 240, 255); SDL_RenderFillRectF(ren_, &handle);
+            if (on) SDL_SetRenderDrawColor(ren_, 205, 215, 240, 255);
+            else SDL_SetRenderDrawColor(ren_, 95, 100, 115, 255);
+            SDL_RenderFillRectF(ren_, &handle);
         }
     }
     SDL_RenderSetClipRect(ren_, nullptr);

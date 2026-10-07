@@ -77,6 +77,7 @@ private:
         std::function<void()> action;            // Button: click handler
         std::function<std::vector<std::string>()> options;   // Dropdown: the choices
         std::function<std::string()> note;       // Dropdown: optional status beside the label
+        std::function<bool()> enabled;           // Slider: unset = always; false = greyed, ignores input
         SDL_FRect row{};                          // filled by layout()
     };
 
