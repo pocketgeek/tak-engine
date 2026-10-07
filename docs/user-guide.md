@@ -895,15 +895,20 @@ World sounds are full volume on screen and fade with distance off screen.
 | **Smooth Movies** | Off | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
 | **Tactical Dots** | Off | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
+| **Tactical Dots Zoom** | 20% | How far out you must zoom before dots replace models. See below. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
 
-**Tactical Dots** turns on when units get too small to read: below zoom 0.30
-(a soldier about 10 pixels across), and also whenever you are zoomed all the way
-out, since on a very wide screen the map fills the window long before units get
-that small. Zooming back in past 0.35, or two wheel notches in from fully out,
-brings the models back; the gap stops it flickering at the boundary. The
-threshold depends on the zoom, not the window size or UI scale. Dots follow the
+**Tactical Dots Zoom** sets when dots take over, as a position along your
+zoom-out range: at **0%** dots appear only when you are zoomed all the way out;
+at **100%** they appear from normal size (100% zoom) outwards; the default
+**20%** means the most zoomed-out fifth of that range. The range is measured in
+mouse-wheel notches, so each notch moves the same share of it. It is relative
+because how far you can zoom out depends on your window and the map: the view
+stops where the map fills the window, which on a very wide screen is close to
+normal size. Once dots are showing, the models come back only after you zoom
+in a little more than one wheel notch past the setting, so the view never
+flickers between the two at the boundary. Dots follow the
 minimap's rules exactly: enemies show only where you can currently see them.
 Buildings are bigger squares than soldiers, flyers sit at their flying height,
 and selected units get a white outline. Click and box selection work on the

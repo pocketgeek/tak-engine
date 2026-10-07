@@ -32,6 +32,7 @@ struct Settings {
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
     bool  treeSway   = true;       // animated tree and shadow sway; default on
     bool  tacticalDots = false;    // zoomed far out, draw units as minimap-style dots
+    int   tacticalDotsZoom = 20;   // when: 0 = only fully zoomed out .. 100 = from normal size
                                    // instead of models (non-retail extra; default off)
     bool  videoDeblock = false;    // deblock the Bink clips before upload. They are
                                    // 640x360 and get stretched ~12x on a wide display,
@@ -131,6 +132,7 @@ struct Settings {
             && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.bilinear == b.bilinear
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
+            && a.tacticalDotsZoom == b.tacticalDotsZoom
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt
             && a.videoDeblock == b.videoDeblock
             && a.healthBars == b.healthBars && a.statsPanel == b.statsPanel

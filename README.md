@@ -920,8 +920,9 @@ retail. Smooth GUI Art applies immediately to the current interface, fonts and
 cursors without a restart. **Trees Sway in Wind** is selectable,
 defaults to **on**, and remembers your choice. **Tactical Dots** (default
 **off**, not in retail) draws every unit as a minimap-style player-coloured dot
-when zoomed far out (below zoom 0.30, or fully zoomed out), with the same fog
-rules as the minimap; selection works on the dots.
+when zoomed far out, with the same fog rules as the minimap; selection works on
+the dots. **Tactical Dots Zoom** (default **20%**) sets how far out: 0% means only
+fully zoomed out, 100% means from normal size outwards.
 
 World sounds stay at full volume inside the camera view and fade with distance
 outside it, becoming silent one shorter viewport dimension beyond the nearest

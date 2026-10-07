@@ -131,7 +131,8 @@
         // Tactical Dots: decided once per frame (with hysteresis), so every pass
         // below -- and picking until the next frame -- agrees on dots vs models.
         // The floor is the map-fills-window clamp the wheel handler applies.
-        dotsFrame_ = dotsSwitch_.update(tacticalDotsOpt_, zm0, mapView_.minZoom(winW, winH));
+        dotsFrame_ = dotsSwitch_.update(tacticalDotsOpt_, tacticalDotsZoom_, zm0,
+                                        mapView_.minZoom(winW, winH));
 
         // Painter list: features and units together, sorted by map z. Lives in a
         // member so its capacity survives across frames (it was the last per-frame

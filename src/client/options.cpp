@@ -259,6 +259,11 @@ void OptionsScreen::build(int channels) {
     // of its model (not in retail). Fog and selection behave exactly as for models.
     toggle("TACTICAL DOTS", [&] { return s_.tacticalDots ? 1.0f : 0.0f; },
            [&](float v) { s_.tacticalDots = v > 0.5f; });
+    // When dots take over, as a position along the zoom-out range: 0% = only fully
+    // zoomed out, 100% = from normal size outwards (client/tacticaldots.h).
+    slider("TACTICAL DOTS ZOOM", 0, 100, [&] { return float(s_.tacticalDotsZoom); },
+           [&](float v) { s_.tacticalDotsZoom = std::clamp(int(v + 0.5f), 0, 100); },
+           [](float v) { return pctOf(v, 100); });
     // OS-tracked cursor: the pointer keeps moving smoothly even when a heavy frame
     // stalls the render loop (the retail Direct3D "hardware cursor" option).
     toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },

@@ -100,6 +100,7 @@
         healthBars_ = std::clamp(s.healthBars, 0, 2);
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
         tacticalDotsOpt_ = s.tacticalDots;                // Options: zoomed-out unit dots
+        tacticalDotsZoom_ = s.tacticalDotsZoom;
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
     }
 
@@ -436,8 +437,12 @@
                 return std::find(debugDotIds_.begin(),debugDotIds_.end(),id)!=debugDotIds_.end();
             };
             namespace td=tak::tacticaldots;
-            const float zIn=td::enterZoom()*0.9f,zBand=(td::enterZoom()+td::exitZoom())*0.5f,
-                        zOut=td::exitZoom()*1.1f;
+            // Slider at 50%: halfway (in wheel notches) from this window's floor to 1.0,
+            // leaving room both below and above the threshold.
+            tacticalDotsZoom_=50;
+            const float zT=td::thresholdZoom(50,mapView_.minZoom(W,H))*td::kSlack;
+            const float zIn=zT*0.95f,zBand=zT*1.08f,zOut=zT*td::kBuffer*1.05f;
+            check(zIn>=mapView_.minZoom(W,H),"fixture has room below the threshold");
             tacticalDotsOpt_=false;frame(zIn);
             check(!dotsFrame_ && !visUnits_.empty(),"option off draws models even far out");
             tacticalDotsOpt_=true;frame(zOut);
@@ -486,25 +491,33 @@
             check(debugDotCount_>0 && dotsFrame_,"selected dots still drawn");
             tacticalDotsOpt_=false;frame(zIn);
             check(!dotsFrame_ && !visUnits_.empty(),"turning the option off restores models at once");
-            {   // The zoom-out floor trigger, as on a 7680x2160 window where the
-                // map-fills-window floor (0.75 here) sits above the size threshold.
-                const float floor=0.75f,notch=1.118f;
+            {   // The slider, as on a 7680x2160 window where the map-fills-window
+                // floor (0.75 on Ulasem) sits far above any fixed zoom threshold.
+                const float floor=0.75f,notch=td::kNotch;
                 td::Switch s;
-                check(!s.update(true,floor*notch*notch,floor),"two notches above the floor: models");
-                check(s.update(true,floor,floor),"fully zoomed out: dots at any window size");
-                check(s.update(true,floor*notch,floor),"one notch in from the floor keeps dots");
-                check(!s.update(true,floor*notch*notch,floor),"second notch in brings models back");
-                check(!s.update(true,floor*notch,floor),"one notch above the floor, coming out: still models");
-                check(!s.update(false,floor,floor),"option off overrides the floor");
-                // Size: building > infantry, a minimum, and compact at a high floor zoom.
+                check(!s.update(true,0,floor*notch*notch,floor),"0%: two notches above the floor: models");
+                check(s.update(true,0,floor,floor),"0%: fully zoomed out: dots");
+                check(s.update(true,0,floor*notch,floor),"0%: one notch in from the floor keeps dots");
+                check(!s.update(true,0,floor*notch*notch,floor),"0%: second notch in brings models back");
+                check(!s.update(true,0,floor*notch,floor),"0%: one notch above the floor, coming out: still models");
+                check(!s.update(false,0,floor,floor),"option off overrides the slider");
+                check(std::fabs(td::thresholdZoom(100,0.19f)-1.0f)<1e-4f,"100%: dots from normal size");
+                check(std::fabs(td::thresholdZoom(0,0.19f)-0.19f)<1e-4f,"0%: dots only at the floor");
+                check(td::thresholdZoom(20,0.19f)>0.19f && td::thresholdZoom(20,0.19f)<td::thresholdZoom(50,0.19f),
+                      "threshold grows with the slider");
+                check(std::fabs(td::thresholdZoom(70,1.5f)-1.5f)<1e-4f,"floor above normal size: always at the floor");
+                td::Switch d;
+                check(d.update(true,td::kDefaultPercent,0.19f,0.19f),"default 20%: fully zoomed out shows dots");
+                check(!d.update(true,td::kDefaultPercent,0.5f,0.19f),"default 20%: zoom 0.5 at 1080p shows models");
+                // Size: building > infantry, a minimum, and compact at a high zoom.
                 check(td::dotSide(6,6,0.25f)>td::dotSide(2,2,0.25f),"building dot larger than infantry");
                 check(td::dotSide(1,1,0.05f)>=td::kMinDotPx,"dots never shrink below the minimum");
-                check(td::dotSide(2,2,1.5f)==td::dotSide(2,2,td::exitZoom()),"dots stay compact when zoomed in at the floor");
+                check(td::dotSide(2,2,1.5f)==td::dotSide(2,2,td::kCompactZoom),"dots stay compact when zoomed in");
             }
             // Leave dots on with a selection so the --shot capture shows both.
             tacticalDotsOpt_=true;selection_={infantry,keep,flyer};mapView_.setZoom(zIn);
-            std::fprintf(stderr,"PASS: tactical dots (threshold %.3f/%.3f zoom, min zoom here %.3f)\n",
-                         td::enterZoom(),td::exitZoom(),mapView_.minZoom(W,H));
+            std::fprintf(stderr,"PASS: tactical dots (threshold %.3f/%.3f zoom at 50%%, min zoom here %.3f)\n",
+                         zT,zT*td::kBuffer,mapView_.minZoom(W,H));
             return;
         }
 #endif

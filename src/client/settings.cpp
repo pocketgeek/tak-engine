@@ -84,6 +84,7 @@ Settings loadSettings() {
         else if (key == "buildBarScale")   s.buildBarScale = asFloat(0.75f, 4.0f);
         else if (key == "treeSway")        s.treeSway = asBool();
         else if (key == "tacticalDots")    s.tacticalDots = asBool();
+        else if (key == "tacticalDotsZoom") s.tacticalDotsZoom = asInt(0, 100);
         else if (key == "unitShadows")     s.unitShadows = asBool();
         else if (key == "smoothArt")       s.smoothArt = asBool();
         else if (key == "videoDeblock")    s.videoDeblock = asBool();
@@ -169,6 +170,7 @@ bool saveSettings(const Settings& s) {
     o << "buildBarScale = " << s.buildBarScale << "\n";
     o << "treeSway = " << (s.treeSway ? 1 : 0) << "\n";
     o << "tacticalDots = " << (s.tacticalDots ? 1 : 0) << "\n";
+    o << "tacticalDotsZoom = " << s.tacticalDotsZoom << "\n";
     o << "unitShadows = " << (s.unitShadows ? 1 : 0) << "\n";
     o << "smoothArt = " << (s.smoothArt ? 1 : 0) << "\n";
     o << "videoDeblock = " << (s.videoDeblock ? 1 : 0) << "\n";

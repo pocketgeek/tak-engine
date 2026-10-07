@@ -2429,6 +2429,7 @@ private:
     // zoom policy lives in client/tacticaldots.h; dotsFrame_ is the state the LAST
     // drawn frame used, so picking always matches what is on screen.
     bool tacticalDotsOpt_ = false;              // the Options toggle
+    int  tacticalDotsZoom_ = tak::tacticaldots::kDefaultPercent;  // the Options slider
     tak::tacticaldots::Switch dotsSwitch_;      // zoom threshold + hysteresis
     bool dotsFrame_ = false;
     // Exactly the minimap's rule for showing a unit: alive, not embarked, and

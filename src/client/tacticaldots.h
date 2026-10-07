@@ -9,38 +9,39 @@
 // own: when dots are on (zoom threshold + hysteresis) and how big one is.
 
 #include <algorithm>
+#include <cmath>
 
 namespace tak::tacticaldots {
 
-// The main threshold is expressed as SCREEN PIXELS PER FOOTPRINT CELL: one 16
-// world px cell, the unit of every footprint, drawn at zoom z is 16*z screen
-// pixels. That depends on the zoom alone, never on window size or UI scale, so
-// the switch happens at the same apparent unit size on a 1280x960 window and on
-// a 7680x2160 one. Chosen from captures of a 16000-unit army: at zoom 0.45
-// (7.2 px/cell) infantry and siege engines are still told apart; at 0.30 (4.8)
-// a 2x2-cell soldier is a ~10px blob whose only readable property is its team
-// colour -- exactly what a dot shows, more clearly.
+// WHEN dots show is the player's TACTICAL DOTS ZOOM slider, 0-100%. It is a
+// position along this window's zoom-out range, not an absolute zoom, because the
+// range differs per window and map: the view cannot zoom out past the point where
+// the map fills the window (MapView::minZoom -- 0.75 on Ulasem Arena at
+// 7680x2160, ~0.19 at 1920x1080), so a fixed "20% zoom" would never be reachable
+// on a wide display.
+//   0%   -> dots only when fully zoomed out (at that floor)
+//   100% -> dots from normal size (zoom 1.0) outwards
+//   p    -> floor * (1/floor)^(p/100), i.e. measured in WHEEL NOTCHES: each notch
+//           is a x1.118 zoom step, so every notch moves the same share of the range.
+// When the floor is already >= 1 (a small map on a wide window) every setting
+// means "at the floor".
 //
-// Dots come on below kEnterCellPx and go off again only above kExitCellPx. The
-// gap is the hysteresis: one mouse-wheel notch is a x1.118 zoom step, and the
-// band is wider than that, so a notch back and forth across the boundary (or
-// the benchmark camera's slow zoom) cannot flicker between models and dots.
-inline constexpr float kEnterCellPx = 4.8f;   // zoom 0.30
-inline constexpr float kExitCellPx  = 5.6f;   // zoom 0.35 (~1.17x the entry zoom)
+// Hysteresis: dots come on at or below the threshold and go off again only above
+// threshold * kBuffer. The band is wider than one notch, so a notch back and forth
+// across the boundary (or the benchmark camera's slow zoom) cannot flicker.
+inline constexpr int   kDefaultPercent = 20;
+inline constexpr float kNotch  = 1.118f;
+inline constexpr float kBuffer = 1.17f;    // > one notch
+inline constexpr float kSlack  = 1.02f;    // float slack at the floor itself
+inline constexpr float kMinZoom = 0.05f;   // MapView's absolute zoom-out limit
 inline constexpr float kCellWorldPx = 16.0f;
 
-inline constexpr float enterZoom() { return kEnterCellPx / kCellWorldPx; }
-inline constexpr float exitZoom() { return kExitCellPx / kCellWorldPx; }
-
-// The second trigger: the camera at the zoom-out FLOOR. The view cannot zoom out
-// past the point where the map fills the window, and that floor is window-wide:
-// at 7680x2160 it is 7680/mapWidth -- 0.75 on Ulasem Arena (10240 px), 1.5 on a
-// 5120 px map -- so the size threshold above could never be reached on a wide
-// display. Fully zoomed out IS the "zoomed a lot out" overview, whatever the
-// window, so dots also show there. Same hysteresis idea: on at the floor, still
-// on one wheel notch (x1.118) in, models again from the second notch.
-inline constexpr float kFloorEnter = 1.02f;   // at the floor (float slack only)
-inline constexpr float kFloorExit  = 1.15f;
+inline float thresholdZoom(int percent, float floorZoom) {
+    const float f = floorZoom > 0.0f ? floorZoom : kMinZoom;
+    const float top = std::max(1.0f, f);
+    const float p = float(std::clamp(percent, 0, 100)) / 100.0f;
+    return f * std::pow(top / f, p);
+}
 
 // Smallest dot edge, in screen pixels at UI SCALE 100%. The minimap's dots are
 // 3px; the world view is far larger, so a little more keeps a lone scout visible.
@@ -48,12 +49,12 @@ inline constexpr float kMinDotPx = 4.0f;
 
 class Switch {
 public:
-    // Feed the option, the frame's zoom and the window's zoom-out floor
-    // (MapView::minZoom; 0 = no floor trigger); returns whether dots draw.
-    bool update(bool enabled, float zoom, float floorZoom = 0.0f) {
+    // Feed the option, the slider (0-100), the frame's zoom and the window's
+    // zoom-out floor (MapView::minZoom); returns whether dots draw.
+    bool update(bool enabled, int percent, float zoom, float floorZoom) {
+        const float t = thresholdZoom(percent, floorZoom) * kSlack;
         if (!enabled) on_ = false;
-        else if (on_) on_ = zoom < exitZoom() || zoom <= floorZoom * kFloorExit;
-        else on_ = zoom < enterZoom() || zoom <= floorZoom * kFloorEnter;
+        else on_ = on_ ? zoom <= t * kBuffer : zoom <= t;
         return on_;
     }
     bool on() const { return on_; }
@@ -65,19 +66,21 @@ private:
 // Share of the footprint a dot covers, so a tight formation still reads as
 // separate dots rather than one solid block.
 inline constexpr float kFootFill = 0.75f;
+// Zoom at which dots reach their largest size (a 2x2-cell soldier ~13px).
+inline constexpr float kCompactZoom = 0.35f;
 
 // Edge of a unit's square dot in screen pixels: its larger footprint side at
 // this zoom (times kFootFill), so buildings come out as larger squares than
 // infantry. Floored so a dot never shrinks out of sight, and capped at its size
-// at the exit zoom so a floor-triggered overview on a wide window shows compact
-// markers, not huge slabs. The floor and cap follow UI SCALE, the setting a
+// at kCompactZoom so dots shown at a high zoom (a wide window, or a high slider
+// setting) are compact markers, not huge slabs. The floor and cap follow UI SCALE, the setting a
 // high-DPI player already uses to make small things legible. The minimap draws
 // every unit as a square too, so the shape matches it.
 inline float dotSide(int footX, int footZ, float zoom, float uiScale = 1.0f) {
     const float cells = float(std::max({footX, footZ, 1}));
     const float ui = std::clamp(uiScale, 0.75f, 2.0f);
     const float lo = kMinDotPx * ui;
-    const float hi = std::max(lo, cells * kCellWorldPx * exitZoom() * kFootFill * ui);
+    const float hi = std::max(lo, cells * kCellWorldPx * kCompactZoom * kFootFill * ui);
     return std::clamp(cells * kCellWorldPx * zoom * kFootFill, lo, hi);
 }
 
