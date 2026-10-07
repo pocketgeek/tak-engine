@@ -255,6 +255,14 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.videoDeblock = v > 0.5f; });
     toggle("TREES SWAY IN WIND", [&] { return s_.treeSway ? 1.0f : 0.0f; },
            [&](float v) { s_.treeSway = v > 0.5f; });
+    // OS-tracked cursor: the pointer keeps moving smoothly even when a heavy frame
+    // stalls the render loop (the retail Direct3D "hardware cursor" option).
+    toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },
+           [&](float v) { s_.hardwareCursor = v > 0.5f; });
+    // Glide units between the 30Hz sim ticks instead of stepping them -- smooth motion
+    // above 30fps, at the cost of ~one tick (33ms) of visual latency.
+    toggle("SMOOTH MOTION", [&] { return s_.smoothMotion ? 1.0f : 0.0f; },
+           [&](float v) { s_.smoothMotion = v > 0.5f; });
 
     // INTERFACE: on-screen HUD -- its size, and the game overlays.
     section("INTERFACE");
@@ -292,14 +300,6 @@ void OptionsScreen::build(int channels) {
     slider("CURSOR SIZE", 1, 8, [&] { return float(s_.cursorScale); },
            [&](float v) { s_.cursorScale = int(v + 0.5f); },
            [](float v) { return std::to_string(int(v + 0.5f)) + "X"; });
-    // OS-tracked cursor: the pointer keeps moving smoothly even when a heavy frame
-    // stalls the render loop (the retail Direct3D "hardware cursor" option).
-    toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },
-           [&](float v) { s_.hardwareCursor = v > 0.5f; });
-    // Glide units between the 30Hz sim ticks instead of stepping them -- smooth motion
-    // above 30fps, at the cost of ~one tick (33ms) of visual latency.
-    toggle("SMOOTH MOTION", [&] { return s_.smoothMotion ? 1.0f : 0.0f; },
-           [&](float v) { s_.smoothMotion = v > 0.5f; });
 
     // (Hotkey rebinding moved OUT of Options: it's now a CONTROLS entry in the settings
     // menu -- the in-game Esc menu and the title screen's menu button. See mainmenu.cpp

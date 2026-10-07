@@ -131,9 +131,9 @@ whose priests (`attractsgods` units) have channelled enough mana favour manifest
 Audio (master / music / SFX volumes, per-speaker trim, output device), display,
 camera, and interface preferences are set in the in-game **Options** screen
 (Esc → Options) and persisted per user: **bilinear filtering** (retail's video
-option), **shadows**, swaying trees,
-**health bars** (off / damaged / always), build-menu alignment and scale, UI
-scale, cursor size and **hardware cursor**, smooth motion, and edge scrolling.
+option), **shadows**, swaying trees, **hardware cursor** and smooth motion
+(all under Graphics), **health bars** (off / damaged / always), build-menu
+alignment and scale, UI scale, cursor size, and edge scrolling.
 The shadow toggle controls unit, scenery, and projectile shadows. Shading baked
 into terrain artwork remains visible; swaying trees also deform their shadows.
 The engine also adds boat shadows, an intentional enhancement
