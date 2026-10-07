@@ -547,6 +547,10 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
         retireActive();
     auto [entry,inserted]=q_.try_emplace(unitId);
     Entry& e=entry->second;
+    if (inserted && unitId>=0) {
+        if (size_t(unitId)>=pendingIds_.size()) pendingIds_.resize(size_t(unitId)+1,0);
+        pendingIds_[size_t(unitId)]=1;
+    }
     if (!inserted) {
         if(telemetry_)telemetry_->cancelled(e.telemetryToken,NavigationTelemetry::Cancel::Replaced);
         --pendingByPlayer_[size_t(e.player)];
@@ -577,6 +581,7 @@ void PathService::request(int unitId, PathCell start, PathCell goal, int mapW,
 void PathService::eraseRequest(std::unordered_map<int,Entry>::iterator it) {
     --pendingByPlayer_[size_t(it->second.player)];
     priorityByPlayer_[size_t(it->second.player)]-=it->second.priority;
+    if (it->first>=0 && size_t(it->first)<pendingIds_.size()) pendingIds_[size_t(it->first)]=0;
     q_.erase(it);
 }
 

@@ -120,12 +120,22 @@ struct LegionNavigator::Impl {
         std::vector<std::array<int,4>> pending;   // static changes during the build
         std::array<int,4> box{};                  // box of the component being flooded
     };
+    // Running totals of the live fields (every Field lives in some group's
+    // field or next): startField's cap test reads them instead of walking
+    // every group, which cost O(groups) per call and O(groups^2) per tick
+    // with many groups waiting at the cap. Derived, never hashed.
+    struct FieldTotals {size_t fields=0,cells=0;};
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
     // A field covers only the bounding box of its seeds' static component
     // (every origin it can ever reach): a group penned in a small region
     // costs that region, not the whole map. Cells outside read kUnreached.
     struct Field {
+        Field()=default;
+        Field(const Field&)=delete;
+        Field& operator=(const Field&)=delete;
+        ~Field() {if(totals) {--totals->fields;totals->cells-=potential.size();}}
+        FieldTotals* totals=nullptr;      // set once potential is sized (startField)
         int plane=-1;
         uint64_t epoch=0;
         uint64_t serial=0;                // unique per field built (identifies it to the aim memo)
@@ -328,6 +338,13 @@ struct LegionNavigator::Impl {
 
     World& w;
     std::vector<Plane> planes;
+    // Declared before `groups`: the fields it owns update these as they die.
+    FieldTotals fieldTotals;
+    // startField found no field to evict at (tick, fieldsDone): until a
+    // field finishes or the tick moves on, no group can become a victim
+    // (see startField), so the next caller skips the O(groups) scan.
+    uint64_t fieldsDone=0;
+    uint32_t noVictimTick=~0u;uint64_t noVictimDone=~0ull;
     std::map<int,Group> groups;
     std::map<int,Member> members;
     // Unit id -> its node in `members` (std::map nodes are stable): the
@@ -341,6 +358,11 @@ struct LegionNavigator::Impl {
         auto& slot=members[id];slot=m;
         if(size_t(id)>=memberIndex.size())memberIndex.resize(size_t(id)+1,nullptr);
         memberIndex[size_t(id)]=&slot;
+        if(slot.pt) {
+            auto& ids=slot.pt->ids;
+            const auto at=std::lower_bound(ids.begin(),ids.end(),id);
+            if(at==ids.end()||*at!=id)ids.insert(at,id);
+        }
     }
     // Settled Legion arrivals: the goal origin each one completed on, and how
     // many times it has stepped aside since. A settled body may yield one
@@ -382,6 +404,7 @@ struct LegionNavigator::Impl {
     std::vector<int32_t> soft;           // per cell: a soft body covering it (0 none)
     std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival (see softCell)
     std::vector<int> softCells;          // cells set in `soft`, ascending
+    std::vector<uint8_t> softPrior;      // scanStill scratch: a cell's kind before the rescan (all 0 between scans)
     // Per unit id: the command (player, issue tick) a settled Legion arrival
     // belongs to, else ~0: a field never treats its own arrivals as soft.
     std::vector<uint64_t> softOwner;
@@ -534,15 +557,28 @@ struct LegionNavigator::Impl {
         std::sort(next.begin(),next.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
         stills.swap(next);
         std::sort(stamps.begin(),stamps.end());
+        // The window counts depend on each cell's kind alone, and their
+        // updates are additive: a cell soft before and after with the same
+        // kind would be removed and added back unchanged. Only cells whose
+        // kind changed are counted (in a still crowd that is almost none;
+        // re-counting every cell cost ~5-8 ms per scan at ~10k bodies).
+        if(softPrior.size()!=n)softPrior.assign(n,0);
         for(int c:softCells) {
-            if(softKind[size_t(c)])countAll(c,softKind[size_t(c)],-1);
+            softPrior[size_t(c)]=softKind[size_t(c)];
             soft[size_t(c)]=0;softKind[size_t(c)]=0;
         }
         uint64_t h=0x736f6674;
         for(const auto& [c,id]:stamps)if(!soft[size_t(c)]) {
             soft[size_t(c)]=id;softKind[size_t(c)]=size_t(id)<owner.size()&&owner[size_t(id)]!=~0ull?2:1;
-            countAll(c,softKind[size_t(c)],1);
+            if(const uint8_t prior=softPrior[size_t(c)];prior!=softKind[size_t(c)]) {
+                if(prior)countAll(c,prior,-1);
+                countAll(c,softKind[size_t(c)],1);
+            }
+            softPrior[size_t(c)]=0;
             cells.push_back(c);h=mix(h,uint64_t(c)<<32|uint32_t(id));
+        }
+        for(int c:softCells)if(const uint8_t prior=softPrior[size_t(c)]) {
+            countAll(c,prior,-1);softPrior[size_t(c)]=0;
         }
         for(size_t i=0;i<owner.size();++i)if(owner[i]!=~0ull)h=mix(mix(h,i),owner[i]);
         const bool changed=h!=softHash;
@@ -557,6 +593,11 @@ struct LegionNavigator::Impl {
     // packed area around the point (see assignFormation).
     struct Point {
         int refs=0;std::set<int> cells;
+        // Ids of the members whose entry names this point, ascending (the
+        // order `members` iterates them in): assignFormation and the pivot
+        // centroid read these instead of scanning every member. Derived,
+        // never hashed.
+        std::vector<int> ids;
         bool assigned=false,tried=false;
         int64_t centreX=0,centreZ=0,scaleNum=1,scaleDen=1,limit=0;   // px
         // The members' live centroid (px) on tick liveTick: derived from
@@ -1211,7 +1252,11 @@ struct LegionNavigator::Impl {
         if(found==members.end())return;
         if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
             slotCells(found->second,u->type->footX,u->type->footZ,false);
-        if(auto point=points.find(found->second.point);point!=points.end()&&--point->second.refs<=0)points.erase(point);
+        if(auto point=points.find(found->second.point);point!=points.end()) {
+            auto& ids=point->second.ids;
+            if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
+            if(--point->second.refs<=0)points.erase(point);
+        }
         auto group=groups.find(found->second.group);
         if(group!=groups.end()) {
             const auto& m=found->second;
@@ -1372,14 +1417,8 @@ struct LegionNavigator::Impl {
         m.group=g.id;
         putMember(u.id,m);
     }
-    size_t liveFields() const {
-        size_t n=0;for(const auto& [id,g]:groups)n+=(g.field!=nullptr)+(g.next!=nullptr);return n;
-    }
-    size_t liveFieldCells() const {
-        size_t n=0;
-        for(const auto& [id,g]:groups)n+=(g.field?g.field->potential.size():0)+(g.next?g.next->potential.size():0);
-        return n;
-    }
+    size_t liveFields() const {return fieldTotals.fields;}
+    size_t liveFieldCells() const {return fieldTotals.cells;}
     // The window a new field for `g` needs: the union of its seeds' static
     // component boxes (the whole map if a seed is unlabelled).
     std::array<int,4> fieldWindow(const Group& g,bool whole=false) const {
@@ -1416,10 +1455,14 @@ struct LegionNavigator::Impl {
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         const size_t budget=kMaxFields*size_t(width())*size_t(height());
         while(liveFields()>=kMaxFieldCount||liveFieldCells()+cells>budget) {
+            // A victim is a group whose finished field is past its tenure.
+            // Within one tick that set only grows when a field finishes
+            // (fieldsDone): evictions and new builds only shrink it.
+            if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return false;
             Group* victim=nullptr;
             for(auto& [id,o]:groups)
                 if(o.field&&o.field->done&&w.tickCounter_-o.built>=kFieldTenure&&(!victim||o.built<victim->built))victim=&o;
-            if(!victim)return false;
+            if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
             victim->field.reset();victim->next.reset();victim->stale=false;++stats.fieldEvictions;
         }
         g.built=w.tickCounter_;
@@ -1428,6 +1471,7 @@ struct LegionNavigator::Impl {
         f->ownArrivals=std::find(softOwner.begin(),softOwner.end(),f->command)!=softOwner.end();
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
+        f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
         {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
@@ -1477,7 +1521,7 @@ struct LegionNavigator::Impl {
             }
         }
         if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
-            f.done=true;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
+            f.done=true;++fieldsDone;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
         }
         f.work+=spent;
         return spent;
@@ -1730,7 +1774,7 @@ struct LegionNavigator::Impl {
         settle();
         auto finish=[&](Group& g,Field& f,uint64_t spent) {
             budget-=std::min(budget,spent);stats.fieldWork+=spent;
-            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);g.stale=false;restaleSlots(g);}}
+            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=false;restaleSlots(g);}}
         };
         // Groups with a member standing still for want of a field come
         // first (their field starts, or its frontier advances toward them),
@@ -2350,7 +2394,8 @@ struct LegionNavigator::Impl {
         const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
         std::vector<std::pair<int,Member*>> list;
         int64_t sumX=0,sumZ=0,area=0,areaGap=0,firstSide=0,minSide=8;bool mixed=false;
-        for(auto& [id,mm]:members) {
+        for(const int id:pt.ids) {
+            Member& mm=*memberIndex[size_t(id)];
             // Approach members stand in for an unreachable click: they take
             // no slot and do not size the area.
             if(mm.point!=key||mm.goal<0||mm.slot>=0||mm.approach)continue;
@@ -2831,7 +2876,7 @@ struct LegionNavigator::Impl {
             auto& pt=*m.pt;
             if(pt.liveTick!=w.tickCounter_) {
                 int64_t sx=0,sz=0,count=0;
-                for(const auto& [id,mm]:members)if(mm.pt==&pt)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
+                for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
                 pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
             }
             const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-pt.liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-pt.liveZ;
