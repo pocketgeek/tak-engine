@@ -700,7 +700,12 @@ int main(int argc, char** argv) {
             tak::renderdriver::plan(settings.renderer, tak::renderdriver::available(), renFlags);
         if (!rp.fallback) {
             SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, rp.hint.c_str(), SDL_HINT_OVERRIDE);
+            // SDL turns command batching OFF for a renderer picked by name (it assumes
+            // the app will mix in its own API calls). Auto keeps it on, and so must a
+            // chosen driver: without it OpenGL measured ~20% slower per frame here.
+            SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
             ren = SDL_CreateRenderer(win, -1, rp.flags);
+            SDL_ResetHint(SDL_HINT_RENDER_BATCHING);
             SDL_RendererInfo ri{};
             const char* got = (ren && SDL_GetRendererInfo(ren, &ri) == 0) ? ri.name : nullptr;
             if (!tak::renderdriver::honoured(rp.hint, got)) {
