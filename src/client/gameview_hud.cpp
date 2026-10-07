@@ -1106,13 +1106,16 @@ namespace {
             for (auto& sq : tak::gaf::load(vread(base + ".gaf"), pal, -1, base + ".gaf")) {
                 if (sq.frames.empty()) continue;
                 auto& f = sq.frames[0];
-                if (sq.name == "AidPanel" || sq.name == "MainPanel") {
+                // Iron Plague's Creon art (creingame.gaf) names the same two panels
+                // ButtonPanel and InfoPanel; the four original sides use Aid*/Main*.
+                if (sq.name == "AidPanel" || sq.name == "MainPanel" || sq.name == "ButtonPanel") {
                     // panelW_/panelH_ keep the 1x LOGICAL size, which is what the HUD
                     // lays out in -- so the texture being built at 2x is invisible here.
                     panelTex_ = tak::art::makeTexture(ren_, f.rgba, f.width, f.height);
                     panelW_ = f.width;
                     panelH_ = f.height;
-                } else if (sq.name == "AidBotPanel" || sq.name == "BottomPanel") {
+                } else if (sq.name == "AidBotPanel" || sq.name == "BottomPanel" ||
+                           sq.name == "InfoPanel") {
                     botTex_ = tak::art::makeTexture(ren_, f.rgba, f.width, f.height);
                     botW_ = f.width;
                     botH_ = f.height;
