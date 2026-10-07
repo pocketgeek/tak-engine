@@ -69,16 +69,16 @@ constexpr RetailGroupPoint retailGroupCentre(const RetailGroupRecord& g,const Re
         return detail::retailGroupMean(part,u.position,c==RetailGroupClass::Ground);
     };
     if (u.kind!=RetailGroupClass::Flyer) return own(u.kind);
-    constexpr int32_t far=99999999;
+    constexpr int32_t kNoMember=99999999;
     const auto& boat=g.all[size_t(RetailGroupClass::Boat)];
     const auto& ground=g.all[size_t(RetailGroupClass::Ground)];
     const auto distance=[&](const RetailGroupAggregate& a) {
         return retailOctDistance(u.position.x-detail::retailGroupWord(a.centre.x),
                                  u.position.z-detail::retailGroupWord(a.centre.z));
     };
-    const int32_t boatDistance=boat.count>0 ? distance(boat) : far;
-    const int32_t groundDistance=ground.count>0 ? distance(ground) : far;
-    if (groundDistance>=far && boatDistance>=far) {
+    const int32_t boatDistance=boat.count>0 ? distance(boat) : kNoMember;
+    const int32_t groundDistance=ground.count>0 ? distance(ground) : kNoMember;
+    if (groundDistance>=kNoMember && boatDistance>=kNoMember) {
         const auto& all=g.all[size_t(RetailGroupClass::Flyer)];
         const auto& part=g.moving[size_t(RetailGroupClass::Flyer)];
         if (!moving || part.count<=0) return all.centre;
@@ -99,7 +99,7 @@ constexpr int32_t retailGroupRadius(const RetailGroupRecord& g,const RetailGroup
         return includeSelf ? part.area+u.area : part.area;
     };
     if (u.kind!=RetailGroupClass::Flyer) return own(u.kind);
-    constexpr int32_t far=99999999;
+    constexpr int32_t kNoMember=99999999;
     const auto& boat=g.all[size_t(RetailGroupClass::Boat)];
     const auto& ground=g.all[size_t(RetailGroupClass::Ground)];
     const auto distance=[&](const RetailGroupAggregate& a) {
@@ -107,9 +107,9 @@ constexpr int32_t retailGroupRadius(const RetailGroupRecord& g,const RetailGroup
                                  u.position.z-detail::retailGroupWord(a.centre.z));
     };
     const int32_t flyers=g.all[size_t(RetailGroupClass::Flyer)].area;
-    const int32_t boatDistance=boat.count>0 ? distance(boat) : far;
-    const int32_t groundDistance=ground.count>0 ? distance(ground) : far;
-    if (groundDistance<far || boatDistance<far) {
+    const int32_t boatDistance=boat.count>0 ? distance(boat) : kNoMember;
+    const int32_t groundDistance=ground.count>0 ? distance(ground) : kNoMember;
+    if (groundDistance<kNoMember || boatDistance<kNoMember) {
         const int32_t value=u.area+(boatDistance<groundDistance ? boat.area : ground.area);
         return value>flyers ? value : flyers;
     }
