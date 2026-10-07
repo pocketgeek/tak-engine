@@ -2566,11 +2566,22 @@ private:
     std::array<std::array<RetailGroupRecord,100>,kMaxPlayers> retailGroups_{};
     std::vector<uint8_t> retailGroupPaced_;
     Fixed retailGroupMaximum_;   // 4d95f0 cap for the unit being moved; 0 = none
+    // Legion: where a flyer in a mixed formation (squad < 0 with ground
+    // members) keeps station this tick, by unit index. Rebuilt each tick from
+    // hashed state before the unit loop; not persistent, so not hashed.
+    struct LegionFlightStation {
+        bool active=false, hold=false;   // hold: the ground is still under way
+        Fixed x, z, pace;                // pace: the slowest ground member's speed
+    };
+    std::vector<LegionFlightStation> legionFlightStations_;
+    bool legionFlightStationsLive_=false;
+    const LegionFlightStation* legionFlightStation(const Unit& u) const;
     static int retailGroupIndex(const Unit& u);
     RetailGroupMember retailGroupMember(const Unit& u) const;
     const RetailGroupRecord* retailGroupOf(const Unit& u) const;
     uint32_t retailMissionFlags(Unit& u);
     void tickRetailGroups();
+    void planLegionFlightStations();
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
     bool pathPending(int id) const {return paths_.pending(id);}

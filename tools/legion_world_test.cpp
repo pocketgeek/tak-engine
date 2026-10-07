@@ -1570,6 +1570,102 @@ void squadformation() {
 }
 }
 
+// A formation (Alt+1) of 20 ground bodies and 8 flyers given one order.
+// Measures how far the flyers stray from the ground members' centroid while
+// the ground is under way, and where they end up.
+struct MixedRun {int groundDone=-1,flyersDone=-1;float maxAway=0,meanAway=0,endAway=0;uint64_t hash=0;int landedAhead=0;};
+MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
+    Fixture f(260,100,serial);f.publish();
+    if(!legion)f.world.setPathfindingMode(PathfindingMode::Retail);
+    const auto type=mover(2);
+    UnitType flyer{};flyer.id=flyer.name="legion-flyer";
+    flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
+    flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    std::vector<int> ground,flyers,all;
+    for(int i=0;i<20;++i)ground.push_back(f.spawn(type,14+(i%5)*3,40+(i/5)*4));
+    for(int i=0;i<8;++i)flyers.push_back(f.spawn(flyer,16+(i%4)*4,58+(i/4)*4));
+    all=ground;all.insert(all.end(),flyers.begin(),flyers.end());
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd k,int id,int target,float x,float z) {
+        tak::net::Command c;c.kind=k;c.player=0;c.unitId=id;c.targetId=target;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    for(int id:all)command(tak::net::Cmd::SetSquad,id,-1,0,0);
+    for(int t=0;t<300;++t)f.world.tick(1.f/30);
+    const float px=220*16,pz=50*16;
+    // As the move UI does: flyers keep their offset from the selection's
+    // centre, clamped to 60 px per axis; Legion surface movers share the point.
+    float sx=0,sz=0;
+    for(int id:all){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
+    sx/=float(all.size());sz/=float(all.size());
+    for(int id:all) {
+        const auto& u=*f.world.unit(id);
+        const bool offset=kind==tak::net::Cmd::Move&&(u.type->canFly||!legion);
+        command(kind,id,0,offset?px+std::clamp(u.x.toFloat()-sx,-60.f,60.f):px,
+                offset?pz+std::clamp(u.z.toFloat()-sz,-60.f,60.f):pz);
+    }
+    MixedRun r;Motion motion;double sum=0;int samples=0;
+    const int ticks=kind==tak::net::Cmd::Patrol?3000:6000;
+    auto centroid=[&](float& cx,float& cz) {
+        double sx=0,sz=0;for(int id:ground){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
+        cx=float(sx/ground.size());cz=float(sz/ground.size());
+    };
+    for(int t=0;t<ticks;++t) {
+        f.world.tick(1.f/30);motion.observe(f.world,ground);
+        for(int id:ground)check(f.legal(id),"illegal footprint in a mixed formation");
+        bool groundBusy=false,flyersBusy=false;
+        for(int id:ground)groundBusy|=!f.world.unit(id)->orders.empty();
+        for(int id:flyers)flyersBusy|=!f.world.unit(id)->orders.empty();
+        if(!groundBusy&&r.groundDone<0)r.groundDone=t;
+        if(!flyersBusy&&r.flyersDone<0)r.flyersDone=t;
+        if(groundBusy&&t>=150) {
+            float cx,cz;centroid(cx,cz);
+            for(int id:flyers) {
+                const auto& u=*f.world.unit(id);
+                const float d=std::hypot(u.x.toFloat()-cx,u.z.toFloat()-cz);
+                r.maxAway=std::max(r.maxAway,d);sum+=d;++samples;
+                if(t%30==0&&u.flightGroundMode==1&&u.x.toFloat()>cx+300)++r.landedAhead;
+            }
+        }
+        if(std::getenv("MIXED_TRACE")&&t%150==0) {
+            float cx,cz;centroid(cx,cz);
+            std::printf("  t=%d ground %.0f,%.0f busy=%d |",t,cx,cz,int(groundBusy));
+            for(int id:flyers) {const auto& u=*f.world.unit(id);
+                std::printf(" %.0f,%.0f/%zu%s%d",u.x.toFloat(),u.z.toFloat(),u.orders.size(),
+                    u.orders.empty()?"":u.orders.front().formationLevel?"F":"",int(u.flightGroundMode));}
+            std::printf("\n");
+        }
+        if(kind!=tak::net::Cmd::Patrol&&r.groundDone>=0&&r.flyersDone>=0&&t>r.groundDone+600)break;
+    }
+    float cx,cz;centroid(cx,cz);
+    for(int id:flyers)r.endAway=std::max(r.endAway,std::hypot(f.world.unit(id)->x.toFloat()-cx,f.world.unit(id)->z.toFloat()-cz));
+    r.meanAway=samples?float(sum/samples):0;r.hash=f.world.stateHash();
+    const char* name=kind==tak::net::Cmd::Move?"move":kind==tak::net::Cmd::AttackMove?"fight":"patrol";
+    std::printf("mixedformation %s %s ground_done=%d flyers_done=%d away_max=%.0f away_mean=%.0f end_away=%.0f landed_ahead=%d spins=%llu hash=%016llx\n",
+        legion?"legion":"retail",name,r.groundDone,r.flyersDone,r.maxAway,r.meanAway,r.endAway,r.landedAhead,
+        (unsigned long long)motion.spins,(unsigned long long)r.hash);
+    return r;
+}
+void mixedformation() {
+    for(auto kind:{tak::net::Cmd::Move,tak::net::Cmd::AttackMove,tak::net::Cmd::Patrol}) {
+        mixedformationRun(false,kind);   // Retail: reported, the 417e02 re-forming port
+        const auto r=mixedformationRun(true,kind);
+        if(std::getenv("MIXED_REPORT"))continue;   // measurement only
+        // Flyers stay over the ground (spiral of 8 flyers: <= ~2 rings of 64 px,
+        // plus the lag of a 4 px/tick flyer behind its moving station).
+        check(r.maxAway<=320.f,"a formation flyer strayed from the ground");
+        check(r.landedAhead==0,"a formation flyer landed ahead of the ground");
+        if(kind!=tak::net::Cmd::Patrol) {
+            check(r.groundDone>=0&&r.flyersDone>=0,"the mixed formation never finished");
+            check(r.flyersDone>=r.groundDone,"formation flyers finished before the ground");
+            check(r.endAway<=200.f,"formation flyers settled away from the ground");
+        }
+    }
+    const auto a=mixedformationRun(true,tak::net::Cmd::Move,true),b=mixedformationRun(true,tak::net::Cmd::Move,false);
+    check(a.hash==b.hash,"mixed formation: serial and workers differ");
+}
+
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
@@ -1579,7 +1675,7 @@ int main(int argc,char** argv) {
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
-        {"pinwheel",pinwheel},{"landedflyers",landedflyers}};
+        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
