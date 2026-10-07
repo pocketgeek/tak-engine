@@ -4,6 +4,8 @@
 #include "client/artscale.h"
 #include "client/cursorrange.h"
 #include "client/gpuvram.h"
+#include "client/renderdriver.h"
+#include "client/blockfont.h"
 #include "client/statsfit.h"
 #include "net/protocol.h"
 #include "sim/retailtransport.h"
@@ -775,6 +777,7 @@ namespace {
         }
         std::snprintf(b, sizeof b, "%zu MB", gpuvram::bytes() >> 20);
         rows.push_back({"VID", b});
+        rows.push_back({"RENDERER", tak::renderdriver::shortLabel(tak::renderdriver::active().created)});
 
         // The block font the mana readout uses (5x7 cells, blockWidth = chars * 6 * px),
         // so the panel matches the HUD it sits in rather than introducing a second face.
@@ -1833,6 +1836,8 @@ namespace {
 
     void GameView::blockText(const std::string& s, float x, float y, float px, SDL_Color c) {
         SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, c.a);
+        float sx, sy;
+        tak::blockScale(ren_, sx, sy);
         float cx = x;
         for (char ch : s) {
             char u = char(std::toupper((unsigned char)ch));
@@ -1841,7 +1846,7 @@ namespace {
             for (int col = 0; col < 5; ++col)
                 for (int row = 0; row < 7; ++row)
                     if (cols[col] & (1 << row)) {
-                        SDL_FRect r{cx + col * px, y + row * px, px, px};
+                        SDL_FRect r = tak::blockPixel(cx + col * px, y + row * px, px, sx, sy);
                         SDL_RenderFillRectF(ren_, &r);
                     }
             cx += 6 * px;

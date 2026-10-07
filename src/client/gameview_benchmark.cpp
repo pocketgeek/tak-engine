@@ -1,4 +1,5 @@
 #include "client/gameview.h"
+#include "client/renderdriver.h"
 
     void GameView::setupPatrolPerf() {
 #ifndef NDEBUG
@@ -189,7 +190,12 @@
         auto sl = [&](const std::string& t) { blockText(t, cxL, y, setPx, {200, 205, 215, 255}); y += 28 * k; };
         std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); sl(b);
         if (!benchGpuName_.empty()) sl(std::string("GPU         ") + benchGpuName_);
-        else { SDL_RendererInfo ri; if (SDL_GetRendererInfo(ren_, &ri) == 0) { std::snprintf(b, sizeof b, "RENDERER    %s", ri.name); sl(b); } }
+        {   // the backend that produced these numbers, and whether it was AUTO's pick
+            SDL_RendererInfo ri{};
+            std::string id = SDL_GetRendererInfo(ren_, &ri) == 0 && ri.name ? tak::renderdriver::normalize(ri.name) : std::string();
+            sl("RENDERER    " + tak::renderdriver::label(id) +
+               (tak::renderdriver::active().inEffect.empty() ? " (AUTO)" : ""));
+        }
         sl(std::string("FULLSCREEN  ") + (settings_ && settings_->fullscreen ? "ON" : "OFF"));
         sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
         if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }

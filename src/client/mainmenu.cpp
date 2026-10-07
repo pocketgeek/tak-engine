@@ -1,6 +1,8 @@
 #include "client/streaming.h"
 #include "client/presentationpacer.h"
 #include "client/mainmenu.h"
+#include "client/renderdriver.h"
+#include "client/blockfont.h"
 #include "client/dooranimation.h"
 #include "client/videofilter.h"
 #include "client/runtimesettings.h"
@@ -601,6 +603,10 @@ struct MainMenu::Impl {
         for (auto& d : doors) if (d.hover && !d.tip.empty()) { tip = &d.tip; break; }
         if (!tip) for (auto& b : buttons) if (b.hover && !b.tip.empty()) { tip = &b.tip; break; }
         if (tip) placard(*tip, 172, 296, 448, 2.5f, {240, 238, 245, 235});
+        // One-time renderer fallback notice (Options -> RENDERER could not be used this
+        // launch). Across the top, clear of the doors; gone once this menu visit ends.
+        if (std::string n = tak::renderdriver::pendingNotice(); !n.empty())
+            placard(n, 0, 640, 6, 1.8f, {245, 195, 95, 240});
     }
 
     // ---- minimal block font + multiplayer server-select overlay ---------------
@@ -713,6 +719,8 @@ struct MainMenu::Impl {
     }
     void blockText(const std::string& str, float x, float y, float px, SDL_Color c) {
         SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+        float sx, sy;
+        blockScale(ren, sx, sy);
         float cx = x;
         for (char ch : str) {
             const uint8_t* cols = glyph5x7(char(std::toupper((unsigned char)ch)));
@@ -720,7 +728,7 @@ struct MainMenu::Impl {
             for (int col = 0; col < 5; ++col)
                 for (int row = 0; row < 7; ++row)
                     if (cols[col] & (1 << row)) {
-                        SDL_FRect r{cx + col * px, y + row * px, px, px};
+                        SDL_FRect r = blockPixel(cx + col * px, y + row * px, px, sx, sy);
                         SDL_RenderFillRectF(ren, &r);
                     }
             cx += 6 * px;

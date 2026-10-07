@@ -1,5 +1,7 @@
 #include "client/settings.h"
 
+#include "client/renderdriver.h"
+
 #include <SDL.h>
 
 #include <algorithm>
@@ -72,6 +74,7 @@ Settings loadSettings() {
         if      (key == "fullscreen")      s.fullscreen = asBool();
         else if (key == "vsync")           s.vsync = asBool();
         else if (key == "maxFps")          s.maxFps = asInt(30, 480);
+        else if (key == "renderer")        s.renderer = renderdriver::normalize(val);
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.75f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
         else if (key == "bilinearFilter")  { s.bilinear = asBool(); bilinearSeen = true; }
@@ -161,6 +164,7 @@ bool saveSettings(const Settings& s) {
     o << "fullscreen = " << (s.fullscreen ? 1 : 0) << "\n";
     o << "vsync = " << (s.vsync ? 1 : 0) << "\n";
     o << "maxFps = " << s.maxFps << "\n";
+    o << "renderer = " << (s.renderer.empty() ? "auto" : s.renderer) << "\n";
     o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
     o << "bilinearFilter = " << (s.bilinear ? 1 : 0) << "\n";

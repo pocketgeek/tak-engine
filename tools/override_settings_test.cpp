@@ -78,6 +78,39 @@ int main() {
         if(tak::loadSettings().scorecardScale!=2.0f)throw std::runtime_error("scorecard upper limit");
         std::ofstream(path)<<"scorecardScale = 0\n";
         if(tak::loadSettings().scorecardScale!=0.75f)throw std::runtime_error("scorecard lower limit");
+        // Renderer: AUTO ("") by default and when the key is absent (every file written
+        // before the option existed); stored by SDL driver id, written as "auto" for AUTO.
+        if(!tak::Settings{}.renderer.empty())throw std::runtime_error("renderer must default to Auto");
+        std::ofstream(path)<<"vsync = 1\n";
+        if(!tak::loadSettings().renderer.empty())throw std::runtime_error("pre-option file must load as Auto");
+        for(const char* id:{"","opengl","opengles2","software","direct3d11","metal"}) {
+            tak::Settings v;v.renderer=id;
+            if(!tak::saveSettings(v) || tak::loadSettings().renderer!=id)
+                throw std::runtime_error(std::string("renderer did not round trip: ")+id);
+        }
+        {
+            tak::Settings v;
+            if(!tak::saveSettings(v))throw std::runtime_error("save failed");
+            std::ifstream in(path);std::string all((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+            if(all.find("\nrenderer = auto\n")==std::string::npos)throw std::runtime_error("Auto must be written as 'renderer = auto'");
+        }
+        struct RendererCase { const char* text; const char* expected; };
+        for(const RendererCase& c:std::initializer_list<RendererCase>{
+                {"renderer = auto\n",""},{"renderer = AUTO\n",""},{"renderer =\n",""},
+                {"renderer = OpenGL\n","opengl"},{"renderer =  software  \n","software"},
+                // a well-formed id this build lacks is kept; startup falls back for that launch
+                {"renderer = vulkan\n","vulkan"},
+                // junk never reaches SDL_SetHint
+                {"renderer = open gl\n",""},{"renderer = ../../x\n",""}}) {
+            std::ofstream(path)<<c.text;
+            if(tak::loadSettings().renderer!=c.expected)
+                throw std::runtime_error(std::string("renderer value not normalised: ")+c.text);
+        }
+        {
+            tak::Settings a,b;b.renderer="software";
+            if(a==b)throw std::runtime_error("renderer changes not detected");
+            if(!tak::preferenceDefaults(b).renderer.empty())throw std::runtime_error("DEFAULTS must reset the renderer to Auto");
+        }
         // Graphics defaults: Bilinear Filtering off (retail's default), art filters off.
         auto graphicsDefaults=[](const tak::Settings& v) {
             if(v.bilinear || v.smoothArt || v.videoDeblock)throw std::runtime_error("graphics defaults changed");

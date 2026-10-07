@@ -76,6 +76,7 @@ private:
         std::function<std::string(float)> fmt;   // value -> display text
         std::function<void()> action;            // Button: click handler
         std::function<std::vector<std::string>()> options;   // Dropdown: the choices
+        std::function<std::string()> note;       // Dropdown: optional status beside the label
         SDL_FRect row{};                          // filled by layout()
     };
 

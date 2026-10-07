@@ -2548,6 +2548,8 @@ public:
     // override the room's setting for that mission.
     bool missionFullVision_ = false, missionPreMapped_ = false;
     uint32_t shakeSeqSeen_ = 0;   // last mission ScreenShake sequence acted on
+    // A top-of-screen HUD notice from the app shell (e.g. the renderer fallback).
+    void showNotice(std::string msg, float seconds) { postNotice(std::move(msg), seconds); }
 private:
     int keepId_ = -1, aiKeepId_ = -1, builderId_ = -1;
     std::optional<std::pair<float,float>> initialCamera_;

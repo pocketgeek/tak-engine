@@ -1,6 +1,7 @@
 #include "client/options.h"
 
 #include "client/blockfont.h"
+#include "client/renderdriver.h"
 
 #include <algorithm>
 #include <cctype>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 
 namespace tak {
 
@@ -241,6 +243,34 @@ void OptionsScreen::build(int channels) {
 
     // GRAPHICS. BILINEAR FILTERING is retail's video option (BiLinearFilter).
     section("GRAPHICS");
+    // RENDERER: AUTO (SDL's own pick) or any driver this SDL build reports. Applied at
+    // startup only, so the row says RESTART REQUIRED when the pick differs from what is
+    // running (or UNAVAILABLE when startup already had to fall back from it).
+    {
+        auto values = std::make_shared<std::vector<std::string>>(1, std::string());
+        for (auto& id : renderdriver::available()) values->push_back(id);
+        if (std::find(values->begin(), values->end(), s_.renderer) == values->end())
+            values->push_back(s_.renderer);          // a saved id this build lacks
+        dropdown("RENDERER",
+            [values] {
+                std::vector<std::string> labels;
+                for (auto& v : *values) labels.push_back(renderdriver::label(v));
+                return labels;
+            },
+            [this, values] {
+                auto it = std::find(values->begin(), values->end(), s_.renderer);
+                return it == values->end() ? 0.0f : float(it - values->begin());
+            },
+            [this, values](float idx) {
+                size_t i = size_t(idx < 0 ? 0 : idx);
+                if (i < values->size()) s_.renderer = (*values)[i];
+            });
+        ctls_.back().note = [this] {
+            const auto& a = renderdriver::active();
+            if (!a.failed.empty() && s_.renderer == a.failed) return std::string("UNAVAILABLE");
+            return s_.renderer != a.inEffect ? std::string("RESTART REQUIRED") : std::string();
+        };
+    }
     toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
            [&](float v) { s_.bilinear = v > 0.5f; });
     // Projected unit shadows. Retail's Glide path casts these, so ON is the faithful
@@ -579,6 +609,7 @@ void OptionsScreen::render(int winW, int winH) {
             drawBlockText(ren_, c.label, c.row.x, c.row.y + 12 * u_, fpx, {225, 230, 240, 255});
             float cw = dropWidth(c);
             SDL_FRect chip{c.row.x + c.row.w - cw, c.row.y + 5 * u_, cw, 24 * u_};
+
             SDL_SetRenderDrawColor(ren_, 52, 60, 82, 255); SDL_RenderFillRectF(ren_, &chip);
             SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &chip);
             auto opts = c.options ? c.options() : std::vector<std::string>{};
@@ -589,6 +620,14 @@ void OptionsScreen::render(int winW, int winH) {
             if (int(t.size()) > maxCh && maxCh > 0) t = t.substr(0, size_t(maxCh));
             drawBlockText(ren_, t, chip.x + 6 * u_, chip.y + (chip.h - 7 * dpx) / 2, dpx,
                           {215, 225, 245, 255});
+            if (c.note) {   // e.g. RESTART REQUIRED: small, amber, right-aligned before the caret
+                std::string n = c.note();
+                float npx = 1.3f * u_, nw = blockTextWidth(n, npx);
+                float nx = chip.x + chip.w - 26 * u_ - nw;
+                if (!n.empty() && nx > chip.x + 6 * u_ + blockTextWidth(t, dpx) + 8 * u_)
+                    drawBlockText(ren_, n, nx, chip.y + (chip.h - 7 * npx) / 2, npx,
+                                  {240, 190, 90, 255});
+            }
             // Down-caret: a filled triangle at the chip's right edge (a real glyph, not "V").
             float aw = 9 * u_, ah = 5 * u_;
             float cx = chip.x + chip.w - 13 * u_, ty = chip.y + (chip.h - ah) / 2;

@@ -22,6 +22,9 @@ struct Settings {
     bool  fullscreen = true;       // borderless-desktop fullscreen (default on)
     bool  vsync      = true;
     int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
+    std::string renderer;          // SDL render driver id ("opengl", "software", ...);
+                                   // "" = AUTO, SDL's own choice. Applied at startup
+                                   // only (restart required); see client/renderdriver.h.
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.75..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
     // Retail's BiLinearFilter video option (default off): bilinear sampling of unit
@@ -141,7 +144,7 @@ struct Settings {
             && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
-            && a.audioDevice == b.audioDevice
+            && a.audioDevice == b.audioDevice && a.renderer == b.renderer
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
     }

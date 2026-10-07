@@ -47,6 +47,7 @@ int main() {
     flips("fullscreen",      [](Settings& s) { s.fullscreen = !s.fullscreen; });
     flips("vsync",           [](Settings& s) { s.vsync = !s.vsync; });
     flips("maxFps",          [](Settings& s) { s.maxFps += 17; });
+    flips("renderer",        [](Settings& s) { s.renderer = "software"; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
     flips("bilinear",        [](Settings& s) { s.bilinear = !s.bilinear; });
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
@@ -152,6 +153,7 @@ int main() {
         cur.masterVol = 7;
         cur.uiScale = 1.75f;
         cur.bilinear = !cur.bilinear;
+        cur.renderer = "opengles2";
 
         const Settings d = tak::preferenceDefaults(cur);
         if (!(d.gameCreate == cur.gameCreate)) ++g_fail;
@@ -180,6 +182,7 @@ int main() {
         reset("masterVol",        d.masterVol == fresh.masterVol);
         reset("uiScale",          d.uiScale == fresh.uiScale);
         reset("bilinear",         d.bilinear == fresh.bilinear);
+        reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
 
         // And the two questions must agree: after a reset we ARE at defaults, which is
         // the invariant that broke when the preserve list and atDefaults() diverged.

@@ -63,6 +63,7 @@
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
+#include "client/renderdriver.h"
 #include "net/crypto.h"
 #include "client/dev.h"
 #include "client/appquit.h"
@@ -683,7 +684,42 @@ int main(int argc, char** argv) {
     if(testbuild && tak::devFlag("TAK_RENDER_STUDY") && SDL_GetCurrentVideoDriver() &&
        std::strcmp(SDL_GetCurrentVideoDriver(),"dummy")==0)renFlags=SDL_RENDERER_SOFTWARE;
 #endif
-    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, renFlags);
+    // Options -> RENDERER. AUTO (the default, "") leaves SDL_HINT_RENDER_DRIVER alone,
+    // so it is exactly the pre-option path. A chosen driver is applied only to a real
+    // window launch: the screenshot/test and dummy-driver paths above keep their own
+    // flags untouched. If the choice is missing from this SDL build or fails to create,
+    // this launch falls back to AUTO, logs it, and the menu shows a one-time notice.
+    // The saved choice is kept (no implicit write): it is re-checked every launch, and a
+    // transient failure does not silently lose it. See docs/user-guide.md.
+    const char* vidDrv = SDL_GetCurrentVideoDriver();
+    const bool applyRenderer = shot.empty() && !(vidDrv && std::strcmp(vidDrv, "dummy") == 0);
+    auto& renState = tak::renderdriver::active();
+    SDL_Renderer* ren = nullptr;
+    if (applyRenderer && !settings.renderer.empty()) {
+        tak::renderdriver::Plan rp =
+            tak::renderdriver::plan(settings.renderer, tak::renderdriver::available(), renFlags);
+        if (!rp.fallback) {
+            SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, rp.hint.c_str(), SDL_HINT_OVERRIDE);
+            ren = SDL_CreateRenderer(win, -1, rp.flags);
+            SDL_RendererInfo ri{};
+            const char* got = (ren && SDL_GetRendererInfo(ren, &ri) == 0) ? ri.name : nullptr;
+            if (!tak::renderdriver::honoured(rp.hint, got)) {
+                rp.fallback = true;
+                rp.reason = ren ? std::string("SDL created '") + (got ? got : "?") + "' instead"
+                                : std::string("creation failed: ") + SDL_GetError();
+                if (ren) { SDL_DestroyRenderer(ren); ren = nullptr; }
+            } else {
+                renState.inEffect = rp.hint;
+            }
+            SDL_ResetHint(SDL_HINT_RENDER_DRIVER);   // back to SDL's own (env) value
+        }
+        if (rp.fallback) {
+            std::fprintf(stderr, "renderer: %s unavailable (%s) -- using Auto\n",
+                         tak::renderdriver::label(settings.renderer).c_str(), rp.reason.c_str());
+            renState.failed = settings.renderer;
+        }
+    }
+    if (!ren) ren = SDL_CreateRenderer(win, -1, renFlags);
     if (!ren) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
         return 1;
@@ -702,8 +738,12 @@ int main(int argc, char** argv) {
         SDL_RendererInfo ri{};
         if (SDL_GetRendererInfo(ren, &ri) == 0) {
             renAccelerated = (ri.flags & SDL_RENDERER_ACCELERATED) != 0;
-            std::fprintf(stderr, "renderer: %s%s\n", ri.name ? ri.name : "?",
-                         renAccelerated ? " (accelerated)" : " (SOFTWARE)");
+            renState.created = ri.name ? tak::renderdriver::normalize(ri.name) : std::string();
+            renState.accelerated = renAccelerated;
+            std::fprintf(stderr, "renderer: %s%s [%s, setting %s]\n", ri.name ? ri.name : "?",
+                         renAccelerated ? " (accelerated)" : " (SOFTWARE)",
+                         tak::renderdriver::label(renState.created).c_str(),
+                         tak::renderdriver::label(renState.inEffect).c_str());
         }
     }
 
@@ -824,6 +864,7 @@ int main(int argc, char** argv) {
                 menuReplayError.clear();
             }
             choice = menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
+            tak::renderdriver::active().noticeShown = true;   // the menu showed it (if any)
             if (choice == tak::MainMenu::Choice::Campaign) {
                 campaignStem = menu.chosenMission();
                 campaignId = menu.chosenCampaign();
@@ -1131,6 +1172,10 @@ int main(int argc, char** argv) {
 #endif
             gameView->applySettings(settings);   // audio / camera / UI-scale prefs
             gameView->setSettings(&settings);     // in-game Options edits + persists these
+            if (std::string n = tak::renderdriver::pendingNotice(); !n.empty()) {
+                gameView->showNotice(n, 10);   // launched straight into a game: say it here
+                tak::renderdriver::active().noticeShown = true;
+            }
             if(playtestTrace)gameView->setScenarioTrace([log=playtestTrace](int32_t tick,int player,int group,int action,const tak::crt::Rule* rule) {
                 log->append(tick,player,group,action,rule);
             });
