@@ -404,6 +404,7 @@ struct LegionNavigator::Impl {
     std::vector<int32_t> soft;           // per cell: a soft body covering it (0 none)
     std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival (see softCell)
     std::vector<int> softCells;          // cells set in `soft`, ascending
+    std::vector<uint8_t> softPrior;      // scanStill scratch: a cell's kind before the rescan (all 0 between scans)
     // Per unit id: the command (player, issue tick) a settled Legion arrival
     // belongs to, else ~0: a field never treats its own arrivals as soft.
     std::vector<uint64_t> softOwner;
@@ -556,15 +557,28 @@ struct LegionNavigator::Impl {
         std::sort(next.begin(),next.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
         stills.swap(next);
         std::sort(stamps.begin(),stamps.end());
+        // The window counts depend on each cell's kind alone, and their
+        // updates are additive: a cell soft before and after with the same
+        // kind would be removed and added back unchanged. Only cells whose
+        // kind changed are counted (in a still crowd that is almost none;
+        // re-counting every cell cost ~5-8 ms per scan at ~10k bodies).
+        if(softPrior.size()!=n)softPrior.assign(n,0);
         for(int c:softCells) {
-            if(softKind[size_t(c)])countAll(c,softKind[size_t(c)],-1);
+            softPrior[size_t(c)]=softKind[size_t(c)];
             soft[size_t(c)]=0;softKind[size_t(c)]=0;
         }
         uint64_t h=0x736f6674;
         for(const auto& [c,id]:stamps)if(!soft[size_t(c)]) {
             soft[size_t(c)]=id;softKind[size_t(c)]=size_t(id)<owner.size()&&owner[size_t(id)]!=~0ull?2:1;
-            countAll(c,softKind[size_t(c)],1);
+            if(const uint8_t prior=softPrior[size_t(c)];prior!=softKind[size_t(c)]) {
+                if(prior)countAll(c,prior,-1);
+                countAll(c,softKind[size_t(c)],1);
+            }
+            softPrior[size_t(c)]=0;
             cells.push_back(c);h=mix(h,uint64_t(c)<<32|uint32_t(id));
+        }
+        for(int c:softCells)if(const uint8_t prior=softPrior[size_t(c)]) {
+            countAll(c,prior,-1);softPrior[size_t(c)]=0;
         }
         for(size_t i=0;i<owner.size();++i)if(owner[i]!=~0ull)h=mix(mix(h,i),owner[i]);
         const bool changed=h!=softHash;
