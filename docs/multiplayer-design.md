@@ -585,7 +585,8 @@ The creation-time choice is `Retail` (the default) or experimental `Legion`.
 Protocol 220 introduced the selection (then Retail or Flowfield); protocols
 225-227 added Cooperative and Retail+, and 228 added Legion. Protocol 231
 removed Retail+, Flowfield and Cooperative (2026-10-06, by user decision; they
-remain in git history). Game options
+remain in git history). Protocols 232-236 carry later Legion and Retail
+behavior changes; 0.7.25 ships protocol 236. Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
@@ -646,6 +647,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Current live peers and the server require protocol 227; its replay loader
-rejects older simulation protocols, including 225 and 226.
+227. Version 0.7.25 peers and the server require protocol 236; the replay loader
+rejects every older simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

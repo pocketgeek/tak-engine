@@ -1,5 +1,8 @@
 # TAK Engine 0.7.24
 
+> **0.7.24 was prepared but never published.** It is superseded by
+> [0.7.25](release-0.7.25-notes.md), which ships the changes below that survived.
+
 - Add **Retail+** and **Cooperative** pathfinding to game creation. The choices
   appear in the order Retail, Retail+, Flowfield, Cooperative; Retail remains
   the default. The three alternatives are experimental and the lobby preserves

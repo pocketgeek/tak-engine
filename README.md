@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.24-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.25-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -35,7 +35,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.24 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.25 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
 
 </div>
 
@@ -47,56 +47,47 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## Development branch
+## New in 0.7.25
 
-- **Two pathfinding choices: Retail (the default) and Legion.** The
-  experimental Retail+, Flowfield and Cooperative modes that 0.7.24 shipped
-  were removed on 2026-10-06; they remain in git history. Retail behavior is
-  unchanged by the removal. See [Legion](docs/legion-pathfinding.md).
-- **One graphics filter, as in retail.** Terrain AA / Model AA (later Unit Edge
-  Smoothing, Zoom Smoothing and Zoomed-Out Terrain) and their supersampling
-  targets are gone. The single **Bilinear Filtering** toggle (default **off**)
-  is retail's `BiLinearFilter`: it smooths unit model textures and unit shadows
-  only. Terrain, scenery and the interface stay point-sampled, as they always
-  were in retail. A saved Zoom Smoothing of Smooth, or 0.7.24's Bilinear
-  Filtering on, carries over as on; every other old graphics choice loads as off.
+0.7.25 follows 0.7.23; 0.7.24 was prepared but never published, and its
+surviving changes are included here.
 
-## New in 0.7.24
-
-- **Five pathfinding choices:** Retail remains the default. Experimental
-  **Retail+** keeps native long-distance routes and adds bounded local traffic
-  handling for ordinary ground moves. **Flowfield** and **Cooperative** offer
-  shared routes and group coordination. Experimental **Legion** plans one route
-  per army on the exact footprint-legality rule the mover uses, so units slide
-  along jagged walls, hold still when a crowd blocks them, and stop when they
-  are genuinely trapped. Each has scene-dependent costs and limitations; none
-  is uniformly faster or more reliable in every crowd. See the
-  [five-mode comparison](docs/navigation-comparison-2026-10-05.md).
-- **Movement and route work:** improve group arrivals, local yielding, narrow
-  passages and route recovery. Retail search reuses scratch storage without
-  changing its route decisions. See [Legion](docs/legion-pathfinding.md) and
-  the [Retail port notes](docs/pathfinding-port.md) for scope and measurements.
-- **Graphics controls restored:** independently select Terrain AA and Model AA,
-  bilinear filtering, Smooth GUI Art and Smooth Movies. All default off and
-  remember your choices; Smooth GUI Art updates the current interface immediately.
-  Rendering also reduces repeated geometry work and retires unused image caches.
+- **Two pathfinding choices: Retail (the default) and experimental Legion.**
+  Legion plans one route per army on the exact footprint rule the mover uses,
+  so groups route round walls together, fan out round wall ends, part
+  lanes through idle friendly units and stop when genuinely trapped. It covers
+  ground units, boats and hovercraft; flyers keep retail flight, and in Legion
+  games they never land on other flyers or on ground units. Dense crowds,
+  unreachable goals and very large armies still have limits; see
+  [Legion](docs/legion-pathfinding.md#known-weaknesses). The experimental
+  Retail+, Flowfield and Cooperative modes prepared for 0.7.24 were removed.
+- **Closer to retail movement:** flyer landing sites and the airborne grid,
+  group pacing for numbered groups and formations, and route-search budgets
+  follow the original game. See the [Retail port notes](docs/pathfinding-port.md).
+- **Shift queues every order,** including patrols, which now loop back to
+  where the patrol starts. Armed orders stay armed while Shift is held.
 - **Clearer builder controls:** releasing Shift after queued placement clears
   the chosen build icon, keeping the builder and its queued work. The build menu
   appears for one selected builder or producer. Shift previews remaining known
   area-work stops together with later queued orders.
+- **One graphics filter, as in retail:** a single **Bilinear Filtering**
+  toggle (default off) smooths unit model textures and unit shadows only;
+  terrain, scenery and the interface stay point-sampled. The AA options are
+  gone. Smooth GUI Art and Smooth Movies are available again (default off), and
+  Hardware Cursor and Smooth Motion now live under Graphics.
+- **Fewer hitches:** the first retail route search for a new unit shape builds
+  its search data about 9–14 times faster on the maps measured, and
+  exploration updates skip explored ground.
 - **Map and server controls:** Extra Mana Spots requests 0–6 additional spots
   per player, subject to balanced placement space. `takserver --status` reports
   local game and connection counts as JSON, including on TLS servers.
 
-Version **0.7.24 uses protocol 227 and replay format 11**. The current
-development branch uses **protocol 231** (navigation changes, the Legion mode,
-and the removal of Retail+, Flowfield and Cooperative); clients and servers
-built from it must match each other. Update clients and
-servers together. Replays require the current simulation protocol; older
-recordings need the engine that recorded them. No new dynamic runtime
-dependencies or retail assets are included. See the
-[release notes](docs/release-0.7.24-notes.md) and
-[validation report](docs/release-0.7.24-validation.md).
+Version **0.7.25 uses protocol 236 and replay format 11**. Update clients and
+servers together; 0.7.23 clients cannot join. Replays require the exact
+simulation protocol; older recordings need the engine that recorded them. No new
+dynamic runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.7.25-notes.md) and
+[validation report](docs/release-0.7.25-validation.md).
 
 ### Previously in 0.7.23
 
@@ -135,8 +126,7 @@ shipped. See the [release notes](docs/release-0.7.23-notes.md) and
 - **Independent antialiasing:** Terrain AA (Off/2x/4x) and Model AA
   (Off/2x/4x/8x/16x), with native-resolution UI, preserved scenery ordering,
   remembered settings, and reported capability/memory fallbacks in that release.
-  Version 0.7.24 restores these controls; later builds replace them with a
-  single Bilinear Filtering toggle.
+  Version 0.7.25 replaces them with a single Bilinear Filtering toggle.
 - **Server hardening:** bounded map parsing and background validation, actual-size
   memory admission, command-processing budgets, automatic ACME retry recovery,
   and per-source HTTP challenge connection limits.
@@ -354,7 +344,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.24** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.25** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -622,7 +612,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.7.24 uses generator v8;
+the same named map when the game starts. Version 0.7.25 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -630,7 +620,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.7.24 uses protocol **227**: update clients and servers together.
+Version 0.7.25 uses protocol **236**: update clients and servers together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -705,7 +695,9 @@ These are the engine's default bindings. Command, selection, view, and emote
 bindings can be changed in **Settings → Controls** (click a row and press a
 new key; right-click clears it). Number-key squads, **Esc**, chat, pause, and
 speed controls are fixed. Orders requiring a target are armed by the key and
-issued with a left-click; **Shift** queues the order.
+issued with a left-click; **Shift** queues any order behind the unit's current
+ones, and an armed order stays armed while **Shift** is held. A queued patrol
+loops back to where the patrol starts, as in retail.
 
 ### Orders and unit actions
 
@@ -893,13 +885,13 @@ the movement it supports for ground units, boats and hovercraft, including
 moves, fight-moves, patrols, combat and escort approaches, and work and
 logistics approaches; flyers and unsupported legs keep Retail behavior. See its
 [design, limits and measurements](docs/legion-pathfinding.md).
-Campaigns retain Retail pathfinding regardless of the saved create preference.
-The experimental Retail+, Flowfield and Cooperative modes were removed on
-2026-10-06; a saved preference for one of them now falls back to Retail. Their
-history is in git.
+Campaigns and Crusades battles retain Retail pathfinding regardless of the
+saved create preference. The experimental Retail+, Flowfield and Cooperative
+modes prepared for the unpublished 0.7.24 were removed; a saved preference for
+one of them falls back to Retail.
 
 Use the **same engine build and compatible game data** on every participant.
-The development branch uses **protocol 231**; version **0.7.24 uses protocol 227**, including authoritative pathfinding
+Version **0.7.25 uses protocol 236**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
 Update clients and servers together; earlier clients cannot join these matches.
 Replay format remains **11**, and playback requires the current simulation
@@ -922,8 +914,10 @@ Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
 and camera behavior. **F4 Scorecard Scale** independently adjusts the player
 scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
 and Smooth Motion default to **on**; saved choices still apply.
-Graphics options include **Bilinear Filtering**, **Smooth GUI Art** and
-**Smooth Movies**, all **off** by default and remembered. Bilinear Filtering is
+The **Graphics** section holds **Bilinear Filtering**, Shadows, **Smooth GUI
+Art**, **Smooth Movies**, Trees Sway in Wind, Hardware Cursor and Smooth
+Motion. Bilinear Filtering, Smooth GUI Art and Smooth Movies are **off** by
+default and remembered. Bilinear Filtering is
 retail's Visual Options filter: it smooths unit model textures and unit shadows,
 and nothing else; terrain and scenery stay point-sampled at every zoom, as in
 retail. Smooth GUI Art applies immediately to the current interface, fonts and
@@ -1072,7 +1066,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.24 uses protocol **227**; update server and clients together.
+Version 0.7.25 uses protocol **236**; update server and clients together.
 
 
 ## License

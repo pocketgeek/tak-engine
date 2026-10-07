@@ -880,9 +880,6 @@ Acceptance:
   * The review-4 fixes were not screened at 500 or 1000 units, with 4 or 8
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
     exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test.
-* **Whole-plane rebuilds.** Every static change rebuilds every plane in use
-  over the whole map. The work is quota-charged and the debt is clamped, but
-  a single rebuild is not split across ticks.
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially
