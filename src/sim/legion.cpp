@@ -718,6 +718,11 @@ struct LegionNavigator::Impl {
     // stamped with their yard maps by the mover's rule
     // (World::mobilePlacement): '.' is open, a closable 'c' yard is open
     // while the script holds it open. Returns the cells visited (work).
+    // Live structures in unit order, gathered once per syncStatic: a refresh
+    // recomputes a few small rectangles on every plane, and walking every
+    // unit (10k+ in a battle) per rectangle per plane cost 5-10 ms per plane
+    // for a 36-cell change. Null outside syncStatic (callers walk units).
+    const std::vector<const Unit*>* structureList=nullptr;
     uint64_t computeCells(Plane& p,int x0,int z0,int x1,int z1) {
         const int W=width(),H=height();
         x0=std::max(x0,0);z0=std::max(z0,0);x1=std::min(x1,W-1);z1=std::min(z1,H-1);
@@ -743,10 +748,10 @@ struct LegionNavigator::Impl {
                 p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
                 [](uint16_t){return RetailPlacementEntity{};});
         uint64_t work=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
-        for(const auto& u:w.units_) {
-            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+        auto stampStructure=[&](const Unit& u) {
+            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())return;
             const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
-            if(ux>x1||uz>z1||ux+u.type->footX<=x0||uz+u.type->footZ<=z0)continue;
+            if(ux>x1||uz>z1||ux+u.type->footX<=x0||uz+u.type->footZ<=z0)return;
             const bool opened=yardOpen(u.id);
             for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
                 const int cx=ux+i,cz=uz+j;
@@ -757,7 +762,9 @@ struct LegionNavigator::Impl {
                 }
                 p.cell[size_t(cz)*W+cx]=0;++work;
             }
-        }
+        };
+        if(structureList)for(const Unit* u:*structureList)stampStructure(*u);
+        else for(const auto& u:w.units_)stampStructure(u);
         return work;
     }
     bool yardOpen(int id) const {
@@ -1555,8 +1562,11 @@ struct LegionNavigator::Impl {
         }
         std::vector<std::array<int,4>> rects;
         std::map<int,Stamp> now;
+        std::vector<const Unit*> structures;
+        struct ListScope {const std::vector<const Unit*>*& list;~ListScope(){list=nullptr;}} listScope{structureList};
         for(const auto& u:w.units_) {
             if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+            structures.push_back(&u);
             now[u.id]={footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
                        u.type->footX,u.type->footZ,yardOpen(u.id)};
         }
@@ -1573,6 +1583,7 @@ struct LegionNavigator::Impl {
         w.placementDirty_.clear();w.placementDirtyAll_=false;
         bool changed=false;
         if(lastWorldEpoch==~0ull) {lastWorldEpoch=0;changed=true;}   // the first epoch, as before
+        structureList=&structures;
         if(all||!rects.empty()) {
             std::vector<Plane*> refreshed;
             touch.assign(planes.size(),{0,0,-1,-1});
