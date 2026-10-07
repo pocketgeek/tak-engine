@@ -94,6 +94,15 @@ jobs:
             ${{ matrix.package }}-python
             zip
 
+      # MSYS2's NSIS 3.13-1 makensis searches no plugin directory ("Plugin
+      # directories:" is empty), so MUI's welcome page fails on
+      # InstallOptions::initDialog. 3.12-1 ships the same plugins and finds them.
+      - name: Pin NSIS 3.12 (3.13-1 finds no plugins)
+        if: matrix.arch == 'x64'
+        run: |
+          pacman -U --noconfirm https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-nsis-3.12-1-any.pkg.tar.zst
+          makensis -VERSION
+
       # Static Bink/streaming FFmpeg so the bundle plays the door videos with no
       # runtime FFmpeg DLLs (see tools/build-ffmpeg-bink.sh). Cached by FFmpeg version.
       - name: Verify native runner and compiler target
