@@ -9,6 +9,23 @@
 
 ## Retail audit: flyer landing site and airborne occupancy (2026-10-06, all modes)
 
+> **Follow-up (flyer-landing2, 2026-10-06).** Flyers do land on each other in
+> retail, and the port matches it. Landed flyers are in ground word `+0`:
+> mode 1 stamps them at `50697f..506a3d`, re-stamped by `51b370`/`4dafd2`
+> when the mode changes, as `searchBodyRect` does. A descending flyer stays in
+> mode 2 until `4da750`, so the only place it appears is word `+2`. There a
+> shared cell's owner is redrawn every tick (`506c40`), and eight or more
+> overlapping flyers leave `0xffff`. `509400` passes both, and it passes
+> unexplored sites. `tools/re/check_landing_overlap.py` replays landings
+> natively (`509400`, `5066f0`, `507050`, `506c40`) and checks the port on
+> every call: 61,082 calls agree. Over 512 scenarios, 366 end with overlapping
+> landed flyers. Of the 2,794 overlapping pairs, 1,317 came from a flyer
+> accepted during another's descent (904 of those via `0xffff`), and 1,477
+> came from unexplored sites. On those sites a flyer was accepted on top of an
+> already landed one 343 times. Retail therefore stays as it is. Legion alone
+> refuses landed and descending flyers' footprints; see
+> [legion-pathfinding.md](legion-pathfinding.md#scope).
+
 **User decision.** The user was asked whether to port retail's landing check
 exactly, port it for Retail only, or keep our rule. The answer was "Port it".
 Flight is not handled separately per pathfinding mode, so the port is

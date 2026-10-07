@@ -2278,6 +2278,7 @@ private:
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
+    bool flyerLandingOccupied(const Unit& self, int x0, int z0, int fx, int fz) const;
     std::pair<int,int> cellHeightRange(size_t cell) const;
     bool acquireTarget(Unit& u, bool missionPoll);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;

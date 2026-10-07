@@ -2107,7 +2107,40 @@ bool World::flightLandingFree(const Unit& self,Fixed x,Fixed z) const {
         int high(size_t cell) const { return w.cellHeightRange(cell).second; }
         int sea() const { return uint8_t(w.seaLevel_); }
     } host{*this,self,x0,z0,fx,fz,{},{}};
-    return retailLandingSiteFree(x.v,z.v,limits,host);
+    if (!retailLandingSiteFree(x.v,z.v,limits,host)) return false;
+    // Legion difference (deliberate, not retail): never touch down on another
+    // flyer. Retail lets a stack of flyers land on one spot: a descending
+    // flyer stays airborne in word +2, where a shared cell's owner is redrawn
+    // every tick and eight or more overlapping flyers leave only 0xffff,
+    // both of which 509400 treats as free; an unexplored site skips every
+    // test. Legion refuses any footprint that overlaps a landed flyer or one
+    // that has already begun its descent (stage 3), whatever the exploration.
+    // Both states are the units' own hashed state and the test runs in unit
+    // order, so simultaneous descents serialize: the later lander sees the
+    // earlier one's descent in the same tick.
+    if (isLegionPathfinding(pathfindingMode_) && flyerLandingOccupied(self,x0,z0,fx,fz)) return false;
+    return true;
+}
+
+bool World::flyerLandingOccupied(const Unit& self,int x0,int z0,int fx,int fz) const {
+    auto blocks=[&](const Unit& o,int ox,int oz) {
+        if (&o==&self || !o.alive() || o.embarked() || !o.type || !o.type->canFly) return false;
+        if (ox>=x0+fx || oz>=z0+fz || ox+o.type->footX<=x0 || oz+o.type->footZ<=z0) return false;
+        return o.flightGroundMode==1 || (o.landing && o.landing->mission.stage==3);
+    };
+    if (bodyIndexEnabled_ && hW_>0 && hH_>0 && x0>=0 && z0>=0 && x0+fx<=hW_ && z0+fz<=hH_) {
+        if (!bodyIndexValid_) rebuildBodyIndex();
+        for (int tz=z0/8;tz<(z0+fz+7)/8;++tz)
+            for (int tx=x0/8;tx<(x0+fx+7)/8;++tx)
+                for (int index:bodyTiles_[size_t(tz)*bodyTilesW_+tx]) {
+                    const auto& o=units_[size_t(index)];
+                    if (o.type && blocks(o,footprintOrigin(o.x,o.type->footX),footprintOrigin(o.z,o.type->footZ))) return true;
+                }
+        return false;
+    }
+    for (const auto& o:units_)
+        if (o.type && blocks(o,footprintOrigin(o.x,o.type->footX),footprintOrigin(o.z,o.type->footZ))) return true;
+    return false;
 }
 
 // Cell quad extrema (+6 low, +5 high) from the corner lattice (50ed60).
