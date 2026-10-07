@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -51,8 +52,30 @@ inline const uint8_t* blockGlyph(char c) {
 
 inline float blockTextWidth(const std::string& s, float px) { return float(s.size()) * 6 * px; }
 
+// One block-glyph pixel, snapped to whole DEVICE pixels (at the renderer's current
+// scale). OpenGL fills the pixels whose centres fall inside a fractional rect, but
+// SDL's software renderer truncates the rect's position and size separately, so at a
+// fractional size (the 1.7px stats panel, a UI-scaled Options row) every glyph dot
+// shrank to 1px with a gap after it and the text read as faint dotted outlines.
+// Rounding both edges here gives the pixels OpenGL already drew, on every renderer.
+// The +0.01 keeps the software path's truncation from landing one pixel short.
+inline SDL_FRect blockPixel(float x, float y, float px, float sx, float sy) {
+    float x0 = std::floor(x * sx + 0.5f), x1 = std::floor((x + px) * sx + 0.5f);
+    float y0 = std::floor(y * sy + 0.5f), y1 = std::floor((y + px) * sy + 0.5f);
+    if (x1 <= x0) x1 = x0 + 1;
+    if (y1 <= y0) y1 = y0 + 1;
+    return {(x0 + 0.01f) / sx, (y0 + 0.01f) / sy, (x1 - x0 + 0.01f) / sx, (y1 - y0 + 0.01f) / sy};
+}
+inline void blockScale(SDL_Renderer* r, float& sx, float& sy) {
+    SDL_RenderGetScale(r, &sx, &sy);
+    if (!(sx > 0)) sx = 1;
+    if (!(sy > 0)) sy = 1;
+}
+
 inline void drawBlockText(SDL_Renderer* r, const std::string& s, float x, float y, float px, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    float sx, sy;
+    blockScale(r, sx, sy);
     float cx = x;
     for (char ch : s) {
         const uint8_t* cols = blockGlyph(char(std::toupper((unsigned char)ch)));
@@ -60,7 +83,7 @@ inline void drawBlockText(SDL_Renderer* r, const std::string& s, float x, float 
             for (int col = 0; col < 5; ++col)
                 for (int row = 0; row < 7; ++row)
                     if (cols[col] & (1 << row)) {
-                        SDL_FRect q{cx + col * px, y + row * px, px, px};
+                        SDL_FRect q = blockPixel(cx + col * px, y + row * px, px, sx, sy);
                         SDL_RenderFillRectF(r, &q);
                     }
         cx += 6 * px;

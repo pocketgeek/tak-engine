@@ -910,9 +910,9 @@ Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
 and camera behavior. **F4 Scorecard Scale** independently adjusts the player
 scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
 and Smooth Motion default to **on**; saved choices still apply.
-The **Graphics** section holds **Bilinear Filtering**, Shadows, **Smooth GUI
-Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots, Hardware Cursor
-and Smooth Motion. Bilinear Filtering, Smooth GUI Art and Smooth Movies are **off** by
+The **Graphics** section holds **Renderer**, **Bilinear Filtering**, Shadows,
+**Smooth GUI Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots,
+Hardware Cursor and Smooth Motion. Bilinear Filtering, Smooth GUI Art and Smooth Movies are **off** by
 default and remembered. Bilinear Filtering is
 retail's Visual Options filter: it smooths unit model textures and unit shadows,
 and nothing else; terrain and scenery stay point-sampled at every zoom, as in
@@ -923,6 +923,12 @@ defaults to **on**, and remembers your choice. **Tactical Dots** (default
 when zoomed far out, with the same fog rules as the minimap; selection works on
 the dots. **Tactical Dots Zoom** (default **20%**) sets how far out: 0% means only
 fully zoomed out, 100% means from normal size outwards.
+**Renderer** picks the graphics backend: **Auto** (the default; OpenGL on
+Linux, Direct3D on Windows, Metal on macOS) or any backend SDL offers on the
+machine, including Software. It applies after a restart; a backend that cannot
+start falls back to Auto for that session with a notice on the main menu. If a
+backend starts but misbehaves, set `renderer = auto` in `settings.ini` (see the
+[user guide](docs/user-guide.md#the-game-will-not-start-or-shows-a-black-screen)).
 
 World sounds stay at full volume inside the camera view and fade with distance
 outside it, becoming silent one shorter viewport dimension beyond the nearest

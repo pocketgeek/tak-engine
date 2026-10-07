@@ -889,6 +889,7 @@ World sounds are full volume on screen and fade with distance off screen.
 
 | Option | Default | What it does |
 | --- | --- | --- |
+| **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
 | **Bilinear Filtering** | Off | The original game's option. Smooths unit textures and unit shadows. Terrain, scenery and the interface stay sharp, as in the original. |
 | **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
 | **Smooth GUI Art** | Off | Sharpens the low-resolution interface art, menus, fonts and cursors with an edge-aware upscale. No cost per frame; uses more video memory. |
@@ -916,6 +917,29 @@ dots. Health bars, production bars and unit shadows are hidden while dots are
 showing; trees, terrain, projectiles and explosions are drawn as normal. Dots
 are much cheaper to draw than models, so a huge zoomed-out battle also runs
 faster.
+
+#### Renderer
+
+**Auto** lets the game pick the graphics backend, as every earlier version did:
+OpenGL on Linux, Direct3D on Windows and Metal on macOS. The list also shows
+every other backend your copy of the game can use, such as **OpenGL ES 2**,
+**OpenGL ES**, **Direct3D 11**, **Direct3D 12** or **Software**; only the ones
+available on your system appear.
+
+- Leave it on **Auto** unless something is wrong. Try another backend if the
+  game draws incorrectly, crashes in the graphics driver, or runs badly on your
+  graphics card; on Windows, Direct3D 11 or OpenGL are the usual alternatives.
+- **Software** draws everything on the processor without the graphics card. It
+  is a last resort for a machine with no working graphics driver: it is very
+  slow at high resolutions (a few frames per second at 1920x1080 in a big
+  battle), and Bilinear Filtering has no effect on units with it.
+- The change takes effect the next time the game starts. Until then the row
+  says **RESTART REQUIRED**.
+- If the chosen backend is missing or fails to start, the game uses **Auto** for
+  that session and says so at the top of the main menu (and the row says
+  **UNAVAILABLE**). Your choice stays saved, so it is tried again next time;
+  pick **Auto** to stop the message.
+- The Benchmark results and the Stats panel show the backend in use.
 
 ### Interface
 
@@ -1275,6 +1299,21 @@ to avoid this. If it still happens:
 - close other programs that use the GPU heavily;
 - turn **Smooth GUI Art** off and **Shadows** off;
 - use a lower resolution.
+
+### The game will not start, or shows a black screen
+
+If this started after you changed **Options → Graphics → Renderer**, set it back
+to Auto by hand: close the game, open `settings.ini` (see
+[Where files are kept](#where-files-are-kept)) in a text editor, and change the
+line `renderer = ...` to
+
+```
+renderer = auto
+```
+
+(deleting the line works too). The game also falls back to Auto by itself when a
+backend cannot start at all; editing the file is only needed when the backend
+starts but then misbehaves.
 
 ### There is no sound, or sound comes from the wrong device
 
