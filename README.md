@@ -6,28 +6,33 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.25-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.26-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="80%" alt="TAK Engine title screen"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.7.26"></a>
 
 <table>
   <tr>
-    <td colspan="2"><a href="docs/img/army.jpg"><img src="docs/img/army.jpg" alt="Hundreds of Aramon troops, cavalry, and siege units visible together on Ulasem Arena"></a><br><sub>A large Aramon force — 16,000-unit development stress scene, showing part of one army</sub></td>
+    <td colspan="2"><a href="docs/img/battle.jpg"><img src="docs/img/battle.jpg" alt="Aramon and Taros armies clash across a sandy arena with fire, magic and Black Dragons"></a><br><sub>Aramon and Taros collide in an eight-AI benchmark battle on Ulasem Arena</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/gameplay.jpg"><img src="docs/img/gameplay.jpg" alt="Aramon barracks and troops in the local development demo"></a><br><sub>Aramon base on Ulasem Arena</sub></td>
-    <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna ships fighting on the water at Cairbray Coast Landing"></a><br><sub>Naval combat on Cairbray Coast Landing</sub></td>
+    <td width="50%"><a href="docs/img/dragons.jpg"><img src="docs/img/dragons.jpg" alt="Creon Neo Dragons breathe blue fire on an Aramon siege column"></a><br><sub>Creon Neo Dragons strike an Aramon siege column (development scene)</sub></td>
+    <td width="50%"><a href="docs/img/flyers.jpg"><img src="docs/img/flyers.jpg" alt="Zhon Gryphons, Harpies and Drakes flying over Trolls and Stone Giants in one formation"></a><br><sub>New in 0.7.26: Legion flyers keep station over their formation (development scene)</sub></td>
   </tr>
   <tr>
+    <td width="50%"><a href="docs/img/hud.jpg"><img src="docs/img/hud.jpg" alt="Aramon army with Elsin selected, showing the build menu, command panel, minimap and stats panel"></a><br><sub>The Aramon interface with Elsin's build menu and the stats panel</sub></td>
+    <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna sailing ships trade fire with Creon ironclads on open water"></a><br><sub>Veruna's fleet against Creon ironclads (development scene)</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated Aramon Riverlands map"></a><br><sub>A generated Aramon Riverlands map</sub></td>
     <td width="50%"><a href="docs/img/lobby.jpg"><img src="docs/img/lobby.jpg" alt="The create-game screen with map selection and preview"></a><br><sub>Maps and match setup</sub></td>
-    <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with remembered override-pack selections and read-only match settings"></a><br><sub>Lobby settings and selectable override packs</sub></td>
+    <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with remembered override-pack selections and read-only match settings"></a><br><sub>Lobby settings and override packs</sub></td>
+    <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/streaming.jpg"><img src="docs/img/streaming.jpg" alt="YouTube streaming panel with Max 3840 and 60 FPS selected"></a><br><sub>Built-in YouTube streaming</sub></td>
@@ -35,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.25 build. Army, base, and naval views: development demos. Results: sample statistics.</sub>
+<sub>Captured from the 0.7.26 build. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -47,7 +52,29 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.25
+## New in 0.7.26
+
+- **Legion flyers stay with their formation.** In Legion games, flyers in a
+  formation that also has ground units now hold stations over the ground units
+  while the formation moves, fight-moves or patrols, keep to the slowest ground
+  member's pace near their station, and settle over the group when it arrives.
+  Before, they raced ahead, landed at the destination and waited there. See
+  [Legion](docs/legion-pathfinding.md).
+- **Retail grouped flyers follow the original game.** The original game's
+  group checks for flyers are ported from the retail binary: a flyer far out of
+  place is sent back to the group's centre, and one found ahead of the centre a
+  second time has a 1-in-4 chance to drop all its orders, as in 1999. Retail
+  still never slows flyers to the group's pace. See the
+  [Retail port notes](docs/pathfinding-port.md).
+
+Version **0.7.26 uses protocol 237 and replay format 11**. Update clients and
+servers together; 0.7.25 clients cannot join. Replays require the exact
+simulation protocol; older recordings need the engine that recorded them. No new
+dynamic runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.7.26-notes.md) and
+[validation report](docs/release-0.7.26-validation.md).
+
+### Previously in 0.7.25
 
 0.7.25 follows 0.7.23; 0.7.24 was prepared but never published, and its
 surviving changes are included here.
@@ -88,38 +115,6 @@ simulation protocol; older recordings need the engine that recorded them. No new
 dynamic runtime dependencies or retail assets are included. See the
 [release notes](docs/release-0.7.25-notes.md) and
 [validation report](docs/release-0.7.25-validation.md).
-
-### Previously in 0.7.23
-
-- **Optional Flowfield pathfinding:** choose Retail or experimental Flowfield when
-  creating skirmish and multiplayer games. Shared terrain preparation and route
-  workers have bounded work and memory. Campaigns keep Retail; its search
-  implementation is unchanged. Maze traffic, group arrivals, factory exits,
-  fight-move and patrol orders have expanded regression coverage.
-- **Builder automation:** drag a lodestone placement box to build across eligible
-  mana spots, exploring first when needed. Patrolling builders repair nearby
-  damaged allies and then resume their route. Defensive AI intercepts spotted
-  attackers near its base without sending offensive raids.
-- **Map generation:** remembered map names with distinct recipe identifiers,
-  preview updates on slider release, open lake and maze edges, faction layouts,
-  connected Veruna harbors, and improved terrain transitions.
-- **Presentation and controls:** independent F4 scorecard scale and team grouping,
-  Shift+Z retail zoom, speeds up to 8×, real-time selected-unit emotes,
-  offscreen sound fading, lodestone shadows, and corrected destructive scenery
-  and wreck behavior. Single-player startup shows loading progress.
-- **Graphics defaults:** filtering, smooth GUI/movies and AA are fixed off while
-  their engine support remains. Trees sway by default and remain configurable;
-  fullscreen, VSync, shadows, statistics, hardware cursor and smooth motion
-  default on.
-- **Linux packages:** native ARM64 packages alongside x64 for Ubuntu, Debian,
-  Fedora and openSUSE Leap, plus Slackware64 15.0 and Arch x64 packages.
-
-Version **0.7.23 uses protocol 221 and replay format 11**. Update clients and
-servers together. Protocol-220/format-11 and protocol-219/format-10 recordings
-remain supported with their original patrol behavior; older recordings require
-an older engine. No new dynamic runtime dependencies or retail assets are
-shipped. See the [release notes](docs/release-0.7.23-notes.md) and
-[validation report](docs/release-0.7.23-validation.md).
 
 ### Previously in 0.7.22
 
@@ -344,7 +339,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.25** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.26** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -612,7 +607,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.7.25 uses generator v8;
+the same named map when the game starts. Version 0.7.26 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -620,7 +615,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.7.25 uses protocol **236**: update clients and servers together.
+Version 0.7.26 uses protocol **237**: update clients and servers together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -883,7 +878,8 @@ Legion is experimental. Each right-click plans one integer route field per
 army and footprint size on the same legality rule the mover enforces. It routes
 the movement it supports for ground units, boats and hovercraft, including
 moves, fight-moves, patrols, combat and escort approaches, and work and
-logistics approaches; flyers and unsupported legs keep Retail behavior. See its
+logistics approaches; flyers in a formation with ground units hold stations
+over them, and other flyers and unsupported legs keep Retail behavior. See its
 [design, limits and measurements](docs/legion-pathfinding.md).
 Campaigns and Crusades battles retain Retail pathfinding regardless of the
 saved create preference. The experimental Retail+, Flowfield and Cooperative
@@ -891,7 +887,7 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.25 uses protocol 236**, including authoritative pathfinding
+Version **0.7.26 uses protocol 237**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
 Update clients and servers together; earlier clients cannot join these matches.
 Replay format remains **11**, and playback requires the current simulation
@@ -1066,7 +1062,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.25 uses protocol **236**; update server and clients together.
+Version 0.7.26 uses protocol **237**; update server and clients together.
 
 
 ## License

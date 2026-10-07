@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.7.25** (network protocol **236**, replay format
+This guide covers **TAK Engine 0.7.26** (network protocol **237**, replay format
 **11**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -173,6 +173,10 @@ archive supplies a given file.
 
 ## The main menu
 
+![The title menu with its three doors and the version number](img/title.jpg)
+
+*The title menu. The doors open Single-Player, Multiplayer and Campaign; the version is shown at the bottom.*
+
 The front end is the original game's three-door menu:
 
 | Door | What it opens |
@@ -209,6 +213,10 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
 5. Set each other slot to an AI, choose its side and **difficulty**, or close
    the slot. **Easy** is a good first opponent.
 6. Click **Start**.
+
+![The game setup screen with the map list, a map preview and the match options](img/lobby.jpg)
+
+*The game setup screen: pick a map, check its preview and player count, and set the match rules.*
 
 The game opens centred on your **Monarch**. Your first steps:
 
@@ -273,9 +281,26 @@ updates when you release a slider. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
+![A wooded lake shore on a generated Aramon Riverlands map](img/generated.jpg)
+
+*Part of a generated Aramon Riverlands map.*
+
 ---
 
 ## Playing
+
+![The in-game screen with numbered markers on the minimap, stats panel, orders, weapons and stances, mana, build menu, information bar and the selected Monarch](img/guide/hud-annotated.jpg)
+
+*The in-game screen with Aramon's Monarch, Elsin, selected.*
+
+1. **Minimap.** Click or drag to move the camera.
+2. **Stats panel** (optional; see [Interface](#interface)).
+3. **Orders** for the selected units, such as move, attack, patrol, guard and stop.
+4. **Weapons and stances** for the selected units.
+5. **Mana**: your current mana and storage, with income and spending beside the orb.
+6. **Build menu** of the selected builder or production building.
+7. **Information bar**: the selected unit's portrait, name, health and what it is doing.
+8. **The selected unit**, here the Monarch.
 
 ### The goal
 
@@ -409,6 +434,20 @@ landed flyer can be attacked by ground units and blocks ground movement. In **Le
 of other flyers or ground units; in **Retail** mode they follow the original
 game's rules, which sometimes let them overlap.
 
+Flyers are much faster than most ground units. When you put flyers and ground
+units in the same group or formation:
+
+- In **Legion** mode, flyers in a formation hold their places over the ground
+  units, keep to the army's pace, and settle over it when it arrives.
+- In **Retail** mode, as in the original game, they are never slowed to the
+  army's pace. A flyer that gets far out of place is sent back to the group,
+  and a flyer that gets ahead of the group a second time has a one-in-four
+  chance to drop all its orders and stop where it is.
+
+![Side-by-side pictures of the same Zhon formation: in Retail the flyers are far ahead of the ground units, in Legion they fly over them](img/guide/flyers-retail-legion.jpg)
+
+*The same formation of ground units and flyers 22 seconds after one move order. Left, Retail: the flyers have gone ahead. Right, Legion: they keep over the ground units. (A development scene.)*
+
 ### Ships and transports
 
 Ships and hovercraft move on water; some hovercraft also cross land. Several
@@ -438,6 +477,10 @@ Destroying an enemy unit adds that unit's experience value to your score, as in
 the original game. Building units and gathering mana do not score. The **F4**
 panel shows each player's kills, losses and score.
 
+![The F4 scorecard listing eight players with kills, losses and score over a battle](img/guide/scorecard.jpg)
+
+*The F4 scorecard during an eight-player benchmark battle.*
+
 ---
 
 ## The five sides
@@ -463,6 +506,10 @@ walls and a gate.
 
 ### Aramon
 
+![Aramon's Monarch Elsin selected beside an Aramon army, with her build menu along the bottom](img/guide/side-aramon.jpg)
+
+*Aramon: Elsin selected, with her build menu. The army is a test start, not a normal opening.*
+
 The kingdom of knights and stone castles. Aramon fields solid infantry,
 cavalry and powerful siege weapons.
 
@@ -478,6 +525,10 @@ cavalry and powerful siege weapons.
 - **God: the Avatar of Anu.**
 
 ### Taros
+
+![Taros's Monarch Lokken selected beside a Taros army, with the dark Taros interface](img/guide/side-taros.jpg)
+
+*Taros: Lokken and the Taros interface.*
 
 A kingdom of necromancy, fire and demons, led by the sorcerer Lokken.
 
@@ -495,6 +546,10 @@ A kingdom of necromancy, fire and demons, led by the sorcerer Lokken.
 - **God: the Spawn of Belial.**
 
 ### Veruna
+
+![Veruna's Monarch Kirenna selected beside a Veruna army with Dirigibles](img/guide/side-veruna.jpg)
+
+*Veruna: Kirenna, with Dirigibles over the army.*
 
 A seafaring kingdom of gunpowder, crossbows and warships, ruled by the sorceress
 Kirenna.
@@ -515,6 +570,10 @@ Kirenna.
 
 ### Zhon
 
+![Zhon's Monarch Thirsha selected beside a Zhon army of beasts and flyers](img/guide/side-zhon.jpg)
+
+*Zhon: Thirsha. Her build menu holds conjurers and field structures, not production buildings.*
+
 A wild kingdom of beasts and nature spirits, led by the huntress Thirsha.
 
 Zhon has **no fixed production buildings**. Everything is conjured in the field
@@ -533,6 +592,10 @@ by mobile builders, so a Zhon base is wherever its conjurers stand.
 - **God: the Wrath of Tammuz.**
 
 ### Creon
+
+![Creon's Monarch the Sage selected beside a Creon army of machines](img/guide/side-creon.jpg)
+
+*Creon: the Sage and the Creon interface.*
 
 The fifth side, added by *Iron Plague*: a nation of engineers and steam-driven
 machines.
@@ -692,6 +755,10 @@ repair, reclaim, area reclaim, load, unload and building.
   their queued orders, including building sites and area jobs.
 - **Stop** (**S**) clears the whole list.
 
+![A dotted line with waypoint markers showing the Monarch's queued moves while Shift is held](img/guide/shift-queue.jpg)
+
+*Holding Shift shows the queued route: one move, then three Shift-queued moves.*
+
 **Patrols loop.** Patrol points keep cycling; other orders run once.
 
 | You issue | The unit does |
@@ -752,10 +819,14 @@ armies:
   instead of stop-starting.
 - **Flyers land cleanly.** Flyers never land on top of other flyers or ground
   units.
+- **Flyers stay with the army.** Flyers in a formation with ground units hold
+  places over the ground units and keep to their pace, instead of racing
+  ahead and waiting at the destination.
 
 Legion handles ground units, ships and hovercraft for moves, fight-moves,
 patrols, attacks, guarding, building, repairing, reclaiming and transport
-orders. Flyers in flight use the original game's movement.
+orders. Flyers in flight use the original game's movement, except that flyers
+in a formation with ground units keep station over them.
 
 **Known limits of Legion:**
 
@@ -811,6 +882,10 @@ World sounds are full volume on screen and fade with distance off screen.
 | **Max FPS** | 60 | Frame-rate cap when VSync is off (30–240). |
 
 ### Graphics
+
+![The Options screen scrolled to the Graphics settings, all at their defaults](img/guide/options-graphics.jpg)
+
+*Options, Graphics section, at the default settings.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -868,6 +943,10 @@ player's game stays in step.
 5. In the room, choose your side, colour and team, then click **Ready**. The host
    starts the game when everyone is ready.
 
+![A game room with player and AI slots, override pack choices and the read-only match rules](img/room.jpg)
+
+*A game room, here for a single-player game: player and AI slots, override packs and the read-only match rules.*
+
 The host can open and close slots, add AIs and kick players. Match options are
 set when the game is created; see [Match options](#match-options).
 
@@ -894,6 +973,10 @@ Press **D** for the **Diplomacy** screen:
   teammates.
 - **Chat recipients**: choose who receives your chat messages.
 
+![The Diplomacy screen listing players with Share Mana and Chat checkboxes and a Give Selected Units button](img/diplomacy.jpg)
+
+*The Diplomacy screen (**D**), from the engine's built-in input test.*
+
 See [unit gifting](unit-gifting.md) for which units can be given.
 
 ### Spectating
@@ -909,7 +992,7 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same version of TAK Engine**, client and server alike.
-Version 0.7.25 uses network protocol **236**. Older and newer versions cannot
+Version 0.7.26 uses network protocol **237**. Older and newer versions cannot
 play together, and the server turns away a mismatched client.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -943,10 +1026,18 @@ In the book:
 - **Enter** plays the selected chapter. **Escape** returns to the menu.
 - Every chapter can be selected, including the *Iron Plague* alternate ending.
 
+![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose](img/campaign.jpg)
+
+*The campaign book, with tabs for both campaigns at the bottom.*
+
 Each mission plays its intro movie, then shows the briefing over the paused
 battlefield. **Enter**, **Space**, **Escape** or a left click starts the
 mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 **O** (with nothing selected) shows the objectives.
+
+![The chapter 1 briefing, All Hell Broken Loose, over the darkened paused battlefield](img/guide/campaign-briefing.jpg)
+
+*The briefing for *Book of Darien* chapter 1, over the paused battlefield.*
 
 When you win, **Next** goes to the next chapter and **Retry** replays this one.
 Campaigns always use Retail pathfinding.
@@ -967,10 +1058,14 @@ recording. During playback:
 - **+** / **−** change playback speed.
 - The time bar shows elapsed and total time.
 
+![A replay of an Aramon army moving, with the replay time bar at nine of sixteen seconds](img/guide/replay.jpg)
+
+*Replay playback, with the time bar near the bottom.*
+
 A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
-- **the same version of TAK Engine** that recorded it (0.7.25 plays protocol-236
+- **the same version of TAK Engine** that recorded it (0.7.26 plays protocol-237
   recordings);
 - the same game data and map.
 
@@ -1017,6 +1112,8 @@ same file.
 ## Map editor
 
 ![Cartographer unit browser, terrain canvas and minimap](img/cartographer.png)
+
+*Cartographer's Units browser, map canvas and minimap.*
 
 **Cartographer** is TAK Engine's map and scenario editor. Launch it from its
 application shortcut. It uses the same data folder as the game.
@@ -1114,6 +1211,10 @@ processor use, memory, GPU use and video memory, together with the display
 settings used. Unit limits still apply, so the highest intensities may not
 reach their requested unit counts. A slow machine can take longer than 60 real
 seconds.
+
+![A benchmark battle between Zhon and Creon armies, with Creon Neo Dragons breathing blue fire](img/guide/benchmark.jpg)
+
+*A benchmark run at Absurd intensity, 55 seconds in. The badge at the top counts down the time remaining.*
 
 ---
 
