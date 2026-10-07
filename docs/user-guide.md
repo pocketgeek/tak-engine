@@ -1214,7 +1214,7 @@ seconds.
 
 ![A benchmark battle between Zhon and Creon armies, with Creon Neo Dragons breathing blue fire](img/guide/benchmark.jpg)
 
-*A benchmark run at Absurd intensity, 55 seconds in.*
+*A benchmark run at Absurd intensity, 55 seconds in. The badge at the top counts down the time remaining.*
 
 ---
 

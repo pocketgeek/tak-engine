@@ -54,13 +54,13 @@ replace them. The unchanged views contain no version text and still match 0.7.26
 | Image | Scene |
 | --- | --- |
 | `hud-annotated.jpg` | The same setup as `hud.jpg`, captured at 1600 × 900 with 1× zoom. Markers: 1 minimap, 2 stats panel, 3 orders, 4 weapons and stances, 5 mana, 6 build menu, 7 information bar, 8 selected Monarch |
-| `side-aramon.jpg` … `side-creon.jpg` | One per side. A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu. In the Creon picture, the engine's text readout of mana and the selection also appears at the top left |
+| `side-aramon.jpg` … `side-creon.jpg` | One per side. A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu. `side-creon.jpg` was recaptured after 0393b54 (Creon's Iron Plague panel art); the other four were unchanged by that fix, verified by pixel comparison of the panels |
 | `shift-queue.jpg` | Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders. 1.7× zoom |
 | `flyers-retail-legion.jpg` | **Development scene, spawned.** The `flyers.jpg` formation and order, 22 s in, run once in Retail and once in Legion. The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
 | `options-graphics.jpg` | Options screen scrolled to Graphics, cropped to the panel. Every Graphics setting is at its default; Display shows the windowed capture profile |
 | `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch |
 | `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**) |
-| `benchmark.jpg` | Benchmark run (Absurd), 55 s in: Zhon and Creon armies, with Creon Neo Dragons breathing fire; scaled from 1920 × 1080 |
+| `benchmark.jpg` | Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): Zhon and Creon armies, with Creon Neo Dragons breathing fire; scaled from 1920 × 1080 |
 | `scorecard.jpg` | F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom |
 
 The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
