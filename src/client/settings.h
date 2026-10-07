@@ -24,12 +24,10 @@ struct Settings {
     int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.75..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
-    // World filtering (see src/client/zoomsmooth.h and docs/antialiasing.md).
-    // Interface art stays at native output resolution.
-    int unitEdgeAA = 0;            // unit edge smoothing: Off/2/4/8/16 samples
-    int zoomSmoothing = 2;         // magnified art: 0=Off, 1=Smooth (retail bilinear), 2=Sharp
-    int zoomOutTerrain = 0;        // supersampling while zoomed out: 0=Auto, 1=Off, 2=2x, 4=4x
-    int unitEdgeAAEffective=-1, zoomOutTerrainEffective=-1; // runtime only; not preferences
+    // Retail's BiLinearFilter video option (default off): bilinear sampling of unit
+    // model textures and unit shadows instead of nearest. Retail never filtered the
+    // terrain, scenery or interface, so this does not either; see Smooth GUI Art.
+    bool  bilinear   = false;
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
     bool  treeSway   = true;       // animated tree and shadow sway; default on
@@ -128,8 +126,7 @@ struct Settings {
     friend bool operator==(const Settings& a, const Settings& b) {
         for (int i = 0; i < 8; ++i) if (a.chanGain[i] != b.chanGain[i]) return false;
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
-            && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.unitEdgeAA == b.unitEdgeAA
-            && a.zoomSmoothing == b.zoomSmoothing && a.zoomOutTerrain == b.zoomOutTerrain
+            && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.bilinear == b.bilinear
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
             && a.treeSway == b.treeSway
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt

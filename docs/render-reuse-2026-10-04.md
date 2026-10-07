@@ -47,7 +47,8 @@ The labels must be normalized before comparing quality or cost:
 TAK's retained selective model-AA implementation uses reusable **screen-aligned
 tiles**, not a packed per-unit AA atlas. It bypasses the distant body-image cache
 and resolves at painter boundaries. That support remains in the engine, but
-settings loading and the settings UI keep it off. See [the AA design](antialiasing.md).
+settings loading and the settings UI keep it off. The AA design was in
+`docs/antialiasing.md`, removed with the AA options after 0.7.24 (see git history).
 
 ## Existing reuse and the measured bottleneck
 

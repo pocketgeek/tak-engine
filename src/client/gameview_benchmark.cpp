@@ -194,8 +194,7 @@
         sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
         if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }
         else sl("MAX FPS     (VSYNC)");
-        sl("UNIT EDGES  "+std::to_string(modelAA_.effective)+"X / ZOOMED-OUT TERRAIN  "+std::to_string(terrainAA_.effective)+"X");
-        sl(std::string("ZOOM SMOOTH ") + (settings_ ? (settings_->zoomSmoothing == tak::kZoomSharp ? "SHARP" : settings_->zoomSmoothing == tak::kZoomSmooth ? "SMOOTH" : "OFF") : "OFF"));
+        sl(std::string("BILINEAR    ") + (settings_ && settings_->bilinear ? "ON" : "OFF"));
         // GPU texture memory: the self-calibrating cap, and this run's peak usage/pages.
         size_t gpuPeak = 0, sysPeak = 0;
         for (const auto& s : benchSamples_) {

@@ -49,11 +49,7 @@
 #include "version.h"
 #include "client/cursors.h"
 #include "client/dirpicker.h"   // first-run data-dir folder picker
-#include "client/aascalereset.h"   // RAII 1:1 render-scale guard (extracted leaf)
 #include "client/distantmodels.h"
-#include "client/selectiveaa.h"
-#include "client/zoomsmooth.h"
-#include "client/geometrytiles.h"
 #include "client/featureindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
@@ -891,17 +887,6 @@ public:
         bakeVertices=distantModelCache_.bakeVertices;bakeCalls=distantModelCache_.bakeDraws;
         switches=distantModelCache_.targetSwitches;imageBytes=distantModelCache_.bytes();
     }
-    struct AAWork {
-        uint64_t terrainResolves,modelResolves,clearPixels,targetSwitches,translatedVertices,culledVertices;
-        size_t bytes;
-    };
-    AAWork aaWork() const {
-        return {terrainAA_.resolves,modelAA_.resolves,
-            terrainAA_.clearPixels+modelAA_.clearPixels,
-            terrainAA_.targetSwitches+modelAA_.targetSwitches,
-            modelAA_.translatedVertices,modelAA_.culledVertices,
-            terrainAA_.bytes()+modelAA_.bytes()+terrainSharp_.bytes()+sharpSpriteBytes_};
-    }
 #endif
 
     void advance(float seconds);
@@ -1268,36 +1253,19 @@ private:
         drawModelTriangles();
     }
 
-    // Already projected, depth-sorted model triangles. Keep texture runs inside
-    // one AA resolve so neighboring faces share coverage at their common edges.
+    // Already projected, depth-sorted model triangles, one draw per texture run.
     void drawModelTriangles() {
         if (tris_.empty()) return;
-        SDL_FRect bounds{};
-        if (modelAA_.effective) {
-            bool first=true;
-            for (const auto& triangle : tris_) {
-                auto b=tak::SelectiveAA::bounds({triangle.v,3});
-                if(first){bounds=b;first=false;}else {
-                    float right=std::max(bounds.x+bounds.w,b.x+b.w),bottom=std::max(bounds.y+bounds.h,b.y+b.h);
-                    bounds.x=std::min(bounds.x,b.x);bounds.y=std::min(bounds.y,b.y);bounds.w=right-bounds.x;bounds.h=bottom-bounds.y;
-                }
-            }
+        triBatch_.clear();SDL_Texture* cur=nullptr;
+        auto flush=[&]{
+            if(!triBatch_.empty())SDL_RenderGeometry(ren_,cur,triBatch_.data(),int(triBatch_.size()),nullptr,0);
+            triBatch_.clear();
+        };
+        for(const auto& t:tris_) {
+            if(t.tex!=cur){flush();cur=t.tex;}
+            triBatch_.insert(triBatch_.end(),std::begin(t.v),std::end(t.v));
         }
-        modelAA_.render(ren_,bounds,[&](SDL_FPoint offset,SDL_Rect tile){
-            triBatch_.clear();SDL_Texture* cur=nullptr;
-            auto flush=[&]{
-                if(!triBatch_.empty()) {
-                    const auto vertices=modelAA_.translated(triBatch_,offset,tile);
-                    if(!vertices.empty())SDL_RenderGeometry(ren_,cur,vertices.data(),int(vertices.size()),nullptr,0);
-                }
-                triBatch_.clear();
-            };
-            for(const auto& t:tris_) {
-                if(t.tex!=cur){flush();cur=t.tex;}
-                triBatch_.insert(triBatch_.end(),std::begin(t.v),std::end(t.v));
-            }
-            flush();
-        });
+        flush();
     }
 
     // Per-unit screen-space geometry, built in parallel each frame (the expensive
@@ -1338,7 +1306,6 @@ private:
     tak::GeometrySubmit fogSubmit_;
     tak::FogUpload fogUpload_;
     uint64_t fogMeshRevision_=0;
-    tak::SelectiveAA terrainAA_,modelAA_;
     tak::DistantModels distantModelCache_;
     std::vector<tak::DistantModels::Item> distantModelItems_;
     std::vector<SDL_Vertex> shadowCompositeBatch_;
@@ -1422,8 +1389,7 @@ private:
     std::unordered_map<std::string, CobCache> cobCache_;
     struct CopyTask { int geom, src, count, dst; };
     struct DrawOp { const UnitR* u; const FeatureInst* f;
-                    SDL_Texture* tex; int start, count;
-                    size_t rangeFirst=0,rangeCount=0; };   // seg if u&&f both null
+                    SDL_Texture* tex; int start, count; };   // seg if u&&f both null
     // Feature sync: the sim-side state of each visual feature, refreshed only when
     // World::featGeneration() moves. A member rather than a function-static so a new
     // game cannot inherit the previous one's array.
@@ -1437,8 +1403,6 @@ private:
 
     std::vector<CopyTask> copyTasks_;
     std::vector<DrawOp> drawOps_;
-    std::vector<tak::GeometryTileRange> bodyTileRanges_;
-    std::vector<SDL_Vertex> bodyTileScratch_;
     // TAK_PROF sub-phase timers (main thread). ALL of these are MONOTONIC -- they only
     // ever grow, and takeProf() returns the delta since its last call rather than zeroing
     // them. They used to be reset in takeProf, which silently corrupted the TAK_SPIKES
@@ -1554,25 +1518,9 @@ public:
 private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
-    // Zoom smoothing (Options) resolved for the current zoom each frame; see
-    // updateZoomFiltering(). bilinear_ = sample terrain/feature art LINEAR now.
-    bool bilinear_ = false;
-    bool modelLinear_ = false;  // model-texture atlases sampled LINEAR (Smooth)
-    int sharpK_ = 1;            // integer prescale for Sharp scenery (1 = none)
-    uint64_t zoomOutSeenMs_ = 0, sharpModelsSeenMs_ = 0;   // hysteresis for releasing targets
-    tak::ZoomSharpTarget terrainSharp_;
-    // Sharp-bilinear copies of feature/scenery frames: each source texture drawn
-    // once at sharpK_ x its size with NEAREST, then sampled LINEAR. Bounded LRU,
-    // built on demand for visible frames only.
-    struct SharpSprite { SDL_Texture* tex = nullptr; int k = 0; uint64_t used = 0; size_t bytes = 0; };
-    std::unordered_map<SDL_Texture*, SharpSprite> sharpSprites_;
-    size_t sharpSpriteBytes_ = 0;
-    uint64_t sharpSpriteFrame_ = 0;
-    int sharpSpriteBuilds_ = 0;
-    static constexpr size_t kSharpSpriteBudget = 64u << 20;
-    SDL_Texture* zoomArt(SDL_Texture* t);
-    void clearSharpSprites();
-    void updateZoomFiltering(float zoom, int viewW, int viewH);
+    bool bilinear_ = false;     // retail BiLinearFilter: unit and unit-shadow pages LINEAR (Options)
+    void setBilinear(bool on);
+    SDL_ScaleMode unitScaleMode() const;
     bool smoothArt_ = tak::art::g_smoothArt; // how the current interface was built
     int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
     uint64_t statsSampleAt_ = 0, statsGpuAt_ = 0;

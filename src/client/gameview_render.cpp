@@ -120,50 +120,10 @@
         int mvw = mapViewW(winW);
         SDL_Rect worldClip{0, 0, mvw, winH};
         SDL_RenderSetClipRect(ren_, &worldClip);
-        // World filtering for this frame's zoom. mapView_.draw() clamps the camera,
-        // so clamp first: the passes below must agree with the terrain draw.
-        mapView_.clampOffset(mvw, winH);
-        const float viewZoom = mapView_.zoom();
-        const uint64_t filterNow = SDL_GetTicks64();
-        const int zoomMode = settings_ ? settings_->zoomSmoothing : tak::kZoomOff;
-        updateZoomFiltering(viewZoom, mvw, winH);
-        // Zoomed-out terrain supersampling: only below 1.0, where minification
-        // shimmers. At exactly 1.0 the mosaic is an integer copy and supersampling it
-        // is a pixel-identical no-op, so the (drawable-sized) target is released three
-        // seconds after the camera last zoomed out, not held at the default view.
-        const bool outNow = tak::zoomedOut(viewZoom);
-        if (outNow) zoomOutSeenMs_ = filterNow;
-        const int outSamples = settings_ ? tak::zoomOutTerrainSamples(settings_->zoomOutTerrain, winW, winH) : 0;
-        const bool outHeld = outNow || (zoomOutSeenMs_ && filterNow - zoomOutSeenMs_ <= 3000);
-        // Unit edge smoothing; Sharp zoom smoothing raises it to at least 4x while
-        // zoomed in, because supersampled NEAREST model textures resolved down are
-        // the sharp-bilinear result for texels on arbitrarily rotated polygons.
-        const int edgeRequest = settings_ ? settings_->unitEdgeAA : 0;
-        const bool sharpModels = zoomMode == tak::kZoomSharp && sharpModelsSeenMs_ &&
-                                 filterNow - sharpModelsSeenMs_ <= 3000;
-        const int modelRequest = sharpModels ? std::max(edgeRequest, 4) : edgeRequest;
-        // Model AA uses full geometry. Release its dormant native-resolution
-        // impostors before admitting AA targets against the shared GPU budget.
-        if(modelRequest && distantModelCache_.bytes())
-            distantModelCache_.clear();
-        terrainAA_.configure(ren_,winW,winH,outHeld?outSamples:0,true);
-        modelAA_.configure(ren_,winW,winH,modelRequest,false);
-        terrainAA_.report("terrain (zoomed out)");modelAA_.report("models");
-        if(settings_){
-            settings_->zoomOutTerrainEffective=outNow && outSamples?terrainAA_.effective:outNow?0:-1;
-            settings_->unitEdgeAAEffective=modelAA_.effective;
-        }
         mapView_.setUnderlay(miniTex_);   // low-res gap filler (null until the overview bakes)
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
-            const bool sharpTerrain = zoomMode == tak::kZoomSharp && sharpK_ >= 2 && !mapView_.bilinear();
-            if (sharpTerrain && terrainSharp_.render(ren_, viewZoom, mapView_.offX(), mapView_.offY(), mvw, winH,
-                    [&](int k, float ox, float oy, int w, int h) { mapView_.drawView(float(k), ox, oy, w, h); })) {
-            } else if (outNow) {
-                terrainAA_.render(ren_,{0,0,float(mvw),float(winH)},[&](SDL_FPoint,SDL_Rect){mapView_.draw(mvw,winH);});
-            } else {
-                mapView_.draw(mvw, winH);
-            }
+            mapView_.draw(mvw, winH);
             profTerrainMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                               (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
@@ -349,8 +309,7 @@
                 !u.moving() && !u.walking() && !u.corpsePhase && !u.replacementModel && !(u.type && u.type->ghost) &&
                 !selSet_.contains(u.id);
         }
-        if(modelAA_.effective || (settings_ && settings_->unitEdgeAA)) {for(auto& item:distantModelItems_)item.texture=nullptr;}
-        else distantModelCache_.prepare(ren_,distantModelItems_,tak::devFlag("TAK_RENDER_STUDY")
+        distantModelCache_.prepare(ren_,distantModelItems_,tak::devFlag("TAK_RENDER_STUDY")
             ? uint64_t(animClock_*1000) : SDL_GetTicks64());
         static uint64_t distantLogAt=0;
         if(tak::devFlag("TAK_DISTANT_STATS") && SDL_GetTicks64()-distantLogAt>=1000) {
@@ -485,7 +444,7 @@
                     SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
                     SDL_SetTextureColorMod(texture,0,0,0);
                     SDL_SetTextureAlphaMod(texture,255-kShadowLevel);
-                    SDL_SetTextureScaleMode(texture,SDL_ScaleModeNearest);
+                    SDL_SetTextureScaleMode(texture,unitScaleMode());
                     shadowSilhouettePages_.push_back({texture,0,0,0});
                     if (!tryPage(shadowSilhouettePages_.size()-1)) return fail("new page could not fit tile");
                 }
@@ -770,14 +729,11 @@
         int destOff = 0;
         SDL_Texture* segTex = nullptr;
         int segStart = 0, segCount = 0;
-        size_t segRangeStart = 0;
         auto closeSeg = [&] {
             if (segCount > 0) {
-                drawOps_.push_back({nullptr, nullptr, segTex, segStart, segCount,
-                    segRangeStart,copyTasks_.size()-segRangeStart});
+                drawOps_.push_back({nullptr, nullptr, segTex, segStart, segCount});
                 segCount = 0;
             }
-            segRangeStart=copyTasks_.size();
             // Force the next run to re-anchor segStart to the current destOff. Without
             // this, a unit whose texture matches segTex but follows a feature/special
             // unit (which closed the segment) keeps the PREVIOUS segment's segStart and
@@ -823,9 +779,7 @@
         }
         closeSeg();
         bodyVerts_.resize(size_t(destOff));
-        const bool indexModelTiles=modelAA_.effective && !tak::devFlag("TAK_AA_TILE_REFERENCE");
-        if(indexModelTiles)bodyTileRanges_.resize(copyTasks_.size());
-        pool_.parallelFor(copyTasks_.size(), [this,indexModelTiles](size_t b, size_t e) {
+        pool_.parallelFor(copyTasks_.size(), [this](size_t b, size_t e) {
             for (size_t i = b; i < e; ++i) {
                 const CopyTask& t = copyTasks_[i];
                 const auto& distant=distantModelItems_[size_t(t.geom)];
@@ -835,8 +789,6 @@
                     std::copy(gv.begin() + t.src, gv.begin() + t.src + t.count,
                               bodyVerts_.begin() + t.dst);
                 }
-                if(indexModelTiles)bodyTileRanges_[i]={size_t(t.dst),size_t(t.count),
-                    tak::SelectiveAA::bounds({bodyVerts_.data()+t.dst,size_t(t.count)})};
             }
         });
         // The deferred air shadows run INSIDE the body window but belong to the shadow
@@ -907,8 +859,8 @@
                             {{sd.x+sd.w+bottom,sd.y+sd.h},white,{1,1}},
                             {{sd.x+bottom,sd.y+sd.h},white,{0,1}}};
                         static const int indices[6]={0,1,2,0,2,3};
-                        SDL_RenderGeometry(ren_,zoomArt(shadow),v,4,indices,6);
-                    } else SDL_RenderCopyF(ren_, zoomArt(shadow), nullptr, &sd);
+                        SDL_RenderGeometry(ren_,shadow,v,4,indices,6);
+                    } else SDL_RenderCopyF(ren_, shadow, nullptr, &sd);
                 }
                 const auto drawFeatureSmoke = [&] {
                     const auto found=featureSmokeSprites_.find(f.simId);
@@ -975,7 +927,7 @@
                     SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
                                   (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
                                   float(fw) * zm0, float(fh) * zm0};
-                    SDL_RenderCopyF(ren_, zoomArt(tex), nullptr, &dst);
+                    SDL_RenderCopyF(ren_, tex, nullptr, &dst);
                     drawFlame(f.frontFlame);
                     drawFeatureSmoke();
                     continue;
@@ -1010,40 +962,17 @@
                         {{dst.x, dst.y + dst.h}, wc, {0, 1}},
                     };
                     static const int wIdx[6] = {0, 1, 2, 0, 2, 3};
-                    if (tex) SDL_RenderGeometry(ren_, zoomArt(tex), v, 4, wIdx, 6);
+                    if (tex) SDL_RenderGeometry(ren_, tex, v, 4, wIdx, 6);
                 } else {
-                    if (tex) SDL_RenderCopyF(ren_, zoomArt(tex), nullptr, &dst);
+                    if (tex) SDL_RenderCopyF(ren_, tex, nullptr, &dst);
                 }
                 drawFlame(f.frontFlame);
                 drawFeatureSmoke();
             } else if (op.u) {
                 drawUnit(*op.u);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
-                size_t end=opi+1;
-                while(end<drawOps_.size() && end!=airShadowOp_ && !drawOps_[end].f && !drawOps_[end].u && drawOps_[end].count>0 && drawOps_[end].tex)++end;
-                const auto& last=drawOps_[end-1];
-                const auto vertices=std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(last.start+last.count-op.start));
-                const SDL_FRect bounds=indexModelTiles
-                    ? tak::geometryTileBounds(std::span<const tak::GeometryTileRange>(bodyTileRanges_).subspan(
-                        op.rangeFirst,last.rangeFirst+last.rangeCount-op.rangeFirst))
-                    : modelAA_.effective?tak::SelectiveAA::bounds(vertices):SDL_FRect{};
-                modelAA_.render(ren_,bounds,[&](SDL_FPoint offset,SDL_Rect tile){
-                    for(size_t i=opi;i<end;++i) {
-                        const auto& part=drawOps_[i];
-                        const auto source=std::span<const SDL_Vertex>(bodyVerts_.data()+part.start,size_t(part.count));
-                        const bool cull=modelAA_.tileCulling() && tile.w>0 && tile.h>0;
-                        const auto verts=cull && indexModelTiles
-                            ? tak::translatedGeometryTile(bodyVerts_,std::span<const tak::GeometryTileRange>(bodyTileRanges_).subspan(
-                                part.rangeFirst,part.rangeCount),offset,tile,bodyTileScratch_)
-                            : cull?modelAA_.translated(source,offset,tile):source;
-                        if(cull && indexModelTiles) {
-                            modelAA_.translatedVertices+=verts.size();
-                            modelAA_.culledVertices+=source.size()-verts.size();
-                        }
-                        bodySubmit_.draw(ren_,part.tex,verts,!tak::devFlag("TAK_BODY_SDL_SUBMIT"),0,cull?SDL_FPoint{}:offset);
-                    }
-                });
-                opi=end-1;
+                bodySubmit_.draw(ren_,op.tex,std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
+                                 !tak::devFlag("TAK_BODY_SDL_SUBMIT"));
             }
         }
         // Fallback drain: if the air layer produced no draw ops at all (every flyer
@@ -2216,7 +2145,7 @@
                     SDL_TEXTUREACCESS_STATIC,side,side);
                 if(!texture) {noteGpuAllocFail();continue;}
                 SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
-                SDL_SetTextureScaleMode(texture,SDL_ScaleModeNearest);
+                SDL_SetTextureScaleMode(texture,unitScaleMode());
                 paletteTexturePages_.push_back({texture});page=&paletteTexturePages_.back();
                 freeIndex=0;
             }
@@ -2236,7 +2165,6 @@
             if(tak::devFlag("TAK_PALETTE_VERIFY")) {
                 // Exercise the actual uploaded subrect, including the four-column
                 // band layout, on software and accelerated SDL backends alike.
-                AaScaleReset scale(ren_);
                 auto* check=gpuvram::create(ren_,SDL_PIXELFORMAT_RGBA32,
                     SDL_TEXTUREACCESS_TARGET,rect.w,rect.h);
                 if(!check)throw std::runtime_error("palette verification target allocation failed");
@@ -2269,7 +2197,6 @@
     static void paintAtlasRect(SDL_Renderer* r, SDL_Texture* src, const SDL_Rect& d);
 
     void GameView::animateGlowTextures() {
-        AaScaleReset _sr(ren_);   // bakes render at 1:1 even when whole-frame AA is on
         if (animatedTex_.empty()) return;
         bool changed = glowDirty_;
         for (auto& [name, animation] : modelTextureAnimations_) {
@@ -2314,7 +2241,6 @@
         mapView_.invalidateRenderTargets();
         fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
         fogMeshValid_ = false;
-        terrainAA_.clear();modelAA_.clear();terrainSharp_.clear();clearSharpSprites();
         distantModelCache_.clear();
         for(auto& geometry:geomPool_)geometry.geometryKey.clear();
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
@@ -2374,7 +2300,6 @@
             for (auto* texture : a.shadowFrames) if (texture) gpuvram::destroy(texture);
         }
         featureArt_.clear();
-        clearSharpSprites();terrainSharp_.clear();
         for (auto& [n, ea] : effectAnims_)
             for (auto& f : ea.frames) if (f.tex) gpuvram::destroy(f.tex);
         effectAnims_.clear();
@@ -2384,7 +2309,6 @@
         kill(panelTex_);
         kill(botTex_);
         kill(mapPreviewTex_);
-        terrainAA_.clear();modelAA_.clear();
         distantModelCache_.clear();
         distantModelItems_.clear();
         hudFont_.destroyGlyphs();
@@ -2395,126 +2319,28 @@
         scoreboardLogos_.clear();
     }
 
-    // Resolve Zoom smoothing for this frame's zoom: which art samples LINEAR, the
-    // Sharp prescale factor, and the terrain target's lifetime. Cheap when nothing
-    // changed (every setter early-outs on an unchanged state).
-    void GameView::updateZoomFiltering(float zoom, int viewW, int viewH) {
-        const uint64_t now = SDL_GetTicks64();
-        const int mode = settings_ ? settings_->zoomSmoothing : tak::kZoomOff;
-        const bool in = tak::zoomedIn(zoom);
-        const bool sharp = mode == tak::kZoomSharp && in;
-        if (sharp) sharpModelsSeenMs_ = now;
-        const int k = sharp ? tak::sharpFactor(zoom) : 1;
-        terrainSharp_.configure(ren_, viewW, viewH, sharp && k >= 2, now);
-        const bool sharpTerrain = sharp && terrainSharp_.ready() &&
-                                  tak::sharpFactor(zoom, terrainSharp_.cap()) >= 2;
-        // Smooth: everything bilinear, as retail's Filtering option. Sharp, zoomed
-        // in: originals bilinear as the fallback (and the whole answer at k = 1,
-        // where sharp bilinear IS bilinear); the terrain target and prescaled sprites
-        // supply the sharp result. Off, and Sharp at zoom <= 1: nearest.
-        const bool featLinear = mode == tak::kZoomSmooth || sharp;
-        mapView_.setBilinear(mode == tak::kZoomSmooth || (sharp && !sharpTerrain));
-        if (featLinear != bilinear_) {
-            bilinear_ = featLinear;
-            const SDL_ScaleMode fm = featLinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
-            for (auto& [id, a] : featureArt_) {
-                for (SDL_Texture* t : a.frames) if (t) SDL_SetTextureScaleMode(t, fm);
-                for (SDL_Texture* t : a.shadowFrames) if (t) SDL_SetTextureScaleMode(t, fm);
-            }
-        }
-        const bool modelLinear = mode == tak::kZoomSmooth;
-        if (modelLinear != modelLinear_) {
-            modelLinear_ = modelLinear;
-            for (SDL_Texture* t : atlasTex_)
-                if (t) SDL_SetTextureScaleMode(t, modelLinear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
-        }
-        sharpK_ = sharp ? k : 1;
-        ++sharpSpriteFrame_;
-        sharpSpriteBuilds_ = 0;
-        if (sharpK_ < 2 && !sharpSprites_.empty() &&
-            (mode != tak::kZoomSharp || now - sharpModelsSeenMs_ > 3000))
-            clearSharpSprites();
+    // Retail's BiLinearFilter (VisualOptions +0x13, default off) is read only by the
+    // 3D-hardware unit pass: it bilinearly stretches the unit and unit-shadow images
+    // that pass rendered at reduced resolution (KINGDOMS.icd 0x4ebdcc). Terrain,
+    // scenery, effects and the interface stay point-sampled whatever it says. This
+    // engine draws units at full resolution, so the same switch samples what makes
+    // up a unit and its shadow -- the model-texture pages and the shadow silhouette
+    // pages -- and nothing else. Pages created later read bilinear_ when built.
+    SDL_ScaleMode GameView::unitScaleMode() const {
+        return bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
     }
-
-    void GameView::clearSharpSprites() {
-        for (auto& [source, sprite] : sharpSprites_) gpuvram::destroy(sprite.tex);
-        sharpSprites_.clear();
-        sharpSpriteBytes_ = 0;
-    }
-
-    // Sharp bilinear for one bitmap: a sharpK_-times NEAREST copy sampled LINEAR.
-    // Normalised UVs are unchanged, so callers substitute it for the original in any
-    // RenderCopy/RenderGeometry. Falls back to the (bilinear) original whenever a copy
-    // is not ready: per-frame build budget, the LRU budget, or GPU allocation backoff.
-    SDL_Texture* GameView::zoomArt(SDL_Texture* t) {
-        if (sharpK_ < 2 || !t) return t;
-        auto found = sharpSprites_.find(t);
-        if (found != sharpSprites_.end() && found->second.k == sharpK_ && found->second.tex) {
-            found->second.used = sharpSpriteFrame_;
-            return found->second.tex;
-        }
-        if (sharpSpriteBuilds_ >= 16 || gpuAllocBlocked()) return t;
-        int w = 0, h = 0;
-        if (SDL_QueryTexture(t, nullptr, nullptr, &w, &h) != 0 || w <= 0 || h <= 0) return t;
-        const int k = sharpK_;
-        const size_t bytes = size_t(w) * k * size_t(h) * k * 4;
-        if (w * k > 4096 || h * k > 4096 || bytes > kSharpSpriteBudget / 4) return t;
-        if (found != sharpSprites_.end()) {
-            gpuvram::destroy(found->second.tex);
-            sharpSpriteBytes_ -= found->second.bytes;
-            sharpSprites_.erase(found);
-        }
-        while (sharpSpriteBytes_ + bytes > kSharpSpriteBudget) {
-            auto oldest = sharpSprites_.end();
-            for (auto i = sharpSprites_.begin(); i != sharpSprites_.end(); ++i)
-                if (i->second.used != sharpSpriteFrame_ &&
-                    (oldest == sharpSprites_.end() || i->second.used < oldest->second.used)) oldest = i;
-            if (oldest == sharpSprites_.end()) return t;
-            gpuvram::destroy(oldest->second.tex);
-            sharpSpriteBytes_ -= oldest->second.bytes;
-            sharpSprites_.erase(oldest);
-        }
-        if (!gpuvram::wouldFit(bytes)) return t;
-        ++sharpSpriteBuilds_;
-        SDL_Texture* out = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, w * k, h * k);
-        if (!out) { noteGpuAllocFail(); return t; }
-        AaScaleReset _sr(ren_);
-        SDL_Texture* prev = SDL_GetRenderTarget(ren_);
-        SDL_BlendMode drawBlend; SDL_GetRenderDrawBlendMode(ren_, &drawBlend);
-        Uint8 dr, dg, db, da; SDL_GetRenderDrawColor(ren_, &dr, &dg, &db, &da);
-        SDL_BlendMode blend; SDL_GetTextureBlendMode(t, &blend);
-        SDL_ScaleMode scale; SDL_GetTextureScaleMode(t, &scale);
-        Uint8 alpha; SDL_GetTextureAlphaMod(t, &alpha);
-        bool ok = SDL_SetRenderTarget(ren_, out) == 0;
-        if (ok) {
-            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
-            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
-            SDL_RenderClear(ren_);
-            SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
-            SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
-            SDL_SetTextureAlphaMod(t, 255);
-            ok = SDL_RenderCopy(ren_, t, nullptr, nullptr) == 0;   // exact k x k texel blocks
-            // Texture scale mode is applied immediately, but the copy is batched:
-            // flush before restoring LINEAR, or the copy samples bilinearly.
-            SDL_RenderFlush(ren_);
-            SDL_SetTextureBlendMode(t, blend);
-            SDL_SetTextureScaleMode(t, scale);
-            SDL_SetTextureAlphaMod(t, alpha);
-        }
-        SDL_SetRenderTarget(ren_, prev);
-        SDL_SetRenderDrawBlendMode(ren_, drawBlend);
-        SDL_SetRenderDrawColor(ren_, dr, dg, db, da);
-        if (!ok) { gpuvram::destroy(out); return t; }
-        SDL_SetTextureBlendMode(out, blend);
-        SDL_SetTextureScaleMode(out, SDL_ScaleModeLinear);
-        sharpSprites_[t] = {out, k, sharpSpriteFrame_, bytes};
-        sharpSpriteBytes_ += bytes;
-        return out;
+    void GameView::setBilinear(bool on) {
+        if (on == bilinear_) return;
+        bilinear_ = on;
+        const SDL_ScaleMode mode = unitScaleMode();
+        for (SDL_Texture* t : atlasTex_) if (t) SDL_SetTextureScaleMode(t, mode);
+        for (auto& page : paletteTexturePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
+        for (auto& page : shadowSilhouettePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
     }
 
     // Copy one model texture into its atlas rect plus a one-texel clamped gutter
-    // (the layout leaves a two-texel pad). Bilinear model textures (Smooth) then
-    // sample the texture's own edge at a polygon's UV boundary instead of the
+    // (the layout leaves a two-texel pad). With Bilinear Filtering on, model textures
+    // then sample the texture's own edge at a polygon's UV boundary instead of the
     // transparent pad. Uses the source's current blend mode for body and gutter alike.
     static void paintAtlasRect(SDL_Renderer* r, SDL_Texture* src, const SDL_Rect& d) {
         int w = 0, h = 0;
@@ -2560,7 +2386,6 @@
     }
 
     SDL_Texture* GameView::atlasFor(int slot) {
-        AaScaleReset _sr(ren_);
         if (slot < 0) slot = 0;
         if (!atlasLaidOut_) buildAtlasLayout();
         if (atlasW_ <= 0) return nullptr;
@@ -2591,7 +2416,7 @@
         }
         SDL_SetRenderTarget(ren_, prev);
         // NEAREST unless Zoom smoothing is Smooth; the gutters keep LINEAR in-rect.
-        SDL_SetTextureScaleMode(atlas, modelLinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        SDL_SetTextureScaleMode(atlas, unitScaleMode());
         atlasTex_[slot] = atlas;
         glowDirty_ = true;   // fresh atlas: its animated regions are unpainted
         return atlas;
@@ -3189,20 +3014,16 @@
         // Submit the pre-built, depth-sorted vertex runs -- one SDL_RenderGeometry
         // per texture (usually 1 per unit). The veterancy/conjure colour tint was
         // already baked into the vertices on the worker pool.
-        modelAA_.render(ren_,modelAA_.effective?tak::SelectiveAA::bounds(g.verts):SDL_FRect{},[&](SDL_FPoint offset,SDL_Rect tile){
         int off = 0;
         for (const auto& r : g.runs) {
             // A null run texture (an atlas page that failed to allocate under
             // VRAM pressure -- corpse meshes load mid-game) must be SKIPPED:
             // SDL_RenderGeometry(nullptr,..) paints the raw vertex colours as a
             // solid white shape. Invisible-until-retry beats a white flash.
-            if (r.first) {
-                const auto vertices=modelAA_.translated({g.verts.data()+off,size_t(r.second)},offset,tile);
-                if(!vertices.empty())SDL_RenderGeometry(ren_,r.first,vertices.data(),int(vertices.size()),nullptr,0);
-            }
+            if (r.first)
+                SDL_RenderGeometry(ren_, r.first, g.verts.data() + off, r.second, nullptr, 0);
             off += r.second;
         }
-        });
 
         constructionParticles(true);
 
@@ -3223,7 +3044,7 @@
                 triBatch_.push_back(v);
             }
             if (!triBatch_.empty())
-                modelAA_.geometry(ren_,nullptr,triBatch_.data(),int(triBatch_.size()));
+                SDL_RenderGeometry(ren_, nullptr, triBatch_.data(), int(triBatch_.size()), nullptr, 0);
             if (hadClip) SDL_RenderSetClipRect(ren_, &prevClip);
             else SDL_RenderSetClipRect(ren_, nullptr);
         }
@@ -3393,7 +3214,6 @@
                             if (!t) continue;   // VRAM-pressure alloc fail: drop the frame
                             if (blank) premulUpload(t, std::vector<uint8_t>(4, 0), 1);
                             else premulUpload(t, ff.rgba, ff.width);
-                            if (bilinear_) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
                             a.frames.push_back(t);
                             a.fgeom.push_back({ff.width, ff.height, ff.xoff, ff.yoff});
                             acc += std::max(1, int(ff.retailDelayTicks));
@@ -3422,7 +3242,6 @@
                                 SDL_TEXTUREACCESS_STATIC, blank ? 1 : frame.width, blank ? 1 : frame.height);
                             if (texture) {
                                 premulUpload(texture, px, blank ? 1 : frame.width);
-                                if (bilinear_) SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
                             }
                             a.shadowFrames.push_back(texture);
                             a.shadowGeom.push_back({frame.width, frame.height, frame.xoff, frame.yoff});
@@ -3823,7 +3642,6 @@
     }
 
     SDL_Texture* GameView::modelIconTex(const std::string& id, int slot, bool canMove) {
-        AaScaleReset _sr(ren_);
         auto keyp = std::make_pair(id, slot);
         if (auto it = modelIcons_.find(keyp); it != modelIcons_.end()) return it->second;
         if (gpuAllocBlocked()) return nullptr;   // retry after the alloc backoff lapses

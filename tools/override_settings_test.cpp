@@ -1,5 +1,4 @@
 #include "client/settings.h"
-#include "client/zoomsmooth.h"
 #include "net/crypto.h"
 #include <SDL.h>
 #include <algorithm>
@@ -79,83 +78,53 @@ int main() {
         if(tak::loadSettings().scorecardScale!=2.0f)throw std::runtime_error("scorecard upper limit");
         std::ofstream(path)<<"scorecardScale = 0\n";
         if(tak::loadSettings().scorecardScale!=0.75f)throw std::runtime_error("scorecard lower limit");
-        // Graphics defaults: edge/zoomed-out supersampling off/Auto, Zoom smoothing Sharp.
+        // Graphics defaults: Bilinear Filtering off (retail's default), art filters off.
         auto graphicsDefaults=[](const tak::Settings& v) {
-            if(v.unitEdgeAA || v.zoomSmoothing!=tak::kZoomSharp || v.zoomOutTerrain!=tak::kZoomOutAuto ||
-               v.smoothArt || v.videoDeblock)
-                throw std::runtime_error("graphics defaults changed");
+            if(v.bilinear || v.smoothArt || v.videoDeblock)throw std::runtime_error("graphics defaults changed");
         };
         graphicsDefaults(tak::Settings{});
         if(!tak::Settings{}.treeSway)throw std::runtime_error("tree sway must default on");
-        // New keys round-trip for every combination.
-        for(int out:{tak::kZoomOutAuto,tak::kZoomOutOff,tak::kZoomOut2x,tak::kZoomOut4x})
-        for(int edge:{0,2,4,8,16})for(int zoom:{0,1,2}) {
-            tak::Settings v;v.zoomOutTerrain=out;v.unitEdgeAA=edge;v.zoomSmoothing=zoom;
-            v.smoothArt=v.videoDeblock=true;v.treeSway=false;v.vsync=false;
+        for(bool bilinear:{false,true}) {
+            tak::Settings v;v.bilinear=bilinear;v.smoothArt=v.videoDeblock=true;v.treeSway=false;v.vsync=false;
             if(!tak::saveSettings(v) || !(tak::loadSettings()==v))
                 throw std::runtime_error("graphics preferences failed round trip");
         }
-        // Migration from the old keys (in either line order), when the new key is absent.
-        for(int terrain:{0,2,4})for(int model:{0,2,4,8,16})for(int bilinear:{0,1}) {
-            std::ofstream(path)<<"antiAlias = 4\nterrainAA = "<<terrain<<"\nmodelAA = "<<model
-                <<"\nbilinear = "<<bilinear<<"\nsmoothArt = on\nvideoDeblock = 1\ntreeSway = 0\nvsync = 0\n";
+        // Older keys, used only when bilinearFilter is absent. Zoom Smoothing's Smooth
+        // and 0.7.24's bilinear = 1 were this filter; every other choice and every AA
+        // key has no successor and loads as Off.
+        struct Legacy { const char* text; bool expected; };
+        for(const Legacy& c:std::initializer_list<Legacy>{
+                {"bilinear = 1\n",true},{"bilinear = 0\n",false},
+                {"zoomSmoothing = smooth\n",true},{"zoomSmoothing = 1\n",true},
+                {"zoomSmoothing = sharp\n",false},{"zoomSmoothing = off\n",false},{"zoomSmoothing = bogus\n",false},
+                // the newer Zoom Smoothing key wins over 0.7.24's bilinear, in either order
+                {"bilinear = 1\nzoomSmoothing = sharp\n",false},{"zoomSmoothing = sharp\nbilinear = 1\n",false},
+                {"bilinear = 0\nzoomSmoothing = smooth\n",true},
+                // bilinearFilter wins over both, in any order
+                {"zoomSmoothing = smooth\nbilinear = 1\nbilinearFilter = 0\n",false},
+                {"bilinearFilter = 0\nzoomSmoothing = smooth\nbilinear = 1\n",false},
+                {"bilinearFilter = 1\nzoomSmoothing = off\n",true},
+                {"antiAlias = 4\nterrainAA = 4\nmodelAA = 16\nunitEdgeAA = 16\nzoomedOutTerrain = 4\n",false}}) {
+            std::ofstream(path)<<c.text<<"smoothArt = on\nvideoDeblock = 1\ntreeSway = 0\nvsync = 0\n";
             const auto loaded=tak::loadSettings();
-            const int out=terrain==4?tak::kZoomOut4x:terrain==2?tak::kZoomOut2x:tak::kZoomOutAuto;
-            if(loaded.unitEdgeAA!=model || loaded.zoomOutTerrain!=out ||
-               loaded.zoomSmoothing!=(bilinear?tak::kZoomSmooth:tak::kZoomSharp) || !loaded.smoothArt || !loaded.videoDeblock)
-                throw std::runtime_error("legacy graphics preferences not migrated");
-            if(loaded.treeSway)throw std::runtime_error("tree sway off preference ignored");
-            if(loaded.vsync)throw std::runtime_error("unrelated preference ignored");
+            if(loaded.bilinear!=c.expected)throw std::runtime_error(std::string("legacy filter not migrated: ")+c.text);
+            if(!loaded.smoothArt || !loaded.videoDeblock || loaded.treeSway || loaded.vsync)
+                throw std::runtime_error("legacy graphics keys disturbed other preferences");
         }
-        for(const char* text:{"antiAlias = 4\nterrainAA = 0\n", "terrainAA = 0\nantiAlias = 4\n"}) {
-            std::ofstream(path)<<text;
-            const auto v=tak::loadSettings();
-            if(v.zoomOutTerrain!=tak::kZoomOutAuto || v.unitEdgeAA!=4)throw std::runtime_error("legacy AA overrides explicit terrain choice");
-        }
-        for(const char* text:{"antiAlias = 2\nmodelAA = 16\n", "modelAA = 16\nantiAlias = 2\n"}) {
-            std::ofstream(path)<<text;
-            const auto v=tak::loadSettings();
-            if(v.zoomOutTerrain!=tak::kZoomOut2x || v.unitEdgeAA!=16)throw std::runtime_error("legacy AA overrides explicit model choice");
-        }
-        // New keys win over old ones regardless of order.
-        for(const char* text:{"modelAA = 16\nunitEdgeAA = 2\nbilinear = 1\nzoomSmoothing = off\nterrainAA = 4\nzoomedOutTerrain = off\n",
-                              "unitEdgeAA = 2\nzoomSmoothing = off\nzoomedOutTerrain = off\nmodelAA = 16\nbilinear = 1\nterrainAA = 4\n"}) {
-            std::ofstream(path)<<text;
-            const auto v=tak::loadSettings();
-            if(v.unitEdgeAA!=2 || v.zoomSmoothing!=tak::kZoomOff || v.zoomOutTerrain!=tak::kZoomOutOff)
-                throw std::runtime_error("legacy key overrides a new key");
-        }
-        for(int value:{-1,0,1,2,3,4,7,8,15,16,99}) {
-            std::ofstream(path)<<"unitEdgeAA = "<<value<<"\nmodelAA = 2\n";
-            const auto v=tak::loadSettings();
-            const int expected=value>=16?16:value>=8?8:value>=4?4:value>=2?2:0;
-            if(v.unitEdgeAA!=expected)throw std::runtime_error("invalid edge levels not clamped to supported steps");
-        }
-        for(const char* bad:{"7","sharpest","","-1"}) {
-            std::ofstream(path)<<"zoomSmoothing = "<<bad<<"\nzoomedOutTerrain = "<<bad<<"\n";
-            const auto v=tak::loadSettings();
-            if(v.zoomSmoothing!=tak::kZoomSharp || v.zoomOutTerrain!=tak::kZoomOutAuto)
-                throw std::runtime_error("invalid zoom values did not fall back to defaults");
-        }
-        s.zoomOutTerrain=tak::kZoomOut4x;s.unitEdgeAA=16;s.zoomSmoothing=tak::kZoomSmooth;s.smoothArt=s.videoDeblock=true;s.treeSway=false;
-        s.zoomOutTerrainEffective=2;s.unitEdgeAAEffective=4;
+        // The retired keys are dropped on the next save; only bilinearFilter is written.
+        std::ofstream(path)<<"antiAlias = 4\nterrainAA = 2\nmodelAA = 16\nbilinear = 1\nunitEdgeAA = 8\n"
+                             "zoomSmoothing = smooth\nzoomedOutTerrain = 4\nsmoothArt = 1\n";
+        s=tak::loadSettings();
+        if(!s.bilinear || !s.smoothArt)throw std::runtime_error("legacy file did not load");
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
-        const auto graphics=tak::loadSettings();
-        if(graphics.zoomOutTerrain!=tak::kZoomOut4x || graphics.unitEdgeAA!=16 || graphics.zoomSmoothing!=tak::kZoomSmooth ||
-           !graphics.smoothArt || !graphics.videoDeblock)
-            throw std::runtime_error("enabled graphics preferences not saved");
-        if(graphics.zoomOutTerrainEffective!=-1 || graphics.unitEdgeAAEffective!=-1)
-            throw std::runtime_error("runtime AA fallback saved as a preference");
-        if(tak::loadSettings().treeSway)throw std::runtime_error("tree sway off did not persist");
-        s.treeSway=true;
-        if(!tak::saveSettings(s) || !tak::loadSettings().treeSway)throw std::runtime_error("tree sway on did not persist");
         std::ifstream saved(path);
         const std::string contents((std::istreambuf_iterator<char>(saved)),{});
-        for(const char* old:{"antiAlias =","terrainAA =","modelAA =","bilinear ="})
-            if(contents.find(old)!=std::string::npos)throw std::runtime_error("legacy graphics preference still saved");
-        for(const char* key:{"unitEdgeAA = 16","zoomSmoothing = smooth","zoomedOutTerrain = 4","smoothArt =","videoDeblock ="})
+        for(const char* old:{"antiAlias","terrainAA","modelAA","bilinear =","unitEdgeAA","zoomSmoothing","zoomedOutTerrain"})
+            if(contents.find(old)!=std::string::npos)throw std::runtime_error(std::string("retired graphics key still saved: ")+old);
+        for(const char* key:{"bilinearFilter = 1","smoothArt = 1","videoDeblock ="})
             if(contents.find(key)==std::string::npos)throw std::runtime_error("graphics preference not saved");
-        s.zoomOutTerrain=tak::kZoomOutAuto;s.unitEdgeAA=0;s.zoomSmoothing=tak::kZoomSharp;s.smoothArt=s.videoDeblock=false;
+        if(!(tak::loadSettings()==s))throw std::runtime_error("migrated settings did not round trip");
+        s.bilinear=s.smoothArt=s.videoDeblock=false;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         graphicsDefaults(tak::loadSettings());
         fs::remove_all(root);std::cout<<"PASS: independent host/guest selections persist while Off\n";return 0;

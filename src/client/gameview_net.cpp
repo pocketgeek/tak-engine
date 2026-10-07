@@ -114,7 +114,6 @@
             for (auto texture : art.shadowFrames) if (texture) gpuvram::destroy(texture);
         }
         featureArt_.clear();
-        clearSharpSprites();   // keyed by the feature textures just destroyed
         if ((room.opts.crusades != 0) != crusades_) {
             crusades_ = room.opts.crusades != 0;
             registry_ = tak::sim::TypeRegistry{};

@@ -29,7 +29,8 @@
 - Reduce repeated model geometry and AA tile work, preserve stable fallback
   targets, and release unused distant-image pages. Fix a parallel terrain-height
   sampling race. Full-frame gains vary with the scene and renderer; see the
-  [AA measurements](antialiasing.md) and [render reuse review](render-reuse-2026-10-04.md).
+  AA measurements (in `docs/antialiasing.md`, removed with the AA options after 0.7.24 (see git history)) and the
+  [render reuse review](render-reuse-2026-10-04.md).
 - Improve queued builder controls. Releasing Shift after placing queued sites
   clears the selected build icon without clearing the builder or its orders.
   Show the build menu only for one selected builder or production building,
