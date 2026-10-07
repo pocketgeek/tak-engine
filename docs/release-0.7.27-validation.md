@@ -28,11 +28,72 @@ are unchanged since 0.7.26 (checked in source against `v0.7.26`).
 
 ## Local preparation checks
 
-Pending.
+All checks ran on a clean detached worktree of the version commit `9642e70`
+(0.7.27, protocol 238) with the owned retail install as game data.
+
+- **Builds.** Release, Debug, optimized Debug (`-O2 -g`), Clang Debug and
+  AddressSanitizer all-target builds completed. Every client and server reports
+  `0.7.27 (build v0.7.26-19-g9642e70e009b)` with no `-dirty` suffix.
+- **Full CTest.** Release passed **239/239**. Debug, optimized Debug and Clang
+  Debug each passed **252/252**, including the new Tactical Dots and renderer
+  driver tests. The intentionally disabled `legion_acceptance_crowdheld_legion`
+  is the only skip. No test timed out.
+- **AddressSanitizer/leak run.** The 0.7.26 selection plus `tactical_dots` and
+  `renderdriver`, **84/84**, passed with leak detection and no suppressions.
+- **Retail group port.** `tools/re/check_retail_group.py` passes every section
+  against the emulated original routines, with the same counts as 0.7.26.
+- **Determinism.** GCC and Clang x86-64 at O0/O2/O3 agree on
+  `dcef618cd2e4d558`; aarch64 emulation legs skip for missing headers.
+  `tools/check-detmath.sh` passes.
+- **Headless AI games.** Inner Circle, seed 1, each reproduced on two runs:
+  Legion 300 s `ca02108dfc933123`, Retail 300 s `b240750e5765c02b`, Legion 60 s
+  `dadf535a50b404e1`, Retail 60 s `56cfcbf8ef57181e`. Protocol 238's Legion
+  changes do not affect this two-player game.
+- **Python research suite.** **165 tests** passed, one optional corpus test
+  skipped; the owned-retail archive verifier passed **6/6** with archive
+  checksums unchanged.
+- **Syntax checks.** All 421 Python files compile; all shell scripts pass
+  `bash -n`.
+- **Final commit.** The Tactical Dots Zoom greying and documentation followed the
+  version commit. The final source (`cf98fc9`) was rebuilt and passed the full
+  Release (**239/239**) and optimized Debug (**252/252**) suites again.
 
 ## Remote multiplayer sweep
 
-Pending.
+The full 37-scenario table passed for both modes on `tak.pgnet.us` and
+`vpn3.pgnet.us`, using `9642e70` binaries (the later commits change only the
+Options screen and documentation, not the simulation or network code).
+
+| Mode | Scenarios | Seats | Client-pair checkpoints | Client-referee checkpoints |
+| --- | ---: | ---: | --- | --- |
+| Retail | 37/37 | 52/52 | 9,628 over 22 pairs, 0 mismatched | 1,081 over 23 comparisons, 0 mismatched |
+| Legion | 37/37 | 52/52 | 10,201 over 22 pairs, 0 mismatched | 1,533 over 29 comparisons, 0 mismatched |
+
+- The build-identity check, planted-desync detection (tick 900) and
+  override-transfer rejection passed in both modes. No natural desync or
+  referee-suspect report appeared. Every replay header shows the intended mode,
+  protocol 238 and 0.7.27.
+- The three dense Legion stress cases (`2h-stress`, `2h-orders-stress`,
+  `w-allai-stress`; seeds 2021, 2023, 2035) again exceeded the default 900-second
+  real-time limit while progressing, and passed with a 3,600-second allowance and
+  the same seeds in about 930, 930 and 945 seconds (0.7.26: about 1,010, 2,080
+  and 1,080). Protocol 238 plays different games from the same seeds, so only the
+  all-AI case is a like-for-like comparison, at about 12% faster. The harness runs
+  these games at 4x speed; the referees were limited by one CPU core.
+- All eight impaired-network cases per mode archived setup, the netem rules and
+  an exact game-port filter, and tore down to the interface default. Two leftover
+  netem watchdogs whose claim files were already gone were stopped by PID.
+- Both hosts were confirmed clean afterwards. The public server binary and
+  service were never replaced, stopped or restarted.
+
+SHA-256: referee (Ubuntu 24.04, GCC 13.3, `-O2 -g`)
+`73cc48455c8be9ccdcabe5c2ab8edc165f1c9bae34680cfbd0c899ecb3178a01`; client
+(GCC 16.2.1, `-O2 -g`)
+`486d106c8b3b9f21530fdd2512199fe0a0a1e57974444c1263f42ef93a113a95`; override
+transfer test
+`e3f9a3e1085768511bc083e3f398a73011c104f1fb3f70d454f624bc77a12384`; harness
+(a working copy of `tools/desync-hunt-remote.sh`, unchanged since 0.7.25)
+`02d27068863de212b488e19ba8dbe14e9a386b74039dd709defabaabbd6db974`.
 
 ## CI and packages
 
