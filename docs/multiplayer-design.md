@@ -586,7 +586,9 @@ Protocol 220 introduced the selection (then Retail or Flowfield); protocols
 225-227 added Cooperative and Retail+, and 228 added Legion. Protocol 231
 removed Retail+, Flowfield and Cooperative (2026-10-06, by user decision; they
 remain in git history). Protocols 232-236 carry later Legion and Retail
-behavior changes; 0.7.25 ships protocol 236. Game options
+behavior changes; 0.7.25 shipped protocol 236. Protocol 237 adds grouped flyer
+movement (retail's VTOL_Move group checks in Retail; Legion flyers holding
+stations over a mixed formation); 0.7.26 ships protocol 237. Game options
 and every lobby/start/rejoin snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
@@ -647,6 +649,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.7.25 peers and the server require protocol 236; the replay loader
+227. Version 0.7.26 peers and the server require protocol 237; the replay loader
 rejects every older simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.
