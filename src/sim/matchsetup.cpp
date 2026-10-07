@@ -70,7 +70,7 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             // existed for this the whole time, used only by mission scripts.
             if (owns(c.unitId)) {
                 if (!repeatingMobile) world.cancelBuilds(c.unitId);
-                if (c.queue) world.patrolTo(c.unitId, c.x, c.z, true);
+                if (c.queue) world.queuePatrol(c.unitId, c.x, c.z);
                 else world.patrol(c.unitId, c.x, c.z);
             }
             break;

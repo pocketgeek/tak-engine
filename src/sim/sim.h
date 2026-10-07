@@ -638,6 +638,13 @@ struct Order {
     bool navigationExhausted = false;
     bool navigationConsumed = false; // only the final stored point remains
     bool flightMoveMission = false;
+    // A Shift-queued ground patrol point whose loop has no return point yet.
+    // Retail's patrol mission owns that point: Initialize (40388d) appends
+    // one where the unit stands when the patrol STARTS, unless another
+    // patrol leg in the queue already belongs to a loop. So "move to A,
+    // Shift-patrol B" laps A<->B, and Shift-patrols B, C lap start, B, C.
+    // Hashed when set; ordinary patrol() loops never set it.
+    bool patrolOpen = false;
     RetailMissionState mission;
     uint32_t missionRadius = 0;
     RetailGroundResponse groundResponse;
@@ -1889,6 +1896,11 @@ public:
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.
     void patrolTo(int unitId, float x, float z, bool queue);
+    // The player's Shift-patrol (Cmd::Patrol, queue=1): appends point (x,z)
+    // after every queued order. If it starts with no loop in the queue, the
+    // patrol mission adds the return point where the unit then stands (see
+    // Order::patrolOpen); otherwise it joins the existing loop.
+    void queuePatrol(int unitId, float x, float z);
     // Queue a timed hold (SetMission "w N"): the unit stands still for `seconds`
     // before the next queued order runs.
     void orderWait(int unitId, float seconds, bool queue);

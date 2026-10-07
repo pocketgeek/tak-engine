@@ -1583,6 +1583,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.reclaimFeat = tmpl.reclaimFeat;
             o.repairTarget = tmpl.repairTarget;
             o.patrolRepair = tmpl.patrolRepair;
+            o.patrolOpen = tmpl.patrolOpen;
             o.buildRectangle = tmpl.buildRectangle;
             o.buildX = tmpl.buildX; o.buildZ = tmpl.buildZ;
         }
@@ -2254,6 +2255,7 @@ void World::tickGroundMission(Unit& u) {
         World& w; Unit& u;
         uint64_t replaceController=0;
         bool completeUnloadApproach=false,abortUnloadApproach=false;
+        std::optional<std::pair<Fixed,Fixed>> patrolReturn; // appended after dispatch
         bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
         bool canStandby() const {
             return u.standbyAllowed && u.type && (!u.type->canFly || u.type->vtolStandby) && !u.type->isStructure() &&
@@ -2450,7 +2452,18 @@ void World::tickGroundMission(Unit& u) {
             if (goal.patrol)
                 return retailGroundPatrol(m,goal.missionRadius,w.tickCounter_,events,
                     int16_t(u.type->footX),true,[&](int n){return random(n);},
-                    []{},resetGoal,[]{return 0;});
+                    [&] {
+                        // Initialize: a Shift-queued patrol that starts with no
+                        // loop behind it closes one here. The queue may not grow
+                        // until the dispatcher is done with m and goal.
+                        if (!goal.patrolOpen) return;
+                        goal.patrolOpen=false;
+                        const size_t current=currentLeg(u.orders);
+                        bool loop=false;
+                        for (size_t i=current+1;i<u.orders.size();++i)
+                            loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
+                        if (!loop) patrolReturn=std::pair{u.x,u.z};
+                    },resetGoal,[]{return 0;});
             // Retail relaxes the goal radius after failed searches. Legion
             // waits/retries the same plain Move instead: a blocked army must
             // never "arrive" because repeated failures enlarged its circle.
@@ -2530,6 +2543,7 @@ void World::tickGroundMission(Unit& u) {
         }
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if(host.patrolReturn) patrolTo(u.id,host.patrolReturn->first.toFloat(),host.patrolReturn->second.toFloat(),true);
     if(host.abortUnloadApproach) {
         dropLeg(u);
         if(!u.orders.empty() && u.orders.front().unload)
@@ -3583,6 +3597,17 @@ void World::patrolTo(int unitId, float x, float z, bool queue) {
         u->orders[i].attackMove = true;
         u->orders[i].flightMoveMission = false;
     }
+}
+
+void World::queuePatrol(int unitId, float x, float z) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    const size_t before = u->orders.size();
+    patrolTo(unitId, x, z, true);
+    // Producers keep rally lists and flyers their own patrol handler, which
+    // already appends its return point when the patrol starts.
+    if (u->type->isStructure() || u->repeatType || u->type->canFly) return;
+    for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].patrolOpen = true;
 }
 
 void World::orderWait(int unitId, float seconds, bool queue) {
@@ -10966,6 +10991,7 @@ uint64_t World::stateHash() const {
                 mix(uint32_t(a.minX));mix(uint32_t(a.minZ));mix(uint32_t(a.maxX));mix(uint32_t(a.maxZ));
                 mix(a.approached);
             }
+            if (order.patrolOpen) mix(0x5041544f50454eull);
             if (order.patrolRepair) {
                 mix(0x5054524c52455052ull);
                 mix(uint32_t(order.repairTarget));mix(uint32_t(order.clickX.v));mix(uint32_t(order.clickZ.v));

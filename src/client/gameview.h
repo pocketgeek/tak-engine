@@ -2554,6 +2554,10 @@ private:
     int playerMonarchId_ = -1, aiMonarchId_ = -1;
     const tak::sim::UnitType* placing_ = nullptr;
     bool shiftBuildPlaced_ = false; // disarm placement on Shift release after queued work
+    // An armed order issued with Shift stays armed for the next click, as
+    // retail does (0x526620 keeps the mode and flags it; it disarms once
+    // Shift is up). Releasing Shift disarms it.
+    bool shiftOrderArmed_ = false;
     float mouseX_ = -1, mouseY_ = -1;   // -1 until the first real mouse motion, so
                                         // edge-scroll can't fire from a (0,0) default
                                         // cursor on launch (before the mouse moves)
@@ -2697,6 +2701,8 @@ private:
     // Right-click on the minimap: order the selection to that world point.
     bool minimapOrder(float mx, float my, int winW, int winH, bool queue);
 
+    // After an armed order's click: keep it armed while Shift queues.
+    void armedOrderIssued(bool queue);
     // Issue the armed order (pendingCmd_) to the selection at world (wx,wz). On the
     // main map (`precise`) 'a' targets an enemy under the cursor and 'g' the friendly
     // under it; from the minimap (coarse) 'a' falls back to attack-move and 'g' to the

@@ -4625,6 +4625,9 @@
                 else if (o.guard)           marker = tak::CursorId::Defend;
                 else if (o.targetId)        marker = tak::CursorId::Attack;
                 else if (o.patrol)          marker = tak::CursorId::Patrol;
+                // Fight-move: the cursor its armed command shows
+                // (cursorForArmedCommand 'f').
+                else if (o.attackMove)      marker = tak::CursorId::Attack;
                 if (haveMarker) {
                     // Draw the marker where the PLAYER CLICKED, not where the
                     // unit will end up. order() snaps a destination the unit
