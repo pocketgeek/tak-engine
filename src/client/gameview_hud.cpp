@@ -254,13 +254,13 @@ namespace {
                     // Legion owns footprint-aware group spreading. Per-unit click
                     // offsets would split one selection into unrelated goals.
                     // Flying units retain their independent flight controller.
-                    // Legion plans only footprints up to 8 on a fresh plain
-                    // Move, in every surface domain; a leg queued behind other
-                    // orders may start behind a non-plain leg Retail steers, so
-                    // it keeps its offset.
+                    // Legion plans footprints up to 8 in every surface domain.
+                    // A Shift-queued leg shares the point too: once the legs
+                    // ahead of it are done it is a plain Move, and the legs one
+                    // click queued share its issue tick, so the selection plans
+                    // and packs it as one group when it becomes current.
                     const bool shared=u->type && legion&&!u->type->canFly&&
-                        u->type->footX>=1&&u->type->footZ>=1&&u->type->footX<=8&&u->type->footZ<=8&&
-                        (!queue||u->orders.empty());
+                        u->type->footX>=1&&u->type->footZ>=1&&u->type->footX<=8&&u->type->footZ<=8;
                     c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
                     c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);
                     c.queue = queue;
@@ -1051,9 +1051,17 @@ namespace {
         if (!pendingCmd_) return false;
         float wx, wz;
         if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
-        issueArmedOrder(pendingCmd_, wx, wz, (SDL_GetModState() & KMOD_SHIFT) != 0, false);
-        pendingCmd_ = 0;
+        const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+        issueArmedOrder(pendingCmd_, wx, wz, queue, false);
+        armedOrderIssued(queue);
         return true;
+    }
+
+    void GameView::armedOrderIssued(bool queue) {
+        // Shift queues the order AND keeps its command armed for the next
+        // click; without Shift the order disarms at once.
+        shiftOrderArmed_ = queue;
+        if (!queue) pendingCmd_ = 0;
     }
 
     void GameView::loadInterfaceFonts() {

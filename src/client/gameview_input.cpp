@@ -26,6 +26,17 @@
                 placing_ = nullptr;
                 shiftBuildPlaced_ = false;
             }
+            if (!(e.key.keysym.mod & KMOD_SHIFT & ~released) && shiftOrderArmed_) {
+                pendingCmd_ = 0;
+                shiftOrderArmed_ = false;
+            }
+        }
+        // A Shift release we never saw (focus moved away): the next mouse event
+        // with Shift up disarms, as retail's mouse handler does (0x5280a0).
+        if (shiftOrderArmed_ && !(SDL_GetModState() & KMOD_SHIFT) &&
+            (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEMOTION)) {
+            pendingCmd_ = 0;
+            shiftOrderArmed_ = false;
         }
         if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL ||
             (e.type == SDL_KEYDOWN &&
@@ -154,7 +165,7 @@
             else if (outcome_ != 0) { menuRequested_ = true; }
             else if (placing_ || pendingCmd_) {
                 placing_ = nullptr; pendingCmd_ = 0;buildDrag_=manaBuildDrag_=false;
-                shiftBuildPlaced_ = false;
+                shiftBuildPlaced_ = shiftOrderArmed_ = false;
             }
             else if (!selection_.empty()) selection_.clear();
             else exitMenu_ = true;
@@ -233,9 +244,9 @@
                    pendingCmd_) {
             float wx, wz;
             pickWorld(float(e.button.x), float(e.button.y), wx, wz);
-            issueArmedOrder(pendingCmd_, wx, wz,
-                            (SDL_GetModState() & KMOD_SHIFT) != 0, /*precise=*/true);
-            pendingCmd_ = 0;
+            const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            issueArmedOrder(pendingCmd_, wx, wz, queue, /*precise=*/true);
+            armedOrderIssued(queue);
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
             // Placement pick: a building takes the flat cell under the cursor (so the

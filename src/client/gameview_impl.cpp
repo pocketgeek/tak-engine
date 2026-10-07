@@ -627,6 +627,33 @@
                 throw std::runtime_error("Shift release lost queued mana-area work or kept placement armed");
             world_.stop(builder);SDL_SetModState(savedMod);publish();point(site);
             std::fprintf(stderr,"PASS: Shift placement release clears the build icon, keeps the builder and queue, supports both keys and mid-drag release\n");
+            // Armed orders follow the same rule: Shift queues the order and keeps
+            // the command armed for the next click; releasing Shift disarms.
+            world_.stop(builder);publish();
+            const auto goals=[&] {
+                size_t n=0;for(const auto& o:world_.unit(builder)->orders)n+=o.goal;return n;
+            };
+            pendingCmd_='m';SDL_SetModState(KMOD_LSHIFT);
+            mouse(SDL_MOUSEBUTTONDOWN,placeX,placeY);mouse(SDL_MOUSEBUTTONUP,placeX,placeY);publish();
+            mouse(SDL_MOUSEBUTTONDOWN,invalidX,invalidY);mouse(SDL_MOUSEBUTTONUP,invalidX,invalidY);publish();
+            if(pendingCmd_!='m' || goals()!=2)
+                throw std::runtime_error("Shift-clicked armed move did not queue and stay armed");
+            pendingCmd_='p';
+            mouse(SDL_MOUSEBUTTONDOWN,placeX,placeY);mouse(SDL_MOUSEBUTTONUP,placeX,placeY);publish();
+            if(pendingCmd_!='p' || goals()!=3 || !world_.unit(builder)->orders.back().patrol)
+                throw std::runtime_error("Shift-clicked armed patrol did not append to the move queue");
+            releaseShift(SDLK_LSHIFT,KMOD_NONE);
+            if(pendingCmd_ || goals()!=3)throw std::runtime_error("Shift release did not disarm the queued order mode");
+            pendingCmd_='m';
+            mouse(SDL_MOUSEBUTTONDOWN,placeX,placeY);mouse(SDL_MOUSEBUTTONUP,placeX,placeY);publish();
+            if(pendingCmd_ || goals()!=1)throw std::runtime_error("plain armed move did not replace the queue and disarm");
+            pendingCmd_='m';SDL_SetModState(KMOD_LSHIFT);
+            mouse(SDL_MOUSEBUTTONDOWN,invalidX,invalidY);mouse(SDL_MOUSEBUTTONUP,invalidX,invalidY);
+            SDL_SetModState(KMOD_NONE);
+            {SDL_Event motion{};motion.type=SDL_MOUSEMOTION;motion.motion.x=placeX;motion.motion.y=placeY;input(motion,winW_,winH_);}
+            if(pendingCmd_)throw std::runtime_error("an unseen Shift release did not disarm on the next mouse event");
+            world_.stop(builder);SDL_SetModState(savedMod);publish();point(site);
+            std::fprintf(stderr,"PASS: Shift keeps an armed order armed and queues each click; releasing Shift disarms\n");
             const auto* manaType=registry_.find("aralode");
             if(!manaType || manaSpots_.empty())throw std::runtime_error("area trail fixture needs lodestones and deposits");
             world_.queueManaBuildArea(builder,manaType,0,0,float(mapView_.map().width*16-1),

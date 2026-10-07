@@ -4,6 +4,8 @@
 #include "sim/matchsetup.h"
 #include "hpi/hpi.h"
 #include "tnt/mapgen.h"
+#include "net/lockstep.h"
+#include "net/protocol.h"
 #include <algorithm>
 #include <cstdio>
 #include <stdexcept>
@@ -263,6 +265,180 @@ uint64_t groupPatrol(PathfindingMode mode,bool serial) {
     if(mode==PathfindingMode::Legion)check(legion,"Legion routes the group patrol");
     return w.stateHash();
 }
+// ---- Shift-queued player orders ----------------------------------------
+// Each order arrives through applyCommand exactly as the client sends it
+// (queue=1 is Shift), and must run after everything queued before it.
+void send(World& w,tak::net::Cmd kind,int id,float x,float z,bool queue,int target=0) {
+    static const TypeRegistry none;
+    tak::net::Command c;c.kind=kind;c.player=uint8_t(w.unit(id)->player);c.unitId=id;
+    c.x=x;c.z=z;c.queue=queue;c.targetId=target;
+    // Over the wire first: the Shift flag must survive the command encoding.
+    tak::net::Writer out;out.cmd(c);tak::net::Reader in(out.b.data(),out.b.size());
+    const auto wire=in.cmd();
+    if(!in.ok||wire.kind!=kind||wire.queue!=uint8_t(queue)||wire.targetId!=target) {
+        check(false,"a queued order survives the command encoding");return;
+    }
+    applyCommand(w,none,wire);
+}
+bool near(const Unit& u,float x,float z,float r=40) {
+    return fxLen(u.x-Fixed::fromFloat(x),u.z-Fixed::fromFloat(z))<=Fixed::fromFloat(r);
+}
+// Visits `points` in order (each within 40px), ticking at most `limit`.
+// Returns how many were reached in sequence.
+int visits(World& w,int id,const std::vector<std::pair<float,float>>& points,int limit) {
+    size_t next=0;
+    for(int n=0;n<limit&&next<points.size();++n) {
+        w.tick(1.f/30);
+        if(near(*w.unit(id),points[next].first,points[next].second))++next;
+    }
+    return int(next);
+}
+// The sequence of `points` the unit stands at (within 40px), each new
+// entry recorded once on arrival, until `count` are seen or `limit` ticks.
+std::vector<int> route(World& w,int id,const std::vector<std::pair<float,float>>& points,size_t count,int limit) {
+    std::vector<int> seen;int at=-1;
+    for(int n=0;n<limit&&seen.size()<count;++n) {
+        w.tick(1.f/30);int here=-1;
+        for(size_t k=0;k<points.size();++k)if(near(*w.unit(id),points[k].first,points[k].second))here=int(k);
+        if(here>=0&&here!=at)seen.push_back(here);
+        if(here>=0)at=here;
+    }
+    return seen;
+}
+void queuedMoves(PathfindingMode mode) {
+    using tak::net::Cmd;
+    {   // Move, then two Shift-moves: three legs in order, then idle at the last.
+        World w;setup(w,mode);auto type=soldier();const int id=w.spawn(&type,320,320,0,0);
+        send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Move,id,1200,1200,true);send(w,Cmd::Move,id,320,1200,true);
+        check(visits(w,id,{{1200,320},{1200,1200},{320,1200}},9000)==3,"shift-moves run in the order they were queued");
+        ticks(w,300);check(w.unit(id)->orders.empty()&&near(*w.unit(id),320,1200),"the last queued move finishes and the unit idles there");
+    }
+    // Points: 0 start, 1 east, 2 south-east, 3 south.
+    const std::vector<std::pair<float,float>> square{{320,320},{1200,320},{1200,1200},{320,1200}};
+    {   // Move, then Shift-patrol: walk out, then lap between the move's end and the patrol point.
+        World w;setup(w,mode);auto type=soldier();const int id=w.spawn(&type,320,320,0,0);
+        send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Patrol,id,1200,1200,true);
+        check(route(w,id,square,7,15000)==std::vector<int>{0,1,2,1,2,1,2},
+              "a Shift-patrol after a move laps between the move's end and the patrol point");
+    }
+    {   // Shift-patrols from idle: the loop is start, B, C (retail's return point).
+        World w;setup(w,mode);auto type=soldier();const int id=w.spawn(&type,320,320,0,0);
+        send(w,Cmd::Patrol,id,1200,320,true);send(w,Cmd::Patrol,id,1200,1200,true);
+        check(route(w,id,square,7,18000)==std::vector<int>{0,1,2,0,1,2,0},
+              "Shift-patrols from idle lap start, B, C in order");
+    }
+    {   // Move, then two Shift-patrols: lap the move's end, B, C.
+        World w;setup(w,mode);auto type=soldier();const int id=w.spawn(&type,320,320,0,0);
+        send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Patrol,id,1200,1200,true);send(w,Cmd::Patrol,id,320,1200,true);
+        check(route(w,id,square,8,18000)==std::vector<int>{0,1,2,3,1,2,3,1},
+              "Shift-patrols after a move lap the move's end and every patrol point in order");
+    }
+    {   // Patrol, then Shift-patrol: appended to the running loop (start, B, then C).
+        World w;setup(w,mode);auto type=soldier();const int id=w.spawn(&type,320,320,0,0);
+        send(w,Cmd::Patrol,id,1200,320,false);send(w,Cmd::Patrol,id,1200,1200,true);
+        check(route(w,id,square,7,18000)==std::vector<int>{0,1,0,2,1,0,2},
+              "Shift-patrol joins a running patrol loop at its tail");
+    }
+    {   // Attack, then Shift-move: kill the target first, then walk on.
+        World w;setup(w,mode);auto type=armed(),enemy=soldier();enemy.maxVel=Fixed();
+        const int id=w.spawn(&type,320,640,0,0),target=w.spawn(&enemy,800,640,0,1);
+        send(w,Cmd::Attack,id,0,0,false,target);send(w,Cmd::Move,id,800,1200,true);
+        int killed=-1,arrived=-1;
+        for(int n=0;n<9000&&arrived<0;++n) {
+            w.tick(1.f/30);const auto* t=w.unit(target);
+            if(killed<0&&(!t||!t->alive()))killed=n;
+            if(near(*w.unit(id),800,1200))arrived=n;
+        }
+        check(killed>=0&&arrived>killed,"attack then Shift-move: the target dies, then the queued move runs");
+    }
+    {   // Fight-move, then Shift-patrol: engage en route, reach the fight point, then patrol from there.
+        World w;setup(w,mode);auto type=armed(),enemy=soldier();enemy.maxVel=Fixed();
+        const int id=w.spawn(&type,320,640,0,0),target=w.spawn(&enemy,700,640,0,1);
+        send(w,Cmd::AttackMove,id,1200,640,false);send(w,Cmd::Patrol,id,1200,1400,true);
+        const int reached=visits(w,id,{{1200,640},{1200,1400},{1200,640},{1200,1400}},12000);
+        const auto* t=w.unit(target);
+        check(reached==4&&(!t||!t->alive()),"fight-move then Shift-patrol: engages en route, then laps from the fight point");
+    }
+    {   // Move, then Shift-guard: the guard takes over once the move is done.
+        World w;setup(w,mode);auto type=armed();
+        const int id=w.spawn(&type,320,320,0,0),charge=w.spawn(&type,1200,1200,0,0);
+        send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Guard,id,0,0,true,charge);
+        const bool moved=visits(w,id,{{1200,320}},6000)==1;
+        ticks(w,1200);
+        const auto& u=*w.unit(id);
+        check(moved&&!u.orders.empty()&&u.orders.front().guard&&near(u,1200,1200,160),"move then Shift-guard: walks out, then guards");
+    }
+    {   // Move, Shift-repair, Shift-move: walk out, mend the ally, walk on.
+        World w;setup(w,mode);auto worker=soldier(),ally=soldier();
+        worker.isBuilder=true;worker.workerTime=1000;worker.buildDist=48;
+        ally.maxVel=Fixed();ally.canMove=false;w.player(0).mana=1e9;
+        const int id=w.spawn(&worker,320,320,0,0),hurt=w.spawn(&ally,1200,640,0,0);
+        w.unit(hurt)->hp=Fixed::fromInt(10);
+        send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Repair,id,0,0,true,hurt);send(w,Cmd::Move,id,320,1200,true);
+        int out=-1,mended=-1,back=-1;
+        for(int n=0;n<9000&&back<0;++n) {
+            w.tick(1.f/30);const auto& u=*w.unit(id);
+            if(out<0&&near(u,1200,320))out=n;
+            if(mended<0&&w.unit(hurt)->hp>=Fixed::fromFloat(ally.maxHp))mended=n;
+            if(near(u,320,1200))back=n;
+        }
+        check(out>=0&&mended>out&&back>mended,"move, Shift-repair, Shift-move run in order");
+    }
+    {   // Move, Shift-reclaim, Shift-move: the feature goes only after the first move.
+        World w;setup(w,mode);auto worker=soldier();
+        worker.isBuilder=worker.canReclaim=true;worker.workerTime=1000;worker.buildDist=48;
+        const int id=w.spawn(&worker,320,320,0,0);w.addFeature(31,1200,700,1,4,1,1,false);
+        send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Reclaim,id,0,0,true,31);send(w,Cmd::Move,id,320,1200,true);
+        int out=-1,gone=-1,back=-1;
+        for(int n=0;n<9000&&back<0;++n) {
+            w.tick(1.f/30);const auto& u=*w.unit(id);const auto* f=w.feature(31);
+            if(out<0&&near(u,1200,320))out=n;
+            if(gone<0&&(!f||!f->alive))gone=n;
+            if(near(u,320,1200))back=n;
+        }
+        check(out>=0&&gone>out&&back>gone,"move, Shift-reclaim, Shift-move run in order");
+    }
+    {   // Fight-move, then Shift-move: queued attack-move legs complete like moves.
+        World w;setup(w,mode);auto type=armed();const int id=w.spawn(&type,320,320,0,0);
+        send(w,Cmd::AttackMove,id,1200,320,false);send(w,Cmd::AttackMove,id,1200,1200,true);send(w,Cmd::Move,id,320,1200,true);
+        check(visits(w,id,{{1200,320},{1200,1200},{320,1200}},9000)==3,"fight-move legs queue with moves in order");
+    }
+}
+// A selection's Shift-queued group moves: every member is sent the SAME
+// point per click (Legion packs it into arrival slots), and every leg is
+// a group leg when it becomes current.
+uint64_t queuedGroupMoves(PathfindingMode mode,bool serial) {
+    using tak::net::Cmd;
+    World w;setup(w,mode,serial);auto type=soldier();std::vector<int> ids;
+    for(int i=0;i<12;++i)ids.push_back(w.spawn(&type,float(240+i%3*48),float(320+i/3*48),0,0));
+    const bool shared=mode==PathfindingMode::Legion;
+    auto click=[&](float x,float z,bool queue) {
+        float cx=0,cz=0;for(int id:ids){cx+=w.unit(id)->x.toFloat();cz+=w.unit(id)->z.toFloat();}
+        cx/=float(ids.size());cz/=float(ids.size());
+        for(int id:ids) {const auto& u=*w.unit(id);
+            send(w,Cmd::Move,id,shared?x:x+std::clamp(u.x.toFloat()-cx,-60.f,60.f),
+                 shared?z:z+std::clamp(u.z.toFloat()-cz,-60.f,60.f),queue);}
+    };
+    click(1300,400,false);click(1300,1400,true);click(400,1400,true);
+    std::vector<int> stage(ids.size(),0);bool legionSecond=false;
+    const std::pair<float,float> goals[3]={{1300,400},{1300,1400},{400,1400}};
+    for(int n=0;n<24000;++n) {
+        w.tick(1.f/30);bool all=true;
+        for(size_t k=0;k<ids.size();++k) {
+            const auto& u=*w.unit(ids[k]);
+            if(stage[k]<3&&near(u,goals[stage[k]].first,goals[stage[k]].second,200))++stage[k];
+            if(stage[k]==1)sawLegion(w,ids[k],LegionMission::Move,legionSecond);
+            all&=stage[k]==3&&u.orders.empty();
+        }
+        if(all)break;
+    }
+    const int least=*std::min_element(stage.begin(),stage.end());int idle=0;
+    for(int id:ids)idle+=w.unit(id)->orders.empty();
+    std::printf("queued group mode=%d least=%d idle=%d legion=%d tick=%u\n",int(mode),least,idle,legionSecond,w.tickCount());
+    check(least==3&&idle==int(ids.size()),"every member runs a selection's queued group moves in order and stops");
+    if(mode==PathfindingMode::Legion)check(legionSecond,"Legion routes a queued group move when it becomes current");
+    return w.stateHash();
+}
 void mazeProduction(const char* data) {
     auto vfs=tak::hpi::mountRetailRoot(data,tak::hpi::OverridePolicy::None);
     TypeRegistry registry;setupRegistry(registry,vfs,true);
@@ -391,6 +567,9 @@ int main(int argc,char** argv) {
         attackChase(mode,false);attackChase(mode,true);guardFollow(mode);workApproach(mode);
         const auto patrolHash=groupPatrol(mode,true);
         check(patrolHash==groupPatrol(mode,false),"group patrol hashes match serial and threaded preparation");
+        queuedMoves(mode);
+        const auto queuedHash=queuedGroupMoves(mode,true);
+        check(queuedHash==queuedGroupMoves(mode,false),"queued group move hashes match serial and threaded preparation");
     }
     const auto serial=group(selectedMode,false,true);
     check(serial==group(selectedMode,false,false),"shared-navigation group hashes match serial and threaded preparation");
