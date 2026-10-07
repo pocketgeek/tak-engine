@@ -50,6 +50,7 @@
 #include "client/cursors.h"
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/distantmodels.h"
+#include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
 #include "client/featureindex.h"
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
@@ -930,6 +931,15 @@ private:
     // agree. Optional out: squared distance to the sprite centre (tie-breaks).
     bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr) {
         if (!canPickUnit(u)) return false;
+        if (dotsFrame_) {
+            // Tactical Dots on screen: the hit region is the dot, with the same
+            // 9px floor as a tiny model so a lone dot is still easy to click.
+            SDL_FPoint c = dotCentre(u);
+            float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
+            if (std::fabs(mx - c.x) > half || std::fabs(my - c.y) > half) return false;
+            if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+            return true;
+        }
         float zms = mapView_.zoom();
         SDL_FPoint p = unitScreen(u);
         const SDL_FRect& hb = unitHitBox(u.type);
@@ -2413,6 +2423,39 @@ private:
     // marquee/click selection so a lifted or airborne unit is picked where it's SEEN,
     // not at its flat ground cell.
     SDL_FPoint unitScreen(const UnitR& u);
+
+    // ---- Tactical Dots (Options > Graphics; not in retail) --------------------
+    // Zoomed far out, units draw as minimap-style dots instead of models. The
+    // zoom policy lives in client/tacticaldots.h; dotsFrame_ is the state the LAST
+    // drawn frame used, so picking always matches what is on screen.
+    bool tacticalDotsOpt_ = false;              // the Options toggle
+    tak::tacticaldots::Switch dotsSwitch_;      // zoom threshold + hysteresis
+    bool dotsFrame_ = false;
+    // Exactly the minimap's rule for showing a unit: alive, not embarked, and
+    // either a spectator, an ally, or standing in a cell the local player sees.
+    // Shared by the minimap and the dots so the two can never disagree about
+    // what the fog hides.
+    bool radarVisible(const UnitR& u) const {
+        if (!u.alive() || u.embarked() || !u.type) return false;
+        return noFog_ || alliedToLocal(u.player) || cellVisibleR(u.x, u.z);
+    }
+    // Centre and edge of a unit's dot: its model origin on screen (unitScreen
+    // minus the body bias, so terrain lift and flyer altitude are included).
+    SDL_FPoint dotCentre(const UnitR& u) {
+        SDL_FPoint p = unitScreen(u);
+        p.y += 12.0f * mapView_.zoom();
+        return p;
+    }
+    float dotSide(const UnitR& u) const {
+        return tak::tacticaldots::dotSide(u.type ? u.type->footX : 1, u.type ? u.type->footZ : 1,
+                                          mapView_.zoom(), uiScale_);
+    }
+    // One batched draw of every radar-visible unit in view; returns dots drawn.
+    size_t drawTacticalDots(int mvw, int winH);
+#ifndef NDEBUG
+    size_t debugDotCount_ = 0;                  // dots in the last drawTacticalDots
+    std::vector<int> debugDotIds_;              // ...and whose they were
+#endif
 
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1),
     // computed once by projecting the model over all facings and cached in hitBoxes_.

@@ -255,6 +255,10 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.videoDeblock = v > 0.5f; });
     toggle("TREES SWAY IN WIND", [&] { return s_.treeSway ? 1.0f : 0.0f; },
            [&](float v) { s_.treeSway = v > 0.5f; });
+    // Zoomed far out, draw every unit as a minimap-style player-coloured dot instead
+    // of its model (not in retail). Fog and selection behave exactly as for models.
+    toggle("TACTICAL DOTS", [&] { return s_.tacticalDots ? 1.0f : 0.0f; },
+           [&](float v) { s_.tacticalDots = v > 0.5f; });
     // OS-tracked cursor: the pointer keeps moving smoothly even when a heavy frame
     // stalls the render loop (the retail Direct3D "hardware cursor" option).
     toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },

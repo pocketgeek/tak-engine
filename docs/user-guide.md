@@ -645,7 +645,7 @@ speed keys are fixed.
 | **Shift + right-click** | Queue that order after the current ones. |
 | **Right-drag** with a reclaiming builder | Reclaim everything in the box. |
 | **Middle-drag**, or the cursor at a screen edge | Scroll the map. |
-| **Mouse wheel** | Zoom in and out, towards the cursor. |
+| **Mouse wheel** | Zoom in and out, towards the cursor. Far out, **Options → Tactical Dots** can draw units as minimap-style dots. |
 | **Minimap left-click / drag** | Move the camera. With an order armed, issue it there instead. |
 | **Minimap right-click** | Move the selection there. Shift queues it. |
 | **Right-click a cycling setting** | Go back one choice (left-click goes forward). Works in menus and options. |
@@ -894,8 +894,23 @@ World sounds are full volume on screen and fade with distance off screen.
 | **Smooth GUI Art** | Off | Sharpens the low-resolution interface art, menus, fonts and cursors with an edge-aware upscale. No cost per frame; uses more video memory. |
 | **Smooth Movies** | Off | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
+| **Tactical Dots** | Off | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
+
+**Tactical Dots** turns on when units get too small to read: below zoom 0.30
+(a soldier about 10 pixels across), and also whenever you are zoomed all the way
+out, since on a very wide screen the map fills the window long before units get
+that small. Zooming back in past 0.35, or two wheel notches in from fully out,
+brings the models back; the gap stops it flickering at the boundary. The
+threshold depends on the zoom, not the window size or UI scale. Dots follow the
+minimap's rules exactly: enemies show only where you can currently see them.
+Buildings are bigger squares than soldiers, flyers sit at their flying height,
+and selected units get a white outline. Click and box selection work on the
+dots. Health bars, production bars and unit shadows are hidden while dots are
+showing; trees, terrain, projectiles and explosions are drawn as normal. Dots
+are much cheaper to draw than models, so a huge zoomed-out battle also runs
+faster.
 
 ### Interface
 

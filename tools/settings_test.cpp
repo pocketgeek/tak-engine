@@ -52,6 +52,7 @@ int main() {
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
     flips("buildBarScale",   [](Settings& s) { s.buildBarScale += 0.25f; });
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
+    flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });
     flips("unitShadows",     [](Settings& s) { s.unitShadows = !s.unitShadows; });
     flips("smoothArt",       [](Settings& s) { s.smoothArt = !s.smoothArt; });
     flips("videoDeblock",    [](Settings& s) { s.videoDeblock = !s.videoDeblock; });
@@ -152,6 +153,7 @@ int main() {
         cur.masterVol = 7;
         cur.uiScale = 1.75f;
         cur.bilinear = !cur.bilinear;
+        cur.tacticalDots = true;
 
         const Settings d = tak::preferenceDefaults(cur);
         if (!(d.gameCreate == cur.gameCreate)) ++g_fail;
@@ -180,6 +182,7 @@ int main() {
         reset("masterVol",        d.masterVol == fresh.masterVol);
         reset("uiScale",          d.uiScale == fresh.uiScale);
         reset("bilinear",         d.bilinear == fresh.bilinear);
+        reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && !d.tacticalDots);
 
         // And the two questions must agree: after a reset we ARE at defaults, which is
         // the invariant that broke when the preserve list and atDefaults() diverged.

@@ -84,6 +84,20 @@ int main() {
         };
         graphicsDefaults(tak::Settings{});
         if(!tak::Settings{}.treeSway)throw std::runtime_error("tree sway must default on");
+        // Tactical Dots is a non-retail extra: off by default, off for a file written
+        // before the key existed, and its own key round-trips both ways.
+        if(tak::Settings{}.tacticalDots)throw std::runtime_error("tactical dots must default off");
+        std::ofstream(path)<<"treeSway = 0\nunitShadows = 1\n";
+        if(tak::loadSettings().tacticalDots)throw std::runtime_error("pre-dots settings file must load dots off");
+        for(const char* text:{"tacticalDots = 1\n","tacticalDots = on\n","tacticalDots = true\n"}) {
+            std::ofstream(path)<<text;
+            if(!tak::loadSettings().tacticalDots)throw std::runtime_error(std::string("tactical dots not read: ")+text);
+        }
+        for(bool dots:{true,false}) {
+            tak::Settings v;v.tacticalDots=dots;
+            if(!tak::saveSettings(v) || !(tak::loadSettings()==v) || tak::loadSettings().tacticalDots!=dots)
+                throw std::runtime_error("tactical dots failed round trip");
+        }
         for(bool bilinear:{false,true}) {
             tak::Settings v;v.bilinear=bilinear;v.smoothArt=v.videoDeblock=true;v.treeSway=false;v.vsync=false;
             if(!tak::saveSettings(v) || !(tak::loadSettings()==v))

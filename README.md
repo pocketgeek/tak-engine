@@ -911,14 +911,17 @@ and camera behavior. **F4 Scorecard Scale** independently adjusts the player
 scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
 and Smooth Motion default to **on**; saved choices still apply.
 The **Graphics** section holds **Bilinear Filtering**, Shadows, **Smooth GUI
-Art**, **Smooth Movies**, Trees Sway in Wind, Hardware Cursor and Smooth
-Motion. Bilinear Filtering, Smooth GUI Art and Smooth Movies are **off** by
+Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots, Hardware Cursor
+and Smooth Motion. Bilinear Filtering, Smooth GUI Art and Smooth Movies are **off** by
 default and remembered. Bilinear Filtering is
 retail's Visual Options filter: it smooths unit model textures and unit shadows,
 and nothing else; terrain and scenery stay point-sampled at every zoom, as in
 retail. Smooth GUI Art applies immediately to the current interface, fonts and
 cursors without a restart. **Trees Sway in Wind** is selectable,
-defaults to **on**, and remembers your choice.
+defaults to **on**, and remembers your choice. **Tactical Dots** (default
+**off**, not in retail) draws every unit as a minimap-style player-coloured dot
+when zoomed far out (below zoom 0.30, or fully zoomed out), with the same fog
+rules as the minimap; selection works on the dots.
 
 World sounds stay at full volume inside the camera view and fade with distance
 outside it, becoming silent one shorter viewport dimension beyond the nearest

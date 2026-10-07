@@ -1642,7 +1642,11 @@ int main(int argc, char** argv) {
             if (finish) finish();
         }
         static bool profileCaptured=false;
-        if (!profileCaptured && SDL_GetTicks64()>10000)
+        // TAK_PROFILE_CAPTURE_MS moves the 10s capture later, e.g. until a large
+        // fixture has registered every model (64 a frame) at a low frame rate.
+        static const uint64_t profileCaptureMs=tak::devEnv("TAK_PROFILE_CAPTURE_MS")
+            ? uint64_t(std::max(0,std::atoi(tak::devEnv("TAK_PROFILE_CAPTURE_MS")))) : 10000;
+        if (!profileCaptured && SDL_GetTicks64()>profileCaptureMs)
             if (const char* path=tak::devEnv("TAK_PROFILE_CAPTURE")) {
                 screenshot(ren,w,h,path);profileCaptured=true;
             }

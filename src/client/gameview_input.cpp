@@ -384,7 +384,9 @@
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
                     if (u.alive() && u.player == localPlayer_ && !u.underConstruction) {
-                        SDL_FPoint p = unitScreen(frameUnit(u.id));
+                        // With Tactical Dots up, a unit is where its dot is drawn.
+                        SDL_FPoint p = dotsFrame_ ? dotCentre(frameUnit(u.id))
+                                                  : unitScreen(frameUnit(u.id));
                         if (p.x >= sx0 && p.x <= sx1 && p.y >= sy0 && p.y <= sy1)
                             matched.push_back(u.id);
                     }

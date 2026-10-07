@@ -128,6 +128,10 @@
                               (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
         float zm0 = mapView_.zoom();
+        // Tactical Dots: decided once per frame (with hysteresis), so every pass
+        // below -- and picking until the next frame -- agrees on dots vs models.
+        // The floor is the map-fills-window clamp the wheel handler applies.
+        dotsFrame_ = dotsSwitch_.update(tacticalDotsOpt_, zm0, mapView_.minZoom(winW, winH));
 
         // Painter list: features and units together, sorted by map z. Lives in a
         // member so its capacity survives across frames (it was the last per-frame
@@ -168,6 +172,10 @@
             items.push_back({key, nullptr, &f, 0});
         }
         for (const UnitR* _up : front().live) {
+            // Tactical Dots replace every unit model (corpses and dying units
+            // included, which the minimap does not show either), so no unit enters
+            // the painter list: no projection, no shadow, no body batch.
+            if (dotsFrame_) break;
             const UnitR& r = *_up;   // this tick's snapshot (front().live mirrors world_.units())
             if ((r.deadFor >= float(r.corpseAnimationTicks)/30.0f && !r.corpsePhase) || r.embarked()) continue;
             if (r.corpsePhase && r.corpseFeat >= 0) {
@@ -988,6 +996,9 @@
         // out so body and shadow do not both report the same work.
         profBodyMs_ += -airShadowMs + (double(SDL_GetPerformanceCounter()) - _bdy0) /
                        (double(SDL_GetPerformanceFrequency()) / 1000.0);
+        // Tactical Dots stand in for the unit bodies: over the terrain and features
+        // (a dot under a tree crown would vanish), under shots and explosions.
+        if (dotsFrame_) drawTacticalDots(mvw, winH);
         // Ghosts of the local player's queued (shift) build orders.
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
@@ -1553,6 +1564,7 @@
             // Iterate the (few) selected ids, not the whole world -- frameUnitP(id)
             // is O(1). (A duplicate id would just redraw the same brackets in place.)
             for (int selId : selection_) {
+                if (dotsFrame_) break;   // a selected dot carries its own outline
                 const UnitR* up = frameUnitP(selId);
                 if (!up || !up->alive() || !up->type) continue;
                 const UnitR& u = *up;
@@ -1685,6 +1697,7 @@
         overlayBatch_.clear();
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
+            if (dotsFrame_) break;   // Tactical Dots: no per-unit bars
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.underConstruction && !u.buildBegun) continue;   // ghost: no bar
             if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
@@ -1757,6 +1770,7 @@
         overlayBatch_.clear();
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
+            if (dotsFrame_) break;   // Tactical Dots: no per-unit bars
             if (!u.alive() || u.buildQueue.empty() || !u.type) continue;
             if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
             float total = u.buildQueue.front()->buildTime /
@@ -3048,6 +3062,59 @@
             if (hadClip) SDL_RenderSetClipRect(ren_, &prevClip);
             else SDL_RenderSetClipRect(ren_, nullptr);
         }
+    }
+
+    size_t GameView::drawTacticalDots(int mvw, int winH) {
+        // Every unit the minimap would show, as a flat square in its player colour
+        // -- the minimap's dot, drawn in the world. One untextured geometry batch:
+        // no model projection, no atlas, no shadow, no render target.
+        overlayBatch_.clear();
+#ifndef NDEBUG
+        debugDotIds_.clear();
+#endif
+        const SDL_Color rim{12, 12, 16, 220};     // dark edge: reads on grass and sand
+        const SDL_Color selRim{255, 255, 255, 255};
+        size_t drawn = 0;
+        // Ground first, airborne flyers second, so a flyer's dot sits on top of the
+        // army it is flying over, as its model would.
+        for (int pass = 0; pass < 2; ++pass) {
+            for (const UnitR* up : front().live) {
+                const UnitR& u = *up;
+                if (!radarVisible(u)) continue;
+                bool aloft = false;
+                if (u.type->canFly) {
+                    auto ait = anims_.find(u.id);
+                    aloft = ait == anims_.end() || ait->second.altitude > 1.0f;
+                }
+                if (aloft != (pass == 1)) continue;
+                const SDL_FPoint c = dotCentre(u);   // terrain lift + flyer altitude
+                const float side = dotSide(u), half = side * 0.5f;
+                if (c.x + half < -4 || c.x - half > mvw + 4 ||
+                    c.y + half < -4 || c.y - half > winH + 4) continue;
+                const bool selected = selSet_.contains(u.id);
+                // Selected: a bright 2px outline; otherwise a 1px dark rim.
+                const float edge = selected ? 2.0f : 1.0f;
+                pushQuad(overlayBatch_, c.x - half - edge, c.y - half - edge,
+                         side + 2 * edge, side + 2 * edge, selected ? selRim : rim);
+                SDL_Color col = playerColor(u.player);
+                // An unfinished conjure reads as half there, like its ghosted model.
+                if (u.underConstruction) col.a = 150;
+                pushQuad(overlayBatch_, c.x - half, c.y - half, side, side, col);
+                ++drawn;
+#ifndef NDEBUG
+                debugDotIds_.push_back(u.id);
+#endif
+            }
+        }
+        if (!overlayBatch_.empty()) {
+            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+            SDL_RenderGeometry(ren_, nullptr, overlayBatch_.data(),
+                               int(overlayBatch_.size()), nullptr, 0);
+        }
+#ifndef NDEBUG
+        debugDotCount_ = drawn;
+#endif
+        return drawn;
     }
 
     void GameView::drawRing(float wx, float wz, float r) {
