@@ -75,6 +75,19 @@ int main() {
                 [&]{calls+="move,";},[&]{calls+="scan,";return false;},[&](int){calls+="rand,";return draw;});
             if (s.waitMask&1) calls+="sleep"+std::to_string(s.deadline-1000)+",";
             std::printf("%d %d %d %d %s\n",result,int(s.stage),gx,gz,calls.empty()?"-":calls.c_str());
+        } else if (op=="vtolformation") {
+            bool m;auto r=readRecord(std::cin,m);auto u=readMember(std::cin);
+            int stage,level,canFly,draw;uint32_t flags;
+            std::cin>>stage>>level>>canFly>>flags>>draw;
+            RetailMissionState s;s.stage=uint8_t(stage);s.flags=flags;
+            std::string calls;int gx=0,gz=0;
+            const bool all=(flags&0x4000000u)!=0;
+            const int result=retailFlightFormation(s,1000,level,canFly,
+                [&]{return level>0 ? retailGroupOutOfSlot(r,u,false,level,all) : retailGroupOutOfSlot(r,u,true,-level,all);},
+                [&]{const auto c=retailGroupCentre(r,u,all,level<=0);gx=c.x;gz=c.z;calls+="centre,";},
+                [&]{calls+="begin,";},[&]{calls+="move,";},[&](int){calls+="rand,";return draw;});
+            if (s.waitMask&1) calls+="sleep"+std::to_string(s.deadline-1000)+",";
+            std::printf("%d %d %d %d %s\n",result,int(s.stage),gx,gz,calls.empty()?"-":calls.c_str());
         }
         std::fflush(stdout);
     }

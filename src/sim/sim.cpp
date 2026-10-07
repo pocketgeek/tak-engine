@@ -1815,6 +1815,60 @@ void World::tickFlightPatrol(Unit& u) {
         }
         void clear() { u.orders.clear(); }
         int handle(RetailMissionState& m,uint32_t events) {
+            const RetailGroupRecord* group=w.retailGroupOf(u);
+            if (u.orders.front().flightMoveMission && u.orders.front().formationLevel) {
+                // 417750 VTOL_Move_Formation: fly to the group centre until
+                // back inside the level's radius.
+                auto& order=u.orders.front();
+                const int level=order.formationLevel;
+                const bool all=(m.flags&0x4000000u)!=0;
+                const auto member=w.retailGroupMember(u);
+                return retailFlightFormation(m,w.tickCounter_,level,u.type->canFly,
+                    [&] { return group && (level>0 ? retailGroupOutOfSlot(*group,member,false,level,all)
+                                                   : retailGroupOutOfSlot(*group,member,true,-level,all)); },
+                    [&] {
+                        const auto c=retailGroupCentre(*group,member,all,level<=0);
+                        order.x=Fixed::fromInt(int16_t(c.x));order.z=Fixed::fromInt(int16_t(c.z));
+                    },
+                    [&] {
+                        // 416c50, as VTOL_Move's stage 0.
+                        if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
+                            script->second.activated=true;w.notifyUnitScript(u,"Activate");
+                        }
+                        w.notifyUnitScript(u,"BeginFlight");
+                    },
+                    [&] {
+                        order.x=footprintWaypoint(footprintCell(order.x,u.type->footX),u.type->footX);
+                        order.z=footprintWaypoint(footprintCell(order.z,u.type->footZ),u.type->footZ);
+                        order.flightGoal=RetailFlightGoal{{order.x.v,u.flightY.v,order.z.v},0x30,0,16};
+                    },
+                    [&](int n) { return random(n); });
+            }
+            if (u.orders.front().flightMoveMission && group) {
+                // 417e02..418052: VTOL_Move runs Move_Ground's two group
+                // checks (402b00) before its stages. As on the ground, the
+                // y terms are left at zero (docs/pathfinding-port.md).
+                auto& order=u.orders.front();
+                const int check=retailGroundGroupCheck(*group,w.retailGroupMember(u),m.flags,{u.x.v,0,u.z.v},
+                    {order.x.v,0,order.z.v},[&](int n){return int(random(n));});
+                if (check==1) {
+                    // Ahead again: 50c480, then 4d6a50(unit,0) drops every mission.
+                    w.leaveRetailGroupCentre(u);
+                    u.orders.clear();
+                    return 2;
+                }
+                if (check) {
+                    Order formation;
+                    formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
+                    formation.formationLevel=int8_t(check);formation.mission.flags=0x1000000u;
+                    formation.issuedTick=w.tickCounter_;
+                    // The parent restarts at stage 0 when the formation retires;
+                    // inserting invalidates m, so set it first.
+                    m.stage=0;
+                    u.orders.insert(u.orders.begin(),formation);
+                    return 4;
+                }
+            }
             if ((m.flags&0x8000000u) && random(10)==0) m.flags&=~0x8000000u;
             if (u.orders.front().flightMoveMission) {
                 auto& order=u.orders.front();
@@ -2184,6 +2238,8 @@ const RetailGroupRecord* World::retailGroupOf(const Unit& u) const {
 // models: landing, ground missions and standby. Other orders report none.
 uint32_t World::retailMissionFlags(Unit& u) {
     if (u.landing) return u.landing->mission.flags;
+    // VTOL_Move, VTOL_Move_Formation and VTOL_Patrol all carry 0x1000000.
+    if (plainFlightPatrol(u)) return u.orders.front().mission.flags;
     if (auto* o=groundMissionOrder(u,true))
         return o->transportUnloadApproach ? o->transportMission.flags : o->mission.flags;
     if (u.orders.empty() && u.standbyActive) return u.standbyState.flags;

@@ -373,6 +373,58 @@ ground host does not model (attack/build) read as 0. Retail AI squads
 click offsets (`gameview_hud.cpp`) remain untraced; Ctrl+N group assignment
 is `522170` (`50b4f0` at `5221ce`), and a plain selection is never grouped.
 
+**Flyers in a group (formation-air, 2026-10-07).** The mission registry
+row puts the handler at `+4` and the name at `+0x15`. Read that way:
+- VTOL_Move: flags `0x1000402`, handler `417c20`;
+- VTOL_Move_Formation: flags `0x1000402`, handler `417750`.
+
+Neither carries `0x2000000`, so no flyer is ever paced. `51b890` computes no
+flyer speed either. VTOL_Move's head `417e02..418052` matches `402b00`
+instruction for instruction:
+- `51d1e0(unit,1,3)`, then a goal-versus-centre comparison on the three
+  16.16 components;
+- the `0x8000000` flag, then `rand(4)==0` -> `50c480` + `4d6a50(unit,0)`;
+- otherwise VTOL_Move_Formation at level -2. Failing that, `51d1e0(unit,0,4)`
+  -> level 4.
+
+For a flyer, `51c700` is the nearer surface group's centre, with the flyer
+counted in. The radius doubles.
+
+VTOL_Move_Formation differs from the ground mission in several ways:
+- Both levels fly. There is no stop for level > 0.
+- Stage 0 takes the centre (`51c700(unit, flags>>26 & 1, level<=0)`) and calls
+  `416c50`.
+- Stage 1 snaps the point to the footprint grid, installs a 16 px point
+  controller (`4e40e0`, `4e4540(0x10)`), sleeps `rand(10)+5` and returns 0,
+  so every wake re-takes the centre.
+- It retires once back inside the level's radius.
+
+Ported as `retailFlightFormation` and as the head in `World::tickFlightPatrol`,
+which reuses `retailGroundGroupCheck` (with y = 0, as on the ground).
+`retailMissionFlags` now reports flight move and patrol missions, so flyers
+enter the moving aggregate as `0x1000000` missions do.
+
+`check_retail_group.py` emulates both natively:
+- `vtolcheck` (2,000 heads, 3-D positions with flyer altitudes): all agree,
+  including reform, wait, cancel and the `50c480` record update;
+- `vtolform` (2,000 calls, every stage and level): all agree on result,
+  stage, centre, calls and the 16 px radius.
+
+In `legion_world_test mixedformation` (Retail move), flyers now average
+511 px from the ground centroid instead of 872. Five of the eight end more
+than 300 px from the group: the cancel path dropped their orders on the
+way, as in retail.
+
+Not ported:
+- VTOL_Patrol's identical head (`419fa0`/`41a162`);
+- the single checks in the air attack missions (`41c19f`, `41cce3`, `41daff`,
+  `41e55f`);
+- the VTOL_Move_FormationStandby branch (`41797e`, only pushed by the landing
+  search).
+
+Our flyer fight-move is not a VTOL_Move. Retail-mode fight and patrol orders
+are therefore unchanged.
+
 Original mapping (audit 2026-10-06):
 
 Retail mode's formation pacing is still our own rule, not retail's. The
