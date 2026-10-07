@@ -259,7 +259,7 @@ void trapped() {
         Fixture f(64,64);
         f.rect(10,10,12,1);f.rect(10,21,12,1);f.rect(10,10,1,12);f.rect(21,10,1,12);
         f.publish();
-        const int inside=f.spawn(mover(2),15,15);
+        const auto type=mover(2);const int inside=f.spawn(type,15,15);
         f.start();
         f.world.order(inside,50*16,50*16,false);
         for(int t=0;t<300;++t)f.world.tick(1.f/30);
@@ -697,7 +697,7 @@ void farclick() {
     Fixture f(128,64);
     f.rect(60,0,68,64);
     f.publish();
-    const int id=f.spawn(mover(2),10,30);
+    const auto type=mover(2);const int id=f.spawn(type,10,30);
     f.start();
     f.world.order(id,110*16,30*16,false);
     int cleared=-1;
@@ -714,7 +714,7 @@ void approachhold() {
     Fixture f(96,64);
     f.rect(48,0,3,64);
     f.publish();
-    const int id=f.spawn(mover(2),10,30);
+    const auto type=mover(2);const int id=f.spawn(type,10,30);
     f.start();
     f.world.order(id,80*16,30*16,false);
     Motion motion;
@@ -745,7 +745,7 @@ void approachopen() {
     Fixture f(96,64);
     f.rect(48,0,3,64);
     f.publish();
-    const int id=f.spawn(mover(2),10,30);
+    const auto type=mover(2);const int id=f.spawn(type,10,30);
     f.start();
     f.world.order(id,80*16,30*16,false);
     for(int t=0;t<1500;++t)f.world.tick(1.f/30);
