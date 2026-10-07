@@ -2118,15 +2118,18 @@ bool World::flightLandingFree(const Unit& self,Fixed x,Fixed z) const {
     // that has already begun its descent (stage 3), whatever the exploration.
     // Both states are the units' own hashed state and the test runs in unit
     // order, so simultaneous descents serialize: the later lander sees the
-    // earlier one's descent in the same tick.
+    // earlier one's descent in the same tick. It refuses a mobile ground
+    // unit's footprint too: 509400 sees those, moving or not, only at an
+    // explored site (tools/re/check_landing_moving_ground.py).
     if (isLegionPathfinding(pathfindingMode_) && flyerLandingOccupied(self,x0,z0,fx,fz)) return false;
     return true;
 }
 
 bool World::flyerLandingOccupied(const Unit& self,int x0,int z0,int fx,int fz) const {
     auto blocks=[&](const Unit& o,int ox,int oz) {
-        if (&o==&self || !o.alive() || o.embarked() || !o.type || !o.type->canFly) return false;
+        if (&o==&self || !o.alive() || o.embarked() || !o.type) return false;
         if (ox>=x0+fx || oz>=z0+fz || ox+o.type->footX<=x0 || oz+o.type->footZ<=z0) return false;
+        if (!o.type->canFly) return !o.type->isStructure();
         return o.flightGroundMode==1 || (o.landing && o.landing->mission.stage==3);
     };
     if (bodyIndexEnabled_ && hW_>0 && hH_>0 && x0>=0 && z0>=0 && x0+fx<=hW_ && z0+fz<=hH_) {
@@ -5163,15 +5166,17 @@ bool World::canFollowTraffic(const Unit& self, const Unit& other) const {
     return other.speed >= base * Fixed::raw(0xc000);
 }
 
+// One nonzero cell's term in a plane's XOR checksum.
+static uint64_t searchCellWord(size_t index,uint8_t grade) {
+    if (!grade) return 0;
+    uint64_t v=(uint64_t(index)<<4)|grade;
+    v=(v^(v>>30))*0xbf58476d1ce4e5b9ull;
+    v=(v^(v>>27))*0x94d049bb133111ebull;
+    return v^(v>>31);
+}
+
 void World::setSearchCell(SearchGradePlane& plane,size_t index,uint8_t value) {
-    const auto word=[&](uint8_t grade) -> uint64_t {
-        if (!grade) return 0;
-        uint64_t v=(uint64_t(index)<<4)|grade;
-        v=(v^(v>>30))*0xbf58476d1ce4e5b9ull;
-        v=(v^(v>>27))*0x94d049bb133111ebull;
-        return v^(v>>31);
-    };
-    plane.checksum^=word(plane.cells[index])^word(value);
+    plane.checksum^=searchCellWord(index,plane.cells[index])^searchCellWord(index,value);
     plane.cells[index]=value;
 }
 
@@ -5404,6 +5409,124 @@ void World::ageSearchBody(SearchGradePlane& plane,const RetailGradeBody& body,bo
         });
 }
 
+// The first build of a plane, and any rebuild after a whole-grid nav edit.
+// It must equal refreshSearchRect over the whole map, which rates every
+// cell's footprint and clearance ring cell by cell: on a large map that cost
+// one tick 40-66 ms. Every rating it makes is the minimum of one per-cell
+// grade over a rectangle (an early zero return is that minimum too), so the
+// same plane comes from one pass of per-cell grades, one stamp of the bodies
+// and two box minima: on a 768x768 map 37-49 ms becomes about 3.5 ms.
+// Derived state only: the cells and checksum equal the per-cell build's
+// (pathblock_test checks it, and TAK_VERIFY_SEARCH_PLANE does on every
+// build in a Debug binary).
+void World::buildSearchPlane(SearchGradePlane& plane) {
+    const NavGrid& nav=*plane.nav;
+    const int width=nav.width(),height=nav.height();
+    const int footX=plane.footX,footZ=plane.footZ;
+    plane.preparation={}; plane.checksum=0;
+    plane.cells.assign(size_t(std::max(width,0))*std::max(height,0),0);
+    plane.navVersion=nav.version();
+    if (width<=0 || height<=0 || footX<1 || footZ<1 || width!=hW_ || height!=hH_) {
+        refreshSearchRect(plane,0,0,width,height);
+        return;
+    }
+    const bool hasMapCells=mapPlacementCells_.size()==size_t(hW_)*hH_ && !mapPlacementCells_.empty();
+    // rawSearchGrade for one cell, without its rectangle bounds test: the
+    // feature and terrain grades, then the body searchBodyRect keeps there.
+    std::vector<uint8_t> cell(size_t(width)*height);
+    for (int cz=0;cz<height;++cz) for (int cx=0;cx<width;++cx) {
+        int grade=7;
+        if (hasMapCells) grade=mapFeatureGrade(cx,cz);
+        if (grade) grade=std::min(grade,nav.terrainGrade(cx,cz,!hasMapCells));
+        cell[size_t(cz)*width+cx]=uint8_t(grade);
+    }
+    // searchBodyRect keeps the last eligible unit in vector order on a cell,
+    // so stamping in that order and overwriting leaves the same body's grade.
+    std::vector<uint8_t> body(cell.size(),0xff);
+    bool anyBody=false;
+    for (const auto& u:units_) {
+        if (!u.alive() || u.embarked() || !u.type || (u.type->canFly && u.flightGroundMode!=1)) continue;
+        const auto& type=*u.type;
+        const int ux=footprintOrigin(u.x,type.footX),uz=footprintOrigin(u.z,type.footZ);
+        const int x0=std::max(0,ux),z0=std::max(0,uz);
+        const int x1=std::min(width,ux+type.footX),z1=std::min(height,uz+type.footZ);
+        if (x0>=x1 || z0>=z1) continue;
+        const uint8_t grade=uint8_t(retailCachedBodyGrade(!type.isStructure(),u.id==plane.preparation.requestSlot,
+            u.groundGradeTick,plane.preparation.recent,plane.preparation.stale));
+        const bool yards=type.isStructure() && !type.yardMap.empty();
+        const bool gate=type.gate && !type.yardMap.empty();
+        bool yardOpen=false;
+        if (yards) {
+            const auto script=unitScripts_.find(u.id);
+            yardOpen=script!=unitScripts_.end() && script->second.yardOpen;
+        }
+        for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx) {
+            uint8_t value=grade;
+            if (yards || gate) {
+                const char yard=type.yardMap.at(size_t(cz-uz)*type.footX+cx-ux);
+                if (yards && (yard=='.' || ((yard=='c' || yard=='C') && yardOpen))) continue;
+                // 506416 marks only c/C gate passages; 508b54 grades them
+                // specially before the ordinary stationary-body rejection.
+                if (gate && (yard=='c' || yard=='C')) value=3;
+            }
+            body[size_t(cz)*width+cx]=value;
+            anyBody=true;
+        }
+    }
+    // out(x,z) = minimum of cell over [x,x+w) x [z,z+h), where that fits.
+    // Separate buffers, so the byte loops vectorize.
+    std::vector<uint8_t> rows(cell.size());
+    const auto lower=[](uint8_t* __restrict dst,const uint8_t* __restrict src,int n) {
+        for (int x=0;x<n;++x) dst[x]=src[x]<dst[x] ? src[x] : dst[x];
+    };
+    const auto boxMin=[&](int w,int h,std::vector<uint8_t>& out) {
+        out.assign(cell.size(),0);
+        if (w>width || h>height) return;
+        const int span=width-w+1;
+        for (int z=0;z<height;++z) {
+            const uint8_t* src=&cell[size_t(z)*width];
+            uint8_t* dst=&rows[size_t(z)*width];
+            std::copy_n(src,span,dst);
+            for (int i=1;i<w;++i) lower(dst,src+i,span);
+        }
+        for (int z=0;z+h<=height;++z) {
+            uint8_t* dst=&out[size_t(z)*width];
+            std::copy_n(&rows[size_t(z)*width],width,dst);
+            for (int j=1;j<h;++j) lower(dst,&rows[size_t(z+j)*width],width);
+        }
+    };
+    if (anyBody) lower(cell.data(),body.data(),int(cell.size()));
+    std::vector<uint8_t> foot,ring;
+    boxMin(footX,footZ,foot);
+    boxMin(footX+2,footZ+2,ring);
+    for (int cz=0;cz<height;++cz) for (int cx=0;cx<width;++cx) {
+        // retailCachedFootprintGrade: the footprint, then four clearance
+        // strips that together cover the ring round it. Some strip's bounds
+        // test fails exactly when that ring leaves the map.
+        int grade=cx+footX>=width || cz+footZ>=height ? 0 : foot[size_t(cz)*width+cx];
+        if (grade>4 && (cx<1 || cz<1 || cx+footX+1>=width || cz+footZ+1>=height ||
+                        ring[size_t(cz-1)*width+cx-1]<6)) grade=4;
+        if (!grade) continue;
+        const size_t index=size_t(cz)*width+cx;
+        plane.cells[index]=uint8_t(grade);
+        plane.checksum^=searchCellWord(index,uint8_t(grade));
+    }
+}
+
+bool World::searchGradeBuildMatchesReference() {
+    for (const auto& existing:searchGrades_) {
+        SearchGradePlane fast,reference;
+        fast.nav=reference.nav=existing.nav;
+        fast.footX=reference.footX=existing.footX;
+        fast.footZ=reference.footZ=existing.footZ;
+        buildSearchPlane(fast);
+        reference.cells.assign(size_t(reference.nav->width())*reference.nav->height(),0);
+        refreshSearchRect(reference,0,0,reference.nav->width(),reference.nav->height());
+        if (fast.cells!=reference.cells || fast.checksum!=reference.checksum) return false;
+    }
+    return true;
+}
+
 void World::prepareSearchGrade(int id,bool lastRetry) {
     const Unit* requester=unit(id);
     if (!requester || !requester->type) return;
@@ -5421,10 +5544,12 @@ void World::prepareSearchGrade(int id,bool lastRetry) {
     }
     auto& plane=searchGrades_[size_t(index)];
     if (plane.cells.empty() || plane.navVersion!=nav->version()) {
-        plane.preparation={}; plane.checksum=0;
-        plane.cells.assign(size_t(nav->width())*nav->height(),0);
-        refreshSearchRect(plane,0,0,nav->width(),nav->height());
-        plane.navVersion=nav->version();
+        buildSearchPlane(plane);
+#ifndef NDEBUG
+        static const bool verify=std::getenv("TAK_VERIFY_SEARCH_PLANE")!=nullptr;
+        if (verify && !searchGradeBuildMatchesReference())
+            throw std::runtime_error("separable search plane build differs from the per-cell reference");
+#endif
     }
     activeSearchGrade_=index;
     if (!searchGradeBatch_ || !searchGradeBodiesValid_) {

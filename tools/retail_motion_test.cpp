@@ -818,6 +818,58 @@ int main(int argc, char** argv) {
                     unexploredRetail.overlaps,unexploredLegion.overlaps);
         check(unexploredLegion.overlaps==0 && unexploredLegion.landed==unexploredLegion.count,
               "Legion flyers never land on a flyer even at an unexplored site");
+        // The same over a ground unit, standing or walking across the spot.
+        // 509400 sees ground bodies in word +0 whether or not they move
+        // (tools/re/check_landing_moving_ground.py), but skips every test at a
+        // site the lander has not explored, so retail touches down on top.
+        auto onGround=[](PathfindingMode mode,bool walking) {
+            World world;world.setVisPlayer(-1);world.setPathfindingMode(mode);
+            world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
+            flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
+            flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.footX=flyer.footZ=2;flyer.sight=0;
+            UnitType ground;ground.canMove=true;ground.maxHp=100;ground.footX=ground.footZ=2;
+            ground.maxVel=Fixed::fromFloat(0.25f);ground.accel=ground.brake=Fixed::fromFloat(0.1f);
+            ground.turnRate=1200;
+            const int body=world.spawn(&ground,walking ? 448 : 512,512,0.0f,0);
+            if(walking)world.order(body,600,512,false);
+            std::vector<int> ids;
+            for(int i=0;i<4;++i) {
+                const int id=world.spawn(&flyer,512,512,0.0f,1);
+                auto* u=world.unit(id);u->flightGroundMode=2;u->flightY=Fixed::fromInt(180);
+                u->standbyActive=true;u->standbyState={1,0,0xffffffffu,0,0};
+                ids.push_back(id);
+            }
+            int overlapTicks=0,landed=0;
+            for(int tick=0;tick<1500;++tick) {
+                world.tick(1.0f/30.0f);
+                const auto& g=*world.unit(body);
+                const int gx=footprintOrigin(g.x,2),gz=footprintOrigin(g.z,2);
+                landed=0;
+                bool over=false;
+                for(int id:ids) {
+                    const auto& a=*world.unit(id);
+                    if(a.flightGroundMode!=1)continue;
+                    ++landed;
+                    const int ax=footprintOrigin(a.x,2),az=footprintOrigin(a.z,2);
+                    over|=ax<gx+2 && gx<ax+2 && az<gz+2 && gz<az+2;
+                }
+                overlapTicks+=over;
+            }
+            return std::pair{overlapTicks,landed};
+        };
+        const auto groundRetail=onGround(PathfindingMode::Retail,false);
+        const auto groundLegion=onGround(PathfindingMode::Legion,false);
+        const auto walkLegion=onGround(PathfindingMode::Legion,true);
+        std::printf("unexplored landing over a ground unit: Retail %d overlap ticks, Legion %d, "
+                    "Legion walking %d (landed %d/%d/%d of 4)\n",groundRetail.first,groundLegion.first,
+                    walkLegion.first,groundRetail.second,groundLegion.second,walkLegion.second);
+        check(groundRetail.first>0,"retail lands on a ground unit at an unexplored site");
+        check(groundLegion.first==0 && groundLegion.second==4,
+              "Legion flyers land clear of a standing ground unit even at an unexplored site");
+        // A unit that walks in under a descender (stage 3) is not refused:
+        // the site was free when chosen, as in retail. Only count landings.
+        check(walkLegion.second==4,"Legion flyers all land while a ground unit walks across the spot");
     }
     {
         World world; world.setVisPlayer(-1);
