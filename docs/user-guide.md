@@ -883,9 +883,9 @@ World sounds are full volume on screen and fade with distance off screen.
 
 ### Graphics
 
-![The Options screen scrolled to the Graphics settings: Renderer set to Auto, then the filtering, shadow, art, tree, Tactical Dots (off), Tactical Dots Zoom (20%), cursor and motion settings, all at their defaults](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Graphics settings: Renderer set to Auto, then the filtering, shadow, art, tree, Tactical Dots (off), Tactical Dots Zoom (20%, greyed out because Tactical Dots is off), cursor and motion settings, all at their defaults](img/guide/options-graphics.jpg)
 
-*Options, Graphics section, at the default settings. The picture was taken in a window, so Fullscreen above shows Off.*
+*Options, Graphics section, at the default settings. Tactical Dots Zoom is greyed out because Tactical Dots is off. The picture was taken in a window, so Fullscreen above shows Off.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -896,12 +896,13 @@ World sounds are full volume on screen and fade with distance off screen.
 | **Smooth Movies** | Off | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
 | **Tactical Dots** | Off | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
-| **Tactical Dots Zoom** | 20% | How far out you must zoom before dots replace models. See below. |
+| **Tactical Dots Zoom** | 20% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
 
-**Tactical Dots Zoom** sets when dots take over, as a position along your
-zoom-out range: at **0%** dots appear only when you are zoomed all the way out;
+**Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be
+changed while Tactical Dots is off. It is a position along your zoom-out range:
+at **0%** dots appear only when you are zoomed all the way out;
 at **100%** they appear from normal size (100% zoom) outwards; the default
 **20%** means the most zoomed-out fifth of that range. The range is measured in
 mouse-wheel notches, so each notch moves the same share of it. It is relative

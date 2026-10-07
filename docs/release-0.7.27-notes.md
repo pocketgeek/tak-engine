@@ -53,7 +53,8 @@ that release packages report.
   dots take over. It is measured along your zoom-out range, not as a fixed
   zoom: 0% means only fully zoomed out, 100% means from normal size outwards.
   Dots stay on until you zoom in a little more than one wheel notch past the
-  setting, so the view does not flicker. Dots are much cheaper to draw: on a
+  setting, so the view does not flicker. The slider is greyed out while Tactical
+  Dots is off. Dots are much cheaper to draw: on a
   16,000-unit test at 1920×1080, drawing took about 2 ms per frame instead of
   35 ms (an exploratory measurement). See
   [the user guide](user-guide.md#graphics).
@@ -72,10 +73,11 @@ that release packages report.
   [Renderer](user-guide.md#renderer) and
   [the black-screen troubleshooting](user-guide.md#the-game-will-not-start-or-shows-a-black-screen).
   Only Linux was tested by hand; Direct3D and Metal were not.
-- **Build identity.** The CI build scripts were fixed so that Linux packages and
-  Windows builds report their real build id. 0.7.26 Linux packages said
-  `build unknown`, and Windows builds added a spurious `-dirty`. This will be
-  confirmed on the release's own CI packages before publication.
+- **Build identity fixed.** Linux packages and Windows builds now report their
+  real build id. 0.7.26 Linux packages said `build unknown`, and Windows builds
+  added a spurious `-dirty`; macOS was already correct. CI confirmed the fix on
+  the version commit: every Linux package and both Windows builds report a clean
+  id.
 
 **Compatibility:** protocol **238**, replay format **11**, generator version
 **8**, campaign payload **4** and Crusades SQL schema **9** (all but the

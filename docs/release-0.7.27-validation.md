@@ -17,7 +17,9 @@ rest between updates, and far-apart static-map changes are repaired one cluster
 at a time. The Legion navigation golden was regenerated for them; the Retail
 golden is unchanged. Tactical Dots and the Renderer option are client-only
 display changes with no simulation, network or hash effect. The Linux and
-Windows CI workflows were changed so packages report their build identity.
+Windows CI workflows were changed so packages report their build identity
+(confirmed in CI; see below). Options greys out Tactical Dots Zoom while Tactical
+Dots is off.
 
 Protocol 238 is required for live play. Replays need the exact simulation
 protocol, so protocol-237 (0.7.26) recordings are not playable by this build.
@@ -34,8 +36,13 @@ Pending.
 
 ## CI and packages
 
-Pending. The build-identity fix (Linux `build unknown`, Windows `-dirty`) is to
-be confirmed on the tagged packages.
+Pending for the tag. The build-identity fix is confirmed on the version commit
+`9642e70`: all 16 Linux package jobs
+([Linux run](https://github.com/pocketgeek/tak-engine/actions/runs/37688998787))
+and both Windows builds
+([Windows run](https://github.com/pocketgeek/tak-engine/actions/runs/37688998842))
+report the clean id `9642e70e009b`, with no `build unknown` and no `-dirty`. On
+the tag the id will read `v0.7.27`.
 
 ## Screenshots
 
@@ -52,8 +59,8 @@ inspected by eye against its caption.
   deterministic Benchmark battle rendered with Tactical Dots off and on, side
   by side, inserted in the Tactical Dots text with alt text and a caption.
   Re-rendered: `guide/options-graphics.jpg`, showing Renderer (AUTO) first in
-  Graphics, Tactical Dots (OFF) and Tactical Dots Zoom (20%), all at their
-  defaults in a fresh profile. `guide/hud-annotated.jpg` was recaptured for
+  Graphics, Tactical Dots (OFF) and Tactical Dots Zoom (20%, greyed out
+  because Tactical Dots is off), all at their defaults in a fresh profile. `guide/hud-annotated.jpg` was recaptured for
   checking but kept: at 1600 × 900 the stats panel shows only its first four
   rows, so the RENDERER row is not visible there.
 - **Labels.** The development and Benchmark scenes are identified in the

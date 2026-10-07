@@ -64,15 +64,15 @@ the GOG edition, supplies the game data.
 - **Tactical Dots** (Options → Graphics, off by default, not in the original
   game): zoomed far out, units are drawn as minimap-style dots in their
   player's colour, with the minimap's fog rules. **Tactical Dots Zoom**
-  (0–100%, default 20%) sets how far out, along your zoom-out range. See the
+  (0–100%, default 20%, greyed out while dots are off) sets how far out, along
+  your zoom-out range. See the
   [user guide](docs/user-guide.md#graphics).
 - **Renderer option** (Options → Graphics): **Auto** by default, or any graphics
   backend SDL offers on your machine. A backend that cannot start falls back to
   Auto with a notice. The stats panel and Benchmark results show the backend in
   use, and text under the Software renderer is no longer faint and dotted.
-- **Build ids.** The CI build scripts were fixed so that Linux packages and
-  Windows builds report their real build id, not `build unknown` or a spurious
-  `-dirty`.
+- **Build ids fixed.** Linux packages and Windows builds report their real
+  build id, not `build unknown` or a spurious `-dirty` (confirmed in CI).
 
 Version **0.7.27 uses protocol 238 and replay format 11**. Update clients and
 servers together; 0.7.26 clients cannot join. Replays require the exact
