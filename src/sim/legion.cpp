@@ -25,6 +25,11 @@ constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
 // the jank replay), a third of a tick at 8x game speed (4.17 ms). A field
 // still steers the bodies its frontier has passed while it builds.
 constexpr uint64_t kFieldQuota=384'000;
+// A body held this many updates in a row (past every early reaction:
+// yields, first detours) is fully re-evaluated only every kRestStride ticks,
+// staggered by unit id, unless something around it changed (heldRest).
+constexpr uint32_t kRestAfter=60;
+constexpr uint32_t kRestStride=2;
 constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
@@ -322,6 +327,10 @@ struct LegionNavigator::Impl {
         // "Close enough": the start of the current no-progress window and the
         // pixel distance to the requested point then (see crowdSettle).
         uint32_t windowTick=0;int64_t windowDist=-1;uint8_t stillWindows=0;
+        // Long-held throttle (see heldRest): what the last full update of a
+        // held body saw -- its position, hit points, the static epoch and
+        // the occupants of every origin around it. Hashed.
+        int32_t restX=0,restZ=0,restHp=0;uint64_t restEpoch=0,restRing=0;bool rest=false;
         // Mission goal (kind, and for moving goals the origin and tick the
         // field was last seeded at). Only hashed for non-Move kinds.
         Kind kind=Kind::Move;
@@ -2603,6 +2612,34 @@ struct LegionNavigator::Impl {
     // aims at: blocked, it flows round toward that cell, not down the field
     // (the field's lower cells lie inward, back toward the wall end).
     const Member* pivoting=nullptr;int pivotTarget=-1;
+    // Occupants of every origin cell touching the body's footprint (its
+    // own cells excluded): a blocker leaving or a new body arriving changes it.
+    uint64_t ringSignature(const Unit& u) const {
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        uint64_t h=0x72696e67;
+        for(int z=oz-1;z<=oz+fz;++z)for(int x=ox-1;x<=ox+fx;++x) {
+            if(x>=ox&&x<ox+fx&&z>=oz&&z<oz+fz)continue;
+            if(x<0||z<0||x>=w.occW_||z>=w.occH_)continue;
+            h=mix(h,uint64_t(uint32_t(occAt(size_t(z)*w.occW_+x))));
+        }
+        return h;
+    }
+    // A long-held body (kRestAfter updates without a step, no committed
+    // detour or route) skips its full update on all but one tick in
+    // kRestStride (staggered by id), as long as nothing it reacts to has
+    // changed since its last full update: it was not pushed or hurt, the
+    // static epoch is the same and no body arrived at or left any cell
+    // around it. Any change wakes it at once. A skipped update is a hold
+    // that does not count toward the held timers (they count updates).
+    bool heldRest(const Unit& u,Member& m) {
+        if(m.state!=Holding||m.held<kRestAfter||m.detour>=0||!m.route.empty()||w.occW_<=0) {m.rest=false;return false;}
+        const uint64_t ring=ringSignature(u);
+        const bool same=m.rest&&m.restX==u.x.v&&m.restZ==u.z.v&&m.restHp==u.hp.v&&m.restEpoch==epoch&&m.restRing==ring;
+        if(same&&(uint32_t(u.id)+w.tickCounter_)%kRestStride!=0)return true;
+        m.rest=true;m.restX=u.x.v;m.restZ=u.z.v;m.restHp=u.hp.v;m.restEpoch=epoch;m.restRing=ring;
+        return false;
+    }
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
         Member* found=member(u.id);
@@ -2641,6 +2678,7 @@ struct LegionNavigator::Impl {
             if(!found) {w.brakeGround(u);return;}
         }
         auto& m=*found;
+        if(heldRest(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
         ++stats.moves;
         // The native goal predicate (the circle the native mover would test)
         // also ends the leg, with the same event.
@@ -3606,6 +3644,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
+            h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillWindows);
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
