@@ -492,6 +492,51 @@ landed flyers: 4 columns by 3 rows, with a one-cell gap between them.
 - With the flyers parked on the group's destination, 9 flyers lift once and
   land nearby after the group has settled, with no bobbing and no overlap.
 
+**A deliberate animation difference: no walking on the spot.** A walker's
+gait is a Create-started COB controller (araarch's `MoveWatcher` and
+`MeleeControl`). Every 100 ms it reads GET 29, the horizontal speed as a
+percentage of the maximum, and above 5 it plays a whole walk cycle, about
+1.3 s. Retail reports a body stopped only after two refused steps in a row
+(the refusal bit, `bodyBlockStreak`). Legion holds a blocked body at zero
+speed, but it moves a jammed body in short, slow shuffles and side-steps
+that do not turn it: an eighth of its speed while it faces away. Every
+sample that lands on one of those creeping ticks starts another full cycle,
+so the legs walk while the body all but stands.
+
+In Legion, `World::updateLegionStill` therefore measures each scripted
+ground body's step from the start of the tick. Six ticks in a row under a
+quarter of its maximum speed, without turning, make it report stopped:
+GET 29 is 0 and MoveRate is 0, as with the refusal bit, so it stands. Two
+consecutive steps at that pace or more, or turns, make it walk again (a
+body pivoting on the spot steps round). This hysteresis stops it flipping
+every tick. Flyers and Retail mode keep retail's rule.
+
+The rule applies to every Legion ground body, whatever blocks it: another
+body of any player (held, waiting, queued behind, pressed against, a crowd)
+or terrain. Its state is hashed only for units with a COB script, the only
+readers.
+
+Measured as unit-ticks in which the body "walks" while it moves less than
+8 px in 30 ticks. "Walks" means that a `walk*` script runs, or, where there
+are no scripts (crowdbench), that the GET 29 signal the gait reads is above
+5. Each tick is classed by contact: another body in the ring of cells round
+the footprint, else terrain (a neighbouring origin the static grid refuses),
+else other.
+- The replay `legion-r9.takrep` on 02aa55a, where it replays exactly, to
+  tick 65,000, scripts: unit contact 720,663 to 92,697, terrain 1,011 to 311,
+  other 24,734 to 2,774.
+- crowdbench, Legion, 6,000 ticks, seed 0, GET 29 signal, unit contact:
+  doors 2000x1 804,090 to 47,904; sharedgoal 2000x1 511,179 to 18,774;
+  opposingcolumns 2000x1 43,079 to 18,543; 500x4 617,889 to 55,443,
+  398,296 to 10,755 and 121,452 to 30,926. Terrain-only contact is rare
+  there: maze 200x1 38 to 12, jagged 10 to 6.
+- `legion_group_motion`, 60 units, scripts: open 4,022 to 143, wall 2,564
+  to 244, cross 1,597 to 158 (Retail: 405, 1,087 and 722).
+
+Movement is unchanged, except through the game's single random stream:
+walk scripts draw from it, so different walk timing shifts later draws.
+The crowdbench screens are identical, because crowdbench has no scripts.
+
 **Boats and hovercraft** are mobility classes like any other. The plane is
 built from `World::mobilePlacement`'s own predicate with the type's limits:
 a boat needs `minWaterDepth` (default 13) under every footprint cell and has
