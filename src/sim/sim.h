@@ -1789,6 +1789,9 @@ public:
     uint64_t stateHash() const;
     // Read-only invariant check for the incrementally maintained grade hashes.
     bool searchGradeChecksumsValid() const;
+    // Test hook: build every existing plane's shape afresh both ways (the
+    // box-minimum build and the per-cell reference) and compare. Derived only.
+    bool searchGradeBuildMatchesReference();
 #ifndef NDEBUG
     // Debug-only divergence locator, and the first thing to reach for when the referee
     // reports a desync. TAK_HASHTRACE="lo:hi" dumps a PER-COMPONENT checksum every tick
@@ -2261,6 +2264,7 @@ private:
     int rawSearchGrade(const SearchGradePlane&,int,int,int,int,const SearchBodyRect* = nullptr) const;
     static void setSearchCell(SearchGradePlane&,size_t,uint8_t);
     void refreshSearchRect(SearchGradePlane&,int,int,int,int);
+    void buildSearchPlane(SearchGradePlane&);
     void ageSearchBody(SearchGradePlane&,const RetailGradeBody&,bool);
     void prepareSearchGrade(int,bool);
     void finishSearchGrade(int);

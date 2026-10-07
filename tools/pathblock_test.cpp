@@ -22,6 +22,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
+#include <tuple>
 #include <vector>
 
 using namespace tak::sim;
@@ -104,6 +106,48 @@ int main() {
         const int self=w.spawn(&mover,64,64);
         check(w.cellScore(&mover,10,10,self)==(structureFirst ? 0 : 2),
               "mixed blockers retain ascending-ID precedence over cell order");
+    }
+    // A plane's first build takes box minima instead of rating every cell's
+    // footprint and ring one by one. It must give the per-cell reference's
+    // cells and checksum exactly: slopes, water, features, edges, structures,
+    // gates and mobile bodies, for square and long footprints.
+    for (auto [fx,fz] : {std::pair{1,1},{2,2},{3,3},{2,6},{6,2},{4,4}}) {
+        World w;w.setVisPlayer(-1);w.setPathService(true);
+        std::vector<uint8_t> heights(size_t(64)*64,100);
+        for (int z=0;z<64;++z) for (int x=0;x<64;++x) {
+            if (x>=40 && x<46) heights[size_t(z)*64+x]=uint8_t(x%2 ? 120 : 100);   // rough: graded 4
+            if (z>=50 && x<20) heights[size_t(z)*64+x]=uint8_t(z>=55 ? 5 : 15);  // shore and deep water
+        }
+        w.setTerrain(heights,64,64,20);
+        w.setMapPlacementFeatures(std::vector<uint16_t>(size_t(64)*64,0xffff),{});
+        int feature=1;
+        for (auto [x,z,size,blocks] : {std::tuple{100,100,1,true},{300,120,2,true},{500,80,1,false},
+                                       {8,8,1,true},{1000,1000,3,true},{200,700,2,false}})
+            w.addFeature(feature++,float(x),float(z),0,1,size,size,blocks);
+        w.blockCells(30,10,2,12,true);
+        UnitType body=soldier(),big=soldier(),house=soldier(),gate=soldier(),mover=soldier();
+        body.footX=body.footZ=1;big.footX=3;big.footZ=2;
+        house.footX=house.footZ=2;house.maxVel=Fixed();
+        gate.footX=3;gate.footZ=1;gate.maxVel=Fixed();gate.gate=true;gate.yardMap="oco";
+        mover.footX=fx;mover.footZ=fz;
+        for (auto [x,z] : {std::pair{200,200},{216,200},{24,500},{1010,300},{600,1010},{8,1016}})
+            w.spawn(&body,float(x),float(z),0,0);
+        w.spawn(&big,420.f,260.f,0,1);
+        w.spawn(&house,520.f,520.f,0,0);
+        w.spawn(&gate,328.f,600.f,0,0);
+        // A yard with open cells, and bodies stacked on structures in both
+        // orders: the cell keeps the later unit, whatever its grade.
+        UnitType yard=house;yard.yardMap="o..o";
+        w.spawn(&yard,712.f,520.f,0,0);
+        w.spawn(&body,712.f,520.f,0,0);
+        w.spawn(&body,808.f,424.f,0,0);
+        w.spawn(&house,808.f,424.f,0,0);
+        const int id=w.spawn(&mover,160,160,0,0);
+        for (int tick=0;tick<14;++tick) w.tick(1.f/30.f);
+        w.order(id,900,900,false);
+        for (int tick=0;tick<4;++tick) w.tick(1.f/30.f);
+        check(w.pathStats().completions()+w.pathStats().failures()>0 && w.searchGradeBuildMatchesReference(),
+              "box-minimum plane build matches the per-cell build "+std::to_string(fx)+"x"+std::to_string(fz));
     }
     // Stress flyers exposed this through a landed body below the map. Aging
     // its clipped footprint read unrelated heap bytes into the cached checksum.
