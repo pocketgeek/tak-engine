@@ -27,6 +27,100 @@ void setup(sim::World& w,sim::PathfindingMode mode,bool serial=true) {
     w.setPathService(true);w.player(0).mana=10000;
 }
 void ticks(sim::World& w,int n) {for(int i=0;i<n;++i)w.tick(1.f/30);}
+// Nearest-first area order. Deposit INDEX order is deliberately not distance
+// order (the old area job walked the deposits in index order).
+const std::vector<std::pair<float,float>> kOrderSpots{{1600,400},{400,400},{1000,400},{400,1200}};
+int spotOf(const sim::World& w,const sim::Unit& site) {
+    int best=-1;float bestD=1e30f;
+    for(size_t i=0;i<w.manaSpots().size();++i) {
+        const float dx=site.x.toFloat()-w.manaSpots()[i].first,dz=site.z.toFloat()-w.manaSpots()[i].second;
+        if(dx*dx+dz*dz<bestD) {bestD=dx*dx+dz*dz;best=int(i);}
+    }
+    return best;
+}
+// Every builder's sites, in the order it started them (one entry per site).
+std::vector<std::vector<int>> runAreaOrder(sim::World& w,const std::vector<int>& ids,int limit=12000) {
+    std::vector<std::vector<int>> visited(ids.size());std::vector<int> last(ids.size(),0);
+    for(int tick=0;tick<limit;++tick) {
+        bool busy=false;
+        for(size_t i=0;i<ids.size();++i) {
+            const auto* b=w.unit(ids[i]);busy|=!b->orders.empty();
+            if(b->buildSiteId && b->buildSiteId!=last[i]) {
+                last[i]=b->buildSiteId;visited[i].push_back(spotOf(w,*w.unit(b->buildSiteId)));
+            }
+        }
+        if(!busy)break;
+        w.tick(1.f/30);
+    }
+    return visited;
+}
+uint64_t areaNearestFirst(bool serial=true) {
+    uint64_t hash=0;
+    const std::pair<float,float> starts[]{{256,400},{1800,400},{400,1400}};
+    const std::vector<int> expected[]{{1,2,0,3},{0,2,1,3},{3,1,2,0}};
+    for(int s=0;s<3;++s) {
+        sim::World w;setup(w,sim::PathfindingMode::Retail,serial);auto builder=worker();auto lode=lodestone();
+        w.setManaSpots(kOrderSpots);
+        const int id=w.spawn(&builder,starts[s].first,starts[s].second,0,0);
+        w.queueManaBuildArea(id,&lode,0,0,2000,2000,false);
+        const auto got=runAreaOrder(w,{id});
+        check(got[0]==expected[s] && w.unit(id)->orders.empty(),
+              s==0 ? "area build visits deposits nearest first (from the west)" :
+              s==1 ? "area build visits deposits nearest first (from the east)" :
+                     "area build visits deposits nearest first (from the south)");
+        hash^=w.stateHash()*uint64_t(s+1);
+    }
+    return hash;
+}
+void areaNearestEdgeCases() {
+    auto builder=worker();auto lode=lodestone();
+    {   // Exact tie: equal distance is broken by deposit index, either way round.
+        for(bool swapped:{false,true}) {
+            sim::World w;setup(w,sim::PathfindingMode::Retail);
+            w.setManaSpots(swapped ? std::vector<std::pair<float,float>>{{600,400},{1400,400}}
+                                   : std::vector<std::pair<float,float>>{{1400,400},{600,400}});
+            const int id=w.spawn(&builder,1000,400,0,0);
+            w.queueManaBuildArea(id,&lode,0,0,2000,2000,false);
+            const auto got=runAreaOrder(w,{id});
+            check(got[0]==std::vector<int>({0,1}),swapped ? "equidistant deposits: lower index first (west)"
+                                                            : "equidistant deposits: lower index first (east)");
+        }
+    }
+    {   // A deposit taken mid-run drops out; the job continues nearest first.
+        sim::World w;setup(w,sim::PathfindingMode::Retail);w.setManaSpots(kOrderSpots);
+        const int id=w.spawn(&builder,256,400,0,0);
+        w.queueManaBuildArea(id,&lode,0,0,2000,2000,false);
+        std::vector<int> got{-1};
+        for(int tick=0;tick<6000 && !w.unit(id)->buildSiteId;++tick)w.tick(1.f/30);
+        got[0]=spotOf(w,*w.unit(w.unit(id)->buildSiteId));
+        const int other=w.spawn(&lode,1000,400,0,0);w.blockFoot(lode,1000,400,true);
+        const auto rest=runAreaOrder(w,{id});
+        got.insert(got.end(),rest[0].begin(),rest[0].end());
+        check(w.unit(other)->alive() && got==std::vector<int>({1,1,3,0}) && w.unit(id)->orders.empty(),
+              "deposit occupied mid-run is skipped and the rest stay nearest first");
+    }
+    {   // Shift-queued behind a move: the area starts from the move's end.
+        sim::World w;setup(w,sim::PathfindingMode::Retail);w.setManaSpots(kOrderSpots);
+        const int id=w.spawn(&builder,256,400,0,0);
+        w.order(id,400,1400,false);w.queueManaBuildArea(id,&lode,0,0,2000,2000,true);
+        const auto got=runAreaOrder(w,{id});
+        check(got[0]==std::vector<int>({3,1,2,0}),"Shift-queued area plans from the end of the previous move");
+    }
+    {   // Two builders, side by side, on the same area: claims split the deposits.
+        sim::World w;setup(w,sim::PathfindingMode::Retail);w.setManaSpots(kOrderSpots);
+        const int a=w.spawn(&builder,256,400,0,0),b=w.spawn(&builder,256,464,0,0);
+        w.queueManaBuildArea(a,&lode,0,0,2000,2000,false);w.queueManaBuildArea(b,&lode,0,0,2000,2000,false);
+        const auto got=runAreaOrder(w,{a,b});
+        std::vector<int> all=got[0];all.insert(all.end(),got[1].begin(),got[1].end());std::sort(all.begin(),all.end());
+        const int built=int(std::count_if(w.units().begin(),w.units().end(),[&](const auto& u) {
+            return u.alive() && u.type==&lode && !u.underConstruction;}));
+        check(!got[0].empty() && !got[1].empty() && got[0].front()!=got[1].front() &&
+              all==std::vector<int>({0,1,2,3}) && built==4,
+              "two builders on one area each take a different nearest deposit, none twice");
+        std::printf("two-builder split: a=");for(int i:got[0])std::printf("%d",i);
+        std::printf(" b=");for(int i:got[1])std::printf("%d",i);std::printf("\n");
+    }
+}
 uint64_t areaBuild(sim::PathfindingMode mode,bool air,bool serial=true) {
     sim::World w;setup(w,mode,serial);auto builder=worker(air);builder.sight=100;auto lode=lodestone();
     w.setManaSpots({{512,256},{896,256},{1280,640}});
@@ -236,6 +330,8 @@ int main(int argc,char** argv) {
     check(patrolRepair(sim::PathfindingMode::Retail,false,true)==patrolRepair(sim::PathfindingMode::Retail,false,false),
           "patrol repair serial/threaded hashes agree");
     areaPolicy();repairPolicy();repairEligibility();movingRepair();
+    check(areaNearestFirst(true)==areaNearestFirst(false),"nearest-first area serial/threaded hashes agree");
+    areaNearestEdgeCases();
     net::Command c;c.kind=net::Cmd::BuildManaArea;c.unitId=1;c.x=100;c.z=200;c.x2=800;c.z2=900;
     std::snprintf(c.type,sizeof c.type,"lode");net::Writer out;out.cmd(c);
     net::Reader in(out.b.data(),out.b.size());auto decoded=in.cmd();

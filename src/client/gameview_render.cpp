@@ -4613,7 +4613,8 @@
             }
             if(areas && beads) {
                 auto& cache=orderTrailCache_[size_t(drawn)];
-                const auto signature=tak::orderTrailSignature(actual)^reinterpret_cast<uintptr_t>(up->type);
+                auto signature=tak::orderTrailSignature(actual)^reinterpret_cast<uintptr_t>(up->type);
+                for(uint32_t i:up->areaVisited)signature=(signature^i)*1099511628211ull;
                 if(cache.unitId!=selId || cache.signature!=signature || cache.featGen!=lastFeatGen_ ||
                    cache.visGen!=front().visGen || cache.noFog!=noFog_ || tick-cache.tick>=30u) {
                     if(!targetsRefreshed) {refreshOrderTrailTargets();targetsRefreshed=true;}
@@ -4621,7 +4622,7 @@
                        cache.sceneSignature!=orderTrailSceneSignature_ || tick-cache.tick>=30u)
                         tak::expandOrderTrail(actual,*up->type,up->player,
                             tak::sim::Fixed::fromFloat(up->x),tak::sim::Fixed::fromFloat(up->z),
-                            orderTrailTargets_,orderTrailSites_,cache.orders);
+                            orderTrailTargets_,orderTrailSites_,up->areaVisited,cache.orders);
                     cache.unitId=selId;cache.signature=signature;cache.featGen=lastFeatGen_;
                     cache.visGen=front().visGen;cache.noFog=noFog_;cache.tick=tick;
                     cache.sceneSignature=orderTrailSceneSignature_;

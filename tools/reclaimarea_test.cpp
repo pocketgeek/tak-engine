@@ -101,5 +101,67 @@ int main(int argc,char** argv) {
     footprint.reclaimArea(fb,184,184,184,184,false);footprint.tick(1.0f/30);
     check(footprint.unit(fb)->reclaimId==30,
           "area touching only a footprint tail selects the anchored feature");
+
+    // Whole runs: the retail selector re-chooses the nearest target from the
+    // builder's current position after every reclaim (greedy nearest first).
+    sim::UnitType walker=builder;walker.id="area-walker";walker.sight=600;walker.buildDist=24;
+    walker.maxVel=sim::Fixed::fromInt(3);walker.footX=walker.footZ=2;walker.upright=true;
+    walker.turnRate=walker.turnInPlaceRate=10000;
+    const std::vector<uint8_t> wide(64*64,100);
+    auto field=[&](sim::World& w) {
+        w.setVisPlayer(-1);w.setTerrain(wide,64,64,20);
+        w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+        w.addFeature(1,200,200,1,4,1,1,false);w.addFeature(2,600,200,1,4,1,1,false);
+        w.addFeature(3,200,700,1,4,1,1,false);w.addFeature(4,900,700,1,4,1,1,false);
+    };
+    auto run=[&](sim::World& w,std::vector<int> ids) {
+        std::vector<std::vector<int>> got(ids.size());
+        for(int tick=0;tick<12000;++tick) {
+            bool busy=false;
+            for(size_t i=0;i<ids.size();++i) {
+                const auto* u=w.unit(ids[i]);busy|=!u->orders.empty();
+                if(u->reclaimId && (got[i].empty() || got[i].back()!=u->reclaimId))got[i].push_back(u->reclaimId);
+            }
+            if(!busy)break;
+            w.tick(1.0f/30);
+        }
+        return got;
+    };
+    {
+        sim::World w;field(w);const int b=w.spawn(&walker,100,200,0,0);
+        w.reclaimArea(b,128,128,960,960,false);
+        check(run(w,{b})[0]==std::vector<int>({1,2,4,3}),"area clear runs nearest first from the north-west");
+    }
+    {
+        sim::World w;field(w);const int b=w.spawn(&walker,950,950,0,0);
+        w.reclaimArea(b,128,128,960,960,false);
+        check(run(w,{b})[0]==std::vector<int>({4,2,1,3}),"area clear runs nearest first from the south-east");
+    }
+    {
+        sim::World w;field(w);const int b=w.spawn(&walker,100,200,0,0);
+        w.order(b,800,850,false);w.reclaimArea(b,128,128,960,960,true);
+        const auto got=run(w,{b})[0];
+        check(got==std::vector<int>({4,2,1,3}),"Shift-queued area clear starts from the previous move's end");
+    }
+    {
+        // Equal sampled distance keeps the first sample in Z-then-X scan order.
+        sim::World w;w.setVisPlayer(-1);w.setTerrain(wide,64,64,20);
+        w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+        w.addFeature(22,200,200,1,4,1,1,false);w.addFeature(21,600,200,1,4,1,1,false);
+        const int b=w.spawn(&walker,392,192,0,0);
+        w.reclaimArea(b,128,128,960,960,false);w.tick(1.0f/30);
+        check(w.unit(b)->reclaimId==22,"equidistant area targets: the first sampled (west) one wins");
+    }
+    {
+        // Retail has no claims: two builders on one area may share a target;
+        // the one left without it re-selects, and the area still completes.
+        sim::World w;field(w);
+        const int a=w.spawn(&walker,100,200,0,0),b=w.spawn(&walker,100,264,0,0);
+        w.reclaimArea(a,128,128,960,960,false);w.reclaimArea(b,128,128,960,960,false);
+        run(w,{a,b});
+        bool cleared=true;for(int id:{1,2,3,4})cleared&=!w.feature(id)->alive;
+        check(cleared && w.unit(a)->orders.empty() && w.unit(b)->orders.empty(),
+              "two builders on one area clear it all and both finish");
+    }
     return failed?1:0;
 }

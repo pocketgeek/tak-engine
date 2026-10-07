@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <tuple>
 #include <array>
 #include <atomic>
 #include <limits>
@@ -6297,49 +6298,101 @@ void World::tickManaBuildArea(Unit& b) {
     if (b.orders.empty() || !b.orders.front().manaBuildArea) return;
     auto& area=*b.orders.front().manaBuildArea;
     const int width=hW_/2,height=hH_/2;
-    for (;area.nextSpot<manaSpots_.size();++area.nextSpot) {
-        const auto [sx,sz]=manaSpots_[area.nextSpot];
-        const Fixed x=Fixed::fromFloat(sx),z=Fixed::fromFloat(sz);
-        if (x<area.minX || x>area.maxX || z<area.minZ || z>area.maxZ) continue;
+    const auto explored=[&](Fixed x,Fixed z) {
         const int cx=x.floorInt()/32,cz=z.floorInt()/32;
-        const bool explored=navigationExplored_.empty() || (cx>=0 && cz>=0 && cx<width && cz<height &&
+        return navigationExplored_.empty() || (cx>=0 && cz>=0 && cx<width && cz<height &&
             (navigationExplored_[size_t(cz)*width+cx] & (1u<<b.player)));
-        if (!explored) {
-            // A failed/partial exploration move must not repeat forever. Other
-            // deposits remain pending, and all occupancy is checked after scouting.
-            if (area.exploring) {area.exploring=false;continue;}
-            if (!b.type->canFly && !pathExists(b.type,sx,sz,b.x.toFloat(),b.z.toFloat())) continue;
-            area.exploring=true;
-            const Order approach=makeBuildOrder(b,area.type,x,z);
-            const size_t oldSize=b.orders.size();
-            order(b.id,approach.x.toFloat(),approach.z.toFloat(),true);
-            if (b.orders.size()>oldSize) {
-                if (b.type->canFly) {
-                    // An ordinary queued flight move may retire 80..144px
-                    // before its point. Scouting must reach the actual approach
-                    // so that its following area job can see the deposit.
-                    auto& scout=b.orders.back();scout.flightMoveMission=false;
-                    scout.flightGoal=RetailFlightGoal{{scout.x.v,b.flightY.v,scout.z.v}};
-                    if (auto script=unitScripts_.find(b.id);script!=unitScripts_.end() && !script->second.activated) {
-                        script->second.activated=true;notifyUnitScript(b,"Activate");
-                    }
-                    notifyUnitScript(b,"BeginFlight");
-                }
-                std::rotate(b.orders.begin(),b.orders.begin()+oldSize,b.orders.end());
-            }
-            return;
+    };
+    const auto tried=[&](uint32_t i){return std::binary_search(area.visited.begin(),area.visited.end(),i);};
+    const auto visit=[&](uint32_t i) {
+        const auto at=std::lower_bound(area.visited.begin(),area.visited.end(),i);
+        if (at==area.visited.end() || *at!=i) area.visited.insert(at,i);
+    };
+    if (area.exploring) {
+        // Scouting is over (arrived, or its move failed). A deposit that is
+        // still unexplored is given up, so a failed scout never repeats.
+        area.exploring=false;
+        if (area.nextSpot<manaSpots_.size()) {
+            const auto [sx,sz]=manaSpots_[area.nextSpot];
+            if (!explored(Fixed::fromFloat(sx),Fixed::fromFloat(sz))) visit(area.nextSpot);
         }
-        const UnitType* type=area.type;
-        area.exploring=false;++area.nextSpot;
+    }
+    // Deposits another allied builder has claimed: a lodestone build in its
+    // queue, or the deposit its own area job is scouting. Two builders on
+    // overlapping areas therefore split the deposits instead of racing to
+    // the same one. Unit order is the deterministic units_ order.
+    struct Claim {const UnitType* type;Fixed x,z;};
+    std::vector<Claim> claims;std::vector<uint32_t> scouted;
+    for (const auto& u:units_) {
+        if (u.id==b.id || !u.alive() || !allied(u.player,b.player)) continue;
+        bool firstArea=true;
+        for (const auto& o:u.orders) {
+            if (o.buildType && o.buildType->onMana) claims.push_back({o.buildType,o.buildX,o.buildZ});
+            if (o.manaBuildArea && firstArea) {
+                firstArea=false;
+                if (o.manaBuildArea->exploring) scouted.push_back(o.manaBuildArea->nextSpot);
+            }
+        }
+    }
+    const auto claimed=[&](uint32_t i,Fixed x,Fixed z) {
+        if (std::find(scouted.begin(),scouted.end(),i)!=scouted.end()) return true;
+        for (const auto& c:claims)
+            if (footprintWaypoint(footprintCell(x,c.type->footX),c.type->footX)==c.x &&
+                footprintWaypoint(footprintCell(z,c.type->footZ),c.type->footZ)==c.z) return true;
+        return false;
+    };
+    // Greedy nearest neighbour, re-chosen from the builder's CURRENT position
+    // after every deposit (so a Shift-queued area starts where the previous
+    // order ended, and deposits built by others drop out as it goes). Rank:
+    // deposits on the builder's own nav component first, then exact squared
+    // straight-line distance in 16.16, then spot index.
+    int64_t best=-1;bool bestKnown=false;
+    std::tuple<int,uint64_t,uint32_t> bestKey{};
+    for (uint32_t i=0;i<manaSpots_.size();++i) {
+        if (tried(i)) continue;
+        const auto [sx,sz]=manaSpots_[i];
+        const Fixed x=Fixed::fromFloat(sx),z=Fixed::fromFloat(sz);
+        if (x<area.minX || x>area.maxX || z<area.minZ || z>area.maxZ || claimed(i,x,z)) continue;
+        const bool known=explored(x,z);
+        const bool reachable=b.type->canFly || pathExists(b.type,sx,sz,b.x.toFloat(),b.z.toFloat());
+        // An unexplored deposit we cannot walk to cannot be scouted: give it up.
+        if (!known && !reachable) {visit(i);continue;}
+        const int64_t dx=int64_t(x.v)-b.x.v,dz=int64_t(z.v)-b.z.v;
+        const std::tuple<int,uint64_t,uint32_t> key{reachable?0:1,uint64_t(dx*dx)+uint64_t(dz*dz),i};
+        if (best<0 || key<bestKey) {best=i;bestKey=key;bestKnown=known;}
+    }
+    if (best<0) {b.orders.erase(b.orders.begin());return;}
+    const uint32_t spot=uint32_t(best);
+    const auto [sx,sz]=manaSpots_[spot];
+    const Fixed x=Fixed::fromFloat(sx),z=Fixed::fromFloat(sz);
+    if (!bestKnown) {
+        area.exploring=true;area.nextSpot=spot;
+        const Order approach=makeBuildOrder(b,area.type,x,z);
         const size_t oldSize=b.orders.size();
-        // Reuse normal placement, clearing, construction and upgrade orders.
-        // Move the appended child work ahead of the area and its queued tail.
-        queueBuild(b.id,type,sx,sz,true);
-        if (b.orders.size()>oldSize)
+        order(b.id,approach.x.toFloat(),approach.z.toFloat(),true);
+        if (b.orders.size()>oldSize) {
+            if (b.type->canFly) {
+                // An ordinary queued flight move may retire 80..144px
+                // before its point. Scouting must reach the actual approach
+                // so that its following area job can see the deposit.
+                auto& scout=b.orders.back();scout.flightMoveMission=false;
+                scout.flightGoal=RetailFlightGoal{{scout.x.v,b.flightY.v,scout.z.v}};
+                if (auto script=unitScripts_.find(b.id);script!=unitScripts_.end() && !script->second.activated) {
+                    script->second.activated=true;notifyUnitScript(b,"Activate");
+                }
+                notifyUnitScript(b,"BeginFlight");
+            }
             std::rotate(b.orders.begin(),b.orders.begin()+oldSize,b.orders.end());
+        }
         return;
     }
-    b.orders.erase(b.orders.begin());
+    visit(spot);
+    const size_t oldSize=b.orders.size();
+    // Reuse normal placement, clearing, construction and upgrade orders.
+    // Move the appended child work ahead of the area and its queued tail.
+    queueBuild(b.id,area.type,sx,sz,true);
+    if (b.orders.size()>oldSize)
+        std::rotate(b.orders.begin(),b.orders.begin()+oldSize,b.orders.end());
 }
 
 Order World::makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const {
@@ -11342,6 +11395,7 @@ uint64_t World::stateHash() const {
                 mix(uint32_t(area.minX.v));mix(uint32_t(area.maxX.v));
                 mix(uint32_t(area.minZ.v));mix(uint32_t(area.maxZ.v));
                 mix(area.nextSpot);mix(area.exploring);
+                mix(area.visited.size());for (uint32_t i:area.visited) mix(i);
                 mix(area.type->id.size());
                 for (unsigned char c:area.type->id) mix(c);
             }
