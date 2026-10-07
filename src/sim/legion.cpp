@@ -45,6 +45,19 @@ constexpr uint8_t kMaxParts=3;                 // parting steps per idle body
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
+// Pinwheel (see pivotAim): a formation member of a command at least
+// kPivotMembers strong rounds a wall end on its own concentric arc, looking
+// kPivotChain descent cells ahead. Its arc radius is capped at 1.5 bodies
+// per sqrt(members) and kPivotMaxCells; below kPivotMinBodies bodies it
+// hugs (the inner file, as before).
+constexpr int kPivotMembers=16;
+constexpr int kPivotChain=48;
+constexpr int kPivotMaxCells=32;
+constexpr int kPivotMinBodies=2;
+constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bounded work)
+constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
+constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
+constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr int kApproachRegion=256;             // origins a region needs before an unreachable goal is approached
 // Moving mission goals (chase, guard) re-seed their field at most once per
@@ -290,6 +303,10 @@ struct LegionNavigator::Impl {
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
         Point* pt=nullptr;         // points[point]: alive while this member holds its ref
         std::vector<int> route;           // committed local detour around still bodies
+        // Pinwheel (see pivotAim): the member's distance off a wall end it
+        // rounds (cells; 0 not yet measured, -1 hugs as the inner file), and
+        // the arc cell it aims at from origin pivotCell.
+        int16_t pivotR=0;int pivotCell=-1,pivotAim=-1;
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
@@ -505,6 +522,9 @@ struct LegionNavigator::Impl {
         int refs=0;std::set<int> cells;
         bool assigned=false,tried=false;
         int64_t centreX=0,centreZ=0,scaleNum=1,scaleDen=1,limit=0;   // px
+        // The members' live centroid (px) on tick liveTick: derived from
+        // positions on demand (see pivotAim), so never hashed.
+        int64_t liveX=0,liveZ=0;uint32_t liveTick=~0u;
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
     void slotCells(const Member& m,int fx,int fz,bool claim) {
@@ -1342,7 +1362,10 @@ struct LegionNavigator::Impl {
         // whole map. A member it fails to cover widens the next build.
         const int x0=std::min(g.minX,g.bodyMinX),z0=std::min(g.minZ,g.bodyMinZ);
         const int x1=std::max(g.maxX,g.bodyMaxX),z1=std::max(g.maxZ,g.bodyMaxZ);
-        const int margin=std::max(kFieldMargin,std::max(x1-x0,z1-z0)/2);
+        int margin=std::max(kFieldMargin,std::max(x1-x0,z1-z0)/2);
+        // A formation strong enough to pinwheel (see pivotAim) takes its
+        // outer arcs up to kPivotMaxCells off the shortest way.
+        for(const auto& [seed,count]:g.sharing)if(count>=kPivotMembers) {margin+=kPivotMaxCells;break;}
         const std::array<int,4> bounded{std::max(box[0],x0-margin),std::max(box[1],z0-margin),
                                         std::min(box[2],x1+margin),std::min(box[3],z1+margin)};
         return bounded;
@@ -2448,8 +2471,12 @@ struct LegionNavigator::Impl {
     }
     // The member whose contact arrival this update already refused.
     const Member* contactRefused=nullptr;
+    // The member this update steers on its pinwheel arc, and the arc cell it
+    // aims at: blocked, it flows round toward that cell, not down the field
+    // (the field's lower cells lie inward, back toward the wall end).
+    const Member* pivoting=nullptr;int pivotTarget=-1;
     void move(Unit& u,Fixed maximum) {
-        contactRefused=nullptr;
+        contactRefused=nullptr;pivoting=nullptr;
         Member* found=member(u.id);
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const Kind kind=kindOf(u);
@@ -2642,8 +2669,12 @@ struct LegionNavigator::Impl {
             }
             const uint16_t potential=f->at(size_t(here));
             if(potential==kUnreached) {trapped(u,m);return;}
-            const int cell=aimCell(u,m,p,*f,ox,oz);
+            int cell=aimCell(u,m,p,*f,ox,oz);
             if(cell<0) {hold(u,m);return;}
+            if(f->done&&m.pivotR>=0&&m.slot>=0&&m.pt&&m.pt->refs>=kPivotMembers&&formationMember(m)) {
+                if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
+                if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;}
+            }
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
         }
         if(here!=m.goal&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct))return;
@@ -2688,6 +2719,130 @@ struct LegionNavigator::Impl {
         }
         if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,cell};
         return cell;
+    }
+    // Pinwheel: a formation keeps its width round the end of a wall. The
+    // field's shortest ways past a convex wall end all touch its tip, so
+    // members descending it fold into one file there. Instead, when a turn
+    // of its descent chain beside a wall comes into its look-ahead, a member
+    // takes a rank: its side offset in the group across the way to the turn,
+    // counted from the inner side (the inner file hugs as before; outer files
+    // get wider radii, so lanes never cross). Its descent chain beside the
+    // wall, offset outward by that radius perpendicular to the chain, is a
+    // concentric arc round the wall end (and a parallel lane along the walls
+    // either side of it); the member pursues it, aiming at the first arc
+    // point at least kPivotLead cells away that is in a straight legal line.
+    // Where the free width beside the wall is narrower than the radius the
+    // arc shrinks cell by cell to what is free, so a gap folds the outer
+    // files inward, down to the field's own passage lanes and single file.
+    // Bounded work; recomputed when the body changes origin.
+    int pivotAim(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+        const int here=oz*W+ox;
+        const uint16_t level=f.at(size_t(here));
+        if(level==kUnreached)return -1;
+        std::array<int,kPivotChain+1> chain{};int n=0;chain[size_t(n++)]=here;
+        while(n<=kPivotChain) {
+            const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz);
+            if(next<0)break;
+            chain[size_t(n++)]=next;
+        }
+        // Outward (away from illegal origins) vector at a chain cell; zero
+        // when no illegal origin is within a cell.
+        auto wall=[&](int c,int& vx,int& vz) {
+            const int x=c%W,z=c/W;vx=vz=0;
+            for(const auto& d:kDirections)if(!legal(p,x+d[0],z+d[1])) {vx-=d[0];vz-=d[1];}
+            return vx||vz||!legal(p,x+1,z)||!legal(p,x,z+1)||!legal(p,x-1,z)||!legal(p,x,z-1);
+        };
+        int touch=-1;
+        for(int i=0;i<n&&touch<0;++i) {int vx,vz;if(wall(chain[size_t(i)],vx,vz))touch=i;}
+        if(touch<0)return -1;
+        // A passage on the way (a strip narrower than kLaneSpan across, as
+        // the passage lanes use) ends the look-ahead: there the field and its
+        // lane grid steer, so a gap beside a wall end is taken single file.
+        auto narrow=[&](int c) {
+            const int x=c%W,z=c/W;
+            for(const auto& d:std::array<std::array<int,2>,2>{{{1,0},{0,1}}}) {
+                int run=1;
+                for(int k=1;k<kLaneSpan&&legal(p,x+d[0]*k,z+d[1]*k);++k)++run;
+                for(int k=1;run<kLaneSpan&&legal(p,x-d[0]*k,z-d[1]*k);++k)++run;
+                if(run<kLaneSpan)return true;
+            }
+            return false;
+        };
+        // Nor near the destination: there the formation's slots and the
+        // area logic place the bodies (a rock among the slots is no wall
+        // end to wheel round).
+        for(int i=touch;i<n;++i)if(narrow(chain[size_t(i)])||f.at(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
+        if(touch>=n)return -1;
+        if(m.pivotR==0) {
+            // Taken once, as the wall end comes into reach: a turn of the
+            // chain (30 degrees or more between 6-cell chords) beside the
+            // wall.
+            int turn=-1;int64_t side=0;
+            for(int i=touch;i+12<n&&turn<0;i+=2) {
+                const int64_t ax=chain[size_t(i+6)]%W-chain[size_t(i)]%W,az=chain[size_t(i+6)]/W-chain[size_t(i)]/W;
+                const int64_t bx=chain[size_t(i+12)]%W-chain[size_t(i+6)]%W,bz=chain[size_t(i+12)]/W-chain[size_t(i+6)]/W;
+                const int64_t cross=ax*bz-az*bx;
+                if(cross*cross*4>=(ax*ax+az*az)*(bx*bx+bz*bz)) {turn=i+6;side=cross>0?1:-1;}
+            }
+            const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(m.pt->refs,0))))*foot*3/2);
+            if(turn<0)return -1;
+            // Rank: the member's side offset from the group's live centroid
+            // across the way to the turn, measured from the inner (turn)
+            // side; the centre file keeps half the group's packed width.
+            auto& pt=*m.pt;
+            if(pt.liveTick!=w.tickCounter_) {
+                int64_t sx=0,sz=0,count=0;
+                for(const auto& [id,mm]:members)if(mm.pt==&pt)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
+                pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
+            }
+            const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-pt.liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-pt.liveZ;
+            const int64_t tl=isqrtFloor(uint64_t(tx*tx+tz*tz));
+            const int64_t lat=tl?(tx*((u.z.v>>16)-pt.liveZ)-tz*((u.x.v>>16)-pt.liveX))/tl:0;   // px, + right of the way
+            const int rank=int(std::clamp<int64_t>(cap/2-side*lat/16,0,cap));
+            m.pivotR=int16_t(rank>=kPivotMinBodies*foot?rank:-1);
+            if(m.pivotR<0)return -1;
+        }
+        const int64_t R=m.pivotR;
+        int sweeps=0;
+        // Pursuit along the arc: the first offset point at least
+        // kPivotLead cells from the body's centre cell (a farther one would
+        // cut the arc's chord through the inner files).
+        const int64_t mx=u.x.v>>20,mz=u.z.v>>20;
+        for(int j=std::max(touch,kPivotAhead);j<n;++j) {
+            const int c=chain[size_t(j)];
+            int vx,vz;
+            if(!wall(c,vx,vz))continue;
+            const int a=chain[size_t(std::max(j-3,0))],b=chain[size_t(std::min(j+3,n-1))];
+            const int64_t tx=b%W-a%W,tz=b/W-a/W;
+            int64_t nx=-tz,nz=tx;
+            const int64_t len=isqrtFloor(uint64_t(nx*nx+nz*nz));
+            if(!len)continue;
+            if(nx*vx+nz*vz<0) {nx=-nx;nz=-nz;}
+            if(nx*vx+nz*vz==0)continue;
+            const int cx=c%W,cz=c/W;
+            // The free width beside the wall here (inside the field's
+            // window): the arc shrinks to it. The offset is a straight legal
+            // segment from the chain cell, so never a pocket behind a wall.
+            // Round the end the arc is a level set of the field (every point
+            // on it is as far from the tip), so the aim is not required to
+            // be lower than here: its chain cell is ahead.
+            auto open=[&](int64_t k) {
+                const int x=cx+int(nx*k/len),z=cz+int(nz*k/len);
+                return legal(p,x,z)&&f.at(size_t(z)*W+x)!=kUnreached;
+            };
+            int64_t r=0;
+            while(r<R&&open(r+1))++r;
+            if(r<int64_t(kPivotMinBodies)*foot)continue;
+            const int qx=cx+int(nx*r/len),qz=cz+int(nz*r/len);
+            if((qx-mx)*(qx-mx)+(qz-mz)*(qz-mz)<int64_t(kPivotLead)*kPivotLead&&j+1<n)continue;
+            // Only an arc point ahead along the arc (never one beside or
+            // behind the body: walking back to it reads as reversing).
+            if((qx-mx)*tx+(qz-mz)*tz<=0)continue;
+            if(++sweeps>kPivotSweeps)return -1;
+            if(sweep(p,u,u.x,u.z,centre(qx,fx),centre(qz,fz)))return qz*W+qx;
+        }
+        return -1;
     }
     // Lane discipline for opposing traffic: a mover that sees an oncoming
     // Legion mover in its own swept lane a few cells ahead moves over one
@@ -2899,7 +3054,10 @@ struct LegionNavigator::Impl {
                 // Direct-line members measure progress toward their own goal
                 // cell; field followers by the group potential.
                 const int goalX=m.goal%W,goalZ=m.goal/W;
+                const bool arc=pivoting==&m&&!towardGoal;
+                const int arcX=pivotTarget%W,arcZ=pivotTarget/W;
                 auto metric=[&](int x,int z)->int64_t {
+                    if(arc)return int64_t(arcX-x)*(arcX-x)+int64_t(arcZ-z)*(arcZ-z);
                     if(towardGoal)return int64_t(goalX-x)*(goalX-x)+int64_t(goalZ-z)*(goalZ-z);
                     return f->at(size_t(z*W+x));
                 };
@@ -3325,6 +3483,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
+            if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
             if(m.kind!=Kind::Move) {
                 h=mix(h,uint64_t(m.kind));h=mix(h,uint64_t(uint32_t(m.seedX))<<32|uint32_t(m.seedZ));h=mix(h,m.seededAt);
