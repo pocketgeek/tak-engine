@@ -120,12 +120,22 @@ struct LegionNavigator::Impl {
         std::vector<std::array<int,4>> pending;   // static changes during the build
         std::array<int,4> box{};                  // box of the component being flooded
     };
+    // Running totals of the live fields (every Field lives in some group's
+    // field or next): startField's cap test reads them instead of walking
+    // every group, which cost O(groups) per call and O(groups^2) per tick
+    // with many groups waiting at the cap. Derived, never hashed.
+    struct FieldTotals {size_t fields=0,cells=0;};
     // Integer distance field from a group's goal origins, built with a
     // bounded bucket queue; resumable across ticks under the work quota.
     // A field covers only the bounding box of its seeds' static component
     // (every origin it can ever reach): a group penned in a small region
     // costs that region, not the whole map. Cells outside read kUnreached.
     struct Field {
+        Field()=default;
+        Field(const Field&)=delete;
+        Field& operator=(const Field&)=delete;
+        ~Field() {if(totals) {--totals->fields;totals->cells-=potential.size();}}
+        FieldTotals* totals=nullptr;      // set once potential is sized (startField)
         int plane=-1;
         uint64_t epoch=0;
         uint64_t serial=0;                // unique per field built (identifies it to the aim memo)
@@ -328,6 +338,13 @@ struct LegionNavigator::Impl {
 
     World& w;
     std::vector<Plane> planes;
+    // Declared before `groups`: the fields it owns update these as they die.
+    FieldTotals fieldTotals;
+    // startField found no field to evict at (tick, fieldsDone): until a
+    // field finishes or the tick moves on, no group can become a victim
+    // (see startField), so the next caller skips the O(groups) scan.
+    uint64_t fieldsDone=0;
+    uint32_t noVictimTick=~0u;uint64_t noVictimDone=~0ull;
     std::map<int,Group> groups;
     std::map<int,Member> members;
     // Unit id -> its node in `members` (std::map nodes are stable): the
@@ -1372,14 +1389,8 @@ struct LegionNavigator::Impl {
         m.group=g.id;
         putMember(u.id,m);
     }
-    size_t liveFields() const {
-        size_t n=0;for(const auto& [id,g]:groups)n+=(g.field!=nullptr)+(g.next!=nullptr);return n;
-    }
-    size_t liveFieldCells() const {
-        size_t n=0;
-        for(const auto& [id,g]:groups)n+=(g.field?g.field->potential.size():0)+(g.next?g.next->potential.size():0);
-        return n;
-    }
+    size_t liveFields() const {return fieldTotals.fields;}
+    size_t liveFieldCells() const {return fieldTotals.cells;}
     // The window a new field for `g` needs: the union of its seeds' static
     // component boxes (the whole map if a seed is unlabelled).
     std::array<int,4> fieldWindow(const Group& g,bool whole=false) const {
@@ -1416,10 +1427,14 @@ struct LegionNavigator::Impl {
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         const size_t budget=kMaxFields*size_t(width())*size_t(height());
         while(liveFields()>=kMaxFieldCount||liveFieldCells()+cells>budget) {
+            // A victim is a group whose finished field is past its tenure.
+            // Within one tick that set only grows when a field finishes
+            // (fieldsDone): evictions and new builds only shrink it.
+            if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return false;
             Group* victim=nullptr;
             for(auto& [id,o]:groups)
                 if(o.field&&o.field->done&&w.tickCounter_-o.built>=kFieldTenure&&(!victim||o.built<victim->built))victim=&o;
-            if(!victim)return false;
+            if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
             victim->field.reset();victim->next.reset();victim->stale=false;++stats.fieldEvictions;
         }
         g.built=w.tickCounter_;
@@ -1428,6 +1443,7 @@ struct LegionNavigator::Impl {
         f->ownArrivals=std::find(softOwner.begin(),softOwner.end(),f->command)!=softOwner.end();
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
+        f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
         {const auto whole=fieldWindow(g,true);f->bounded=whole!=box;}
         if(g.bodyMaxX>=g.bodyMinX) {f->aimed=true;f->tx=(g.bodyMinX+g.bodyMaxX)/2;f->tz=(g.bodyMinZ+g.bodyMaxZ)/2;}
         for(int s:g.seeds) {
@@ -1477,7 +1493,7 @@ struct LegionNavigator::Impl {
             }
         }
         if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
-            f.done=true;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
+            f.done=true;++fieldsDone;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
         }
         f.work+=spent;
         return spent;
@@ -1730,7 +1746,7 @@ struct LegionNavigator::Impl {
         settle();
         auto finish=[&](Group& g,Field& f,uint64_t spent) {
             budget-=std::min(budget,spent);stats.fieldWork+=spent;
-            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);g.stale=false;restaleSlots(g);}}
+            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=false;restaleSlots(g);}}
         };
         // Groups with a member standing still for want of a field come
         // first (their field starts, or its frontier advances toward them),
