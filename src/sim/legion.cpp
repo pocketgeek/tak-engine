@@ -358,6 +358,11 @@ struct LegionNavigator::Impl {
         auto& slot=members[id];slot=m;
         if(size_t(id)>=memberIndex.size())memberIndex.resize(size_t(id)+1,nullptr);
         memberIndex[size_t(id)]=&slot;
+        if(slot.pt) {
+            auto& ids=slot.pt->ids;
+            const auto at=std::lower_bound(ids.begin(),ids.end(),id);
+            if(at==ids.end()||*at!=id)ids.insert(at,id);
+        }
     }
     // Settled Legion arrivals: the goal origin each one completed on, and how
     // many times it has stepped aside since. A settled body may yield one
@@ -574,6 +579,11 @@ struct LegionNavigator::Impl {
     // packed area around the point (see assignFormation).
     struct Point {
         int refs=0;std::set<int> cells;
+        // Ids of the members whose entry names this point, ascending (the
+        // order `members` iterates them in): assignFormation and the pivot
+        // centroid read these instead of scanning every member. Derived,
+        // never hashed.
+        std::vector<int> ids;
         bool assigned=false,tried=false;
         int64_t centreX=0,centreZ=0,scaleNum=1,scaleDen=1,limit=0;   // px
         // The members' live centroid (px) on tick liveTick: derived from
@@ -1228,7 +1238,11 @@ struct LegionNavigator::Impl {
         if(found==members.end())return;
         if(const auto* u=w.unit(id);u&&u->type&&found->second.slot>=0&&found->second.state!=Arrived)
             slotCells(found->second,u->type->footX,u->type->footZ,false);
-        if(auto point=points.find(found->second.point);point!=points.end()&&--point->second.refs<=0)points.erase(point);
+        if(auto point=points.find(found->second.point);point!=points.end()) {
+            auto& ids=point->second.ids;
+            if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
+            if(--point->second.refs<=0)points.erase(point);
+        }
         auto group=groups.find(found->second.group);
         if(group!=groups.end()) {
             const auto& m=found->second;
@@ -2366,7 +2380,8 @@ struct LegionNavigator::Impl {
         const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
         std::vector<std::pair<int,Member*>> list;
         int64_t sumX=0,sumZ=0,area=0,areaGap=0,firstSide=0,minSide=8;bool mixed=false;
-        for(auto& [id,mm]:members) {
+        for(const int id:pt.ids) {
+            Member& mm=*memberIndex[size_t(id)];
             // Approach members stand in for an unreachable click: they take
             // no slot and do not size the area.
             if(mm.point!=key||mm.goal<0||mm.slot>=0||mm.approach)continue;
@@ -2847,7 +2862,7 @@ struct LegionNavigator::Impl {
             auto& pt=*m.pt;
             if(pt.liveTick!=w.tickCounter_) {
                 int64_t sx=0,sz=0,count=0;
-                for(const auto& [id,mm]:members)if(mm.pt==&pt)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
+                for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
                 pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
             }
             const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-pt.liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-pt.liveZ;
