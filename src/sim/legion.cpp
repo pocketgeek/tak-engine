@@ -25,6 +25,11 @@ constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
 // the jank replay), a third of a tick at 8x game speed (4.17 ms). A field
 // still steers the bodies its frontier has passed while it builds.
 constexpr uint64_t kFieldQuota=384'000;
+// A body held this many updates in a row (past every early reaction:
+// yields, first detours) is fully re-evaluated only every kRestStride ticks,
+// staggered by unit id, unless something around it changed (heldRest).
+constexpr uint32_t kRestAfter=60;
+constexpr uint32_t kRestStride=2;
 constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
@@ -322,6 +327,10 @@ struct LegionNavigator::Impl {
         // "Close enough": the start of the current no-progress window and the
         // pixel distance to the requested point then (see crowdSettle).
         uint32_t windowTick=0;int64_t windowDist=-1;uint8_t stillWindows=0;
+        // Long-held throttle (see heldRest): what the last full update of a
+        // held body saw -- its position, hit points, the static epoch and
+        // the occupants of every origin around it. Hashed.
+        int32_t restX=0,restZ=0,restHp=0;uint64_t restEpoch=0,restRing=0;bool rest=false;
         // Mission goal (kind, and for moving goals the origin and tick the
         // field was last seeded at). Only hashed for non-Move kinds.
         Kind kind=Kind::Move;
@@ -718,6 +727,11 @@ struct LegionNavigator::Impl {
     // stamped with their yard maps by the mover's rule
     // (World::mobilePlacement): '.' is open, a closable 'c' yard is open
     // while the script holds it open. Returns the cells visited (work).
+    // Live structures in unit order, gathered once per syncStatic: a refresh
+    // recomputes a few small rectangles on every plane, and walking every
+    // unit (10k+ in a battle) per rectangle per plane cost 5-10 ms per plane
+    // for a 36-cell change. Null outside syncStatic (callers walk units).
+    const std::vector<const Unit*>* structureList=nullptr;
     uint64_t computeCells(Plane& p,int x0,int z0,int x1,int z1) {
         const int W=width(),H=height();
         x0=std::max(x0,0);z0=std::max(z0,0);x1=std::min(x1,W-1);z1=std::min(z1,H-1);
@@ -743,10 +757,10 @@ struct LegionNavigator::Impl {
                 p.maxSlope,p.maxWaterSlope,0,false,1,cellAt,[](uint16_t){return 0x20u;},
                 [](uint16_t){return RetailPlacementEntity{};});
         uint64_t work=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
-        for(const auto& u:w.units_) {
-            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+        auto stampStructure=[&](const Unit& u) {
+            if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())return;
             const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
-            if(ux>x1||uz>z1||ux+u.type->footX<=x0||uz+u.type->footZ<=z0)continue;
+            if(ux>x1||uz>z1||ux+u.type->footX<=x0||uz+u.type->footZ<=z0)return;
             const bool opened=yardOpen(u.id);
             for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
                 const int cx=ux+i,cz=uz+j;
@@ -757,7 +771,9 @@ struct LegionNavigator::Impl {
                 }
                 p.cell[size_t(cz)*W+cx]=0;++work;
             }
-        }
+        };
+        if(structureList)for(const Unit* u:*structureList)stampStructure(*u);
+        else for(const auto& u:w.units_)stampStructure(u);
         return work;
     }
     bool yardOpen(int id) const {
@@ -800,7 +816,41 @@ struct LegionNavigator::Impl {
     // numbering (labels are only ever compared, sized and boxed); the
     // legion_planeincremental test checks that after random changes.
     // Returns the work done (cells), 0 if no origin changed legality.
+    // Changes far apart are refreshed one cluster at a time, as if each had
+    // arrived alone: relabel works in a window round the bounding box of
+    // everything it is given, and a corpse in one corner plus a building in
+    // another made that window most of the map -- a whole-map flood per
+    // plane (8-11 ms each, 20-43 ms per tick on Ulasem with 5 planes) for a
+    // few dozen changed cells. Clusters are rectangles whose boxes, grown by
+    // the relabel margin plus the footprint, overlap; cluster order is the
+    // order of each cluster's first rectangle.
     uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,std::array<int,4>* box=nullptr) {
+        const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
+        std::vector<int> cluster(rects.size());
+        for(size_t i=0;i<rects.size();++i)cluster[i]=int(i);
+        auto root=[&](int i) {while(cluster[size_t(i)]!=i)i=cluster[size_t(i)]=cluster[size_t(cluster[size_t(i)])];return i;};
+        for(size_t i=0;i<rects.size();++i)for(size_t j=i+1;j<rects.size();++j) {
+            const auto& a=rects[i];const auto& b=rects[j];
+            if(a[0]-grow<b[0]+b[2]+grow&&b[0]-grow<a[0]+a[2]+grow&&a[1]-grow<b[1]+b[3]+grow&&b[1]-grow<a[1]+a[3]+grow) {
+                const int ra=root(int(i)),rb=root(int(j));
+                if(ra!=rb)cluster[size_t(std::max(ra,rb))]=std::min(ra,rb);
+            }
+        }
+        uint64_t work=0;
+        if(box)*box={0,0,-1,-1};
+        std::vector<std::array<int,4>> part;
+        for(size_t i=0;i<rects.size();++i) {
+            if(root(int(i))!=int(i))continue;
+            part.clear();
+            for(size_t j=i;j<rects.size();++j)if(root(int(j))==int(i))part.push_back(rects[j]);
+            std::array<int,4> b{0,0,-1,-1};
+            work+=refreshCluster(p,part,changedAny,&b);
+            if(box&&b[2]>=0)*box=(*box)[2]<0?b:std::array<int,4>{std::min((*box)[0],b[0]),std::min((*box)[1],b[1]),
+                std::max((*box)[2],b[2]),std::max((*box)[3],b[3])};
+        }
+        return work;
+    }
+    uint64_t refreshCluster(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,std::array<int,4>* box) {
         const int W=width(),H=height();
         uint64_t work=0;
         for(const auto& r:rects)work+=computeCells(p,r[0],r[1],r[0]+r[2]-1,r[1]+r[3]-1);
@@ -824,6 +874,7 @@ struct LegionNavigator::Impl {
         if(box)*box={bx0,bz0,bx1,bz1};
         return work+relabel(p,added,removed,bx0,bz0,bx1,bz1);
     }
+    static constexpr int kRelabelMargin=8;   // relabel's local window margin (cells)
     void emptyBox(std::array<int,4>& b) const {b={width(),height(),-1,-1};}
     // Scratch marks for splitSearch (a cache, never state).
     std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
@@ -911,9 +962,8 @@ struct LegionNavigator::Impl {
         // the change added or removed joins two legal cells within one cell
         // of a changed origin (N), so local connectivity decides merges
         // exactly and proves "no split" when each old label's N-cells meet.
-        constexpr int kMargin=8;
-        const int wx0=std::max(0,bx0-kMargin),wz0=std::max(0,bz0-kMargin);
-        const int wx1=std::min(W-1,bx1+kMargin),wz1=std::min(H-1,bz1+kMargin);
+        const int wx0=std::max(0,bx0-kRelabelMargin),wz0=std::max(0,bz0-kRelabelMargin);
+        const int wx1=std::min(W-1,bx1+kRelabelMargin),wz1=std::min(H-1,bz1+kRelabelMargin);
         const int ww=wx1-wx0+1,wh=wz1-wz0+1;
         std::vector<int> group(size_t(ww)*wh,-1);
         auto local=[&](int c) {return size_t(c/W-wz0)*ww+size_t(c%W-wx0);};
@@ -1555,8 +1605,11 @@ struct LegionNavigator::Impl {
         }
         std::vector<std::array<int,4>> rects;
         std::map<int,Stamp> now;
+        std::vector<const Unit*> structures;
+        struct ListScope {const std::vector<const Unit*>*& list;~ListScope(){list=nullptr;}} listScope{structureList};
         for(const auto& u:w.units_) {
             if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
+            structures.push_back(&u);
             now[u.id]={footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
                        u.type->footX,u.type->footZ,yardOpen(u.id)};
         }
@@ -1573,6 +1626,7 @@ struct LegionNavigator::Impl {
         w.placementDirty_.clear();w.placementDirtyAll_=false;
         bool changed=false;
         if(lastWorldEpoch==~0ull) {lastWorldEpoch=0;changed=true;}   // the first epoch, as before
+        structureList=&structures;
         if(all||!rects.empty()) {
             std::vector<Plane*> refreshed;
             touch.assign(planes.size(),{0,0,-1,-1});
@@ -2558,6 +2612,34 @@ struct LegionNavigator::Impl {
     // aims at: blocked, it flows round toward that cell, not down the field
     // (the field's lower cells lie inward, back toward the wall end).
     const Member* pivoting=nullptr;int pivotTarget=-1;
+    // Occupants of every origin cell touching the body's footprint (its
+    // own cells excluded): a blocker leaving or a new body arriving changes it.
+    uint64_t ringSignature(const Unit& u) const {
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        uint64_t h=0x72696e67;
+        for(int z=oz-1;z<=oz+fz;++z)for(int x=ox-1;x<=ox+fx;++x) {
+            if(x>=ox&&x<ox+fx&&z>=oz&&z<oz+fz)continue;
+            if(x<0||z<0||x>=w.occW_||z>=w.occH_)continue;
+            h=mix(h,uint64_t(uint32_t(occAt(size_t(z)*w.occW_+x))));
+        }
+        return h;
+    }
+    // A long-held body (kRestAfter updates without a step, no committed
+    // detour or route) skips its full update on all but one tick in
+    // kRestStride (staggered by id), as long as nothing it reacts to has
+    // changed since its last full update: it was not pushed or hurt, the
+    // static epoch is the same and no body arrived at or left any cell
+    // around it. Any change wakes it at once. A skipped update is a hold
+    // that does not count toward the held timers (they count updates).
+    bool heldRest(const Unit& u,Member& m) {
+        if(m.state!=Holding||m.held<kRestAfter||m.detour>=0||!m.route.empty()||w.occW_<=0) {m.rest=false;return false;}
+        const uint64_t ring=ringSignature(u);
+        const bool same=m.rest&&m.restX==u.x.v&&m.restZ==u.z.v&&m.restHp==u.hp.v&&m.restEpoch==epoch&&m.restRing==ring;
+        if(same&&(uint32_t(u.id)+w.tickCounter_)%kRestStride!=0)return true;
+        m.rest=true;m.restX=u.x.v;m.restZ=u.z.v;m.restHp=u.hp.v;m.restEpoch=epoch;m.restRing=ring;
+        return false;
+    }
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
         Member* found=member(u.id);
@@ -2596,6 +2678,7 @@ struct LegionNavigator::Impl {
             if(!found) {w.brakeGround(u);return;}
         }
         auto& m=*found;
+        if(heldRest(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
         ++stats.moves;
         // The native goal predicate (the circle the native mover would test)
         // also ends the leg, with the same event.
@@ -3561,6 +3644,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
             h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
+            h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillWindows);
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
