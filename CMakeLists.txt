@@ -861,6 +861,14 @@ if(TAK_BUILD_CLIENT)
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
           --testbuild --winsize 1280 960 --novsync)
       set_tests_properties(render_texture_reuse PROPERTIES TIMEOUT 90)
+      add_test(NAME tactical_dots COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_TACTICAL_DOTS_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/tactical-dots-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/tactical-dots-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/tactical-dots.png")
+      set_tests_properties(tactical_dots PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: tactical dots \\(threshold")
       add_test(NAME gui_smoothing_menu COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_GUI_SMOOTH_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-menu-profile
@@ -879,7 +887,7 @@ if(TAK_BUILD_CLIENT)
           PASS_REGULAR_EXPRESSION "PASS: HUD smoothing applies live")
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
-      set_tests_properties(build_controls render_texture_reuse gui_smoothing_menu gui_smoothing_game
+      set_tests_properties(build_controls render_texture_reuse tactical_dots gui_smoothing_menu gui_smoothing_game
           PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()
     add_executable(shadow_test tools/shadow_test.cpp)

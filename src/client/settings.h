@@ -31,6 +31,8 @@ struct Settings {
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
     bool  treeSway   = true;       // animated tree and shadow sway; default on
+    bool  tacticalDots = false;    // zoomed far out, draw units as minimap-style dots
+                                   // instead of models (non-retail extra; default off)
     bool  videoDeblock = false;    // deblock the Bink clips before upload. They are
                                    // 640x360 and get stretched ~12x on a wide display,
                                    // which magnifies every 8x8 compression seam into a
@@ -128,7 +130,7 @@ struct Settings {
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
             && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.bilinear == b.bilinear
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
-            && a.treeSway == b.treeSway
+            && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt
             && a.videoDeblock == b.videoDeblock
             && a.healthBars == b.healthBars && a.statsPanel == b.statsPanel

@@ -99,6 +99,7 @@
         setBilinear(s.bilinear);
         healthBars_ = std::clamp(s.healthBars, 0, 2);
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
+        tacticalDotsOpt_ = s.tacticalDots;                // Options: zoomed-out unit dots
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
     }
 
@@ -382,6 +383,131 @@
     }
 
     void GameView::testBuild() {
+#ifndef NDEBUG
+        if (tak::devFlag("TAK_TACTICAL_DOTS_TEST")) {
+            // Tactical Dots through the real draw(): dots replace models past the
+            // threshold, the hysteresis band holds either state, fog-hidden enemies
+            // get no dot, and click/box selection land on the dots.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("tactical dots: "+what);
+                std::fprintf(stderr,"PASS: tactical dots: %s\n",what.c_str());
+            };
+            constexpr int W=1280,H=960;
+            noFog_=false;edgeScrollOn_=false;
+            world_.setPlayerCount(2);
+            const float x0=float(mapView_.map().blocksX)*16.0f,z0=float(mapView_.map().blocksY)*16.0f;
+            const tak::sim::UnitType* flyerType=nullptr;
+            for (const auto& [name,type]:registry_.types())
+                if (type.canFly && !type.isStructure() && !type.commander) {flyerType=&type;break;}
+            const int infantry=spawn("arasword",x0,z0,0,0);
+            const int keep=spawn("arakeep",x0+160,z0+40,0,0);
+            const int flyer=flyerType ? spawn(flyerType->id,x0-120,z0,0,0) : -1;
+            const int foeSeen=spawn("arasword",x0+60,z0-80,0,1);
+            const int foeHidden=spawn("arasword",x0+900,z0+300,0,1);
+            check(infantry>=0 && keep>=0 && flyer>=0 && foeSeen>=0 && foeHidden>=0,"fixture spawned");
+            check(!world_.allied(0,1),"fixture enemy is not allied");
+            selection_={keep};
+            const auto frame=[&](float zoom,const char* capture=nullptr) {
+                captureFrame();beginFrame();cosmeticStep(0);
+                // Local fog for the fixture: everything explored, only a 400px disc
+                // around the fixture centre currently in sight -- the foe 950px away
+                // is in fog, exactly what cellVisibleR reports in a real game.
+                Frame& f=frameBuf_[renderReadIdx_];
+                f.visW=mapView_.map().blocksX*2;f.visH=mapView_.map().blocksY*2;
+                f.vis.assign(size_t(f.visW)*size_t(f.visH),1);
+                for (int cz=0;cz<f.visH;++cz) for (int cx=0;cx<f.visW;++cx) {
+                    const float dx=float(cx)*16+8-x0,dz=float(cz)*16+8-z0;
+                    if (dx*dx+dz*dz<400.0f*400.0f) f.vis[size_t(cz)*size_t(f.visW)+size_t(cx)]=2;
+                }
+                mapView_.setZoom(zoom);
+                // Keep the hidden foe on screen too, so "not drawn" means the fog
+                // rule and not the viewport cull.
+                mapView_.setOffset(x0+300-float(W-300)*0.5f/zoom,z0+100-float(H)*0.5f/zoom);
+                prepare(W,H);draw(W,H);
+                if (capture) {   // TAK_TACTICAL_DOTS_CAPTURE: the frame as drawn
+                    int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                    std::vector<uint8_t> px(size_t(ow)*size_t(oh)*4);
+                    if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4)==0)
+                        tak::png::write(capture,ow,oh,px);
+                }
+                endFrame();
+            };
+            const auto has=[&](int id) {
+                return std::find(debugDotIds_.begin(),debugDotIds_.end(),id)!=debugDotIds_.end();
+            };
+            namespace td=tak::tacticaldots;
+            const float zIn=td::enterZoom()*0.9f,zBand=(td::enterZoom()+td::exitZoom())*0.5f,
+                        zOut=td::exitZoom()*1.1f;
+            tacticalDotsOpt_=false;frame(zIn);
+            check(!dotsFrame_ && !visUnits_.empty(),"option off draws models even far out");
+            tacticalDotsOpt_=true;frame(zOut);
+            check(!dotsFrame_ && !visUnits_.empty(),"above the threshold models still draw");
+            frame(zBand);
+            check(!dotsFrame_ && !visUnits_.empty(),"entering the hysteresis band from above keeps models");
+            frame(zIn);
+            check(dotsFrame_ && visUnits_.empty() && debugDotCount_>0,"below the threshold dots replace every model");
+            check(has(infantry) && has(keep) && has(flyer) && has(foeSeen),"own units, building, flyer and seen enemy get dots");
+            check(!has(foeHidden),"enemy in fog gets no dot");
+            {   // The same unit is shown by the minimap rule, the cull only aside.
+                const auto* hidden=frameUnitP(foeHidden);
+                check(hidden && !radarVisible(*hidden),"dots and minimap share the fog rule");
+                const auto c=dotCentre(*hidden);
+                check(c.x>0 && c.x<W-300 && c.y>0 && c.y<H,"hidden enemy is inside the view (fog, not cull)");
+            }
+            frame(zBand);
+            check(dotsFrame_ && visUnits_.empty(),"leaving through the hysteresis band keeps dots");
+            frame(zOut);
+            check(!dotsFrame_ && !visUnits_.empty(),"past the exit zoom models return");
+            frame(zIn);
+            check(dotsFrame_,"dots come back below the threshold");
+            // Picking: a click on the dot selects it, a small box around it too.
+            const auto* inf=frameUnitP(infantry);
+            const SDL_FPoint c=dotCentre(*inf);
+            check(unitUnderCursor(*inf,c.x,c.y),"cursor over a dot hits its unit");
+            const auto mouse=[&](uint32_t kind,float x,float y) {
+                SDL_Event e{};e.type=kind;
+                if (kind==SDL_MOUSEMOTION) {e.motion.x=int(x);e.motion.y=int(y);}
+                else {e.button.button=SDL_BUTTON_LEFT;e.button.x=int(x);e.button.y=int(y);}
+                input(e,W,H);
+            };
+            const auto savedMod=SDL_GetModState();SDL_SetModState(KMOD_NONE);
+            selection_.clear();
+            mouse(SDL_MOUSEBUTTONDOWN,c.x,c.y);mouse(SDL_MOUSEBUTTONUP,c.x,c.y);
+            check(selection_==std::vector<int>{infantry},"click on a dot selects the unit");
+            selection_.clear();
+            mouse(SDL_MOUSEBUTTONDOWN,c.x-12,c.y-12);mouse(SDL_MOUSEMOTION,c.x+12,c.y+12);
+            mouse(SDL_MOUSEBUTTONUP,c.x+12,c.y+12);
+            check(std::find(selection_.begin(),selection_.end(),infantry)!=selection_.end() &&
+                  std::find(selection_.begin(),selection_.end(),foeSeen)==selection_.end(),
+                  "box around a dot selects own unit, never an enemy");
+            SDL_SetModState(savedMod);
+            selection_={infantry,keep,flyer};
+            frame(zIn,tak::devEnv("TAK_TACTICAL_DOTS_CAPTURE"));
+            check(debugDotCount_>0 && dotsFrame_,"selected dots still drawn");
+            tacticalDotsOpt_=false;frame(zIn);
+            check(!dotsFrame_ && !visUnits_.empty(),"turning the option off restores models at once");
+            {   // The zoom-out floor trigger, as on a 7680x2160 window where the
+                // map-fills-window floor (0.75 here) sits above the size threshold.
+                const float floor=0.75f,notch=1.118f;
+                td::Switch s;
+                check(!s.update(true,floor*notch*notch,floor),"two notches above the floor: models");
+                check(s.update(true,floor,floor),"fully zoomed out: dots at any window size");
+                check(s.update(true,floor*notch,floor),"one notch in from the floor keeps dots");
+                check(!s.update(true,floor*notch*notch,floor),"second notch in brings models back");
+                check(!s.update(true,floor*notch,floor),"one notch above the floor, coming out: still models");
+                check(!s.update(false,floor,floor),"option off overrides the floor");
+                // Size: building > infantry, a minimum, and compact at a high floor zoom.
+                check(td::dotSide(6,6,0.25f)>td::dotSide(2,2,0.25f),"building dot larger than infantry");
+                check(td::dotSide(1,1,0.05f)>=td::kMinDotPx,"dots never shrink below the minimum");
+                check(td::dotSide(2,2,1.5f)==td::dotSide(2,2,td::exitZoom()),"dots stay compact when zoomed in at the floor");
+            }
+            // Leave dots on with a selection so the --shot capture shows both.
+            tacticalDotsOpt_=true;selection_={infantry,keep,flyer};mapView_.setZoom(zIn);
+            std::fprintf(stderr,"PASS: tactical dots (threshold %.3f/%.3f zoom, min zoom here %.3f)\n",
+                         td::enterZoom(),td::exitZoom(),mapView_.minZoom(W,H));
+            return;
+        }
+#endif
         if (tak::devFlag("TAK_RUIN_TEST")) {
             const bool previousShadows=shadowsOnFrame_;
             shadowsOnFrame_=true;

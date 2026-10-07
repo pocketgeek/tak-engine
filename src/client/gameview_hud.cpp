@@ -831,10 +831,9 @@ namespace {
         // set was thousands of state changes a frame at large unit counts).
         overlayBatch_.clear();
         for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-            if (!u.alive() || u.embarked() || !u.type) continue;
             // A spectator (noFog_) sees every unit on the radar; a player sees only
-            // allied units and enemies currently in view.
-            if (!noFog_ && !alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) continue;
+            // allied units and enemies currently in view. (Shared with Tactical Dots.)
+            if (!radarVisible(u)) continue;
             SDL_FPoint p = toMini(u.x, u.z);
             SDL_Color tc = playerColor(u.player);
             pushQuad(overlayBatch_, p.x - 1.5f, p.y - 1.5f, 3, 3, tc);
