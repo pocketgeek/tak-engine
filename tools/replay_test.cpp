@@ -137,7 +137,7 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 233, "replay format 11 is kept under protocol 233");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 234, "replay format 11 is kept under protocol 234");
     check(!supportedReplayProtocol(11, 224), "previous two-pathfinder simulation protocol is refused");
     check(!supportedReplayProtocol(11, 219), "old protocol cannot claim a flow-capable format");
     check(!supportedReplayProtocol(9, 212), "older simulation protocol is refused");

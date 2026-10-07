@@ -19,7 +19,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 233;      // 233: Legion soft obstacles round standing bodies; formation rejoin only at rest
+constexpr uint32_t kNetVersion = 234;      // 234: Legion pinwheel round wall ends; Legion flyers never land on flyers
+                                           // 233: Legion soft obstacles round standing bodies; formation rejoin only at rest
                                            // 232: Legion idle same-player bodies part a lane for held members
                                            // 231: Retail+, Flowfield and Cooperative pathfinding removed;
                                            //      mode bytes 1-3 are now invalid (Retail 0, Legion 4)
