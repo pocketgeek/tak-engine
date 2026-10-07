@@ -807,7 +807,41 @@ struct LegionNavigator::Impl {
     // numbering (labels are only ever compared, sized and boxed); the
     // legion_planeincremental test checks that after random changes.
     // Returns the work done (cells), 0 if no origin changed legality.
+    // Changes far apart are refreshed one cluster at a time, as if each had
+    // arrived alone: relabel works in a window round the bounding box of
+    // everything it is given, and a corpse in one corner plus a building in
+    // another made that window most of the map -- a whole-map flood per
+    // plane (8-11 ms each, 20-43 ms per tick on Ulasem with 5 planes) for a
+    // few dozen changed cells. Clusters are rectangles whose boxes, grown by
+    // the relabel margin plus the footprint, overlap; cluster order is the
+    // order of each cluster's first rectangle.
     uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,std::array<int,4>* box=nullptr) {
+        const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
+        std::vector<int> cluster(rects.size());
+        for(size_t i=0;i<rects.size();++i)cluster[i]=int(i);
+        auto root=[&](int i) {while(cluster[size_t(i)]!=i)i=cluster[size_t(i)]=cluster[size_t(cluster[size_t(i)])];return i;};
+        for(size_t i=0;i<rects.size();++i)for(size_t j=i+1;j<rects.size();++j) {
+            const auto& a=rects[i];const auto& b=rects[j];
+            if(a[0]-grow<b[0]+b[2]+grow&&b[0]-grow<a[0]+a[2]+grow&&a[1]-grow<b[1]+b[3]+grow&&b[1]-grow<a[1]+a[3]+grow) {
+                const int ra=root(int(i)),rb=root(int(j));
+                if(ra!=rb)cluster[size_t(std::max(ra,rb))]=std::min(ra,rb);
+            }
+        }
+        uint64_t work=0;
+        if(box)*box={0,0,-1,-1};
+        std::vector<std::array<int,4>> part;
+        for(size_t i=0;i<rects.size();++i) {
+            if(root(int(i))!=int(i))continue;
+            part.clear();
+            for(size_t j=i;j<rects.size();++j)if(root(int(j))==int(i))part.push_back(rects[j]);
+            std::array<int,4> b{0,0,-1,-1};
+            work+=refreshCluster(p,part,changedAny,&b);
+            if(box&&b[2]>=0)*box=(*box)[2]<0?b:std::array<int,4>{std::min((*box)[0],b[0]),std::min((*box)[1],b[1]),
+                std::max((*box)[2],b[2]),std::max((*box)[3],b[3])};
+        }
+        return work;
+    }
+    uint64_t refreshCluster(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,std::array<int,4>* box) {
         const int W=width(),H=height();
         uint64_t work=0;
         for(const auto& r:rects)work+=computeCells(p,r[0],r[1],r[0]+r[2]-1,r[1]+r[3]-1);
@@ -831,6 +865,7 @@ struct LegionNavigator::Impl {
         if(box)*box={bx0,bz0,bx1,bz1};
         return work+relabel(p,added,removed,bx0,bz0,bx1,bz1);
     }
+    static constexpr int kRelabelMargin=8;   // relabel's local window margin (cells)
     void emptyBox(std::array<int,4>& b) const {b={width(),height(),-1,-1};}
     // Scratch marks for splitSearch (a cache, never state).
     std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
@@ -918,9 +953,8 @@ struct LegionNavigator::Impl {
         // the change added or removed joins two legal cells within one cell
         // of a changed origin (N), so local connectivity decides merges
         // exactly and proves "no split" when each old label's N-cells meet.
-        constexpr int kMargin=8;
-        const int wx0=std::max(0,bx0-kMargin),wz0=std::max(0,bz0-kMargin);
-        const int wx1=std::min(W-1,bx1+kMargin),wz1=std::min(H-1,bz1+kMargin);
+        const int wx0=std::max(0,bx0-kRelabelMargin),wz0=std::max(0,bz0-kRelabelMargin);
+        const int wx1=std::min(W-1,bx1+kRelabelMargin),wz1=std::min(H-1,bz1+kRelabelMargin);
         const int ww=wx1-wx0+1,wh=wz1-wz0+1;
         std::vector<int> group(size_t(ww)*wh,-1);
         auto local=[&](int c) {return size_t(c/W-wz0)*ww+size_t(c%W-wx0);};
