@@ -2118,15 +2118,18 @@ bool World::flightLandingFree(const Unit& self,Fixed x,Fixed z) const {
     // that has already begun its descent (stage 3), whatever the exploration.
     // Both states are the units' own hashed state and the test runs in unit
     // order, so simultaneous descents serialize: the later lander sees the
-    // earlier one's descent in the same tick.
+    // earlier one's descent in the same tick. It refuses a mobile ground
+    // unit's footprint too: 509400 sees those, moving or not, only at an
+    // explored site (tools/re/check_landing_moving_ground.py).
     if (isLegionPathfinding(pathfindingMode_) && flyerLandingOccupied(self,x0,z0,fx,fz)) return false;
     return true;
 }
 
 bool World::flyerLandingOccupied(const Unit& self,int x0,int z0,int fx,int fz) const {
     auto blocks=[&](const Unit& o,int ox,int oz) {
-        if (&o==&self || !o.alive() || o.embarked() || !o.type || !o.type->canFly) return false;
+        if (&o==&self || !o.alive() || o.embarked() || !o.type) return false;
         if (ox>=x0+fx || oz>=z0+fz || ox+o.type->footX<=x0 || oz+o.type->footZ<=z0) return false;
+        if (!o.type->canFly) return !o.type->isStructure();
         return o.flightGroundMode==1 || (o.landing && o.landing->mission.stage==3);
     };
     if (bodyIndexEnabled_ && hW_>0 && hH_>0 && x0>=0 && z0>=0 && x0+fx<=hW_ && z0+fz<=hH_) {
