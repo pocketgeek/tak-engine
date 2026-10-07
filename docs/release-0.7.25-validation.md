@@ -3,8 +3,9 @@
 Protocol **236**, replay format **11**, generator version **8**, campaign
 payload **4**, database schema **9**.
 
-Status: **in preparation.** Sections marked *pending* have not been run or
-recorded yet. 0.7.25 supersedes the unpublished 0.7.24; its scope is everything
+[Version 0.7.25](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.25)
+was published on 2026-10-07 after the checks below. The tag points to
+`5c47516`. 0.7.25 supersedes the unpublished 0.7.24; its scope is everything
 since the published [0.7.23](release-0.7.23-validation.md).
 
 ## Scope and compatibility
@@ -22,9 +23,6 @@ Protocol 236 is required for live play. Replays need the exact simulation
 protocol, so protocol-221 (0.7.23) recordings are not playable by this build.
 Campaign payload 4 and database schema 9 are unchanged since 0.7.23; generator
 version 8 replaces 0.7.23's generator 7, whose recipes cannot be regenerated.
-
-*Pending:* confirmation that the tagged build reports protocol 236 from both
-client and server, and any further scope notes from the lead.
 
 ## Local preparation checks
 
@@ -115,8 +113,35 @@ stricter shaping and cleanup evidence than the committed version. SHA-256:
 
 ## CI and packages
 
-*Pending:* pre-tag CI, tagged CI on all four workflows, asset download and
-SHA-256/size checks, Windows signing verification and package payload checks.
+Pre-tag CI on the version commit `3490f55` passed
+[determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/37567352484)
+and the Linux, Windows and macOS workflows. The later documentation, test-fixture
+and validation commits also passed the platform workflows on `main`. The Windows
+x64 installer step pins MSYS2's NSIS 3.12, because NSIS 3.13-1 finds no plugin
+directory; this affects only CI packaging.
+
+The exact tag passed all four workflows:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/37573443752), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/37573359216): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/37573359166): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/37573359175): x64 and ARM64.
+
+The release was created as a draft holding these notes; tagged CI attached the
+packages. All **29 assets** were downloaded and matched GitHub's SHA-256
+digests and byte sizes before publication: ten DEBs, four RPMs, one Arch package,
+one Slackware TXZ, two Linux Debug archives, eight ZIPs, two DMGs and one Windows
+installer. Every ZIP passed its CRC test. Windows ZIP payloads are x86-64 and
+ARM64 PE executables, macOS ZIP payloads are arm64 and x86-64 Mach-O apps
+reporting bundle version 0.7.25, and the Ubuntu 24.04 DEB's client and server
+report 0.7.25 and ship the systemd service with both ACME/settings templates.
+As with 0.7.23, package builds report `build unknown` because they are built
+outside a Git checkout. DMGs were hash-checked, not mounted.
+
+Windows CI signed every shipped executable before ZIP/NSIS packaging, then the
+completed installer; native verification reported **17** valid signatures with
+timestamps and no errors. Local inspection confirmed an embedded certificate
+table in each Windows ZIP executable checked and in the installer.
 
 ## Screenshots
 
@@ -141,6 +166,8 @@ sample results rather than live-game measurements.
 ## Limits
 
 Local visual inspection covers Linux OpenGL screenshots and the software
-Cartographer renderer. Interactive Windows/macOS GPU rendering, physical
-high-DPI displays and a multi-hour combat soak are *pending* or out of scope;
-the lead will record which.
+Cartographer renderer. Interactive Windows/macOS GPU rendering and physical
+high-DPI displays other than the developer's Linux system were not tested by
+hand. Remote simulated-time sweeps do not substitute for a multi-hour wall-time
+soak. Dense Legion stress battles ran below real time on the Debug test
+referees (see above).
