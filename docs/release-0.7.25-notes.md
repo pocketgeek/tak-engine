@@ -21,11 +21,10 @@ never published; everything from it that still ships is listed here.
   approaches, and build, repair, reclaim, transport, factory-exit and parking
   approaches, for ground units, boats and hovercraft. Flyers keep retail
   flight. Known limits: dense crowds of units with distinct packed goals can
-  leave a unit sealed out; with about 2,000 moving units its per-tick cost
-  measured 20–50% above the cheapest of the removed alternatives in some
-  crowd scenes; opposing columns at that size still cross more slowly than
-  they did under Flowfield; idle units of other players
-  never step aside; and Legion does not model unexplored terrain separately.
+  leave a unit sealed out; with about 2,000 moving units Legion is the
+  cheaper mode on shared destinations, but Retail costs 10–48% less per tick
+  in other crowd scenes; idle units of other players never step aside; and
+  Legion does not model unexplored terrain separately.
   See [Legion](legion-pathfinding.md#known-weaknesses).
 - **Legion landing and obstacles.** In Legion games a flyer never touches down
   on another landed or descending flyer or on a mobile ground unit; it picks
