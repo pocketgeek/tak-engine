@@ -3,9 +3,9 @@
 Protocol **238**, replay format **11**, generator version **8**, campaign
 payload **4**, database schema **9**.
 
-Status: **in preparation.** Version 0.7.27 has not been tagged or published.
-Its scope is everything since [0.7.26](release-0.7.26-validation.md); see the
-[release notes](release-0.7.27-notes.md).
+[Version 0.7.27](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.27)
+was published on 2026-10-07 after the checks below. The tag points to
+`2847e1f`.
 
 ## Scope and compatibility
 
@@ -97,13 +97,27 @@ transfer test
 
 ## CI and packages
 
-Pending for the tag. The build-identity fix is confirmed on the version commit
-`9642e70`: all 16 Linux package jobs
-([Linux run](https://github.com/pocketgeek/tak-engine/actions/runs/37688998787))
-and both Windows builds
-([Windows run](https://github.com/pocketgeek/tak-engine/actions/runs/37688998842))
-report the clean id `9642e70e009b`, with no `build unknown` and no `-dirty`. On
-the tag the id will read `v0.7.27`.
+The final source passed the Linux, Windows and macOS workflows on `main`. The
+build-identity fix was confirmed first on the version commit `9642e70`: all 16
+[Linux package jobs](https://github.com/pocketgeek/tak-engine/actions/runs/37688998787)
+and [both Windows builds](https://github.com/pocketgeek/tak-engine/actions/runs/37688998842)
+reported the clean id `9642e70e009b`. The exact tag passed all four workflows:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/37696476743), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/37696406405): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/37696406434): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/37696406468): x64 and ARM64.
+
+The release was created as a draft with these notes and tagged CI attached the
+packages. All **29 assets** were downloaded and matched GitHub's SHA-256
+digests and byte sizes before publication. Every ZIP passed its CRC test.
+Windows ZIP payloads are x86-64 and ARM64 PE executables; macOS ZIP payloads are
+arm64 and x86-64 Mach-O apps with bundle version 0.7.27. **Build identity is now
+correct on every platform:** the Ubuntu 24.04 DEB's client and server report
+`0.7.27 (build v0.7.27)`, and the Windows and macOS server binaries carry the
+`v0.7.27` id with no `-dirty` suffix. Windows CI reported **17** valid
+timestamped signatures with no errors, and every Windows executable checked
+locally, plus the installer, carries a certificate table.
 
 ## Screenshots
 
@@ -135,4 +149,9 @@ inspected by eye against its caption.
 
 ## Limits
 
-Pending.
+Local visual inspection covers Linux OpenGL screenshots and the software
+Cartographer renderer. The Renderer option's non-OpenGL backends were exercised
+on Linux only (OpenGL ES 2, OpenGL ES, Software); Direct3D and Metal were not
+tested by hand. Remote simulated-time sweeps do not substitute for a multi-hour
+wall-time soak. Dense Legion stress battles still run below the harness's 4x
+speed on the Debug test referees (see above).
