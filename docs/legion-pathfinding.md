@@ -377,6 +377,33 @@ with a placement plane (every real map), boats (`Domain::Water`) and
 hovercraft (`Domain::Hover`). Non-square footprints also need the placement
 plane. Flyers stay native: flight is not pathfinding.
 
+**One deliberate flight difference: Legion flyers never land on other
+flyers.** Retail's landing-site check `509400` (ported exactly for both
+modes, see [pathfinding-port.md](pathfinding-port.md)) lets a group of
+flyers ordered to one spot land on top of each other. A flyer that has
+begun its descent is still airborne, so it is only in the airborne word
+`+2`. The owner of a cell several flyers share there is redrawn every tick.
+Eight or more overlapping flyers leave only the `0xffff` overflow value.
+`509400` treats both as free, and it accepts an unexplored site without any
+test. `tools/re/check_landing_overlap.py` runs this natively: over 512
+scenarios, 366 end with landed flyers overlapping. In the user's replay
+`legion-r8.takrep`, 176 of 287 landings ended on a landed flyer. All of them
+were on explored sites. Nearly all came from stacks of 12 to 30 hovering
+flyers whose shared cells had overflowed to `0xffff`.
+
+`World::flightLandingFree` therefore adds `flyerLandingOccupied` in Legion
+mode only, after the retail predicate. It refuses a footprint that overlaps
+a live, landed flyer (mode 1), or a flyer whose landing mission is in
+descent (stage 3), whatever the exploration. Both states are the units' own
+hashed state, so no new state is added. The check runs in unit order, so a
+simultaneous descent serializes: the later lander sees the earlier one's
+stage 3 in the same tick. The refused flyer then runs retail's own
+candidate search (`417188..4172ff`) to find another site. Test:
+`retail_motion`, where 12 flyers stacked on one point land with no shared
+cells (Retail: all 66 pairs overlap). The test also covers 8 flyers
+arriving over a landed one, and the same at a site that is unexplored for
+them.
+
 **Boats and hovercraft** are mobility classes like any other. The plane is
 built from `World::mobilePlacement`'s own predicate with the type's limits:
 a boat needs `minWaterDepth` (default 13) under every footprint cell and has

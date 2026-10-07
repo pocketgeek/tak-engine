@@ -755,6 +755,71 @@ int main(int argc, char** argv) {
               "retail keeps an in-progress descent when a ground unit enters the site");
     }
     {
+        // A stack of flyers told to land on one spot. Retail lets them land
+        // on each other (descenders stay airborne in word +2, where shared
+        // cells are redrawn every tick or become 0xffff, and unexplored sites
+        // skip every test: tools/re/check_landing_overlap.py). Legion refuses
+        // landed and descending flyers' footprints.
+        struct Stack { int overlaps=0,landed=0,count=0; };
+        auto stack=[](PathfindingMode mode,int airborne,int grounded,int lateSight) {
+            World world;world.setVisPlayer(-1);world.setPathfindingMode(mode);
+            world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
+            flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
+            flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.footX=flyer.footZ=2;
+            UnitType late=flyer;late.sight=lateSight;
+            std::vector<int> ids;
+            for(int i=0;i<grounded;++i) {
+                const int id=world.spawn(&flyer,512,512,0.0f,0);
+                auto* u=world.unit(id);u->flightGroundMode=1;u->flightY=Fixed::fromInt(100);
+                ids.push_back(id);
+            }
+            if(grounded)world.tick(1.0f/30.0f);
+            for(int i=0;i<airborne;++i) {
+                // Late arrivals belong to player 1: with sight 0 the site stays
+                // unexplored for them.
+                const int id=world.spawn(grounded ? &late : &flyer,512,512,0.0f,grounded ? 1 : 0);
+                auto* u=world.unit(id);u->flightGroundMode=2;u->flightY=Fixed::fromInt(180);
+                u->standbyActive=true;u->standbyState={1,0,0xffffffffu,0,0};
+                ids.push_back(id);
+            }
+            Stack result;result.count=int(ids.size());
+            for(int tick=0;tick<4000;++tick) {
+                world.tick(1.0f/30.0f);
+                if(std::all_of(ids.begin(),ids.end(),[&](int id){return world.unit(id)->flightGroundMode==1;}))break;
+            }
+            for(size_t i=0;i<ids.size();++i) {
+                const auto& a=*world.unit(ids[i]);
+                if(a.flightGroundMode!=1)continue;
+                ++result.landed;
+                for(size_t j=i+1;j<ids.size();++j) {
+                    const auto& b=*world.unit(ids[j]);
+                    if(b.flightGroundMode!=1)continue;
+                    const int ax=footprintOrigin(a.x,2),az=footprintOrigin(a.z,2);
+                    const int bx=footprintOrigin(b.x,2),bz=footprintOrigin(b.z,2);
+                    result.overlaps+=ax<bx+2 && bx<ax+2 && az<bz+2 && bz<az+2;
+                }
+            }
+            return result;
+        };
+        const auto retail=stack(PathfindingMode::Retail,12,0,180);
+        const auto legion=stack(PathfindingMode::Legion,12,0,180);
+        std::printf("stacked landing, 12 flyers: Retail %d overlapping landed pairs, Legion %d (landed %d/%d)\n",
+                    retail.overlaps,legion.overlaps,legion.landed,legion.count);
+        check(retail.overlaps>0,"retail lets a stack of descending flyers land on each other");
+        check(legion.overlaps==0 && legion.landed==legion.count,
+              "Legion flyers ordered to one spot all land without sharing footprint cells");
+        const auto onLanded=stack(PathfindingMode::Legion,8,1,180);
+        check(onLanded.overlaps==0 && onLanded.landed==onLanded.count,
+              "Legion flyers arriving over a landed flyer all land clear of it and of each other");
+        const auto unexploredRetail=stack(PathfindingMode::Retail,8,1,0);
+        const auto unexploredLegion=stack(PathfindingMode::Legion,8,1,0);
+        std::printf("unexplored landing over a landed flyer: Retail %d overlapping pairs, Legion %d\n",
+                    unexploredRetail.overlaps,unexploredLegion.overlaps);
+        check(unexploredLegion.overlaps==0 && unexploredLegion.landed==unexploredLegion.count,
+              "Legion flyers never land on a flyer even at an unexplored site");
+    }
+    {
         World world; world.setVisPlayer(-1);
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType fighter; fighter.canMove=true; fighter.maxHp=10000;
