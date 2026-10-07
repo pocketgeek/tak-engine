@@ -447,6 +447,51 @@ distance from the ground centroid drops from 1,999/1,963/2,885 px to
 `legion-r9.takrep`, flyers that had been 5,500 px ahead now keep a median
 of 68 to 144 px from the ground's centroid while it moves.
 
+**A third deliberate flight difference: idle landed flyers make way for an
+allied ground group.** Retail stamps a landed flyer into the ground word
+(`5066f0`), so every ground mover plans and steers round it as round any
+standing body, and Legion does the same (the `grounded` overlay and the soft
+obstacles). A parked air wing on a group's way therefore made the group
+detour round it or file past it. In Legion, every 4 ticks (staggered by unit
+id) each member still on its way looks 12 cells ahead along its planned
+steps: its committed detour route, else the descent of its group's field,
+else the straight line to its goal. Any landed flyer whose footprint those
+steps cover is asked to lift (`World::requestLegionLift`) if it is idle (no
+order, job, build queue, cargo, landing or retained flight controller) and
+belongs to an allied player. Enemy flyers and busy flyers stay obstacles.
+- **Take-off and hover:** the flyer takes off as VTOL_Move's stage 0 does
+  (`416c50`: Activate, BeginFlight) and holds over the spot it left at
+  cruise altitude through the retail flight kernel (`retailFlightNavigation`
+  and `tickFlightBody`). The ground then walks under it: an airborne flyer
+  is not in the ground word.
+- **Planning:** the soft-obstacle scan stamps an idle landed flyer as kind 3.
+  That kind is no obstacle to the fields and lines of an allied player's
+  commands, so the group does not detour for flyers that will lift. It is
+  still an obstacle to everyone else's.
+- **Hysteresis:** every further request extends the hover by 90 ticks. So
+  does any allied member within 6 cells of the flyer that is moving, or has
+  been held for under 60 updates, or is bound for a goal there. The flyer
+  lands only into a settled area, not in front of the stragglers of a group
+  that is still coming in. When the 90 ticks run out, the retail landing
+  mission takes over and searches from the spot it holds over: the flyer
+  lands on its own spot if that is free, else on the nearest free site.
+  It cannot lift again for 240 ticks, which prevents bobbing up and down.
+- **Determinism:** the lift state (`Unit::legionLift`, its spot and expiry,
+  and the rest tick) is hashed. The overlays are rebuilt each tick from
+  hashed state, and members are visited in id order.
+- A hovering flyer skips its combat update until it lands again.
+
+Test: `legion_world_test liftflyers`. 40 ground bodies cross a block of 12
+landed flyers: 4 columns by 3 rows, with a one-cell gap between them.
+- With the player's own flyers, all 12 lift once. The group arrives in 1,740
+  ticks (1,802 on open ground) with no sideways detour, and every flyer lands
+  again on its own spot.
+- Enemy flyers stay landed. The group goes round them in 2,226 ticks, with a
+  7-cell detour.
+- Flyers on guard orders are never asked to lift.
+- With the flyers parked on the group's destination, 9 flyers lift once and
+  land nearby after the group has settled, with no bobbing and no overlap.
+
 **Boats and hovercraft** are mobility classes like any other. The plane is
 built from `World::mobilePlacement`'s own predicate with the type's limits:
 a boat needs `minWaterDepth` (default 13) under every footprint cell and has

@@ -724,6 +724,14 @@ struct Unit {
     uint32_t flightBeginCallbackSerial=0; // display-only BeginFlight call-in edge
     uint32_t flightLandingCallbackSerial=0; // display-only edge; excluded from lockstep hash
     std::optional<RetailLandingState> landing;
+    // Legion (deliberate, not retail): an idle landed flyer lifted to let an
+    // allied ground group pass under it (World::requestLegionLift). It hovers
+    // over the spot it left until no group has asked for `legionLiftQuiet`
+    // ticks, then lands again through the retail landing mission. Hashed.
+    bool legionLift=false;
+    uint32_t legionLiftUntil=0;
+    uint32_t legionLiftRest=0;   // after landing again, no new lift before this tick
+    Fixed legionLiftX,legionLiftZ;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //
     // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
@@ -2582,6 +2590,12 @@ private:
     uint32_t retailMissionFlags(Unit& u);
     void tickRetailGroups();
     void planLegionFlightStations();
+    // Legion: idle landed flyers make way for allied ground groups.
+    static constexpr uint32_t kLegionLiftQuiet=90;   // ticks after the last request
+    static constexpr uint32_t kLegionLiftRest=240;   // ticks from the hand-over to landing until it may lift again
+    bool legionLiftable(const Unit& flyer,int player) const;
+    void requestLegionLift(Unit& flyer);
+    bool tickLegionLift(Unit& u);
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
     bool pathPending(int id) const {return paths_.pending(id);}

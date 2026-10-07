@@ -2213,6 +2213,68 @@ bool World::flyerLandingOccupied(const Unit& self,int x0,int z0,int fx,int fz) c
     return false;
 }
 
+// Legion (deliberate, not retail): idle landed flyers make way for allied
+// ground groups. Retail stamps a landed flyer into the ground word (5066f0)
+// and every ground mover plans and steers round it as round any body; a
+// parked air wing on a group's way makes the group detour or file past.
+// In Legion a ground member whose planned cells ahead cover such a flyer
+// asks it to lift (LegionNavigator::liftFlyers). It takes off as VTOL_Move
+// does (416c50: Activate, BeginFlight), holds over the spot it left at
+// cruise altitude through the retail flight kernel, and the ground walks
+// under it. Every further request extends the hold, and so does any member
+// still on its way near the flyer (the area must stay clear for a while);
+// kLegionLiftQuiet ticks after the last one it hands over to the retail
+// landing mission, which lands on the spot it left if that is free, else on
+// the nearest free site. It then stays down for kLegionLiftRest ticks (no
+// bobbing up and down in a crowd that is still settling). Only an idle flyer (no order, job, cargo or controller) of an
+// allied player lifts; an enemy's stays an obstacle.
+bool World::legionLiftable(const Unit& f,int player) const {
+    return f.alive() && !f.embarked() && f.type && f.type->canFly && !f.type->isStructure() &&
+        f.baseSpeed>Fixed() && !f.underConstruction && allied(f.player,player) &&
+        f.orders.empty() && !f.buildSiteId && !f.repairId && !f.reclaimId && f.buildQueue.empty() &&
+        !f.repeatType && f.cargo.empty() && !f.retainedFlightGoal && !f.landing &&
+        (f.legionLift || (f.flightGroundMode==1 && tickCounter_>=f.legionLiftRest));
+}
+
+void World::requestLegionLift(Unit& f) {
+    if (!f.legionLift) { f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; }
+    f.legionLiftUntil=tickCounter_+kLegionLiftQuiet;
+}
+
+bool World::tickLegionLift(Unit& u) {
+    if (!u.legionLift) return false;
+    if (!isLegionPathfinding(pathfindingMode_) || !legionLiftable(u,u.player)) {
+        // An order (or anything else that makes it busy) takes over from here.
+        u.legionLift=false;
+        return false;
+    }
+    if (tickCounter_>=u.legionLiftUntil) {
+        // Nobody asked for kLegionLiftQuiet ticks: land again, searching from
+        // the spot it holds over (the retail landing mission's own search).
+        u.legionLift=false;
+        u.legionLiftRest=tickCounter_+kLegionLiftRest;
+        if (u.flightGroundMode==2) { u.standbyActive=false; u.landing.emplace(); }
+        return false;
+    }
+    if (u.flightGroundMode!=2) {
+        // 416c50, as VTOL_Move's stage 0.
+        if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
+            script->second.activated=true;notifyUnitScript(u,"Activate");
+        }
+        notifyUnitScript(u,"BeginFlight");
+        u.standbyActive=false;
+        u.flightGroundMode=2;
+    }
+    const int cruise=flightGround(u)+u.type->cruiseAlt;
+    const RetailFlightGoal goal{{u.legionLiftX.v,Fixed::fromInt(std::min(cruise,511)).v,u.legionLiftZ.v}};
+    const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
+    u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
+        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+    tickFlightBody(u);
+    notifyFlightOccupancy(u);
+    return true;
+}
+
 // Cell quad extrema (+6 low, +5 high) from the corner lattice (50ed60).
 std::pair<int,int> World::cellHeightRange(size_t cell) const {
     if (heights_.empty() || hW_<=0) return {0,0};
@@ -10448,6 +10510,7 @@ void World::tick(float dt) {
         // Retail dispatches each unit's missions immediately before its mover,
         // not all ground missions before every other unit's activity.
         if (u.constructionHolding && u.buildSiteId) continue;
+        if (u.legionLift && tickLegionLift(u)) continue;
         tickManaBuildArea(u);
         tickPatrolRepair(u);
         if (g_phase) {
@@ -11295,6 +11358,8 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.orders.size()));
         mix(u.missionEvents);
         mix(u.standbyAllowed); mix(u.standbyActive);
+        if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); }
+        if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
         mix(u.guardNoMoveAllowed); mix(u.guardNoMoveActive);
         if (u.guardNoMoveActive) {
             const auto& m=u.guardNoMoveState;
