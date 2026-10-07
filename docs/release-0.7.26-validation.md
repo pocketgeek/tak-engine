@@ -3,8 +3,9 @@
 Protocol **237**, replay format **11**, generator version **8**, campaign
 payload **4**, database schema **9**.
 
-Status: **in preparation.** Version 0.7.26 has not been tagged or published.
-Its scope is everything since [0.7.25](release-0.7.25-validation.md); see the
+[Version 0.7.26](https://github.com/pocketgeek/tak-engine/releases/tag/v0.7.26)
+was published on 2026-10-07 after the checks below. The tag points to
+`32e9310`. Its scope is everything since [0.7.25](release-0.7.25-validation.md); see the
 [release notes](release-0.7.26-notes.md).
 
 ## Scope and compatibility
@@ -94,7 +95,30 @@ transfer test
 
 ## CI and packages
 
-Pending.
+The final source (`44e834b`) passed the Linux, Windows and macOS workflows on
+`main`, and the version commit `a2842fe` passed them before it. The exact tag
+passed all four workflows:
+
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/37645691778), started manually on the tag because the workflow is path-filtered.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/37645600274): all native package jobs and release attachment.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/37645600271): x64, ARM64 and the x64 signing/package job.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/37645600281): x64 and ARM64.
+
+The release was created as a draft with these notes and tagged CI attached the
+packages. All **29 assets** were downloaded and matched GitHub's SHA-256
+digests and byte sizes before publication. Every ZIP passed its CRC test.
+Windows ZIP payloads are x86-64 and ARM64 PE executables; macOS ZIP payloads are
+arm64 and x86-64 Mach-O apps with bundle version 0.7.26; the Ubuntu 24.04 DEB's
+client and server report 0.7.26 and ship the systemd service. Windows CI
+reported **17** valid timestamped signatures with no errors, and every Windows
+executable checked locally, plus the installer, carries a certificate table.
+
+Release packages report their build identity inconsistently: Linux packages
+report `build unknown` (Git refuses the container checkout once the checkout
+step's temporary safe-directory setting is gone), and Windows reports the tag
+with a spurious `-dirty` suffix; macOS reports the tag correctly. The version
+number and protocol are unaffected. This is a CI-only issue, to be fixed for the
+next release.
 
 ## Screenshots
 
@@ -119,4 +143,8 @@ in the notes), and each was inspected by eye against its caption.
 
 ## Limits
 
-Pending.
+Local visual inspection covers Linux OpenGL screenshots and the software
+Cartographer renderer. Interactive Windows/macOS GPU rendering was not tested
+by hand. Remote simulated-time sweeps do not substitute for a multi-hour
+wall-time soak. Dense Legion stress battles run below real time on the Debug
+test referees (see above).
