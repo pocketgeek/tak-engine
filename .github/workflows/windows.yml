@@ -137,6 +137,17 @@ jobs:
           path: third_party/ffmpeg-bink
           key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
+      # The build id comes from `git describe --dirty`. The checkout was written by
+      # the runner's Windows git (autocrlf=true, no file modes) but the build runs
+      # MSYS2's git, which would see every CRLF file and script mode as modified and
+      # stamp a spurious "-dirty". Match the checkout's settings in the repo config.
+      - name: Match git settings for the build id
+        run: |
+          git config core.autocrlf true
+          git config core.filemode false
+          git status --porcelain | head -5
+          git describe --always --dirty --abbrev=12
+
       - name: Configure + build
         # links MSYS2's static libSDL2.a/libjpeg.a/libz.a (SDL2::SDL2-static
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
