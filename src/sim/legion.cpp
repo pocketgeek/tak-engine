@@ -386,6 +386,43 @@ struct LegionNavigator::Impl {
     // belongs to, else ~0: a field never treats its own arrivals as soft.
     std::vector<uint64_t> softOwner;
     uint64_t softSerial=0,softHash=0;    // bumped whenever `soft` changes; its content hash
+    // Landed flyers (mode 1) stand on the ground: retail stamps them into
+    // its ground grid (5066f0, re-stamped by 51b370/4dafd2 on every mode or
+    // cell change), so mobilePlacement refuses a ground step into one. But
+    // World::occ_ leaves every flyer out, so Legion, which reads occ_ for
+    // who stands where (holds, detours, parting, passing), saw free ground
+    // there and pressed into them. `grounded` overlays them on occ_ (see
+    // occAt); rebuilt each tick from hashed unit state, so never hashed.
+    std::vector<int32_t> grounded;       // per cell: a landed flyer covering it (0 none)
+    std::vector<int> groundedCells,groundedIds;   // cells set; landed flyer ids, ascending
+    int32_t occAt(size_t c) const {const int32_t o=w.occ_[c];return o||groundedCells.empty()?o:grounded[c];}
+    void stampGrounded() {
+        if(w.occW_<=0)return;
+        const size_t n=size_t(w.occW_)*w.occH_;
+        if(grounded.size()!=n) {grounded.assign(n,0);groundedCells.clear();}
+        for(int c:groundedCells)grounded[size_t(c)]=0;
+        groundedCells.clear();
+        std::vector<int> ids;
+        for(const auto& u:w.units_) {
+            if(!u.alive()||u.embarked()||!u.type||!u.type->canFly||u.flightGroundMode!=1)continue;
+            ids.push_back(u.id);
+            const int fx=u.type->footX,fz=u.type->footZ;
+            const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=ox+i,cz=oz+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                int32_t& o=grounded[size_t(cz)*w.occW_+cx];
+                if(!o) {o=u.id;groundedCells.push_back(cz*w.occW_+cx);}
+            }
+        }
+        std::sort(ids.begin(),ids.end());
+        // A flyer that took off is no soft obstacle any more (as a body
+        // setting off as a member, see registerMove): clear it at once,
+        // not at the next scan.
+        if(!softCells.empty())for(int id:groundedIds)if(!std::binary_search(ids.begin(),ids.end(),id))
+            for(int c:softCells)if(soft[size_t(c)]==id&&softKind[size_t(c)]) {countAll(c,softKind[size_t(c)],-1);softKind[size_t(c)]=0;}
+        groundedIds.swap(ids);
+    }
     static uint64_t commandKey(int player,uint32_t issue) {return uint64_t(uint32_t(player))<<32|issue;}
     static constexpr uint64_t kNoSoft=~0ull-1;   // a field / line that ignores soft obstacles
     // Is soft cell c an obstacle to `command`? Kind 1 stands for every
@@ -472,7 +509,7 @@ struct LegionNavigator::Impl {
         }
         std::vector<std::pair<int,int32_t>> stamps;
         for(const auto& u:w.units_) {
-            if(!u.alive()||u.embarked()||!u.type||u.type->canFly||u.type->isStructure())continue;
+            if(!u.alive()||u.embarked()||!u.type||(u.type->canFly&&u.flightGroundMode!=1)||u.type->isStructure())continue;
             const Member* m=member(u.id);
             if(m&&m->state!=Arrived)continue;
             Still s;s.x=u.x.v;s.z=u.z.v;
@@ -1674,6 +1711,7 @@ struct LegionNavigator::Impl {
     }
     void tick() {
         syncStatic();
+        stampGrounded();
         scanStill();
         prebuildStep();
         prune();
@@ -1827,7 +1865,7 @@ struct LegionNavigator::Impl {
     std::map<int,Part> parts;
     bool partable(const Unit& u,int id) const {
         const Unit* b=w.unit(id);
-        if(!b||!b->alive()||b->player!=u.player||!b->orders.empty()||b->speed!=Fixed()||!b->type||b->type->isStructure())return false;
+        if(!b||!b->alive()||b->player!=u.player||!b->orders.empty()||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly)return false;
         if(anchors.count(id)||yielding.count(id))return false;
         const auto part=parts.find(id);
         return part==parts.end()||part->second.count<kMaxParts;
@@ -1854,7 +1892,7 @@ struct LegionNavigator::Impl {
                 for(int j=0;j<fz&&!blocked;++j)for(int i=0;i<fx&&!blocked;++i) {
                     const int cx=lx+i,cz=lz+j;
                     if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                    const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                    const int32_t o=occAt(size_t(cz)*w.occW_+cx);
                     if(!o||o==u.id)continue;
                     any=true;
                     bool seen=false;for(int q=0;q<count;++q)seen|=ids[size_t(q)]==o;
@@ -1929,7 +1967,7 @@ struct LegionNavigator::Impl {
         for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
             const int cx=nx+i,cz=nz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             bool seen=false;for(int k=0;k<count;++k)seen|=ids[size_t(k)]==o;
             if(seen)continue;
@@ -2050,7 +2088,7 @@ struct LegionNavigator::Impl {
             for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
                 const int cx=x+i,cz=z+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
                 if(o&&o!=u.id)return false;
             }
         }
@@ -2265,7 +2303,7 @@ struct LegionNavigator::Impl {
             for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
                 const int cx=x+i,cz=z+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
                 if(o&&o!=u.id)return false;
             }
             return true;
@@ -2874,7 +2912,7 @@ struct LegionNavigator::Impl {
             for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
                 const int cx=x+i,cz=z+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
                 if(o&&o!=u.id)return true;
             }
             return false;
@@ -2901,7 +2939,7 @@ struct LegionNavigator::Impl {
         for(int k=1;k<=kPassCells&&!oncoming;++k)for(int j=0;j<fz&&!oncoming;++j)for(int i=0;i<fx&&!oncoming;++i) {
             const int cx=ox+k*dx+i,cz=oz+k*dz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             if(std::find(seen.begin(),seen.begin()+seenCount,o)!=seen.begin()+seenCount)continue;
             if(seenCount<seen.size())seen[seenCount++]=o;
@@ -2948,7 +2986,7 @@ struct LegionNavigator::Impl {
             for(int k=1;k<=3;++k)for(int j=-1;j<=fz;++j)for(int i=-1;i<=fx;++i) {
                 const int bx=ox+k*dx+i,bz=oz+k*dz+j;
                 if(bx<0||bz<0||bx>=w.occW_||bz>=w.occH_)continue;
-                const int32_t o=w.occ_[size_t(bz)*w.occW_+bx];
+                const int32_t o=occAt(size_t(bz)*w.occW_+bx);
                 if(o&&o!=u.id)++busy;
             }
             const bool face=busy<=fx*fz;
@@ -3007,7 +3045,7 @@ struct LegionNavigator::Impl {
             for(int k=1;k<=2&&!lead;++k)for(int j=0;j<fz&&!lead;++j)for(int i=0;i<fx&&!lead;++i) {
                 const int cx=ox+k*sdx+i,cz=oz+k*sdz+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
                 if(!o||o==u.id)continue;
                 const Unit* other=w.unit(o);
                 if(other&&other->player==u.player&&other->speed>Fixed()&&other->speed<speed&&int64_t(other->speed.v)*2>=cap.v&&
@@ -3142,7 +3180,7 @@ struct LegionNavigator::Impl {
         for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
             const int cx=nx+i,cz=nz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Member* peer=member(o);
             if(!peer||peer->state==Arrived||peer->state==Trapped)return true;
@@ -3168,7 +3206,7 @@ struct LegionNavigator::Impl {
         };
         auto still=[&](int cx,int cz) {
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return false;
-            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)return false;
             const Unit* other=w.unit(o);
             if(!other||other->speed!=Fixed())return false;
@@ -3229,7 +3267,7 @@ struct LegionNavigator::Impl {
         for(int j=0;j<fz&&!blocker;++j)for(int i=0;i<fx&&!blocker;++i) {
             const int cx=nx+i,cz=nz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(o&&o!=u.id)blocker=o;
         }
         const Unit* other=blocker?w.unit(blocker):nullptr;
@@ -3305,7 +3343,7 @@ struct LegionNavigator::Impl {
         for(int j=-foot;j<fz+foot&&(touching<2||!anchored);++j)for(int i=-foot;i<fx+foot&&(touching<2||!anchored);++i) {
             const int cx=ox+i,cz=oz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
             if(!other||other->player!=u.player||!other->type||other->type->isStructure())continue;
@@ -3409,7 +3447,7 @@ struct LegionNavigator::Impl {
             for(int j=0;j<u.type->footZ&&!taken;++j)for(int i=0;i<u.type->footX&&!taken;++i) {
                 const int cx=gx0+i,cz=gz0+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
                 taken=o&&o!=u.id;
             }
             if(!taken)return false;
@@ -3421,7 +3459,7 @@ struct LegionNavigator::Impl {
         for(int j=-1;j<=fz&&!settled;++j)for(int i=-1;i<=fx&&!settled;++i) {
             const int cx=ox+i,cz=oz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-            const int32_t o=w.occ_[size_t(cz)*w.occW_+cx];
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
             if(!other||other->player!=u.player)continue;

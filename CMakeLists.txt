@@ -294,7 +294,7 @@ add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
-    navalclearance navalisland hovershore navalmissions squadformation pinwheel)
+    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
 # Visible motion of group orders with real unit types (measurement only, needs

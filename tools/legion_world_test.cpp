@@ -340,6 +340,99 @@ void staticblock() {
     staticblockRun(0);staticblockRun(1);
 }
 
+// Landed flyers stand on the ground grid (retail stamps a mode-1 flyer into
+// word +0, so mobilePlacement refuses a ground step into one). A group sent
+// across a field of them -- a block of 30 and 12 scattered -- must plan and
+// steer round them like any standing body: no overlap, no pushing into
+// them, every member arrives. layout: 0 block+scattered, 1 none (open
+// reference), 2 the block takes off soon after the order (its cells must
+// clear at once for ground steering). Retail runs the same layout for
+// reference (measured, not asserted).
+struct FlyerRun {uint64_t hash=0;int arrived=0,ticks=0,half=-1,most=-1;uint64_t holds=0,pushes=0,stuck=0,overlap=0,spins=0,reversals=0;};
+FlyerRun landedflyersRun(int layout,bool legion,int flyerFoot,bool serial=true) {
+    Fixture f(200,100,serial);f.publish();
+    if(!legion)f.world.setPathfindingMode(PathfindingMode::Retail);
+    const auto type=mover(2);
+    UnitType flyer{};flyer.id=flyer.name="legion-flyer";
+    flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=flyerFoot;flyer.sight=4096;
+    flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    // FLYER_AS_GROUND: the same layout of idle ground bodies (reference).
+    const UnitType& standing=std::getenv("FLYER_AS_GROUND")&&flyerFoot==2?type:flyer;
+    std::vector<int> flyers,block,ids;
+    if(layout!=1) {
+        const int pitch=flyerFoot+1;
+        for(int c=0;c<5;++c)for(int r=0;r<6;++r)block.push_back(f.spawn(standing,90+c*pitch,38+r*pitch,c%2));
+        for(int i=0;i<12;++i)flyers.push_back(f.spawn(standing,60+(i%4)*10+(i/4)*3,30+(i%4)*7+(i/4)*9,1));
+        flyers.insert(flyers.end(),block.begin(),block.end());
+    }
+    for(int i=0;i<40;++i)ids.push_back(f.spawn(type,20+(i%8)*3,44+(i/8)*3));
+    f.start();
+    for(int t=0;t<90;++t)f.world.tick(1.f/30);
+    for(int id:flyers)check(f.world.unit(id)->flightGroundMode==1,"flyer not landed");
+    const bool asGround=&standing==&type;
+    for(int id:ids)f.world.order(id,160*16,50*16,false);
+    Motion motion;FlyerRun r;
+    for(;r.ticks<5000&&r.arrived<int(ids.size());++r.ticks) {
+        if(layout==2&&r.ticks==150)for(int id:block)f.world.order(id,190*16,95*16,false);
+        f.world.tick(1.f/30);motion.observe(f.world,ids);
+        r.arrived=0;
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            r.arrived+=u.orders.empty();
+            const int ux=footprintOrigin(u.x,2),uz=footprintOrigin(u.z,2);
+            bool touching=false;
+            for(int fid:flyers) {
+                const auto& v=*f.world.unit(fid);
+                if(v.flightGroundMode!=1||(asGround&&!v.orders.empty()))continue;
+                const int vx=footprintOrigin(v.x,flyerFoot),vz=footprintOrigin(v.z,flyerFoot);
+                if(ux<vx+flyerFoot&&vx<ux+2&&uz<vz+flyerFoot&&vz<uz+2)++r.overlap;
+                if(ux<=vx+flyerFoot&&vx<=ux+2&&uz<=vz+flyerFoot&&vz<=uz+2)touching=true;
+            }
+            // Pushing: an ordered body steered as moving, next to a landed
+            // flyer, yet without speed. Stuck: any ordered body standing
+            // still against one (holding there counts).
+            if(legion&&touching&&!u.orders.empty()&&f.world.legionNavigator()->unitState(id)==1&&u.speed==Fixed())++r.pushes;
+            if(touching&&!u.orders.empty()&&u.speed==Fixed())++r.stuck;
+        }
+        if(r.half<0&&2*r.arrived>=int(ids.size()))r.half=r.ticks;
+        if(r.most<0&&10*r.arrived>=9*int(ids.size()))r.most=r.ticks;
+    }
+    for(int id:ids)check(f.legal(id),"illegal footprint");
+    r.hash=f.world.stateHash();
+    r.holds=legion?f.world.legionStats().holds:0;r.spins=motion.spins;r.reversals=motion.reversals;
+    std::printf("landedflyers %s layout=%d foot=%d arrived=%d/%zu ticks=%d half=%d p90=%d holds=%llu pushes=%llu stuck=%llu overlap=%llu spins=%llu reversals=%llu\n",
+        legion?"legion":"retail",layout,flyerFoot,r.arrived,ids.size(),r.ticks,r.half,r.most,(unsigned long long)r.holds,(unsigned long long)r.pushes,(unsigned long long)r.stuck,
+        (unsigned long long)r.overlap,(unsigned long long)r.spins,(unsigned long long)r.reversals);
+    if(std::getenv("STATIC_VERBOSE"))printLeft(f,ids);
+    return r;
+}
+void landedflyers() {
+    const bool report=std::getenv("STATIC_REPORT")!=nullptr;
+    if(std::getenv("FLYER_RETAIL")) {landedflyersRun(0,false,2);landedflyersRun(1,false,2);}
+    const auto open=landedflyersRun(1,true,2);
+    // Before the fix (flyers missing from Legion's view of the ground):
+    // 23/40 and 4/40 arrived in 5000 ticks, 64164 and 99588 member-ticks
+    // standing against a flyer. After: as for the same layout of idle
+    // ground bodies (FLYER_AS_GROUND), 2631 ticks, 2536 of those ticks
+    // (the stream filing along the block's face).
+    for(int foot:{2,3}) {
+        const auto r=landedflyersRun(0,true,foot);
+        if(report)continue;
+        check(r.overlap==0,"ground body overlapped a landed flyer");
+        check(r.arrived==40,"group did not get round the landed flyers");
+        check(r.spins==0,"group spun at the landed flyers");
+        check(r.pushes<=40,"group pushed into the landed flyers");
+        check(r.stuck<=6000,"group stood against the landed flyers");
+        check(r.ticks<=open.ticks*2,"group took far longer than the way round");
+    }
+    // Before: 31/40 in 5000 ticks (the scattered flyers held the rest).
+    const auto off=landedflyersRun(2,true,2);
+    if(report)return;
+    check(landedflyersRun(2,true,2,false).hash==off.hash,"workers run differs from the serial run");
+    check(off.overlap==0&&off.arrived==40&&off.spins==0,"group failed after the flyers took off");
+    check(off.half<=open.half*5/4&&off.ticks<=open.ticks*2,"group did not use the ground the flyers left");
+}
+
 void replace() {
     Fixture f(128,96);
     f.rect(60,0,4,40);f.rect(60,48,4,48);
@@ -1486,7 +1579,7 @@ int main(int argc,char** argv) {
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
-        {"pinwheel",pinwheel}};
+        {"pinwheel",pinwheel},{"landedflyers",landedflyers}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
