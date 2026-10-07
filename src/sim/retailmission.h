@@ -180,6 +180,34 @@ int retailGroundFormation(RetailMissionState& m,uint32_t tick,int level,bool att
     }
 }
 
+// 417750: VTOL_Move_Formation, pushed ahead of a VTOL_Move by the same two
+// group checks as Move_Ground (417e02..418052, structurally 402b00). Unlike
+// the ground mission it never stops to wait: both levels fly to the group
+// centre. Stage 0 takes the centre (51c700, moving subset for level <= 0)
+// as the mission point and begins flight (416c50); stage 1 snaps it to the
+// footprint grid, installs a 16 px point controller and sleeps 5..14 ticks,
+// returning 0 so the next wake re-takes the centre. The mission retires once
+// back inside the level's radius. Level 0 never retires; the 0x4000000
+// standby branch (41797e..417ad1, VTOL_Move_FormationStandby) is not ported:
+// only the landing search pushes that mission.
+template<class OutOfSlot,class Centre,class Begin,class Move,class Random>
+int retailFlightFormation(RetailMissionState& m,uint32_t tick,int level,bool canFly,
+                          OutOfSlot outOfSlot,Centre centre,Begin begin,Move move,Random random) {
+    if (level!=0 && !outOfSlot()) return 5;
+    switch (m.stage) {
+    case 0:
+        if (!canFly) return 7;
+        centre();begin();
+        return 1;
+    case 1:
+        move();
+        m.sleep(tick,random(10)+5);
+        return 0;
+    default:
+        return 7;
+    }
+}
+
 // 40388d..403b91: Patrol after the host's diversion checks. Initialize owns
 // the return waypoint; ResetGoal owns the controller and weapon reset. Action
 // checks combat then assistance and returns 0 (none), 3 (inserted), or 8 (failed

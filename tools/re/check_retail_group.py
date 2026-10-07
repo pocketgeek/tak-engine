@@ -10,6 +10,9 @@ helpers in src/sim/retailgroup.h and retailGroundFormation:
   query      51c700 centre, 51ce40 radius, 51d1e0 out-of-slot
   check      402b00 head: Move_Ground's two group checks (+50c480 on cancel)
   formation  402880 Move_Ground_Formation, all four stages
+  vtolcheck  417c20's head (417e02..418052): VTOL_Move's two group checks,
+             with flyer altitudes (the same helper as 402b00)
+  vtolform   417750 VTOL_Move_Formation (retailFlightFormation)
 
 Observation only: nothing from the binary is copied into the engine.
 
@@ -76,6 +79,18 @@ class Harness:
             this = uc.reg_read(UC_X86_REG_ECX); uc.mem_write(this + 4, b'\1'); return 12, this
         self.p.hooks[0x4d6c40] = ctor
         self.uc.hook_add(1 << 2, self._stop, begin=0x402d53, end=0x402d53)  # UC_HOOK_CODE
+        # VTOL_Move continues at 418052 once its group checks pass.
+        self.uc.hook_add(1 << 2, self._stop, begin=0x418052, end=0x418052)
+        self.p.hooks[0x416c50] = record('begin', 4)
+        self.p.hooks[0x519b10] = lambda uc, sp: (1, 0)
+        def controller(uc, sp):
+            this = uc.reg_read(UC_X86_REG_ECX); vec = struct.unpack('<I', uc.mem_read(sp + 4, 4))[0]
+            x, y, z = struct.unpack('<iii', uc.mem_read(vec, 12))
+            self.events.append(('controller', s16(x >> 16), s16(z >> 16))); return 2, this
+        self.p.hooks[0x4e40e0] = controller
+        def radius(uc, sp):
+            self.events.append(('radius', struct.unpack('<i', uc.mem_read(sp, 4))[0])); return 1, 0
+        self.p.hooks[0x4e4540] = radius
         self.p.freeze_hooks()
         self.put('I', 0x62d55c, GAME); self.put('I', PLAYER, 1); self.put('I', PLAYER + 0x84, TABLE)
         self.put('I', VT + 0x30, HOOK30); self.put('I', VT + 0x38, HOOK38)
@@ -302,6 +317,70 @@ def main():
             raise AssertionError(('formation', case, dict(stage=stage, level=level, mode=mode),
                                   (result, stage_after, gx, gz, calls), out))
         counts['formation'] += 1
+    # 417c20 head: VTOL_Move's group checks, compared with retailGroundGroupCheck
+    # on full 3-D positions (flyer altitude in y).
+    counts['vtolcheck'] = 0; counts['vtolform'] = 0
+    for case in range(a.cases * 5):
+        rec = random_record(rng, spread=400); rec['active'] = True; g = rng.randrange(1, 99)
+        h.load_record(g, rec)
+        u = random_unit(rng, g, spread=400); u['mover'] = True; u['mission'] = True
+        u['tflags'] = 0x800 if rng.random() < 0.8 else u['tflags']
+        u['flags'] = 0x1000402 | (0x8000000 if rng.random() < 0.5 else 0); u['ustate'] = 0x1000000
+        addr = h.load_unit(0, u)
+        h.put('I', addr + 0xa4, 1); h.uc.mem_write(addr + 0x12a, b'\0')
+        ms = MISSIONS; gx, gy, gz = (rng.randrange(0, 400) << 16 for _ in range(3))
+        for k, v in zip((0x22, 0x26, 0x2a), (gx, gy, gz)): h.put('i', ms + k, v)
+        h.uc.mem_write(ms + 5, bytes([rng.randrange(0, 4)]))
+        draw = rng.randrange(4); h.draws = [draw]; h.events.clear()
+        h.call(0x417c20, (addr, ms, 0), allow_early_stop=True)
+        if not h.events or h.events[-1][0] not in ('moveground', 'cancel') and 'formation' not in [e[0] for e in h.events]:
+            raise AssertionError(('vtolcheck-exit', case, h.events))
+        flags_after = h.get('I', ms + 0x5a)[0]
+        kinds = [e[0] for e in h.events]
+        if 'cancel' in kinds: want = 1
+        elif 'formation' in kinds: want = [e for e in h.events if e[0] == 'formation'][0][2]
+        else: want = 0
+        draws = kinds.count('rand'); rec_after = h.read_record(g)
+        out = ask('check %s %s %d %d %d %d %d %d %d %d' % (record_text(rec), member_text(u), u['flags'],
+                  u['fixed'][0], u['fixed'][1], u['fixed'][2], gx, gy, gz, draw), 2)
+        r, f, d = (int(v) for v in out[0].split()); rmine = [int(v) for v in out[1].split()]
+        if (r, f, d) != (want, flags_after, draws) or (want == 1 and rmine != rec_after):
+            raise AssertionError(('vtolcheck', case, (want, hex(flags_after), draws, rec_after), (r, hex(f), d, rmine)))
+        key = {-2: 'vreform', 4: 'vwait', 1: 'vcancel'}.get(want)
+        if key: stats[key] = stats.get(key, 0) + 1
+        counts['vtolcheck'] += 1
+    # 417750 VTOL_Move_Formation
+    for case in range(a.cases * 5):
+        rec = random_record(rng, spread=400); rec['active'] = rng.random() < 0.95; g = rng.randrange(1, 99)
+        h.load_record(g, rec)
+        u = random_unit(rng, g, spread=400); u['mover'] = True; u['mission'] = True
+        u['tflags'] = 0x800 if rng.random() < 0.85 else u['tflags']
+        u['flags'] = rng.choice([0x1000000, 0x1000402]); addr = h.load_unit(0, u)
+        h.put('I', addr + 0xa4, 1); h.uc.mem_write(addr + 0x12a, b'\0')
+        ms = MISSIONS; stage = rng.randrange(0, 3); level = rng.choice([-2, -2, 4, 4, 0, -1, 3])
+        draw = rng.randrange(10)
+        h.uc.mem_write(ms + 5, bytes([stage])); h.put('i', ms + 0x56, level)
+        for k in (0x22, 0x26, 0x2a): h.put('i', ms + k, rng.randrange(0, 400) << 16)
+        h.draws = [draw]; h.events.clear()
+        result = h.p.call(0x417750, (addr, ms, 0), ecx=None)[0]
+        stage_after = h.get('B', ms + 5)[0]
+        calls = []
+        for e in h.events:
+            if e[0] in ('begin', 'rand'): calls.append(e[0])
+            elif e[0] == 'radius': calls.append('move')
+            elif e[0] == 'sleep': calls.append('sleep%d' % e[2])
+        gx = s16(h.get('i', ms + 0x22)[0] >> 16); gz = s16(h.get('i', ms + 0x2a)[0] >> 16)
+        radii = [e[1] for e in h.events if e[0] == 'radius']
+        out = ask('vtolformation %s %s %d %d %d %d %d' % (record_text(rec), member_text(u), stage, level,
+                  int(bool(u['tflags'] & 0x800)), u['flags'], draw))[0].split()
+        r, st = int(out[0]), int(out[1])
+        mine_calls = [c for c in out[4].split(',') if c and c not in ('-', 'centre')]
+        ok = (r, st) == (result, stage_after) and mine_calls == calls and all(x == 16 for x in radii)
+        if 'centre' in out[4]: ok = ok and (int(out[2]), int(out[3])) == (gx, gz)
+        if not ok:
+            raise AssertionError(('vtolform', case, dict(stage=stage, level=level), (result, stage_after, gx, gz, calls, radii), out))
+        key = 'vf%d' % result; stats[key] = stats.get(key, 0) + 1
+        counts['vtolform'] += 1
     ours.stdin.close(); ours.wait()
     print('PASS: %s; %s' % (', '.join('%s %d' % kv for kv in counts.items()),
                             ', '.join('%s %d' % kv for kv in stats.items())))
