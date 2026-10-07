@@ -39,6 +39,7 @@
 
     void GameView::saveNetReplay() {
         if (replaySaved_ || !mp_ || !mp_->recording() || mp_->replayLog().empty()) return;
+        if (benchmarkMode_) return;   // a performance run, not a game worth keeping
         replaySaved_ = true;
         // Beside settings.ini: settingsPath() is <prefdir>/settings.ini, so trim the
         // file name off rather than rebuilding the platform path by hand.

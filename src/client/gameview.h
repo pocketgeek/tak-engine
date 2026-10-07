@@ -179,8 +179,8 @@ public:
     }
     // Write this client's recorded replay into the user's config directory (beside
     // settings.ini). Once per game -- called both when the result lands and from the
-    // destructor, whichever happens first. A no-op when nothing was recorded, which
-    // covers single-player-vs-nobody, spectators, and replay playback itself.
+    // destructor, whichever happens first. A no-op when nothing was recorded (replay
+    // playback itself) and for the Benchmark; players and spectators both record.
     void saveNetReplay();
 
     GameView(SDL_Renderer* ren, tak::hpi::Vfs vfs, const std::string& mapPath,

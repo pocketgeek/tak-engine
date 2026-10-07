@@ -870,12 +870,13 @@ void MpClient::onFrame(const Frame& f) {
             replayTicks_ = r.u32();   // bundles logged before we joined (0 = none)
             // 0xFF marks a spectator (no slot); map it to -1.
             room_.mySlot = !r.ok ? keep : (mySlot == 0xFF ? -1 : int(mySlot));
-            // Record a replay if we are PLAYING this game. Started here rather than
-            // when the view sets up, because the backlog a rejoin/spectate receives
-            // arrives immediately after this message -- any later and the recording
-            // would be missing its first ticks. Spectators (slot -1) do not record:
-            // the request is that each human PLAYER keeps its own copy.
-            if (room_.mySlot >= 0) startRecording(); else stopRecording();
+            // Record a replay of every game we take part in -- playing or spectating
+            // (an all-AI watch game included). Started here rather than when the view
+            // sets up, because the backlog a rejoin/spectate receives arrives
+            // immediately after this message -- any later and the recording would be
+            // missing its first ticks. A spectator's replay carries no hash
+            // checkpoints (see sendHash); the view skips saving for the Benchmark.
+            startRecording();
             // Any 0xFF start is a spectator (a create-as-spectator host, or spectate()).
             spectator_ = expectingSpectate_ || (r.ok && mySlot == 0xFF);
             // Route EVERY spectator through the "set up before the state branches" path
@@ -1041,8 +1042,9 @@ void MpClient::sendCommands(const std::vector<Command>& cmds) {
 
 void MpClient::sendHash(uint32_t tick, uint64_t hash) {
     // Keep our own trail while recording, so the replay carries what this client
-    // actually computed at each checkpoint.
-    if (recording_) hashLog_.push_back({tick, hash});
+    // actually computed at each checkpoint. A spectator's StateHash is only a
+    // progress ack carrying 0 (never a computed hash), so it is not a checkpoint.
+    if (recording_ && !spectator_) hashLog_.push_back({tick, hash});
     Writer w; w.u32(tick); w.u64(hash);
     send(Msg::StateHash, w);
 }

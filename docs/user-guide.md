@@ -1101,7 +1101,9 @@ may still have problems. See the [campaign notes](campaign-design.md).
 
 ## Replays
 
-Every game you finish is **recorded automatically**.
+Every game you play or watch is **recorded automatically**, including games where
+you only spectate the AI (the Benchmark is not recorded). Replays of games you
+watched carry no checkpoint hashes, since a spectator does not report them.
 
 To watch one, open **Settings → Load Replay** on the main menu and choose a
 recording. During playback:
