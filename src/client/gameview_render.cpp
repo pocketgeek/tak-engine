@@ -2415,7 +2415,7 @@
             paintAtlasRect(ren_, it->second[ci], r);
         }
         SDL_SetRenderTarget(ren_, prev);
-        // NEAREST unless Zoom smoothing is Smooth; the gutters keep LINEAR in-rect.
+        // NEAREST unless Bilinear Filtering is on; the gutters keep LINEAR in-rect.
         SDL_SetTextureScaleMode(atlas, unitScaleMode());
         atlasTex_[slot] = atlas;
         glowDirty_ = true;   // fresh atlas: its animated regions are unpainted
