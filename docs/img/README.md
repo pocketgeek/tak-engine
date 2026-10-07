@@ -1,13 +1,15 @@
 # README and user-guide screenshots
 
-Refreshed on 2026-10-07 for **0.7.26**. Every image below is actual engine output
-from the 0.7.26 release-preparation build (Debug with `-O2`, OpenGL renderer) and
-was inspected by eye. Encoding is the only change after capture: JPEG with full
+Refreshed on 2026-10-07 for **0.7.27**. Every image below is actual engine output
+from a release-preparation build (Debug with `-O2`, OpenGL renderer) and was
+inspected by eye. The 0.7.27 build rendered `title.jpg`, `hud.jpg`,
+`guide/options-graphics.jpg` and the new `guide/tactical-dots.jpg`; the rest are
+from the 0.7.26 build (or older, where noted) and show nothing that changed. Encoding is the only change after capture: JPEG with full
 chroma resolution, quality 90 for the title, 88 for the gallery and 86 for the
 guide; guide images are scaled from 1600 × 900 to 1280 × 720. The title is cropped
 to its 4:3 artwork. Nothing was painted into a scene. The guide's HUD picture has
-numbered markers drawn on top, and the Retail/Legion comparison puts two captures
-side by side under text labels.
+numbered markers drawn on top, and the Retail/Legion and Tactical Dots comparisons
+put two captures side by side under text labels.
 
 Several scenes were set up with debug-build harnesses. Release builds do not have
 these switches. Captions say when a picture is a **development scene**:
@@ -28,11 +30,11 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.7.26, 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.7.27, 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena. A real feature with no fixture; spectator view, so no fog |
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column. Spectator view, 1.4× zoom |
 | `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding stations over them (new in 0.7.26). `1F` marks members of formation 1. Fog off, 1.8× zoom |
-| `hud.jpg` | Aramon player in a local-server game, about 12 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. Elsin is selected, so her build menu and portrait show. Stats panel on, 1.15× zoom |
+| `hud.jpg` | Aramon player in a local-server game, about 12 s in. **Stress-test start**: Normal AI opponent, 250-unit cap. Elsin is selected, so her build menu and portrait show. Stats panel on, 1.15× zoom; its last row, RENDERER GL, is new in 0.7.27 |
 | `naval.jpg` | **Development scene, spawned.** Cairbray Coast Landing, 10 s in. Veruna Flagship, Men of War, Trebuchet Ships and Harpoon Ships fight Creon Iron Clads, Stern Wheelers and Submersibles. 1.6× zoom, fog off |
 | `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator v8, seed 7, 256 × 256, four players). Four Hard AIs at 8× speed, seven game minutes in. Spectator view of a lake shore at 1× |
 | `lobby.jpg` | Unchanged from 0.7.25: create-game screen with Ulasem Arena preview and Retail pathfinding |
@@ -47,17 +49,20 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 The 0.7.25 `army.jpg` (an Aramon army standing still, with no combat) and
 `gameplay.jpg` (a single barracks) were removed. `battle.jpg` and `hud.jpg`
-replace them. The unchanged views contain no version text and still match 0.7.26.
+replace them. Since 0.7.26, `battle.jpg`, `dragons.jpg`, `flyers.jpg`, `naval.jpg` and
+`generated.jpg` are unchanged: none of them shows the stats panel, the Options screen
+or Tactical Dots. The unchanged views contain no version text.
 
 ## User guide (`docs/img/guide/`)
 
 | Image | Scene |
 | --- | --- |
-| `hud-annotated.jpg` | The same setup as `hud.jpg`, captured at 1600 × 900 with 1× zoom. Markers: 1 minimap, 2 stats panel, 3 orders, 4 weapons and stances, 5 mana, 6 build menu, 7 information bar, 8 selected Monarch |
+| `hud-annotated.jpg` | From the 0.7.26 build. The same setup as `hud.jpg`, captured at 1600 × 900 with 1× zoom. Markers: 1 minimap, 2 stats panel, 3 orders, 4 weapons and stances, 5 mana, 6 build menu, 7 information bar, 8 selected Monarch. At this window height the stats panel has room for its first four rows only (FPS, PING, SIM, UNITS), so the new RENDERER row would not be visible; a 0.7.27 recapture showed the same four rows and was not used |
 | `side-aramon.jpg` … `side-creon.jpg` | One per side. A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu. `side-creon.jpg` was recaptured after 0393b54 (Creon's Iron Plague panel art); the other four were unchanged by that fix, verified by pixel comparison of the panels |
 | `shift-queue.jpg` | Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders. 1.7× zoom |
 | `flyers-retail-legion.jpg` | **Development scene, spawned.** The `flyers.jpg` formation and order, 22 s in, run once in Retail and once in Legion. The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
-| `options-graphics.jpg` | Options screen scrolled to Graphics, cropped to the panel. Every Graphics setting is at its default; Display shows the windowed capture profile |
+| `options-graphics.jpg` | 0.7.27. Options screen scrolled to Graphics, cropped to the panel: Renderer (AUTO), Bilinear Filtering through Trees Sway in Wind, Tactical Dots (OFF), Tactical Dots Zoom (20%), Hardware Cursor and Smooth Motion. A fresh profile whose only setting is `fullscreen = 0`, so the window takes the capture size; everything else, VSync included, is at its default |
+| `tactical-dots.jpg` | 0.7.27. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view at zoom 0.23 in a 1920 × 1080 window, inside the range where the default Tactical Dots Zoom of 20% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region is cropped from each at 1:1 and placed side by side under labels |
 | `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch |
 | `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**) |
 | `benchmark.jpg` | Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): Zhon and Creon armies, with Creon Neo Dragons breathing fire; scaled from 1920 × 1080 |
@@ -65,6 +70,10 @@ replace them. The unchanged views contain no version text and still match 0.7.26
 
 The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
 `diplomacy.jpg`, `generated.jpg` and `cartographer.png` from the gallery.
+
+The other guide images (side, Shift queue, flyer comparison, briefing, replay,
+benchmark and scorecard) are from the 0.7.26 build and show nothing that 0.7.27
+changed; their profiles had the stats panel off.
 
 The first-launch folder picker is the operating system's own dialog
 (`kdialog`/`zenity`, Finder or Explorer), so it has no in-engine screenshot.
@@ -86,7 +95,8 @@ live and capture after a wall-clock wait, so their FPS reading is real. Screensh
 timing is not a performance measurement.
 
 Capture scripts, job lists and the encoder are in the release-preparation
-scratch directory, `$SCR/shared/release-0.7.26/shots`. Raw PNGs, logs, profiles
+scratch directories, `$SCR/shared/release-0.7.26/shots` and
+`$SCR/shared/release-0.7.27/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then

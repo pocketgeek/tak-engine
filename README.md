@@ -6,13 +6,13 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.7.26-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.7.27-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [Build from source](docs/development.md)
 
-<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.7.26"></a>
+<a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors and version 0.7.27"></a>
 
 <table>
   <tr>
@@ -20,7 +20,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/dragons.jpg"><img src="docs/img/dragons.jpg" alt="Creon Neo Dragons breathe blue fire on an Aramon siege column"></a><br><sub>Creon Neo Dragons strike an Aramon siege column (development scene)</sub></td>
-    <td width="50%"><a href="docs/img/flyers.jpg"><img src="docs/img/flyers.jpg" alt="Zhon Gryphons, Harpies and Drakes flying over Trolls and Stone Giants in one formation"></a><br><sub>New in 0.7.26: Legion flyers keep station over their formation (development scene)</sub></td>
+    <td width="50%"><a href="docs/img/flyers.jpg"><img src="docs/img/flyers.jpg" alt="Zhon Gryphons, Harpies and Drakes flying over Trolls and Stone Giants in one formation"></a><br><sub>Legion flyers keep station over their formation (development scene)</sub></td>
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/hud.jpg"><img src="docs/img/hud.jpg" alt="Aramon army with Elsin selected, showing the build menu, command panel, minimap and stats panel"></a><br><sub>The Aramon interface with Elsin's build menu and the stats panel</sub></td>
@@ -40,7 +40,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
 </table>
 
-<sub>Captured from the 0.7.26 build. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
+<sub>Captured from the 0.7.26 and 0.7.27 builds. The battle is a real benchmark run; dragon, flyer and naval views and the HUD's army are development scenes; results use sample statistics. See the <a href="docs/img/README.md">capture notes</a>.</sub>
 
 </div>
 
@@ -52,7 +52,36 @@ interface art, and sound directly from its installation.
 assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data.
 
-## New in 0.7.26
+## New in 0.7.27
+
+- **Faster large battles.** Legion games with 10,000 or more units spend much
+  less time on bookkeeping: units held in place rest between updates, and
+  map changes in far-apart places are repaired separately. Retail answers its
+  route-pending check without a lookup. In exploratory replays of the 0.7.25
+  stress games, an order-heavy Legion battle went from about 1.1× to 1.6× real
+  time, and Retail movement got about 16% cheaper. Retail behavior is
+  unchanged. See the [release notes](docs/release-0.7.27-notes.md).
+- **Tactical Dots** (Options → Graphics, off by default, not in the original
+  game): zoomed far out, units are drawn as minimap-style dots in their
+  player's colour, with the minimap's fog rules. **Tactical Dots Zoom**
+  (0–100%, default 20%) sets how far out, along your zoom-out range. See the
+  [user guide](docs/user-guide.md#graphics).
+- **Renderer option** (Options → Graphics): **Auto** by default, or any graphics
+  backend SDL offers on your machine. A backend that cannot start falls back to
+  Auto with a notice. The stats panel and Benchmark results show the backend in
+  use, and text under the Software renderer is no longer faint and dotted.
+- **Build ids.** The CI build scripts were fixed so that Linux packages and
+  Windows builds report their real build id, not `build unknown` or a spurious
+  `-dirty`.
+
+Version **0.7.27 uses protocol 238 and replay format 11**. Update clients and
+servers together; 0.7.26 clients cannot join. Replays require the exact
+simulation protocol; older recordings need the engine that recorded them. No new
+dynamic runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.7.27-notes.md) and
+[validation report](docs/release-0.7.27-validation.md).
+
+### Previously in 0.7.26
 
 - **Legion flyers stay with their formation.** In Legion games, flyers in a
   formation that also has ground units now hold stations over the ground units
@@ -339,7 +368,7 @@ Group recall uses one number-key press to select and a second to track.
 
 ## Download
 
-Get **version 0.7.26** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
+Get **version 0.7.27** from the [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
 Choose the package for your system:
 
 | System | Package |
@@ -607,7 +636,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.7.26 uses generator v8;
+the same named map when the game starts. Version 0.7.27 uses generator v8;
 older seed recipes are unsupported, while saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -615,7 +644,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.7.26 uses protocol **237**: update clients and servers together.
+Version 0.7.27 uses protocol **238**: update clients and servers together.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -887,7 +916,7 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same engine build and compatible game data** on every participant.
-Version **0.7.26 uses protocol 237**, including authoritative pathfinding
+Version **0.7.27 uses protocol 238**, including authoritative pathfinding
 selection, shared override-pack transfer, and Darien Crusades campaign messages.
 Update clients and servers together; earlier clients cannot join these matches.
 Replay format remains **11**, and playback requires the current simulation
@@ -1072,7 +1101,7 @@ Guests select their own cosmetic packs separately. Full host packs transfer
 automatically to the server and all players, with checksum verification before
 start. Downloads stay in `OverrideCache/`; they do not replace installed files.
 Campaigns remain unmodified. See [override details](docs/user-guide.md#overrides).
-Version 0.7.26 uses protocol **237**; update server and clients together.
+Version 0.7.27 uses protocol **238**; update server and clients together.
 
 
 ## License

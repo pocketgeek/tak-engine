@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.7.26** (network protocol **237**, replay format
+This guide covers **TAK Engine 0.7.27** (network protocol **238**, replay format
 **11**). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -883,9 +883,9 @@ World sounds are full volume on screen and fade with distance off screen.
 
 ### Graphics
 
-![The Options screen scrolled to the Graphics settings, all at their defaults](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Graphics settings: Renderer set to Auto, then the filtering, shadow, art, tree, Tactical Dots (off), Tactical Dots Zoom (20%), cursor and motion settings, all at their defaults](img/guide/options-graphics.jpg)
 
-*Options, Graphics section, at the default settings.*
+*Options, Graphics section, at the default settings. The picture was taken in a window, so Fullscreen above shows Off.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -917,6 +917,13 @@ dots. Health bars, production bars and unit shadows are hidden while dots are
 showing; trees, terrain, projectiles and explosions are drawn as normal. Dots
 are much cheaper to draw than models, so a huge zoomed-out battle also runs
 faster.
+
+![Two views of the same moment in a large battle, zoomed far out. Left, with Tactical Dots off, the armies are tiny unit models that are hard to tell apart from the trees. Right, with Tactical Dots on, each army is a field of squares in its player's colour: blue, green and maroon](img/guide/tactical-dots.jpg)
+
+*The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
+in a 1920 × 1080 window with Tactical Dots Zoom at its default 20%. Left, Tactical
+Dots off; right, on. Trees, terrain and the blue spell effect are drawn either
+way.*
 
 #### Renderer
 
@@ -1036,7 +1043,7 @@ minutes so you can reconnect and catch up. If you do not return, you forfeit.
 ### Versions
 
 **Everyone must use the same version of TAK Engine**, client and server alike.
-Version 0.7.26 uses network protocol **237**. Older and newer versions cannot
+Version 0.7.27 uses network protocol **238**. Older and newer versions cannot
 play together, and the server turns away a mismatched client.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
@@ -1109,7 +1116,7 @@ recording. During playback:
 A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
-- **the same version of TAK Engine** that recorded it (0.7.26 plays protocol-237
+- **the same version of TAK Engine** that recorded it (0.7.27 plays protocol-238
   recordings);
 - the same game data and map.
 
