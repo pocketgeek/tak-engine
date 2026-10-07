@@ -53,15 +53,13 @@ the GOG edition, supplies the game data.
   experimental Retail+, Flowfield and Cooperative modes that 0.7.24 shipped
   were removed on 2026-10-06; they remain in git history. Retail behavior is
   unchanged by the removal. See [Legion](docs/legion-pathfinding.md).
-- **Edge smoothing and zoom smoothing are separate graphics options.** Unit
-  Edge Smoothing (Off/2x/4x/8x/16x, the former Model AA) smooths unit
-  silhouettes. Zoom Smoothing (Off / Smooth / **Sharp**, the default) controls
-  magnified terrain, scenery and model textures when zoomed in. Smooth is
-  retail's bilinear filtering. Sharp keeps texels as crisp blocks and blends
-  only their one-pixel boundaries. Zoomed-Out Terrain (Auto/Off/2x/4x, the
-  former Terrain AA) supersamples only below 100% zoom, so the default view no
-  longer holds a terrain target (253 MiB at 7680×2160). Saved settings migrate.
-  See [antialiasing](docs/antialiasing.md).
+- **One graphics filter, as in retail.** Terrain AA / Model AA (later Unit Edge
+  Smoothing, Zoom Smoothing and Zoomed-Out Terrain) and their supersampling
+  targets are gone. The single **Bilinear Filtering** toggle (default **off**)
+  is retail's `BiLinearFilter`: it smooths unit model textures and unit shadows
+  only. Terrain, scenery and the interface stay point-sampled, as they always
+  were in retail. A saved Zoom Smoothing of Smooth, or 0.7.24's Bilinear
+  Filtering on, carries over as on; every other old graphics choice loads as off.
 
 ## New in 0.7.24
 
@@ -137,8 +135,8 @@ shipped. See the [release notes](docs/release-0.7.23-notes.md) and
 - **Independent antialiasing:** Terrain AA (Off/2x/4x) and Model AA
   (Off/2x/4x/8x/16x), with native-resolution UI, preserved scenery ordering,
   remembered settings, and reported capability/memory fallbacks in that release.
-  Version 0.7.24 restores these controls. See the
-  [quality and performance comparison](docs/antialiasing.md).
+  Version 0.7.24 restores these controls; later builds replace them with a
+  single Bilinear Filtering toggle.
 - **Server hardening:** bounded map parsing and background validation, actual-size
   memory admission, command-processing budgets, automatic ACME retry recovery,
   and per-source HTTP challenge connection limits.
@@ -924,18 +922,12 @@ Use **Options** to adjust audio, shadows, health bars, UI scale, cursor size,
 and camera behavior. **F4 Scorecard Scale** independently adjusts the player
 scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
 and Smooth Motion default to **on**; saved choices still apply.
-Graphics options include **Unit Edge Smoothing** (Off/2x/4x/8x/16x),
-**Zoom Smoothing** (Off / Smooth / Sharp), **Zoomed-Out Terrain**
-(Auto/Off/2x/4x), **Smooth GUI Art** and **Smooth Movies**. Zoom Smoothing
-defaults to **Sharp**, which keeps magnified pixel art crisp with antialiased
-texel boundaries and changes nothing at 100% zoom. Smooth is retail's bilinear
-filter. Zoomed-Out Terrain defaults to **Auto** and runs only below 100% zoom.
-The others default to **off**, and every choice is remembered. Smooth GUI Art
-applies immediately to the current interface, fonts and cursors without a
-restart. The HUD, menus and cursor stay outside every world pass. Saved Model
-AA, Bilinear Filtering and Terrain AA values migrate to the new options. See
-[antialiasing](docs/antialiasing.md) for resource limits, fallback behavior and
-measurements. **Trees Sway in Wind** is selectable,
+Graphics options include **Bilinear Filtering**, **Smooth GUI Art** and
+**Smooth Movies**, all **off** by default and remembered. Bilinear Filtering is
+retail's Visual Options filter: it smooths unit model textures and unit shadows,
+and nothing else; terrain and scenery stay point-sampled at every zoom, as in
+retail. Smooth GUI Art applies immediately to the current interface, fonts and
+cursors without a restart. **Trees Sway in Wind** is selectable,
 defaults to **on**, and remembers your choice.
 
 World sounds stay at full volume inside the camera view and fade with distance
@@ -952,7 +944,7 @@ over retail Glide, controlled by the same Shadows option. All basic and divine
 lodestones also cast shadows from their visible model pieces, intentionally
 overriding retail scripts that suppress their shadows.
 
-At distant zoom with Unit Edge Smoothing off, tiny stationary units can use cached body images; moving,
+At distant zoom, tiny stationary units can use cached body images; moving,
 selected, and special-effect units retain their full geometry. Wide-map rendering
 also reuses fog geometry and combines fog cells over flat terrain. See the
 [distant rendering measurements](docs/distant-rendering-performance.md) for

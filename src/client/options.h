@@ -68,7 +68,7 @@ public:
 
 private:
     struct Control {
-        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName, Note } kind;   // Note: dim help line
+        enum Kind { Section, Slider, Toggle, Button, Dropdown, PlayerName } kind;
         std::string label;
         float lo = 0, hi = 1;
         std::function<float()> get;              // Dropdown: the selected option index

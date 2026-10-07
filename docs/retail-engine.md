@@ -1875,3 +1875,36 @@ scan and has not been read.
 
 Establishing those is the remaining work before the rating port is designed,
 because they are what decides whether hard solidity flows or gridlocks.
+
+## BiLinearFilter: units and unit shadows only, default off (2026-10-06)
+
+Static analysis of `KINGDOMS.icd`; this is what the engine's single Bilinear
+Filtering toggle follows.
+
+- **Storage and default.** `HKCU\Software\Cavedog Entertainment\Kingdoms\VisualOptions\BiLinearFilter`,
+  a bool at VisualOptions +0x13 (options container `[0x62d558]`+0x18). The load
+  routine `0x499e80` first calls the reset `0x49a030`, which clears it
+  (`0x49a05a mov [esi+0x13],bl`, bl = 0), so a missing key means **off**. The
+  shipped `v4readme.txt` agrees: it "affects how shadows and units are scaled up
+  after being rendered at a reduced resolution" and "defaults to being off"
+  because many cards drew a purple halo.
+- **What reads it.** Apart from load/save and the Visual Options menu, only the
+  3D-hardware unit pass: `0x4ebdcc` (stretch a unit or unit-shadow image that
+  was rendered at scale 2 or 4 back to full size: `SetMode(2)` = bilinear when
+  +0x13 is set, restored with `SetMode(1)` at `0x4ebed7`), and `0x4ec9ba` /
+  `0x4ecb43`, where auto ShadowScale shrinks shadows further when it is on.
+- **Glide path.** `grTexFilterMode` is called only from the driver's
+  SetRenderState emulation (`0x5b8088` mag, `0x5b80e3` min), reset to point
+  sampling at `0x5b7db0`. The only other bilinear draws are the fog-of-war
+  overlay (`0x4982d5`, unless FogDebug) and line-of-sight lightning
+  (`0x52d18a`), neither of which reads the option. Terrain, features, other
+  effects, minimap, fonts, GUI and cursor are always point-sampled; the software
+  renderer never reads +0x13.
+- **The menu** greys the checkbox outside Direct3D (`0x534240` gates on
+  renderer type 3), but nothing in the unit pass checks the renderer, so a
+  stored value applies on Glide too.
+
+The engine renders units at full resolution, so there is no reduced-size image
+to stretch. Its toggle applies the same scope directly: unit model-texture
+pages and unit shadow silhouettes sample LINEAR when on; everything else is
+nearest regardless.

@@ -1,6 +1,4 @@
 #include "client/settings.h"
-#include "client/selectiveaa.h"
-#include "client/zoomsmooth.h"
 
 #include <SDL.h>
 
@@ -37,10 +35,13 @@ Settings loadSettings() {
     std::ifstream in(path);
     if (!in) return s;
 
-    // Pre-0.7.25 graphics keys, used only when the new key is absent (in any line
-    // order): antiAlias (both passes), terrainAA, modelAA and bilinear.
-    int legacyAA=-1,legacyTerrain=-1,legacyModel=-1,legacyBilinear=-1;
-    bool edgeSeen=false,zoomSeen=false,zoomOutSeen=false;
+    // Older filtering keys, used only when bilinearFilter is absent (in any line
+    // order): 0.7.24's bilinear toggle, and the unreleased Zoom Smoothing choice whose
+    // Smooth mode was this filter. Its Sharp and Off, and the AA keys
+    // (antiAlias/terrainAA/modelAA/unitEdgeAA/zoomedOutTerrain), have no successor;
+    // like any unknown key they are skipped and vanish on the next save.
+    int legacyBilinear=-1,legacyZoom=-1;
+    bool bilinearSeen=false;
     std::string line;
     while (std::getline(in, line)) {
         auto hash = line.find('#');
@@ -73,13 +74,9 @@ Settings loadSettings() {
         else if (key == "maxFps")          s.maxFps = asInt(30, 480);
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.75f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
-        else if (key == "antiAlias")       legacyAA = aaStep(asInt(0, 4), 4);
-        else if (key == "terrainAA")       legacyTerrain = aaStep(asInt(0, 4), 4);
-        else if (key == "modelAA")         legacyModel = aaStep(asInt(0, 16));
+        else if (key == "bilinearFilter")  { s.bilinear = asBool(); bilinearSeen = true; }
         else if (key == "bilinear")        legacyBilinear = asBool();
-        else if (key == "unitEdgeAA")      { s.unitEdgeAA = aaStep(asInt(0, 16)); edgeSeen = true; }
-        else if (key == "zoomSmoothing")   { s.zoomSmoothing = parseZoomSmoothing(val, Settings{}.zoomSmoothing); zoomSeen = true; }
-        else if (key == "zoomedOutTerrain"){ s.zoomOutTerrain = parseZoomOutTerrain(val, Settings{}.zoomOutTerrain); zoomOutSeen = true; }
+        else if (key == "zoomSmoothing")   legacyZoom = val == "smooth" || val == "1";
         else if (key == "buildBarAlign")   s.buildBarAlign = asInt(0, 2);
         // 4.0, matching the slider and GameView. This still said 2.0 when the slider
         // went to 400%, so 300-400% survived until the next restart and then silently
@@ -150,12 +147,8 @@ Settings loadSettings() {
             for (int i = 0; i < n; ++i) s.campaignCompleted[id].insert(i);
         }
     }
-    // Model AA is now unit edge smoothing; Bilinear Filtering=1 is Smooth (Off keeps the
-    // new Sharp default); Terrain AA becomes the zoomed-out terrain choice.
-    if (!edgeSeen && (legacyModel >= 0 || legacyAA >= 0)) s.unitEdgeAA = legacyModel >= 0 ? legacyModel : legacyAA;
-    if (!zoomSeen && legacyBilinear == 1) s.zoomSmoothing = kZoomSmooth;
-    if (!zoomOutSeen && (legacyTerrain >= 0 || legacyAA >= 0))
-        s.zoomOutTerrain = zoomOutFromLegacyTerrainAA(legacyTerrain >= 0 ? legacyTerrain : legacyAA);
+    if (!bilinearSeen && (legacyZoom >= 0 || legacyBilinear >= 0))
+        s.bilinear = legacyZoom >= 0 ? legacyZoom == 1 : legacyBilinear == 1;
     return s;
 }
 
@@ -170,9 +163,7 @@ bool saveSettings(const Settings& s) {
     o << "maxFps = " << s.maxFps << "\n";
     o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
-    o << "unitEdgeAA = " << aaStep(s.unitEdgeAA) << "\n";
-    o << "zoomSmoothing = " << zoomSmoothingName(s.zoomSmoothing) << "\n";
-    o << "zoomedOutTerrain = " << zoomOutTerrainName(s.zoomOutTerrain) << "\n";
+    o << "bilinearFilter = " << (s.bilinear ? 1 : 0) << "\n";
     o << "buildBarAlign = " << s.buildBarAlign << "\n";
     o << "buildBarScale = " << s.buildBarScale << "\n";
     o << "treeSway = " << (s.treeSway ? 1 : 0) << "\n";

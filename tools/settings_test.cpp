@@ -48,9 +48,7 @@ int main() {
     flips("vsync",           [](Settings& s) { s.vsync = !s.vsync; });
     flips("maxFps",          [](Settings& s) { s.maxFps += 17; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
-    flips("unitEdgeAA",      [](Settings& s) { s.unitEdgeAA = 16; });
-    flips("zoomSmoothing",   [](Settings& s) { s.zoomSmoothing = 1; });
-    flips("zoomOutTerrain",  [](Settings& s) { s.zoomOutTerrain = 4; });
+    flips("bilinear",        [](Settings& s) { s.bilinear = !s.bilinear; });
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
     flips("buildBarScale",   [](Settings& s) { s.buildBarScale += 0.25f; });
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
@@ -153,7 +151,7 @@ int main() {
         cur.videoDeblock = true;
         cur.masterVol = 7;
         cur.uiScale = 1.75f;
-        cur.zoomSmoothing = 0;
+        cur.bilinear = !cur.bilinear;
 
         const Settings d = tak::preferenceDefaults(cur);
         if (!(d.gameCreate == cur.gameCreate)) ++g_fail;
@@ -181,7 +179,7 @@ int main() {
         reset("videoDeblock",     d.videoDeblock == fresh.videoDeblock);
         reset("masterVol",        d.masterVol == fresh.masterVol);
         reset("uiScale",          d.uiScale == fresh.uiScale);
-        reset("zoomSmoothing",    d.zoomSmoothing == fresh.zoomSmoothing);
+        reset("bilinear",         d.bilinear == fresh.bilinear);
 
         // And the two questions must agree: after a reset we ARE at defaults, which is
         // the invariant that broke when the preserve list and atDefaults() diverged.

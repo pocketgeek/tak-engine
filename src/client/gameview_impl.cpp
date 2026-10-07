@@ -96,8 +96,7 @@
         uiScale_ = s.uiScale;
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
         buildBarScale_ = std::clamp(s.buildBarScale, 0.75f, 4.0f);
-        // Zoom smoothing is resolved per frame against the live zoom (it differs
-        // zoomed in/out); see updateZoomFiltering() in gameview_render.cpp.
+        setBilinear(s.bilinear);
         healthBars_ = std::clamp(s.healthBars, 0, 2);
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys

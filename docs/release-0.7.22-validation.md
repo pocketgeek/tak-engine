@@ -15,7 +15,7 @@ Protocol **213**, replay format **10**, campaign payload **4**, database schema 
 - All 15 independent AA combinations passed the Linux OpenGL renderer test and
   ran in sparse and 1,200-unit scenes. Settings, migration, resource limits,
   transparency, clipping, native UI, target reuse and reset coverage passed.
-  See [AA validation and measurements](antialiasing.md) for costs and limitations.
+  AA validation and measurements were in `docs/antialiasing.md`, removed with the AA options after 0.7.24 (see git history).
 - Focused Release and Debug cancellation, map-transfer, parser-limit and AA
   tests passed. The ACME multi-source fixture passes using IPv4/IPv6 loopback,
   without contacting a public certificate authority.

@@ -50,7 +50,6 @@
 #include "version.h"
 #include "client/cursors.h"
 #include "client/dirpicker.h"   // first-run data-dir folder picker
-#include "client/aascalereset.h"   // RAII 1:1 render-scale guard (extracted leaf)
 #include "client/font.h"      // GAF bitmap font (extracted leaf class)
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
@@ -277,8 +276,6 @@ void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
 // ThreadPool moved to client/threadpool.h.
 
 // --------------------------------------------------------------- game mode
-
-// AaScaleReset moved to client/aascalereset.h.
 
 // Units simulated on a real map: left-click select, right-click move order
 // (shift queues waypoints), arrows scroll, wheel zoom.
@@ -1660,19 +1657,15 @@ int main(int argc, char** argv) {
             static double lastPj=0,lastSb=0,lastSh=0,lastAt=0,lastBd=0;
             size_t vertices=0,calls=0,images=0,bakes=0,bakeVertices=0,bakeCalls=0,switches=0,imageBytes=0;
             gameView->renderWork(vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes);
-            const auto aa=gameView->aaWork();
-            std::printf("DRAWPHASE frame=%u proj=%.3f submit=%.3f shadow=%.3f atlas=%.3f body=%.3f gpu=%.3f vram=%zu body_vertices=%zu body_calls=%zu images=%zu image_bakes=%zu bake_vertices=%zu bake_calls=%zu cache_switches=%zu image_bytes=%zu terrain_resolves=%llu model_resolves=%llu aa_cleared_pixels=%llu aa_switches=%llu aa_translated_vertices=%llu aa_culled_vertices=%llu aa_bytes=%zu\n",
+            std::printf("DRAWPHASE frame=%u proj=%.3f submit=%.3f shadow=%.3f atlas=%.3f body=%.3f gpu=%.3f vram=%zu body_vertices=%zu body_calls=%zu images=%zu image_bakes=%zu bake_vertices=%zu bake_calls=%zu cache_switches=%zu image_bytes=%zu\n",
                 studyFrame,pj-lastPj,sb-lastSb,sh-lastSh,at-lastAt,bd-lastBd,
-                studyQuery?double(gpuNs)/1e6:-1.,gpuvram::bytes(),vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes,
-                static_cast<unsigned long long>(aa.terrainResolves),static_cast<unsigned long long>(aa.modelResolves),
-                static_cast<unsigned long long>(aa.clearPixels),static_cast<unsigned long long>(aa.targetSwitches),
-                static_cast<unsigned long long>(aa.translatedVertices),static_cast<unsigned long long>(aa.culledVertices),aa.bytes);
+                studyQuery?double(gpuNs)/1e6:-1.,gpuvram::bytes(),vertices,calls,images,bakes,bakeVertices,bakeCalls,switches,imageBytes);
             lastPj=pj;lastSb=sb;lastSh=sh;lastAt=at;lastBd=bd;
         }
         if(renderStudy && ++studyFrame==studyFrameLimit) {
-            std::printf("RENDER_STUDY frames=%u hash=%016llx gpu_textures=%.2fMiB world_filter_targets=%.2fMiB\n",studyFrame,
+            std::printf("RENDER_STUDY frames=%u hash=%016llx gpu_textures=%.2fMiB\n",studyFrame,
                 static_cast<unsigned long long>(gameView->worldHashPublic()),
-                double(gpuvram::bytes())/(1<<20),double(gameView->aaWork().bytes)/(1<<20));
+                double(gpuvram::bytes())/(1<<20));
             if(tak::devFlag("TAK_REQUIRE_GEOMETRY_REUSE")) {
                 std::printf("GEOMETRY_VERIFY checks=%llu animated_cross_tick=%llu\n",
                     static_cast<unsigned long long>(gameView->geometryChecks()),

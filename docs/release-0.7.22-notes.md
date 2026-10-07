@@ -4,7 +4,7 @@
   and Model AA (Off/2x/4x/8x/16x). Preserve model/scenery ordering and keep UI
   native. Migrate old preferences, bound target memory and report effective
   fallback levels. Higher model AA can cost more frame time and memory; see
-  [the measurements and rendering design](antialiasing.md).
+  the measurements and rendering design in `docs/antialiasing.md`, removed with the AA options after 0.7.24 (see git history).
 - Bound TDF section/node counts and parsed memory while preserving duplicate
   sections and case handling. Validate untrusted map packages on a bounded
   background worker, with cancellation independent of connection lifetime.
