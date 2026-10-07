@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -810,6 +811,82 @@ void wallendRun(int count) {
 }
 void wallend() {wallendRun(1);wallendRun(12);}
 
+// Pinwheel: a formation of 48 2x2 bodies on open ground, sent round the
+// end of a long wall (a U-turn round its top, to a point beyond it). The
+// field's shortest ways all touch the wall end, so without the pinwheel the
+// whole group files over it one body wide. With it, the outer files take
+// wider concentric arcs and stay abreast: the group crosses the wall's line
+// several bodies wide. `gap` > 0 puts a second wall above the end, leaving a
+// gap that many cells wide: the files must fold in (a 6-cell gap holds three
+// 2-cell files) and take it as before the pinwheel, no slower.
+// Measured on the build before the pinwheel (f767ed2), where the group files over
+// the end: 1.37 files, 90% round by tick 1939; through the gap 2323.
+constexpr int kPinwheelSingleFile90=1939,kPinwheelGap90=2323;
+constexpr double kPinwheelFiles=2.5;
+struct PinwheelResult {int arrived=0,total=0,rounded90=-1,done=-1;double lanes=0,spread=0;uint64_t spins=0,reversals=0;};
+PinwheelResult pinwheelRun(int gap) {
+    Fixture f(200,140);
+    f.rect(98,48,4,92);                      // the wall: x 98-101, z 48 down to the map edge
+    if(gap>0)f.rect(98,0,4,48-gap);          // a second wall above it, leaving a gap
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<48;++i)ids.push_back(f.spawn(type,40+(i%8)*3,96+(i/8)*3));
+    f.start();
+    for(int id:ids)f.world.order(id,150*16,110*16,false);   // one point: a formation
+    Motion motion;
+    PinwheelResult r;r.total=int(ids.size());
+    int samples=0;double lanes=0,spread=0;
+    int t=0;
+    for(;t<6000;++t) {
+        f.world.tick(1.f/30);motion.observe(f.world,ids);
+        int arrived=0,over=0;
+        // Bodies passing over the wall's end (above x 97-102): how many
+        // 2-cell files they use, and how far they spread above the end.
+        std::set<int> files;int lo=1<<30,hi=-1,count=0;
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            arrived+=u.orders.empty();
+            const int x=int(u.x.v>>20),z=int(u.z.v>>20);
+            over+=x>=104;
+            if(x>=97&&x<=102&&z<48) {files.insert(z/2);lo=std::min(lo,z);hi=std::max(hi,z);++count;}
+        }
+        if(count>=3) {++samples;lanes+=double(files.size());spread+=double(hi-lo);}
+        if(r.rounded90<0&&over*10>=r.total*9)r.rounded90=t;
+        r.arrived=arrived;
+        if(std::getenv("PINWHEEL_ASCII")&&t%300==0) {
+            std::vector<std::string> g(70,std::string(100,'.'));
+            for(int z=0;z<70;++z)for(int x=0;x<100;++x)if(f.cells[size_t(z+20)*200+x+50]==0)g[size_t(z)][size_t(x)]='#';
+            for(int id:ids) {const auto& u=*f.world.unit(id);const int x=int(u.x.v>>20)-50,z=int(u.z.v>>20)-20;
+                if(x>=0&&x<99&&z>=0&&z<69)for(int j=0;j<2;++j)for(int i=0;i<2;++i)g[size_t(z+j)][size_t(x+i)]=u.orders.empty()?'o':char('a'+id%26);}
+            std::printf("t=%d\n",t);for(auto& l:g)std::printf("|%s\n",l.c_str());
+        }
+        if(arrived==r.total) {r.done=t;break;}
+    }
+    for(int id:ids)check(f.legal(id),"illegal footprint");
+    r.lanes=samples?lanes/samples:0;r.spread=samples?spread/samples:0;r.spins=motion.spins;r.reversals=motion.reversals;
+    std::printf("pinwheel gap=%d arrived=%d/%d rounded90=%d done=%d files=%.2f spread_cells=%.2f spins=%llu reversals=%llu\n",gap,r.arrived,r.total,
+        r.rounded90,r.done,r.lanes,r.spread,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+    if(std::getenv("PINWHEEL_VERBOSE"))printLeft(f,ids);
+    return r;
+}
+void pinwheel() {
+    const auto open=pinwheelRun(0);
+    const auto gap=pinwheelRun(6);
+    if(std::getenv("PINWHEEL_REPORT"))return;   // measure only (e.g. on an older build)
+    check(open.arrived==open.total,"group did not get round the wall end");
+    check(open.spins==0,"group spun at the wall end");
+    check(open.lanes>=kPinwheelFiles,"group folded into a file at the wall end");
+    // Wider arcs are longer, but files abreast drain the end faster than
+    // one file: no slower than single file round it.
+    check(open.rounded90>=0&&open.rounded90<=kPinwheelSingleFile90,"group rounded the wall end slower than single file");
+    check(gap.arrived==gap.total,"group did not get through the gap beside the wall end");
+    check(gap.spins==0,"group spun in the gap beside the wall end");
+    // A 6-cell gap holds at most three 2-cell files: the files fold in.
+    check(gap.spread<=6.0,"group did not fold into the gap");
+    check(gap.rounded90>=0&&gap.rounded90<=kPinwheelGap90,"group took longer through the gap than single file");
+}
+
 // A member whose own goal lies inside a lattice of settled same-player
 // arrivals (2x2 bodies at a 3-cell stride: the 1-cell gaps fit no body). The
 // way in exists only if the settled bodies yield. It must ask them to, and
@@ -1408,7 +1485,8 @@ int main(int argc,char** argv) {
         {"staticblock",staticblock},{"deaths",deaths},{"deathsshared",deathsshared},{"splitgoal",splitgoal},{"farclick",farclick},{"churn",churn},
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
-        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation}};
+        {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
+        {"pinwheel",pinwheel}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
