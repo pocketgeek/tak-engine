@@ -306,7 +306,9 @@ class PathService {
     struct Notification { int unitId; uint64_t controller; int events; };
     std::vector<Notification> takeNotifications() { return std::exchange(notifications_, {}); }
     void cancel(int unitId,NavigationTelemetry::Cancel reason=NavigationTelemetry::Cancel::Explicit);
-    bool pending(int unitId) const { return q_.find(unitId) != q_.end(); }
+    bool pending(int unitId) const {
+        return unitId>=0 && size_t(unitId)<pendingIds_.size() && pendingIds_[size_t(unitId)];
+    }
     size_t pendingCount() const { return q_.size(); }
     void clear() {
         retireActive();
@@ -314,6 +316,7 @@ class PathService {
             (void)id;telemetry_->cancelled(e.telemetryToken,NavigationTelemetry::Cancel::Cleared);
         }
         q_.clear();
+        pendingIds_.clear();
         pendingByPlayer_.fill(0);priorityByPlayer_.fill(0);
         notifications_.clear();
         scheduler_={};
@@ -380,6 +383,9 @@ class PathService {
     // Requests are looked up by ID only. RetailSearchScheduler owns traversal
     // order (player and allocated entity slot), never this container's order.
     std::unordered_map<int, Entry> q_;
+    // Unit id -> has an entry in q_. pending() runs for every routed unit
+    // every tick; a hash probe there was a scattered cache miss per unit.
+    std::vector<uint8_t> pendingIds_;
     // Derived queue counts: avoid walking thousands of scattered map nodes
     // each tick merely to reconstruct the scheduler's ten player records.
     std::array<int,10> pendingByPlayer_{},priorityByPlayer_{};
