@@ -96,9 +96,15 @@ struct UnitR {
     bool yardOpen = false;
     std::vector<const tak::sim::UnitType*> buildQueue;
     std::vector<RenderOrder> orders, rally;
+    // Deposits the first lodestone area job has already tried (sorted spot
+    // indices); the order-line preview plans the remaining ones from it.
+    std::vector<uint32_t> areaVisited;
     void captureOrders(const tak::sim::Unit& unit) {
         orders.assign(unit.orders.begin(),unit.orders.end());
         rally.assign(unit.rally.begin(),unit.rally.end());
+        areaVisited.clear();
+        for (const auto& o : unit.orders)
+            if (o.manaBuildArea) {areaVisited=o.manaBuildArea->visited;break;}
     }
     const std::vector<RenderOrder>& displayedOrders() const {
         return type && (type->producesUnits() || repeatType) ? rally : orders;

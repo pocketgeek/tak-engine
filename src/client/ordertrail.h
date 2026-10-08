@@ -22,7 +22,10 @@ uint64_t orderTrailSignature(std::span<const RenderOrder> orders);
 // Expand persistent area jobs into their remaining known stops. This is a
 // display prediction: never submits orders or touches the simulation. The sim
 // can choose differently when targets move, vanish or become visible.
+// `areaVisited` is the first lodestone area's tried deposits (sorted indices
+// into `sites`, as sim::ManaBuildArea::visited).
 void expandOrderTrail(std::span<const RenderOrder> orders,const sim::UnitType& builder,
     int player,sim::Fixed x,sim::Fixed z,std::span<const OrderTrailTarget> targets,
-    std::span<const OrderTrailSite> sites,std::vector<RenderOrder>& output);
+    std::span<const OrderTrailSite> sites,std::span<const uint32_t> areaVisited,
+    std::vector<RenderOrder>& output);
 } // namespace tak

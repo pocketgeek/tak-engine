@@ -552,11 +552,16 @@ private:
     std::map<std::string, MoveClass> moveClasses_;   // lowercased name -> limits
 };
 
+// Persistent lodestone area job (an engine feature, not a retail mission).
+// Deposits are visited greedily, nearest first from wherever the builder stands
+// each time it picks: `visited` holds the deposits already tried (sorted spot
+// indices), `nextSpot` is the deposit being scouted while `exploring`.
 struct ManaBuildArea {
     const UnitType* type = nullptr;
     Fixed minX,maxX,minZ,maxZ;
     uint32_t nextSpot = 0;
     bool exploring = false;
+    std::vector<uint32_t> visited;
 };
 
 struct Order {

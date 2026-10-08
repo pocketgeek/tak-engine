@@ -10,6 +10,11 @@ namespace tak {
 namespace {
 using sim::Fixed;
 constexpr int64_t step=16*int64_t(Fixed::kOne);
+// Exact squared 16.16 distance, as the sim ranks build clearing and deposits.
+uint64_t exact(Fixed x,Fixed z,Fixed qx,Fixed qz) {
+    const int64_t dx=int64_t(x.v)-qx.v,dz=int64_t(z.v)-qz.v;
+    return uint64_t(dx*dx)+uint64_t(dz*dz);
+}
 int64_t distance(int64_t x,int64_t z,int64_t qx,int64_t qz) {
     const int64_t dx=x-qx,dz=z-qz;
     // Same high-half scoring and ties as ReclaimArea within the map's normal
@@ -140,8 +145,10 @@ uint64_t orderTrailSignature(std::span<const RenderOrder> orders) {
 
 void expandOrderTrail(std::span<const RenderOrder> orders,const sim::UnitType& builder,
     int player,Fixed x,Fixed z,std::span<const OrderTrailTarget> targets,
-    std::span<const OrderTrailSite> sites,std::vector<RenderOrder>& output) {
+    std::span<const OrderTrailSite> sites,std::span<const uint32_t> areaVisited,
+    std::vector<RenderOrder>& output) {
     output.clear();
+    bool visitedUsed=false;
     std::unordered_set<int> claimed;
     std::set<std::pair<int32_t,int32_t>> plannedSites;
     const auto append=[&](RenderOrder o){output.push_back(o);x=o.x;z=o.z;};
@@ -166,11 +173,28 @@ void expandOrderTrail(std::span<const RenderOrder> orders,const sim::UnitType& b
                 reclaim(*next,o.issuedTick);approach=true;
             }
         } else if(o.manaBuildArea && o.buildType) {
-            for(size_t i=o.areaNextSpot;i<sites.size();++i) {
+            // Same greedy nearest-first choice as World::tickManaBuildArea:
+            // from the previous stop, exact squared distance, then spot index.
+            // Only the first area job has progress (`areaVisited`); later ones
+            // have not started. Reachability ranking and other builders'
+            // claims are sim-only, so the prediction can differ there.
+            std::vector<size_t> pending;
+            for(size_t i=0;i<sites.size();++i) {
                 const auto& s=sites[i];
                 if(!s.known || s.x<o.x || s.x>o.buildX || s.z<o.z || s.z>o.buildZ ||
                     (s.occupant && !upgrade(s,o.buildType,player)) ||
-                    !plannedSites.emplace(s.x.v,s.z.v).second)continue;
+                    (!visitedUsed && std::binary_search(areaVisited.begin(),areaVisited.end(),uint32_t(i))) ||
+                    plannedSites.contains({s.x.v,s.z.v}))continue;
+                pending.push_back(i);
+            }
+            visitedUsed=true;
+            while(!pending.empty()) {
+                const auto next=std::min_element(pending.begin(),pending.end(),[&](size_t a,size_t b) {
+                    const auto da=exact(x,z,sites[a].x,sites[a].z),db=exact(x,z,sites[b].x,sites[b].z);
+                    return da!=db ? da<db : a<b;
+                });
+                const auto& s=sites[*next];pending.erase(next);
+                if(!plannedSites.emplace(s.x.v,s.z.v).second)continue;
                 const auto bx=sim::footprintWaypoint(sim::footprintCell(s.x,o.buildType->footX),o.buildType->footX);
                 const auto bz=sim::footprintWaypoint(sim::footprintCell(s.z,o.buildType->footZ),o.buildType->footZ);
                 const int ox=sim::footprintOrigin(bx,o.buildType->footX),oz=sim::footprintOrigin(bz,o.buildType->footZ);
@@ -186,9 +210,11 @@ void expandOrderTrail(std::span<const RenderOrder> orders,const sim::UnitType& b
                             if(o.buildType->yardMap[size_t(cz-oz)*o.buildType->footX+cx-ox]!='.') {hit=true;break;}
                     if(hit)clearing.push_back(&t);
                 }
+                // World::queueBuild's clearing order: exact squared distance
+                // from where the builder stands, then feature id.
                 const auto fromX=x,fromZ=z;
                 std::sort(clearing.begin(),clearing.end(),[&](const auto* a,const auto* b) {
-                    const auto da=distance(fromX.v,fromZ.v,a->x.v,a->z.v),db=distance(fromX.v,fromZ.v,b->x.v,b->z.v);
+                    const auto da=exact(fromX,fromZ,a->x,a->z),db=exact(fromX,fromZ,b->x,b->z);
                     return da!=db ? da<db : a->id<b->id;
                 });
                 for(const auto* t:clearing)reclaim(*t,o.issuedTick);
