@@ -361,6 +361,12 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(legion_scenario_battle-field-2x60 PROPERTIES LABELS legion TIMEOUT 600)
   set_tests_properties(legion_scenario_battle-field-2x250 legion_scenario_battle-field-2x500
                        legion_scenario_battle-assault PROPERTIES LABELS "legion;nightly" TIMEOUT 3600)
+  # The baseline gate (tools/legion_check.py): every baseline.json entry, exception and accepted
+  # regression carries a reason, and the gate's synthetic unit tests.
+  add_test(NAME legion_baseline_reasons
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_baseline_reasons_test.py
+                   ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+  set_tests_properties(legion_baseline_reasons PROPERTIES LABELS legion TIMEOUT 120)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
