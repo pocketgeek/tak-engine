@@ -1999,6 +1999,8 @@ struct LegionNavigator::Impl {
                             if(!o)continue;
                             const Member* m=member(o);
                             const Unit* b=m?w.unit(o):nullptr;
+                            // Its own squad settling round it is not traffic passing through.
+                            if(b&&b->squad&&b->squad==flyer->squad)continue;
                             if(b&&(m->state==Moving||((m->state==Holding||m->state==Waiting)&&m->held<kRestAfter))&&w.allied(flyer->player,b->player)) {busy=true;break;}
                         }
                     }
@@ -2039,6 +2041,10 @@ struct LegionNavigator::Impl {
                     if(!o&&!liftHomeCells.empty())o=liftHome[c];
                     if(!o)continue;
                     Unit* flyer=w.unit(o);
+                    // A flyer of this member's own squad (a mixed formation that
+                    // has just landed where the formation is settling) stays down:
+                    // the member settles beside it rather than driving it back up.
+                    if(flyer&&u->squad&&u->squad==flyer->squad)continue;
                     if(flyer&&w.legionLiftable(*flyer,u->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
                 }
                 if(k==kLiftCells||(x==gx&&z==gz))break;
