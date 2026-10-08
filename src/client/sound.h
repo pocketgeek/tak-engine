@@ -706,12 +706,22 @@ public:
                         const auto& node = root.children.at(clsName);
                         for (const auto& evName : node.childOrder) {
                             auto& list = cls[evName];
-                            // Entries are WEIGHTED: the "_NN-note" click tone
-                            // carries 100.0 vs 1.0 per voice line, so retail
-                            // mostly bongs and only occasionally speaks.
-                            for (const auto& [wav, weight] : node.children.at(evName).values) {
-                                float w = float(std::atof(weight.c_str()));
-                                list.push_back({wav, w > 0 ? w : 1.0f});
+                            // Two shipped layouts. Unit voice classes are WEIGHTED
+                            // "NAME = weight" entries: the "_NN-note" click tone
+                            // carries 100.0 vs 1.0 per voice line, so retail mostly
+                            // bongs and only occasionally speaks. The weapon impact
+                            // classes in soundclasses.tdf (sword, arrow, rock, ...)
+                            // list "soundN = FILE.wav" instead: the WAV is the VALUE,
+                            // and every variant is equally likely. Reading those as
+                            // "name = weight" picked a sound called "sound0" that
+                            // does not exist, so every soundhitclass impact was silent.
+                            for (const auto& [key, value] : node.children.at(evName).values) {
+                                if (isVariantKey(key)) {
+                                    list.push_back({wavStem(value), 1.0f});
+                                    continue;
+                                }
+                                float w = float(std::atof(value.c_str()));
+                                list.push_back({key, w > 0 ? w : 1.0f});
                             }
                         }
                     }
@@ -737,6 +747,21 @@ public:
             if (r <= 0) return &w;
         }
         return &ei->second.back().first;
+    }
+
+    // "sound0".."soundNN" (any case): the soundclasses.tdf variant layout.
+    static bool isVariantKey(const std::string& key) {
+        if (key.size() < 6) return false;
+        std::string head = key.substr(0, 5);
+        std::transform(head.begin(), head.end(), head.begin(), ::tolower);
+        if (head != "sound") return false;
+        return std::all_of(key.begin() + 5, key.end(), [](unsigned char c) { return std::isdigit(c); });
+    }
+    // "RHITFLS1.wav" -> "rhitfls1": the SoundBank indexes sounds/ by lowercase stem.
+    static std::string wavStem(std::string v) {
+        std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+        if (v.size() > 4 && v.compare(v.size() - 4, 4, ".wav") == 0) v.resize(v.size() - 4);
+        return v;
     }
 
 private:
