@@ -342,6 +342,23 @@ foreach(legion_scn corner-4x50 corner-8x56 corner-1x448 split-450-open split-450
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
 endforeach()
+# Asset-free scenario set, part B: awareness, flyers in streams and mixed
+# formations, boats (island, strait), refresh churn. Same run as part A: both
+# modes, serial and workers (a mismatch fails), three start offsets; no bounds
+# yet. mixed2 and the strait fleets of 24+ big boats are KNOWN-FAILING behaviour
+# (a report, not an assert): each file's header says which.
+foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
+                   aware-adjacent liftstream island-1x48 strait mixed2 strait-4x24 strait-3x48 strait-2x48
+                   refreshchurn)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
+endforeach()
+foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
+endforeach()
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
