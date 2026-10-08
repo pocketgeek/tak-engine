@@ -938,4 +938,47 @@ private:
     std::vector<std::pair<int,std::vector<uint16_t>>> dt_;
 };
 
+// The Work adaptor: every LegionNavigator::Stats counter, as per-tick deltas,
+// into an Observer's Work section (work.<snake_name>.max/p99/total), plus
+// work.legion_total, the per-tick sum of the work classes below. Call
+// sample() once per tick, after World::tick and before Observer::sample. It
+// reads World::legionStats() (a const copy) only. A counter enters the report
+// the first tick it moves (earlier ticks count 0), so a counter that never
+// moves has no keys: read a missing key as 0. Gauges (bytes, live_*) and the
+// running max completion_dist_max are not per-tick work and are skipped.
+// Retail worlds have no navigator: nothing is fed.
+//
+// Total Legion work sums the classes that count cells, iterations or probes,
+// each once: subsets are left out of the sum (field_work_* split field_work;
+// sched_group_visits and join_iterations are inside group_loop_iters;
+// formation_ring_cells and rechoice_bfs_cells inside slot_search_cells;
+// line_sweeps are counted by trace_cells, one plus the cells stepped).
+class NavWork {
+public:
+    static bool totalClass(std::string_view n) {
+        static constexpr std::string_view k[]={
+            "field_work","trace_cells","pass_scan_cells","slot_search_cells","group_loop_iters",
+            "share_scan_iters","aware_pairs","held_rechecks","lift_members_walked","still_units_processed",
+            "crowd_window_ring_cells","crowd_settle_visits","detour_cells","softowner_lookups"};
+        for(auto c:k)if(c==n)return true;
+        return false;
+    }
+    void sample(Observer& obs,const sim::World& w) {
+        if(!const_cast<sim::World&>(w).legionNavigator())return;   // a plain accessor
+        const auto s=w.legionStats();
+        size_t i=0;uint64_t total=0;
+        sim::LegionNavigator::forEachStat(s,[&](const char* name,uint64_t v) {
+            const std::string_view n(name);
+            if(i>=last_.size())last_.push_back(0);
+            const uint64_t d=v>=last_[i]?v-last_[i]:0;last_[i++]=v;
+            if(n=="bytes"||n.substr(0,5)=="live_"||n=="completion_dist_max")return;
+            if(d)obs.work(n,d);
+            if(totalClass(n))total+=d;
+        });
+        obs.work("legion_total",total);
+    }
+private:
+    std::vector<uint64_t> last_;
+};
+
 }

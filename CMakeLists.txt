@@ -305,6 +305,18 @@ add_test(NAME legion_observe_selftest COMMAND legion_observe_selftest)
 add_executable(issue_selection_test tools/issue_selection_test.cpp)
 target_link_libraries(issue_selection_test PRIVATE tak-formats)
 add_test(NAME issue_selection_test COMMAND issue_selection_test)
+# The scenario runner: a .scn file in both modes, serial and workers, three
+# start offsets, observer keys as JSON (tools/legion_scenario.cpp). Exit 77 =
+# the file needs a retail install (--data).
+add_executable(legion_scenario tools/legion_scenario.cpp)
+target_link_libraries(legion_scenario PRIVATE tak-formats)
+add_test(NAME legion_scenario_smoke
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/smoke-open.scn --mode both --json)
+add_test(NAME observer_neutral
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/smoke-open.scn builtin:formation
+                 --neutral --mode both --offsets 0)
+set_tests_properties(legion_scenario_smoke observer_neutral
+                     PROPERTIES SKIP_RETURN_CODE 77 LABELS legion)
 # Visible motion of group orders with real unit types (measurement only, needs
 # a retail install): tools/legion_group_motion.cpp.
 add_executable(legion_group_motion tools/legion_group_motion.cpp)
