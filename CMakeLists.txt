@@ -297,6 +297,10 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
+# The const scenario observer (tools/legion_observe.h) on hand-placed bodies.
+add_executable(legion_observe_selftest tools/legion_observe_selftest.cpp)
+target_link_libraries(legion_observe_selftest PRIVATE tak-formats)
+add_test(NAME legion_observe_selftest COMMAND legion_observe_selftest)
 # Visible motion of group orders with real unit types (measurement only, needs
 # a retail install): tools/legion_group_motion.cpp.
 add_executable(legion_group_motion tools/legion_group_motion.cpp)
