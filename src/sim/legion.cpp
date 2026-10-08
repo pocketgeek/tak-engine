@@ -183,6 +183,8 @@ struct LegionNavigator::Impl {
         uint64_t command=~0ull;int softCounts=-1;
         bool ownArrivals=true;   // a settled arrival of `command` stood soft when the build started
         bool softened=false;   // some step was charged as a soft obstacle
+        std::vector<int> seeds;   // the group's seeds when the build started
+        uint32_t started=0;       // tick the build started
         bool settled(size_t cell,uint16_t v) const {
             if(done)return v!=kUnreached;
             return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))<=current;
@@ -213,10 +215,12 @@ struct LegionNavigator::Impl {
         // crowd) plans on terrain alone: soft=false.
         uint64_t command=~0ull;bool soft=true;
         LegionMission kind=LegionMission::Move;   // members' mission kind (never mixed)
-        std::unique_ptr<Field> field;    // the field members steer by (done or building)
+        // Fields are shared between groups with the same plane and seeds
+        // (see sharedField). A field is never written once done.
+        std::shared_ptr<Field> field;    // the field members steer by (done or building)
         // After a static change the finished field keeps steering (the mover
         // re-proves every step) while its replacement builds in `next`.
-        std::unique_ptr<Field> next;
+        std::shared_ptr<Field> next;
         bool stale=false;
         uint64_t lastUse=0;
         uint32_t built=0;
@@ -1503,6 +1507,33 @@ struct LegionNavigator::Impl {
                                         std::min(box[2],x1+margin),std::min(box[3],z1+margin)};
         return bounded;
     }
+    // Another group's field that serves this group as well as its own
+    // build would: the same plane at the current static epoch, the same
+    // seeds, a window holding this group's (a larger window only frees
+    // paths a bounded one cuts off), the same soft rule (the same command
+    // unless neither has settled arrivals of its own), and started within
+    // the last soft scan period (soft bodies are sampled that coarsely
+    // anyway, and a build already sees them change while it runs).
+    // Finished, its potentials are the exact distances on that window;
+    // still building, it is the build this one would be, under way.
+    // Commands sent to one point at different ticks (AI squads, repeated
+    // orders) otherwise each built the same whole-map field, and rebuilt it
+    // after every static change in a battle: a full quota for seconds.
+    // A finished field first, then one in progress, each in group order.
+    std::shared_ptr<Field> sharedField(const Group& g,const std::array<int,4>& box,uint64_t command,bool own) const {
+        for(int pass=0;pass<2;++pass)for(const auto& [id,o]:groups) {
+            if(&o==&g||o.plane!=g.plane)continue;
+            for(const auto* d:{&o.field,&o.next}) {
+                const Field* f=d->get();
+                if(!f||f->done!=(pass==0)||f->epoch!=epoch||w.tickCounter_-f->started>kStillScan)continue;
+                if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
+                if((f->command==kNoSoft)!=(command==kNoSoft)||f->ownArrivals!=own||(own&&f->command!=command))continue;
+                if(f->seeds!=g.seeds)continue;
+                return *d;
+            }
+        }
+        return nullptr;
+    }
     // At the cap a new field may only displace one that has served its
     // group for a while (oldest build first); otherwise the group waits for
     // a slot. Evicting the least recently used field every tick thrashed:
@@ -1510,20 +1541,33 @@ struct LegionNavigator::Impl {
     bool startField(Group& g) {
         const auto box=fieldWindow(g);
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
+        {
+            const uint64_t command=g.soft?g.command:kNoSoft;
+            const bool own=std::find(softOwner.begin(),softOwner.end(),command)!=softOwner.end();
+            if(auto shared=sharedField(g,box,command,own)) {
+                g.built=w.tickCounter_;++stats.fieldsShared;
+                if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
+                else if(g.field) {g.field=std::move(shared);g.next.reset();g.stale=false;restaleSlots(g);}
+                else g.field=std::move(shared);
+                return true;
+            }
+        }
         const size_t budget=kMaxFields*size_t(width())*size_t(height());
         while(liveFields()>=kMaxFieldCount||liveFieldCells()+cells>budget) {
-            // A victim is a group whose finished field is past its tenure.
+            // A victim is a group whose finished field is past its tenure
+            // and its own (dropping a shared one frees nothing).
             // Within one tick that set only grows when a field finishes
             // (fieldsDone): evictions and new builds only shrink it.
             if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return false;
             Group* victim=nullptr;
             for(auto& [id,o]:groups)
-                if(o.field&&o.field->done&&w.tickCounter_-o.built>=kFieldTenure&&(!victim||o.built<victim->built))victim=&o;
+                if(o.field&&o.field->done&&o.field.use_count()==1&&w.tickCounter_-o.built>=kFieldTenure&&(!victim||o.built<victim->built))victim=&o;
             if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
             victim->field.reset();victim->next.reset();victim->stale=false;++stats.fieldEvictions;
         }
         g.built=w.tickCounter_;
-        auto f=std::make_unique<Field>();
+        auto f=std::make_shared<Field>();
+        f->seeds=g.seeds;f->started=w.tickCounter_;
         f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;f->command=g.soft?g.command:kNoSoft;f->softCounts=softCountsFor(planes[size_t(g.plane)].footX,planes[size_t(g.plane)].footZ);
         f->ownArrivals=std::find(softOwner.begin(),softOwner.end(),f->command)!=softOwner.end();
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
@@ -1847,7 +1891,7 @@ struct LegionNavigator::Impl {
             plane(g.plane);settle();
             if(budget==0)break;
             if(!g.field&&!startField(g))continue;
-            finish(g,*g.field,advance(*g.field,budget));
+            if(!g.field->done)finish(g,*g.field,advance(*g.field,budget));   // (done: shared)
         }
         for(int pass=0;pass<2;++pass)for(auto& [id,g]:groups) {
             if(budget==0)break;
@@ -1869,7 +1913,7 @@ struct LegionNavigator::Impl {
             if(budget==0)break;
             if(!startField(g))break;
             Field& f=g.next?*g.next:*g.field;
-            finish(g,f,advance(f,budget));
+            if(!f.done)finish(g,f,advance(f,budget));   // (done: shared)
         }
     }
     // Members whose unit died, embarked, lost its orders or left Legion's
@@ -3619,13 +3663,13 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(uint32_t(g.compCell)));h=mix(h,g.stale);h=mix(h,g.approach);h=mix(h,g.command);h=mix(h,g.soft);
             if(g.kind!=Kind::Move)h=mix(h,uint64_t(g.kind));
             for(const auto& [seed,count]:g.sharing) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(count));}
-            if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);}
+            if(g.next) {h=mix(h,g.next->work);h=mix(h,g.next->done);h=mix(h,g.next->epoch);h=mix(h,g.next->started);}
             h=mix(h,uint64_t(g.members));h=mix(h,uint64_t(g.plane));
             for(int s:g.seeds)h=mix(h,uint64_t(s));
             for(const auto& [seed,n]:g.peak) {h=mix(h,uint64_t(seed));h=mix(h,uint64_t(n));}
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
-            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);}
+            if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);}
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             for(const auto& [seed,slot]:g.slots) {
                 h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);h=mix(h,slot.stale);

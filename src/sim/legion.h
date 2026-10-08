@@ -23,7 +23,7 @@ public:
     // Deterministic work/outcome counters. Observation only: never hashed and
     // never read by a movement decision.
     struct Stats {
-        uint64_t planeBuilds=0,planeRefreshes=0,planeRelabels=0,fieldWork=0,fieldsBuilt=0,fieldEvictions=0;
+        uint64_t planeBuilds=0,planeRefreshes=0,planeRelabels=0,fieldWork=0,fieldsBuilt=0,fieldEvictions=0,fieldsShared=0;
         uint64_t groups=0,registrations=0,moves=0,holds=0,slides=0,passScans=0,passScansSkipped=0;
         uint64_t arrivals=0,contactArrivals=0,trapped=0,escapes=0;
         uint64_t detours=0,detourCells=0;
