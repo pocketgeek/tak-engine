@@ -8,6 +8,7 @@
 // docs/legion-pathfinding.md.
 #include "sim/sim.h"
 #include "sim/matchsetup.h"
+#include <climits>
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
@@ -1666,6 +1667,100 @@ void mixedformation() {
     check(a.hash==b.hash,"mixed formation: serial and workers differ");
 }
 
+// Group awareness: two moving groups plan round each other as wholes.
+// Cases: two own groups crossing paths at right angles; two own groups head
+// on in a corridor wide enough to pass (each keeps right); an enemy group
+// head on, seen (sight 4096 px) and not seen (sight 16 px); and an
+// attack-move straight at the enemy (no avoidance). Reports, per case: the
+// tick everyone arrived (or -1), the share of samples standing, contacts
+// between bodies of the two groups, spins, and the detour (mean travelled
+// over straight-line distance, %).
+struct AwareResult {int done=-1,arrived=0,total=0;double stopped=0,contacts=0,detour=0;uint64_t spins=0,reversals=0;};
+AwareResult awareRun(const char* name,int kind,int sightB) {
+    // kind 0 crossing, 1 head-on corridor (own), 2 head-on enemy, 3 attack-move into enemy
+    Fixture f(200,140);
+    if(kind>=1) {f.rect(0,40,200,2);f.rect(0,100,200,2);}   // corridor z 42-99 (58 cells)
+    f.publish();
+    auto ta=mover(2),tb=mover(2);tb.id=tb.name="legion-foot-2b";tb.sight=sightB;ta.sight=sightB;
+    std::vector<int> a,b;
+    const int per=24;
+    for(int i=0;i<per;++i) {
+        if(kind==0) {a.push_back(f.spawn(ta,20+(i%6)*3,62+(i/6)*3));b.push_back(f.spawn(tb,88+(i%6)*3,112+(i/6)*3,0));}
+        else {a.push_back(f.spawn(ta,20+(i%6)*3,64+(i/6)*3));b.push_back(f.spawn(tb,160+(i%6)*3,64+(i/6)*3,kind>=2?1:0));}
+    }
+    f.start();
+    std::vector<std::pair<int,int>> goal;
+    for(int id:a) {
+        const auto& u=*f.world.unit(id);
+        const int gx=kind==0?180:185,gz=70;(void)u;
+        if(kind==3)f.world.attackMove(id,float(gx*16),float(gz*16),false);else f.world.order(id,float(gx*16),float(gz*16),false);
+    }
+    // A separate command for an own group B (one selection would be one
+    // convoy, which never plans round itself).
+    if(kind<2)for(int t=0;t<100;++t)f.world.tick(1.f/30);
+    for(int id:b) {
+        const auto& u=*f.world.unit(id);
+        const int gx=kind==0?96:8,gz=kind==0?10:70;(void)u;
+        f.world.order(id,float(gx*16),float(gz*16),false);
+    }
+    std::vector<int> all=a;all.insert(all.end(),b.begin(),b.end());
+    std::map<int,std::pair<int64_t,int64_t>> start,last;std::map<int,double> travelled;
+    for(int id:all) {const auto& u=*f.world.unit(id);start[id]=last[id]={u.x.v,u.z.v};travelled[id]=0;}
+    Motion motion;AwareResult r;r.total=int(all.size());
+    int samples=0,still=0,pairs=0;int64_t contacts=0;
+    for(int t=0;t<6000;++t) {
+        f.world.tick(1.f/30);motion.observe(f.world,all);
+        int arrived=0;
+        for(int id:all) {
+            const auto& u=*f.world.unit(id);
+            arrived+=u.orders.empty()||!f.world.unit(id)->alive();
+            auto& l=last[id];travelled[id]+=std::hypot(double(u.x.v-l.first),double(u.z.v-l.second))/65536.0;l={u.x.v,u.z.v};
+        }
+        if(t%10==0) {
+            for(int id:all) {const auto& u=*f.world.unit(id);if(!u.orders.empty()) {++samples;still+=u.speed<=Fixed();}}
+            for(int i:a)for(int j:b) {
+                const auto& u=*f.world.unit(i);const auto& v=*f.world.unit(j);
+                if(!u.alive()||!v.alive()||u.orders.empty()||v.orders.empty())continue;
+                ++pairs;
+                if(std::abs(int(u.x.v>>20)-int(v.x.v>>20))<=2&&std::abs(int(u.z.v>>20)-int(v.z.v>>20))<=2)++contacts;
+            }
+        }
+        r.arrived=arrived;
+        if(std::getenv("AWARE_ASCII")&&t%150==0) {
+            std::vector<std::string> g(140,std::string(200,'.'));
+            for(int z=0;z<140;++z)for(int x=0;x<200;++x)if(f.cells[size_t(z)*200+x]==0)g[size_t(z)][size_t(x)]='#';
+            for(int id:a) {const auto& u=*f.world.unit(id);g[size_t(u.z.v>>20)][size_t(u.x.v>>20)]='A';}
+            for(int id:b) {const auto& u=*f.world.unit(id);g[size_t(u.z.v>>20)][size_t(u.x.v>>20)]='B';}
+            std::printf("t=%d\n",t);for(auto& l:g)std::printf("|%s\n",l.c_str());
+        }
+        if(arrived==r.total) {r.done=t;break;}
+    }
+    double ratio=0;int counted=0;
+    for(int id:all) {
+        const auto& u=*f.world.unit(id);
+        const double straight=std::hypot(double(u.x.v-start[id].first),double(u.z.v-start[id].second))/65536.0;
+        if(straight>64) {ratio+=travelled[id]/straight;++counted;}
+    }
+    r.stopped=samples?100.0*still/samples:0;r.contacts=pairs?1000.0*double(contacts)/pairs:0;
+    r.detour=counted?100.0*(ratio/counted-1):0;r.spins=motion.spins;r.reversals=motion.reversals;
+    std::printf("aware case=%s arrived=%d/%d done=%d stopped=%.1f%% contacts_permille=%.2f detour=%.1f%% spins=%llu reversals=%llu\n",name,r.arrived,r.total,r.done,
+        r.stopped,r.contacts,r.detour,(unsigned long long)r.spins,(unsigned long long)r.reversals);
+    return r;
+}
+void aware() {
+    const auto cross=awareRun("cross",0,4096);
+    const auto head=awareRun("headon",1,4096);
+    const auto seen=awareRun("enemy-seen",2,4096);
+    const auto unseen=awareRun("enemy-unseen",2,16);
+    const auto attack=awareRun("attack",3,4096);
+    if(std::getenv("AWARE_REPORT"))return;
+    for(const AwareResult* r:std::initializer_list<const AwareResult*>{&cross,&head,&seen,&unseen}) {
+        check(r->arrived==r->total,"aware: groups did not get past each other");
+        check(r->spins==0,"aware: spin");
+    }
+    (void)attack;
+}
+
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
@@ -1675,7 +1770,7 @@ int main(int argc,char** argv) {
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
-        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation}};
+        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"aware",aware}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
