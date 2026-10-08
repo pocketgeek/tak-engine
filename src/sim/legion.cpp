@@ -538,6 +538,7 @@ struct LegionNavigator::Impl {
         auto& slot=members[id];slot=m;
         if(size_t(id)>=memberIndex.size())memberIndex.resize(size_t(id)+1,nullptr);
         memberIndex[size_t(id)]=&slot;
+        markPass(id);
         if(slot.pt) {
             auto& ids=slot.pt->ids;
             const auto at=std::lower_bound(ids.begin(),ids.end(),id);
@@ -614,6 +615,80 @@ struct LegionNavigator::Impl {
     std::vector<int32_t> liftHome;
     std::vector<int> liftHomeCells,liftedIds;
     int32_t occAt(size_t c) const {const int32_t o=w.occ_[c];return o||groundedCells.empty()?o:grounded[c];}
+    // passAhead's oncoming-sector mask (A7): per kPassBlock x kPassBlock
+    // block of cells, the 16-sector directions (sector16) to their goals
+    // of the members that may stand there, each widened by a sector either
+    // way. Rebuilt at the end of tick() from every member whose goal is at
+    // least 2*kPassCells-1 cells off (a superset of passAhead's peer filter,
+    // which also asks state, orders and more than 2*kPassCells), over its
+    // footprint widened by a cell; and OR'ed again for a member whenever its
+    // goal is set and after each of its updates, so within a tick a block
+    // keeps every direction any member standing in it has had. passAhead
+    // skips its lane scan when no block the scan reads holds a direction
+    // that can be oncoming (passOpposed): the scan would find no oncoming
+    // body. Never hashed.
+    static constexpr int kPassBlock=8;
+    std::vector<uint16_t> passMask;
+    std::vector<int> passMaskList;   // non-zero entries of passMask
+    int passMaskW=0;
+    // 16 sectors of 22.5 degrees from +x toward +z; each an interval of
+    // directions (boundaries at tan 22.5 ~ 0.414214).
+    static int sector16(int64_t x,int64_t z) {
+        const int64_t ax=std::abs(x),az=std::abs(z);
+        const int q=az*1000000<ax*414214?0:az<=ax?1:ax*1000000>=az*414214?2:3;
+        return x>=0?(z>=0?q:15-q):(z>=0?7-q:8+q);
+    }
+    static uint16_t widenSector(uint16_t bits) {
+        return uint16_t(bits|uint16_t(bits<<1)|uint16_t(bits>>15)|uint16_t(bits>>1)|uint16_t(bits<<15));
+    }
+    // Per travel octant ((dx+1)*3+dz+1): the sectors of every direction
+    // passAhead counts as oncoming to it (a lattice of directions out to 64
+    // cells, widened by a sector, so no direction's sector is missed).
+    static const std::array<uint16_t,9>& passOpposed() {
+        static const std::array<uint16_t,9> table=[] {
+            std::array<uint16_t,9> t{};
+            for(int dx=-1;dx<=1;++dx)for(int dz=-1;dz<=1;++dz) {
+                if(!dx&&!dz)continue;
+                uint16_t bits=0;
+                for(int64_t z=-64;z<=64;++z)for(int64_t x=-64;x<=64;++x) {
+                    if(!x&&!z)continue;
+                    const int64_t dot=x*dx+z*dz;
+                    if(dot<0&&100*dot*dot>kOncomingCos2*(x*x+z*z)*(dx*dx+dz*dz))bits|=uint16_t(1u<<sector16(x,z));
+                }
+                t[size_t((dx+1)*3+dz+1)]=widenSector(bits);
+            }
+            return t;
+        }();
+        return table;
+    }
+    void markPass(const Unit& u,const Member& m) {
+        if(passMask.empty()||m.goal<0||!u.type)return;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        const int64_t odx=m.goal%W-ox,odz=m.goal/W-oz;
+        if(std::max(std::abs(odx),std::abs(odz))<2*kPassCells-1)return;
+        const uint16_t bits=widenSector(uint16_t(1u<<sector16(odx,odz)));
+        const int x0=std::max(ox-1,0),z0=std::max(oz-1,0),x1=std::min(ox+fx,w.occW_-1),z1=std::min(oz+fz,w.occH_-1);
+        if(x0>x1||z0>z1)return;
+        for(int bz=z0/kPassBlock;bz<=z1/kPassBlock;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock;++bx) {
+            uint16_t& b=passMask[size_t(bz)*passMaskW+bx];
+            if(!b)passMaskList.push_back(bz*passMaskW+bx);
+            b|=bits;
+        }
+    }
+    void markPass(int id) {
+        const Member* m=member(id);const Unit* u=m?w.unit(id):nullptr;
+        if(u)markPass(*u,*m);
+    }
+    void buildPassMask() {
+        if(w.occW_<=0||w.occH_<=0) {passMask.clear();passMaskList.clear();passMaskW=0;return;}
+        passMaskW=(w.occW_+kPassBlock-1)/kPassBlock;
+        const size_t n=size_t(passMaskW)*size_t((w.occH_+kPassBlock-1)/kPassBlock);
+        if(passMask.size()!=n) {passMask.assign(n,0);passMaskList.clear();}
+        for(int b:passMaskList)passMask[size_t(b)]=0;
+        passMaskList.clear();
+        for(const auto& [id,m]:members)if(m.goal>=0)if(const Unit* u=w.unit(id))markPass(*u,m);
+    }
     // The ids of every flyer and every structure in World::units_ order,
     // so stampGrounded, syncStatic and computeCells walk those alone, in the
     // order the all-unit walk visited them. A unit's type never changes;
@@ -2478,6 +2553,7 @@ struct LegionNavigator::Impl {
             }
         }
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
+        buildPassMask();
 #ifndef NDEBUG
         if(gVerify)verifyIndexes();
 #endif
@@ -3366,7 +3442,7 @@ struct LegionNavigator::Impl {
         return found!=points.end()&&found->second.assigned&&found->second.limit>0;
     }
     void takeFormation(Member& m,const Unit& u,int cell) {
-        m.goal=cell;m.slot=0;m.lineCell=-1;
+        m.goal=cell;m.slot=0;m.lineCell=-1;markPass(u,m);
         slotCells(m,u.type->footX,u.type->footZ,true);
     }
     // Every member sent to one point in one command gets its slot at once,
@@ -3491,7 +3567,7 @@ struct LegionNavigator::Impl {
             if(m.state!=Holding||m.held<20||m.held%20)return true;
             slotCells(m,u.type->footX,u.type->footZ,false);
             const int cell=reachableFormationCell(u,p,pt,px,pz);
-            if(cell>=0)m.goal=cell;
+            if(cell>=0) {m.goal=cell;markPass(u,m);}
             slotCells(m,u.type->footX,u.type->footZ,true);m.lineCell=-1;
             return true;
         }
@@ -3561,7 +3637,7 @@ struct LegionNavigator::Impl {
             if(best<0||score>bestScore||(score==bestScore&&side<bestSide)) {best=int(i);bestScore=score;bestSide=side;}
         }
         if(best<0)return;
-        s.taken[size_t(best)]=1;m.slot=best;m.goal=s.cells[size_t(best)];m.lineCell=-1;
+        s.taken[size_t(best)]=1;m.slot=best;m.goal=s.cells[size_t(best)];m.lineCell=-1;markPass(u,m);
         slotCells(m,u.type->footX,u.type->footZ,true);
     }
     // An approach member's stand-in still holds after a static change: the
@@ -4038,14 +4114,31 @@ struct LegionNavigator::Impl {
         };
         const bool laneHeld=direct&&m.passUntil>w.tickCounter_;
         if(!passOpen(options[0])&&!passOpen(options[1])&&!(laneHeld&&mayStep(dx,dz))) {++stats.passScansSkipped;return false;}
-        ++stats.passScans;
+        // No block the scan reads holds a member direction that can be
+        // oncoming (see passMask): the scan would find no oncoming body.
+        bool opposed=passMask.empty();
+        if(!opposed) {
+            const uint16_t want=passOpposed()[size_t((dx+1)*3+dz+1)];
+            const int x0=std::max(ox+std::min(dx,kPassCells*dx),0),x1=std::min(ox+std::max(dx,kPassCells*dx)+fx-1,w.occW_-1);
+            const int z0=std::max(oz+std::min(dz,kPassCells*dz),0),z1=std::min(oz+std::max(dz,kPassCells*dz)+fz-1,w.occH_-1);
+            for(int bz=z0/kPassBlock;bz<=z1/kPassBlock&&!opposed&&x0<=x1;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock;++bx)
+                if(passMask[size_t(bz)*passMaskW+bx]&want) {opposed=true;break;}
+        }
         bool oncoming=false;
         // A body spans several scanned cells; the verdict on it depends only
         // on the body, so each one is judged once (the scan's hot cost was
         // the repeated member lookups).
         std::array<int32_t,8> seen{};size_t seenCount=0;
         uint64_t scanned=0;
-        for(int k=1;k<=kPassCells&&!oncoming;++k)for(int j=0;j<fz&&!oncoming;++j)for(int i=0;i<fx&&!oncoming;++i) {
+#ifndef NDEBUG
+        // TAK_LEGION_VERIFY: a skipped scan is run anyway and must find no
+        // oncoming body.
+        const bool scan=opposed||gVerify;
+#else
+        const bool scan=opposed;
+#endif
+        if(opposed)++stats.passScans;else ++stats.passScansSkipped;
+        if(scan)for(int k=1;k<=kPassCells&&!oncoming;++k)for(int j=0;j<fz&&!oncoming;++j)for(int i=0;i<fx&&!oncoming;++i) {
             ++scanned;
             const int cx=ox+k*dx+i,cz=oz+k*dz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
@@ -4067,6 +4160,10 @@ struct LegionNavigator::Impl {
             const int64_t dot=odx*dx+odz*dz;
             oncoming=dot<0&&100*dot*dot>kOncomingCos2*(odx*odx+odz*odz)*(dx*dx+dz*dz);
         }
+#ifndef NDEBUG
+        if(!opposed&&oncoming)verifyFail("passAhead's oncoming mask skipped a scan that finds an oncoming body");
+        if(!opposed)scanned=0;
+#endif
         stats.passScanCells+=scanned;
         if(!oncoming) {
             // Committed pass: for a while after moving over, keep to the new
@@ -4660,7 +4757,7 @@ LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindO
 void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
 void LegionNavigator::cancel(int id) {impl_->leave(id);}
 void LegionNavigator::tick() {impl_->tick();}
-void LegionNavigator::move(Unit& u,Fixed maximum) {impl_->move(u,maximum);}
+void LegionNavigator::move(Unit& u,Fixed maximum) {impl_->move(u,maximum);impl_->markPass(u.id);}
 uint64_t LegionNavigator::checksum() const {return impl_->checksum();}
 LegionNavigator::Stats LegionNavigator::stats() const {
     auto s=impl_->stats;
