@@ -1,0 +1,24 @@
+scn 1
+# Refresh under constant static churn (RB-05): CONTROL HALF ONLY. The fixture of the
+# probe (refreshchurn.cpp, mode 2/3): a 1024x1024 map, a long wall, eight movers
+# ordered round its far end. The probe then toggles a 2x2 blocking feature (or two
+# short-lived structures) inside the field's component on every tick for 900 ticks
+# and counts field refresh completions: 11, 85-86 ticks apart on main (1 before
+# b565029). A .scn cannot do that: it spawns everything at tick 0 and has no mid-run
+# edits (a structure shot dead leaves a wreck of the same footprint, which changes no
+# plane). So this file runs the geometry WITHOUT churn: work.refresh_completed.total is
+# absent (0) and one field is built. The churn rows need a `churn` directive in the
+# format (a feature place/remove every N ticks at a cell), listed in
+# $SCR/shared/w0/scenarios-b.md as the one missing piece.
+name refreshchurn
+ticks 900
+seed 7
+players 2
+team 0 0
+team 1 1
+map flat 1024 1024
+wall 0 614 921 4
+type m mover 2 2500 10 1.79999
+group M 0 m 8 cells 20,100 24,100 28,100 32,100 20,104 24,104 28,104 32,104
+at 1 move M 60 716
+region goal 40 700 90 740

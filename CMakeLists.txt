@@ -326,6 +326,23 @@ add_test(NAME observer_neutral
                  --neutral --mode both --offsets 0)
 set_tests_properties(legion_scenario_smoke observer_neutral
                      PROPERTIES SKIP_RETURN_CODE 77 LABELS legion)
+# Asset-free scenario set, part B: awareness, flyers in streams and mixed
+# formations, boats (island, strait), refresh churn. Same run as part A: both
+# modes, serial and workers (a mismatch fails), three start offsets; no bounds
+# yet. mixed2 and the strait fleets of 24+ big boats are KNOWN-FAILING behaviour
+# (a report, not an assert): each file's header says which.
+foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
+                   aware-adjacent liftstream island-1x48 strait mixed2 strait-4x24 strait-3x48 strait-2x48
+                   refreshchurn)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
+endforeach()
+foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
+endforeach()
 # Visible motion of group orders with real unit types (measurement only, needs
 # a retail install): tools/legion_group_motion.cpp.
 add_executable(legion_group_motion tools/legion_group_motion.cpp)
