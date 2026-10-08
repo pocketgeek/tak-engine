@@ -326,10 +326,6 @@ add_test(NAME observer_neutral
                  --neutral --mode both --offsets 0)
 set_tests_properties(legion_scenario_smoke observer_neutral
                      PROPERTIES SKIP_RETURN_CODE 77 LABELS legion)
-# Visible motion of group orders with real unit types (measurement only, needs
-# a retail install): tools/legion_group_motion.cpp.
-add_executable(legion_group_motion tools/legion_group_motion.cpp)
-target_link_libraries(legion_group_motion PRIVATE tak-formats)
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
 # evidence, never failing).
