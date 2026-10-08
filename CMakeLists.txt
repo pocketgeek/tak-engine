@@ -326,6 +326,26 @@ add_test(NAME observer_neutral
                  --neutral --mode both --offsets 0)
 set_tests_properties(legion_scenario_smoke observer_neutral
                      PROPERTIES SKIP_RETURN_CODE 77 LABELS legion)
+# Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
+# every counter against tools/legion_cost_baseline.json) and the battle
+# scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
+# printed, never gated. The larger battles run nightly.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME legion_cost
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_cost.py
+                   --runner $<TARGET_FILE:legion_scenario> --tmpdir ${CMAKE_BINARY_DIR}/legion_cost_tmp)
+  set_tests_properties(legion_cost PROPERTIES LABELS legion TIMEOUT 600)
+  foreach(battle battle-field-2x60 battle-field-2x250 battle-field-2x500 battle-assault)
+    add_test(NAME legion_scenario_${battle}
+             COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_cost.py battle
+                     ${CMAKE_SOURCE_DIR}/tools/scenarios/${battle}.scn
+                     --runner $<TARGET_FILE:legion_scenario> --tmpdir ${CMAKE_BINARY_DIR}/legion_cost_tmp)
+  endforeach()
+  set_tests_properties(legion_scenario_battle-field-2x60 PROPERTIES LABELS legion TIMEOUT 600)
+  set_tests_properties(legion_scenario_battle-field-2x250 legion_scenario_battle-field-2x500
+                       legion_scenario_battle-assault PROPERTIES LABELS "legion;nightly" TIMEOUT 3600)
+endif()
 # Visible motion of group orders with real unit types (measurement only, needs
 # a retail install): tools/legion_group_motion.cpp.
 add_executable(legion_group_motion tools/legion_group_motion.cpp)
