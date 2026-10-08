@@ -27,16 +27,24 @@ SCENARIOS = (
 # Requirement-driven acceptance scenarios (tools/crowdbench_acceptance.h). Kept
 # out of SCENARIOS so default matrices and their runtime estimates are unchanged.
 ACCEPTANCE_SCENARIOS = ("jagged", "trapped", "crowdtrap", "singleunit", "groupdetour")
-ALL_SCENARIOS = SCENARIOS + ACCEPTANCE_SCENARIOS
+# Workload scenarios: churn (T7 I3) keeps hundreds of Legion groups live with
+# staggered re-orders and a structure placed/removed every 20 ticks.
+STRESS_SCENARIOS = ("churn",)
+ALL_SCENARIOS = SCENARIOS + ACCEPTANCE_SCENARIOS + STRESS_SCENARIOS
 # The frozen baseline has no Legion mode. (Retail+, Flowfield and Cooperative
 # were removed on 2026-10-06.)
 LEGACY_MODES = ("retail",)
 MODES = LEGACY_MODES + ("legion",)
 CASE_KEYS = ("build_role", "mode", "scenario", "units_per_player", "players",
-             "moving_percent", "ticks", "seed", "workers", "allocation_counting",
+             "moving_percent", "ticks", "seed", "turn_rate", "workers", "allocation_counting",
              "path_profiling", "latency_observation")
 OUTCOME_KEYS = ("hash", "alive", "arrived_settled", "all_arrived_tick", "crossed_middle",
-                "illegal_footprint_samples", "path_length_px", "stalled_unit_ticks")
+                "illegal_footprint_samples", "path_length_px", "stalled_unit_ticks",
+                # 2026-10-08 keys (absent from older binaries: compared as None)
+                "raw_terrain_contact_noprogress_unit_ticks", "age_waiting_no_progress_unit_ticks",
+                "age_parked_no_progress_unit_ticks", "age_waiting_held_by_design_unit_ticks",
+                "age_parked_held_by_design_unit_ticks", "cap8_moving_samples", "route_crawl_samples",
+                "complete_outside_radius", "cross_gap_max")
 
 
 def sha256(path):
@@ -201,6 +209,8 @@ def main():
     parser.add_argument("--ticks", type=int, default=1200)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--seeds", nargs="+", type=int, default=[0])
+    parser.add_argument("--turn-rate", type=int,
+                        help="crowdbench --turn-rate for every run (default: the binary's own, 2500)")
     parser.add_argument("--timeout", type=float, default=600)
     parser.add_argument("--workers", action="store_true")
     parser.add_argument("--trace", action="store_true", help="every-tick traces; larger files and observer overhead")
@@ -220,6 +230,8 @@ def main():
         parser.error("rounds and ticks must be positive")
     if any(seed < 0 or seed > 0xffffffff for seed in args.seeds):
         parser.error("seeds must be unsigned 32-bit integers")
+    if args.turn_rate is not None and not 1 <= args.turn_rate <= 32768:
+        parser.error("turn-rate must be 1..32768")
     populations = []
     for value in args.populations:
         players, moving = map(int, value.split(":"))
@@ -269,6 +281,8 @@ def main():
                 command = [str(executable), "--scenario", scenario, "--units", str(units),
                            "--players", str(players), "--moving-percent", str(moving),
                            "--mode", mode, "--ticks", str(args.ticks), "--seed", str(seed)]
+                if args.turn_rate is not None:
+                    command += ["--turn-rate", str(args.turn_rate)]
                 for flag in ("workers", "allocations", "profile", "latency"):
                     if getattr(args, flag):
                         command.append("--" + flag)
@@ -289,6 +303,8 @@ def main():
                     expected = {"mode": mode, "scenario": scenario, "units_per_player": units,
                                 "players": players, "moving_percent": moving, "seed": seed,
                                 "ticks": args.ticks, "workers": args.workers}
+                    if args.turn_rate is not None:
+                        expected["turn_rate"] = args.turn_rate
                     for key, value in expected.items():
                         if data.get(key) != value:
                             raise ValueError(f"benchmark command/metric mismatch: {key}={data.get(key)!r}, expected {value!r}")
