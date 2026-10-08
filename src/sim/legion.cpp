@@ -288,6 +288,10 @@ struct LegionNavigator::Impl {
         // Last tick a member started its update Moving (Stats only: the
         // field work split; never hashed, never read by a decision).
         uint32_t movingTick=~0u-8;
+        // The scheduler lists the group is on and its byBuilt key (see
+        // listGroup). Derived, never hashed.
+        bool onBuilding=false,onNeedField=false,onStaleDone=false,onByBuilt=false;
+        uint32_t byBuiltKey=0;
     };
     enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5};
     // ---- mission goals ------------------------------------------------
@@ -418,6 +422,57 @@ struct LegionNavigator::Impl {
     uint64_t fieldsDone=0;
     uint32_t noVictimTick=~0u;uint64_t noVictimDone=~0ull;
     std::map<int,Group> groups;
+    // Scheduler work lists (see tick), ascending ids:
+    //   buildingIds  a field or refresh is building ((field && !done) ||
+    //                next); a group whose shared field another group
+    //                finished stays listed until tick next visits it;
+    //   waitedIds    a member waited for a field (setWaited); dropped by
+    //                tick once that is two ticks old;
+    //   needFieldIds no field and no refresh;
+    //   staleDoneIds a stale field (done or not: tick checks) and no
+    //                refresh.
+    // byBuilt: the groups with a field by (built, id), the eviction order.
+    // Functions of each group's own field, next, stale, waited and built:
+    // every write of those is followed by listGroup (waited: setWaited),
+    // and TAK_LEGION_VERIFY checks each list against a full scan. Never
+    // hashed; a peer replaying the same commands lists the same groups.
+    std::set<int> buildingIds,waitedIds,needFieldIds,staleDoneIds;
+    std::set<std::pair<uint32_t,int>> byBuilt;
+    static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done)||g.next;}
+    static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
+    static bool wantsStaleDone(const Group& g) {return g.field&&g.stale&&!g.next;}
+    void listGroup(Group& g) {
+        auto put=[&](std::set<int>& ids,bool& on,bool want) {
+            if(want==on)return;
+            if(want)ids.insert(g.id);else ids.erase(g.id);
+            on=want;
+        };
+        put(buildingIds,g.onBuilding,wantsBuilding(g));
+        put(needFieldIds,g.onNeedField,wantsNeedField(g));
+        put(staleDoneIds,g.onStaleDone,wantsStaleDone(g));
+        const bool built=g.field!=nullptr;
+        if(g.onByBuilt&&(!built||g.byBuiltKey!=g.built)) {byBuilt.erase({g.byBuiltKey,g.id});g.onByBuilt=false;}
+        if(built&&!g.onByBuilt) {byBuilt.insert({g.built,g.id});g.byBuiltKey=g.built;g.onByBuilt=true;}
+    }
+    void unlistGroup(const Group& g) {
+        if(g.onBuilding)buildingIds.erase(g.id);
+        if(g.onNeedField)needFieldIds.erase(g.id);
+        if(g.onStaleDone)staleDoneIds.erase(g.id);
+        if(g.onByBuilt)byBuilt.erase({g.byBuiltKey,g.id});
+        waitedIds.erase(g.id);
+    }
+#ifndef NDEBUG
+    [[noreturn]] void verifyFail(const char* what) const {
+        std::fprintf(stderr,"TAK_LEGION_VERIFY tick %u: %s\n",w.tickCounter_,what);
+        std::abort();
+    }
+#endif
+    void setWaited(Group& g) {g.waited=w.tickCounter_;waitedIds.insert(g.id);}
+    // The first id in `ids` above `id` (0: none; group ids start at 1).
+    static int after(const std::set<int>& ids,int id) {
+        const auto at=ids.upper_bound(id);
+        return at==ids.end()?0:*at;
+    }
     std::map<int,Member> members;
     // Unit id -> its node in `members` (std::map nodes are stable): the
     // per-update lookups (own member, bodies in the lane ahead) without a
@@ -1455,7 +1510,7 @@ struct LegionNavigator::Impl {
             }
             if(auto shared=group->second.sharing.find(m.requested);shared!=group->second.sharing.end()&&
                --shared->second<=0)group->second.sharing.erase(shared);
-            if(--group->second.members<=0)groups.erase(group);
+            if(--group->second.members<=0) {unlistGroup(group->second);groups.erase(group);}
         }
         if(size_t(id)<memberIndex.size())memberIndex[size_t(id)]=nullptr;
         members.erase(found);
@@ -1594,6 +1649,7 @@ struct LegionNavigator::Impl {
             g.command=commandKey(u.player,std::get<1>(m.point));g.soft=!u.type->wanders;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             joined=&groups.emplace(g.id,std::move(g)).first->second;
+            listGroup(*joined);
             ++stats.groups;
         }
         auto& g=*joined;
@@ -1685,6 +1741,7 @@ struct LegionNavigator::Impl {
                     g.field=std::move(shared);g.next.reset();g.stale=false;restaleSlots(g);
                 }
                 else g.field=std::move(shared);
+                listGroup(g);
                 return true;
             }
         }
@@ -1696,13 +1753,29 @@ struct LegionNavigator::Impl {
             // Within one tick that set only grows when a field finishes
             // (fieldsDone): evictions and new builds only shrink it.
             if(noVictimTick==w.tickCounter_&&noVictimDone==fieldsDone)return false;
+            // The oldest build first (ties: the lowest id), so the walk in
+            // byBuilt order stops at the first victim or at tenure.
             Group* victim=nullptr;
-            stats.groupLoopIters+=groups.size();
-            for(auto& [id,o]:groups)
-                if(o.field&&o.field->done&&o.field.use_count()==1&&w.tickCounter_-o.built>=kFieldTenure&&(!victim||o.built<victim->built))victim=&o;
+            uint64_t iters=0;
+            for(const auto& [built,id]:byBuilt) {
+                ++iters;
+                if(w.tickCounter_-built<kFieldTenure)break;
+                Group& o=groups.find(id)->second;
+                if(o.field->done&&o.field.use_count()==1) {victim=&o;break;}
+            }
+            stats.groupLoopIters+=iters;
+#ifndef NDEBUG
+            if(gVerify) {
+                Group* scan=nullptr;
+                for(auto& [id,o]:groups)
+                    if(o.field&&o.field->done&&o.field.use_count()==1&&w.tickCounter_-o.built>=kFieldTenure&&(!scan||o.built<scan->built))scan=&o;
+                if(scan!=victim)verifyFail("byBuilt eviction victim differs from the full scan");
+            }
+#endif
             if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
             if(victim->next&&!victim->next->done)++stats.refreshDiscards;
             victim->field.reset();victim->next.reset();victim->stale=false;++stats.fieldEvictions;
+            listGroup(*victim);
         }
         g.built=w.tickCounter_;
         auto f=std::make_shared<Field>();
@@ -1725,6 +1798,7 @@ struct LegionNavigator::Impl {
         std::sort(f->seedKeys.begin(),f->seedKeys.end());
         f->current=f->seedKeys.empty()?0:f->seedKeys.front().first;
         if(g.field)g.next=std::move(f);else g.field=std::move(f);
+        listGroup(g);
         return true;
     }
     // Dial's algorithm on key = potential + heuristic (A*; consistent, so
@@ -1885,6 +1959,7 @@ struct LegionNavigator::Impl {
             for(auto& [id,g]:groups) {
                 if(changes&&(g.plane<0||size_t(g.plane)>=changes->size()||!fieldTouched(g,(*changes)[size_t(g.plane)])))continue;
                 g.stale=g.field!=nullptr;
+                listGroup(g);
                 restaleSlots(g);
             }
         }
@@ -2152,27 +2227,39 @@ struct LegionNavigator::Impl {
                 else
                     (policy(g.kind).area&&!g.approach&&g.members>int(g.sharing.size())?stats.fieldWorkFirstSlot:stats.fieldWorkFirstSolo)+=spent;
             }
-            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;restaleSlots(g);++stats.refreshCompleted;}}
+            if(f.done) {
+                ++stats.fieldsBuilt;
+                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;restaleSlots(g);++stats.refreshCompleted;}
+                listGroup(g);
+            }
         };
         // Groups with a member standing still for want of a field come
         // first (their field starts, or its frontier advances toward them),
         // then first fields whose members all steer already, then refreshes
         // (members still steer by the finished stale field).
-        for(auto& [id,g]:groups) {
+        // Each loop walks its work list (see buildingIds) in id order with
+        // the predicate of a walk over every group: a list holds every
+        // group the predicate accepts, including one a step of the loop
+        // makes eligible (an eviction), so the same groups are served in
+        // the same order.
+        for(int id=after(waitedIds,0);id;id=after(waitedIds,id)) {
             if(budget==0)break;
             ++visits;
-            if(w.tickCounter_-g.waited>1||g.next||(g.field&&g.field->done))continue;
+            Group& g=groups.find(id)->second;
+            if(w.tickCounter_-g.waited>1) {waitedIds.erase(id);continue;}
+            if(g.next||(g.field&&g.field->done))continue;
             plane(g.plane);settle();
             if(budget==0)break;
             if(!g.field&&!startField(g))continue;
             if(!g.field->done)finish(g,*g.field,advance(*g.field,budget));   // (done: shared)
         }
         uint64_t refresh=kRefreshQuota;
-        for(int pass=0;pass<2;++pass)for(auto& [id,g]:groups) {
+        for(int pass=0;pass<2;++pass)for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
             if(budget==0)break;
             ++visits;
+            Group& g=groups.find(id)->second;
             Field* f=pass==1?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
-            if(!f)continue;
+            if(!f) {if(!wantsBuilding(g))listGroup(g);continue;}   // a shared build another group finished
             if(f->done) {finish(g,*f,0);continue;}   // a refresh another group finished
             if(pass==1&&refresh==0)continue;
             plane(g.plane);settle();
@@ -2185,22 +2272,26 @@ struct LegionNavigator::Impl {
         // (they cannot steer at all), then stale refreshes. Served first,
         // refreshes of older groups under constant churn starved a new
         // group forever.
-        for(int pass=0;pass<2;++pass)for(auto& [id,g]:groups) {
-            if(budget==0)break;
-            ++visits;
-            if((g.field&&(!g.stale||!g.field->done))||g.next)continue;
-            if((pass==0)!=(g.field==nullptr))continue;
-            plane(g.plane);settle();
-            if(budget==0)break;
-            // With the refresh allowance spent, a stale group only takes a
-            // field another group already has (see sharedField).
-            const bool shareOnly=pass==1&&refresh==0;
-            if(!startField(g,shareOnly)) {if(shareOnly) {++stats.refreshDeferred;continue;}break;}
-            Field& f=g.next?*g.next:*g.field;
-            if(f.done)continue;   // shared
-            const uint64_t spent=advance(f,pass==1?std::min(budget,refresh):budget);
-            if(pass==1)refresh-=std::min(refresh,spent);
-            finish(g,f,spent);
+        for(int pass=0;pass<2;++pass) {
+            const std::set<int>& ids=pass==0?needFieldIds:staleDoneIds;
+            for(int id=after(ids,0);id;id=after(ids,id)) {
+                if(budget==0)break;
+                ++visits;
+                Group& g=groups.find(id)->second;
+                if((g.field&&(!g.stale||!g.field->done))||g.next)continue;
+                if((pass==0)!=(g.field==nullptr))continue;
+                plane(g.plane);settle();
+                if(budget==0)break;
+                // With the refresh allowance spent, a stale group only takes a
+                // field another group already has (see sharedField).
+                const bool shareOnly=pass==1&&refresh==0;
+                if(!startField(g,shareOnly)) {if(shareOnly) {++stats.refreshDeferred;continue;}break;}
+                Field& f=g.next?*g.next:*g.field;
+                if(f.done)continue;   // shared
+                const uint64_t spent=advance(f,pass==1?std::min(budget,refresh):budget);
+                if(pass==1)refresh-=std::min(refresh,spent);
+                finish(g,f,spent);
+            }
         }
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
 #ifndef NDEBUG
@@ -2251,6 +2342,26 @@ struct LegionNavigator::Impl {
             std::sort(cmds.begin(),cmds.end());
             cmds.erase(std::unique(cmds.begin(),cmds.end()),cmds.end());
             if(cmds!=softOwnerCmds)fail("softOwnerCmds is not the sorted distinct softOwner");
+        }
+        // The scheduler lists against a scan of every group.
+        {
+            size_t building=0,need=0,staleDone=0,built=0;
+            for(const auto& [id,g]:groups) {
+                if(g.id!=id)fail("group id differs from its key");
+                if(wantsBuilding(g)&&!g.onBuilding)fail("a building group is off buildingIds");
+                if(g.onBuilding&&!g.field&&!g.next)fail("a group without field or refresh is on buildingIds");
+                if(g.onNeedField!=wantsNeedField(g))fail("needFieldIds flag differs from the group");
+                if(g.onStaleDone!=wantsStaleDone(g))fail("staleDoneIds flag differs from the group");
+                if(g.onByBuilt!=(g.field!=nullptr)||(g.onByBuilt&&g.byBuiltKey!=g.built))fail("byBuilt entry differs from the group");
+                if(g.onBuilding!=(buildingIds.count(id)>0)||g.onNeedField!=(needFieldIds.count(id)>0)||
+                   g.onStaleDone!=(staleDoneIds.count(id)>0)||(g.onByBuilt&&!byBuilt.count({g.byBuiltKey,id})))
+                    fail("a list flag differs from its list");
+                if(w.tickCounter_-g.waited<=1&&!waitedIds.count(id))fail("a group that waited is off waitedIds");
+                building+=g.onBuilding;need+=g.onNeedField;staleDone+=g.onStaleDone;built+=g.onByBuilt;
+            }
+            if(building!=buildingIds.size()||need!=needFieldIds.size()||staleDone!=staleDoneIds.size()||built!=byBuilt.size())
+                fail("a scheduler list holds a group that is not listed");
+            for(int id:waitedIds)if(!groups.count(id))fail("waitedIds holds a dead group");
         }
         // Counters only grow (the sizes are filled in by stats() alone).
         std::vector<uint64_t> before;
@@ -2393,6 +2504,7 @@ struct LegionNavigator::Impl {
             if(replan&&g.field&&g.field->done) {
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
                 g.next.reset();g.stale=true;
+                listGroup(g);
             }
         }
         stats.awarePairs+=pairs;
@@ -3338,7 +3450,7 @@ struct LegionNavigator::Impl {
         // every static change and never finish under constant churn.
         if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
             if(g.next&&!g.next->done)++stats.refreshDiscards;
-            g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);
+            g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // Close enough: a body that gained less than half a body on its
@@ -3442,7 +3554,7 @@ struct LegionNavigator::Impl {
         }
         if(!direct) {
             if(!f||(f->at(size_t(here))==kUnreached&&f->bounded)) {
-                g.waited=w.tickCounter_;
+                setWaited(g);
                 // No field reaches this body yet: head toward the goal along
                 // a short proven straight segment (kHeadingCells) instead of
                 // standing still; the field takes over as soon as its
