@@ -729,6 +729,14 @@ struct Unit {
     uint32_t flightBeginCallbackSerial=0; // display-only BeginFlight call-in edge
     uint32_t flightLandingCallbackSerial=0; // display-only edge; excluded from lockstep hash
     std::optional<RetailLandingState> landing;
+    // Legion (deliberate, not retail): an idle landed flyer lifted to let an
+    // allied ground group pass under it (World::requestLegionLift). It hovers
+    // over the spot it left until no group has asked for `legionLiftQuiet`
+    // ticks, then lands again through the retail landing mission. Hashed.
+    bool legionLift=false;
+    uint32_t legionLiftUntil=0;
+    uint32_t legionLiftRest=0;   // after landing again, no new lift before this tick
+    Fixed legionLiftX,legionLiftZ;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //
     // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
@@ -781,6 +789,12 @@ struct Unit {
     // Consecutive refused steps, saturated at two: mover +36 sets 0x8 on
     // first refusal, then 0x4 on repetition. Caps are base/2 then base/5.
     int32_t bodyBlockStreak = 0;
+    // Legion (deliberate, not retail): a ground body that makes no real
+    // headway stands in its scripts (GET 29 and MoveRate report it stopped)
+    // instead of walking on the spot. See World::updateLegionStill. Hashed
+    // for units with a COB script, the only readers.
+    uint8_t legionStillTicks = 0, legionStepTicks = 0;
+    bool legionStill = false;
     uint16_t groundTerrainFlags = 0; // mover +36 bits 11/12, refreshed by the mover
     uint8_t groundMovementMode = 0; // retail mover +36 bits 5..7; mode transitions remain partial
     uint32_t groundScanTick = 0;    // mover +30: next local navigation scan
@@ -2057,6 +2071,12 @@ private:
     void startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ);
     void stopWorkAnimation(Unit& u);
     void notifyMovementRate(Unit& u);
+    void updateLegionStill(Unit& u, Fixed beforeX, Fixed beforeZ);
+    // Each unit's position at the start of the tick, by id (Legion only),
+    // before Legion's own start-of-tick steps (yields). Derived each tick,
+    // never hashed. A unit spawned during the tick has none (generation).
+    std::vector<std::array<int32_t,2>> legionTickStart_;
+    std::vector<uint32_t> legionTickStartAt_;
     void notifyFlightOccupancy(Unit& u);
     bool prepareBuildApproach(Unit& u);
     Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;
@@ -2587,6 +2607,12 @@ private:
     uint32_t retailMissionFlags(Unit& u);
     void tickRetailGroups();
     void planLegionFlightStations();
+    // Legion: idle landed flyers make way for allied ground groups.
+    static constexpr uint32_t kLegionLiftQuiet=90;   // ticks after the last request
+    static constexpr uint32_t kLegionLiftRest=240;   // ticks from the hand-over to landing until it may lift again
+    bool legionLiftable(const Unit& flyer,int player) const;
+    void requestLegionLift(Unit& flyer);
+    bool tickLegionLift(Unit& u);
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;
     bool pathPending(int id) const {return paths_.pending(id);}

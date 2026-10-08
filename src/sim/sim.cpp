@@ -2214,6 +2214,68 @@ bool World::flyerLandingOccupied(const Unit& self,int x0,int z0,int fx,int fz) c
     return false;
 }
 
+// Legion (deliberate, not retail): idle landed flyers make way for allied
+// ground groups. Retail stamps a landed flyer into the ground word (5066f0)
+// and every ground mover plans and steers round it as round any body; a
+// parked air wing on a group's way makes the group detour or file past.
+// In Legion a ground member whose planned cells ahead cover such a flyer
+// asks it to lift (LegionNavigator::liftFlyers). It takes off as VTOL_Move
+// does (416c50: Activate, BeginFlight), holds over the spot it left at
+// cruise altitude through the retail flight kernel, and the ground walks
+// under it. Every further request extends the hold, and so does any member
+// still on its way near the flyer (the area must stay clear for a while);
+// kLegionLiftQuiet ticks after the last one it hands over to the retail
+// landing mission, which lands on the spot it left if that is free, else on
+// the nearest free site. It then stays down for kLegionLiftRest ticks (no
+// bobbing up and down in a crowd that is still settling). Only an idle flyer (no order, job, cargo or controller) of an
+// allied player lifts; an enemy's stays an obstacle.
+bool World::legionLiftable(const Unit& f,int player) const {
+    return f.alive() && !f.embarked() && f.type && f.type->canFly && !f.type->isStructure() &&
+        f.baseSpeed>Fixed() && !f.underConstruction && allied(f.player,player) &&
+        f.orders.empty() && !f.buildSiteId && !f.repairId && !f.reclaimId && f.buildQueue.empty() &&
+        !f.repeatType && f.cargo.empty() && !f.retainedFlightGoal && !f.landing &&
+        (f.legionLift || (f.flightGroundMode==1 && tickCounter_>=f.legionLiftRest));
+}
+
+void World::requestLegionLift(Unit& f) {
+    if (!f.legionLift) { f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; }
+    f.legionLiftUntil=tickCounter_+kLegionLiftQuiet;
+}
+
+bool World::tickLegionLift(Unit& u) {
+    if (!u.legionLift) return false;
+    if (!isLegionPathfinding(pathfindingMode_) || !legionLiftable(u,u.player)) {
+        // An order (or anything else that makes it busy) takes over from here.
+        u.legionLift=false;
+        return false;
+    }
+    if (tickCounter_>=u.legionLiftUntil) {
+        // Nobody asked for kLegionLiftQuiet ticks: land again, searching from
+        // the spot it holds over (the retail landing mission's own search).
+        u.legionLift=false;
+        u.legionLiftRest=tickCounter_+kLegionLiftRest;
+        if (u.flightGroundMode==2) { u.standbyActive=false; u.landing.emplace(); }
+        return false;
+    }
+    if (u.flightGroundMode!=2) {
+        // 416c50, as VTOL_Move's stage 0.
+        if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
+            script->second.activated=true;notifyUnitScript(u,"Activate");
+        }
+        notifyUnitScript(u,"BeginFlight");
+        u.standbyActive=false;
+        u.flightGroundMode=2;
+    }
+    const int cruise=flightGround(u)+u.type->cruiseAlt;
+    const RetailFlightGoal goal{{u.legionLiftX.v,Fixed::fromInt(std::min(cruise,511)).v,u.legionLiftZ.v}};
+    const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
+    u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,goal.point,
+        u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+    tickFlightBody(u);
+    notifyFlightOccupancy(u);
+    return true;
+}
+
 // Cell quad extrema (+6 low, +5 high) from the corner lattice (50ed60).
 std::pair<int,int> World::cellHeightRange(size_t cell) const {
     if (heights_.empty() || hW_<=0) return {0,0};
@@ -8569,7 +8631,7 @@ struct World::ScriptHost {
             const auto multiplier=unit.groundTerrainFlags&0x800 ? unit.type->roadMult :
                 unit.groundTerrainFlags&0x1000 ? unit.type->waterMult : Fixed::fromInt(1);
             const auto maximum=unit.baseSpeed*multiplier;
-            const bool refused=!unit.type->canFly && unit.bodyBlockStreak>=2;
+            const bool refused=!unit.type->canFly && (unit.bodyBlockStreak>=2 || unit.legionStill);
             if(id==30) return unit.type->canFly ? uint32_t(retailFlightVerticalPercent(
                 unit.flightVelocity.y,maximum.v,false,unit.embarked())) : 0;
             const auto step=retailGroundStep(unit.heading,unit.speed);
@@ -9025,6 +9087,51 @@ void World::notifyUnitScript(Unit& u,const char* name) {
     state.state.notify(file,file.scriptIndex(name),host);
 }
 
+// Legion (deliberate, not retail): no walking on the spot. A walker's gait is
+// its own Create-started controller polling GET 29 (horizontal speed as a
+// percentage of its maximum) every 100 ms and playing a whole walk cycle
+// (about 1.3 s for araarch) whenever it reads above 5. Retail's mover
+// reports a body stopped only after two refused steps in a row (the 51a930
+// refusal bit, bodyBlockStreak). Legion instead holds a blocked body (zero
+// speed) and moves a jammed one in short, slow shuffles and side-steps
+// that do not turn it (an eighth of its speed while it faces away): every
+// sample that lands on one of those creeping ticks starts another full
+// cycle, so the legs walk while the body all but stands (measured with
+// legion_group_motion: 4022 unit-ticks of walk cycles with under 8 px of
+// headway per second in the open 60-unit case, Retail 405). So in Legion a
+// body whose step this tick is under a quarter of its maximum speed counts
+// toward standing, unless it turned; after kLegionStillAfter such ticks in
+// a row it reports stopped (GET 29 = 0, MoveRate 0, like the refusal bit)
+// and stands; it walks again on kLegionStepAfter consecutive steps of at
+// least that pace or turns (hysteresis: no flipping each tick). Flyers
+// keep retail's rule.
+void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
+    constexpr uint8_t kLegionStillAfter=6,kLegionStepAfter=2;
+    if (!isLegionPathfinding(pathfindingMode_) || !u.type || u.type->canFly || u.type->isStructure() ||
+        !u.alive()) {
+        u.legionStillTicks=u.legionStepTicks=0;u.legionStill=false;
+        return;
+    }
+    // Measured from the start of the tick (Legion's yields step before the
+    // unit loop), else from the start of this unit's update.
+    if (size_t(u.id)<legionTickStart_.size() && legionTickStartAt_[size_t(u.id)]==tickCounter_) {
+        beforeX=Fixed::raw(legionTickStart_[size_t(u.id)][0]);beforeZ=Fixed::raw(legionTickStart_[size_t(u.id)][1]);
+    }
+    const int64_t dx=int64_t(u.x.v)-beforeX.v,dz=int64_t(u.z.v)-beforeZ.v;
+    const int64_t pace=std::max<int64_t>(1,u.baseSpeed.v/4);
+    // Turning toward its way counts as headway: a body pivoting on the
+    // spot steps round (retail's MoveRate is "slow" while only turning).
+    if (dx*dx+dz*dz>=pace*pace || uint16_t(u.heading.v)!=u.tickStartHeadingBam) {
+        u.legionStillTicks=0;
+        u.legionStepTicks=uint8_t(std::min(u.legionStepTicks+1,255));
+        if (u.legionStepTicks>=kLegionStepAfter) u.legionStill=false;
+    } else {
+        u.legionStepTicks=0;
+        u.legionStillTicks=uint8_t(std::min(u.legionStillTicks+1,255));
+        if (u.legionStillTicks>=kLegionStillAfter) u.legionStill=true;
+    }
+}
+
 void World::notifyMovementRate(Unit& u) {
     if (!u.type || u.type->isStructure() || !u.alive() || u.underConstruction) return;
     const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
@@ -9039,7 +9146,7 @@ void World::notifyMovementRate(Unit& u) {
     }
     const int16_t turn=std::bit_cast<int16_t>(uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam));
     const uint32_t rate=retailAnimationMoveRate(u.speed.v,turn,horizontal,
-        slow,fast,u.bodyBlockStreak>=2,u.embarked());
+        slow,fast,u.bodyBlockStreak>=2 || u.legionStill,u.embarked());
     if (u.retailBuild && u.retailBuild->flying) {
         auto& flags=u.retailBuild->flyingOwnerFlags;
         flags=(flags&~0xcu)|(rate<<2);
@@ -9773,6 +9880,14 @@ void World::tick(float dt) {
     ++tickCounter_;
     {
         const auto _n0 = g_phase ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        if(isLegionPathfinding(pathfindingMode_)) {
+            for(const auto& u:units_) {
+                if(size_t(u.id)>=legionTickStart_.size()) {
+                    legionTickStart_.resize(size_t(u.id)+1);legionTickStartAt_.resize(size_t(u.id)+1,0);
+                }
+                legionTickStart_[size_t(u.id)]={u.x.v,u.z.v};legionTickStartAt_[size_t(u.id)]=tickCounter_;
+            }
+        }
         if(isLegionPathfinding(pathfindingMode_)&&pathService_) {
             if(!legion_)legion_=std::make_unique<LegionNavigator>(*this);
             legion_->tick();
@@ -10328,6 +10443,7 @@ void World::tick(float dt) {
                 auto* subject=world.unit(id);
                 if (!subject || !subject->type) return;
                 auto& u=*subject;
+                world.updateLegionStill(u,x,z);
                 world.notifyMovementRate(u);
                 if (u.alive() && !u.embarked() && !u.type->canFly && !u.type->isStructure() &&
                     u.flightGroundMode==1 && (u.type->canHover || u.x!=x || u.z!=z || u.heading!=heading))
@@ -10501,6 +10617,7 @@ void World::tick(float dt) {
         // Retail dispatches each unit's missions immediately before its mover,
         // not all ground missions before every other unit's activity.
         if (u.constructionHolding && u.buildSiteId) continue;
+        if (u.legionLift && tickLegionLift(u)) continue;
         tickManaBuildArea(u);
         tickPatrolRepair(u);
         if (g_phase) {
@@ -11348,6 +11465,11 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.orders.size()));
         mix(u.missionEvents);
         mix(u.standbyAllowed); mix(u.standbyActive);
+        if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); }
+        if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
+        if (unitScript(u.id) && (u.legionStillTicks || u.legionStepTicks || u.legionStill)) {
+            mix(0x5354494cu); mix(u.legionStillTicks); mix(u.legionStepTicks); mix(u.legionStill);
+        }
         mix(u.guardNoMoveAllowed); mix(u.guardNoMoveActive);
         if (u.guardNoMoveActive) {
             const auto& m=u.guardNoMoveState;

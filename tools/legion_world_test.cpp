@@ -433,6 +433,120 @@ void landedflyers() {
     check(off.half<=open.half*5/4&&off.ticks<=open.ticks*2,"group did not use the ground the flyers left");
 }
 
+// Idle landed flyers make way for an allied ground group (World::
+// requestLegionLift): 12 landed flyers stand on the straight way of 40
+// ground bodies. mode 0: own flyers -- they lift, the group walks under
+// them as on open ground, and they land again on the spots they left;
+// 1: an enemy's -- they stay landed obstacles; 2: own flyers on guard
+// orders (a guard within reach stays landed) -- they do not lift; 3: own
+// flyers ON the group's destination -- they lift, the group settles there,
+// and they land nearby once, without bobbing; 4: no flyers (reference).
+struct LiftRun {uint64_t hash=0;int arrived=0,ticks=0,half=-1,lifted=0,takeoffs=0,maxTakeoffs=0,landed=0,home=0;
+                uint64_t overlap=0,flyerOverlap=0,spins=0,detour=0,lifts=0;};
+LiftRun liftflyersRun(int mode,bool serial=true) {
+    Fixture f(200,100,serial);f.publish();
+    const auto type=mover(2);
+    UnitType flyer{};flyer.id=flyer.name="legion-flyer";
+    flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=2;flyer.sight=4096;
+    flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    std::vector<int> flyers,ids;
+    const int owner=mode==1?1:0;
+    if(mode!=4)for(int i=0;i<12;++i)flyers.push_back(f.spawn(flyer,mode==3?150+(i%4)*4:70+(i%4)*3,mode==3?44+(i/4)*4:46+(i/4)*3,owner));
+    // Guards: a post inside the flyers' reach (70 px) keeps them landed.
+    const int post=mode==2?f.spawn(type,64,40,0):0;
+    for(int i=0;i<40;++i)ids.push_back(f.spawn(type,20+(i%8)*3,44+(i/8)*3));
+    f.start();
+    for(int t=0;t<90;++t)f.world.tick(1.f/30);
+    for(int id:flyers)check(f.world.unit(id)->flightGroundMode==1,"flyer not landed");
+    if(mode==2) {
+        for(int id:flyers)f.world.guard(id,post,false);
+        for(int t=0;t<30;++t)f.world.tick(1.f/30);
+    }
+    std::vector<std::pair<int,int>> spots;
+    for(int id:flyers) {const auto& v=*f.world.unit(id);spots.push_back({footprintOrigin(v.x,2),footprintOrigin(v.z,2)});}
+    std::vector<uint8_t> mode0(flyers.size(),1);std::vector<int> takeoffs(flyers.size(),0);
+    for(int id:ids)f.world.order(id,160*16,50*16,false);
+    Motion motion;LiftRun r;
+    std::vector<int32_t> startZ;for(int id:ids)startZ.push_back(f.world.unit(id)->z.v);
+    int done=-1;
+    for(;r.ticks<6000;++r.ticks) {
+        f.world.tick(1.f/30);motion.observe(f.world,ids);
+        r.arrived=0;
+        for(size_t k=0;k<ids.size();++k) {
+            const auto& u=*f.world.unit(ids[k]);
+            r.arrived+=u.orders.empty();
+            // Detour: how far a body strays across the straight way (cells).
+            r.detour=std::max<uint64_t>(r.detour,uint64_t(std::abs(int64_t(u.z.v)-startZ[k])>>20));
+            const int ux=footprintOrigin(u.x,2),uz=footprintOrigin(u.z,2);
+            for(int fid:flyers) {
+                const auto& v=*f.world.unit(fid);
+                if(v.flightGroundMode!=1)continue;
+                const int vx=footprintOrigin(v.x,2),vz=footprintOrigin(v.z,2);
+                if(ux<vx+2&&vx<ux+2&&uz<vz+2&&vz<uz+2)++r.overlap;
+            }
+        }
+        for(size_t a=0;a<flyers.size();++a) {
+            const auto& v=*f.world.unit(flyers[a]);
+            if(mode0[a]==1&&v.flightGroundMode==2)++takeoffs[a];
+            if(std::getenv("LIFT_TRACE")&&mode0[a]!=v.flightGroundMode)std::printf("  t=%d flyer %d mode %d->%d at %d,%d lift=%d arrived=%d\n",r.ticks,flyers[a],mode0[a],v.flightGroundMode,footprintOrigin(v.x,2),footprintOrigin(v.z,2),int(v.legionLift),r.arrived);
+            mode0[a]=v.flightGroundMode;
+            if(v.flightGroundMode!=1)continue;
+            for(size_t b=a+1;b<flyers.size();++b) {
+                const auto& o=*f.world.unit(flyers[b]);
+                if(o.flightGroundMode!=1)continue;
+                const int ax=footprintOrigin(v.x,2),az=footprintOrigin(v.z,2),bx=footprintOrigin(o.x,2),bz=footprintOrigin(o.z,2);
+                if(ax<bx+2&&bx<ax+2&&az<bz+2&&bz<az+2)++r.flyerOverlap;
+            }
+        }
+        if(r.half<0&&2*r.arrived>=int(ids.size()))r.half=r.ticks;
+        if(r.arrived==int(ids.size())&&done<0)done=r.ticks;
+        // After the group is in, let lifted flyers land again (quiet time,
+        // then a descent), then stop.
+        if(done>=0&&r.ticks>=done+600)break;
+    }
+    if(done>=0)r.ticks=done;
+    for(int id:ids)check(f.legal(id),"illegal footprint");
+    for(size_t a=0;a<flyers.size();++a) {
+        const auto& v=*f.world.unit(flyers[a]);
+        r.lifted+=takeoffs[a]>0;r.takeoffs+=takeoffs[a];r.maxTakeoffs=std::max(r.maxTakeoffs,takeoffs[a]);
+        r.landed+=v.flightGroundMode==1;
+        r.home+=v.flightGroundMode==1&&footprintOrigin(v.x,2)==spots[a].first&&footprintOrigin(v.z,2)==spots[a].second;
+    }
+    r.hash=f.world.stateHash();r.spins=motion.spins;r.lifts=f.world.legionStats().lifts;
+    std::printf("liftflyers mode=%d arrived=%d/%zu ticks=%d half=%d detour=%llu lifted=%d takeoffs=%d max=%d landed=%d home=%d/%zu overlap=%llu flyer_overlap=%llu spins=%llu lifts=%llu\n",
+        mode,r.arrived,ids.size(),r.ticks,r.half,(unsigned long long)r.detour,r.lifted,r.takeoffs,r.maxTakeoffs,r.landed,r.home,flyers.size(),
+        (unsigned long long)r.overlap,(unsigned long long)r.flyerOverlap,(unsigned long long)r.spins,(unsigned long long)f.world.legionStats().lifts);
+    return r;
+}
+void liftflyers() {
+    const bool report=std::getenv("STATIC_REPORT")!=nullptr;
+    const auto open=liftflyersRun(4);
+    const auto own=liftflyersRun(0);
+    const auto enemy=liftflyersRun(1);
+    const auto guards=liftflyersRun(2);
+    const auto onGoal=liftflyersRun(3);
+    if(report)return;
+    // Own flyers: all lift, the group walks through as on open ground, and
+    // every flyer lands again on its own spot, once.
+    check(own.arrived==40&&own.overlap==0&&own.flyerOverlap==0&&own.spins==0,"group failed under lifting flyers");
+    check(own.lifted==12&&own.maxTakeoffs==1,"own idle flyers did not lift exactly once");
+    check(own.landed==12&&own.home==12,"lifted flyers did not land again on their spots");
+    check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10&&own.detour<=open.detour+1,"group detoured round flyers that lift");
+    // An enemy's flyers never lift: obstacles, planned and steered round.
+    check(enemy.lifted==0&&enemy.landed==12,"enemy flyers lifted");
+    check(enemy.arrived==40&&enemy.overlap==0&&enemy.spins==0,"group failed round enemy flyers");
+    check(enemy.detour>open.detour,"group did not go round the enemy flyers");
+    // Flyers with orders never lift (guards go their own way; Legion never
+    // asks one of them).
+    check(guards.lifts==0,"flyers with orders were lifted");
+    check(guards.arrived==40&&guards.overlap==0,"group failed round guarding flyers");
+    // Flyers on the destination: lift once, land nearby, no bobbing.
+    check(onGoal.arrived==40&&onGoal.overlap==0&&onGoal.flyerOverlap==0,"group failed on the flyers' spots");
+    check(onGoal.lifted>0&&onGoal.maxTakeoffs<=1,"flyers on the destination bobbed");
+    check(onGoal.landed==12,"flyers on the destination did not land again");
+    check(liftflyersRun(0,false).hash==own.hash,"workers run differs from the serial run");
+}
+
 void replace() {
     Fixture f(128,96);
     f.rect(60,0,4,40);f.rect(60,48,4,48);
@@ -1675,7 +1789,7 @@ int main(int argc,char** argv) {
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
-        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation}};
+        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

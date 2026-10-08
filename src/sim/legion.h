@@ -27,6 +27,7 @@ public:
         uint64_t groups=0,registrations=0,moves=0,holds=0,slides=0,passScans=0,passScansSkipped=0;
         uint64_t arrivals=0,contactArrivals=0,trapped=0,escapes=0;
         uint64_t detours=0,detourCells=0;
+        uint64_t lifts=0;   // lift requests to idle landed flyers (see World::requestLegionLift)
         // Per LegionMission: legs (unit, order) Legion took on, arrivals it
         // raised (0x500) and failed approaches it handed back (0x200).
         uint64_t missionLegs[16]={},missionArrivals[16]={},missionFailures[16]={};

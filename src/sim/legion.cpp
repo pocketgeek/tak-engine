@@ -187,6 +187,7 @@ struct LegionNavigator::Impl {
         // settled arrivals are its destination crowd, never soft obstacles.
         uint64_t command=~0ull;int softCounts=-1;
         bool ownArrivals=true;   // a settled arrival of `command` stood soft when the build started
+        bool liftAllied=true;    // a liftable flyer of an ally of `command` stood soft then
         bool softened=false;   // some step was charged as a soft obstacle
         std::vector<int> seeds;   // the group's seeds when the build started
         uint32_t started=0;       // tick the build started
@@ -427,6 +428,7 @@ struct LegionNavigator::Impl {
     // belongs to, else ~0: a field never treats its own arrivals as soft.
     std::vector<uint64_t> softOwner;
     uint64_t softSerial=0,softHash=0;    // bumped whenever `soft` changes; its content hash
+    std::vector<int> liftSoftPlayers;    // owners of the kind 3 cells (liftable flyers), sorted unique
     // Landed flyers (mode 1) stand on the ground: retail stamps them into
     // its ground grid (5066f0, re-stamped by 51b370/4dafd2 on every mode or
     // cell change), so mobilePlacement refuses a ground step into one. But
@@ -436,6 +438,11 @@ struct LegionNavigator::Impl {
     // occAt); rebuilt each tick from hashed unit state, so never hashed.
     std::vector<int32_t> grounded;       // per cell: a landed flyer covering it (0 none)
     std::vector<int> groundedCells,groundedIds;   // cells set; landed flyer ids, ascending
+    // Flyers lifted to let a group pass (Unit::legionLift): the spot each
+    // one left, so the members still on their way keep it up. Rebuilt each
+    // tick with `grounded`; never hashed.
+    std::vector<int32_t> liftHome;
+    std::vector<int> liftHomeCells,liftedIds;
     int32_t occAt(size_t c) const {const int32_t o=w.occ_[c];return o||groundedCells.empty()?o:grounded[c];}
     void stampGrounded() {
         if(w.occW_<=0)return;
@@ -444,7 +451,21 @@ struct LegionNavigator::Impl {
         for(int c:groundedCells)grounded[size_t(c)]=0;
         groundedCells.clear();
         std::vector<int> ids;
+        if(liftHome.size()!=n) {liftHome.assign(n,0);liftHomeCells.clear();}
+        for(int c:liftHomeCells)liftHome[size_t(c)]=0;
+        liftHomeCells.clear();liftedIds.clear();
         for(const auto& u:w.units_) {
+            if(u.legionLift&&u.alive()&&u.type) {
+                liftedIds.push_back(u.id);
+                const int fx=u.type->footX,fz=u.type->footZ;
+                const int ox=footprintOrigin(u.legionLiftX,fx),oz=footprintOrigin(u.legionLiftZ,fz);
+                for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                    const int cx=ox+i,cz=oz+j;
+                    if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                    int32_t& o=liftHome[size_t(cz)*w.occW_+cx];
+                    if(!o) {o=u.id;liftHomeCells.push_back(cz*w.occW_+cx);}
+                }
+            }
             if(!u.alive()||u.embarked()||!u.type||!u.type->canFly||u.flightGroundMode!=1)continue;
             ids.push_back(u.id);
             const int fx=u.type->footX,fz=u.type->footZ;
@@ -470,6 +491,12 @@ struct LegionNavigator::Impl {
     // field; kind 2 (a settled Legion arrival) not for its own command.
     bool softCell(size_t c,uint64_t command) const {
         const uint8_t k=softKind[c];
+        if(k==3) {
+            // An idle landed flyer lifts for an allied group (see liftFlyers):
+            // no obstacle to its fields, still one to anyone else's.
+            const Unit* f=w.unit(soft[c]);
+            return !f||!w.allied(f->player,int(uint32_t(command>>32)));
+        }
         if(k!=2)return k!=0;
         const int32_t o=soft[c];
         return !(size_t(o)<softOwner.size()&&softOwner[size_t(o)]==command);
@@ -495,7 +522,7 @@ struct LegionNavigator::Impl {
     // The field's charge for entering origin (x,z): 2 covers a soft body,
     // 1 passes within a cell of one (a stream keeps a lane off the block's
     // face instead of filing along it), 0 clear.
-    int softLevel(int x,int z,int fx,int fz,uint64_t command,int counts,bool own=true) const {
+    int softLevel(int x,int z,int fx,int fz,uint64_t command,int counts,bool own=true,bool lift=true) const {
         if(softCells.empty()||command==kNoSoft)return 0;
         // The field asks this for every improving relaxation: answered from
         // the footprint's window counts, walking the window only near a
@@ -503,9 +530,10 @@ struct LegionNavigator::Impl {
         if(counts>=0) {
             const uint32_t k=softCounts[size_t(counts)].at[size_t(z)*w.occW_+x];
             if(!k)return 0;
-            // No settled arrival of this command stands anywhere: every
-            // counted cell is an obstacle to it.
-            if(!own||!(k&kArrivalCount))return k&kCoverCount?2:1;
+            // No settled arrival of this command stands anywhere, and no
+            // liftable flyer of an ally: every counted cell is an obstacle
+            // to it.
+            if(!((own&&(k&kArrivalCount))||(lift&&(k&kLiftCount))))return k&kCoverCount?2:1;
         }
         int level=0;
         for(int j=-1;j<=fz;++j)for(int i=-1;i<=fx;++i) {
@@ -520,17 +548,19 @@ struct LegionNavigator::Impl {
     // Per footprint class of a plane fields are built on, one word per
     // origin (one load per relaxation): byte 0 the soft cells (either kind)
     // its footprint covers, byte 1 those in the footprint grown by one
-    // cell, byte 2 the settled-arrival cells among the latter (a window
-    // holds at most 49 cells). Derived from `soft`/`softKind` and kept up
-    // to date cell by cell, never hashed.
+    // cell, byte 2 the settled-arrival cells among the latter, byte 3 the
+    // liftable flyers' cells among them (a window holds at most 49 cells).
+    // Derived from `soft`/`softKind` and kept up to date cell by cell,
+    // never hashed.
     struct SoftCounts {int fx=0,fz=0;std::vector<uint32_t> at;};
-    static constexpr uint32_t kCoverCount=0xff,kArrivalCount=0xff0000;
+    static constexpr uint32_t kCoverCount=0xff,kArrivalCount=0xff0000,kLiftCount=0xff000000;
     std::vector<SoftCounts> softCounts;
     void countCell(SoftCounts& k,int c,uint8_t kind,int delta) {
         const int W=w.occW_,H=w.occH_,cx=c%W,cz=c/W;
         for(int oz=std::max(0,cz-k.fz);oz<=std::min(H-1,cz+1);++oz)for(int ox=std::max(0,cx-k.fx);ox<=std::min(W-1,cx+1);++ox) {
             uint32_t& word=k.at[size_t(oz)*W+ox];
             if(kind==2)word=uint32_t(int64_t(word)+(int64_t(delta)<<16));
+            if(kind==3)word=uint32_t(int64_t(word)+(int64_t(delta)<<24));
             word=uint32_t(int64_t(word)+(int64_t(delta)<<8));
             if(ox>cx-k.fx&&ox<=cx&&oz>cz-k.fz&&oz<=cz)word=uint32_t(int64_t(word)+delta);
         }
@@ -556,6 +586,7 @@ struct LegionNavigator::Impl {
             soft.assign(n,0);softKind.assign(n,0);softCells.clear();softCounts.clear();
         }
         std::vector<std::pair<int,int32_t>> stamps;
+        std::vector<uint8_t> liftable;
         for(const auto& u:w.units_) {
             if(!u.alive()||u.embarked()||!u.type||(u.type->canFly&&u.flightGroundMode!=1)||u.type->isStructure())continue;
             const Member* m=member(u.id);
@@ -572,6 +603,10 @@ struct LegionNavigator::Impl {
                 const int cx=ox+i,cz=oz+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
                 stamps.push_back({cz*w.occW_+cx,u.id});
+            }
+            if(u.type->canFly&&w.legionLiftable(u,u.player)) {
+                if(size_t(u.id)>=liftable.size())liftable.resize(size_t(u.id)+1,0);
+                liftable[size_t(u.id)]=1;
             }
             if(isAnchor(u.id)) {
                 const auto a=anchors.find(u.id);
@@ -593,8 +628,15 @@ struct LegionNavigator::Impl {
             soft[size_t(c)]=0;softKind[size_t(c)]=0;
         }
         uint64_t h=0x736f6674;
+        liftSoftPlayers.clear();
         for(const auto& [c,id]:stamps)if(!soft[size_t(c)]) {
             soft[size_t(c)]=id;softKind[size_t(c)]=size_t(id)<owner.size()&&owner[size_t(id)]!=~0ull?2:1;
+            if(size_t(id)<liftable.size()&&liftable[size_t(id)]) {
+                softKind[size_t(c)]=3;h=mix(h,0x6c696674u);
+                const int owner=w.unit(id)->player;
+                const auto at=std::lower_bound(liftSoftPlayers.begin(),liftSoftPlayers.end(),owner);
+                if(at==liftSoftPlayers.end()||*at!=owner)liftSoftPlayers.insert(at,owner);
+            }
             if(const uint8_t prior=softPrior[size_t(c)];prior!=softKind[size_t(c)]) {
                 if(prior)countAll(c,prior,-1);
                 countAll(c,softKind[size_t(c)],1);
@@ -1576,6 +1618,8 @@ struct LegionNavigator::Impl {
         f->seeds=g.seeds;f->started=w.tickCounter_;
         f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;f->command=g.soft?g.command:kNoSoft;f->softCounts=softCountsFor(planes[size_t(g.plane)].footX,planes[size_t(g.plane)].footZ);
         f->ownArrivals=std::find(softOwner.begin(),softOwner.end(),f->command)!=softOwner.end();
+        f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
+            [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
         f->potential.assign(cells,kUnreached);
         f->totals=&fieldTotals;++fieldTotals.fields;fieldTotals.cells+=cells;
@@ -1617,7 +1661,7 @@ struct LegionNavigator::Impl {
                 if(!f.inside(x+d[0],z+d[1]))continue;
                 auto& slot=f.potential[f.local(x+d[0],z+d[1])];
                 if(g+base>=slot)continue;   // no charge can improve it
-                const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals);
+                const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
                 f.softened|=level>0;
                 const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base);
                 if(next>=kUnreached)continue;   // saturated: beyond the field's range
@@ -1866,10 +1910,115 @@ struct LegionNavigator::Impl {
             }
         }
     }
+    // Idle landed flyers make way (World::requestLegionLift): every
+    // kLiftStride ticks (staggered by id) a ground member on its way looks
+    // kLiftCells cells ahead along its planned steps -- its committed
+    // detour route, else the descent of its group's field, else the
+    // straight line to its goal -- and asks every allied idle landed flyer
+    // whose footprint those steps cover to lift, and every flyer already
+    // lifted from them to stay up. Bounded and in member (id) order.
+    static constexpr uint32_t kLiftStride=4;
+    static constexpr int kLiftCells=12;
+    static constexpr int kLiftClear=6;   // cells round a lifted flyer: no member on its way there or bound there
+    std::vector<int32_t> liftGoal;       // liftFlyers scratch: per goal origin, a member bound there (0 none)
+    std::vector<int> liftGoalCells;
+    void liftFlyers() {
+        if(groundedIds.empty()&&liftHomeCells.empty())return;
+        const int W=width();
+        // A lifted flyer stays up while an allied member within kLiftClear
+        // cells of it, or bound for a goal there, is moving or was held
+        // only briefly (a long-held jam is not passing through): it lands
+        // only into a settled area, not in front of the stragglers of a
+        // group that is still coming in (it would have to lift again).
+        if(!liftedIds.empty()&&w.tickCounter_%kLiftStride==0) {
+            const size_t n=size_t(w.occW_)*w.occH_;
+            if(liftGoal.size()!=n)liftGoal.assign(n,0);
+            for(int c:liftGoalCells)liftGoal[size_t(c)]=0;
+            liftGoalCells.clear();
+            for(const auto& [id,m]:members) {
+                if(m.state==Arrived||m.state==Trapped||m.goal<0||size_t(m.goal)>=n||liftGoal[size_t(m.goal)])continue;
+                liftGoal[size_t(m.goal)]=id;liftGoalCells.push_back(m.goal);
+            }
+            for(int id:liftedIds) {
+                Unit* flyer=w.unit(id);
+                if(!flyer||!flyer->legionLift)continue;
+                const int fx=flyer->type->footX,fz=flyer->type->footZ;
+                const int ox=footprintOrigin(flyer->x,fx),oz=footprintOrigin(flyer->z,fz);
+                bool busy=false;
+                for(int cz=std::max(0,oz-kLiftClear);cz<std::min(w.occH_,oz+fz+kLiftClear)&&!busy;++cz)
+                    for(int cx=std::max(0,ox-kLiftClear);cx<std::min(w.occW_,ox+fx+kLiftClear)&&!busy;++cx) {
+                        const size_t c=size_t(cz)*w.occW_+cx;
+                        for(const int32_t o:{w.occ_[c],liftGoal[c]}) {
+                            if(!o)continue;
+                            const Member* m=member(o);
+                            const Unit* b=m?w.unit(o):nullptr;
+                            if(b&&(m->state==Moving||((m->state==Holding||m->state==Waiting)&&m->held<kRestAfter))&&w.allied(flyer->player,b->player)) {busy=true;break;}
+                        }
+                    }
+                if(busy&&w.legionLiftable(*flyer,flyer->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
+            }
+        }
+        // Bounding box of every cell a request can hit: each planned step
+        // moves at most one cell, so a member whose footprint cannot reach
+        // it within kLiftCells steps is skipped without walking its steps.
+        int bx0=W,bz0=w.occH_,bx1=-1,bz1=-1;
+        for(const auto* cells:{&groundedCells,&liftHomeCells})for(int c:*cells) {
+            bx0=std::min(bx0,c%W);bx1=std::max(bx1,c%W);bz0=std::min(bz0,c/W);bz1=std::max(bz1,c/W);
+        }
+        for(auto& [id,m]:members) {
+            if((uint32_t(id)+w.tickCounter_)%kLiftStride)continue;
+            if(m.state==Arrived||m.state==Trapped||m.goal<0)continue;
+            Unit* u=w.unit(id);
+            if(!u||!u->alive()||!u->type||u->type->canFly||u->embarked())continue;
+            if(m.route.empty()) {
+                const int ux=footprintOrigin(u->x,u->type->footX),uz=footprintOrigin(u->z,u->type->footZ);
+                if(ux-kLiftCells>bx1||uz-kLiftCells>bz1||ux+kLiftCells+u->type->footX-1<bx0||uz+kLiftCells+u->type->footZ-1<bz0)continue;
+            }
+            const auto group=groups.find(m.group);
+            if(group==groups.end())continue;
+            const auto& g=group->second;
+            const auto& p=planes[size_t(g.plane)];
+            const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+            const int fx=u->type->footX,fz=u->type->footZ;
+            int x=footprintOrigin(u->x,fx),z=footprintOrigin(u->z,fz);
+            const int gx=m.goal%W,gz=m.goal/W;
+            size_t r=0;
+            for(int k=0;k<=kLiftCells;++k) {
+                for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                    const int cx=x+i,cz=z+j;
+                    if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                    const size_t c=size_t(cz)*w.occW_+cx;
+                    int32_t o=groundedCells.empty()?0:grounded[c];
+                    if(!o&&!liftHomeCells.empty())o=liftHome[c];
+                    if(!o)continue;
+                    Unit* flyer=w.unit(o);
+                    if(flyer&&w.legionLiftable(*flyer,u->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
+                }
+                if(k==kLiftCells||(x==gx&&z==gz))break;
+                // The next planned cell.
+                int nx=x,nz=z;
+                while(r<m.route.size()&&m.route[r]==z*W+x)++r;
+                if(r<m.route.size()) {nx=m.route[r]%W;nz=m.route[r]/W;++r;}
+                else if(f&&f->inside(x,z)&&f->at(size_t(z*W+x))!=kUnreached) {
+                    uint32_t best=f->at(size_t(z*W+x));
+                    for(const auto& d:kDirections) {
+                        if(!step(p,x,z,d[0],d[1])||!f->inside(x+d[0],z+d[1]))continue;
+                        const uint32_t v=f->at(size_t((z+d[1])*W+x+d[0]));
+                        if(v<best) {best=v;nx=x+d[0];nz=z+d[1];}
+                    }
+                } else {
+                    nx=x+(gx>x)-(gx<x);nz=z+(gz>z)-(gz<z);
+                }
+                if(nx==x&&nz==z)break;
+                x=nx;z=nz;
+            }
+        }
+    }
     void tick() {
         syncStatic();
         stampGrounded();
         scanStill();
+        liftFlyers();
         prebuildStep();
         prune();
         // Yields run even while no Legion member remains (a committed yield

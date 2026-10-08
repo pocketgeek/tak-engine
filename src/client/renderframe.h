@@ -161,7 +161,7 @@ struct UnitR {
         flightBeginCallbackSerial = u.flightBeginCallbackSerial;
         flightLandingCallbackSerial = u.flightLandingCallbackSerial;
         movementTerrainFlags=u.groundTerrainFlags;
-        movementRefused = !u.type->canFly && u.bodyBlockStreak >= 2;
+        movementRefused = !u.type->canFly && (u.bodyBlockStreak >= 2 || u.legionStill);
         const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
             u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1);
         const auto maximum=u.baseSpeed*multiplier;
