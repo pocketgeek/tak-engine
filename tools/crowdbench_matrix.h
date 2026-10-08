@@ -240,15 +240,13 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
             (unsigned long long)d.preparationNanoseconds,(unsigned long long)d.executionNanoseconds,d.scratchBytes,
             (unsigned long long)d.bodySnapshotRebuilds,d.bodySnapshotBytes,d.gradePlaneBytes);
     } else std::printf("\"path_profiling\":false,\"search_scratch_bytes\":null,");
+    // Every LegionNavigator::Stats counter, run totals, as legion_<name>
+    // (forEachStat's names, so a counter added to Stats is exported here
+    // without a second list to keep in step).
     if constexpr(requires {world.legionStats();}) {
-        const auto l=world.legionStats();
-        metric("legion_plane_builds",l.planeBuilds);metric("legion_field_work",l.fieldWork);
-        metric("legion_fields_built",l.fieldsBuilt);metric("legion_field_evictions",l.fieldEvictions);
-        metric("legion_groups",l.groups);metric("legion_registrations",l.registrations);
-        metric("legion_holds",l.holds);metric("legion_slides",l.slides);metric("legion_arrivals",l.arrivals);
-        metric("legion_contact_arrivals",l.contactArrivals);metric("legion_trapped",l.trapped);
-        metric("legion_escapes",l.escapes);metric("legion_bytes",l.bytes);
-        metric("legion_pass_scans",l.passScans);metric("legion_pass_scans_skipped",l.passScansSkipped);
+        tak::sim::LegionNavigator::forEachStat(world.legionStats(),[&](const char* name,uint64_t value) {
+            metric(("legion_"+std::string(name)).c_str(),value);
+        });
     }
 }
 // MV-06's route-follower split needs the member's committed detour, which no
