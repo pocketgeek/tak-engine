@@ -418,34 +418,60 @@ In the user's replay `legion-r9.takrep`, 16 and later 51 flyers in an Alt+1
 formation flew at about 4 px/tick against the ground's 0.6. They got up to
 5,500 px ahead, landed at the goal, and waited there for up to 2,000 ticks.
 
-`World::planLegionFlightStations` (Legion only) gives a station to each
-flyer in a `squad < 0` formation that has ground members. The flyer's head
-order must be a plain move, fight-move or patrol leg with no target or job.
-- The stations lie on a square spiral, `16 * foot + 16` px apart, over the
-  ground members' integer centroid, and are numbered in unit order.
-- **While the ground is under way:** some busy ground member's last order
-  lies within 96 px of the flyer's own destination, or both are patrolling.
-  The move UI offsets a flyer's point by up to 60 px per axis from the shared
-  ground point. The flyer then steers to its station and does not complete
-  its leg.
-- **When the ground has arrived:** a flyer whose destination is within the
-  formation radius (`max(256, 32 * sqrt(area))` px) of the centroid settles
-  at its station, and its order completes there.
-- **Speed:** `tickFlightBody` lowers the flyer's maximum to the slowest ground
-  member's speed within 64 px of the station. The cap rises linearly to the
-  flyer's own speed at 256 px, so a flyer that is far behind can catch up.
-  Otherwise the retail flight motion is unchanged.
-- **Determinism:** stations are rebuilt every tick from hashed state with
-  integer arithmetic. They are not persistent, so they are not hashed.
+`World::planLegionFlightStations` (Legion only) runs every tick. It covers a
+flyer in a `squad < 0` formation that has ground members still under way,
+when the flyer's head order is a plain move, fight-move or patrol leg with
+no target or job. The ground counts as "the same command" when one of these
+holds:
+- some busy ground member's last order lies within 96 px of the flyer's own
+  destination (the move UI offsets a flyer's point by up to 60 px per axis
+  from the shared ground point);
+- both the flyer and the ground are patrolling.
 
-Flyers ordered on their own, or to a different destination, fly as before.
-Test: `legion_world_test mixedformation` uses 20 ground bodies and 8 flyers
-at 4 px/tick. Under move, fight-move and patrol, the flyers' largest
-distance from the ground centroid drops from 1,999/1,963/2,885 px to
-148 px. The flyers finish 3 to 65 ticks after the ground instead of about
-1,100 ticks before it, and settle 91 px from the centroid. In
-`legion-r9.takrep`, flyers that had been 5,500 px ahead now keep a median
-of 68 to 144 px from the ground's centroid while it moves.
+- **Station.** Each flyer has a station on a square spiral, `16 * foot + 16`
+  px apart, over the ground members' integer centroid. Stations are numbered
+  in unit order.
+- **Flight (formation-air2).** The flyer does not steer at the station
+  itself. A point destination puts retail's flight model in its arrival
+  regime. There the navigator keeps its old heading inside 16 px, and the
+  body creeps after a target that moves a fraction of a pixel a tick. In
+  `legion-r9.takrep` the formation's bats held one heading for a whole leg
+  at about 0.45 px/tick and looked parked. Instead, the flyer steers at a
+  point 160 px ahead of its station along the ground's direction of travel:
+  the sum of the busy members' unit vectors toward their current legs. It
+  therefore cruises facing its way and turns and banks with the formation.
+  Its script animation is untouched; the Zhon bat's `FlightControl`, for
+  example, flaps regardless of speed.
+- **Speed.** `tickFlightBody` caps the flyer's maximum at the busy ground
+  members' mean speed:
+  - rising linearly to the flyer's own speed when it is 192 px behind its
+    station;
+  - falling to zero when it is 128 px ahead;
+  - at the flyer's own speed when it is more than 192 px from its station,
+    so a joining or left-behind flyer can catch up.
+
+  While travelling, the leg never completes.
+- **Arrival (formation-air2).** Once the ground's centroid is within the
+  formation radius (`max(256, 32 * sqrt(area))` px) of the flyer's
+  destination, the flyer flies its own order, as in retail. The pace cap
+  stays until it is within 160 px of its point. It arrives, completes the
+  order and lands through the retail landing search and the Legion overlap
+  refusal. The first version held flyers over the centroid until every
+  ground member had finished, so they hovered while stragglers arrived.
+- **Determinism.** Everything is derived each tick from hashed state with
+  integer arithmetic. Nothing persists, so nothing new is hashed.
+
+Flyers ordered on their own, or to another destination, fly as before. Test:
+`legion_world_test mixedformation` uses 20 ground bodies and 8 flyers at
+4 px/tick, with a wall the ground detours around. Under move, fight-move and
+patrol it checks:
+- distance to the ground centroid stays at most 320 px;
+- flyers keep the ground's pace in every 30-tick window (0.97 to 0.99 of
+  the centroid's distance);
+- flyers face the way they move (1-2% of moving ticks off by more than
+  30 degrees, against 56-66% before formation-air2);
+- no hover longer than the 18-tick arrival brake (before: up to 654 ticks);
+- the landing descent starts in the tick the order ends.
 
 **Boats and hovercraft** are mobility classes like any other. The plane is
 built from `World::mobilePlacement`'s own predicate with the type's limits:

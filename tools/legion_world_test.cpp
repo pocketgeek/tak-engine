@@ -1572,15 +1572,22 @@ void squadformation() {
 
 // A formation (Alt+1) of 20 ground bodies and 8 flyers given one order.
 // Measures how far the flyers stray from the ground members' centroid while
-// the ground is under way, and where they end up.
-struct MixedRun {int groundDone=-1,flyersDone=-1;float maxAway=0,meanAway=0,endAway=0;uint64_t hash=0;int landedAhead=0;};
+// the ground is under way, whether they fly like flyers on the way (keep up
+// with the ground in 30-tick windows, face the way they move) and whether
+// they land as soon as their order is done (no hovering).
+struct MixedRun {int groundDone=-1,flyersDone=-1;float maxAway=0,meanAway=0,endAway=0;uint64_t hash=0;int landedAhead=0;
+    int windows=0,stalls=0,moving=0,misaligned=0,maxHover=0,maxLandDelay=0,landed=0;double flown=0,marched=0;};
 MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
-    Fixture f(260,100,serial);f.publish();
+    Fixture f(260,100,serial);
+    // A wall across the straight line: the ground detours through the gap
+    // at its south end, so the formation turns twice on the way.
+    f.rect(110,8,4,72);f.publish();
     if(!legion)f.world.setPathfindingMode(PathfindingMode::Retail);
     const auto type=mover(2);
     UnitType flyer{};flyer.id=flyer.name="legion-flyer";
     flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
     flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);flyer.turnRate=1200;flyer.cruiseAlt=80;flyer.buildTime=1;
+    flyer.vtolStandby=true;   // defaultmissiontype=VTOL_standby: an idle flyer lands
     std::vector<int> ground,flyers,all;
     for(int i=0;i<20;++i)ground.push_back(f.spawn(type,14+(i%5)*3,40+(i/5)*4));
     for(int i=0;i<8;++i)flyers.push_back(f.spawn(flyer,16+(i%4)*4,58+(i/4)*4));
@@ -1606,6 +1613,8 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
                 offset?pz+std::clamp(u.z.toFloat()-sz,-60.f,60.f):pz);
     }
     MixedRun r;Motion motion;double sum=0;int samples=0;
+    std::map<int,std::pair<float,float>> windowStart;float windowCx=0,windowCz=0;
+    std::map<int,int> hover,idleAt,hoverRun;
     const int ticks=kind==tak::net::Cmd::Patrol?3000:6000;
     auto centroid=[&](float& cx,float& cz) {
         double sx=0,sz=0;for(int id:ground){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
@@ -1619,6 +1628,47 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
         for(int id:flyers)flyersBusy|=!f.world.unit(id)->orders.empty();
         if(!groundBusy&&r.groundDone<0)r.groundDone=t;
         if(!flyersBusy&&r.flyersDone<0)r.flyersDone=t;
+        if(t%30==0) {
+            // Keeping up: over each 30-tick window in which the ground's
+            // centroid moved at least 9 px, a travelling flyer covers at least
+            // 40% of that distance.
+            float cx,cz;centroid(cx,cz);
+            const float marched=std::hypot(cx-windowCx,cz-windowCz);
+            for(int id:flyers) {
+                const auto& u=*f.world.unit(id);
+                const auto it=windowStart.find(id);
+                // (Its own final approach, inside 300 px of its point, is retail's.)
+                const bool travelling=!u.orders.empty()&&std::hypot(u.x.toFloat()-u.orders.back().x.toFloat(),
+                    u.z.toFloat()-u.orders.back().z.toFloat())>300.f;
+                if(t>=300&&groundBusy&&it!=windowStart.end()&&travelling&&marched>=9.f) {
+                    const float flown=std::hypot(u.x.toFloat()-it->second.first,u.z.toFloat()-it->second.second);
+                    ++r.windows;r.stalls+=flown<0.4f*marched;r.flown+=flown;r.marched+=marched;
+                }
+                windowStart[id]={u.x.toFloat(),u.z.toFloat()};
+            }
+            windowCx=cx;windowCz=cz;
+        }
+        for(int id:flyers) {
+            const auto& u=*f.world.unit(id);
+            // Flying like a flyer: while it moves on an order it faces the
+            // way it moves (within 30 degrees).
+            if(!u.orders.empty()&&u.flightGroundMode==2&&u.speed>Fixed::fromFloat(0.3f)) {
+                ++r.moving;
+                const uint16_t way=uint16_t(retailDirection(Fixed::raw(u.flightVelocity.x),Fixed::raw(u.flightVelocity.z)).v);
+                const int off=int16_t(uint16_t(way-uint16_t(u.heading.v)));
+                r.misaligned+=std::abs(off)>0x1555;
+            }
+            // Hovering: airborne, all but still, and not descending.
+            const bool still=u.flightGroundMode==2&&u.speed<Fixed::fromFloat(0.25f)&&!u.landing&&t>=60;
+            hoverRun[id]=still?hoverRun[id]+1:0;
+            r.maxHover=std::max(r.maxHover,hoverRun[id]);
+            // Landing: from the tick its orders end to the start of its descent.
+            if(u.orders.empty()&&u.flightGroundMode==2&&!idleAt.count(id))idleAt[id]=t;
+            if(!u.orders.empty())idleAt.erase(id);
+            if(const auto it=idleAt.find(id);it!=idleAt.end()&&(u.landing||u.flightGroundMode==1)&&it->second>=0) {
+                r.maxLandDelay=std::max(r.maxLandDelay,t-it->second);it->second=-1;
+            }
+        }
         if(groundBusy&&t>=150) {
             float cx,cz;centroid(cx,cz);
             for(int id:flyers) {
@@ -1640,10 +1690,14 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
     }
     float cx,cz;centroid(cx,cz);
     for(int id:flyers)r.endAway=std::max(r.endAway,std::hypot(f.world.unit(id)->x.toFloat()-cx,f.world.unit(id)->z.toFloat()-cz));
+    for(int id:flyers)r.landed+=f.world.unit(id)->flightGroundMode==1;
+    for(const auto& [id,at]:idleAt)if(at>=0)r.maxLandDelay=std::max(r.maxLandDelay,9999);
     r.meanAway=samples?float(sum/samples):0;r.hash=f.world.stateHash();
     const char* name=kind==tak::net::Cmd::Move?"move":kind==tak::net::Cmd::AttackMove?"fight":"patrol";
-    std::printf("mixedformation %s %s ground_done=%d flyers_done=%d away_max=%.0f away_mean=%.0f end_away=%.0f landed_ahead=%d spins=%llu hash=%016llx\n",
+    std::printf("mixedformation %s %s ground_done=%d flyers_done=%d away_max=%.0f away_mean=%.0f end_away=%.0f landed_ahead=%d "
+        "pace=%.2f stalls=%d/%d misaligned=%d/%d max_hover=%d land_delay=%d landed=%d spins=%llu hash=%016llx\n",
         legion?"legion":"retail",name,r.groundDone,r.flyersDone,r.maxAway,r.meanAway,r.endAway,r.landedAhead,
+        r.marched>0?r.flown/r.marched:0.0,r.stalls,r.windows,r.misaligned,r.moving,r.maxHover,r.maxLandDelay,r.landed,
         (unsigned long long)motion.spins,(unsigned long long)r.hash);
     return r;
 }
@@ -1656,10 +1710,19 @@ void mixedformation() {
         // plus the lag of a 4 px/tick flyer behind its moving station).
         check(r.maxAway<=320.f,"a formation flyer strayed from the ground");
         check(r.landedAhead==0,"a formation flyer landed ahead of the ground");
+        // Flying with the formation, not parked over it: they keep the
+        // ground's pace in every window and face the way they move.
+        check(r.windows>0&&r.stalls==0,"a formation flyer stalled behind the ground");
+        check(r.flown>=0.8*r.marched&&r.flown<=1.5*r.marched,"formation flyers did not keep the ground's pace");
+        check(r.moving>0&&r.misaligned*20<=r.moving,"formation flyers did not face the way they flew");
+        // Never hovering in place: at most the arrival's own brake.
+        check(r.maxHover<=60,"a formation flyer hovered");
         if(kind!=tak::net::Cmd::Patrol) {
             check(r.groundDone>=0&&r.flyersDone>=0,"the mixed formation never finished");
-            check(r.flyersDone>=r.groundDone,"formation flyers finished before the ground");
-            check(r.endAway<=200.f,"formation flyers settled away from the ground");
+            check(r.endAway<=300.f,"formation flyers settled away from the ground");
+            // Landing as soon as the order is done (retail's standby takes 3 ticks).
+            check(r.landed==8,"formation flyers did not land");
+            check(r.maxLandDelay<=10,"a formation flyer waited before landing");
         }
     }
     const auto a=mixedformationRun(true,tak::net::Cmd::Move,true),b=mixedformationRun(true,tak::net::Cmd::Move,false);
