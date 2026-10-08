@@ -80,6 +80,9 @@ struct RetailReplayProbe {
     static void telemetry(World& world,NavigationTelemetry* observer) {
         world.paths_.setTelemetry(observer);
     }
+    // churn: remove the scenario's structure at once (no corpse, no death
+    // animation), through the same path a CRT defeat uses.
+    static void removeUnits(World& world,int player) {world.removeScenarioUnits(player);}
 };
 }
 namespace crowdbench_matrix {
@@ -89,6 +92,9 @@ constexpr int restTicks=30;
 struct Options {
     std::string mode="retail",scenario="open",trace;
     int units=200,players=1,movingPercent=100,ticks=3600;
+    // --turn-rate: the movers' turnRate and turnInPlaceRate (BAM/tick).
+    // -1 keeps each type's built-in rate (2500, see mover()).
+    int turnRate=-1;
     uint32_t seed=0;
     bool workers=false,allocations=false,profile=false,latency=false;
 };
@@ -114,6 +120,10 @@ inline Options parse(int argc,char** argv) {
         else if(key=="--moving-percent")o.movingPercent=integer(value);
         else if(key=="--ticks")o.ticks=integer(value);
         else if(key=="--trace")o.trace=value;
+        else if(key=="--turn-rate") {
+            o.turnRate=integer(value);
+            if(o.turnRate<1||o.turnRate>32768)throw std::runtime_error("turn-rate must be 1..32768 BAM/tick");
+        }
         else if(key=="--seed") {
             size_t count=0;const std::string seed=value;
             const auto parsed=std::stoull(seed,&count);
@@ -127,22 +137,29 @@ inline Options parse(int argc,char** argv) {
         throw std::runtime_error("mode must be retail or legion");
     constexpr std::array names{"open","doors","bridges","maze","opposingcolumns","sharedgoal",
         "mixedfootprints","exploration","dynamicobstacle","rapidreplacement","unreachable","recovery","recovery-passive",
-        "jagged","trapped","crowdtrap","singleunit","groupdetour"};
+        "jagged","trapped","crowdtrap","singleunit","groupdetour","churn"};
     if(std::find(names.begin(),names.end(),o.scenario)==names.end())throw std::runtime_error("unknown scenario");
     if(o.units<1||o.units>2000||o.players<1||o.players>8||o.movingPercent<0||o.movingPercent>100||o.ticks<1)
         throw std::runtime_error("units: 1..2000 per player; players: 1..8; moving-percent: 0..100; ticks: positive");
     return o;
 }
-inline UnitType mover(int footprint,bool exploring) {
+inline UnitType mover(int footprint,bool exploring,int turnRate=-1) {
     UnitType type{};type.id=type.name="benchmark-foot-"+std::to_string(footprint);
     type.canMove=true;type.maxHp=100;type.footX=type.footZ=footprint;
     type.sight=exploring?192:4096;type.maxVel=Fixed::raw(117964);
-    type.accel=type.brake=Fixed::fromInt(10);type.turnRate=type.turnInPlaceRate=2500;
+    type.accel=type.brake=Fixed::fromInt(10);type.turnRate=type.turnInPlaceRate=turnRate>0?turnRate:2500;
     type.halfCellTicks=3;type.buildTime=1;return type;
+}
+// churn's structure: a 4x4 building (maxVel 0, so isStructure()) that the
+// scenario places and removes, as AI construction and losses do.
+inline UnitType churnStructure() {
+    UnitType type{};type.id=type.name="benchmark-structure";
+    type.canMove=false;type.maxHp=100;type.footX=type.footZ=4;type.sight=64;type.buildTime=1;return type;
 }
 struct Member {
     int id=0,player=0,epoch=0,commandTick=0,firstMove=-1,firstAdmission=-1,firstRoute=-1,firstPendingClear=-1;
     int rest=0,arrivedTick=-1,retiredTick=-1,crossedTick=-1,stamp=-1;
+    int stillSince=0;      // last tick this member moved or had no orders (age classes)
     int initialX=0,initialZ=0,previousX=0,previousZ=0;
     float gx=0,gz=0,alternateX=0,alternateZ=0,radius=32;
     double path=0,straight=0;uint64_t stalled=0;
@@ -234,6 +251,14 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
         metric("legion_pass_scans",l.passScans);metric("legion_pass_scans_skipped",l.passScansSkipped);
     }
 }
+// MV-06's route-follower split needs the member's committed detour, which no
+// public LegionNavigator hook exposes yet. When a hook `int routeLength(int id)
+// const` exists the key is filled; until then route_crawl_samples prints null.
+template<class N> constexpr bool hasRouteHook() {return requires(const N& n) {n.routeLength(0);};}
+template<class N> int routeLengthOf(const N* nav,int id) {
+    if constexpr(hasRouteHook<N>()) {return nav?nav->routeLength(id):0;}
+    else {(void)nav;(void)id;return 0;}
+}
 inline void barriers(World& world,int width,int height,const std::vector<Rect>& previous,
                      const std::vector<Rect>& next) {
     for(const auto& r:previous)world.blockCells(r.x,r.z,r.w,r.h,false);
@@ -262,8 +287,18 @@ inline Layout acceptanceLayout(const Options& o) {
     if(o.scenario=="singleunit") {
         // Every unit alone in its own walled tile with a concave cup facing it:
         // even tiles start in front of the cup, odd tiles start inside it.
-        constexpr int TW=56,TH=40;const int total=o.units*o.players;
-        const int perRow=int(std::ceil(std::sqrt(double(total)))),tileRows=(total+perRow-1)/perRow;
+        //
+        // World coordinates are 16.16 Fixed, so every position must stay
+        // below 32768 px (2048 cells). The square 56x40 tiling does up to
+        // 1296 units (36 per row); beyond that its far tiles overflowed (a
+        // spawn there failed "invalid initial footprint", a goal there
+        // wrapped). Larger populations use a compact 50x36 tile with the same
+        // cup, packed 40 per row: 2000 units fit in 2000x1800 cells.
+        constexpr int kMaxCells=2048;const int total=o.units*o.players;
+        int TW=56,TH=40,perRow=int(std::ceil(std::sqrt(double(total))));
+        if(perRow*TW>kMaxCells) {TW=50;TH=36;perRow=(kMaxCells-1)/TW;}
+        const int tileRows=(total+perRow-1)/perRow;
+        if(tileRows*TH>=kMaxCells)throw std::runtime_error("singleunit: population does not fit the 2048-cell map limit");
         l.width=round64(perRow*TW);l.height=round64(tileRows*TH);
         for(int i=0;i<total;++i) {
             const int tx=i%perRow*TW,tz=i/perRow*TH,zc=tz+TH/2;
@@ -359,6 +394,7 @@ inline int run(const Options& o) {
     const auto setupStart=Clock::now();
     const bool mixed=o.scenario=="mixedfootprints",shared=mixed||o.scenario=="sharedgoal";
     const bool opposing=o.scenario=="opposingcolumns",exploring=o.scenario=="exploration";
+    const bool churn=o.scenario=="churn";
     const int stride=mixed?5:3,rows=int(std::ceil(std::sqrt(double(o.units))));
     const int columns=(o.units+rows-1)/rows,laneHeight=rows*stride+16;
     const bool accept=acceptanceScenario(o.scenario);const Layout acc=accept?acceptanceLayout(o):Layout{};
@@ -370,7 +406,10 @@ inline int run(const Options& o) {
     // Numeric identities (Retail 0, Legion 4) so the frozen baseline, which
     // predates the Legion enumerator, builds this harness unchanged.
     world.setPathfindingMode(PathfindingMode(o.mode=="legion"?4:0));
-    world.setPlayerCount(o.players);for(int p=0;p<o.players;++p)world.setTeam(p,0);
+    // churn's structures belong to one extra allied player, so removing that
+    // player's units removes exactly the standing structure.
+    const int structurePlayer=o.players;
+    world.setPlayerCount(o.players+(churn?1:0));for(int p=0;p<o.players+(churn?1:0);++p)world.setTeam(p,0);
     world.setTerrain(std::vector<uint8_t>(size_t(width)*height,100),width,height,64);
     std::vector<Rect> walls;if(accept)walls=acc.walls;
     const bool lanes=!accept&&(o.scenario=="doors"||o.scenario=="bridges"||o.scenario=="maze"||exploring);
@@ -389,9 +428,9 @@ inline int run(const Options& o) {
     }
     if(o.scenario=="unreachable"||o.scenario=="recovery"||o.scenario=="recovery-passive")walls.push_back({middle-2,0,4,height});
     barriers(world,width,height,{},walls);
-    std::array<UnitType,3> types{mover(2,exploring),mover(3,exploring),mover(4,exploring)};
+    std::array<UnitType,3> types{mover(2,exploring,o.turnRate),mover(3,exploring,o.turnRate),mover(4,exploring,o.turnRate)};
     std::vector<Member> members;members.reserve(size_t(o.units)*o.players);
-    std::array<UnitType,4> footTypes{mover(1,false),mover(2,false),mover(3,false),mover(4,false)};
+    std::array<UnitType,4> footTypes{mover(1,false,o.turnRate),mover(2,false,o.turnRate),mover(3,false,o.turnRate),mover(4,false,o.turnRate)};
     if(accept)for(const auto& s:acc.spawns) {
         Member member;member.player=s.player;member.moving=s.moving;member.gx=s.gx;member.gz=s.gz;
         member.alternateX=s.x;member.alternateZ=s.z;member.radius=s.radius;
@@ -432,15 +471,18 @@ inline int run(const Options& o) {
         if(!world.mobilePlacement(u,footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),false))
             throw std::runtime_error("invalid initial footprint for unit "+std::to_string(m.id));
     }
+    auto issue=[&](Member& m,int tick) {
+        world.order(m.id,m.gx,m.gz,false);const auto& u=*world.unit(m.id);
+        m.commandTick=tick;++m.epoch;m.firstMove=m.firstAdmission=m.firstRoute=-1;
+        m.firstPendingClear=-1;m.pending=RetailReplayProbe::pending(world,m.id);
+        m.rest=0;m.arrivedTick=m.retiredTick=-1;m.stamp=u.routeStamp;
+        m.initialX=u.x.v;m.initialZ=u.z.v;
+        if(m.epoch==1)m.straight=std::hypot(double(u.x.toFloat()-m.gx),double(u.z.toFloat()-m.gz));
+    };
     auto command=[&](int tick,bool alternate) {
         for(auto& m:members)if(m.moving) {
             if(alternate) {std::swap(m.gx,m.alternateX);std::swap(m.gz,m.alternateZ);}
-            world.order(m.id,m.gx,m.gz,false);const auto& u=*world.unit(m.id);
-            m.commandTick=tick;++m.epoch;m.firstMove=m.firstAdmission=m.firstRoute=-1;
-            m.firstPendingClear=-1;m.pending=RetailReplayProbe::pending(world,m.id);
-            m.rest=0;m.arrivedTick=m.retiredTick=-1;m.stamp=u.routeStamp;
-            m.initialX=u.x.v;m.initialZ=u.z.v;
-            if(m.epoch==1)m.straight=std::hypot(double(u.x.toFloat()-m.gx),double(u.z.toFloat()-m.gz));
+            issue(m,tick);
         }
     };
     if(o.latency)RetailReplayProbe::telemetry(world,&latency);
@@ -567,7 +609,11 @@ inline int run(const Options& o) {
                 }
                 bool terrain=false;
                 for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)terrain|=!observer.legalAt(p,ox+dx,oz+dz);
-                if(!crowd&&terrain&&queuedBehindMover(i,u,ox,oz,tx,tz))crowd=true;
+                // IN-12: the raw terrain-contact signal before the narrowing
+                // below, kept beside class_terrain_stuck (observation only).
+                if(terrain) {++totals.rawTerrainTicks;t.everRawTerrain=true;}
+                if(terrain&&crowd)++totals.crowdAndTerrainTicks;
+                if(!crowd&&terrain&&queuedBehindMover(i,u,ox,oz,tx,tz)) {crowd=true;++totals.narrowedTicks;t.everNarrowed=true;}
                 cls=crowd?ca::CrowdHeld:terrain?ca::TerrainStuck:ca::OpenIdle;
             }
             ++totals.classTicks[cls];t.finalClass=cls;
@@ -646,10 +692,67 @@ inline int run(const Options& o) {
         }
     };
     observeTrace(0);
+    // churn (T7 I3): staggered re-orders keep hundreds of Legion groups live,
+    // and a structure is placed or removed every kChurnStructureEvery ticks.
+    // Every choice is a pure function of the seed, the member index, its order
+    // count and the deterministic unit positions, so the run is reproducible.
+    constexpr int kChurnEvery=4,kChurnSlices=30,kChurnStructureEvery=20;
+    const UnitType structureType=churnStructure();
+    int structureId=0;uint64_t churnReorders=0,churnPlaced=0,churnRemoved=0,churnSkipped=0;
+    auto churnGoal=[&](size_t index,Member& m) {
+        uint64_t h=mix(mix(mix(1469598103934665603ull,o.seed),index),uint64_t(m.epoch));
+        h^=h>>29;h*=0xbf58476d1ce4e5b9ull;h^=h>>32;
+        // Goals sit within 3 cells of anchors 32 cells apart: Legion groups
+        // one tick's orders whose goals lie within 16 cells of each other,
+        // so every anchor picked in a burst is a group of its own.
+        const int spanX=right+columns*stride-left,spanZ=rows*stride,baseZ=36+m.player*laneHeight;
+        const int nx=std::max(1,spanX/32),nz=std::max(1,spanZ/32),a=int(h%uint64_t(nx*nz));
+        const int ax=left+(a%nx)*32+std::min(16,spanX/2),az=baseZ+(a/nx)*32+std::min(16,spanZ/2);
+        const int x=std::clamp(ax+int((h>>32)%7)-3,left,left+spanX-1),z=std::clamp(az+int((h>>40)%7)-3,baseZ,baseZ+spanZ-1);
+        m.gx=float(x*16);m.gz=float(z*16);
+    };
+    auto churnStructure=[&](int tick) {
+        if(structureId) {RetailReplayProbe::removeUnits(world,structurePlayer);structureId=0;++churnRemoved;return;}
+        // The first candidate site whose 4x4 footprint plus a one-cell margin
+        // touches no body; candidates rotate through every player's lane.
+        const int f=structureType.footX;
+        for(int attempt=0;attempt<25;++attempt) {
+            const int k=int(churnPlaced+churnSkipped)+attempt,p=k%o.players;
+            const int cx=middle-f/2+((k*7)%5-2)*8,cz=36+p*laneHeight+rows*stride/2-f/2+((k*3)%5-2)*std::max(1,rows*stride/6);
+            bool clear=cx>0&&cz>26+p*laneHeight&&cx+f<width&&cz+f<24+(p+1)*laneHeight;
+            for(size_t i=0;clear&&i<members.size();++i) {
+                const auto& u=*world.unit(members[i].id);if(!u.alive())continue;
+                const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+                clear=ox+u.type->footX<cx-1||ox>cx+f||oz+u.type->footZ<cz-1||oz>cz+f;
+            }
+            if(!clear)continue;
+            structureId=world.spawn(&structureType,float(cx*16+f*8),float(cz*16+f*8),std::nullopt,structurePlayer);
+            world.blockFoot(structureType,float(cx*16+f*8),float(cz*16+f*8),true);
+            ++churnPlaced;return;
+        }
+        ++churnSkipped;(void)tick;
+    };
+    // Observation-only per-run counters for the keys added 2026-10-08
+    // (Retail age classes, MV-06 crawl samples, live Legion groups).
+    // Fetched after every tick: the World creates its navigator lazily.
+    const bool legionMode=o.mode=="legion";LegionNavigator* legionNav=nullptr;
+    auto legionState=[&](int id) {return legionNav?legionNav->unitState(id):0;};
+    uint64_t ageTicks[4]{};   // waiting held/no-progress, parked held/no-progress
+    uint64_t movingSamples=0,cap8Samples=0,routeCrawlSamples=0;
+    constexpr bool routeHook=hasRouteHook<LegionNavigator>();
+    uint64_t liveGroupSamples=0,liveGroupSum=0,liveGroupPeak=0,liveGroupMin=~0ull;
+    constexpr int kLiveWarmup=300;
     for(int tick=1;tick<=o.ticks;++tick) {
         latency.tick=uint64_t(tick);
         const auto eventStart=Clock::now();
         if(o.scenario=="rapidreplacement"&&tick%120==0&&tick<=o.ticks/2)command(tick,true);
+        if(churn&&tick%kChurnEvery==0) {
+            const size_t slice=size_t(tick/kChurnEvery%kChurnSlices);
+            for(size_t i=slice;i<members.size();i+=kChurnSlices)if(members[i].moving) {
+                churnGoal(i,members[i]);issue(members[i],tick);++churnReorders;
+            }
+        }
+        if(churn&&tick%kChurnStructureEvery==0)churnStructure(tick);
         if((o.scenario=="recovery"||o.scenario=="recovery-passive")&&tick==std::max(1,o.ticks/3)) {
             barriers(world,width,height,walls,{});walls.clear();traceWalls(tick);
             if(o.scenario=="recovery")command(tick,false);
@@ -674,6 +777,7 @@ inline int run(const Options& o) {
             [](const Rect& a,const Rect& b){return a.x==b.x&&a.z==b.z&&a.w==b.w&&a.h==b.h;}))rebuildObserver();
         crowdbench_allocation::enabled.store(o.allocations,std::memory_order_relaxed);
         const auto begin=Clock::now();world.tick(1.f/30);const auto end=Clock::now();
+        legionNav=legionMode?world.legionNavigator():nullptr;
         crowdbench_allocation::enabled.store(false,std::memory_order_relaxed);
         times.push_back(millis(begin,end));
         peakPending=std::max(peakPending,uint64_t(world.pathStats().pendingCount()));
@@ -705,12 +809,41 @@ inline int run(const Options& o) {
                 if(m.crossedTick<0&&(m.reverse?u.x.toFloat()<middle*16-32:u.x.toFloat()>middle*16+32)) {
                     m.crossedTick=tick;if(firstCross<0)firstCross=tick;lastCross=tick;
                 }
+                // Retail age classes (retailgrade.h: a body unmoved for 10
+                // ticks is "recent", for 150 "stale"): still with orders for
+                // 10..150 ticks = waiting, longer = parked. Split by whether
+                // Legion holds the member on purpose (Holding, Waiting for its
+                // field, Arrived, Trapped) or it simply makes no progress.
+                // Retail has no such state: all of it is no_progress.
+                if(moved||u.orders.empty())m.stillSince=tick;
+                else if(const int still=tick-m.stillSince;still>=10) {
+                    const int state=legionState(m.id);
+                    ageTicks[(still>150?2:0)+(state>=2&&state<=5?0:1)]++;
+                }
+                // MV-06, sampled every 10 ticks like the audit's dump: a
+                // moving member (Legion state Moving; Retail: orders and
+                // speed) crawling at no more than cap/8 (+1/64 px).
+                if(tick%10==0&&!u.orders.empty()) {
+                    const bool movingState=legionNav?legionState(m.id)==1:u.speed.v>0;
+                    if(movingState) {
+                        ++movingSamples;
+                        if(u.speed.v>0&&u.speed.v<=u.type->maxVel.v/8+1024) {
+                            ++cap8Samples;
+                            routeCrawlSamples+=routeLengthOf(legionNav,m.id)>0;
+                        }
+                    }
+                }
             }
             if(!checkedPlacement&&(tick%60==0||tick==o.ticks)) {
                 m.legal=u.alive()&&world.mobilePlacement(u,footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),false);
                 illegalSamples+=!m.legal;
             }
             m.previousX=u.x.v;m.previousZ=u.z.v;
+        }
+        if(legionNav&&tick%10==0) {
+            const uint64_t live=world.legionStats().liveGroups;
+            liveGroupPeak=std::max(liveGroupPeak,live);
+            if(tick>kLiveWarmup) {++liveGroupSamples;liveGroupSum+=live;liveGroupMin=std::min(liveGroupMin,live);}
         }
         if(arrived==totalMoving&&allAt<0)allAt=tick;
         if(arrived!=totalMoving)allAt=-1;
@@ -777,13 +910,14 @@ inline int run(const Options& o) {
         (unsigned long long)retail.workSpent(),(unsigned long long)retail.requests(),(unsigned long long)retail.completions(),(unsigned long long)retail.failures(),
         peakRss);
     {
-        uint64_t spinning=0,everTerrain=0,everCrowd=0,everTrapped=0,trappedMovers=0,reachableMovers=0,optimalUnits=0;
+        uint64_t spinning=0,everTerrain=0,everCrowd=0,everTrapped=0,trappedMovers=0,reachableMovers=0,optimalUnits=0,everRaw=0,everNarrowed=0;
         int settleMax=-1;uint64_t finals[ca::ClassCount]{};double ratioSum=0,ratioMax=0;
         int sides=0,minority=0,sided=0;
         for(size_t i=0;i<members.size();++i) {
             const auto& t=tracks[i];spinning+=t.spinTicks>0;
             if(!members[i].moving)continue;
             everTerrain+=t.everTerrainStuck;everCrowd+=t.everCrowdHeld;everTrapped+=t.everTrapped;
+            everRaw+=t.everRawTerrain;everNarrowed+=t.everNarrowed;
             trappedMovers+=t.movingAfterGrace;if(t.everTrapped)settleMax=std::max(settleMax,t.settleMax);
             if(t.finalClass>=0)++finals[t.finalClass];
             reachableMovers+=reachable(members[i],*world.unit(members[i].id));
@@ -801,12 +935,58 @@ inline int run(const Options& o) {
         for(int c=0;c<ca::ClassCount;++c)std::printf("\"class_%s_unit_ticks\":%llu,\"final_%s\":%llu,",ca::className(c),(unsigned long long)totals.classTicks[c],ca::className(c),(unsigned long long)finals[c]);
         std::printf("\"units_ever_terrain_stuck\":%llu,\"units_ever_crowd_held\":%llu,\"units_ever_trapped\":%llu,\"static_reachable_movers\":%llu,",
             (unsigned long long)everTerrain,(unsigned long long)everCrowd,(unsigned long long)everTrapped,(unsigned long long)reachableMovers);
+        std::printf("\"raw_terrain_contact_noprogress_unit_ticks\":%llu,\"narrowed_to_crowd_held_unit_ticks\":%llu,\"crowd_and_terrain_unit_ticks\":%llu,\"units_ever_raw_terrain_contact\":%llu,\"units_ever_narrowed\":%llu,",
+            (unsigned long long)totals.rawTerrainTicks,(unsigned long long)totals.narrowedTicks,(unsigned long long)totals.crowdAndTerrainTicks,
+            (unsigned long long)everRaw,(unsigned long long)everNarrowed);
         std::printf("\"trapped_moving_unit_ticks\":%llu,\"trapped_units_moving_after_grace\":%llu,\"trapped_settle_ticks_max\":%d,",
             (unsigned long long)totals.trappedMoving,(unsigned long long)trappedMovers,settleMax);
         std::printf("\"path_optimality_units\":%llu,\"path_optimality_ratio_mean\":%.6f,\"path_optimality_ratio_max\":%.6f,",
             (unsigned long long)optimalUnits,optimalUnits?ratioSum/optimalUnits:-1.0,optimalUnits?ratioMax:-1.0);
         std::printf("\"group_sides_taken\":%d,\"group_minority_side_fraction\":%.6f,\"group_progress_spread_px_mean\":%.3f,\"group_progress_spread_px_max\":%.3f,",
             sides,sided?double(minority)/sided:0.0,totals.spreadSamples?totals.spreadSum/totals.spreadSamples:0.0,totals.spreadMax);
+    }
+    {
+        // Keys added 2026-10-08 (LEGION-PLAN 3.8 housekeeping). All are
+        // deterministic observations; none feeds back into the World.
+        std::printf("\"turn_rate\":%d,",o.turnRate>0?o.turnRate:2500);
+        std::printf("\"age_waiting_held_by_design_unit_ticks\":%llu,\"age_waiting_no_progress_unit_ticks\":%llu,\"age_parked_held_by_design_unit_ticks\":%llu,\"age_parked_no_progress_unit_ticks\":%llu,",
+            (unsigned long long)ageTicks[0],(unsigned long long)ageTicks[1],(unsigned long long)ageTicks[2],(unsigned long long)ageTicks[3]);
+        std::printf("\"moving_state_samples\":%llu,\"cap8_moving_samples\":%llu,",(unsigned long long)movingSamples,(unsigned long long)cap8Samples);
+        if(routeHook&&legionMode)std::printf("\"route_crawl_samples\":%llu,",(unsigned long long)routeCrawlSamples);
+        else std::printf("\"route_crawl_samples\":null,");
+        if(legionMode)std::printf("\"live_groups_peak\":%llu,\"live_groups_mean\":%.3f,\"live_groups_min_after_warmup\":%lld,",
+            (unsigned long long)liveGroupPeak,liveGroupSamples?double(liveGroupSum)/liveGroupSamples:0.0,
+            liveGroupSamples?(long long)liveGroupMin:-1ll);
+        if(shared) {
+            // AR-08: where completed orders ended, in cells from the click.
+            std::vector<double> dist;int outside=0;
+            for(const auto& m:members)if(m.moving) {
+                const auto& u=*world.unit(m.id);if(!u.alive()||!u.orders.empty())continue;
+                const double d=std::hypot(double(u.x.toFloat()-m.gx),double(u.z.toFloat()-m.gz));
+                dist.push_back(d/16);outside+=d>m.radius;
+            }
+            std::sort(dist.begin(),dist.end());
+            std::printf("\"complete_outside_radius\":%d,\"complete_dist_median\":%.3f,\"complete_dist_max\":%.3f,",outside,
+                dist.empty()?-1.0:dist.size()%2?dist[dist.size()/2]:(dist[dist.size()/2-1]+dist[dist.size()/2])/2,
+                dist.empty()?-1.0:dist.back());
+        }
+        if(opposing) {
+            // MV-03: the longest run of ticks without a crossing, from the
+            // first crossing until 95% have crossed (or the run ends). A run
+            // with no crossing at all is one gap of the whole run.
+            std::vector<int> ticks;for(const auto& m:members)if(m.moving&&m.crossedTick>=0)ticks.push_back(m.crossedTick);
+            std::sort(ticks.begin(),ticks.end());
+            const size_t need=size_t(std::ceil(0.95*totalMoving));
+            int gap=o.ticks;
+            if(!ticks.empty()) {
+                gap=0;const size_t last=std::min(ticks.size(),std::max<size_t>(need,1))-1;
+                for(size_t k=1;k<=last;++k)gap=std::max(gap,ticks[k]-ticks[k-1]-1);
+                if(ticks.size()<need)gap=std::max(gap,o.ticks-ticks.back());
+            }
+            std::printf("\"cross_gap_max\":%d,",gap);
+        }
+        if(churn)std::printf("\"churn_reorders\":%llu,\"churn_structures_placed\":%llu,\"churn_structures_removed\":%llu,\"churn_structures_skipped\":%llu,",
+            (unsigned long long)churnReorders,(unsigned long long)churnPlaced,(unsigned long long)churnRemoved,(unsigned long long)churnSkipped);
     }
     printBuild();
     printDiagnostics(world,o.profile);
@@ -816,8 +996,10 @@ inline int run(const Options& o) {
 }
 inline int main(int argc,char** argv) {
     if(argc==2&&std::string_view(argv[1])=="--help") {
-        std::puts("crowdbench [legacy-scenario...]\ncrowdbench --mode retail|legion --units N --players N --moving-percent N --ticks N --scenario NAME [--seed N] [--workers] [--allocations] [--profile] [--latency] [--trace PATH]\n"
-            "Scenarios: open doors bridges maze opposingcolumns sharedgoal mixedfootprints exploration dynamicobstacle rapidreplacement unreachable recovery recovery-passive\n"
+        std::puts("crowdbench [legacy-scenario...]\ncrowdbench --mode retail|legion --units N --players N --moving-percent N --ticks N --scenario NAME [--seed N] [--turn-rate N] [--workers] [--allocations] [--profile] [--latency] [--trace PATH]\n"
+            "Scenarios: open doors bridges maze opposingcolumns sharedgoal mixedfootprints exploration dynamicobstacle rapidreplacement unreachable recovery recovery-passive churn\n"
+            "churn: staggered re-orders (a 1/30 slice of the movers every 4 ticks, to seeded random goals in their lane) and a 4x4 structure placed or removed every 20 ticks.\n"
+            "--turn-rate N sets the movers' turnRate and turnInPlaceRate (BAM/tick; default 2500).\n"
             "Acceptance scenarios: jagged trapped crowdtrap singleunit groupdetour (see tools/crowdbench_acceptance.h for metric definitions)\n"
             "units is per player; movement percentage rounds down per player. Default execution is serial.\n"
             "arrived_settled requires live, empty orders, zero speed, legal footprint, authored goal area and 30 unchanged ticks.\n"
