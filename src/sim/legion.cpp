@@ -236,6 +236,7 @@ struct LegionNavigator::Impl {
         bool liftAllied=true;    // a liftable flyer of an ally of `command` stood soft then
         bool softened=false;   // some step was charged as a soft obstacle
         std::vector<int> seeds;   // the group's seeds when the build started
+        uint64_t seedKey=0;       // seedsKey(seeds): its route-key index entry (see routeIndex)
         uint32_t started=0;       // tick the build started
         bool settled(size_t cell,uint16_t v) const {
             if(done)return v!=kUnreached;
@@ -292,6 +293,7 @@ struct LegionNavigator::Impl {
         // listGroup). Derived, never hashed.
         bool onBuilding=false,onNeedField=false,onStaleDone=false,onByBuilt=false;
         uint32_t byBuiltKey=0;
+        std::array<uint64_t,2> routeKeys{};uint8_t routeCount=0;   // its routeIndex entries
     };
     enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5};
     // ---- mission goals ------------------------------------------------
@@ -438,6 +440,39 @@ struct LegionNavigator::Impl {
     // hashed; a peer replaying the same commands lists the same groups.
     std::set<int> buildingIds,waitedIds,needFieldIds,staleDoneIds;
     std::set<std::pair<uint32_t,int>> byBuilt;
+    // Route-key index for sharedField: (group plane, seedsKey of a field's
+    // seeds) -> ascending ids of the groups whose field or next has those
+    // seeds. Every group sharedField can accept is listed under the key of
+    // the asking group's seeds (a hash collision only adds candidates),
+    // so a walk of that entry in id order finds the same first field as a
+    // walk of every group. Maintained by listGroup; never hashed.
+    std::map<std::pair<int,uint64_t>,std::set<int>> routeIndex;
+    // LPROBE only (never hashed, never read by the sim): the four work
+    // lists' sizes and the live groups, summed over the ticks.
+    uint64_t probeListSum=0,probeGroupSum=0;
+    static uint64_t seedsKey(const std::vector<int>& seeds) {
+        uint64_t h=mix(0x7365656473ull,seeds.size());
+        for(int c:seeds)h=mix(h,uint32_t(c));
+        return h;
+    }
+    void listRoutes(Group& g) {
+        std::array<uint64_t,2> want{};uint8_t n=0;
+        for(const Field* f:{g.field.get(),g.next.get()})
+            if(f&&!(n==1&&want[0]==f->seedKey))want[n++]=f->seedKey;
+        if(n==g.routeCount&&std::is_permutation(want.begin(),want.begin()+n,g.routeKeys.begin()))return;
+        unlistRoutes(g);
+        for(uint8_t i=0;i<n;++i)routeIndex[{g.plane,want[i]}].insert(g.id);
+        g.routeKeys=want;g.routeCount=n;
+    }
+    void unlistRoutes(Group& g) {
+        for(uint8_t i=0;i<g.routeCount;++i) {
+            const auto at=routeIndex.find({g.plane,g.routeKeys[i]});
+            if(at==routeIndex.end())continue;
+            at->second.erase(g.id);
+            if(at->second.empty())routeIndex.erase(at);
+        }
+        g.routeCount=0;
+    }
     static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done)||g.next;}
     static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
     static bool wantsStaleDone(const Group& g) {return g.field&&g.stale&&!g.next;}
@@ -453,8 +488,10 @@ struct LegionNavigator::Impl {
         const bool built=g.field!=nullptr;
         if(g.onByBuilt&&(!built||g.byBuiltKey!=g.built)) {byBuilt.erase({g.byBuiltKey,g.id});g.onByBuilt=false;}
         if(built&&!g.onByBuilt) {byBuilt.insert({g.built,g.id});g.byBuiltKey=g.built;g.onByBuilt=true;}
+        listRoutes(g);
     }
-    void unlistGroup(const Group& g) {
+    void unlistGroup(Group& g) {
+        unlistRoutes(g);
         if(g.onBuilding)buildingIds.erase(g.id);
         if(g.onNeedField)needFieldIds.erase(g.id);
         if(g.onStaleDone)staleDoneIds.erase(g.id);
@@ -1705,22 +1742,37 @@ struct LegionNavigator::Impl {
     // after every static change in a battle: a full quota for seconds.
     // A finished field first, then one in progress, each in group order.
     std::shared_ptr<Field> sharedField(const Group& g,const std::array<int,4>& box,uint64_t command,bool own) const {
-        ++stats.sharedfieldFullScans;
+        std::shared_ptr<Field> hit;
         uint64_t iters=0;
-        struct Flush {uint64_t& to;uint64_t& n;~Flush() {to+=n;}} flush{stats.shareScanIters,iters};
-        for(int pass=0;pass<2;++pass)for(const auto& [id,o]:groups) {
-            ++iters;
-            if(&o==&g||o.plane!=g.plane)continue;
-            for(const auto* d:{&o.field,&o.next}) {
-                const Field* f=d->get();
-                if(!f||f->done!=(pass==0)||f->epoch!=epoch||w.tickCounter_-f->started>kStillScan)continue;
-                if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
-                if((f->command==kNoSoft)!=(command==kNoSoft)||f->ownArrivals!=own||(own&&f->command!=command))continue;
-                if(f->seeds!=g.seeds)continue;
-                return *d;
+        if(const auto found=routeIndex.find({g.plane,seedsKey(g.seeds)});found!=routeIndex.end()) {
+            for(int pass=0;pass<2&&!hit;++pass)for(int id:found->second) {
+                ++iters;
+                if(sharesWith(g,groups.find(id)->second,pass,box,command,own,hit))break;
             }
         }
-        return nullptr;
+        stats.shareScanIters+=iters;
+#ifndef NDEBUG
+        if(gVerify) {
+            std::shared_ptr<Field> scan;
+            for(int pass=0;pass<2&&!scan;++pass)for(const auto& [id,o]:groups)if(sharesWith(g,o,pass,box,command,own,scan))break;
+            if(scan!=hit)verifyFail("route-key index finds another shared field than the full scan");
+        }
+#endif
+        return hit;
+    }
+    // sharedField's test of one group: its field, then its next.
+    bool sharesWith(const Group& g,const Group& o,int pass,const std::array<int,4>& box,uint64_t command,bool own,std::shared_ptr<Field>& hit) const {
+        if(&o==&g||o.plane!=g.plane)return false;
+        for(const auto* d:{&o.field,&o.next}) {
+            const Field* f=d->get();
+            if(!f||f->done!=(pass==0)||f->epoch!=epoch||w.tickCounter_-f->started>kStillScan)continue;
+            if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
+            if((f->command==kNoSoft)!=(command==kNoSoft)||f->ownArrivals!=own||(own&&f->command!=command))continue;
+            if(f->seeds!=g.seeds)continue;
+            hit=*d;
+            return true;
+        }
+        return false;
     }
     // At the cap a new field may only displace one that has served its
     // group for a while (oldest build first); otherwise the group waits for
@@ -1779,7 +1831,7 @@ struct LegionNavigator::Impl {
         }
         g.built=w.tickCounter_;
         auto f=std::make_shared<Field>();
-        f->seeds=g.seeds;f->started=w.tickCounter_;
+        f->seeds=g.seeds;f->seedKey=seedsKey(f->seeds);f->started=w.tickCounter_;
         f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;f->command=g.soft?g.command:kNoSoft;f->softCounts=softCountsFor(planes[size_t(g.plane)].footX,planes[size_t(g.plane)].footZ);
         f->avoid=g.avoidSeg;
         f->ownArrivals=ownsArrivals(f->command);
@@ -2216,6 +2268,8 @@ struct LegionNavigator::Impl {
         };
         settle();
         uint64_t visits=0;
+        probeListSum+=waitedIds.size()+buildingIds.size()+needFieldIds.size()+staleDoneIds.size();
+        probeGroupSum+=groups.size();
         auto finish=[&](Group& g,Field& f,uint64_t spent) {
             budget-=std::min(budget,spent);stats.fieldWork+=spent;
             if(spent) {
@@ -2305,13 +2359,14 @@ struct LegionNavigator::Impl {
         std::fprintf(stderr,"LPROBE tick=%u groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
             " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu fields_paused=%llu"
-            " still_units_processed=%llu\n",
+            " still_units_processed=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu\n",
             w.tickCounter_,groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
             (unsigned long long)s.refreshDeferred,(unsigned long long)s.blockedRerequests,(unsigned long long)s.lifts,
             (unsigned long long)s.liftMembersWalked,(unsigned long long)s.liftMembersSkipped,(unsigned long long)s.waitingMemberTicks,
-            (unsigned long long)s.demandResumes,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed);
+            (unsigned long long)s.demandResumes,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
+            (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum);
     }
 #ifndef NDEBUG
     // TAK_LEGION_VERIFY: every derived index and work list against a full
@@ -2362,6 +2417,13 @@ struct LegionNavigator::Impl {
             if(building!=buildingIds.size()||need!=needFieldIds.size()||staleDone!=staleDoneIds.size()||built!=byBuilt.size())
                 fail("a scheduler list holds a group that is not listed");
             for(int id:waitedIds)if(!groups.count(id))fail("waitedIds holds a dead group");
+            std::map<std::pair<int,uint64_t>,std::set<int>> routes;
+            for(const auto& [id,g]:groups)for(const Field* f:{g.field.get(),g.next.get()}) {
+                if(!f)continue;
+                if(f->seedKey!=seedsKey(f->seeds))fail("a field's seed key differs from its seeds");
+                routes[{g.plane,f->seedKey}].insert(id);
+            }
+            if(routes!=routeIndex)fail("routeIndex differs from the groups' fields");
         }
         // Counters only grow (the sizes are filled in by stats() alone).
         std::vector<uint64_t> before;
