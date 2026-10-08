@@ -3279,25 +3279,43 @@ struct LegionNavigator::Impl {
     int formationCell(const Unit& u,const Plane& p,int comp,const Point& pt,int64_t px,int64_t pz,int64_t tx,int64_t tz) const {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int sx=footprintOrigin(Fixed::fromInt(int32_t(tx)),fx),sz=footprintOrigin(Fixed::fromInt(int32_t(tz)),fz);
+        auto test=[&](int dx,int dz,int& best,int64_t& bestD) {
+            const int x=sx+dx,z=sz+dz;
+            if(!legal(p,x,z)||compAt(p,z*W+x)!=comp)return;
+            const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
+            if((cx-px)*(cx-px)+(cz-pz)*(cz-pz)>pt.limit*pt.limit)return;
+            const int64_t d=(cx-tx)*(cx-tx)+(cz-tz)*(cz-tz);
+            if(best>=0&&(d>bestD||(d==bestD&&z*W+x>best)))return;
+            bool clear=true;
+            for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt.cells.count((z+j)*W+x+i);
+            if(clear) {best=z*W+x;bestD=d;}
+        };
         int best=-1;int64_t bestD=0;
         uint64_t cells=0;
         for(int r=0;r<=48;++r) {
             if(best>=0&&int64_t(r-1)*16*int64_t(r-1)*16>bestD)break;
-            cells+=uint64_t(2*r+1)*uint64_t(2*r+1);
-            for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;++dx) {
-                if(std::max(std::abs(dx),std::abs(dz))!=r)continue;
-                const int x=sx+dx,z=sz+dz;
-                if(!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
-                const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
-                if((cx-px)*(cx-px)+(cz-pz)*(cz-pz)>pt.limit*pt.limit)continue;
-                const int64_t d=(cx-tx)*(cx-tx)+(cz-tz)*(cz-tz);
-                if(best>=0&&(d>bestD||(d==bestD&&z*W+x>best)))continue;
-                bool clear=true;
-                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt.cells.count((z+j)*W+x+i);
-                if(clear) {best=z*W+x;bestD=d;}
+            // The ring at Chebyshev distance r alone, in the (dz,dx) order of
+            // a walk of the whole square: the top row, each middle row's two
+            // ends, the bottom row.
+            cells+=r?8*uint64_t(r):1;
+            for(int dz=-r;dz<=r;++dz) {
+                const int stride=dz==-r||dz==r?1:2*r;
+                for(int dx=-r;dx<=r;dx+=stride)test(dx,dz,best,bestD);
             }
         }
         stats.formationRingCells+=cells;stats.slotSearchCells+=cells;
+#ifndef NDEBUG
+        if(gVerify) {
+            // The walk of every square cell the ring search replaced (A6).
+            int square=-1;int64_t squareD=0;
+            for(int r=0;r<=48;++r) {
+                if(square>=0&&int64_t(r-1)*16*int64_t(r-1)*16>squareD)break;
+                for(int dz=-r;dz<=r;++dz)for(int dx=-r;dx<=r;++dx)
+                    if(std::max(std::abs(dx),std::abs(dz))==r)test(dx,dz,square,squareD);
+            }
+            if(square!=best||squareD!=bestD)verifyFail("formationCell's ring search differs from the square walk");
+        }
+#endif
         return best;
     }
     // A member walled off from its slot: breadth-first over legal origins
