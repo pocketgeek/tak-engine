@@ -457,6 +457,13 @@ struct Writer {
         b.insert(b.end(), q, q + m);
     }
     void bytes(const std::vector<uint8_t>& v) { bytes(v.data(), v.size()); }
+    // Whole-file payloads (override package entries): u32 length + payload,
+    // never truncated. Not for login fields -- those keep str()/bytes() and their
+    // 4 KiB cap. The caller bounds the total (e.g. maps::kMaxBytes).
+    void blob(const std::vector<uint8_t>& v) {
+        u32(uint32_t(v.size()));
+        b.insert(b.end(), v.begin(), v.end());
+    }
     void cmd(const Command& c);
 };
 
@@ -492,6 +499,13 @@ struct Reader {
         if (!avail(2)) { ok = false; return {}; }
         uint32_t n = uint32_t(p[0]) | (uint32_t(p[1]) << 8); p += 2;
         if (n > 4096 || !avail(n) || (want && n != want)) { ok = false; return {}; }
+        std::vector<uint8_t> v(p, p + n); p += n; return v;
+    }
+    // Counterpart to Writer::blob: a u32 length no larger than `maxLen` and no
+    // larger than what is actually left, checked before anything is allocated.
+    std::vector<uint8_t> blob(size_t maxLen) {
+        const uint32_t n = u32();
+        if (!ok || n > maxLen || !avail(n)) { ok = false; return {}; }
         std::vector<uint8_t> v(p, p + n); p += n; return v;
     }
     Command cmd();
