@@ -5,6 +5,9 @@
 //       [--offsets 0,1,-1] [--workers|--serial|--both-exec] [--window R]
 //       [--data <install>] [--json] [--ticks N] [--no-observer] [--neutral]
 //       [--wanderers on|off]   (fbi types keep / lose Standby_wander; default: the file's)
+//       [--check <baseline.json> [--step ID] [--cumulative] [--ratchet "reason"]]
+//       [--baseline <baseline.json> --reason "text" [--since ID]]
+//       [--exit-table <old.json|run.jsonl>] [--anchor <anchor.json>]
 //
 // For each mode and each start offset (cells, applied to every spawn) the
 // file is built (tools/legion_scn.h), its orders are clicked through
@@ -50,6 +53,17 @@
 // attached and detached must give the same hash and digest (and serial and
 // workers the same keys). Only --neutral takes several files.
 //
+// Gate modes (PLAN 3.0 / 3.8; the logic is tools/legion_check.py, kept in one
+// place): --check, --baseline, --exit-table and --anchor run the files (several
+// allowed, JSON forced) and hand the JSON lines to the checker, which prints
+// the verdict; the exit status is the checker's (1 a gate failed, 2 tooling).
+// --check compares with a baseline (eq / one-sided bands / bounds / Retail
+// floor), --ratchet REASON also writes the improvements into the references
+// and a history line, --baseline retakes the base (needs --reason),
+// --exit-table lists every key moved over 5% against an older base,
+// --anchor prints the drift against the frozen anchor. Mode defaults to both
+// (the Retail floor needs Retail beside Legion).
+//
 // Exit: 0 ok, 1 a mismatch (serial != workers, or --neutral), 2 usage or a
 // bad file, 77 the file needs --data (ctest SKIP).
 #include "legion_observe.h"
@@ -63,6 +77,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <set>
@@ -71,6 +86,9 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 using tak::sim::PathfindingMode;
 namespace obs = tak::legion_observe;
@@ -107,13 +125,26 @@ struct Options {
     bool json = false, observer = true, neutral = false;
     uint32_t ticks = 0;     // 0: the file's
     int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
+    // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
+    std::string gate;                  // check | baseline | exit-table | anchor | "" (none)
+    std::string gateFile;              // the baseline (check, baseline), old base (exit-table), anchor
+    std::vector<std::string> gateArgs; // pass-through options of the checker
 };
+
+// JSON lines of a gate-mode run; empty capture = print to stdout.
+std::string* g_capture = nullptr;
+void emit(const std::string& line) {
+    if (g_capture) *g_capture += line + "\n";
+    else std::puts(line.c_str());
+}
 
 [[noreturn]] void usage(const char* why) {
     std::fprintf(stderr, "legion_scenario: %s\n"
         "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
-        "       [--no-observer] [--neutral] [--wanderers on|off]\n", why);
+        "       [--no-observer] [--neutral] [--wanderers on|off]\n"
+        "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
+        "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
 }
 
@@ -319,6 +350,52 @@ std::vector<int> parseOffsets(const std::string& list) {
 
 int runFile(const std::string& file, Options opt);
 
+// Hand the captured JSON lines to tools/legion_check.py (the one place the
+// gate logic lives) and return its exit status.
+int runChecker(const Options& opt, const std::string& lines) {
+#ifdef _WIN32
+    (void)opt; (void)lines;
+    std::fprintf(stderr, "legion_scenario: gate modes need python3 and a POSIX shell\n");
+    return 2;
+#else
+    namespace fs = std::filesystem;
+    fs::path script = fs::path(__FILE__).parent_path() / "legion_check.py";
+    if (!fs::exists(script)) script = fs::path("tools") / "legion_check.py";
+    if (!fs::exists(script)) {
+        std::fprintf(stderr, "legion_scenario: tools/legion_check.py not found\n");
+        return 2;
+    }
+    fs::path tmp = fs::temp_directory_path() /
+                   ("legion_check_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                    ".jsonl");
+    {
+        std::ofstream f(tmp);
+        f << lines;
+        if (!f) {
+            std::fprintf(stderr, "legion_scenario: cannot write %s\n", tmp.c_str());
+            return 2;
+        }
+    }
+    auto q = [](const std::string& x) {
+        std::string o = "'";
+        for (char c : x) o += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        return o + "'";
+    };
+    std::string cmd = "python3 " + q(script.string()) + " " + opt.gate;
+    if (opt.gate == "exit-table") cmd += " --base " + q(opt.gateFile);
+    else if (opt.gate == "anchor") cmd += " --anchor " + q(opt.gateFile);
+    else cmd += " --baseline " + q(opt.gateFile);
+    cmd += " --results " + q(tmp.string());
+    for (const auto& a : opt.gateArgs) cmd += " " + q(a);
+    std::fflush(stdout);
+    const int rc = std::system(cmd.c_str());
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    if (rc == -1) return 2;
+    return WIFEXITED(rc) ? WEXITSTATUS(rc) : 2;
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -353,6 +430,16 @@ int main(int argc, char** argv) {
             const auto v = value();
             if (v != "on" && v != "off") usage("--wanderers on|off");
             opt.wanderers = v == "on" ? 1 : 0;
+        } else if (a == "--check" || a == "--baseline" || a == "--exit-table" || a == "--anchor") {
+            if (!opt.gate.empty()) usage("one of --check, --baseline, --exit-table, --anchor");
+            opt.gate = a == "--check" ? "check" : a == "--baseline" ? "baseline" : a == "--exit-table" ? "exit-table" : "anchor";
+            opt.gateFile = value();
+        } else if (a == "--step" || a == "--reason" || a == "--since" || a == "--ratchet" || a == "--intended" ||
+                   a == "--intended-file" || a == "--cluster" || a == "--keys") {
+            opt.gateArgs.push_back(a);
+            opt.gateArgs.push_back(value());
+        } else if (a == "--cumulative" || a == "--require-all" || a == "--hashes") {
+            opt.gateArgs.push_back(a);
         } else if (a == "--no-observer") opt.observer = false;
         else if (a == "--neutral") opt.neutral = true;
         else if (a == "-h" || a == "--help") usage("help");
@@ -360,12 +447,24 @@ int main(int argc, char** argv) {
         else opt.files.push_back(a);
     }
     if (opt.files.empty()) usage("no scenario file");
-    if (opt.files.size() > 1 && !opt.neutral) usage("one scenario file (several only with --neutral)");
+    const bool gate = !opt.gate.empty();
+    if (opt.files.size() > 1 && !opt.neutral && !gate) usage("one scenario file (several only with --neutral or a gate mode)");
+    if (gate && opt.neutral) usage("--neutral and a gate mode do not combine");
+    for (size_t i = 0; i + 1 < opt.gateArgs.size(); ++i)
+        if (opt.gateArgs[i] == "--ratchet" && opt.gate != "check") usage("--ratchet goes with --check");
+    std::string capture;
+    if (gate) { opt.json = true; g_capture = &capture; }
     int status = 0, skipped = 0;
     for (const auto& file : opt.files) {
         const int one = runFile(file, opt);
         if (one == 77) { ++skipped; continue; }   // data-gated: the others still run
         if (one) status = status ? status : one;
+    }
+    if (gate) {
+        g_capture = nullptr;
+        if (status == 2) return 2;
+        const int verdict = runChecker(opt, capture);
+        return verdict ? verdict : status;
     }
     return status ? status : skipped == int(opt.files.size()) ? 77 : 0;
 }
@@ -389,7 +488,7 @@ int runFile(const std::string& file, Options opt) {
     if (opt.wanderers >= 0) s.wanderers = opt.wanderers == 1;
     const std::string name = !s.name.empty() ? s.name : std::filesystem::path(file).stem().string();
     if (const auto why = s.needsData(); !why.empty() && !opt.data) {
-        if (opt.json) std::printf("{\"scenario\":\"%s\",\"skipped\":\"needs --data: %s\"}\n", name.c_str(), why.c_str());
+        if (opt.json) emit("{\"scenario\":\"" + name + "\",\"skipped\":\"needs --data: " + why + "\"}");
         else std::printf("%s: SKIPPED (needs --data: %s)\n", name.c_str(), why.c_str());
         return 77;
     }
@@ -484,7 +583,7 @@ int runFile(const std::string& file, Options opt) {
                     j += "]";
                 }
                 j += "}}";
-                std::puts(j.c_str());
+                emit(j);
             } else {
                 std::printf("%s %s: %d units, %u ticks, exec %s, window %d\n", name.c_str(), modeName(mode), units,
                             s.ticks, execName(opt.exec).c_str(), window);
