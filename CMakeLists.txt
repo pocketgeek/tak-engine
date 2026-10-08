@@ -297,6 +297,15 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
+# T1 probes for W3 (measurement only; they assert determinism, not bounds).
+foreach(legion_probe settlelatency doorplug)
+  add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
+  set_tests_properties(legion_${legion_probe} PROPERTIES LABELS legion)
+endforeach()
+foreach(legion_probe pocket deadend tail)
+  add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
+  set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
+endforeach()
 # The const scenario observer (tools/legion_observe.h) on hand-placed bodies.
 add_executable(legion_observe_selftest tools/legion_observe_selftest.cpp)
 target_link_libraries(legion_observe_selftest PRIVATE tak-formats)
