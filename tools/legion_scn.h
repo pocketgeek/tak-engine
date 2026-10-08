@@ -100,6 +100,8 @@ struct Scenario {
     int players = 2;
     std::vector<std::pair<int, int>> teams;
     bool weapons = false, explored = true;
+    bool crusades = false;            // `crusades on`: the Crusades balance overlay (unitscb/canbuildcb)
+    bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
     MapSpec map;
     std::vector<TypeSpec> types;
@@ -245,6 +247,14 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             need(2, 2);
             if (w[1] != "on" && w[1] != "off") c.fail("weapons on|off");
             s.weapons = w[1] == "on";
+        } else if (k == "crusades") {
+            need(2, 2);
+            if (w[1] != "on" && w[1] != "off") c.fail("crusades on|off");
+            s.crusades = w[1] == "on";
+        } else if (k == "wanderers") {
+            need(2, 2);
+            if (w[1] != "on" && w[1] != "off") c.fail("wanderers on|off");
+            s.wanderers = w[1] == "on";
         } else if (k == "explored") {
             need(2, 2);
             if (w[1] != "all" && w[1] != "none") c.fail("explored all|none");
@@ -471,7 +481,9 @@ inline std::string format(const Scenario& s) {
     if (!s.name.empty()) o << "name " << s.name << "\n";
     o << "ticks " << s.ticks << "\nseed " << s.seed << "\nplayers " << s.players << "\n";
     for (const auto& [p, t] : s.teams) o << "team " << p << " " << t << "\n";
-    o << "weapons " << (s.weapons ? "on" : "off") << "\nexplored " << (s.explored ? "all" : "none") << "\n";
+    o << "weapons " << (s.weapons ? "on" : "off") << "\nwanderers " << (s.wanderers ? "on" : "off")
+      << (s.crusades ? "\ncrusades on" : "")
+      << "\nexplored " << (s.explored ? "all" : "none") << "\n";
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
     switch (s.map.kind) {
     case MapSpec::Ascii:
@@ -635,11 +647,11 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
     }
     if (opt.install) {
         b->vfs = std::make_unique<tak::hpi::Vfs>(opt.install);   // a local view: map files stay ours
-        setupRegistry(b->registry, *opt.install, opt.crusades);
+        setupRegistry(b->registry, *opt.install, opt.crusades || s.crusades);
     } else if (opt.data) {
         b->vfs = std::make_unique<tak::hpi::Vfs>(
             tak::hpi::mountRetailRoot(opt.data, tak::hpi::OverridePolicy::None));
-        setupRegistry(b->registry, *b->vfs, opt.crusades);
+        setupRegistry(b->registry, *b->vfs, opt.crusades || s.crusades);
     } else {
         b->vfs = std::make_unique<tak::hpi::Vfs>();
     }
@@ -732,6 +744,7 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
             auto copy = *real;
             copy.weapons.clear();
             copy.weapon.damage = 0;
+            if (!s.wanderers) copy.wanders = false;   // the motion cases' wanderer knob
             b->types.push_back(copy);
             return made[key] = &b->types.back();
         }

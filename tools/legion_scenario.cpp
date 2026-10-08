@@ -4,6 +4,7 @@
 //   legion_scenario <file.scn | builtin:NAME>... [--mode legion|retail|both]
 //       [--offsets 0,1,-1] [--workers|--serial|--both-exec] [--window R]
 //       [--data <install>] [--json] [--ticks N] [--no-observer] [--neutral]
+//       [--wanderers on|off]   (fbi types keep / lose Standby_wander; default: the file's)
 //
 // For each mode and each start offset (cells, applied to every spawn) the
 // file is built (tools/legion_scn.h), its orders are clicked through
@@ -105,13 +106,14 @@ struct Options {
     const char* data = nullptr;
     bool json = false, observer = true, neutral = false;
     uint32_t ticks = 0;     // 0: the file's
+    int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
 };
 
 [[noreturn]] void usage(const char* why) {
     std::fprintf(stderr, "legion_scenario: %s\n"
         "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
-        "       [--no-observer] [--neutral]\n", why);
+        "       [--no-observer] [--neutral] [--wanderers on|off]\n", why);
     std::exit(2);
 }
 
@@ -347,6 +349,10 @@ int main(int argc, char** argv) {
             const long v = std::atol(value().c_str());
             if (v < 1 || v > 10'000'000) usage("--ticks N takes 1..10000000");
             opt.ticks = uint32_t(v);
+        } else if (a == "--wanderers") {
+            const auto v = value();
+            if (v != "on" && v != "off") usage("--wanderers on|off");
+            opt.wanderers = v == "on" ? 1 : 0;
         } else if (a == "--no-observer") opt.observer = false;
         else if (a == "--neutral") opt.neutral = true;
         else if (a == "-h" || a == "--help") usage("help");
@@ -380,6 +386,7 @@ int runFile(const std::string& file, Options opt) {
         return 2;
     }
     if (opt.ticks) s.ticks = opt.ticks;
+    if (opt.wanderers >= 0) s.wanderers = opt.wanderers == 1;
     const std::string name = !s.name.empty() ? s.name : std::filesystem::path(file).stem().string();
     if (const auto why = s.needsData(); !why.empty() && !opt.data) {
         if (opt.json) std::printf("{\"scenario\":\"%s\",\"skipped\":\"needs --data: %s\"}\n", name.c_str(), why.c_str());
