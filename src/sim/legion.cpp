@@ -480,6 +480,15 @@ struct LegionNavigator::Impl {
     // Per unit id: the command (player, issue tick) a settled Legion arrival
     // belongs to, else ~0: a field never treats its own arrivals as soft.
     std::vector<uint64_t> softOwner;
+    // The distinct values of softOwner (~0 included when some id has no
+    // owner), ascending: "does any settled arrival belong to this command"
+    // is a binary search (Stats::softownerLookups counts the linear scans
+    // it replaced: none). Written with softOwner by scanStill alone; a
+    // function of it, never hashed.
+    std::vector<uint64_t> softOwnerCmds;
+    bool ownsArrivals(uint64_t command) const {
+        return std::binary_search(softOwnerCmds.begin(),softOwnerCmds.end(),command);
+    }
     uint64_t softSerial=0,softHash=0;    // bumped whenever `soft` changes; its content hash
     std::vector<int> liftSoftPlayers;    // owners of the kind 3 cells (liftable flyers), sorted unique
     // Landed flyers (mode 1) stand on the ground: retail stamps them into
@@ -633,7 +642,7 @@ struct LegionNavigator::Impl {
         if(w.tickCounter_%kStillScan!=0||w.occW_<=0)return;
         std::vector<std::pair<int,Still>> next;next.reserve(stills.size()+16);
         std::vector<int> cells;
-        std::vector<uint64_t> owner;
+        std::vector<uint64_t> owner,ownerCmds;
         const size_t n=size_t(w.occW_)*w.occH_;
         if(soft.size()!=n) {
             soft.assign(n,0);softKind.assign(n,0);softCells.clear();softCounts.clear();
@@ -666,6 +675,7 @@ struct LegionNavigator::Impl {
                 const auto a=anchors.find(u.id);
                 if(size_t(u.id)>=owner.size())owner.resize(size_t(u.id)+1,~0ull);
                 owner[size_t(u.id)]=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
+                ownerCmds.push_back(owner[size_t(u.id)]);
             }
         }
         stats.stillUnitsProcessed+=processed;
@@ -705,7 +715,12 @@ struct LegionNavigator::Impl {
         for(size_t i=0;i<owner.size();++i)if(owner[i]!=~0ull)h=mix(mix(h,i),owner[i]);
         const bool changed=h!=softHash;
         softHash=h;
-        softCells.swap(cells);softOwner.swap(owner);
+        // Each unit is visited once, so ownerCmds has one entry per owned
+        // id: any other id below owner.size() holds ~0.
+        if(ownerCmds.size()<owner.size())ownerCmds.push_back(~0ull);
+        std::sort(ownerCmds.begin(),ownerCmds.end());
+        ownerCmds.erase(std::unique(ownerCmds.begin(),ownerCmds.end()),ownerCmds.end());
+        softCells.swap(cells);softOwner.swap(owner);softOwnerCmds.swap(ownerCmds);
         if(changed)++softSerial;
     }
     // Cells claimed by arrival slots of every group sent to one point in one
@@ -1660,8 +1675,7 @@ struct LegionNavigator::Impl {
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         {
             const uint64_t command=g.soft?g.command:kNoSoft;
-            const bool own=std::find(softOwner.begin(),softOwner.end(),command)!=softOwner.end();
-            ++stats.softownerLookups;
+            const bool own=ownsArrivals(command);
             if(auto shared=sharedField(g,box,command,own)) {
                 g.built=w.tickCounter_;++stats.fieldsShared;
                 if(!shared->done)(g.field?g.next:g.field)=std::move(shared);
@@ -1695,8 +1709,8 @@ struct LegionNavigator::Impl {
         f->seeds=g.seeds;f->started=w.tickCounter_;
         f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;f->command=g.soft?g.command:kNoSoft;f->softCounts=softCountsFor(planes[size_t(g.plane)].footX,planes[size_t(g.plane)].footZ);
         f->avoid=g.avoidSeg;
-        f->ownArrivals=std::find(softOwner.begin(),softOwner.end(),f->command)!=softOwner.end();
-        ++stats.softownerLookups;++stats.fieldsStartedByKind[size_t(g.kind)&15];
+        f->ownArrivals=ownsArrivals(f->command);
+        ++stats.fieldsStartedByKind[size_t(g.kind)&15];
         f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
         f->W=width();f->x0=box[0];f->z0=box[1];f->fw=box[2]-box[0]+1;f->fh=box[3]-box[1]+1;
@@ -2232,6 +2246,12 @@ struct LegionNavigator::Impl {
         if(s.formationRingCells+s.rechoiceBfsCells>s.slotSearchCells)
             fail("slot search cells below the formation ring and re-choice cells");
         if(s.blockedRerequests||s.demandResumes||s.fieldsPaused)fail("counters of mechanisms that do not exist yet are non-zero");
+        {
+            std::vector<uint64_t> cmds(softOwner);
+            std::sort(cmds.begin(),cmds.end());
+            cmds.erase(std::unique(cmds.begin(),cmds.end()),cmds.end());
+            if(cmds!=softOwnerCmds)fail("softOwnerCmds is not the sorted distinct softOwner");
+        }
         // Counters only grow (the sizes are filled in by stats() alone).
         std::vector<uint64_t> before;
         forEachStat(verified,[&](const char*,uint64_t v) {before.push_back(v);});
