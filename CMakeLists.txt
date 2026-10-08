@@ -342,6 +342,26 @@ foreach(legion_scn corner-4x50 corner-8x56 corner-1x448 split-450-open split-450
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
 endforeach()
+# Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
+# every counter against tools/legion_cost_baseline.json) and the battle
+# scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
+# printed, never gated. The larger battles run nightly.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME legion_cost
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_cost.py
+                   --runner $<TARGET_FILE:legion_scenario> --tmpdir ${CMAKE_BINARY_DIR}/legion_cost_tmp)
+  set_tests_properties(legion_cost PROPERTIES LABELS legion TIMEOUT 600)
+  foreach(battle battle-field-2x60 battle-field-2x250 battle-field-2x500 battle-assault)
+    add_test(NAME legion_scenario_${battle}
+             COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_cost.py battle
+                     ${CMAKE_SOURCE_DIR}/tools/scenarios/${battle}.scn
+                     --runner $<TARGET_FILE:legion_scenario> --tmpdir ${CMAKE_BINARY_DIR}/legion_cost_tmp)
+  endforeach()
+  set_tests_properties(legion_scenario_battle-field-2x60 PROPERTIES LABELS legion TIMEOUT 600)
+  set_tests_properties(legion_scenario_battle-field-2x250 legion_scenario_battle-field-2x500
+                       legion_scenario_battle-assault PROPERTIES LABELS "legion;nightly" TIMEOUT 3600)
+endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
 # evidence, never failing).
