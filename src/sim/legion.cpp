@@ -614,6 +614,28 @@ struct LegionNavigator::Impl {
     std::vector<int32_t> liftHome;
     std::vector<int> liftHomeCells,liftedIds;
     int32_t occAt(size_t c) const {const int32_t o=w.occ_[c];return o||groundedCells.empty()?o:grounded[c];}
+    // The ids of every flyer and every structure in World::units_ order,
+    // so stampGrounded, syncStatic and computeCells walk those alone, in the
+    // order the all-unit walk visited them. A unit's type never changes;
+    // World::spawn only appends to units_, and compactRetiredUnits (the
+    // only removal) keeps the order, so the lists follow units_ by reading
+    // the units appended since the last call, and are rebuilt whenever the
+    // entry they ended at moved (a compaction). They keep dead units until
+    // then: every walk tests alive() as before. Never hashed.
+    std::vector<int> flyerIds,structureIds;
+    size_t listedUnits=0;int listedTail=0;
+    void syncUnitLists() {
+        const auto& units=w.units_;
+        size_t from=listedUnits;
+        if(from>units.size()||(from&&units[from-1].id!=listedTail)) {from=0;flyerIds.clear();structureIds.clear();}
+        for(size_t i=from;i<units.size();++i) {
+            const Unit& u=units[i];
+            if(!u.type)continue;
+            if(u.type->canFly)flyerIds.push_back(u.id);
+            if(u.type->isStructure())structureIds.push_back(u.id);
+        }
+        listedUnits=units.size();listedTail=units.empty()?0:units.back().id;
+    }
     // liftFlyers' gate: per kLiftBucket x kLiftBucket block of cells, how
     // many grounded and lift-home cells it holds (a cell in both counts
     // twice). Rebuilt with them by stampGrounded; never hashed.
@@ -651,7 +673,12 @@ struct LegionNavigator::Impl {
         if(liftHome.size()!=n) {liftHome.assign(n,0);liftHomeCells.clear();}
         for(int c:liftHomeCells)liftHome[size_t(c)]=0;
         liftHomeCells.clear();liftedIds.clear();
-        for(const auto& u:w.units_) {
+        // Only flyers are lifted (World::legionLiftable) or land.
+        syncUnitLists();
+        for(const int flyer:flyerIds) {
+            const Unit* found=w.unit(flyer);
+            if(!found)continue;
+            const Unit& u=*found;
             if(u.legionLift&&u.alive()&&u.type) {
                 liftedIds.push_back(u.id);
                 const int fx=u.type->footX,fz=u.type->footZ;
@@ -1045,12 +1072,17 @@ struct LegionNavigator::Impl {
             }
         };
         if(structureList)for(const Unit* u:*structureList)stampStructure(*u);
-        else for(const auto& u:w.units_)stampStructure(u);
+        else {
+            syncUnitLists();
+            for(const int id:structureIds)if(const Unit* u=w.unit(id))stampStructure(*u);
+        }
         return work;
     }
+    // (World::unitScript: the dense mirror of unitScripts_, kept by every
+    // insert and erase of it.)
     bool yardOpen(int id) const {
-        const auto script=w.unitScripts_.find(id);
-        return script!=w.unitScripts_.end()&&script->second.yardOpen;
+        const auto* script=w.unitScript(id);
+        return script&&script->yardOpen;
     }
     // Label static components by flood fill in cell order (deterministic).
     void labelPlane(Plane& p) {
@@ -1947,7 +1979,10 @@ struct LegionNavigator::Impl {
         int x=0,z=0,fx=0,fz=0;bool open=false;
         bool operator==(const Stamp&) const=default;
     };
-    std::map<int,Stamp> stamps;
+    // Ascending ids; `nowStamps` and `structurePtrs` are syncStatic's
+    // scratch, kept to reuse their storage.
+    std::vector<std::pair<int,Stamp>> stamps,nowStamps;
+    std::vector<const Unit*> structurePtrs;
     // Bring the static planes up to date with the world. On a placement map
     // only the changed rectangles are recomputed (refreshPlane), and a new
     // static epoch starts only when some built plane's legality actually
@@ -1959,7 +1994,11 @@ struct LegionNavigator::Impl {
             // Structures are bodies the mover always refuses: fold their layout
             // into the static epoch so the plane follows construction/death.
             uint64_t sig=0x6c6567696f6e;
-            for(const auto& u:w.units_) {
+            syncUnitLists();
+            for(const int id:structureIds) {
+                const Unit* found=w.unit(id);
+                if(!found)continue;
+                const Unit& u=*found;
                 if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
                 sig=mix(sig,uint64_t(u.id));sig=mix(sig,uint64_t(uint32_t(u.x.v))<<32|uint32_t(u.z.v));
                 sig=mix(sig,yardOpen(u.id));
@@ -1970,15 +2009,23 @@ struct LegionNavigator::Impl {
             return;
         }
         std::vector<std::array<int,4>> rects;
-        std::map<int,Stamp> now;
-        std::vector<const Unit*> structures;
+        auto& now=nowStamps;
+        auto& structures=structurePtrs;
+        now.clear();structures.clear();
         struct ListScope {const std::vector<const Unit*>*& list;~ListScope(){list=nullptr;}} listScope{structureList};
-        for(const auto& u:w.units_) {
+        syncUnitLists();
+        for(const int id:structureIds) {
+            const Unit* found=w.unit(id);
+            if(!found)continue;
+            const Unit& u=*found;
             if(!u.alive()||u.embarked()||!u.type||!u.type->isStructure())continue;
             structures.push_back(&u);
-            now[u.id]={footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
-                       u.type->footX,u.type->footZ,yardOpen(u.id)};
+            now.push_back({u.id,{footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
+                                 u.type->footX,u.type->footZ,yardOpen(u.id)}});
         }
+        // Unit ids ascend along units_ except in restored retail fixtures.
+        if(!std::is_sorted(now.begin(),now.end(),[](const auto& x,const auto& y){return x.first<y.first;}))
+            std::sort(now.begin(),now.end(),[](const auto& x,const auto& y){return x.first<y.first;});
         auto a=stamps.begin();auto b=now.begin();
         auto rect=[&](const Stamp& t) {rects.push_back({t.x,t.z,t.fx,t.fz});};
         while(a!=stamps.end()||b!=now.end()) {
@@ -2508,6 +2555,26 @@ struct LegionNavigator::Impl {
                 routes[{g.plane,f->seedKey}].insert(id);
             }
             if(routes!=routeIndex)fail("routeIndex differs from the groups' fields");
+        }
+        // The flyer and structure lists against a walk of every unit (A5),
+        // and the dense yard lookup against the script map.
+        {
+            std::vector<int> flyers,structures;
+            for(const auto& u:w.units_) {
+                if(u.legionLift&&!(u.type&&u.type->canFly))fail("a unit that is no flyer is lifted");
+                if(!u.type)continue;
+                if(u.type->canFly)flyers.push_back(u.id);
+                if(u.type->isStructure()) {
+                    structures.push_back(u.id);
+                    const auto script=w.unitScripts_.find(u.id);
+                    if(yardOpen(u.id)!=(script!=w.unitScripts_.end()&&script->second.yardOpen))
+                        fail("the dense yard lookup differs from the script map");
+                }
+            }
+            syncUnitLists();
+            if(flyers!=flyerIds||structures!=structureIds)
+                fail("flyerIds or structureIds differ from a walk of the units");
+            for(size_t i=1;i<stamps.size();++i)if(stamps[i-1].first>=stamps[i].first)fail("stamps are not in ascending id order");
         }
         // liftFlyers' buckets against a scan of the grounded and lift-home
         // cells (A4).
