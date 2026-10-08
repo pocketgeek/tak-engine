@@ -25,6 +25,11 @@ constexpr uint16_t kOrthogonal=5,kDiagonal=7;   // 7/5 = 1.4 ~ sqrt(2)
 // the jank replay), a third of a tick at 8x game speed (4.17 ms). A field
 // still steers the bodies its frontier has passed while it builds.
 constexpr uint64_t kFieldQuota=384'000;
+// Of which refreshes (rebuilds of a stale field whose group still steers by
+// the finished one) take at most this much per tick: after a static change
+// in a battle a whole-map refresh otherwise ran the full quota for a dozen
+// ticks, a spike over the 8x budget each time.
+constexpr uint64_t kRefreshQuota=kFieldQuota/4;
 // A body held this many updates in a row (past every early reaction:
 // yields, first detours) is fully re-evaluated only every kRestStride ticks,
 // staggered by unit id, unless something around it changed (heldRest).
@@ -1538,7 +1543,7 @@ struct LegionNavigator::Impl {
     // group for a while (oldest build first); otherwise the group waits for
     // a slot. Evicting the least recently used field every tick thrashed:
     // all live groups use theirs every tick.
-    bool startField(Group& g) {
+    bool startField(Group& g,bool shareOnly=false) {
         const auto box=fieldWindow(g);
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         {
@@ -1552,6 +1557,7 @@ struct LegionNavigator::Impl {
                 return true;
             }
         }
+        if(shareOnly)return false;
         const size_t budget=kMaxFields*size_t(width())*size_t(height());
         while(liveFields()>=kMaxFieldCount||liveFieldCells()+cells>budget) {
             // A victim is a group whose finished field is past its tenure
@@ -1731,11 +1737,13 @@ struct LegionNavigator::Impl {
             // a clean rebuild follows): restarting it on every change meant
             // a group ordered during constant churn (corpses every tick)
             // never got any field. Arrival slots were proven on the old
-            // plane: they are rebuilt (see restaleSlots).
+            // plane: they are rebuilt (see restaleSlots). A refresh under way
+            // keeps building too, and another follows once it is installed
+            // (see finish): refreshes run on a reduced allowance, and
+            // restarted on every change in a battle they never finished.
             // Only the groups a change reaches (all, without per-plane boxes).
             for(auto& [id,g]:groups) {
                 if(changes&&(g.plane<0||size_t(g.plane)>=changes->size()||!fieldTouched(g,(*changes)[size_t(g.plane)])))continue;
-                g.next.reset();
                 g.stale=g.field!=nullptr;
                 restaleSlots(g);
             }
@@ -1879,7 +1887,7 @@ struct LegionNavigator::Impl {
         settle();
         auto finish=[&](Group& g,Field& f,uint64_t spent) {
             budget-=std::min(budget,spent);stats.fieldWork+=spent;
-            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=false;restaleSlots(g);}}
+            if(f.done) {++stats.fieldsBuilt;if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;restaleSlots(g);}}
         };
         // Groups with a member standing still for want of a field come
         // first (their field starts, or its frontier advances toward them),
@@ -1893,27 +1901,38 @@ struct LegionNavigator::Impl {
             if(!g.field&&!startField(g))continue;
             if(!g.field->done)finish(g,*g.field,advance(*g.field,budget));   // (done: shared)
         }
+        uint64_t refresh=kRefreshQuota;
         for(int pass=0;pass<2;++pass)for(auto& [id,g]:groups) {
             if(budget==0)break;
             Field* f=pass==1?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
             if(!f)continue;
+            if(f->done) {finish(g,*f,0);continue;}   // a refresh another group finished
+            if(pass==1&&refresh==0)continue;
             plane(g.plane);settle();
             if(budget==0)break;
-            finish(g,*f,advance(*f,budget));
+            const uint64_t spent=advance(*f,pass==1?std::min(budget,refresh):budget);
+            if(pass==1)refresh-=std::min(refresh,spent);
+            finish(g,*f,spent);
         }
         // Groups that need a field start in id order: first those with none
-        // (they cannot steer at all), then stale refreshes. Under constant
-        // churn a refresh restarts every tick and never finishes; served
-        // first, refreshes of older groups starved a new group forever.
+        // (they cannot steer at all), then stale refreshes. Served first,
+        // refreshes of older groups under constant churn starved a new
+        // group forever.
         for(int pass=0;pass<2;++pass)for(auto& [id,g]:groups) {
             if(budget==0)break;
             if((g.field&&(!g.stale||!g.field->done))||g.next)continue;
             if((pass==0)!=(g.field==nullptr))continue;
             plane(g.plane);settle();
             if(budget==0)break;
-            if(!startField(g))break;
+            // With the refresh allowance spent, a stale group only takes a
+            // field another group already has (see sharedField).
+            const bool shareOnly=pass==1&&refresh==0;
+            if(!startField(g,shareOnly)) {if(shareOnly)continue;break;}
             Field& f=g.next?*g.next:*g.field;
-            if(!f.done)finish(g,f,advance(f,budget));   // (done: shared)
+            if(f.done)continue;   // shared
+            const uint64_t spent=advance(f,pass==1?std::min(budget,refresh):budget);
+            if(pass==1)refresh-=std::min(refresh,spent);
+            finish(g,f,spent);
         }
     }
     // Members whose unit died, embarked, lost its orders or left Legion's
