@@ -293,16 +293,21 @@ cleanup() {
       # silent-pass failure this whole file keeps being about, so cleanup has to honour
       # the serialisation the runs use rather than bypassing it.
       #
-      # -w so a stuck peer cannot wedge our exit; if the lock cannot be had, fall through
-      # and let the ownership check below be the guard.
+      # -w so a stuck peer cannot wedge our exit. A failed lock never authorises a
+      # deletion: another run can acquire ownership immediately after our query.
       exec 8>"${TMPDIR:-/tmp}/tak-netem.$_h.lock"
-      flock -w 30 8 2>/dev/null || true
-      if [ -n "$_tok" ]; then
-        _owner=$("${CLEANSSH[@]}" "$RUSER@$_h" "cat '$NETEM_OWNER.$_if' 2>/dev/null" 2>/dev/null || true)
-        if [ -n "$_owner" ] && [ "$_owner" != "$_tok" ]; then
-          flock -u 8 2>/dev/null || true
-          continue    # someone else owns this interface now -- not ours to clear
-        fi
+      _locked=0
+      flock -w 30 8 2>/dev/null && _locked=1
+      _owner=$("${CLEANSSH[@]}" "$RUSER@$_h" "if [ -e '$NETEM_OWNER.$_if' ]; then cat '$NETEM_OWNER.$_if'; else echo __TAK_NO_OWNER__; fi" 2>/dev/null) || _owner=""
+      if [ -n "$_owner" ] && [ "$_owner" != "$_tok" ]; then
+        [ "$_locked" = 0 ] || flock -u 8 2>/dev/null || true
+        continue    # missing claim or another owner -- not ours to clear
+      fi
+      if [ "$_locked" = 0 ] || [ -z "$_tok" ] || [ "$_owner" != "$_tok" ]; then
+        echo "WARN cleanup: cannot confirm locked ownership of $_if on $_h -- leaving watchdog armed" >&2
+        printf '%s\t%s\n' "$_h" "$_if" >>"$SHAPEDFILE.unclean"
+        [ "$_locked" = 0 ] || flock -u 8 2>/dev/null || true
+        continue
       fi
       # The interface name is interpolated into a remote shell command; keep it to the
       # characters an interface can actually have.
@@ -503,6 +508,20 @@ for _spec in "${RUNS[@]}"; do
   fi
 done
 
+# tc u32 prints a 16-bit source-port match in the high half of the word at
+# IPv4 offset 20. Require the key in the SAME terminal rule as flowid 1:3.
+netem_proof_valid() {
+  local qdisc="$1" filter="$2" port="$3" key
+  key=$(printf '%04x0000/ffff0000' "$port")
+  grep -Eq '^qdisc prio 1: root' "$qdisc" &&
+  grep -Eq '^qdisc netem 30: .*parent 1:3([[:space:]]|$)' "$qdisc" &&
+  awk -v key="$key" '
+    /^filter / { rule = /protocol ip / && /pref 3 / && /flowid 1:3([[:space:]]|$)/ }
+    rule && $1 == "match" && $2 == key && $3 == "at" && $4 == "20" { found = 1 }
+    END { exit !found }
+  ' "$filter"
+}
+
 run_one() {
   local host="$1" idx="$2" spec="$3"
   local name map envs flags seat weight humans
@@ -543,6 +562,41 @@ run_one() {
   case "$envs" in *TAK_JITTER=*) jit=$(printf '%s' "$envs" | grep -oE 'TAK_JITTER=[0-9]+' | cut -d= -f2);; esac
   case "$envs" in *TAK_LOSS=*)   loss=$(printf '%s' "$envs" | grep -oE 'TAK_LOSS=[0-9.]+' | cut -d= -f2);; esac
   envs=$(printf '%s' "$envs" | sed -E 's/TAK_(RTT|JITTER|LOSS)=[0-9.]+//g')
+
+  # Defined before setup so partial tc failures take the same teardown as a game.
+  local shaping_failed=0
+  shaping_down() {
+    [ -n "$proxypid" ] && kill "$proxypid" 2>/dev/null
+    if [ -n "$shaped_netem" ]; then
+      local _clean=0 _out _owner _try
+      _owner=$(rsh1 "cat '$NETEM_OWNER.$shaped_iface'" 2>/dev/null) || _owner=""
+      if [ -n "$shaped_token" ] && [ "$_owner" = "$shaped_token" ]; then
+        for _try in 1 2; do
+          rsh1 "sudo -n /usr/sbin/tc qdisc del dev '$shaped_iface' root" >>"$OUT/$name.netem-teardown.log" 2>&1 || true
+          if _out=$(rsh1 "LC_ALL=C /usr/sbin/tc qdisc show dev '$shaped_iface' && echo __TCOK__" 2>&1); then
+            printf '%s\n' "$_out" >>"$OUT/$name.netem-teardown.log"
+            case "$_out" in
+              *__TCOK__*) case "$_out" in
+                *netem*|*"qdisc prio 1:"*) ;;
+                *) _clean=1; break ;;
+              esac ;;
+            esac
+          else
+            printf 'query failed: %s\n' "$_out" >>"$OUT/$name.netem-teardown.log"
+          fi
+          sleep 1
+        done
+      fi
+      if [ "$_clean" = 1 ]; then
+        rsh1 "rm -f '$NETEM_OWNER.$shaped_iface'" >/dev/null 2>&1 || true
+      else
+        echo "WARN $name ($host): could not prove shaping removed -- leaving watchdog armed"
+        shaping_failed=1
+      fi
+      shaped_netem=""; shaped_token=""
+    fi
+    flock -u 9 2>/dev/null || true
+  }
 
   if [ "${rtt:-0}" != "0" ] || [ "${jit:-0}" != "0" ] || [ "${loss:-0}" != "0" ]; then
     # PREFER NETEM. It delays real packets and can DROP them; the relay delays a TCP
@@ -587,7 +641,7 @@ run_one() {
       local iface="${TAK_NETEM_IFACE:-}"
       [ -n "$iface" ] || iface=$(rsh1 "ip -o route get $myaddr 2>/dev/null | grep -oE 'dev [a-z0-9]+' | head -1 | cut -d' ' -f2")
       if [ -z "$iface" ]; then
-        echo "SKIP $name ($host): cannot determine the interface back to $myaddr"; flock -u 9; return 0
+        echo "SKIP $name ($host): cannot determine the interface back to $myaddr"; flock -u 9; return 1
       fi
       # Record BEFORE touching the interface, and arm a remote expiry. If this worker is
       # killed -- interrupt, timeout, the sweep stopped -- neither shaping_down call is
@@ -614,30 +668,36 @@ run_one() {
       # ownership file is what makes recovery possible, so a host must never end up shaped
       # without one. Read it back rather than trusting the exit status.
       if [ "$(rsh1 "echo '$token' > '$NETEM_OWNER.$iface' 2>/dev/null; cat '$NETEM_OWNER.$iface' 2>/dev/null" 2>/dev/null)" != "$token" ]; then
-        echo "SKIP $name ($host): could not claim $iface for shaping"; flock -u 9; return 0
+        echo "SKIP $name ($host): could not claim $iface for shaping"; flock -u 9; return 1
       fi
       rsh1 "nohup sh -c 'sleep ${NETEM_EXPIRY}
             [ \"\$(cat \"$NETEM_OWNER.$iface\" 2>/dev/null)\" = \"$token\" ] || exit 0
             sudo /usr/sbin/tc qdisc del dev $iface root 2>/dev/null
             rm -f \"$NETEM_OWNER.$iface\"' >/dev/null 2>&1 </dev/null &" >/dev/null 2>&1
-      rsh1 "sudo /usr/sbin/tc qdisc del dev $iface root 2>/dev/null
-            sudo /usr/sbin/tc qdisc add dev $iface root handle 1: prio bands 3 \
+      shaped_netem="$host"; shaped_iface="$iface"
+      # Fail on ANY setup command, including the filter; archive proof of both the
+      # qdisc and the exact source-port rule instead of merely finding "netem".
+      if ! rsh1 "set -e
+            sudo -n /usr/sbin/tc qdisc del dev $iface root 2>/dev/null || true
+            sudo -n /usr/sbin/tc qdisc add dev $iface root handle 1: prio bands 3 \
                  priomap 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
             _a='delay ${rtt:-0}ms'
-            [ '${jit:-0}' != '0' ] && _a=\"\$_a ${jit}ms distribution normal\"
-            [ '${loss:-0}' != '0' ] && _a=\"\$_a loss ${loss}%\"
-            sudo /usr/sbin/tc qdisc add dev $iface parent 1:3 handle 30: netem \$_a
-            sudo /usr/sbin/tc filter add dev $iface protocol ip parent 1:0 prio 3 \
-                 u32 match ip sport $port 0xffff flowid 1:3" >/dev/null 2>&1
-      # CONFIRM IT TOOK. Every tc call above is silenced, so a failure at any step would
-      # otherwise leave the run unshaped and indistinguishable from a passing one.
-      if ! rsh1 "/usr/sbin/tc qdisc show dev $iface | grep -q netem"; then
-        echo "SKIP $name ($host): netem did not apply on $iface"; flock -u 9; return 0
+            if [ '${jit:-0}' != '0' ]; then _a=\"\$_a ${jit}ms distribution normal\"; fi
+            if [ '${loss:-0}' != '0' ]; then _a=\"\$_a loss ${loss}%\"; fi
+            sudo -n /usr/sbin/tc qdisc add dev $iface parent 1:3 handle 30: netem \$_a
+            sudo -n /usr/sbin/tc filter add dev $iface protocol ip parent 1:0 prio 3 \
+                 u32 match ip sport $port 0xffff flowid 1:3
+            echo __SETUP_OK__" >"$OUT/$name.netem-setup.log" 2>&1 ||
+         ! grep -q '^__SETUP_OK__$' "$OUT/$name.netem-setup.log" ||
+         ! rsh1 "LC_ALL=C /usr/sbin/tc qdisc show dev '$iface'" >"$OUT/$name.netem-qdisc.log" 2>&1 ||
+         ! rsh1 "LC_ALL=C /usr/sbin/tc filter show dev '$iface' parent 1:0" >"$OUT/$name.netem-filter.log" 2>&1 ||
+         ! netem_proof_valid "$OUT/$name.netem-qdisc.log" "$OUT/$name.netem-filter.log" "$port"; then
+        shaping_down
+        echo "FAIL $name ($host): could not prove netem and exact port $port filter on $iface"; return 1
       fi
-      shaped_netem="$host"; shaped_iface="$iface"
     elif [ "${loss:-0}" != "0" ]; then
       echo "SKIP $name ($host): TAK_LOSS needs netem, and sudo tc is not available there"
-      flock -u 9; return 0
+      flock -u 9; return 1
     else
       local pport=$((PORT_BASE + 200 + idx))
       python3 tools/netdelay.py --listen "$pport" --to "$host:$port" \
@@ -674,44 +734,6 @@ run_one() {
     rsh1 "grep -q listening /tmp/tak-srv-$port.log 2>/dev/null" && { up=1; break; }
     sleep 2
   done
-  # Kill the relay on THIS path too. It is started before the readiness check, and an
-  # early return skipped the teardown further down -- so a failed server start leaked a
-  # listener that outlived the sweep. The next run on that port then cannot bind, or
-  # worse, silently connects through the stale one. (Observed: two leaked relays.)
-  # ONE teardown, reachable from EVERY exit. It previously sat inside the readiness
-  # FAILURE branch below, so unshaping only happened when the server failed to start --
-  # on the normal path netem was simply left applied, and the "confirm it is gone" check
-  # never ran either, which is why a whole sweep reported zero warnings while both hosts
-  # ended up shaped. A cleanup that only runs on the error path is not cleanup.
-  shaping_down() {
-    [ -n "$proxypid" ] && kill "$proxypid" 2>/dev/null
-    if [ -n "$shaped_netem" ]; then
-      rsh1 "sudo /usr/sbin/tc qdisc del dev $shaped_iface root 2>/dev/null; true" >/dev/null 2>&1
-      # Confirm, then retry once. Leaving netem on would silently apply this run's
-      # latency to every later run on that host -- including ones that are not latency
-      # tests, which would then be measuring a link nobody configured.
-      local _clean=1
-      if rsh1 "/usr/sbin/tc qdisc show dev $shaped_iface | grep -q netem"; then
-        echo "WARN $name ($host): netem NOT removed from $shaped_iface -- retrying"
-        rsh1 "sudo /usr/sbin/tc qdisc del dev $shaped_iface root 2>/dev/null; true" >/dev/null 2>&1
-        if rsh1 "/usr/sbin/tc qdisc show dev $shaped_iface | grep -q netem"; then
-          echo "WARN $name ($host): STILL shaped -- clear $shaped_iface by hand"
-          _clean=0
-        fi
-      fi
-      # Release the ownership claim ONLY once the interface is confirmed clear. Dropping
-      # it here unconditionally disarmed the watchdog in exactly the case it exists for:
-      # teardown had just reported STILL shaped, and removing the claim meant the timer
-      # would decline to retry. While the claim stands the watchdog will finish the job
-      # for us; once it is gone, neither it nor another sweep's cleanup can touch what the
-      # next run installs here.
-      if [ "$_clean" = "1" ]; then
-        rsh1 "rm -f '$NETEM_OWNER.$shaped_iface'" >/dev/null 2>&1
-      fi
-      shaped_netem=""; shaped_token=""
-    fi
-    flock -u 9 2>/dev/null || true
-  }
 
   [ "$up" = "1" ] || {
       shaping_down
@@ -796,6 +818,7 @@ run_one() {
   # a pass if you only check that the line exists. Require the exit status, the error
   # field, and a server log we actually retrieved.
   local hit=""
+  [ "$shaping_failed" = 0 ] || hit="${hit}netem-teardown-unproved "
   grep -qi "DESYNCED"        "$OUT/$name.server.log" 2>/dev/null && hit="${hit}DESYNC "
   grep -qi "REFEREE SUSPECT" "$OUT/$name.server.log" 2>/dev/null && hit="${hit}REFEREE-SUSPECT "
   grep -Eqi "DESYNCED|err=[^ ]*desync|desync at" "$clog" 2>/dev/null && hit="${hit}client-desync "
@@ -854,6 +877,7 @@ run_one() {
   elif [ "$nohash" = "1" ]; then
     echo "flow $name @$host [seat=$seat seed=$seed] -- NO HASH COMPARISON -- $done_line"
   else echo "ok   $name @$host [seat=$seat seed=$seed] -- $done_line"; fi
+  [ -z "$hit" ]
 }
 
 # DISPATCH. Assign every run to exactly one host, then let each host drain its own
@@ -1034,7 +1058,10 @@ for ((h = 0; h < NH; h++)); do
   (
     k=0
     for spec in "${mine[@]}"; do
-      run_one "${H_NAME[$h]}" "${myidx[$k]}" "$spec" &
+      (
+        run_one "${H_NAME[$h]}" "${myidx[$k]}" "$spec"
+        printf '%s\n' "$?" >"$OUT/${spec%%|*}.status"
+      ) &
       k=$((k + 1))
       while [ "$(jobs -rp | wc -l)" -ge "${H_JOBS[$h]}" ]; do sleep 5; done
     done
@@ -1065,6 +1092,14 @@ hits=$(grep -rlEi "DESYNCED|REFEREE SUSPECT" "$OUT" 2>/dev/null | grep -v "/vali
 # every one of them has to finish for the run to mean anything. Say "seat" so the
 # number lines up with something the reader can count, rather than looking like a
 # run total that disagrees with the table.
+_bad_cases=0
+for _spec in "${RUNS[@]}"; do
+  _name=${_spec%%|*}
+  if [ "$(cat "$OUT/$_name.status" 2>/dev/null)" != 0 ]; then
+    echo "incomplete or failed case: $_name"
+    _bad_cases=$((_bad_cases + 1))
+  fi
+done
 _ok=0; _bad=0
 for f in "$OUT"/*.client*.log; do
   case "$(basename "$f")" in validate.*|negative.*) continue ;; esac
@@ -1075,8 +1110,8 @@ for f in "$OUT"/*.client*.log; do
 done
 if [ -n "$hits" ]; then
   echo "DESYNCS FOUND in:"; echo "$hits"
-elif [ "$_bad" -gt 0 ]; then
-  echo "no desyncs in the $_ok seat(s) that completed -- but $_bad DID NOT, see below."
+elif [ "$_bad" -gt 0 ] || [ "$_bad_cases" -gt 0 ]; then
+  echo "no desyncs in the $_ok seat(s) that completed -- but $_bad seat(s) and $_bad_cases case(s) lack a clean result, see below."
   echo "This is NOT a clean sweep: a run that errored proves nothing either way."
 else
   echo "no desyncs reported ($_ok seats, all completed)"
@@ -1113,3 +1148,5 @@ for f in "$OUT"/*.client*.log; do
   esac
 done
 echo "logs: $OUT"
+
+[ -z "$hits" ] && [ "$_bad" = 0 ] && [ "$_bad_cases" = 0 ]
