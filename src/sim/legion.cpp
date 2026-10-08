@@ -4,6 +4,7 @@
 #include "retailplacement.h"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -39,9 +40,21 @@ constexpr uint32_t kRestAfter=60;
 constexpr uint32_t kRestStride=2;
 // Process-wide hooks (see legion.h): the rest stride for the settlelatency
 // probe, TAK_LEGION_VERIFY and the LPROBE line. Set by tools before a run.
+// A debug build also starts with the verify hook on when TAK_LEGION_VERIFY
+// is set (no tool wires it yet: legion_identity.sh --verify, crowdbench and
+// the world tests only set the variable). Observation only, never hashed.
 uint32_t gRestStride=kRestStride;
+#ifndef NDEBUG
+bool gVerify=std::getenv("TAK_LEGION_VERIFY")!=nullptr;
+#else
 bool gVerify=false;
+#endif
+#ifndef NDEBUG
+// ... and the LPROBE line every TAK_LPROBE ticks.
+uint32_t gProbe=std::getenv("TAK_LPROBE")?uint32_t(std::strtoul(std::getenv("TAK_LPROBE"),nullptr,10)):0;
+#else
 uint32_t gProbe=0;
+#endif
 constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
@@ -450,6 +463,9 @@ struct LegionNavigator::Impl {
     // LPROBE only (never hashed, never read by the sim): the four work
     // lists' sizes and the live groups, summed over the ticks.
     uint64_t probeListSum=0,probeGroupSum=0;
+    // LPROBE only: wall time (ms, summed over the ticks) of syncStatic,
+    // stampGrounded and liftFlyers. Measured only while the probe is on.
+    double probeSyncMs=0,probeStampMs=0,probeLiftMs=0;
     static uint64_t seedsKey(const std::vector<int>& seeds) {
         uint64_t h=mix(0x7365656473ull,seeds.size());
         for(int c:seeds)h=mix(h,uint32_t(c));
@@ -598,6 +614,33 @@ struct LegionNavigator::Impl {
     std::vector<int32_t> liftHome;
     std::vector<int> liftHomeCells,liftedIds;
     int32_t occAt(size_t c) const {const int32_t o=w.occ_[c];return o||groundedCells.empty()?o:grounded[c];}
+    // liftFlyers' gate: per kLiftBucket x kLiftBucket block of cells, how
+    // many grounded and lift-home cells it holds (a cell in both counts
+    // twice). Rebuilt with them by stampGrounded; never hashed.
+    static constexpr int kLiftBucket=16;
+    std::vector<uint16_t> liftBuckets;
+    std::vector<int> liftBucketList;   // non-zero entries of liftBuckets
+    int liftBucketW=0;
+    void fillLiftBuckets() {
+        liftBucketW=(w.occW_+kLiftBucket-1)/kLiftBucket;
+        const size_t n=size_t(liftBucketW)*size_t((w.occH_+kLiftBucket-1)/kLiftBucket);
+        if(liftBuckets.size()!=n)liftBuckets.assign(n,0);
+        else for(int b:liftBucketList)liftBuckets[size_t(b)]=0;
+        liftBucketList.clear();
+        for(const auto* cells:{&groundedCells,&liftHomeCells})for(int c:*cells) {
+            const int b=(c/w.occW_)/kLiftBucket*liftBucketW+(c%w.occW_)/kLiftBucket;
+            if(!liftBuckets[size_t(b)]++)liftBucketList.push_back(b);
+        }
+    }
+    // Does any grounded or lift-home cell lie in a bucket the inclusive cell
+    // rectangle [x0,x1]x[z0,z1] touches? (False means none lies in it.)
+    bool liftBucketsHit(int x0,int z0,int x1,int z1) const {
+        x0=std::max(x0,0);z0=std::max(z0,0);x1=std::min(x1,w.occW_-1);z1=std::min(z1,w.occH_-1);
+        if(x0>x1||z0>z1||liftBucketList.empty())return false;
+        for(int bz=z0/kLiftBucket;bz<=z1/kLiftBucket;++bz)for(int bx=x0/kLiftBucket;bx<=x1/kLiftBucket;++bx)
+            if(liftBuckets[size_t(bz)*liftBucketW+bx])return true;
+        return false;
+    }
     void stampGrounded() {
         if(w.occW_<=0)return;
         const size_t n=size_t(w.occW_)*w.occH_;
@@ -632,6 +675,7 @@ struct LegionNavigator::Impl {
             }
         }
         std::sort(ids.begin(),ids.end());
+        fillLiftBuckets();
         // A flyer that took off is no soft obstacle any more (as a body
         // setting off as a member, see registerMove): clear it at once,
         // not at the next scan.
@@ -2183,27 +2227,23 @@ struct LegionNavigator::Impl {
                 if(busy&&w.legionLiftable(*flyer,flyer->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
             }
         }
-        // Bounding box of every cell a request can hit: each planned step
-        // moves at most one cell, so a member whose footprint cannot reach
-        // it within kLiftCells steps is skipped without walking its steps.
+        // Bounding box of every cell a request can hit, and the exact gate
+        // below it: each planned step moves at most one cell, so every origin
+        // the walk visits lies within kLiftCells cells of the body's origin
+        // or of a cell of its committed route (whatever cell it joins the
+        // route at). A member whose footprint over that box reaches no
+        // bucket holding a grounded or lift-home cell (see liftBuckets) can
+        // ask no flyer to lift and is skipped without walking its steps.
         int bx0=W,bz0=w.occH_,bx1=-1,bz1=-1;
         for(const auto* cells:{&groundedCells,&liftHomeCells})for(int c:*cells) {
             bx0=std::min(bx0,c%W);bx1=std::max(bx1,c%W);bz0=std::min(bz0,c/W);bz1=std::max(bz1,c/W);
         }
-        uint64_t walked=0,skipped=0;
-        for(auto& [id,m]:members) {
-            if((uint32_t(id)+w.tickCounter_)%kLiftStride)continue;
-            if(m.state==Arrived||m.state==Trapped||m.goal<0)continue;
-            Unit* u=w.unit(id);
-            if(!u||!u->alive()||!u->type||u->type->canFly||u->embarked())continue;
-            if(m.route.empty()) {
-                const int ux=footprintOrigin(u->x,u->type->footX),uz=footprintOrigin(u->z,u->type->footZ);
-                if(ux-kLiftCells>bx1||uz-kLiftCells>bz1||ux+kLiftCells+u->type->footX-1<bx0||uz+kLiftCells+u->type->footZ-1<bz0) {++skipped;continue;}
-            }
-            const auto group=groups.find(m.group);
-            if(group==groups.end())continue;
-            ++walked;
-            const auto& g=group->second;
+        // The member's planned steps (detour route, else its group field's
+        // descent, else the straight line to its goal), kLiftCells ahead;
+        // asks every liftable flyer its footprint covers on the way to lift.
+        // `dry` (TAK_LEGION_VERIFY) only reports whether the walk covers
+        // any grounded or lift-home cell, and asks nothing.
+        auto walk=[&](Unit* u,const Member& m,const Group& g,bool dry) {
             const auto& p=planes[size_t(g.plane)];
             const Field* f=g.field&&g.field->done?g.field.get():nullptr;
             const int fx=u->type->footX,fz=u->type->footZ;
@@ -2218,6 +2258,7 @@ struct LegionNavigator::Impl {
                     int32_t o=groundedCells.empty()?0:grounded[c];
                     if(!o&&!liftHomeCells.empty())o=liftHome[c];
                     if(!o)continue;
+                    if(dry)return true;
                     Unit* flyer=w.unit(o);
                     // A flyer of this member's own squad (a mixed formation that
                     // has just landed where the formation is settling) stays down:
@@ -2243,14 +2284,56 @@ struct LegionNavigator::Impl {
                 if(nx==x&&nz==z)break;
                 x=nx;z=nz;
             }
+            return false;
+        };
+        uint64_t walked=0,skipped=0;
+        for(auto& [id,m]:members) {
+            if((uint32_t(id)+w.tickCounter_)%kLiftStride)continue;
+            if(m.state==Arrived||m.state==Trapped||m.goal<0)continue;
+            Unit* u=w.unit(id);
+            if(!u||!u->alive()||!u->type||u->type->canFly||u->embarked())continue;
+            {
+                int x0=footprintOrigin(u->x,u->type->footX),z0=footprintOrigin(u->z,u->type->footZ),x1=x0,z1=z0;
+                for(const int c:m.route) {x0=std::min(x0,c%W);x1=std::max(x1,c%W);z0=std::min(z0,c/W);z1=std::max(z1,c/W);}
+                x0-=kLiftCells;z0-=kLiftCells;x1+=kLiftCells+u->type->footX-1;z1+=kLiftCells+u->type->footZ-1;
+                if((m.route.empty()&&(x0>bx1||z0>bz1||x1<bx0||z1<bz0))||!liftBucketsHit(x0,z0,x1,z1)) {
+#ifndef NDEBUG
+                    if(gVerify) {
+                        const auto group=groups.find(m.group);
+                        if(group!=groups.end()&&walk(u,m,group->second,true))
+                            verifyFail("lift gate skipped a member whose steps cover a grounded or lift-home cell");
+                    }
+#endif
+                    ++skipped;continue;
+                }
+            }
+            const auto group=groups.find(m.group);
+            if(group==groups.end())continue;
+            ++walked;
+            walk(u,m,group->second,false);
         }
         stats.liftMembersWalked+=walked;stats.liftMembersSkipped+=skipped;
     }
     void tick() {
-        syncStatic();
-        stampGrounded();
-        scanStill();
-        liftFlyers();
+        if(gProbe) {
+            using Clock=std::chrono::steady_clock;
+            auto ms=[](Clock::time_point a,Clock::time_point b) {return std::chrono::duration<double,std::milli>(b-a).count();};
+            const auto t0=Clock::now();
+            syncStatic();
+            const auto t1=Clock::now();
+            stampGrounded();
+            const auto t2=Clock::now();
+            scanStill();
+            const auto t3=Clock::now();
+            liftFlyers();
+            const auto t4=Clock::now();
+            probeSyncMs+=ms(t0,t1);probeStampMs+=ms(t1,t2);probeLiftMs+=ms(t3,t4);
+        } else {
+            syncStatic();
+            stampGrounded();
+            scanStill();
+            liftFlyers();
+        }
         awareScan();
         prebuildStep();
         prune();
@@ -2359,14 +2442,15 @@ struct LegionNavigator::Impl {
         std::fprintf(stderr,"LPROBE tick=%u groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
             " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu fields_paused=%llu"
-            " still_units_processed=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu\n",
+            " still_units_processed=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
             w.tickCounter_,groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
             (unsigned long long)s.refreshDeferred,(unsigned long long)s.blockedRerequests,(unsigned long long)s.lifts,
             (unsigned long long)s.liftMembersWalked,(unsigned long long)s.liftMembersSkipped,(unsigned long long)s.waitingMemberTicks,
             (unsigned long long)s.demandResumes,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
-            (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum);
+            (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
+            probeSyncMs,probeStampMs,probeLiftMs);
     }
 #ifndef NDEBUG
     // TAK_LEGION_VERIFY: every derived index and work list against a full
@@ -2424,6 +2508,21 @@ struct LegionNavigator::Impl {
                 routes[{g.plane,f->seedKey}].insert(id);
             }
             if(routes!=routeIndex)fail("routeIndex differs from the groups' fields");
+        }
+        // liftFlyers' buckets against a scan of the grounded and lift-home
+        // cells (A4).
+        if(w.occW_>0&&grounded.size()==size_t(w.occW_)*w.occH_) {
+            std::vector<uint16_t> count(liftBuckets.size(),0);
+            for(size_t c=0;c<grounded.size();++c) {
+                const size_t b=size_t(int(c)/w.occW_/kLiftBucket*liftBucketW+int(c)%w.occW_/kLiftBucket);
+                if(b>=count.size())fail("liftBuckets do not cover the map");
+                count[b]+=uint16_t((grounded[c]!=0)+(liftHome.size()==grounded.size()&&liftHome[c]!=0));
+            }
+            if(count!=liftBuckets)fail("liftBuckets differ from a scan of the grounded and lift-home cells");
+            size_t listed=0;
+            for(size_t b=0;b<count.size();++b)listed+=count[b]!=0;
+            if(listed!=liftBucketList.size())fail("liftBucketList differs from the non-zero liftBuckets");
+            for(int b:liftBucketList)if(!liftBuckets[size_t(b)])fail("liftBucketList holds an empty bucket");
         }
         // Counters only grow (the sizes are filled in by stats() alone).
         std::vector<uint64_t> before;

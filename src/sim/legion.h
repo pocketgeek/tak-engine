@@ -168,9 +168,9 @@ public:
     // full re-evaluation stride (default 2). Changes behaviour and hashes.
     static void setRestStrideForTest(int stride);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
-    // after every tick() (aborts on a mismatch). A no-op in release. Tools
-    // turn it on from TAK_LEGION_VERIFY; the sim never reads the
-    // environment. Process-wide.
+    // after every tick() (aborts on a mismatch). A no-op in release. A debug
+    // build starts with it on when TAK_LEGION_VERIFY is set (the only
+    // environment read, debug-only and never hashed). Process-wide.
     static void setVerify(bool on);
     // Print the scheduler counters (an "LPROBE" line on stderr) every
     // `ticks` ticks; 0 off. Process-wide; tools and debug clients set it.
