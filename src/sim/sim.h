@@ -2595,8 +2595,11 @@ private:
     // members) keeps station this tick, by unit index. Rebuilt each tick from
     // hashed state before the unit loop; not persistent, so not hashed.
     struct LegionFlightStation {
-        bool active=false, hold=false;   // hold: the ground is still under way
-        Fixed x, z, pace;                // pace: the slowest ground member's speed
+        bool active=false;
+        bool steer=false;   // fly at (x,z) instead of the order's own point
+        bool hold=false;    // the ground is still under way: the leg does not complete
+        bool capped=false;  // limit the flyer's maximum to cap
+        Fixed x, z, cap;
     };
     std::vector<LegionFlightStation> legionFlightStations_;
     bool legionFlightStationsLive_=false;
