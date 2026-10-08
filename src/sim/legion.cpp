@@ -90,6 +90,18 @@ constexpr uint32_t kStillScan=30;
 constexpr uint16_t kStillScans=2;
 constexpr uint32_t kSoftFactor=4;
 constexpr uint32_t kSoftNear=3;                // ... within a cell of one
+// Group awareness (see awareScan): every kAwareScan ticks each moving
+// formation of at least kAwareMembers is a mover: its centroid, spread and
+// the corridor it sweeps over the next kAwareAhead scans. A group whose way
+// ahead (kAwareChain descent cells from its centroid) meets a mover it may
+// see plans round it as a whole (its next field charges the corridor), and
+// keeps doing so until the mover has been off its way for kAwareKeep scans.
+// Formations of one player ordered within kConvoyTicks to points within
+// kConvoyCells are one selection and never plan round each other.
+constexpr uint32_t kAwareScan=30;
+constexpr int kAwareMembers=8,kAwareAhead=3,kAwareChain=48,kAwareKeep=2;
+constexpr uint32_t kConvoyTicks=90;
+constexpr int kConvoyCells=32;
 constexpr std::array<std::array<int,2>,8> kDirections{{
     {1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{1,-1},{-1,-1}}};
 
@@ -159,8 +171,35 @@ struct LegionNavigator::Impl {
         }
         // Buckets keyed by potential + heuristic (see advance); the key of a
         // relaxed neighbour is at most (kSoftFactor+1)*kDiagonal above the
-        // popped one.
-        std::array<std::vector<int>,64> buckets;
+        // popped one, plus a mover corridor's charge (see Corridor).
+        std::array<std::vector<int>,128> buckets;
+        // Movers this field plans round (see awareScan): corridor segments
+        // (px) and radius; a step inside one costs kSoftFactor times, within
+        // two cells of its edge kSoftNear times. With a soft obstacle on top
+        // a key rises by at most (2*kSoftFactor-1)*kDiagonal plus the
+        // heuristic's kDiagonal, under the 128 buckets.
+        struct Corridor {int64_t x0=0,z0=0,x1=0,z1=0,r=0;};
+        std::vector<Corridor> avoid;
+        uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {
+            uint32_t extra=0;
+            const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
+            for(const auto& c:avoid) {
+                const int64_t d2=segDist2(px,pz,c);
+                if(d2<=c.r*c.r)return base*(kSoftFactor-1);
+                if(d2<=(c.r+32)*(c.r+32))extra=base*(kSoftNear-1);
+            }
+            return extra;
+        }
+        static int64_t segDist2(int64_t px,int64_t pz,const Corridor& c) {
+            const int64_t vx=c.x1-c.x0,vz=c.z1-c.z0,wx=px-c.x0,wz=pz-c.z0;
+            const int64_t len2=vx*vx+vz*vz;
+            int64_t qx=c.x0,qz=c.z0;
+            if(len2>0) {
+                const int64_t t=std::clamp<int64_t>(wx*vx+wz*vz,0,len2);
+                qx=c.x0+vx*t/len2;qz=c.z0+vz*t/len2;
+            }
+            return (px-qx)*(px-qx)+(pz-qz)*(pz-qz);
+        }
         uint32_t current=0;
         int tx=0,tz=0;bool aimed=false;    // heuristic target: the group's bodies
         std::vector<std::pair<uint32_t,int>> seedKeys;size_t seedNext=0;   // seeds by key, enqueued in order
@@ -235,6 +274,10 @@ struct LegionNavigator::Impl {
         // the point outward and nobody has to cross a settled body.
         struct Slots {std::vector<int> cells;std::vector<uint8_t> taken;bool built=false,stale=false;uint16_t reach=0;};
         std::map<int,Slots> slots;
+        // Group awareness (see awareScan): the movers (by command) its
+        // fields plan round, their corridors as planned, and the scans each
+        // has been off its way.
+        std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
     };
     enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5};
     // ---- mission goals ------------------------------------------------
@@ -670,6 +713,7 @@ struct LegionNavigator::Impl {
         // The members' live centroid (px) on tick liveTick: derived from
         // positions on demand (see pivotAim), so never hashed.
         int64_t liveX=0,liveZ=0;uint32_t liveTick=~0u;
+        int64_t awareX=0,awareZ=0;bool awareSeen=false;   // centroid (px) at the last awareScan (hashed)
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
     void slotCells(const Member& m,int fx,int fz,bool claim) {
@@ -1617,6 +1661,7 @@ struct LegionNavigator::Impl {
         auto f=std::make_shared<Field>();
         f->seeds=g.seeds;f->started=w.tickCounter_;
         f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;f->command=g.soft?g.command:kNoSoft;f->softCounts=softCountsFor(planes[size_t(g.plane)].footX,planes[size_t(g.plane)].footZ);
+        f->avoid=g.avoidSeg;
         f->ownArrivals=std::find(softOwner.begin(),softOwner.end(),f->command)!=softOwner.end();
         f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
             [&](int owner) {return w.allied(owner,int(uint32_t(f->command>>32)));});
@@ -1636,7 +1681,8 @@ struct LegionNavigator::Impl {
     }
     // Dial's algorithm on key = potential + heuristic (A*; consistent, so
     // a key never drops below its parent's and rises by at most
-    // (kSoftFactor+1)*kDiagonal: 64 circular buckets suffice). Seeds enter
+    // (kSoftFactor+1)*kDiagonal plus a corridor charge: 128 circular
+    // buckets suffice). Seeds enter
     // in key order.
     uint64_t advance(Field& f,uint64_t budget) {
         const auto& p=planes[size_t(f.plane)];
@@ -1644,9 +1690,9 @@ struct LegionNavigator::Impl {
         while((f.queued||f.seedNext<f.seedKeys.size())&&spent<budget) {
             if(!f.queued&&f.seedKeys[f.seedNext].first>f.current)f.current=f.seedKeys[f.seedNext].first;
             while(f.seedNext<f.seedKeys.size()&&f.seedKeys[f.seedNext].first==f.current) {
-                f.buckets[f.current&63].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
+                f.buckets[f.current&127].push_back(f.seedKeys[f.seedNext].second);++f.queued;++f.seedNext;
             }
-            auto& bucket=f.buckets[f.current&63];
+            auto& bucket=f.buckets[f.current&127];
             if(bucket.empty()) {++f.current;continue;}
             const int cell=bucket.back();bucket.pop_back();--f.queued;
             const int x=cell%W,z=cell/W;
@@ -1663,11 +1709,12 @@ struct LegionNavigator::Impl {
                 if(g+base>=slot)continue;   // no charge can improve it
                 const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
                 f.softened|=level>0;
-                const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base);
+                const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base)+
+                    (f.avoid.empty()?0:f.corridorCharge(x+d[0],z+d[1],p.footX,p.footZ,base));
                 if(next>=kUnreached)continue;   // saturated: beyond the field's range
                 if(next<slot) {
                     slot=uint16_t(next);
-                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&63].push_back((z+d[1])*W+x+d[0]);++f.queued;
+                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&127].push_back((z+d[1])*W+x+d[0]);++f.queued;
                 }
             }
         }
@@ -2019,6 +2066,7 @@ struct LegionNavigator::Impl {
         stampGrounded();
         scanStill();
         liftFlyers();
+        awareScan();
         prebuildStep();
         prune();
         // Yields run even while no Legion member remains (a committed yield
@@ -2082,6 +2130,131 @@ struct LegionNavigator::Impl {
             const uint64_t spent=advance(f,pass==1?std::min(budget,refresh):budget);
             if(pass==1)refresh-=std::min(refresh,spent);
             finish(g,f,spent);
+        }
+    }
+    // Group awareness: moving formations plan round each other as wholes.
+    // Same-player and allied movers always; an enemy mover only within the
+    // sight (World::sightDistance, from hashed unit types and positions) of
+    // some member of the group, and never by a group whose mission engages
+    // enemies (fight, attack, guard, patrol). Two groups meeting head on each
+    // keep right: the corridor a group plans round is shifted to its left by
+    // half the corridor's radius. Deterministic: integer, ordered, on a fixed
+    // cadence; the plans are hashed.
+    void awareScan() {
+        if(w.tickCounter_%kAwareScan!=kAwareScan/2)return;
+        struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz;};
+        std::vector<Mover> movers;
+        for(auto& [key,pt]:points) {
+            if(std::get<0>(key)<0)continue;
+            int64_t sx=0,sz=0,n=0;
+            for(const int id:pt.ids) {
+                const Member* mm=member(id);const Unit* v=w.unit(id);
+                if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+                sx+=v->x.v>>16;sz+=v->z.v>>16;++n;
+            }
+            if(n<kAwareMembers) {pt.awareSeen=false;continue;}
+            const int64_t cx=sx/n,cz=sz/n;
+            int64_t ss=0;
+            for(const int id:pt.ids) {
+                const Member* mm=member(id);const Unit* v=w.unit(id);
+                if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+                const int64_t ox=(v->x.v>>16)-cx,oz=(v->z.v>>16)-cz;ss+=ox*ox+oz*oz;
+            }
+            const int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
+            pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;
+            if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
+            const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
+            movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz});
+        }
+        // Each group's centroid, spread and the sight of its members.
+        struct Acc {int64_t sx=0,sz=0,n=0,sight=0;};
+        std::map<int,Acc> acc;
+        for(const auto& [id,m]:members) {
+            if(m.state!=Moving&&m.state!=Holding)continue;
+            const Unit* v=w.unit(id);if(!v||!v->type)continue;
+            auto& a=acc[m.group];a.sx+=v->x.v>>16;a.sz+=v->z.v>>16;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
+        }
+        const int W=width();
+        for(auto& [id,g]:groups) {
+            const auto a=acc.find(id);
+            std::vector<uint64_t> want;std::vector<Field::Corridor> seg;
+            if(a!=acc.end()&&a->second.n>=kAwareMembers&&g.field&&g.field->done&&!movers.empty()) {
+                const auto& p=planes[size_t(g.plane)];
+                const int64_t cx=a->second.sx/a->second.n,cz=a->second.sz/a->second.n;
+                int c=nearestLegal(p,int(cx/16),int(cz/16));
+                if(c>=0&&g.field->at(size_t(c))!=kUnreached) {
+                    std::vector<int> chain{c};
+                    for(int k=0;k<kAwareChain;++k) {const int next=descend(p,*g.field,chain.back()%W,chain.back()/W,chain.back());if(next<0)break;chain.push_back(next);}
+                    const int64_t tx=(chain.back()%W)*16-cx,tz=(chain.back()/W)*16-cz;
+                    const bool engages=g.kind==Kind::Fight||g.kind==Kind::Attack||g.kind==Kind::Guard||g.kind==Kind::Patrol;
+                    for(const auto& mv:movers) {
+                        if(mv.command==g.command)continue;
+                        // One selection sent as several groups (one player,
+                        // within kConvoyTicks, to points within kConvoyCells)
+                        // never plans round itself, and a
+                        // mover going the same way (within 60 degrees) is
+                        // followed, not planned round.
+                        const int64_t gcx=int64_t(g.minX+g.maxX)*8,gcz=int64_t(g.minZ+g.maxZ)*8;
+                        if(mv.player==g.player&&(mv.issue>g.issuedTick?mv.issue-g.issuedTick:g.issuedTick-mv.issue)<=kConvoyTicks&&
+                           std::abs(mv.px-gcx)<=kConvoyCells*16&&std::abs(mv.pz-gcz)<=kConvoyCells*16)continue;
+                        {
+                            const int64_t dot=tx*mv.dx+tz*mv.dz;
+                            if(dot>0&&4*dot*dot>=(tx*tx+tz*tz)*(mv.dx*mv.dx+mv.dz*mv.dz))continue;
+                        }
+                        const bool friendly=mv.player==g.player||w.allied(g.player,mv.player);
+                        if(!friendly) {
+                            if(engages)continue;
+                            const int64_t ex=mv.cx-cx,ez=mv.cz-cz,see=a->second.sight+mv.r;
+                            if(ex*ex+ez*ez>see*see)continue;
+                        }
+                        const bool headOn=tx*mv.dx+tz*mv.dz<0;
+                        // Crossing ways: only one group gives way, the one
+                        // with the larger command key (player, then issue
+                        // tick); head on, both keep right.
+                        if(!headOn&&mv.command>g.command)continue;
+                        // Already in among each other: too late to plan round
+                        // (a late swerve only reverses bodies).
+                        const bool known=std::find(g.avoidCmd.begin(),g.avoidCmd.end(),mv.command)!=g.avoidCmd.end();
+                        {
+                            const int64_t ex=mv.cx-cx,ez=mv.cz-cz;
+                            if(!known&&ex*ex+ez*ez<4*mv.r*mv.r)continue;
+                        }
+                        Field::Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
+                        bool meets=false;
+                        for(size_t k=0;k<chain.size()&&!meets;k+=4)
+                            meets=Field::segDist2(int64_t(chain[k]%W)*16+8,int64_t(chain[k]/W)*16+8,cor)<=(cor.r+32)*(cor.r+32);
+                        if(!meets)continue;
+                        // Head on: keep right (plan round a corridor shifted left).
+                        if(headOn) {
+                            const int64_t tl=std::max<int64_t>(1,isqrtFloor(uint64_t(tx*tx+tz*tz)));
+                            const int64_t lx=tz*cor.r/(2*tl),lz=-tx*cor.r/(2*tl);
+                            cor.x0+=lx;cor.x1+=lx;cor.z0+=lz;cor.z1+=lz;
+                        }
+                        want.push_back(mv.command);seg.push_back(cor);
+                    }
+                }
+            }
+            // Hysteresis: a mover leaves the plan only after kAwareKeep
+            // scans off the way; a new one re-plans at once.
+            bool replan=false;
+            std::vector<uint64_t> cmd;std::vector<Field::Corridor> keep;std::vector<uint8_t> off;
+            for(size_t i=0;i<g.avoidCmd.size();++i) {
+                const auto at=std::find(want.begin(),want.end(),g.avoidCmd[i]);
+                if(at!=want.end()) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(0);continue;}
+                if(g.avoidOff[i]+1<kAwareKeep) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(uint8_t(g.avoidOff[i]+1));continue;}
+                replan=true;
+            }
+            for(size_t i=0;i<want.size();++i)
+                if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),want[i])==g.avoidCmd.end()) {
+                    cmd.push_back(want[i]);keep.push_back(seg[i]);off.push_back(0);replan=true;
+                }
+            if(replan) {
+                // New corridors replace the planned ones (the movers moved on).
+                for(size_t i=0;i<cmd.size();++i)
+                    for(size_t j=0;j<want.size();++j)if(want[j]==cmd[i])keep[i]=seg[j];
+            }
+            g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);
+            if(replan&&g.field&&g.field->done) {g.next.reset();g.stale=true;}
         }
     }
     // Members whose unit died, embarked, lost its orders or left Legion's
@@ -3034,7 +3207,12 @@ struct LegionNavigator::Impl {
                 const uint64_t command=g.soft?g.command:kNoSoft;
                 const int counts=softCells.empty()?-1:softCountsFor(fx,fz);
                 m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz)&&
-                    (softCells.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}));
+                    (softCells.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}))&&
+                    // ... and so is a line through a mover the group plans round.
+                    (g.avoidSeg.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {
+                        const int64_t px=int64_t(cx)*16+fx*8,pz=int64_t(cz)*16+fz*8;
+                        for(const auto& c:g.avoidSeg)if(Field::segDist2(px,pz,c)<=c.r*c.r)return false;
+                        return true;}));
             }
             direct=m.line;
         }
@@ -3838,6 +4016,10 @@ struct LegionNavigator::Impl {
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
             if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);}
+            for(size_t i=0;i<g.avoidCmd.size();++i) {
+                h=mix(h,g.avoidCmd[i]);h=mix(h,g.avoidOff[i]);const auto& c=g.avoidSeg[i];
+                h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32);
+            }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             for(const auto& [seed,slot]:g.slots) {
                 h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);h=mix(h,slot.stale);
@@ -3850,6 +4032,7 @@ struct LegionNavigator::Impl {
             if(point.assigned) {h=mix(h,uint64_t(point.centreX));h=mix(h,uint64_t(point.centreZ));
                 h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));}
             for(int c:point.cells)h=mix(h,uint64_t(c));
+            if(point.awareSeen) {h=mix(h,uint64_t(point.awareX));h=mix(h,uint64_t(point.awareZ));}
         }
         for(const auto& [id,a]:anchors) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);
