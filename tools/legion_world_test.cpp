@@ -9,6 +9,7 @@
 #include "sim/sim.h"
 #include "sim/matchsetup.h"
 #include "sim/footprint.h"
+#include "legion_observe.h"
 #include <climits>
 #include <cmath>
 #include <algorithm>
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -72,32 +74,43 @@ struct Fixture {
     }
 };
 
-// Spinning and oscillation observer. A spin is a heading change without any
-// movement. An oscillation is a return to a 16 px cell the body left less
-// than 90 ticks earlier (A -> B -> A); sub-cell steering wiggle is not one.
-struct Motion {
-    struct Track {int32_t x=0,z=0,heading=0;std::vector<std::pair<int64_t,int>> cells;};
-    std::map<int,Track> tracks;
-    uint64_t spins=0,reversals=0;
-    int tick=0;
-    void observe(World& w,const std::vector<int>& ids) {
-        ++tick;
-        for(int id:ids) {
-            const auto& u=*w.unit(id);
-            auto [it,fresh]=tracks.try_emplace(id);
-            auto& t=it->second;
-            if(!fresh&&u.x.v==t.x&&u.z.v==t.z&&u.heading.v!=t.heading)++spins;
-            const int64_t cell=(int64_t(u.z.v>>20)<<32)|uint32_t(u.x.v>>20);
-            if(t.cells.empty()||t.cells.back().first!=cell) {
-                for(size_t i=0;i+1<t.cells.size();++i)
-                    if(t.cells[i].first==cell&&tick-t.cells[i].second<90) {++reversals;break;}
-                t.cells.push_back({cell,tick});
-                if(t.cells.size()>6)t.cells.erase(t.cells.begin());
-            }
-            t.x=u.x.v;t.z=u.z.v;t.heading=u.heading.v;
+// Per-case motion metrics come from the shared const observer
+// (tools/legion_observe.h). A Watch holds one: set `cfg` (groups, gates,
+// sides, pairs, decisionEvery) before the first observe(), or leave it and
+// one group of every id passed to the first call is watched. spins() and
+// reversals() read the observer's `spins` / `reversals` keys (a spin is a
+// heading change without any movement; a reversal is a return to a 16 px
+// cell the body left less than 90 ticks earlier).
+struct Watch {
+    tak::legion_observe::Config cfg;
+    std::unique_ptr<tak::legion_observe::Observer> obs;
+    int64_t tick=0;
+    Watch() {cfg.decisionEvery=0;}
+    void observe(const World& w,const std::vector<int>& ids) {
+        if(!obs) {
+            if(cfg.groups.empty()) {tak::legion_observe::Group g;g.name="all";g.ids=ids;cfg.groups.push_back(std::move(g));}
+            obs=std::make_unique<tak::legion_observe::Observer>(cfg);
         }
+        obs->sample(w,tick++);
     }
+    tak::legion_observe::Keys keys() const {return obs?obs->report():tak::legion_observe::Keys{};}
+    int64_t key(std::string_view name,int64_t fallback=0) const {return tak::legion_observe::Observer::get(keys(),name,fallback);}
+    uint64_t spins() const {return uint64_t(key("spins"));}
+    uint64_t reversals() const {return uint64_t(key("reversals"));}
 };
+
+// The observer's AR-08 completion-distance keys of one group, as one text:
+// how many members finished, how far from the click (cells) the median and
+// the farthest finished, and how many finished outside the packed-disc radius.
+std::string completionKeys(const tak::legion_observe::Keys& k,const std::string& group) {
+    using tak::legion_observe::Observer;
+    const std::string p="g."+group+".";
+    char buf[160];
+    std::snprintf(buf,sizeof buf,"complete_n=%lld complete_outside_radius=%lld complete_dist_median=%lld complete_dist_max=%lld",
+        (long long)Observer::get(k,p+"complete_n",0),(long long)Observer::get(k,p+"complete_outside_radius",0),
+        (long long)Observer::get(k,p+"complete_dist_median",-1),(long long)Observer::get(k,p+"complete_dist_max",-1));
+    return buf;
+}
 
 void printLeft(Fixture& f,const std::vector<int>& ids) {
     for(int id:ids)if(!f.world.unit(id)->orders.empty()) {
@@ -196,7 +209,7 @@ void jaggedRun(int count,int stride,int foot,const char* label) {
     for(int i=0;i<count;++i)ids.push_back(f.spawn(type,40+(i%4)*(foot+2),8+(i/4)*(foot+2)));
     f.start();
     for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((44+int(i%4)*stride)*16),float((62+int(i/4)*stride)*16),false);
-    Motion motion;uint64_t pressing=0;
+    Watch motion;uint64_t pressing=0;
     for(int t=0;t<4000;++t) {
         f.world.tick(1.f/30);
         motion.observe(f.world,ids);
@@ -215,9 +228,9 @@ void jaggedRun(int count,int stride,int foot,const char* label) {
             u.orders.back().x.toFloat()/16,u.orders.back().z.toFloat()/16,f.world.legionNavigator()->unitState(id));
     }
     std::printf("jagged %s arrived=%d/%zu spins=%llu reversals=%llu pressing=%llu\n",label,arrived,ids.size(),
-        (unsigned long long)motion.spins,(unsigned long long)motion.reversals,(unsigned long long)pressing);
+        (unsigned long long)motion.spins(),(unsigned long long)motion.reversals(),(unsigned long long)pressing);
     check(arrived==int(ids.size()),std::string("units stuck against jagged terrain: ")+label);
-    check(motion.spins==0,"units turned in place while stuck");
+    check(motion.spins()==0,"units turned in place while stuck");
     check(pressing==0,"units pressed into terrain");
 }
 void jagged() {
@@ -238,7 +251,7 @@ void trapped() {
         const int inside=f.spawn(type,15,15),outside=f.spawn(type,40,15);
         f.start();
         f.world.order(inside,50*16,50*16,false);f.world.order(outside,50*16,50*16,false);
-        Motion motion;
+        Watch motion;
         int clearedAt=-1;uint64_t moved=0;
         int32_t x=f.world.unit(inside)->x.v,z=f.world.unit(inside)->z.v;
         for(int t=0;t<9200;++t) {
@@ -248,10 +261,10 @@ void trapped() {
             if(clearedAt<0&&u.orders.empty())clearedAt=t;
         }
         std::printf("trapped cleared_at=%d moved_ticks=%llu spins=%llu reversals=%llu\n",clearedAt,
-            (unsigned long long)moved,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+            (unsigned long long)moved,(unsigned long long)motion.spins(),(unsigned long long)motion.reversals());
         check(moved==0,"trapped unit moved");
         check(clearedAt>=8950&&clearedAt<=9060,"trapped order not retired after the grace period");
-        check(motion.spins==0&&motion.reversals==0,"trapped unit turned or rocked");
+        check(motion.spins()==0&&motion.reversals()==0,"trapped unit turned or rocked");
         check(f.world.legionStats().trapped>=1,"trapped classification not recorded");
         check(f.world.unit(outside)->orders.empty(),"free unit did not arrive");
     }
@@ -287,15 +300,15 @@ void crowdhold() {
     for(int i=0;i<20;++i)ids.push_back(f.spawn(type,8+(i%5)*3,10+(i/5)*4));
     f.start();
     for(int id:ids)f.world.order(id,110*16,20*16,false);
-    Motion motion;
+    Watch motion;
     for(int t=0;t<1500;++t) {
         f.world.tick(1.f/30);
         if(t>600)motion.observe(f.world,ids);
     }
     int holding=0;for(int id:ids)holding+=f.world.legionNavigator()->unitState(id)==2;
-    std::printf("crowdhold holding=%d spins=%llu reversals=%llu\n",holding,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
-    check(motion.spins==0,"held crowd turned in place");
-    check(motion.reversals<=4,"held crowd oscillated");
+    std::printf("crowdhold holding=%d spins=%llu reversals=%llu\n",holding,(unsigned long long)motion.spins(),(unsigned long long)motion.reversals());
+    check(motion.spins()==0,"held crowd turned in place");
+    check(motion.reversals()<=4,"held crowd oscillated");
     for(int id:ids)check(f.legal(id),"illegal footprint in held crowd");
 }
 
@@ -312,7 +325,7 @@ int staticblockRun(int owner) {
     f.start();
     for(int t=0;t<90;++t)f.world.tick(1.f/30);   // the block has stood still a while
     for(int id:ids)f.world.order(id,160*16,50*16,false);
-    Motion motion;
+    Watch motion;
     int t=0,arrived=0,half=-1;
     for(;t<4000&&arrived<int(ids.size());++t) {
         f.world.tick(1.f/30);motion.observe(f.world,ids);
@@ -323,11 +336,11 @@ int staticblockRun(int owner) {
     for(int id:ids)check(f.legal(id),"illegal footprint");
     const auto s=f.world.legionStats();
     std::printf("staticblock owner=%d arrived=%d/%zu ticks=%d half=%d holds=%llu detours=%llu spins=%llu reversals=%llu\n",owner,arrived,ids.size(),t,half,
-        (unsigned long long)s.holds,(unsigned long long)s.detours,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+        (unsigned long long)s.holds,(unsigned long long)s.detours,(unsigned long long)motion.spins(),(unsigned long long)motion.reversals());
     if(std::getenv("STATIC_VERBOSE"))printLeft(f,ids);
     if(std::getenv("STATIC_REPORT"))return t;   // measure only (e.g. on an older build)
     check(arrived==int(ids.size()),"group did not get round the standing block");
-    check(motion.spins==0,"group spun at the standing block");
+    check(motion.spins()==0,"group spun at the standing block");
     // The way round the block (by one side, clear of its face) is barely
     // longer than the straight 140 cells. On open ground (no block) half the
     // group arrives at 1226 ticks and all of it at 1803; round the block it
@@ -373,7 +386,15 @@ FlyerRun landedflyersRun(int layout,bool legion,int flyerFoot,bool serial=true) 
     for(int id:flyers)check(f.world.unit(id)->flightGroundMode==1,"flyer not landed");
     const bool asGround=&standing==&type;
     for(int id:ids)f.world.order(id,160*16,50*16,false);
-    Motion motion;FlyerRun r;
+    Watch motion;FlyerRun r;
+    {
+        // Ground group, plus the standing bodies as a second group: the
+        // observer counts a landed flyer standing on a ground body
+        // (illegal_overlap_ticks) in the group that holds the flyer.
+        tak::legion_observe::Group gg,gf;gg.name="ground";gg.ids=ids;gf.name="flyers";gf.ids=flyers;
+        motion.cfg.groups.push_back(gg);
+        if(!flyers.empty())motion.cfg.groups.push_back(gf);
+    }
     for(;r.ticks<5000&&r.arrived<int(ids.size());++r.ticks) {
         if(layout==2&&r.ticks==150)for(int id:block)f.world.order(id,190*16,95*16,false);
         f.world.tick(1.f/30);motion.observe(f.world,ids);
@@ -387,7 +408,6 @@ FlyerRun landedflyersRun(int layout,bool legion,int flyerFoot,bool serial=true) 
                 const auto& v=*f.world.unit(fid);
                 if(v.flightGroundMode!=1||(asGround&&!v.orders.empty()))continue;
                 const int vx=footprintOrigin(v.x,flyerFoot),vz=footprintOrigin(v.z,flyerFoot);
-                if(ux<vx+flyerFoot&&vx<ux+2&&uz<vz+flyerFoot&&vz<uz+2)++r.overlap;
                 if(ux<=vx+flyerFoot&&vx<=ux+2&&uz<=vz+flyerFoot&&vz<=uz+2)touching=true;
             }
             // Pushing: an ordered body steered as moving, next to a landed
@@ -401,7 +421,8 @@ FlyerRun landedflyersRun(int layout,bool legion,int flyerFoot,bool serial=true) 
     }
     for(int id:ids)check(f.legal(id),"illegal footprint");
     r.hash=f.world.stateHash();
-    r.holds=legion?f.world.legionStats().holds:0;r.spins=motion.spins;r.reversals=motion.reversals;
+    r.holds=legion?f.world.legionStats().holds:0;r.spins=motion.spins();r.reversals=motion.reversals();
+    r.overlap=uint64_t(motion.key("g.flyers.illegal_overlap_ticks"));
     std::printf("landedflyers %s layout=%d foot=%d arrived=%d/%zu ticks=%d half=%d p90=%d holds=%llu pushes=%llu stuck=%llu overlap=%llu spins=%llu reversals=%llu\n",
         legion?"legion":"retail",layout,flyerFoot,r.arrived,ids.size(),r.ticks,r.half,r.most,(unsigned long long)r.holds,(unsigned long long)r.pushes,(unsigned long long)r.stuck,
         (unsigned long long)r.overlap,(unsigned long long)r.spins,(unsigned long long)r.reversals);
@@ -468,7 +489,7 @@ LiftRun liftflyersRun(int mode,bool serial=true) {
     for(int id:flyers) {const auto& v=*f.world.unit(id);spots.push_back({footprintOrigin(v.x,2),footprintOrigin(v.z,2)});}
     std::vector<uint8_t> mode0(flyers.size(),1);std::vector<int> takeoffs(flyers.size(),0);
     for(int id:ids)f.world.order(id,160*16,50*16,false);
-    Motion motion;LiftRun r;
+    Watch motion;LiftRun r;
     std::vector<int32_t> startZ;for(int id:ids)startZ.push_back(f.world.unit(id)->z.v);
     int done=-1;
     for(;r.ticks<6000;++r.ticks) {
@@ -514,7 +535,7 @@ LiftRun liftflyersRun(int mode,bool serial=true) {
         r.landed+=v.flightGroundMode==1;
         r.home+=v.flightGroundMode==1&&footprintOrigin(v.x,2)==spots[a].first&&footprintOrigin(v.z,2)==spots[a].second;
     }
-    r.hash=f.world.stateHash();r.spins=motion.spins;r.lifts=f.world.legionStats().lifts;
+    r.hash=f.world.stateHash();r.spins=motion.spins();r.lifts=f.world.legionStats().lifts;
     std::printf("liftflyers mode=%d arrived=%d/%zu ticks=%d half=%d detour=%llu lifted=%d takeoffs=%d max=%d landed=%d home=%d/%zu overlap=%llu flyer_overlap=%llu spins=%llu lifts=%llu\n",
         mode,r.arrived,ids.size(),r.ticks,r.half,(unsigned long long)r.detour,r.lifted,r.takeoffs,r.maxTakeoffs,r.landed,r.home,flyers.size(),
         (unsigned long long)r.overlap,(unsigned long long)r.flyerOverlap,(unsigned long long)r.spins,(unsigned long long)f.world.legionStats().lifts);
@@ -583,12 +604,12 @@ void unreachable() {
     for(int i=0;i<16;++i)ids.push_back(f.spawn(type,10+(i%4)*3,20+(i/4)*3));
     f.start();
     for(int id:ids)f.world.order(id,80*16,30*16,false);
-    Motion motion;
+    Watch motion;
     for(int t=0;t<9100;++t) {f.world.tick(1.f/30);motion.observe(f.world,ids);}
     int cleared=0;for(int id:ids)cleared+=f.world.unit(id)->orders.empty();
-    std::printf("unreachable cleared=%d spins=%llu\n",cleared,(unsigned long long)motion.spins);
+    std::printf("unreachable cleared=%d spins=%llu\n",cleared,(unsigned long long)motion.spins());
     check(cleared==int(ids.size()),"unreachable orders not retired");
-    check(motion.spins==0,"unreachable units spun");
+    check(motion.spins()==0,"unreachable units spun");
 }
 
 void slotblock() {
@@ -603,7 +624,7 @@ void slotblock() {
     for(int i=0;i<16;++i)ids.push_back(f.spawn(type,8+(i%4)*3,20+(i/4)*3));
     f.start();
     for(int id:ids)f.world.order(id,60*16,32*16,false);
-    Motion motion;
+    Watch motion;
     int done=-1;
     for(int t=0;t<4000;++t) {
         if(t==150) {f.rect(61,30,2,5);f.rect(57,35,4,1);f.publish();}
@@ -613,11 +634,11 @@ void slotblock() {
     }
     int cleared=0;for(int id:ids)cleared+=f.world.unit(id)->orders.empty();
     std::printf("slotblock cleared=%d at=%d spins=%llu reversals=%llu\n",cleared,done,
-        (unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+        (unsigned long long)motion.spins(),(unsigned long long)motion.reversals());
     printLeft(f,ids);
     check(cleared==int(ids.size()),"shared-point orders livelocked on covered slots");
     for(int id:ids)check(f.legal(id),"illegal footprint after slot cover");
-    check(motion.spins==0,"units spun around covered slots");
+    check(motion.spins()==0,"units spun around covered slots");
 }
 
 void quota() {
@@ -734,16 +755,16 @@ void deathsshared() {
     for(int t=0;t<60;++t)f.world.tick(1.f/30);
     std::vector<int> live;
     for(size_t i=0;i<ids.size();++i) {if(i%2)f.world.unit(ids[i])->hp=Fixed();else live.push_back(ids[i]);}
-    Motion motion;
+    Watch motion;
     for(int t=0;t<6000;++t) {f.world.tick(1.f/30);motion.observe(f.world,live);}
     int arrived=0;for(int id:live)arrived+=f.world.unit(id)->orders.empty();
     const auto e=f.world.legionStats();
     std::printf("deathsshared arrived=%d/%zu members=%zu groups=%zu spins=%llu\n",arrived,live.size(),
-        e.liveMembers,e.liveGroups,(unsigned long long)motion.spins);
+        e.liveMembers,e.liveGroups,(unsigned long long)motion.spins());
     printLeft(f,live);
     check(arrived==int(live.size()),"shared-point survivors did not arrive");
     for(int id:live)check(f.legal(id),"illegal survivor footprint");
-    check(motion.spins==0,"shared-point survivors spun");
+    check(motion.spins()==0,"shared-point survivors spun");
     check(e.liveMembers==0&&e.liveGroups==0,"Legion containers did not empty");
 }
 
@@ -833,7 +854,7 @@ void approachhold() {
     const auto type=mover(2);const int id=f.spawn(type,10,30);
     f.start();
     f.world.order(id,80*16,30*16,false);
-    Motion motion;
+    Watch motion;
     int stillFrom=-1;int32_t x=f.world.unit(id)->x.v,z=f.world.unit(id)->z.v,heading=f.world.unit(id)->heading.v;
     uint64_t movedAfter=0,turnedAfter=0;
     for(int t=0;t<3000;++t) {
@@ -846,10 +867,10 @@ void approachhold() {
     const auto& u=*f.world.unit(id);
     std::printf("approachhold held_at=%d x=%.1f z=%.1f moved_after=%llu turned_after=%llu spins=%llu speed=%d\n",stillFrom,
         u.x.toFloat()/16,u.z.toFloat()/16,(unsigned long long)movedAfter,(unsigned long long)turnedAfter,
-        (unsigned long long)motion.spins,u.speed.v);
+        (unsigned long long)motion.spins(),u.speed.v);
     check(stillFrom>=0,"approaching unit never held");
     check(u.x.toFloat()/16>44&&u.x.toFloat()/16<48.5f&&std::abs(u.z.toFloat()/16-30)<2,"unit did not walk to the nearest reachable point");
-    check(movedAfter==0&&turnedAfter==0&&motion.spins==0,"held unit moved, turned or spun");
+    check(movedAfter==0&&turnedAfter==0&&motion.spins()==0,"held unit moved, turned or spun");
     check(u.speed.v==0,"held unit has speed");
     check(!u.orders.empty(),"approach order dropped before the grace period");
     check(f.legal(id),"illegal footprint at the approach point");
@@ -891,13 +912,17 @@ void churn() {
     auto* legion=f.world.legionNavigator();
     bool ready=false;int waits=0,arrived=0;
     for(int t=0;t<6000;++t) {
-        if(t%5==0)f.world.blockCells(150,60,1,1,(t/5)%2==0);
+        // A blocking feature placed and lifted again (blockCells alone never
+        // reaches Legion's placement plane, so it churned nothing).
+        if(t%5==0)f.world.addFeature(40*160+150,150*16+8.f,40*16+8.f,0,1,1,1,(t/5)%2==0,-1,true);
         f.world.tick(1.f/30);
         if(!ready&&f.world.legionStats().fieldsBuilt>0)ready=true;
         else if(ready)for(int id:ids)waits+=legion->unitState(id)==3;
     }
     for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
-    std::printf("churn arrived=%d waits=%d planes=%llu\n",arrived,waits,(unsigned long long)f.world.legionStats().planeBuilds);
+    std::printf("churn arrived=%d waits=%d planes=%llu refreshes=%llu\n",arrived,waits,(unsigned long long)f.world.legionStats().planeBuilds,
+        (unsigned long long)f.world.legionStats().planeRefreshes);
+    check(f.world.legionStats().planeRefreshes>0,"the static churn never reached the placement plane");
     check(arrived==int(ids.size()),"group did not arrive under static churn");
     check(waits==0,"members lost their field to an unrelated static change");
 }
@@ -921,7 +946,7 @@ void churnfield() {
     const int32_t x0=f.world.unit(late)->x.v,z0=f.world.unit(late)->z.v;
     int fieldAt=-1;
     for(int t=0;t<330;++t) {
-        f.world.blockCells(1010,1010,1,1,t%2==0);
+        f.world.addFeature(1010*1024+1010,1010*16+8.f,1010*16+8.f,0,1,1,1,t%2==0,-1,true);
         if(t==30)f.world.order(late,50*16,700*16,false);
         f.world.tick(1.f/30);
         if(t>30&&fieldAt<0&&legion->fieldPotential(late,footprintOrigin(f.world.unit(late)->x,2),
@@ -929,8 +954,9 @@ void churnfield() {
     }
     const auto& u=*f.world.unit(late);
     const int64_t dx=int64_t(u.x.v-x0)>>16,dz=int64_t(u.z.v-z0)>>16;
-    std::printf("churnfield field_after=%d moved_px=%lld planes=%llu state=%d\n",fieldAt,(long long)isqrt64(uint64_t(dx*dx+dz*dz)),
-        (unsigned long long)f.world.legionStats().planeBuilds,legion->unitState(late));
+    std::printf("churnfield field_after=%d moved_px=%lld planes=%llu refreshes=%llu state=%d\n",fieldAt,(long long)isqrt64(uint64_t(dx*dx+dz*dz)),
+        (unsigned long long)f.world.legionStats().planeBuilds,(unsigned long long)f.world.legionStats().planeRefreshes,legion->unitState(late));
+    check(f.world.legionStats().planeRefreshes>0,"the constant churn never reached the placement plane");
     check(fieldAt>=0,"group ordered during constant churn never got a field");
     check(dx*dx+dz*dz>=64*64,"group ordered during constant churn did not move");
 }
@@ -992,7 +1018,7 @@ void wallendRun(int count) {
     for(int i=0;i<count;++i)ids.push_back(f.spawn(type,10+(i%4)*3,40+(i/4)*3));
     f.start();
     for(int id:ids)f.world.order(id,12*16,18*16,false);
-    Motion motion;
+    Watch motion;
     int done=-1;
     for(int t=0;t<3000;++t) {
         f.world.tick(1.f/30);motion.observe(f.world,ids);
@@ -1001,7 +1027,7 @@ void wallendRun(int count) {
     }
     int left=0;for(int id:ids)left+=!f.world.unit(id)->orders.empty();
     std::printf("wallend count=%d done=%d left=%d spins=%llu reversals=%llu\n",count,done,left,
-        (unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+        (unsigned long long)motion.spins(),(unsigned long long)motion.reversals());
     if(left) {
         printLeft(f,ids);
         auto* n=f.world.legionNavigator();
@@ -1016,7 +1042,7 @@ void wallendRun(int count) {
         }
     }
     check(left==0,"bodies did not round the wall end");
-    check(motion.spins==0,"bodies turned in place at the wall end");
+    check(motion.spins()==0,"bodies turned in place at the wall end");
 }
 void wallend() {wallendRun(1);wallendRun(12);}
 
@@ -1043,25 +1069,21 @@ PinwheelResult pinwheelRun(int gap) {
     for(int i=0;i<48;++i)ids.push_back(f.spawn(type,40+(i%8)*3,96+(i/8)*3));
     f.start();
     for(int id:ids)f.world.order(id,150*16,110*16,false);   // one point: a formation
-    Motion motion;
+    // Bodies passing over the wall's end (above x 97-102): how many 2-cell
+    // files they use (gate "end", 3 or more inside), how far they spread
+    // above the end, and when 90% are round it (side "round", x >= 104).
+    Watch motion;
+    {
+        tak::legion_observe::Gate g;g.name="end";g.region={97,0,102,47};g.lateral=1;g.band=2;g.minCount=3;
+        motion.cfg.gates.push_back(g);
+        motion.cfg.sides.push_back({"round",0,104});
+    }
     PinwheelResult r;r.total=int(ids.size());
-    int samples=0;double lanes=0,spread=0;
     int t=0;
     for(;t<6000;++t) {
         f.world.tick(1.f/30);motion.observe(f.world,ids);
-        int arrived=0,over=0;
-        // Bodies passing over the wall's end (above x 97-102): how many
-        // 2-cell files they use, and how far they spread above the end.
-        std::set<int> files;int lo=1<<30,hi=-1,count=0;
-        for(int id:ids) {
-            const auto& u=*f.world.unit(id);
-            arrived+=u.orders.empty();
-            const int x=int(u.x.v>>20),z=int(u.z.v>>20);
-            over+=x>=104;
-            if(x>=97&&x<=102&&z<48) {files.insert(z/2);lo=std::min(lo,z);hi=std::max(hi,z);++count;}
-        }
-        if(count>=3) {++samples;lanes+=double(files.size());spread+=double(hi-lo);}
-        if(r.rounded90<0&&over*10>=r.total*9)r.rounded90=t;
+        int arrived=0;
+        for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
         r.arrived=arrived;
         if(std::getenv("PINWHEEL_ASCII")&&t%300==0) {
             std::vector<std::string> g(70,std::string(100,'.'));
@@ -1073,9 +1095,16 @@ PinwheelResult pinwheelRun(int gap) {
         if(arrived==r.total) {r.done=t;break;}
     }
     for(int id:ids)check(f.legal(id),"illegal footprint");
-    r.lanes=samples?lanes/samples:0;r.spread=samples?spread/samples:0;r.spins=motion.spins;r.reversals=motion.reversals;
+    {
+        const auto k=motion.keys();
+        using tak::legion_observe::Observer;
+        r.rounded90=int(Observer::get(k,"side.round.t90",-1));
+        r.lanes=double(Observer::get(k,"gate.end.files_x100",0))/100;
+        r.spread=double(Observer::get(k,"gate.end.spread_x100",0))/100;
+    }
+    r.spins=motion.spins();r.reversals=motion.reversals();
     std::printf("pinwheel gap=%d arrived=%d/%d rounded90=%d done=%d files=%.2f spread_cells=%.2f spins=%llu reversals=%llu\n",gap,r.arrived,r.total,
-        r.rounded90,r.done,r.lanes,r.spread,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+        r.rounded90,r.done,r.lanes,r.spread,(unsigned long long)motion.spins(),(unsigned long long)motion.reversals());
     if(std::getenv("PINWHEEL_VERBOSE"))printLeft(f,ids);
     return r;
 }
@@ -1117,7 +1146,7 @@ void latticeRun(int sx,int sz,int gi,int gj) {
     for(int t=0;t<200;++t)f.world.tick(1.f/30);
     for(int id:settlers)check(f.world.unit(id)->orders.empty(),"settler did not arrive");
     f.world.order(walker,(40+3*gi)*16,(20+3*gj)*16,false);
-    Motion motion;
+    Watch motion;
     int arrivedAt=-1;
     for(int t=0;t<2400&&arrivedAt<0;++t) {
         f.world.tick(1.f/30);
@@ -1126,9 +1155,9 @@ void latticeRun(int sx,int sz,int gi,int gj) {
     }
     const auto& u=*f.world.unit(walker);
     std::printf("lattice arrived_at=%d at %.1f,%.1f reversals=%llu spins=%llu\n",arrivedAt,u.x.toFloat()/16,
-        u.z.toFloat()/16,(unsigned long long)motion.reversals,(unsigned long long)motion.spins);
+        u.z.toFloat()/16,(unsigned long long)motion.reversals(),(unsigned long long)motion.spins());
     check(arrivedAt>=0,"walker never reached the lattice slot");
-    check(motion.reversals<=4,"walker oscillated against settled arrivals");
+    check(motion.reversals()<=4,"walker oscillated against settled arrivals");
     for(int id:settlers)check(f.legal(id),"illegal settler footprint");
 }
 
@@ -1424,7 +1453,7 @@ uint64_t navalislandRun(bool serial,int foot,int count,bool print) {
     auto* legion=f.world.legionNavigator();
     for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float(150*16),float(52*16),false);
     for(int id:ids)check(legion->mission(*f.world.unit(id))==LegionMission::Move,"Legion does not route the fleet");
-    Motion motion;int last=-1;
+    Watch motion;int last=-1;
     std::map<int,bool> passedStrait;
     for(int t=0;t<9000;++t) {
         f.world.tick(1.f/30);
@@ -1442,11 +1471,11 @@ uint64_t navalislandRun(bool serial,int foot,int count,bool print) {
     for(int id:ids) {arrived+=f.world.unit(id)->orders.empty();east+=f.world.unit(id)->x>Fixed::fromInt(124*16);}
     if(print)printLeft(f,ids);
     if(print)std::printf("navalisland foot=%d count=%d arrived=%d east=%d strait=%zu tick=%d spins=%llu reversals=%llu hash=%016llx\n",
-        foot,count,arrived,east,passedStrait.size(),last,(unsigned long long)motion.spins,
-        (unsigned long long)motion.reversals,(unsigned long long)f.world.stateHash());
+        foot,count,arrived,east,passedStrait.size(),last,(unsigned long long)motion.spins(),
+        (unsigned long long)motion.reversals(),(unsigned long long)f.world.stateHash());
     check(arrived==count&&east==count,"fleet did not cross the strait");
     check(int(passedStrait.size())==count,"a boat bypassed the strait");
-    check(motion.spins==0,"a boat spun in place");
+    check(motion.spins()==0,"a boat spun in place");
     return f.world.stateHash();
 }
 void navalisland() {
@@ -1472,7 +1501,7 @@ void hovershore() {
     for(int id:hovers)f.world.order(id,float(100*16),float(30*16),false);
     for(int id:hovers)check(legion->mission(*f.world.unit(id))==LegionMission::Move,"Legion does not route hovercraft");
     auto run=[&](const std::vector<int>& ids,int limit) {
-        Motion motion;
+        Watch motion;
         for(int t=0;t<limit;++t) {
             f.world.tick(1.f/30);motion.observe(f.world,ids);
             bool all=true;
@@ -1480,9 +1509,9 @@ void hovershore() {
                 std::to_string(f.world.unit(id)->x.toFloat()/16)+","+std::to_string(f.world.unit(id)->z.toFloat()/16)+" tick "+std::to_string(t));
             for(int id:boats)check(f.legal(id),"boat on an illegal origin");
             for(int id:ids)all&=f.world.unit(id)->orders.empty();
-            if(all)return std::pair{t,motion.spins};
+            if(all)return std::pair{t,motion.spins()};
         }
-        return std::pair{-1,motion.spins};
+        return std::pair{-1,motion.spins()};
     };
     const auto out=run(hovers,6000);
     std::printf("hovershore out tick=%d spins=%llu\n",out.first,(unsigned long long)out.second);
@@ -1651,7 +1680,11 @@ void squadformation() {
     for(int t=0;t<600;++t)f.world.tick(1.f/30);      // assigning the formation gathers it
     const float px=160*16,pz=50*16;
     for(int id:ids)command(tak::net::Cmd::Move,id,0,px,pz);
-    Motion motion;
+    Watch motion;
+    {
+        tak::legion_observe::Group g;g.name="squad";g.ids=ids;g.clickX=int(px);g.clickZ=int(pz);
+        motion.cfg.groups.push_back(g);
+    }
     std::map<int,int> reorders;std::map<int,bool> idle;
     int lastOrdered=-1;
     constexpr int kTicks=12000;
@@ -1675,14 +1708,14 @@ void squadformation() {
         far=std::max(far,fxLen(u.x-Fixed::fromFloat(px),u.z-Fixed::fromFloat(pz)).toFloat());
     }
     printLeft(f,ids);
-    std::printf("squadformation settled=%d/%zu last_ordered=%d max_reorders=%d far=%.0f spins=%llu reversals=%llu\n",settled,ids.size(),
-        lastOrdered,maxReorders,far,(unsigned long long)motion.spins,(unsigned long long)motion.reversals);
+    std::printf("squadformation settled=%d/%zu last_ordered=%d max_reorders=%d far=%.0f spins=%llu reversals=%llu %s\n",settled,ids.size(),
+        lastOrdered,maxReorders,far,(unsigned long long)motion.spins(),(unsigned long long)motion.reversals(),completionKeys(motion.keys(),"squad").c_str());
     check(settled==int(ids.size()),"formation members never settled");
     check(lastOrdered<kTicks-3000,"formation members kept being re-ordered");
     check(maxReorders<=1,"a settled formation member was re-ordered repeatedly");
     // Near its spot: inside the native formation radius (2*sqrt(area) cells).
     check(far<=32.f*std::sqrt(float(ids.size()*4)),"a formation member settled far from the point");
-    check(motion.spins==0,"formation members turned in place");
+    check(motion.spins()==0,"formation members turned in place");
 }
 }
 
@@ -1728,7 +1761,7 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
         command(kind,id,0,offset?px+std::clamp(u.x.toFloat()-sx,-60.f,60.f):px,
                 offset?pz+std::clamp(u.z.toFloat()-sz,-60.f,60.f):pz);
     }
-    MixedRun r;Motion motion;double sum=0;int samples=0;
+    MixedRun r;Watch motion;double sum=0;int samples=0;
     std::map<int,std::pair<float,float>> windowStart;float windowCx=0,windowCz=0;
     std::map<int,int> hover,idleAt,hoverRun;
     const int ticks=kind==tak::net::Cmd::Patrol?3000:6000;
@@ -1814,7 +1847,7 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
         "pace=%.2f stalls=%d/%d misaligned=%d/%d max_hover=%d land_delay=%d landed=%d spins=%llu hash=%016llx\n",
         legion?"legion":"retail",name,r.groundDone,r.flyersDone,r.maxAway,r.meanAway,r.endAway,r.landedAhead,
         r.marched>0?r.flown/r.marched:0.0,r.stalls,r.windows,r.misaligned,r.moving,r.maxHover,r.maxLandDelay,r.landed,
-        (unsigned long long)motion.spins,(unsigned long long)r.hash);
+        (unsigned long long)motion.spins(),(unsigned long long)r.hash);
     return r;
 }
 void mixedformation() {
@@ -1882,27 +1915,20 @@ AwareResult awareRun(const char* name,int kind,int sightB) {
         f.world.order(id,float(gx*16),float(gz*16),false);
     }
     std::vector<int> all=a;all.insert(all.end(),b.begin(),b.end());
-    std::map<int,std::pair<int64_t,int64_t>> start,last;std::map<int,double> travelled;
-    for(int id:all) {const auto& u=*f.world.unit(id);start[id]=last[id]={u.x.v,u.z.v};travelled[id]=0;}
-    Motion motion;AwareResult r;r.total=int(all.size());
-    int samples=0,still=0,pairs=0;int64_t contacts=0;
+    // The observer's decision samples (every 10 ticks) give the standing
+    // share, the A x B proximity contacts (centre cells within 2 on both
+    // axes) and the detour; no pair loop here.
+    Watch motion;AwareResult r;r.total=int(all.size());
+    {
+        tak::legion_observe::Group ga,gb;ga.name="A";ga.ids=a;gb.name="B";gb.ids=b;
+        motion.cfg.groups={ga,gb};
+        motion.cfg.pairs.push_back({"A","B",2});
+        motion.cfg.decisionEvery=10;
+    }
     for(int t=0;t<6000;++t) {
         f.world.tick(1.f/30);motion.observe(f.world,all);
         int arrived=0;
-        for(int id:all) {
-            const auto& u=*f.world.unit(id);
-            arrived+=u.orders.empty()||!f.world.unit(id)->alive();
-            auto& l=last[id];travelled[id]+=std::hypot(double(u.x.v-l.first),double(u.z.v-l.second))/65536.0;l={u.x.v,u.z.v};
-        }
-        if(t%10==0) {
-            for(int id:all) {const auto& u=*f.world.unit(id);if(!u.orders.empty()) {++samples;still+=u.speed<=Fixed();}}
-            for(int i:a)for(int j:b) {
-                const auto& u=*f.world.unit(i);const auto& v=*f.world.unit(j);
-                if(!u.alive()||!v.alive()||u.orders.empty()||v.orders.empty())continue;
-                ++pairs;
-                if(std::abs(int(u.x.v>>20)-int(v.x.v>>20))<=2&&std::abs(int(u.z.v>>20)-int(v.z.v>>20))<=2)++contacts;
-            }
-        }
+        for(int id:all)arrived+=f.world.unit(id)->orders.empty()||!f.world.unit(id)->alive();
         r.arrived=arrived;
         if(std::getenv("AWARE_ASCII")&&t%150==0) {
             std::vector<std::string> g(140,std::string(200,'.'));
@@ -1913,14 +1939,14 @@ AwareResult awareRun(const char* name,int kind,int sightB) {
         }
         if(arrived==r.total) {r.done=t;break;}
     }
-    double ratio=0;int counted=0;
-    for(int id:all) {
-        const auto& u=*f.world.unit(id);
-        const double straight=std::hypot(double(u.x.v-start[id].first),double(u.z.v-start[id].second))/65536.0;
-        if(straight>64) {ratio+=travelled[id]/straight;++counted;}
+    {
+        const auto k=motion.keys();
+        using tak::legion_observe::Observer;
+        r.stopped=double(Observer::get(k,"stopped_permille",0))/10;
+        r.contacts=double(Observer::get(k,"pair.A.B.permille_x100",0))/100;
+        r.detour=double(Observer::get(k,"detour_permille",0))/10;
     }
-    r.stopped=samples?100.0*still/samples:0;r.contacts=pairs?1000.0*double(contacts)/pairs:0;
-    r.detour=counted?100.0*(ratio/counted-1):0;r.spins=motion.spins;r.reversals=motion.reversals;
+    r.spins=motion.spins();r.reversals=motion.reversals();
     std::printf("aware case=%s arrived=%d/%d done=%d stopped=%.1f%% contacts_permille=%.2f detour=%.1f%% spins=%llu reversals=%llu\n",name,r.arrived,r.total,r.done,
         r.stopped,r.contacts,r.detour,(unsigned long long)r.spins,(unsigned long long)r.reversals);
     return r;
@@ -2121,8 +2147,13 @@ ProbeRun deadendRun(int width,int count,bool room,bool squad,bool retail,bool se
     std::map<int,int> doneAt;
     constexpr int kTicks=12000;
     int ticks=0;
+    Watch watch;
+    {
+        tak::legion_observe::Group g;g.name="all";g.ids=ids;g.clickX=int(px);g.clickZ=int(pz);
+        watch.cfg.groups.push_back(g);
+    }
     for(;ticks<kTicks&&doneAt.size()<ids.size();++ticks) {
-        f.world.tick(1.f/30);
+        f.world.tick(1.f/30);watch.observe(f.world,ids);
         for(int id:ids)if(!doneAt.count(id)&&f.world.unit(id)->orders.empty())doneAt[id]=ticks;
     }
     std::vector<int> done;for(auto& [id,t]:doneAt)done.push_back(t);
@@ -2139,7 +2170,7 @@ ProbeRun deadendRun(int width,int count,bool room,bool squad,bool retail,bool se
         " farthest_settled_cells=%.1f nearest_holder_cells=%.1f",
         retail?"retail":"legion",width,int(room),int(squad),count,doneAt.size(),count,holding,moving,quantile(done,0.5),quantile(done,0.9),
         done.empty()?-1:*std::max_element(done.begin(),done.end()),farthestSettled,nearestHolder);
-    return {std::string(buf)+t1Counters(f.world),f.world.stateHash()};
+    return {std::string(buf)+" | "+completionKeys(watch.keys(),"all")+t1Counters(f.world),f.world.stateHash()};
 }
 void deadend() {
     if(std::getenv("DEADEND_W")||std::getenv("DEADEND_N")) {
