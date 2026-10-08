@@ -180,7 +180,7 @@ struct Track {
     int lastTurnSign=0;int32_t lastStepX=0,lastStepZ=0;int32_t lastHeading=0;bool started=false;
     uint64_t spinTicks=0;
     int trappedSince=-1,trappedLastMotion=-1,settleMax=0,lastTrapped=-1;bool everTrapped=false,movingAfterGrace=false;
-    bool everTerrainStuck=false,everCrowdHeld=false;
+    bool everTerrainStuck=false,everCrowdHeld=false,everRawTerrain=false,everNarrowed=false;
     int finalClass=-1;double optimal=-1,pathAtGoal=-1;int side=-1;
     void init() {xs.assign(window+1,0);zs.assign(window+1,0);turn.assign(window+1,0);
         headingFlip.assign(window+1,0);travelFlip.assign(window+1,0);}
@@ -195,6 +195,10 @@ inline const char* className(int c) {
 struct Totals {
     uint64_t classTicks[ClassCount]{};uint64_t spinTicks=0,headingStationaryBam=0,travelReversals=0;
     uint64_t spinTrapped=0,spinCrowdHeld=0,trappedMoving=0;
+    // IN-12: no-progress unit-ticks touching terrain before the queued-behind-
+    // a-mover narrowing; those the narrowing moved to crowd_held; and those
+    // both crowd-held and touching terrain.
+    uint64_t rawTerrainTicks=0,narrowedTicks=0,crowdAndTerrainTicks=0;
     double spreadSum=0,spreadMax=0;uint64_t spreadSamples=0;
 };
 
