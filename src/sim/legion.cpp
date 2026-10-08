@@ -466,9 +466,16 @@ struct LegionNavigator::Impl {
         return !(size_t(o)<softOwner.size()&&softOwner[size_t(o)]==command);
     }
     // Does a footprint at origin (x,z) cover a soft body other than the
-    // command's own arrivals?
-    bool softAt(int x,int z,int fx,int fz,uint64_t command) const {
+    // command's own arrivals? `counts` (the footprint's window counts, see
+    // SoftCounts; -1 none) answers without a walk unless a settled arrival
+    // is near: none covered, or only bodies soft to every command.
+    bool softAt(int x,int z,int fx,int fz,uint64_t command,int counts=-1) const {
         if(softCells.empty()||command==kNoSoft)return false;
+        if(counts>=0&&x>=0&&z>=0&&x<w.occW_&&z<w.occH_) {
+            const uint32_t k=softCounts[size_t(counts)].at[size_t(z)*w.occW_+x];
+            if(!(k&kCoverCount))return false;
+            if(!(k&kArrivalCount))return true;
+        }
         for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
             const int cx=x+i,cz=z+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
@@ -2813,8 +2820,9 @@ struct LegionNavigator::Impl {
                 // this command's own arrivals) is refused: the field plans
                 // round it.
                 const uint64_t command=g.soft?g.command:kNoSoft;
+                const int counts=softCells.empty()?-1:softCountsFor(fx,fz);
                 m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz)&&
-                    (softCells.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command);}));
+                    (softCells.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}));
             }
             direct=m.line;
         }
