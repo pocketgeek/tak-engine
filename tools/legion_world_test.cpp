@@ -8,6 +8,7 @@
 // docs/legion-pathfinding.md.
 #include "sim/sim.h"
 #include "sim/matchsetup.h"
+#include "sim/footprint.h"
 #include <climits>
 #include <cmath>
 #include <algorithm>
@@ -1938,6 +1939,414 @@ void aware() {
     (void)attack;
 }
 
+// ---- T1 probes (W3's instruments; measurement only) -------------------------
+// pocket, deadend, tail, settlelatency and doorplug print numbers for the
+// army-throughput and settling work (docs/legion-pathfinding.md, "Known
+// weaknesses"). They read state and use the test hooks only; the one that
+// changes behaviour is settlelatency's rest stride, a process-wide test hook
+// it restores. Each asserts determinism only: a repeated run and a workers
+// run of one configuration print and hash exactly as the serial run. Bounds
+// come with the baselines.
+namespace {
+int envInt(const char* key,int fallback) {const char* e=std::getenv(key);return e?std::atoi(e):fallback;}
+template<class T> T quantile(std::vector<T> v,double q) {
+    if(v.empty())return T(-1);
+    std::sort(v.begin(),v.end());
+    return v[std::min(v.size()-1,size_t(q*double(v.size())))];
+}
+// The T1 I4 work counters, the completion counters and the I2 slot shape of
+// the formation assigned last.
+std::string t1Counters(World& w) {
+    const auto* nav=w.legionNavigator();
+    if(!nav)return " | retail";
+    static const std::set<std::string_view> keep{"crowd_window_ring_cells","crowd_settle_visits","rechoice_bfs_cells",
+        "formation_ring_cells","join_iterations","midroute_completions","outside_area_completions","completion_dist_max"};
+    std::string s=" |";
+    std::string byState=" move_calls_by_state=";
+    char buf[96];
+    LegionNavigator::forEachStat(nav->stats(),[&](const char* name,uint64_t v) {
+        const std::string_view n(name);
+        if(n.substr(0,20)=="move_calls_by_state_") {byState+=(byState.back()=='='?"":"/")+std::to_string(v);return;}
+        if(!keep.count(n))return;
+        std::snprintf(buf,sizeof buf," %s=%llu",name,(unsigned long long)v);s+=buf;
+    });
+    s+=byState;
+    const auto shape=nav->lastSlotShape();
+    std::snprintf(buf,sizeof buf," | slot_shape valid=%d members=%d slots=%d frontage=%d rms_along=%lld rms_across=%lld limit=%lld",
+        int(shape.valid),shape.members,shape.slots,shape.frontage,(long long)shape.rmsAlong,(long long)shape.rmsAcross,(long long)shape.limit);
+    s+=buf;
+    return s;
+}
+struct ProbeRun {std::string text;uint64_t hash=0;};
+// Determinism: the same run again and with workers prints and hashes the same.
+void checkRepeatable(const char* name,const std::function<ProbeRun(bool)>& run,const ProbeRun& serial) {
+    const ProbeRun again=run(true),workers=run(false);
+    std::printf("%s determinism serial=%016llx repeat=%016llx workers=%016llx\n",name,(unsigned long long)serial.hash,
+        (unsigned long long)again.hash,(unsigned long long)workers.hash);
+    check(again.hash==serial.hash&&again.text==serial.text,std::string(name)+": a repeated run differs");
+    check(workers.hash==serial.hash&&workers.text==serial.text,std::string(name)+": serial and workers differ");
+}
+// Holding members by what stands in front of them (a body touching them on
+// the downhill side of their own field, else nearer the click): a settled
+// body of the order, a Holding member of the order, or something else.
+struct HoldClass {int held=0,behindOwnHeld=0,behindSettled=0,other=0;};
+HoldClass holdClasses(World& w,const std::vector<int>& ids,float tx,float tz) {
+    HoldClass r;
+    auto* nav=w.legionNavigator();
+    if(!nav)return r;
+    std::map<int64_t,std::vector<int>> grid;   // 64 px buckets
+    auto key=[](int64_t bx,int64_t bz) {return (bz<<32)^(bx&0xffffffff);};
+    for(int id:ids) {const auto& u=*w.unit(id);grid[key(int64_t(u.x.v)>>22,int64_t(u.z.v)>>22)].push_back(id);}
+    for(int id:ids) {
+        const auto& u=*w.unit(id);
+        if(u.orders.empty()||nav->unitState(id)!=2)continue;
+        ++r.held;
+        const int foot=u.type->footX;
+        const int own=nav->fieldPotential(id,footprintOrigin(u.x,foot),footprintOrigin(u.z,foot));
+        const float ux=u.x.toFloat(),uz=u.z.toFloat();
+        const float dl=std::hypot(tx-ux,tz-uz)+1e-3f;
+        bool settled=false,held=false;
+        const int64_t bx=int64_t(u.x.v)>>22,bz=int64_t(u.z.v)>>22;
+        for(int64_t j=-1;j<=1;++j)for(int64_t i=-1;i<=1;++i) {
+            const auto found=grid.find(key(bx+i,bz+j));
+            if(found==grid.end())continue;
+            for(int o:found->second) {
+                if(o==id)continue;
+                const auto& v=*w.unit(o);
+                const float ox=v.x.toFloat()-ux,oz=v.z.toFloat()-uz;
+                const float d=std::hypot(ox,oz);
+                if(d>=float(foot+v.type->footX)*8.f+12.f)continue;
+                const int p=own>=0?nav->fieldPotential(id,footprintOrigin(v.x,v.type->footX),footprintOrigin(v.z,v.type->footZ)):-1;
+                const bool ahead=own>=0&&p>=0?p<own:(ox*(tx-ux)+oz*(tz-uz))/dl>0.3f*d;
+                if(!ahead)continue;
+                if(v.orders.empty())settled=true;
+                else if(nav->unitState(o)==2)held=true;
+            }
+        }
+        if(settled)++r.behindSettled;else if(held)++r.behindOwnHeld;else ++r.other;
+    }
+    return r;
+}
+
+// pocket (MV-01): 615 or 304 foot-2 bodies in a wall-bounded pocket (or the
+// same spot with no walls) ordered to one point far east past the wall's
+// underside, either 64 orders per tick (the client's selection split) or all
+// in one tick. POCKET_N/POCKET_CAP/POCKET_OPEN/POCKET_TICKS pick one run.
+ProbeRun pocketRun(int n,int cap,bool open,int ticks,bool serial) {
+    Fixture f(640,300,serial);
+    if(!open) {f.rect(138,60,6,115);f.rect(138,174,290,12);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<n;++i)ids.push_back(f.spawn(type,60+(i%26)*3,108+(i/26)*3));
+    f.start();
+    const float tx=461*16,tz=206*16;
+    auto* nav=f.world.legionNavigator();
+    size_t issued=0;
+    int t90=-1,arrived2000=-1,arrived4000=-1,arrived8000=-1,holding1000=-1,end=ticks;
+    HoldClass at1000;
+    for(int t=0;t<ticks;++t) {
+        if(issued<ids.size()) {
+            const size_t k=cap>0?std::min(ids.size()-issued,size_t(cap)):ids.size()-issued;
+            for(size_t i=0;i<k;++i)f.world.order(ids[issued+i],tx,tz,false);
+            issued+=k;
+        }
+        f.world.tick(1.f/30);
+        const int now=t+1;
+        if(now%250)continue;
+        int arrived=0,holding=0;
+        for(int id:ids) {const auto& u=*f.world.unit(id);if(u.orders.empty())++arrived;else holding+=nav->unitState(id)==2;}
+        if(t90<0&&arrived*10>=n*9)t90=now;
+        if(now==1000) {holding1000=holding;at1000=holdClasses(f.world,ids,tx,tz);}
+        if(now<=2000)arrived2000=arrived;
+        if(now<=4000)arrived4000=arrived;
+        arrived8000=arrived;
+        if(arrived==n) {end=now;break;}
+    }
+    std::vector<double> dist;
+    for(int id:ids) {const auto& u=*f.world.unit(id);if(!u.orders.empty())dist.push_back(std::hypot(u.x.toFloat()-tx,u.z.toFloat()-tz));}
+    const HoldClass last=holdClasses(f.world,ids,tx,tz);
+    char buf[640];
+    std::snprintf(buf,sizeof buf,"pocket n=%d cap=%d open=%d ticks=%d end=%d arrived@2000=%d @4000=%d @%d=%d t90=%d holding@1000=%d"
+        " held1000[behind_own_held=%d settled=%d other=%d] active=%zu active_med_dist=%.0f held_end[behind_own_held=%d settled=%d other=%d]",
+        n,cap,int(open),ticks,end,arrived2000,arrived4000,ticks,arrived8000,t90,holding1000,at1000.behindOwnHeld,at1000.behindSettled,at1000.other,
+        dist.size(),quantile(dist,0.5),last.behindOwnHeld,last.behindSettled,last.other);
+    return {std::string(buf)+t1Counters(f.world),f.world.stateHash()};
+}
+void pocket() {
+    const int ticks=envInt("POCKET_TICKS",8000);
+    if(std::getenv("POCKET_N")||std::getenv("POCKET_CAP")||std::getenv("POCKET_OPEN")) {
+        const auto r=pocketRun(envInt("POCKET_N",615),envInt("POCKET_CAP",64),envInt("POCKET_OPEN",0)!=0,ticks,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        return;
+    }
+    ProbeRun check304;
+    for(int n:{615,304})for(int open:{1,0})for(int cap:{64,0}) {
+        const auto r=pocketRun(n,cap,open!=0,ticks,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        std::fflush(stdout);
+        if(n==304&&open==0&&cap==64)check304=r;
+    }
+    checkRepeatable("pocket",[&](bool serial) {return pocketRun(304,64,false,ticks,serial);},check304);
+}
+
+// deadend (AR-02): bodies ordered to the closed end of a dead-end corridor
+// (width 2/4/6 cells, 100 cells long, optionally opening into a 20x12 room),
+// as one order or as an Alt+N squad; Retail runs the same as the parity
+// reference. DEADEND_W/N/ROOM/SQUAD/RETAIL pick one run.
+ProbeRun deadendRun(int width,int count,bool room,bool squad,bool retail,bool serial) {
+    Fixture f(260,100,serial);
+    if(retail)f.world.setPathfindingMode(PathfindingMode::Retail);
+    const int roomL=room?20:0,roomH=room?12:0,zc=48+width/2;
+    if(room) {
+        const int zr0=zc-roomH/2;
+        f.rect(100,0,100,48);f.rect(100,48+width,100,52-width);
+        f.rect(200,0,roomL,zr0);f.rect(200,zr0+roomH,roomL,100-zr0-roomH);f.rect(200+roomL,0,60-roomL,100);
+    } else {
+        f.rect(100,0,140,48);f.rect(100,48+width,140,52-width);f.rect(240,48,20,width);
+    }
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<count;++i)ids.push_back(f.spawn(type,14+(i%12)*3,32+(i/12)*4));
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd kind,int id,float x,float z) {
+        tak::net::Command c;c.kind=kind;c.player=0;c.unitId=id;c.targetId=-1;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    if(squad) {for(int id:ids)command(tak::net::Cmd::SetSquad,id,0,0);for(int t=0;t<600;++t)f.world.tick(1.f/30);}
+    const float px=float((room?200+roomL/2:236)*16),pz=float(zc*16);
+    for(int id:ids)command(tak::net::Cmd::Move,id,px,pz);
+    std::map<int,int> doneAt;
+    constexpr int kTicks=12000;
+    int ticks=0;
+    for(;ticks<kTicks&&doneAt.size()<ids.size();++ticks) {
+        f.world.tick(1.f/30);
+        for(int id:ids)if(!doneAt.count(id)&&f.world.unit(id)->orders.empty())doneAt[id]=ticks;
+    }
+    std::vector<int> done;for(auto& [id,t]:doneAt)done.push_back(t);
+    int holding=0,moving=0;float nearestHolder=-1,farthestSettled=0;
+    for(int id:ids) {
+        const auto& u=*f.world.unit(id);
+        const float d=std::hypot(u.x.toFloat()-px,u.z.toFloat()-pz)/16;
+        if(u.orders.empty()) {farthestSettled=std::max(farthestSettled,d);continue;}
+        ++holding;moving+=u.speed>Fixed();
+        nearestHolder=nearestHolder<0?d:std::min(nearestHolder,d);
+    }
+    char buf[400];
+    std::snprintf(buf,sizeof buf,"deadend mode=%s width=%d room=%d squad=%d n=%d settled=%zu/%d holding=%d moving=%d done_tick p50=%d p90=%d max=%d"
+        " farthest_settled_cells=%.1f nearest_holder_cells=%.1f",
+        retail?"retail":"legion",width,int(room),int(squad),count,doneAt.size(),count,holding,moving,quantile(done,0.5),quantile(done,0.9),
+        done.empty()?-1:*std::max_element(done.begin(),done.end()),farthestSettled,nearestHolder);
+    return {std::string(buf)+t1Counters(f.world),f.world.stateHash()};
+}
+void deadend() {
+    if(std::getenv("DEADEND_W")||std::getenv("DEADEND_N")) {
+        const auto r=deadendRun(envInt("DEADEND_W",4),envInt("DEADEND_N",120),envInt("DEADEND_ROOM",0)!=0,envInt("DEADEND_SQUAD",0)!=0,
+            envInt("DEADEND_RETAIL",0)!=0,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        return;
+    }
+    ProbeRun w4;
+    for(int retail:{0,1})for(int width:{2,4,6})for(int count:{40,120})for(int room:{0,1})for(int squad:{0,1}) {
+        const auto r=deadendRun(width,count,room!=0,squad!=0,retail!=0,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        std::fflush(stdout);
+        if(!retail&&width==4&&count==120&&!room&&!squad)w4=r;
+    }
+    checkRepeatable("deadend",[&](bool serial) {return deadendRun(4,120,false,false,false,serial);},w4);
+}
+
+// tail (AR-01): one same-point order on a blank map; how many orders stay
+// open on bodies that have stood still (speed 0) for 900+ ticks. Cases: open
+// 304 and 570 bodies about 2.6k px, 380 bodies to a map corner 8.9k px away,
+// and a wave (150 settled at the point first, then 304 more).
+ProbeRun tailRun(const std::string& name,bool serial) {
+    const auto type=mover(2);
+    const bool open=name=="open304"||name=="open570",corner=name=="corner380",wave=name=="wave";
+    check(open||corner||wave,"unknown tail case");
+    const int n=name=="open570"?570:corner?380:304;
+    const int ticks=name=="open304"||wave?8000:12000;
+    Fixture f(corner?600:640,corner?300:220,serial);f.publish();
+    std::vector<int> ids,first;
+    float tx=0,tz=0;
+    if(corner) {
+        for(int i=0;i<n;++i)ids.push_back(f.spawn(type,500+(i/20)*3,200+(i%20)*3));
+        f.start();
+        tx=12*16;tz=12*16;
+    } else if(open) {
+        const int cols=(n+15)/16;
+        for(int i=0;i<n;++i)ids.push_back(f.spawn(type,40+(i/16)*3,80+(i%16)*3));
+        f.start();
+        tx=float((40+cols*3/2+160)*16);tz=float((80+24)*16);
+    } else {
+        for(int i=0;i<150;++i)first.push_back(f.spawn(type,40+(i/16)*3,80+(i%16)*3));
+        f.start();
+        tx=float((40+30+160)*16);tz=float((80+24)*16);
+        for(int id:first)f.world.order(id,tx,tz,false);
+        for(int t=0;t<4000;++t)f.world.tick(1.f/30);
+        for(int i=0;i<n;++i)ids.push_back(f.spawn(type,40+(i/16)*3,80+(i%16)*3));
+        for(int t=0;t<30;++t)f.world.tick(1.f/30);
+    }
+    int firstSettled=0;for(int id:first)firstSettled+=f.world.unit(id)->orders.empty();
+    for(int id:ids)f.world.order(id,tx,tz,false);
+    auto* nav=f.world.legionNavigator();
+    std::map<int,int> streak,maxStreak,arrivedAt;
+    for(int t=1;t<=ticks;++t) {
+        f.world.tick(1.f/30);
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            if(u.orders.empty()) {arrivedAt.try_emplace(id,t);streak[id]=0;continue;}
+            if(u.speed.v>0)streak[id]=0;else maxStreak[id]=std::max(maxStreak[id],++streak[id]);
+        }
+    }
+    int held900Ever=0,openStill900=0,active=0,holdingNow=0,longest=0;
+    std::vector<int> at;std::vector<double> dist;
+    for(int id:ids) {
+        const auto& u=*f.world.unit(id);
+        held900Ever+=maxStreak[id]>=900;longest=std::max(longest,maxStreak[id]);
+        if(u.orders.empty()) {at.push_back(arrivedAt[id]);continue;}
+        ++active;openStill900+=streak[id]>=900;holdingNow+=nav&&nav->unitState(id)==2;
+        dist.push_back(std::hypot(u.x.toFloat()-tx,u.z.toFloat()-tz));
+    }
+    char buf[400];
+    std::snprintf(buf,sizeof buf,"tail case=%s n=%d ticks=%d%s gone=%zu/%d arrival p50=%d p90=%d max=%d active=%d holding=%d open_still900=%d"
+        " held900_ever=%d longest_still=%d active_dist max=%.0f",
+        name.c_str(),n,ticks,wave?(" wave1_settled="+std::to_string(firstSettled)+"/150").c_str():"",at.size(),n,quantile(at,0.5),quantile(at,0.9),
+        at.empty()?-1:*std::max_element(at.begin(),at.end()),active,holdingNow,openStill900,held900Ever,longest,dist.empty()?0.0:quantile(dist,1.0));
+    return {std::string(buf)+t1Counters(f.world),f.world.stateHash()};
+}
+void tail() {
+    if(const char* only=std::getenv("TAIL_CASE")) {
+        const auto r=tailRun(only,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        return;
+    }
+    ProbeRun open304;
+    for(const char* name:{"open304","open570","corner380","wave"}) {
+        const auto r=tailRun(name,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        std::fflush(stdout);
+        if(std::string_view(name)=="open304")open304=r;
+    }
+    checkRepeatable("tail",[&](bool serial) {return tailRun("open304",serial);},open304);
+}
+
+// settlelatency (AR-05): squadformation's scenario at rest stride 1/2/4
+// (LegionNavigator::setRestStrideForTest). Order-completion ticks, and the
+// gap from each body's last position change to its order completing.
+ProbeRun settlelatencyRun(int stride,bool serial) {
+    LegionNavigator::setRestStrideForTest(stride);
+    Fixture f(220,100,serial);
+    f.rect(96,0,4,46);f.rect(96,52,4,48);
+    f.rect(150,38,3,3);f.rect(168,58,4,2);f.rect(140,60,2,5);f.rect(175,40,2,6);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<120;++i)ids.push_back(f.spawn(type,14+(i%12)*3,32+(i/12)*4));
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd kind,int id,float x,float z) {
+        tak::net::Command c;c.kind=kind;c.player=0;c.unitId=id;c.targetId=-1;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    for(int id:ids)command(tak::net::Cmd::SetSquad,id,0,0);
+    for(int t=0;t<600;++t)f.world.tick(1.f/30);
+    const float px=160*16,pz=50*16;
+    for(int id:ids)command(tak::net::Cmd::Move,id,px,pz);
+    std::map<int,int> doneAt,lastTravel;
+    std::map<int,std::pair<int32_t,int32_t>> was;
+    for(int id:ids) {const auto& u=*f.world.unit(id);was[id]={u.x.v,u.z.v};lastTravel[id]=-1;}
+    constexpr int kTicks=12000;
+    for(int t=0;t<kTicks;++t) {
+        f.world.tick(1.f/30);
+        for(int id:ids) {
+            if(doneAt.count(id))continue;
+            const auto& u=*f.world.unit(id);
+            if(u.x.v!=was[id].first||u.z.v!=was[id].second) {lastTravel[id]=t;was[id]={u.x.v,u.z.v};}
+            if(u.orders.empty())doneAt[id]=t;
+        }
+    }
+    LegionNavigator::setRestStrideForTest(2);
+    std::vector<int> done,gap;
+    int over500=0;
+    for(auto& [id,t]:doneAt) {done.push_back(t);gap.push_back(t-lastTravel[id]);over500+=t-lastTravel[id]>500;}
+    char buf[400];
+    std::snprintf(buf,sizeof buf,"settlelatency stride=%d settled=%zu/%zu done_tick p50=%d p75=%d p90=%d p95=%d max=%d gap p50=%d p90=%d max=%d over500=%d",
+        stride,doneAt.size(),ids.size(),quantile(done,0.5),quantile(done,0.75),quantile(done,0.9),quantile(done,0.95),
+        done.empty()?-1:*std::max_element(done.begin(),done.end()),quantile(gap,0.5),quantile(gap,0.9),
+        gap.empty()?-1:*std::max_element(gap.begin(),gap.end()),over500);
+    return {std::string(buf)+t1Counters(f.world),f.world.stateHash()};
+}
+void settlelatency() {
+    ProbeRun base;
+    for(int stride:{1,2,4}) {
+        const auto r=settlelatencyRun(stride,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        if(stride==2)base=r;
+    }
+    checkRepeatable("settlelatency",[&](bool serial) {return settlelatencyRun(2,serial);},base);
+}
+
+// doorplug: order A (60 bodies) settles beyond an 8-cell door (its point
+// `ax` cells east: 112 = its area spills into the door mouth, 124 = clear of
+// it); then order B (60 more, from the same start) is sent through the door
+// to a point far beyond. How many of B cross, arrive, or complete short of
+// the door, and how many of A's settled bodies B displaced.
+ProbeRun doorplugRun(int ax,bool serial) {
+    Fixture f(240,100,serial);
+    f.rect(100,0,4,46);f.rect(100,54,4,46);   // door z 46..53
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> a,b;
+    for(int i=0;i<60;++i)a.push_back(f.spawn(type,14+(i%10)*3,36+(i/10)*4));
+    f.start();
+    for(int id:a)f.world.order(id,float(ax*16),50*16,false);
+    constexpr int kSettle=3000,kPass=6000;
+    for(int t=0;t<kSettle;++t)f.world.tick(1.f/30);
+    int aSettled=0,aBeyond=0;
+    std::map<int,std::pair<int32_t,int32_t>> aAt;
+    for(int id:a) {const auto& u=*f.world.unit(id);aSettled+=u.orders.empty();aBeyond+=u.x.toFloat()>=104*16;aAt[id]={u.x.v,u.z.v};}
+    for(int i=0;i<60;++i)b.push_back(f.spawn(type,14+(i%10)*3,36+(i/10)*4));
+    f.world.tick(1.f/30);
+    const float bx=200*16,bz=50*16;
+    for(int id:b)f.world.order(id,bx,bz,false);
+    std::map<int,int> crossedAt,doneAt;
+    int shortOfDoor=0;
+    for(int t=0;t<kPass;++t) {
+        f.world.tick(1.f/30);
+        for(int id:b) {
+            const auto& u=*f.world.unit(id);
+            if(!crossedAt.count(id)&&u.x.toFloat()>=104*16)crossedAt[id]=t;
+            if(!doneAt.count(id)&&u.orders.empty()) {doneAt[id]=t;shortOfDoor+=u.x.toFloat()<100*16;}
+        }
+    }
+    int aMoved=0,bMoving=0,bHolding=0;
+    for(int id:a) {const auto& u=*f.world.unit(id);aMoved+=std::abs(u.x.v-aAt[id].first)+std::abs(u.z.v-aAt[id].second)>(32<<16);}
+    auto* nav=f.world.legionNavigator();
+    std::vector<int> crossed,done;std::vector<double> bX;
+    for(int id:b) {const auto& u=*f.world.unit(id);bX.push_back(u.x.toFloat()/16);if(!u.orders.empty()) {bMoving+=u.speed>Fixed();bHolding+=nav->unitState(id)==2;}}
+    for(auto& [id,t]:crossedAt)crossed.push_back(t);
+    for(auto& [id,t]:doneAt)done.push_back(t);
+    char buf[512];
+    std::snprintf(buf,sizeof buf,"doorplug a_point_x=%d a_settled=%d/60 a_beyond_door=%d b_crossed=%zu/60 cross_tick p50=%d p90=%d b_done=%zu done_tick p50=%d p90=%d"
+        " b_done_short_of_door=%d b_open=%zu b_moving=%d b_holding=%d b_x p10/med/p90=%.0f/%.0f/%.0f a_displaced=%d",
+        ax,aSettled,aBeyond,crossedAt.size(),quantile(crossed,0.5),quantile(crossed,0.9),doneAt.size(),quantile(done,0.5),quantile(done,0.9),
+        shortOfDoor,b.size()-doneAt.size(),bMoving,bHolding,quantile(bX,0.1),quantile(bX,0.5),quantile(bX,0.9),aMoved);
+    return {std::string(buf)+t1Counters(f.world),f.world.stateHash()};
+}
+void doorplug() {
+    ProbeRun mouth;
+    for(int ax:{112,124}) {
+        const auto r=doorplugRun(ax,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        if(ax==112)mouth=r;
+    }
+    checkRepeatable("doorplug",[](bool serial) {return doorplugRun(112,serial);},mouth);
+}
+}
+
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"clearance",clearance},{"groupreuse",groupreuse},{"jagged",jagged},{"trapped",trapped},
@@ -1947,7 +2356,8 @@ int main(int argc,char** argv) {
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
-        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware}};
+        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
+        {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
