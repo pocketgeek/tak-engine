@@ -19,7 +19,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 239;      // 239: override packages carry whole files (TOV2); area build nearest first; Legion shared goal fields + bounded rebuilds
+constexpr uint32_t kNetVersion = 239;      // 239: override packages carry whole files (TOV2); area build nearest first; Legion shared goal fields + bounded rebuilds,
+                                           //      no walking in place, idle allied landed flyers lift for passing ground units
                                            // 238: Legion clustered static-map repair; held Legion units rest between updates
                                            // 237: grouped flyers: retail VTOL_Move group checks; Legion flyers hold over the formation
                                            // 236: Legion flyers never touch down on a mobile ground unit
