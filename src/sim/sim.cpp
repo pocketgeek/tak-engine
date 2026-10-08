@@ -46,6 +46,7 @@ bool gInstantBuild = false;
 static const bool g_phase = getenv("TAK_PHASE") != nullptr;
 static thread_local double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
 static thread_local double g_tcomb = 0, g_scriptMs = 0, g_moveMs = 0, g_navMs = 0;
+static thread_local double g_exploreMs = 0;   // navigation exploration; part of sep
 
 namespace {
 
@@ -9908,7 +9909,7 @@ void World::tick(float dt) {
     std::chrono::steady_clock::time_point _tk0, _sep0;
     if (g_phase) { _tk0 = std::chrono::steady_clock::now();
                    g_tcomb = g_scriptMs = g_moveMs = g_navMs = 0;
-                   g_visMs = g_burnMs = g_gridMs = 0; }
+                   g_visMs = g_burnMs = g_gridMs = g_exploreMs = 0; }
     if (!tickCounter_) updateNavigationExploration();
     ++tickCounter_;
     {
@@ -11190,7 +11191,12 @@ void World::tick(float dt) {
     // what should keep it from happening in the first place.
     // Win/defeat is derived from unit state on every sim (clients + referee),
     // so all peers agree on the tick a team is eliminated / the game is won.
-    updateNavigationExploration();
+    {
+        const auto _x0 = g_phase ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        updateNavigationExploration();
+        if (g_phase) g_exploreMs += std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - _x0).count();
+    }
     updateOutcome();
     if (g_phase) {
         auto _end = std::chrono::steady_clock::now();
@@ -11201,8 +11207,8 @@ void World::tick(float dt) {
             int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
             // flow= and path= used to sit here; the flow fields and the inline
             // A* are both gone, so the counters were always zero.
-            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f vis=%.1f burn=%.1f grid=%.1f scripts=%.1f movement=%.1f nav=%.1f other=%.1f units=%d\n",
-                         ttot, g_tcomb, tsep, g_visMs, g_burnMs, g_gridMs, g_scriptMs, g_moveMs, g_navMs,
+            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f explore=%.1f vis=%.1f burn=%.1f grid=%.1f scripts=%.1f movement=%.1f nav=%.1f other=%.1f units=%d\n",
+                         ttot, g_tcomb, tsep, g_exploreMs, g_visMs, g_burnMs, g_gridMs, g_scriptMs, g_moveMs, g_navMs,
                          ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs - g_scriptMs - g_moveMs - g_navMs, alive);
         }
     }
