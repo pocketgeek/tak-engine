@@ -342,10 +342,6 @@ foreach(legion_scn corner-4x50 corner-8x56 corner-1x448 split-450-open split-450
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
 endforeach()
-# Visible motion of group orders with real unit types (measurement only, needs
-# a retail install): tools/legion_group_motion.cpp.
-add_executable(legion_group_motion tools/legion_group_motion.cpp)
-target_link_libraries(legion_group_motion PRIVATE tak-formats)
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
 # evidence, never failing).
@@ -692,6 +688,32 @@ if(TAK_TEST_DATA)
             PASS_REGULAR_EXPRESSION "PASS: Arapult land/water authored impact variants"
             TIMEOUT 120)
     endif()
+endif()
+# Data-gated Legion scenarios (need the install; label data;nightly). The motion
+# cases are tools/legion_group_motion's open/wall/cross with 12 real unit types,
+# wanderers off (motion-wall-wanderers-on reproduces the old tool's confound);
+# the gen1 routes are the seven big army orders of the legion-r9 replay on the
+# user's generated map.
+if(TAK_TEST_DATA)
+    foreach(legion_motion open wall cross)
+        add_test(NAME legion_motion_${legion_motion}
+                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/motion-${legion_motion}.scn
+                         --data "${TAK_TEST_DATA}" --json)
+        set_tests_properties(legion_motion_${legion_motion} PROPERTIES
+                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
+    endforeach()
+    add_test(NAME legion_motion_wall_wanderers_on
+             COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/motion-wall.scn
+                     --data "${TAK_TEST_DATA}" --wanderers on --json)
+    set_tests_properties(legion_motion_wall_wanderers_on PROPERTIES
+                         SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
+    foreach(legion_route 21096 27459 36057 45941 54772 61923 65845)
+        add_test(NAME legion_gen1_route_${legion_route}
+                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gen1-route-${legion_route}.scn
+                         --data "${TAK_TEST_DATA}" --json)
+        set_tests_properties(legion_gen1_route_${legion_route} PROPERTIES
+                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+    endforeach()
 endif()
 target_link_libraries(footprobe PRIVATE tak-formats)
 
