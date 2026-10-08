@@ -326,6 +326,22 @@ add_test(NAME observer_neutral
                  --neutral --mode both --offsets 0)
 set_tests_properties(legion_scenario_smoke observer_neutral
                      PROPERTIES SKIP_RETURN_CODE 77 LABELS legion)
+# Asset-free scenario set, part A (tools/scenarios/*.scn): both modes, serial and
+# workers (the runner fails on a state or key mismatch), three start offsets.
+# No bounds yet: a later task adds `--check` against baseline.json. The long
+# ones (more than ~10 s of the optimized Debug build, one core) are nightly.
+foreach(legion_scn corner-1x48 uturn gap6 sbend opentangent wall-1x48
+                   doorform bridgeform mazeform)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
+endforeach()
+foreach(legion_scn corner-4x50 corner-8x56 corner-1x448 split-450-open split-450-pocket wall-4x50
+                   gapsweep slowturn)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
+endforeach()
 # Visible motion of group orders with real unit types (measurement only, needs
 # a retail install): tools/legion_group_motion.cpp.
 add_executable(legion_group_motion tools/legion_group_motion.cpp)
