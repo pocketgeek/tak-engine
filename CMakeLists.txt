@@ -297,6 +297,10 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
 endforeach()
+# .scn scenarios and issueSelection (the client's 64-per-tick order split).
+add_executable(issue_selection_test tools/issue_selection_test.cpp)
+target_link_libraries(issue_selection_test PRIVATE tak-formats)
+add_test(NAME issue_selection_test COMMAND issue_selection_test)
 # Visible motion of group orders with real unit types (measurement only, needs
 # a retail install): tools/legion_group_motion.cpp.
 add_executable(legion_group_motion tools/legion_group_motion.cpp)
@@ -577,6 +581,7 @@ if(TAK_TEST_DATA)
     set_tests_properties(legion_movement_orders_trolls legion_movement_orders_trolls_maze PROPERTIES TIMEOUT 900)
     add_test(NAME map_transfer_data COMMAND map_transfer_test "${TAK_TEST_DATA}")
     add_test(NAME mapgen_roster COMMAND mapgen_test "${TAK_TEST_DATA}")
+    add_test(NAME issue_selection_test_data COMMAND issue_selection_test "${TAK_TEST_DATA}")
     add_test(NAME mapgen_mana COMMAND mapgen_test "${TAK_TEST_DATA}" --mana)
     set_tests_properties(mapgen mapgen_mana PROPERTIES TIMEOUT 180)
     add_test(NAME mapgen_naval COMMAND mapgen_test "${TAK_TEST_DATA}" --naval)
