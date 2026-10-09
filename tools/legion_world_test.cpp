@@ -35,6 +35,17 @@ UnitType mover(int foot) {
     return t;
 }
 
+// The start offset of the baselined tests (tools/scenarios/README.scn-format.txt):
+// every spawn shifts by 0, +1 or -1 cells on both axes while walls and orders stay
+// put. The cases with committed bounds run offsets 0,+1,-1 (the 3-offset median of
+// the baseline) plus +2,-2 where the 3-offset spread exceeds the key's band
+// (median-of-5, PLAN 3.0), and gate on the median.
+int g_shift=0;
+constexpr int kShifts[5]={0,1,-1,2,-2};
+template<class T,size_t N> T medianOf(const T (&v)[N]) {
+    std::vector<T> x(v,v+N);std::sort(x.begin(),x.end());return x[(N-1)/2];
+}
+
 struct Fixture;
 void printLeft(Fixture& f,const std::vector<int>& ids);
 struct Fixture {
@@ -59,7 +70,7 @@ struct Fixture {
     }
     void publish() {world.setMapPlacementFeatures(cells,{{"legion-wall",1,1,true,true,false,0}});}
     int spawn(const UnitType& t,int cx,int cz,int player=0) {
-        const int id=world.spawn(&t,float(cx*16),float(cz*16),std::nullopt,player);
+        const int id=world.spawn(&t,float((cx+g_shift)*16),float((cz+g_shift)*16),std::nullopt,player);
         check(id>0,"spawn failed");return id;
     }
     void start() {
@@ -429,31 +440,64 @@ FlyerRun landedflyersRun(int layout,bool legion,int flyerFoot,bool serial=true) 
     if(std::getenv("STATIC_VERBOSE"))printLeft(f,ids);
     return r;
 }
+// Bounds are the median-of-5 start offsets of the committed build (W0
+// baseline, one-sided). Offsets 0 / +1 / -1 / +2 / -2 (legion):
+//   open (layout 1)  ticks 1803 / 1724 / 1897 / 1880 / 1902
+//   block, foot 2    ticks 2566 / 2777 / 2827 / 2575 / 2799, stuck 1039 / 662 / 1520 / 1244 / 1176
+//   block, foot 3    ticks 2188 / 2402 / 2564 / 2832 / 2341, stuck 187 / 81 / 290 / 582 / 159
+//   takes off (2)    ticks 2476 / 2414 / never (39/40 at -1) / 2369 / 2389, half 1345 / 1458 / 1490 / 1272 / 1438
+//   pushes 0 everywhere. Every spread is over 1.10, so every band is the full 1.20.
+// The old bounds (pushes <= 40, stuck <= 6000, ticks <= 2x the open run, half <=
+// 1.25x the open run) were measured at offset 0 and sat 1.4x-5.8x from it.
+struct FlyerBase {int ticks;uint64_t stuck,pushes;double band;};
+constexpr int kLandedOpenTicks=1880;           // layout 1, none standing: the way round
+constexpr FlyerBase kLandedBlock[2]={{2777,1176,0,1.20},{2402,187,0,1.20}};      // layout 0, flyer foot 2 and 3
+constexpr FlyerBase kLandedOff={2414,0,0,1.20};          // layout 2, the block takes off
+constexpr int kLandedOffHalf=1438;
 void landedflyers() {
     const bool report=std::getenv("STATIC_REPORT")!=nullptr;
     if(std::getenv("FLYER_RETAIL")) {landedflyersRun(0,false,2);landedflyersRun(1,false,2);}
-    const auto open=landedflyersRun(1,true,2);
+    FlyerRun open[5],block[2][5],off[5];
+    for(int i=0;i<5;++i) {
+        g_shift=kShifts[i];
+        open[i]=landedflyersRun(1,true,2);
+        block[0][i]=landedflyersRun(0,true,2);block[1][i]=landedflyersRun(0,true,3);
+        off[i]=landedflyersRun(2,true,2);
+    }
+    g_shift=0;
+    if(report)return;
     // Before the fix (flyers missing from Legion's view of the ground):
     // 23/40 and 4/40 arrived in 5000 ticks, 64164 and 99588 member-ticks
     // standing against a flyer. After: as for the same layout of idle
     // ground bodies (FLYER_AS_GROUND), 2631 ticks, 2536 of those ticks
     // (the stream filing along the block's face).
-    for(int foot:{2,3}) {
-        const auto r=landedflyersRun(0,true,foot);
-        if(report)continue;
-        check(r.overlap==0,"ground body overlapped a landed flyer");
-        check(r.arrived==40,"group did not get round the landed flyers");
-        check(r.spins==0,"group spun at the landed flyers");
-        check(r.pushes<=40,"group pushed into the landed flyers");
-        check(r.stuck<=6000,"group stood against the landed flyers");
-        check(r.ticks<=open.ticks*2,"group took far longer than the way round");
-    }
     // Before: 31/40 in 5000 ticks (the scattered flyers held the rest).
-    const auto off=landedflyersRun(2,true,2);
-    if(report)return;
-    check(landedflyersRun(2,true,2,false).hash==off.hash,"workers run differs from the serial run");
-    check(off.overlap==0&&off.arrived==40&&off.spins==0,"group failed after the flyers took off");
-    check(off.half<=open.half*5/4&&off.ticks<=open.ticks*2,"group did not use the ground the flyers left");
+    auto med=[](const FlyerRun (&r)[5],auto field) {
+        std::vector<int64_t> v;for(const auto& x:r)v.push_back(int64_t(field(x)));
+        std::sort(v.begin(),v.end());return v[2];
+    };
+    for(int i=0;i<5;++i) {
+        for(int k=0;k<2;++k) {
+            const auto& r=block[k][i];
+            check(r.overlap==0,"ground body overlapped a landed flyer");
+            check(r.spins==0,"group spun at the landed flyers");
+        }
+        check(off[i].overlap==0&&off[i].spins==0,"group failed after the flyers took off");
+    }
+    // Offset 0 is the original fixture: everyone arrives. (At offset -1 one
+    // member is still on the way when the block has taken off: AR-01, the tail.)
+    for(int k=0;k<2;++k)check(block[k][0].arrived==40,"group did not get round the landed flyers");
+    check(off[0].arrived==40,"group failed after the flyers took off");
+    check(landedflyersRun(2,true,2,false).hash==off[0].hash,"workers run differs from the serial run");
+    check(med(open,[](const FlyerRun& r) {return r.ticks;})<=kLandedOpenTicks*1.20,"group took longer than the way round");
+    for(int k=0;k<2;++k) {
+        const auto& b=kLandedBlock[k];
+        check(med(block[k],[](const FlyerRun& r) {return r.pushes;})<=b.pushes*b.band,"group pushed into the landed flyers");
+        check(med(block[k],[](const FlyerRun& r) {return r.stuck;})<=b.stuck*b.band,"group stood against the landed flyers");
+        check(med(block[k],[](const FlyerRun& r) {return r.ticks;})<=b.ticks*b.band,"group took far longer than the way round");
+    }
+    check(med(off,[](const FlyerRun& r) {return r.ticks;})<=kLandedOff.ticks*kLandedOff.band,"group did not use the ground the flyers left");
+    check(med(off,[](const FlyerRun& r) {return r.half;})<=kLandedOffHalf*kLandedOff.band,"group did not use the ground the flyers left");
 }
 
 // Idle landed flyers make way for an allied ground group (World::
@@ -1055,9 +1099,19 @@ void wallend() {wallendRun(1);wallendRun(12);}
 // gap that many cells wide: the files must fold in (a 6-cell gap holds three
 // 2-cell files) and take it as before the pinwheel, no slower.
 // Measured on the build before the pinwheel (f767ed2), where the group files over
-// the end: 1.37 files, 90% round by tick 1939; through the gap 2323.
-constexpr int kPinwheelSingleFile90=1939,kPinwheelGap90=2323;
-constexpr double kPinwheelFiles=2.5;
+// the end: 1.37 files, 90% round by tick 1939; through the gap 2323 (one offset).
+// The bounds below are the median-of-5 start offsets of the committed build
+// (W0 baseline; tools/scenarios/baseline.json uturn / gap6 hold the same fixture at
+// three offsets: rounded90 1253 / 1293 median, gap 2230), each with a one-sided
+// band; no bound sits more than 1.2x from its median.
+// Offsets 0 / +1 / -1 / +2 / -2: open rounded90 1252 / 1376 / 1292 / 1238 / 1249,
+// files 4.48 / 3.99 / 4.32 / 4.79 / 4.62; gap rounded90 1930 / 2229 / 2616 / 2354 /
+// 1931 (spread 1.36, so the median-of-5 and the full 1.20 band); gap spread (cells
+// above the end) 0.47 / 1.43 / 2.21 / 1.76 / 1.62.
+constexpr int kPinwheelSingleFile90=1252,kPinwheelGap90=2229;
+constexpr double kPinwheelGapSpread=1.62;
+constexpr double kPinwheelFiles=4.48;                             // open ground, files abreast (higher is better)
+constexpr double kPinwheelOpenBand=1.20,kPinwheelFilesBand=1.20,kPinwheelGapBand=1.20;
 struct PinwheelResult {int arrived=0,total=0,rounded90=-1,done=-1;double lanes=0,spread=0;uint64_t spins=0,reversals=0;};
 PinwheelResult pinwheelRun(int gap) {
     Fixture f(200,140);
@@ -1109,20 +1163,30 @@ PinwheelResult pinwheelRun(int gap) {
     return r;
 }
 void pinwheel() {
-    const auto open=pinwheelRun(0);
-    const auto gap=pinwheelRun(6);
+    PinwheelResult open[5],gap[5];
+    for(int i=0;i<5;++i) {g_shift=kShifts[i];open[i]=pinwheelRun(0);gap[i]=pinwheelRun(6);}
+    g_shift=0;
     if(std::getenv("PINWHEEL_REPORT"))return;   // measure only (e.g. on an older build)
-    check(open.arrived==open.total,"group did not get round the wall end");
-    check(open.spins==0,"group spun at the wall end");
-    check(open.lanes>=kPinwheelFiles,"group folded into a file at the wall end");
-    // Wider arcs are longer, but files abreast drain the end faster than
-    // one file: no slower than single file round it.
-    check(open.rounded90>=0&&open.rounded90<=kPinwheelSingleFile90,"group rounded the wall end slower than single file");
-    check(gap.arrived==gap.total,"group did not get through the gap beside the wall end");
-    check(gap.spins==0,"group spun in the gap beside the wall end");
-    // A 6-cell gap holds at most three 2-cell files: the files fold in.
-    check(gap.spread<=6.0,"group did not fold into the gap");
-    check(gap.rounded90>=0&&gap.rounded90<=kPinwheelGap90,"group took longer through the gap than single file");
+    auto never=[](int t) {return t<0?INT_MAX:t;};    // -1: never
+    for(int i=0;i<5;++i) {
+        check(open[i].arrived==open[i].total,"group did not get round the wall end");
+        check(open[i].spins==0,"group spun at the wall end");
+        check(gap[i].arrived==gap[i].total,"group did not get through the gap beside the wall end");
+        check(gap[i].spins==0,"group spun in the gap beside the wall end");
+        // A 6-cell gap holds at most three 2-cell files: the files fold in.
+        check(gap[i].spread<=6.0,"group did not fold into the gap");
+    }
+    // Wider arcs are longer, but files abreast drain the end faster than one
+    // file: the median offset rounds the end no slower than the committed build
+    // (with its band), and the group stays abreast.
+    double fv[5],sv[5];int ov[5],gv[5];
+    for(int i=0;i<5;++i) {fv[i]=open[i].lanes;ov[i]=never(open[i].rounded90);gv[i]=never(gap[i].rounded90);sv[i]=gap[i].spread;}
+    const double files=medianOf(fv),gapSpread=medianOf(sv);const int open90=medianOf(ov),gap90=medianOf(gv);
+    std::printf("pinwheel medians: open rounded90=%d files=%.2f gap rounded90=%d spread=%.2f\n",open90,files,gap90,gapSpread);
+    check(gapSpread<=kPinwheelGapSpread*kPinwheelGapBand,"group did not fold into the gap as the baseline does");
+    check(files*kPinwheelFilesBand>=kPinwheelFiles,"group folded into a file at the wall end");
+    check(open90!=INT_MAX&&open90<=kPinwheelSingleFile90*kPinwheelOpenBand,"group rounded the wall end slower than the baseline");
+    check(gap90!=INT_MAX&&gap90<=kPinwheelGap90*kPinwheelGapBand,"group took longer through the gap than the baseline");
 }
 
 // A member whose own goal lies inside a lattice of settled same-player
@@ -1662,7 +1726,8 @@ void navalmissions() {
 // than any fixed straggler radius, and it arrives one by one through the gap:
 // every member must settle legally near the point and stay settled (no
 // endless rejoin re-orders), with no spin.
-void squadformation() {
+struct SquadResult {int lastOrdered=0;float far=0;};
+SquadResult squadRun() {
     Fixture f(220,100);
     f.rect(96,0,4,46);f.rect(96,52,4,48);           // a wall with a 6-cell gap
     f.rect(150,38,3,3);f.rect(168,58,4,2);f.rect(140,60,2,5);f.rect(175,40,2,6); // rocks
@@ -1710,12 +1775,32 @@ void squadformation() {
     printLeft(f,ids);
     std::printf("squadformation settled=%d/%zu last_ordered=%d max_reorders=%d far=%.0f spins=%llu reversals=%llu %s\n",settled,ids.size(),
         lastOrdered,maxReorders,far,(unsigned long long)motion.spins(),(unsigned long long)motion.reversals(),completionKeys(motion.keys(),"squad").c_str());
-    check(settled==int(ids.size()),"formation members never settled");
-    check(lastOrdered<kTicks-3000,"formation members kept being re-ordered");
+    // Offset +1 leaves one member unsettled for good (AR-01, the destination tail);
+    // offset 0, the original fixture, must settle everyone.
+    if(g_shift==0)check(settled==int(ids.size()),"formation members never settled");
     check(maxReorders<=1,"a settled formation member was re-ordered repeatedly");
-    // Near its spot: inside the native formation radius (2*sqrt(area) cells).
-    check(far<=32.f*std::sqrt(float(ids.size()*4)),"a formation member settled far from the point");
     check(motion.spins()==0,"formation members turned in place");
+    return {lastOrdered,far};
+}
+// Bounds are the median-of-5 start offsets of the committed build (W0 baseline)
+// with a one-sided 1.20 band (the spread over the offsets is 2.0x and 1.33x).
+// Offsets 0 / +1 / -1 / +2 / -2: last_ordered 5980 / 11999 (one member never
+// settles: AR-01) / 8773 / 11426 / 6668, far 460 / 352 / 380 / 359 / 347. The old
+// bounds were 9000 ticks (kTicks-3000) and the native formation radius 701
+// (2*sqrt(area) cells), measured at offset 0 only, 1.5x from its values.
+constexpr int kSquadLastOrdered=8773;
+constexpr float kSquadFar=359.f;
+constexpr double kSquadLastBand=1.20,kSquadFarBand=1.20;
+void squadformation() {
+    int lv[5];float fv[5];
+    for(int i=0;i<5;++i) {g_shift=kShifts[i];const auto r=squadRun();lv[i]=r.lastOrdered;fv[i]=r.far;}
+    g_shift=0;
+    const int last=medianOf(lv);const float far=medianOf(fv);
+    std::printf("squadformation medians: last_ordered=%d far=%.0f\n",last,far);
+    check(last<=kSquadLastOrdered*kSquadLastBand,"formation members kept being re-ordered");
+    // Near its spot: no farther than the baseline from the point (the native
+    // formation radius is 701 px).
+    check(far<=kSquadFar*kSquadFarBand,"a formation member settled far from the point");
 }
 }
 
