@@ -404,6 +404,7 @@
                 job.tick = netTick_;
                 job.wantHash = (netTick_ % uint32_t(tak::net::kHashPeriod) == 0);
                 job.spectator = mp_->isSpectator();
+                job.wantPos = job.wantHash && mp_->recording() && !job.spectator;
                 { std::lock_guard<std::mutex> lk(inboxMutex_); simInbox_.push_back(std::move(job)); }
                 inboxCv_.notify_one();
             } else {
@@ -421,7 +422,8 @@
                 // an all-AI room has no seated players to form a consensus). A spectator's
                 // hash is a progress ACK only, so skip the O(units) stateHash for it.
                 if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0)
-                    mp_->sendHash(netTick_, reportedHash(mp_->isSpectator(), netTick_));
+                    mp_->sendHash(netTick_, reportedHash(mp_->isSpectator(), netTick_),
+                                  mp_->recording() && !mp_->isSpectator() ? world_.posDigest() : 0);
             }
             ++netTick_;
             ++drained;
@@ -521,7 +523,7 @@
         if (useSimThread_) {
             std::deque<HashJob> done;
             { std::lock_guard<std::mutex> lk(outboxMutex_); done.swap(simOutbox_); }
-            for (const auto& h : done) mp_->sendHash(h.tick, h.hash);
+            for (const auto& h : done) mp_->sendHash(h.tick, h.hash, h.pos);
             drainPendingNotice();   // apply any HUD notice the worker posted (god/mission/scenario)
         }
         // Cosmetics once per frame, covering the game time actually played.

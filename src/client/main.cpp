@@ -394,6 +394,16 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
                  path.c_str(), rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "",
                  rf.formatVersion, rf.engineVersion.empty() ? "an older build" : rf.engineVersion.c_str(), rf.checks.size());
+#ifndef NDEBUG
+    // TAK_POSTRAIL_REF=<file>: digests written by TAK_POSTRAIL on the recording build, for a recording that
+    // predates format 12. TAK_POSTRAIL=<file> writes this playback's own trail (src/client/postrail.h).
+    if (const char* ref = tak::devEnv("TAK_POSTRAIL_REF")) {
+        const auto trail = tak::postrail::load(ref);
+        for (auto& ck : rf.checks)
+            if (ck.posDigest == 0) if (auto it = trail.find(ck.tick); it != trail.end()) ck.posDigest = it->second;
+    }
+    view->openPostrail(tak::devEnv("TAK_POSTRAIL"));
+#endif
     view->setReplayChecks(std::move(rf.checks));
     view->startReplay(rf.cfg, std::move(rf.bundles), rf.mission);
     return view;
@@ -1301,6 +1311,8 @@ int main(int argc, char** argv) {
         // FAIL when playback did not reproduce the recording. This returned 0
         // unconditionally, so an automated verify passed a recording it had just
         // detected diverging from -- the one thing the mode exists to catch.
+        if (const std::string why = gameView->replayDivergenceSummary(); !why.empty())
+            std::fprintf(stderr, "replay verify: %s\n", why.c_str());
         return gameView->replayDiverged() ? 1 : 0;
     }
     if (gameView && mp && mpHeadless) {

@@ -1806,6 +1806,13 @@ public:
         bool bypassPrimaryGeometry=false,std::optional<std::array<int32_t,3>> targetShot={},
         uint16_t proximityRadius=0) const;
     uint64_t stateHash() const;
+    // A coarse, layout-independent digest for replay verification: FNV over (id, type,
+    // owner, x, z, hp, front order kind and target) in unit-id order and nothing else --
+    // no Legion bookkeeping, scripts, nav or RNG. Never folded into stateHash and never
+    // read by the sim. A replay whose stateHash diverges but whose posDigest still
+    // matches changed a hash LAYOUT (or hidden state); one whose posDigest diverges too
+    // changed behaviour.
+    uint64_t posDigest() const;
     // Read-only invariant check for the incrementally maintained grade hashes.
     bool searchGradeChecksumsValid() const;
     // Test hook: build every existing plane's shape afresh both ways (the

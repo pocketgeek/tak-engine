@@ -272,6 +272,9 @@
             world_.tick(1.0f / 30.0f);
             captureTransportEffects();
             ++replayTick_;
+#ifndef NDEBUG
+            if (postrail_.active()) postrail_.record(uint32_t(replayTick_ - 1), world_);
+#endif
             // COMPARE against what the original game computed at this tick. Recording
             // the checkpoints was only half of it -- playback printed the count and
             // checked nothing, so a replay that diverged still ran happily to the end
@@ -283,8 +286,9 @@
                 if (ck.tick + 1 == uint32_t(replayTick_)) {
                     ++replayCheckAt_;
                     const uint64_t mine = world_.stateHash();
-                    if (mine != ck.hash && !replayDiverged_) {
-                        replayDiverged_ = true;
+                    // Keeps checking the position digest after the first hash divergence:
+                    // that is what separates a hash-layout change from changed play.
+                    if (replayTracker_.observe(ck, mine, [&] { return world_.posDigest(); })) {
                         std::fprintf(stderr,
                             "replay: DIVERGED at tick %u -- recorded %016llx, replayed "
                             "%016llx\n", ck.tick, (unsigned long long)ck.hash,
@@ -4304,17 +4308,18 @@
                 job = std::move(simInbox_.front());
                 simInbox_.pop_front();
             }
-            uint64_t hash = 0;
+            uint64_t hash = 0, pos = 0;
             {
                 std::lock_guard<std::mutex> lk(simMutex_);
                 for (const auto& c : job.bundle.cmds) apply(c);
                 for (const auto& e : job.bundle.events) applyEvent(e);
                 simStep(1.0f / 30.0f);   // world_.tick + captureFrame (publishes a snapshot)
                 if (job.wantHash) hash = reportedHash(job.spectator, job.tick);
+                if (job.wantPos) pos = world_.posDigest();
             }
             if (job.wantHash) {
                 std::lock_guard<std::mutex> lk(outboxMutex_);
-                simOutbox_.push_back({job.tick, hash});
+                simOutbox_.push_back({job.tick, hash, pos});
             }
             simProcessedTick_.store(job.tick, std::memory_order_relaxed);   // for backlog/ack tracking
         }

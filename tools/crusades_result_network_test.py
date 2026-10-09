@@ -68,7 +68,7 @@ def verify_replay(root, identity, digest, fingerprint):
     replay = auth.Reader(files[0].read_bytes())
     assert replay.data[:4] == b'TAKR'
     replay.pos = 4
-    assert replay.num('<I') == 11
+    assert replay.num('<I') == 12  # format 12: every checkpoint also carries the position digest
     assert replay.num('<I') == auth.VERSION
     replay.field()  # map
     assert replay.num('<B') == 1  # Crusades Balance
@@ -86,8 +86,8 @@ def verify_replay(root, identity, digest, fingerprint):
         length = replay.num('<I')
         assert struct.unpack_from('<I', replay.data, replay.pos)[0] == tick
         replay.pos += length
-    checks = [(replay.num('<I'), replay.num('<Q')) for _ in range(replay.num('<I'))]
-    assert (final_tick - 1, final_hash) in checks
+    checks = [(replay.num('<I'), replay.num('<Q'), replay.num('<Q')) for _ in range(replay.num('<I'))]
+    assert (final_tick - 1, final_hash) in [(tick, state) for tick, state, _digest in checks]
     assert replay.pos == len(replay.data)
 
 

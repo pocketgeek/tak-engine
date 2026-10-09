@@ -1040,11 +1040,11 @@ void MpClient::sendCommands(const std::vector<Command>& cmds) {
     send(Msg::PlayerCommands, w);
 }
 
-void MpClient::sendHash(uint32_t tick, uint64_t hash) {
+void MpClient::sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest) {
     // Keep our own trail while recording, so the replay carries what this client
     // actually computed at each checkpoint. A spectator's StateHash is only a
     // progress ack carrying 0 (never a computed hash), so it is not a checkpoint.
-    if (recording_ && !spectator_) hashLog_.push_back({tick, hash});
+    if (recording_ && !spectator_) hashLog_.push_back({tick, hash, posDigest});
     Writer w; w.u32(tick); w.u64(hash);
     send(Msg::StateHash, w);
 }
