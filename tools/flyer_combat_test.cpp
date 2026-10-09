@@ -226,7 +226,8 @@ int main(int argc,char** argv) {
                 const bool overrides=name=="zondrake" && close;
                 const int ground=overrides?240:100;
                 w.setTerrain(std::vector<uint8_t>(256*256,overrides?230:100),256,256,overrides?240:20);
-                auto victim=*registry.find("tarzom");victim.maxHp=1000000;victim.healTime=0;
+                auto victim=*registry.find("tarzom");victim.maxHp=30000;   // Fixed is 16.16: anything above 32767 overflows (UB; wraps on Linux, saturates to a corpse on MinGW)
+                victim.healTime=0;
                 victim.weapon.damage=0;victim.weapons.clear();
                 for (auto& weapon:type.weapons) { weapon.mindControl=false;weapon.damage=1; }
                 type.canCapture=false;
