@@ -59,6 +59,12 @@ constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields wh
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
+// Ticks an approach member's order (an unreachable goal) is kept once the body
+// reaches its approach point, the nearest reachable spot: none, the order drops
+// there (user decision 2026-10-08, PLAN W2 AR-11). Timed from arrival, so the
+// walk to the point is never cut short; the walk's own limit is the
+// kTrappedRetire age test in move().
+constexpr uint32_t kApproachRetire=0;
 constexpr int kClusterCells=16;
 constexpr int kFieldMargin=32;                 // bounded field window margin (cells), at least
 constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
@@ -3160,8 +3166,9 @@ struct LegionNavigator::Impl {
         m.state=Holding;++m.held;
     }
     void complete(Unit& u,Member& m,bool contact) {
-        // The nearest reachable point to an unreachable goal is held, not
-        // completed: the order waits there for the terrain to open.
+        // The nearest reachable point to an unreachable goal is not a
+        // completion: the body stops there and its order is retired after
+        // kApproachRetire (see trapped), as Retail drops an unreachable goal.
         if(m.approach) {trapped(u,m);return;}
         // A goal its owner ends (combat in range, guard within reach) is
         // never declared reached by Legion: the body holds there, order kept.
@@ -3220,12 +3227,20 @@ struct LegionNavigator::Impl {
         // constant heading, no probing). The order is kept for a grace
         // period so a gate opening or a wall coming down (a new static
         // epoch) resumes it; after that the leg is retired as Retail retires
-        // an unreachable goal. Later queued legs proceed.
-        if(m.state!=Trapped) {
-            m.state=Trapped;m.trappedSince=m.approach?m.approachSince:w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;
-        }
+        // an unreachable goal. Later queued legs proceed. An approach member
+        // got here by reaching its nearest reachable spot (its approach
+        // point) or by outliving the walk's age limit: its grace,
+        // kApproachRetire, is timed from that arrival, never from the order,
+        // so a long walk is not cut short. The update that stops the body
+        // only stamps the clock; the retire test runs from the next update
+        // on (with kApproachRetire = 0 the order drops one update after
+        // arrival, and the body is seen standing at its point in between).
         u.speed=Fixed();u.turnReqBam=0;
-        if(w.tickCounter_-m.trappedSince<kTrappedRetire)return;
+        if(m.state!=Trapped) {
+            m.state=Trapped;m.trappedSince=w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;
+            return;
+        }
+        if(w.tickCounter_-m.trappedSince<(m.approach?kApproachRetire:kTrappedRetire))return;
         leave(u.id);
         w.dropLeg(u);
         u.routeStamp=-1;
@@ -3745,7 +3760,8 @@ struct LegionNavigator::Impl {
             if(clear||(rally&&m.stillWindows>=2*kExitWindows)) {complete(u,m,true);return;}
         }
         if(m.goal<0) {trapped(u,m);return;}
-        // Holding at the approach point, or out of grace while walking to it.
+        // Stopped at its approach point (retired by trapped), or still
+        // walking to it kTrappedRetire after the order (the walk's age limit).
         if(m.approach&&(m.state==Trapped||w.tickCounter_-m.approachSince>=kTrappedRetire)) {trapped(u,m);return;}
         auto group=groups.find(m.group);
         if(group==groups.end()) {registerMove(u);w.brakeGround(u);return;}

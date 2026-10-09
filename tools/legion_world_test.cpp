@@ -889,8 +889,9 @@ void farclick() {
 }
 
 // A goal behind a full wall, from a region with room to move: the body walks
-// to the region's nearest point to the goal, then holds there -- order kept,
-// zero speed, constant heading, no pushing against the wall.
+// to the region's nearest point to the goal and stops there -- zero speed,
+// constant heading, no pushing against the wall -- and its order drops on
+// arrival (kApproachRetire = 0; user decision 2026-10-08, PLAN W2 AR-11).
 void approachhold() {
     Fixture f(96,64);
     f.rect(48,0,3,64);
@@ -899,46 +900,68 @@ void approachhold() {
     f.start();
     f.world.order(id,80*16,30*16,false);
     Watch motion;
-    int stillFrom=-1;int32_t x=f.world.unit(id)->x.v,z=f.world.unit(id)->z.v,heading=f.world.unit(id)->heading.v;
+    int stillFrom=-1,cleared=-1;int32_t x=f.world.unit(id)->x.v,z=f.world.unit(id)->z.v,heading=f.world.unit(id)->heading.v;
     uint64_t movedAfter=0,turnedAfter=0;
     for(int t=0;t<3000;++t) {
         f.world.tick(1.f/30);motion.observe(f.world,{id});
         const auto& u=*f.world.unit(id);
         if(stillFrom<0&&f.world.legionNavigator()->unitState(id)==5)stillFrom=t;
+        if(cleared<0&&u.orders.empty())cleared=t;
         if(stillFrom>=0&&t>stillFrom) {movedAfter+=u.x.v!=x||u.z.v!=z;turnedAfter+=u.heading.v!=heading;}
         x=u.x.v;z=u.z.v;heading=u.heading.v;
     }
     const auto& u=*f.world.unit(id);
-    std::printf("approachhold held_at=%d x=%.1f z=%.1f moved_after=%llu turned_after=%llu spins=%llu speed=%d\n",stillFrom,
+    std::printf("approachhold held_at=%d cleared_at=%d x=%.1f z=%.1f moved_after=%llu turned_after=%llu spins=%llu speed=%d\n",stillFrom,cleared,
         u.x.toFloat()/16,u.z.toFloat()/16,(unsigned long long)movedAfter,(unsigned long long)turnedAfter,
         (unsigned long long)motion.spins(),u.speed.v);
     check(stillFrom>=0,"approaching unit never held");
     check(u.x.toFloat()/16>44&&u.x.toFloat()/16<48.5f&&std::abs(u.z.toFloat()/16-30)<2,"unit did not walk to the nearest reachable point");
     check(movedAfter==0&&turnedAfter==0&&motion.spins()==0,"held unit moved, turned or spun");
     check(u.speed.v==0,"held unit has speed");
-    check(!u.orders.empty(),"approach order dropped before the grace period");
+    check(cleared>=stillFrom&&cleared<=stillFrom+8,"approach order not dropped on arrival at the approach point");
     check(f.legal(id),"illegal footprint at the approach point");
 }
 
-// The wall comes down while the body holds at its approach point: the kept
-// order resumes and the body arrives at the real goal, no re-issued order.
+// The wall comes down while the body still walks to its approach point: the
+// order re-resolves to the real goal and the body arrives there, no re-issued
+// order. Once the body has reached the point its order is gone (dropped on
+// arrival, kApproachRetire = 0), so a wall that opens later does not move it:
+// open question 13 (PLAN section 6, gates that reopen).
 void approachopen() {
-    Fixture f(96,64);
-    f.rect(48,0,3,64);
-    f.publish();
-    const auto type=mover(2);const int id=f.spawn(type,10,30);
-    f.start();
-    f.world.order(id,80*16,30*16,false);
-    for(int t=0;t<1500;++t)f.world.tick(1.f/30);
-    const float heldX=f.world.unit(id)->x.toFloat()/16;
-    check(heldX>44&&!f.world.unit(id)->orders.empty(),"unit did not approach the wall with its order kept");
-    f.open(48,0,3,64);f.publish();
-    int arrived=-1;
-    for(int t=0;t<1500&&arrived<0;++t) {f.world.tick(1.f/30);if(f.world.unit(id)->orders.empty())arrived=t;}
-    const auto& u=*f.world.unit(id);
-    std::printf("approachopen held_x=%.1f arrived_after=%d at %.1f,%.1f\n",heldX,arrived,u.x.toFloat()/16,u.z.toFloat()/16);
-    check(arrived>=0&&arrived<600,"unit did not resume promptly after the wall opened");
-    check(std::abs(u.x.toFloat()-80*16)<20&&std::abs(u.z.toFloat()-30*16)<20,"resumed unit did not reach its real goal");
+    {
+        Fixture f(96,64);
+        f.rect(48,0,3,64);
+        f.publish();
+        const auto type=mover(2);const int id=f.spawn(type,10,30);
+        f.start();
+        f.world.order(id,80*16,30*16,false);
+        for(int t=0;t<150;++t)f.world.tick(1.f/30);
+        const float walkX=f.world.unit(id)->x.toFloat()/16;
+        check(walkX<40&&!f.world.unit(id)->orders.empty(),"unit not still walking to its approach point");
+        f.open(48,0,3,64);f.publish();
+        int arrived=-1;
+        for(int t=0;t<1500&&arrived<0;++t) {f.world.tick(1.f/30);if(f.world.unit(id)->orders.empty())arrived=t;}
+        const auto& u=*f.world.unit(id);
+        std::printf("approachopen walk_x=%.1f arrived_after=%d at %.1f,%.1f\n",walkX,arrived,u.x.toFloat()/16,u.z.toFloat()/16);
+        check(arrived>=0&&arrived<900,"walking unit did not take the opened way");
+        check(std::abs(u.x.toFloat()-80*16)<20&&std::abs(u.z.toFloat()-30*16)<20,"unit did not reach its real goal");
+    }
+    {
+        Fixture f(96,64);
+        f.rect(48,0,3,64);
+        f.publish();
+        const auto type=mover(2);const int id=f.spawn(type,10,30);
+        f.start();
+        f.world.order(id,80*16,30*16,false);
+        for(int t=0;t<1500;++t)f.world.tick(1.f/30);
+        const float heldX=f.world.unit(id)->x.toFloat()/16;
+        check(heldX>44&&f.world.unit(id)->orders.empty(),"unit did not drop its order at the wall");
+        f.open(48,0,3,64);f.publish();
+        for(int t=0;t<600;++t)f.world.tick(1.f/30);
+        const auto& u=*f.world.unit(id);
+        std::printf("approachopen after_arrival held_x=%.1f now %.1f,%.1f\n",heldX,u.x.toFloat()/16,u.z.toFloat()/16);
+        check(std::abs(u.x.toFloat()/16-heldX)<0.01f&&u.orders.empty(),"a dropped approach order came back");
+    }
 }
 
 // Static changes away from a moving group (a corpse-like cell toggled every
@@ -1006,8 +1029,8 @@ void churnfield() {
 }
 
 // An approach member under unrelated static churn (a far cell toggled every
-// 10 ticks) keeps its walk and its clock: it still reaches the approach
-// point, holds, and retires after the grace period counted from the order.
+// 10 ticks) keeps its walk: it still reaches the approach point and its order
+// retires on arrival there (kApproachRetire = 0, timed from arrival).
 void approachchurn() {
     Fixture f(96,64);
     f.rect(48,0,3,64);
@@ -1017,15 +1040,18 @@ void approachchurn() {
     f.start();
     f.world.order(id,80*16,30*16,false);
     const uint64_t registrations=f.world.legionStats().registrations;
-    int cleared=-1;
+    int cleared=-1,arrived=-1;
     for(int t=0;t<9300&&cleared<0;++t) {
         if(t%10==0)f.world.blockCells(2,60,1,1,(t/10)%2==0);
         f.world.tick(1.f/30);
+        if(arrived<0&&f.world.legionNavigator()->unitState(id)==5)arrived=t;
         if(f.world.unit(id)->orders.empty())cleared=t;
     }
     const uint64_t again=f.world.legionStats().registrations-registrations;
-    std::printf("approachchurn cleared_at=%d reregistrations=%llu\n",cleared,(unsigned long long)again);
-    check(cleared>=8950&&cleared<=9100,"approach order not retired after the grace period under churn");
+    const auto& u=*f.world.unit(id);
+    std::printf("approachchurn arrived_at=%d cleared_at=%d x=%.1f reregistrations=%llu\n",arrived,cleared,u.x.toFloat()/16,(unsigned long long)again);
+    check(arrived>=0&&u.x.toFloat()/16>44,"approach member did not reach its approach point under churn");
+    check(cleared>=arrived&&cleared<=arrived+8,"approach order not retired on arrival under churn");
     check(again<=2,"approach member re-registered on unrelated static changes");
 }
 
