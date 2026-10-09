@@ -50719,50 +50719,74 @@
     "work.field_work.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 384000
+     "since": "W0-followups",
+     "value": 383960
     },
     "work.field_work.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 384000
+     "since": "W0-followups",
+     "value": 381464
     },
     "work.field_work.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 9423112
+     "since": "W0-followups",
+     "value": 93422416
     },
     "work.field_work_first_slot.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 384000
+     "since": "W0-followups",
+     "value": 383960
     },
     "work.field_work_first_slot.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 384000
+     "since": "W0-followups",
+     "value": 381464
     },
     "work.field_work_first_slot.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 9423112
+     "since": "W0-followups",
+     "value": 9422416
+    },
+    "work.field_work_refresh_moving.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 96000
+    },
+    "work.field_work_refresh_moving.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 96000
+    },
+    "work.field_work_refresh_moving.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 84000000
     },
     "work.fields_built.max": {
      "band": 1.1,
@@ -50775,18 +50799,18 @@
     "work.fields_built.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 0
+     "since": "W0-followups",
+     "value": 1
     },
     "work.fields_built.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 2
+     "since": "W0-followups",
+     "value": 12
     },
     "work.fields_started_by_kind_1.max": {
      "band": 1.1,
@@ -50799,18 +50823,18 @@
     "work.fields_started_by_kind_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 0
+     "since": "W0-followups",
+     "value": 1
     },
     "work.fields_started_by_kind_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 2
+     "since": "W0-followups",
+     "value": 14
     },
     "work.formation_ring_cells.max": {
      "band": 1.1,
@@ -50847,18 +50871,18 @@
     "work.group_loop_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 1
+     "since": "W0-followups",
+     "value": 4
     },
     "work.group_loop_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 72
+     "since": "W0-followups",
+     "value": 2728
     },
     "work.groups.max": {
      "band": 1.1,
@@ -50911,34 +50935,34 @@
     "work.legion_total.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 387844
+     "since": "W0-followups",
+     "value": 385309
     },
     "work.legion_total.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 384627
+     "since": "W0-followups",
+     "value": 382167
     },
     "work.legion_total.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 10194815
+     "since": "W0-followups",
+     "value": 94196763
     },
     "work.line_sweeps.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 29
+     "since": "W0-followups",
+     "value": 30
     },
     "work.line_sweeps.p99": {
      "band": 1.1,
@@ -50951,10 +50975,10 @@
     "work.line_sweeps.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 22430
+     "since": "W0-followups",
+     "value": 22425
     },
     "work.mission_legs_1.max": {
      "band": 1.1,
@@ -51071,10 +51095,10 @@
     "work.pass_scan_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 89136
+     "since": "W0-followups",
+     "value": 89064
     },
     "work.pass_scans.max": {
      "band": 1.1,
@@ -51095,10 +51119,10 @@
     "work.pass_scans.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 3714
+     "since": "W0-followups",
+     "value": 3711
     },
     "work.pass_scans_skipped.max": {
      "band": 1.1,
@@ -51119,10 +51143,10 @@
     "work.pass_scans_skipped.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 3363
+     "since": "W0-followups",
+     "value": 3364
     },
     "work.plane_builds.max": {
      "band": 1.1,
@@ -51146,6 +51170,78 @@
      "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
      "rule": "band",
      "since": "W0",
+     "value": 1
+    },
+    "work.plane_refreshes.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.plane_refreshes.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.plane_refreshes.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 898
+    },
+    "work.refresh_completed.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.refresh_completed.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.refresh_completed.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 10
+    },
+    "work.refresh_discards.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.refresh_discards.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.refresh_discards.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
      "value": 1
     },
     "work.registrations.max": {
@@ -51175,26 +51271,50 @@
     "work.sched_group_visits.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 2
+     "since": "W0-followups",
+     "value": 3
     },
     "work.sched_group_visits.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 1
+     "since": "W0-followups",
+     "value": 3
     },
     "work.sched_group_visits.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 27
+     "since": "W0-followups",
+     "value": 1785
+    },
+    "work.share_scan_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 2
+    },
+    "work.share_scan_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 2
+    },
+    "work.share_scan_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: refreshchurn.scn now carries the churn (a 2x2 blocking feature in a fresh cell every tick for 900 ticks; refresh_completed 10) and refreshchurn-control.scn is the former churn-free file; median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 24
     },
     "work.slot_search_cells.max": {
      "band": 1.1,
@@ -51231,18 +51351,18 @@
     "work.trace_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 2082
+     "since": "W0-followups",
+     "value": 2188
     },
     "work.trace_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "band",
-     "since": "W0",
-     "value": 683085
+     "since": "W0-followups",
+     "value": 682592
     },
     "work.waiting_member_ticks.max": {
      "band": 1.1,
@@ -51272,44 +51392,809 @@
    "retail": {
     "hash@-1": {
      "dir": "lower",
-     "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
-     "since": "W0",
-     "value": "3118e573184faaa0"
+     "since": "W0-followups",
+     "value": "61f05037f7ae2f05"
     },
     "hash@-2": {
      "dir": "lower",
-     "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
-     "since": "W0",
-     "value": "48a6b9f5fa424aeb"
+     "since": "W0-followups",
+     "value": "51dce4f1a937b3aa"
     },
     "hash@0": {
      "dir": "lower",
-     "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
-     "since": "W0",
-     "value": "b338ad62228fd8d1"
+     "since": "W0-followups",
+     "value": "65bc1dd272fbb6d0"
     },
     "hash@1": {
      "dir": "lower",
-     "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
-     "since": "W0",
-     "value": "6de8bbedf0ac049f"
+     "since": "W0-followups",
+     "value": "171550a6da3b110e"
     },
     "hash@2": {
      "dir": "lower",
-     "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
+     "reason": "W0 follow-up 2: refreshchurn.scn carries the churn (a 2x2 blocking feature in a fresh cell every tick, 900 ticks; refresh_completed 10), median of 5 offsets",
      "rule": "eq",
-     "since": "W0",
-     "value": "b4970f4d000074ad"
+     "since": "W0-followups",
+     "value": "9a2ae5367c009ab4"
     },
     "serial_eq_workers": {
      "dir": "lower",
      "reason": "serial == workers on hash, digest and keys (PLAN 3.0 exact)",
      "rule": "eq",
      "since": "W0",
+     "value": true
+    }
+   }
+  },
+  "refreshchurn-control": {
+   "legion": {
+    "contact_other_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "contact_own_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 295
+    },
+    "contact_settled_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "g.M.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "g.M.complete_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "g.M.complete_outside_radius": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "g.M.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": -1
+    },
+    "g.M.left_behind": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "g.M.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": -1
+    },
+    "parked_no_progress": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "region.goal.inside": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "reversals": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": true
+    },
+    "spins": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "stopped_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "walk_in_place": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "wall_touch_near_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "wall_touch_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.aware_pairs.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.aware_pairs.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.aware_pairs.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 29
+    },
+    "work.field_work.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 384000
+    },
+    "work.field_work.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 384000
+    },
+    "work.field_work.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 9423112
+    },
+    "work.field_work_first_slot.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 384000
+    },
+    "work.field_work_first_slot.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 384000
+    },
+    "work.field_work_first_slot.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 9423112
+    },
+    "work.fields_built.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.fields_built.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.fields_built.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 2
+    },
+    "work.fields_started_by_kind_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.fields_started_by_kind_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.fields_started_by_kind_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 2
+    },
+    "work.formation_ring_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 72
+    },
+    "work.formation_ring_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.formation_ring_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 72
+    },
+    "work.group_loop_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 16
+    },
+    "work.group_loop_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.group_loop_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 72
+    },
+    "work.groups.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.groups.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.groups.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.join_iterations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 15
+    },
+    "work.join_iterations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.join_iterations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 15
+    },
+    "work.legion_total.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 387844
+    },
+    "work.legion_total.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 384627
+    },
+    "work.legion_total.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 10194815
+    },
+    "work.line_sweeps.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 29
+    },
+    "work.line_sweeps.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 28
+    },
+    "work.line_sweeps.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 22430
+    },
+    "work.mission_legs_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 16
+    },
+    "work.mission_legs_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.mission_legs_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 16
+    },
+    "work.move_calls_by_state_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.move_calls_by_state_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.move_calls_by_state_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 7183
+    },
+    "work.move_calls_by_state_3.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.move_calls_by_state_3.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.move_calls_by_state_3.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 9
+    },
+    "work.moves.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.moves.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.moves.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 7192
+    },
+    "work.pass_scan_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 192
+    },
+    "work.pass_scan_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 192
+    },
+    "work.pass_scan_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 89136
+    },
+    "work.pass_scans.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.pass_scans.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.pass_scans.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 3714
+    },
+    "work.pass_scans_skipped.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.pass_scans_skipped.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 8
+    },
+    "work.pass_scans_skipped.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 3363
+    },
+    "work.plane_builds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.plane_builds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.plane_builds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.registrations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 16
+    },
+    "work.registrations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.registrations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 16
+    },
+    "work.sched_group_visits.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 2
+    },
+    "work.sched_group_visits.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.sched_group_visits.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 27
+    },
+    "work.slot_search_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 72
+    },
+    "work.slot_search_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.slot_search_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 72
+    },
+    "work.trace_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 3843
+    },
+    "work.trace_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 2082
+    },
+    "work.trace_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 683085
+    },
+    "work.waiting_member_ticks.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    },
+    "work.waiting_member_ticks.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 0
+    },
+    "work.waiting_member_ticks.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 1
+    }
+   },
+   "retail": {
+    "hash@-1": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": "3118e573184faaa0"
+    },
+    "hash@-2": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": "48a6b9f5fa424aeb"
+    },
+    "hash@0": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": "b338ad62228fd8d1"
+    },
+    "hash@1": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": "6de8bbedf0ac049f"
+    },
+    "hash@2": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
+     "value": "b4970f4d000074ad"
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W0 follow-up 2: the former churn-free refreshchurn file, median of 5 offsets",
+     "rule": "eq",
+     "since": "W0-followups",
      "value": true
     }
    }
@@ -73661,6 +74546,12 @@
    "ratchets": [],
    "reason": "W0 follow-up 1: added the audit-defined keys lane.cross.swaps_permille (laneRun lane-order swaps), gate.strip.files_x100 (abreast strips) and pair.contacts.permille_x100 (aware contacts) for wall-1x48, wall-4x50, island-1x48, island-1x150, aware-cross/headon/seen/unseen/attack: median of 5 offsets, both modes, band 1.10; no existing value changed",
    "when": "2026-10-08T12:00:00Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "W0 follow-up 2: refreshchurn.scn gained its churn directive (30 existing values retaken, 15 new work.* keys such as work.refresh_completed.total=10 and work.plane_refreshes added); refreshchurn-control.scn is the former churn-free file with the same key set",
+   "when": "2026-10-08T13:00:00Z"
   }
  ],
  "references": {},
