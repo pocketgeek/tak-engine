@@ -15,7 +15,8 @@ seed 0, 6000 ticks, turn rate 2500).
 ## W3 exit (2026-10-09): one order, one army; tails settle (protocol 241)
 
 Head: `task-w3-b2` = round 4 + the exit commits below (no sim change after round 4's `05513052`: every
-scenario state hash, Legion and Retail, equals round 4's on all offsets; `--mpai` unchanged). Measured on
+scenario state hash, Legion and Retail, equals round 4's on all offsets -- re-checked on the ruling (f)-(h)
+head, all 182 lines; `--mpai` unchanged). Measured on
 oden-win (scenario results are platform-independent), optimized Debug, all 91 scenarios, both modes, the gate
 offsets (small-count keys on the median of 0,+-1..+-5 or the file's `gateoffsets`, every other key on the core
 five), serial == workers on all 182 lines. Base: the W3 step-0 sim `7a01f7bb` with the exit observer (branch
@@ -30,7 +31,18 @@ rest; a held formation unit re-aims its lane every 20 held ticks.
 
 Exit commits: `27c04ef2` observer (ruling (1)), `0d2dcd58` legion_liftflyers bound (W3-4), `28c07765`
 legion_cost windows (ruling (3)), the baseline commit (rulings (1), (2), (4); W3-3, W3-4), this section and
-`docs/legion-exit-w3-moves.md` (the full move table).
+`docs/legion-exit-w3-moves.md` (the full move table); then the final-exit rulings (f)-(h): `2f28ebc0` observer
+(click-level keys), `a858c231` legion_check (click-level floor, ratchet keeps unmasked spreads), the baseline
+retake of the click keys and this update.
+
+### Lead rulings W3 final exit (e)-(h), applied
+
+| Item | Applied |
+|---|---|
+| (e) the arrival disc keyed by convoy | accepted as landed in `27c04ef2` (decision 2); nothing to change |
+| (f) one-body groups of a multi-body click judged at click level | the runner names every group of a convoy that joins two or more groups, one of them a single body, with the click of its first group; the observer reports `click.<first>.n / arrived / t50 / t90 / done` over all their bodies (each against its convoy-sized disc) and `g.<name>.click_n`, in both modes. Eight scenarios carry clicks: aware-attack / cross / headon / seen / unseen (`click.a00`, `click.b00`, 24 bodies each), motion-cross (`click.u00` east, `click.u01` west, 24 each), motion-open and motion-wall (`click.u00`, 48). `legion_check` reads a one-body group's own arrived / t50 / t90 / done as report-only (768 key reads in the run): no band, no floor, no retake entry. Baseline: the 48 floor exceptions on those per-body keys dropped (the 13 open failures with them); the click keys' 112 entries retaken from the step-0 sim (branch `w3b5-base` = `w3b4-base` + the click observer, oden-win, the gate offsets, serial), with 47 spread exceptions and 3 floor exceptions for clicks that fail the floor at that base (aware-attack `click.b00.t90` 2166 vs 1954 -- passes at the head, cleared at the next ratchet; aware-cross `click.a00.t90` 1947 vs 1759; aware-unseen `click.a00.t90` 2206 vs 1877; MV-09). At the head: 5 more spread exceptions (MV-09 / MV-12), aware-seen `click.b00.done` 2098 -> 2702 licensed as A2/B shape (incidental; its t90 passes its band) |
+| (g) motion-cross g.u11 | at click level the floor passes (`click.u01.t90` 2702 vs Retail 2887, `arrived` 23 vs 22), so no floor exception; `click.u01.done` is never (base 2860, Retail never) -- licensed as a W3-4-class steering gap citing ruling (g); W5 hard exit gate (below) |
+| (h) apply_ratchet unmasking spreads | `check()` records every offset spread an exception covered; when the ratchet clears a Retail-floor exception, the spread it masked becomes a spread exception (same cluster, the modes it covered) instead of failing the next check. Unit tests for (f) and (h) in `legion_baseline_reasons` |
 
 ### Lead rulings W3 round 4 (1)-(6) and user decisions W3-3 / W3-4, applied
 
@@ -48,37 +60,33 @@ legion_cost windows (ruling (3)), the baseline commit (rulings (1), (2), (4); W3
 
 | Gate | Result |
 |---|---|
-| `legion_check check` (gate offsets, both modes, serial == workers) | **13 fail**, all Retail floor, 16564 keys, 1267 licensed, 156 floor exceptions in the run. The 13 are per-body keys of the one-body aware-* / motion-* groups, read on a disc for the first time by ruling (1): they pass at the step-0 base and fail at the head (below). Not licensed: a floor failure needs a decision |
-| Retail-floor exceptions (non-spread, whole file) | 185 -> 167 (59 first-read keys added at the step-0 base, 6 decision exceptions, 36 dropped by (1), 47 cleared by the ratchet) |
-| Legion ctests | Linux (optimized Debug, the exit baseline; legion, navigation_determinism, replay, observer, convoy, issue_selection, movement_orders): 213 of 214 -- only legion_acceptance_crowdheld_legion fails (pre-existing, W5); every `legion_check_*` passes. oden-win (`0d2dcd58`, before the legion_cost retake): 173 of 176 -- battle-assault / battle-field-2x60 (fixed by the retake) and crowdheld |
+| `legion_check check` (gate offsets, both modes, serial == workers; oden-win, head `a858c231`) | **PASS** after ruling (i) (oden-win, head `f938ccd6` = `a858c231` + the retaken baseline + the three ruling-(i) exceptions; all 91 scenarios, both modes, serial == workers on all 182 lines): 16676 keys, 0 failed, 1269 licensed, 113 floor exceptions in the run, 768 per-body reads report-only; ratchet applied (3 references), re-run PASS with 0 ratchets. At `a858c231`, before ruling (i): 3 fail (the click-level floor, below); before rulings (f)-(h): 13 fail (per-body keys of the one-body groups) |
+| Retail-floor exceptions (non-spread, whole file) | 185 -> 167 at the round-4 licensing (59 first-read keys added at the step-0 base, 6 decision exceptions, 36 dropped by (1), 47 cleared by the ratchet) -> 122 under ruling (f) (48 per-body dropped, 3 click keys added at the base) |
+| Legion ctests | Linux after (f)-(h) (optimized Debug, `a858c231` + the retaken baseline, same selection): 213 of 214 -- only crowdheld (W5). Before, Linux (optimized Debug, the exit baseline; legion, navigation_determinism, replay, observer, convoy, issue_selection, movement_orders): 213 of 214 -- only legion_acceptance_crowdheld_legion fails (pre-existing, W5); every `legion_check_*` passes. oden-win (`0d2dcd58`, before the legion_cost retake): 173 of 176 -- battle-assault / battle-field-2x60 (fixed by the retake) and crowdheld |
 | `legion_cost` | scaling ok (W(4N)/W(N) 0.39 / 0.72, slot cells 0.44 / 0.61, upkeep 1.00); battle-assault, 2x60, 2x250, 2x500 ok |
 | `--mpai` Inner Circle 300 s seed 1 | oden-win: Legion 136218d83cbf7af8, Retail b240750e5765c02b (unchanged); the Mac: Retail b240750e5765c02b |
-| crowdbench screen | see below |
+| crowdbench screen | the Mac (`a858c231`): identical to the exit run's screen -- 1576 differences against the committed W0 screen baseline, the same rows and values (no sim change) |
 | Retail | every Retail state hash equal to round 4's; no Retail key moved against the step-0 base |
 
-### Open: the 13 floor failures (for the lead)
+### Floor exceptions of lead ruling (i): 3 click-level failures, accepted until W7
 
-Per-body t90 (and `arrived`) of the one-body observer groups of aware-* and motion-*. Their 24 / 48 bodies are
-one click, so under ruling (1) each reads arrival on the click's disc; before, each body had its own 33 px disc
-and both modes read `never`, so the floor passed trivially. On the step-0 base they pass; on the head:
+Ruling (f) retires the 13 per-body failures; read at click level, three clicks that pass the floor at the step-0
+base fail it at the head (the same A2 cause the per-body keys showed: one formation for the whole click walks
+some bodies to slots farther round than Retail's stop-where-near; crossing-group arrival about 5% slower than
+Retail). Lead ruling (i), 2026-10-09: they are Retail-floor exceptions, cluster MV-09, "accepted until W7
+(crossing/opposing traffic)"; **W7's exit must bring them within Retail** (x1.1). Core-five median; the eleven
+gate offsets for reference (a 24-body t90 is not a small-count key, so the gate reads the core five):
 
-| Key | step-0 base Legion | head Legion | Retail |
-|---|---|---|---|
-| aware-cross g.a12.t90 | 1815 | 1937 | 1693 |
-| aware-headon g.a02.t90 | 1855 | 1892 | 1704 |
-| aware-seen g.a00 / a02 / a06 .t90 | 1927 / 1880 / 1847 | 1982 / 1982 / 1981 | 1795 / 1777 / 1760 |
-| aware-unseen g.a05 / a07 / a13 .t90 | 1806 / 1906 / 1864 | 1937 / 1963 / 1937 | 1734 / 1764 / 1759 |
-| motion-cross g.u11.t90 | 2674 | never (at 7 of 11 offsets) | 2703 |
-| motion-cross g.u16.t90 | 2317 | 2571 | 2314 |
-| motion-open g.u16 / u32 .t90 | 2316 / 2364 | 2792 / 2409 | 2363 / 2171 |
-| motion-open g.u43.arrived | 1 | 0 | 1 |
+| Key | base Legion | head Legion | Retail | floor (x1.1) | head / Retail on the eleven |
+|---|---|---|---|---|---|
+| aware-headon `click.a00.t90` | 2066 | 2162 | 1925 | 2117 | 2072 / 1870 (fails, 2057) |
+| aware-seen `click.a00.t90` | 1968 | 2065 | 1877 | 2064.7 | 2046 / 1940 (passes) |
+| aware-unseen `click.b00.t90` | 2055 | 2207 | 1929 | 2121.9 | 2128 / 1951 (passes) |
 
-The aware-* keys are within per-body offset noise of the floor (per offset the head spans e.g. 1639..2612 on
-aware-cross a12, Retail 1592..1798); motion-open u16 is a steady +20% (every offset 2477..2927 vs base
-2247..2388), and motion-cross u11 is a "never" (ruling (d): a real bug, one body of the one-click group that does
-not stop inside the click's disc at 7 of 11 offsets). A2's one formation for the whole click walks some bodies to
-slots farther round than Retail's stop-where-near. Needs a ruling: exceptions (MV-09 / MV-12, decision 2), a
-floor for one-body groups judged on the click as a whole, or a fix (W5).
+The aware-attack `click.b00.t90` exception cleared (it passes the floor at the head) and is removed. With the
+three exceptions in `tools/scenarios/baseline.json` the check passes (below); the ratchet was then applied through
+`legion_check` (3 references raised: aware-attack `click.b00.done` never -> 2150, aware-headon `click.a00.done`
+2563 -> 2297, aware-unseen `click.b00.done` 2889 -> 2397) and the check re-run: PASS, 0 ratchets.
 
 ### W5 / W9 hard exit gates carried from W3
 
@@ -89,6 +97,7 @@ floor for one-body groups judged on the click as a whole, or a fix (W5).
 | doorplug-124 `g.A.done` (W3-4) | never at 2 of 11 offsets | completes at every gate offset |
 | legion_liftflyers own-run detour (W3-4) | 5 vs open 2 (bound open + 3) | open + 1 (`kLiftDetourSlack` back to 1) |
 | crowdheld_legion (ruling (5)) | `units_ever_terrain_stuck` 1, one unit 5 cells short at tick 7198 (as at the step-0 head) | the ctest passes |
+| motion-cross g.u11 (ruling (g), W3-4 class) | never inside its click's disc at 7 of 11 offsets; `click.u01.done` never (base 2860), licensed | u11 arrives at every gate offset; the license removed |
 
 ### Headline keys (Legion, step-0 base -> exit; Retail on the same binary)
 
