@@ -30,8 +30,9 @@
 // - Retail age classes. A member with orders that has not moved for 10-150
 //   ticks is WAITING, longer is PARKED (retailgrade.h's recent/stale stamps).
 //   Each splits into held_by_design (Legion's member state is Holding,
-//   Waiting for its field, Arrived or Trapped: a deliberate stand) and
-//   no_progress (Legion says Moving, or the unit is not a Legion member).
+//   Waiting for its field, Arrived or Trapped, or its leg completed and not
+//   yet retired: a deliberate stand) and no_progress (Legion says Moving, or
+//   the unit is not a Legion member).
 // - Motion. spins: heading changed without the position changing.
 //   reversals: return to a 16 px cell left less than 90 ticks earlier
 //   (A -> B -> A over the last 6 cells). stop_go: a start after a stop while
@@ -523,7 +524,12 @@ private:
             m.maxStillRun=std::max(m.maxStillRun,m.stillRun);
             if(m.stillRun>=10) {
                 const int state=nav?nav->unitState(m.id):0;
-                const bool held=state>=2;
+                // A leg already completed (its arrival event set, 0x500) and
+                // waiting for World to retire it is a deliberate stand, not
+                // a body without progress: Legion drops the member on the
+                // completing tick, so it read as no_progress for that tick.
+                const auto& leg=u->orders[sim::World::currentLeg(u->orders)];
+                const bool held=state>=2||(leg.mission.pending&0x500)==0x500;
                 if(m.stillRun<=150)(held?waitingHeld_:waitingNoProgress_)++;
                 else (held?parkedHeld_:parkedNoProgress_)++;
             }
