@@ -400,6 +400,25 @@ foreach(legion_scn structsquad structsquad-keep unreach-200 mazeapproach)
     set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w2;nightly" TIMEOUT 900)
   endif()
 endforeach()
+# W3 step 0 fixtures (PLAN 4 W3 step 0): the pocket, deadend, tail and doorplug probes of legion_world_test as .scn files,
+# so the baseline gate (tools/legion_check.py) covers them over five start offsets and both modes. They report the
+# W3 targets rather than meet them (pocket t90, deadend settled == n, tail open_still900, doorplug B crossings), so
+# the baseline holds today's values and a W3 step that makes one worse fails here. Nightly: 2-60 s each per offset.
+foreach(legion_scn
+    deadend-w2-n120-closed-plain deadend-w2-n120-closed-squad deadend-w2-n120-room-plain
+    deadend-w2-n120-room-squad deadend-w2-n40-closed-plain deadend-w2-n40-closed-squad
+    deadend-w2-n40-room-plain deadend-w2-n40-room-squad deadend-w4-n120-closed-plain
+    deadend-w4-n120-closed-squad deadend-w4-n120-room-plain deadend-w4-n120-room-squad
+    deadend-w4-n40-closed-plain deadend-w4-n40-closed-squad deadend-w4-n40-room-plain
+    deadend-w4-n40-room-squad deadend-w6-n120-closed-plain deadend-w6-n120-closed-squad
+    deadend-w6-n120-room-plain deadend-w6-n120-room-squad deadend-w6-n40-closed-plain
+    deadend-w6-n40-closed-squad deadend-w6-n40-room-plain deadend-w6-n40-room-squad doorplug-112 doorplug-124
+    pocket-304-open pocket-304-wall pocket-615-open pocket-615-wall tail-corner380 tail-open304 tail-open570
+    tail-wave)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w3;nightly" TIMEOUT 1800)
+endforeach()
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
