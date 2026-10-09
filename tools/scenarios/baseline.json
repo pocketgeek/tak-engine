@@ -152332,12 +152332,6 @@
   },
   {
    "cluster": "MV-09",
-   "key": "click.b00.t90",
-   "reason": "fails legion <= retail x1.1 at W3-exit-f: legion 2166 vs retail 1954",
-   "scenario": "aware-attack"
-  },
-  {
-   "cluster": "MV-09",
    "key": "click.a00.done",
    "median5": true,
    "mode": "retail",
@@ -152717,6 +152711,27 @@
    "mode": "legion",
    "reason": "offset spread 35..39 exceeds the band on the W3 exit head (task-w3-b2), first read by the click-level keys of lead ruling W3 final exit (f); gated on median-of-5 offsets",
    "scenario": "motion-open"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the W3 exit (2162 vs Retail 1925): crossing-group arrival ~5% slower than Retail under A2's one formation per click; lead ruling (i), accepted until W7; W7 exit must bring within Retail",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the W3 exit (misses by 0.3 tick): crossing-group arrival ~5% slower than Retail under A2's one formation per click; lead ruling (i), accepted until W7; W7 exit must bring within Retail",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at the W3 exit (2207 vs Retail 1929): crossing-group arrival ~5% slower than Retail under A2's one formation per click; lead ruling (i), accepted until W7; W7 exit must bring within Retail",
+   "scenario": "aware-unseen"
   }
  ],
  "history": [
