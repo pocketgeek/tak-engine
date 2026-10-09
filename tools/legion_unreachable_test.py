@@ -17,9 +17,13 @@ every order completes within the horizon in both modes (an order never hangs for
 Legion never completes an order before the unit arrived (approach_wait_max >= 0).
 
 --require-w2 additionally asserts the W2 step 2 acceptance (PLAN section 0 row 11, 3.4 AR-11):
-each order completes as soon as its unit reaches its spot, approach_wait_max <= 8 ticks. Off by
-default: on the W2 head the wait is the whole kTrappedRetire (9000 from the order), and only
-about half the units ever reach their point (the rest queue behind them), so it fails there.
+each order completes as soon as its unit reaches its spot, approach_wait_max <= 8 ticks, every
+unit gets there (a unit held behind its own army's stopped bodies has reached the nearest spot
+IT can reach: the holder rule), and every order has completed by tick 3000 (3.4: "0 -> 200 by
+3000"). On the W2 step-0 head the wait is the whole kTrappedRetire (9000 from the order) and
+only about half the units ever reach their point; with the arrival retire alone (step 2a) the
+units queued behind still keep their orders to the 9000-tick age test. ctest runs it with
+--require-w2 from step 2c on.
 """
 import argparse
 import json
@@ -57,9 +61,10 @@ def main():
     leg = rows["legion"]
     if leg["approach_arrived"] and leg["approach_wait_max"] < 0:
         bad.append("legion: an order completed before its unit reached its approach point")
-    if args.require_w2 and not (0 <= leg["approach_wait_max"] <= 8 and leg["approach_arrived"] == args.units):
-        bad.append("W2 AR-11: approach_wait_max %d (want <= 8), arrived %d of %d"
-                   % (leg["approach_wait_max"], leg["approach_arrived"], args.units))
+    if args.require_w2 and not (0 <= leg["approach_wait_max"] <= 8 and leg["approach_arrived"] == args.units
+                                and 0 <= leg["orders_retired_tick_max"] <= 3000):
+        bad.append("W2 AR-11: approach_wait_max %d (want <= 8), arrived %d of %d, last order completed %d (want <= 3000)"
+                   % (leg["approach_wait_max"], leg["approach_arrived"], args.units, leg["orders_retired_tick_max"]))
     for b in bad:
         print("FAIL " + b)
     print("PASS" if not bad else "FAIL")
