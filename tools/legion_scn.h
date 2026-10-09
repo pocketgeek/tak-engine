@@ -208,9 +208,9 @@ struct Cursor {
     [[noreturn]] void fail(const std::string& why) const {
         throw std::runtime_error(origin + ":" + std::to_string(line) + ": " + why);
     }
-    long integer(const std::string& s, long lo, long hi) const {
+    long long integer(const std::string& s, long long lo, long long hi) const {
         char* end = nullptr;
-        const long v = std::strtol(s.c_str(), &end, 10);
+        const long long v = std::strtoll(s.c_str(), &end, 10);
         if (s.empty() || *end) fail("not an integer: '" + s + "'");
         if (v < lo || v > hi) fail("'" + s + "' outside " + std::to_string(lo) + ".." + std::to_string(hi));
         return v;
@@ -298,7 +298,7 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
         }
         if (k == "name") { need(2, 2); s.name = w[1]; }
         else if (k == "ticks") { need(2, 2); s.ticks = uint32_t(c.integer(w[1], 1, 10'000'000)); }
-        else if (k == "seed") { need(2, 2); s.seed = uint32_t(c.integer(w[1], 0, 0xffffffffL)); }
+        else if (k == "seed") { need(2, 2); s.seed = uint32_t(c.integer(w[1], 0, 0xffffffffLL)); }
         else if (k == "players") { need(2, 2); s.players = int(c.integer(w[1], 1, 8)); }
         else if (k == "team") {
             need(3, 3);
@@ -537,8 +537,8 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
         } else if (k == "clock") {
             need(3, 3);
             s.hasClock = true;
-            s.clockTick = uint32_t(c.integer(w[1], 0, 0xffffffffL));
-            s.clockRng = uint32_t(c.integer(w[2], 0, 0xffffffffL));
+            s.clockTick = uint32_t(c.integer(w[1], 0, 0xffffffffLL));
+            s.clockRng = uint32_t(c.integer(w[2], 0, 0xffffffffLL));
         } else if (k == "truth") {
             if (w.size() < 2) c.fail("truth TICK X,Z ...");
             Scenario::Truth tr;
