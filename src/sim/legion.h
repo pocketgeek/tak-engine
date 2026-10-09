@@ -19,6 +19,17 @@ struct Unit;
 enum class LegionMission : uint8_t {None=0,Move,Fight,Patrol,Attack,Guard,
     Build,Repair,Reclaim,Load,Unload,Exit,Park};
 
+// Is this mover "shared" under Legion: does a Move click give it the clicked
+// point itself? Legion plans surface movers with footprints 1..8 (ground units
+// and boats) and packs one shared destination into arrival slots; flyers and
+// oversize bodies keep their offset from the selection centroid (clamped to
+// +-60 px per axis). The client's right-click (gameview_hud.cpp) and
+// World::order()'s convoy test (sim/convoy.h) both call this, so the two
+// cannot drift.
+constexpr bool legionSharedClick(bool canFly,int footX,int footZ) {
+    return !canFly&&footX>=1&&footZ>=1&&footX<=8&&footZ<=8;
+}
+
 class LegionNavigator {
 public:
     // Deterministic work/outcome counters. Observation only: never hashed and
@@ -175,6 +186,9 @@ public:
     // build starts with it on when TAK_LEGION_VERIFY is set (the only
     // environment read, debug-only and never hashed). Process-wide.
     static void setVerify(bool on);
+    // Is the verify hook on? (Always false in release.) World's convoy table
+    // (sim/convoy.h) runs its own checks under the same hook.
+    static bool verifying();
     // Print the scheduler counters (an "LPROBE" line on stderr) every
     // `ticks` ticks; 0 off. Process-wide; tools and debug clients set it.
     static void setProbe(uint32_t ticks);

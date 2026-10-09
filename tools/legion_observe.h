@@ -977,7 +977,9 @@ private:
 // each once: subsets are left out of the sum (field_work_* split field_work;
 // sched_group_visits and join_iterations are inside group_loop_iters;
 // formation_ring_cells and rechoice_bfs_cells inside slot_search_cells;
-// line_sweeps are counted by trace_cells, one plus the cells stepped).
+// line_sweeps are counted by trace_cells, one plus the cells stepped). World's
+// convoy_tests (index probes plus candidates per order, sim/convoy.h) live
+// outside Stats and are fed and summed here too.
 class NavWork {
 public:
     static bool totalClass(std::string_view n) {
@@ -1000,10 +1002,16 @@ public:
             if(d||n=="midroute_completions")obs.work(n,d);   // a safety key: always present, 0 when clean
             if(totalClass(n))total+=d;
         });
+        // World's convoy lookups (sim/convoy.h), a work class outside Stats.
+        const uint64_t convoy=w.convoyStats().tests;
+        const uint64_t d=convoy>=lastConvoy_?convoy-lastConvoy_:0;lastConvoy_=convoy;
+        if(d)obs.work("convoy_tests",d);
+        total+=d;
         obs.work("legion_total",total);
     }
 private:
     std::vector<uint64_t> last_;
+    uint64_t lastConvoy_=0;
 };
 
 }

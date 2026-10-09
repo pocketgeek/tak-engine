@@ -392,8 +392,8 @@ prune cursor and every member's state, timers, detours, routes, pass lane and
 approach fields. The only unhashed inputs are values derived again from
 World each tick (structure signature, plane labels) and the goal-resolution
 cache, which is a pure function of the plane. `World::stateHash` mixes that
-checksum, and the orders' issue ticks that define groups, only in Legion
-mode. Movement and yields run serially. The `legion_determinism` test and the
+checksum, the orders' issue ticks that define groups, their convoy ticks and
+the open convoys (see "Convoys"), only in Legion mode. Movement and yields run serially. The `legion_determinism` test and the
 `navigation_determinism` goldens check that runs are repeatable and that
 serial and `--workers` runs produce the same hash. `sweep` uses `__int128`,
 which GCC, Clang and MinGW all provide.
@@ -728,6 +728,7 @@ workers (`legion_movement_orders_trolls_maze`).
   asserts, the others report. singleunit, jagged, trapped and group pass for
   Legion; crowdheld is a ratchet (61 of 64 in goal or better, below).
 * `navigation_determinism` and `legion_determinism`.
+* `convoy_test`: one convoy per click (see "Convoys").
 * `legion_movement_orders` (`movement_orders_test --legion`): attack approach
   around terrain, chase of a moving target, guard follow, group patrol,
   fight-move and patrol laps, combat resume, partial routes, repair and build
@@ -1089,6 +1090,39 @@ avoided. Head on, both groups keep right; on crossing ways only the group with
 the larger command key gives way. Measured by `aware-headon:pair.contacts.permille_x100`
 and the `aware-*` fixtures (`aware-unseen` is the awareness-off control: the
 enemy is out of sight).
+
+### Convoys: one order per click (W3 A1)
+
+The client lands a selection over 64 units over several ticks (64 commands
+per tick, and at most 512 outstanding), so each tick's part used to be an
+order of its own. In Legion mode `World::order()` now stamps every order with
+`Order::convoyTick`, the tick its **convoy** opened: one value for every order
+one click gave, ground and air, per player and order class (Move, Fight from
+`attackMove`, Patrol from `patrolTo` and the flyer branch of `patrol()`). A
+patrol's return leg (queued by `patrol()`, or appended by the patrol mission
+when it starts) copies its outbound leg's value and never opens a convoy.
+`issuedTick` stays the identity of the order's own 64-unit part.
+
+The table (`sim/convoy.h`) is anchored on the convoy's first shared point:
+`legionSharedClick` in `legion.h`, which the client's right-click also calls,
+says which units get the click itself (surface movers with footprints 1..8);
+the rest get the click plus their offset from the selection centroid, clamped
+to 60 px per axis. Shared orders join within one cell of the anchor, offset
+orders within 60 px + 1 cell; before an anchor exists, within 60 px + 1 cell
+(shared) or 120 px + 1 cell (offset) of every point taken, tested on the
+convoy's bounding box. All tests are per axis. A convoy stays open while the
+tick is at most `last + 9` (up to 8 command-free ticks: the 512 window with a
+16-tick round trip) and at most `first + 32`; closed convoys leave the hashed
+table at the start of the next tick. Lookups go through two ordered indexes
+(anchored convoys by anchor cell, unanchored ones by the 256 px tile of their
+first point), and each order's probes plus candidates are counted as
+`legion_convoy_tests` (crowdbench) and `work.convoy_tests` (the scenario
+observer, inside `work.legion_total`). `TAK_LEGION_VERIFY` checks every join
+against a scan of the table and the indexes against a rebuild every tick.
+Nothing reads `convoyTick` yet (A2 keys Legion's groups on it); `convoy_test`
+covers the click shapes (flyers first with saturated offsets, opposite
+corners, all-air, the 974-unit window at round trips 0/8/16/24, patrol, two
+clicks 48 px apart) and the index against the scan.
 
 ## Instruments
 

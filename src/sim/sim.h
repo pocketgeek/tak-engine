@@ -2,6 +2,7 @@
 #include "sim/retailreclaimarea.h"
 
 #include "sim/fixed.h"
+#include "sim/convoy.h"
 #include "cob/emissionpose.h"
 #include "sim/footprint.h"
 #include "sim/retailrng.h"
@@ -668,6 +669,14 @@ struct Order {
     Fixed hoverAttackTargetX, hoverAttackTargetZ;
     // Mission destination can change while the navigator retains its old route.
     std::optional<std::pair<Fixed,Fixed>> missionTarget;
+    // Legion only (sim/convoy.h): the tick this order's convoy opened, one
+    // value for every order one click gave a selection, even across the
+    // client's 64-per-tick uplink split. issuedTick stays the identity of the
+    // order's own 64-unit part. A patrol's return leg copies its outbound
+    // leg's value. kNone outside Legion and on orders no click made (formation
+    // anchors, rallies, waypoints spliced in by a route). Retail never sets
+    // it; hashed with a tag when set.
+    uint32_t convoyTick = ConvoyTable::kNone;
 };
 
 struct Unit {
@@ -1378,6 +1387,11 @@ public:
     }
     LegionNavigator::Stats legionStats() const {return legion_?legion_->stats():LegionNavigator::Stats{};}
     LegionNavigator* legionNavigator() {return legion_.get();}
+    // Legion's open convoys (sim/convoy.h) and their lookup counters. The
+    // counters are observation only (never hashed); tools export them beside
+    // the navigator's Stats as legion_convoy_*.
+    const ConvoyTable& convoys() const {return convoys_;}
+    ConvoyTable::Stats convoyStats() const {return convoys_.stats();}
 
 
     // Footprint route score: terrain/parked bodies block, qualifying same-way
@@ -1636,7 +1650,7 @@ public:
         clearScenarioState();
         scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
-        paths_.clear();legion_.reset();
+        paths_.clear();legion_.reset();convoys_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         projectiles_.clear();flames_.clear();
@@ -1887,7 +1901,11 @@ public:
     // search (retail's boundary tracer, sim/pathsearch.h, NOT an A*) routes around
     // terrain by splicing its waypoints in as further order legs (see replaceLeg).
     // This used to describe a shared flow field; that system is gone.
-    void order(int unitId, float x, float z, bool queue);
+    // Under Legion every order joins a convoy of its class (Move here, Fight
+    // from attackMove, Patrol from patrolTo); `convoyCopy`, when set, is stamped
+    // instead of joining (a patrol's return leg).
+    void order(int unitId, float x, float z, bool queue, ConvoyClass cls = ConvoyClass::Move,
+               std::optional<uint32_t> convoyCopy = std::nullopt);
 
     // ---- order-queue helpers ------------------------------------------------
     // One issued order can expand into a whole route, so Unit::orders mixes
@@ -1933,7 +1951,7 @@ public:
     void patrol(int unitId, float x, float z);
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.
-    void patrolTo(int unitId, float x, float z, bool queue);
+    void patrolTo(int unitId, float x, float z, bool queue, std::optional<uint32_t> convoyCopy = std::nullopt);
     // The player's Shift-patrol (Cmd::Patrol, queue=1): appends point (x,z)
     // after every queued order. If it starts with no loop in the queue, the
     // patrol mission adds the return point where the unit then stands (see
@@ -2586,6 +2604,8 @@ private:
     PathService paths_;          // retail's request queue + budget scheduler
     PathfindingMode pathfindingMode_=PathfindingMode::Retail;
     std::unique_ptr<LegionNavigator> legion_; // Legion mode only
+    ConvoyTable convoys_;                     // Legion mode only; hashed while not empty
+    uint32_t joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z);
     // Bumped whenever terrain/feature placement legality may change. Derived
     // planes compare it; never hashed (it is a cache key, not state).
     uint64_t placementEpoch_=0;

@@ -110,6 +110,7 @@ add_library(tak-formats
   src/sim/sim.cpp
   src/sim/pathsearch.cpp
   src/sim/legion.cpp
+  src/sim/convoy.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
@@ -331,6 +332,11 @@ target_link_libraries(legion_observe_selftest PRIVATE tak-formats)
 add_test(NAME legion_observe_selftest COMMAND legion_observe_selftest)
 set_tests_properties(legion_observe_selftest PROPERTIES LABELS legion)
 # .scn scenarios and issueSelection (the client's 64-per-tick order split).
+add_executable(convoy_test tools/convoy_test.cpp)
+target_link_libraries(convoy_test PRIVATE tak-formats)
+add_test(NAME convoy_test COMMAND convoy_test)
+set_tests_properties(convoy_test PROPERTIES LABELS legion)
+
 add_executable(issue_selection_test tools/issue_selection_test.cpp)
 target_link_libraries(issue_selection_test PRIVATE tak-formats)
 add_test(NAME issue_selection_test COMMAND issue_selection_test)

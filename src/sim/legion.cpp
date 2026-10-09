@@ -5021,5 +5021,6 @@ LegionNavigator::SlotShape LegionNavigator::slotShape(int id) const {
 LegionNavigator::SlotShape LegionNavigator::lastSlotShape() const {return impl_->lastShape;}
 void LegionNavigator::setRestStrideForTest(int stride) {gRestStride=uint32_t(std::max(stride,1));}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
+bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}
 }

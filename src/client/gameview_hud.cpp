@@ -261,8 +261,8 @@ namespace {
                     // ahead of it are done it is a plain Move, and the legs one
                     // click queued share its issue tick, so the selection plans
                     // and packs it as one group when it becomes current.
-                    const bool shared=u->type && legion&&!u->type->canFly&&
-                        u->type->footX>=1&&u->type->footZ>=1&&u->type->footX<=8&&u->type->footZ<=8;
+                    const bool shared=u->type && legion&&
+                        tak::sim::legionSharedClick(u->type->canFly,u->type->footX,u->type->footZ);
                     c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
                     c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);
                     c.queue = queue;

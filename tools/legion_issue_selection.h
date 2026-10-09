@@ -90,8 +90,7 @@ inline std::vector<tak::net::Command> hudCommands(const tak::sim::World& world,
             if (!u) continue;
             auto c = make(Cmd::Move, id);
             const auto* t = u->type;
-            const bool shared = t && legion && !t->canFly &&
-                t->footX >= 1 && t->footZ >= 1 && t->footX <= 8 && t->footZ <= 8;
+            const bool shared = t && legion && tak::sim::legionSharedClick(t->canFly, t->footX, t->footZ);
             c.x = shared ? order.x : order.x + std::clamp(u->x.toFloat() - cx, -60.0f, 60.0f);
             c.z = shared ? order.z : order.z + std::clamp(u->z.toFloat() - cz, -60.0f, 60.0f);
             c.queue = order.queue;
