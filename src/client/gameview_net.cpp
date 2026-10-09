@@ -455,9 +455,22 @@
         if (netAuto_) {
             // Size the buffer to cover the measured bundle-arrival jitter, with an
             // RTT-scaled floor, clamped. Recomputed each frame so it tracks the link.
-            int kJit = int(std::ceil(mp_->arrivalJitterMs() / (1000.0f / 30.0f)));
-            int kRtt = int(std::ceil(mp_->rttMs() / 60.0f));   // gentle RTT floor
-            netDelay_ = std::clamp(2 + std::max(kJit, kRtt), 2, 16);
+            // Everything is in ticks at the CURRENT game speed (tickMs = 1000/(30*speed)): a
+            // reserve sized in 1x ticks is a handful of ms at 8x, shorter than one display frame.
+            // The frame term keeps at least one frame's worth of arrivals in hand, since a frame
+            // consumes up to frameMs/tickMs ticks at once.
+            const float sp = std::max(1, int(mp_->gameSpeed())) / 10.0f;
+            const float tickMs = 1000.0f / (30.0f * sp);
+            const uint64_t nowF = SDL_GetTicks64();
+            if (netFrameAt_) {
+                const float f = std::min(250.0f, float(nowF - netFrameAt_));
+                netFrameMs_ += 0.1f * (f - netFrameMs_);
+            }
+            netFrameAt_ = nowF;
+            int kJit = int(std::ceil(mp_->arrivalJitterMs() / tickMs));
+            int kRtt = int(std::ceil(mp_->rttMs() / 60.0f));   // gentle RTT floor (1x ticks, as before)
+            int kFrame = netFrameMs_ > tickMs ? int(std::ceil(netFrameMs_ / tickMs)) : 0;   // sub-tick frames: 1x unchanged
+            netDelay_ = std::clamp(2 + std::max({kJit, kRtt, kFrame}), 2, std::max(16, int(16.0f * sp)));
         }
         if (netDelay_ <= 0) {
             // Default: drain to the newest delivered bundle every frame.

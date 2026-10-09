@@ -2169,6 +2169,7 @@ private:
     bool netAuto_ = false;       // auto (default): size the buffer to the link
     bool netBufReady_ = false;   // built the initial reserve
     float netAccum_ = 0;         // wall-clock tick accumulator (seconds)
+    uint64_t netFrameAt_ = 0; float netFrameMs_ = 0;   // smoothed render-frame interval (S1)
     uint64_t netStepMs_ = 0;     // last mpStep wall time
     long netBenchFrames_ = 0, netBenchStalls_ = 0;   // jitter-buffer stall metric
 public:
