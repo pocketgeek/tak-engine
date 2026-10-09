@@ -2095,7 +2095,7 @@ void World::tickFlightBody(Unit& u) {
         u.type->bankScale.v,u.type->pitchScale.v,8155); // native map initialization 50f240
     u.groundRoll=attitude[0];u.groundPitch=attitude[1];
     const auto& v=u.flightVelocity;
-    u.speed=Fixed::raw(int32_t(std::sqrt((double(v.z)*v.z+double(v.y)*v.y)+double(v.x)*v.x)));
+    u.speed=Fixed::raw(truncSat32(std::sqrt((double(v.z)*v.z+double(v.y)*v.y)+double(v.x)*v.x)));
     const int oldX=footprintOrigin(u.x,u.type->footX),oldZ=footprintOrigin(u.z,u.type->footZ);
     u.x+=Fixed::raw(v.x); u.z+=Fixed::raw(v.z); u.flightY+=Fixed::raw(v.y);
     updateBodyIndex(u);
@@ -2844,7 +2844,7 @@ void World::tickGroundMission(Unit& u) {
         int velocityPercent() {
             if (u.baseSpeed<=Fixed()) return 0;
             const auto& v=u.flightVelocity;
-            const int32_t speed=int32_t(std::sqrt(double(v.x)*v.x+double(v.z)*v.z));
+            const int32_t speed=truncSat32(std::sqrt(double(v.x)*v.x+double(v.z)*v.z));
             return std::clamp(int(double(speed)*100/u.baseSpeed.v+0.5),0,100);
         }
         bool landable(RetailFlightVector point) {
@@ -9517,7 +9517,7 @@ void World::tickProduction(Unit& u, float dt) {
     const UnitType* t = u.buildQueue.front();
     if (!buildAllowed(t)) return;
     const int producerId=u.id, player=u.player;
-    const int32_t total=std::max(1,int32_t(t->buildTime/std::max(u.type->workerTime,0.01f)*kTick+0.5f));
+    const int32_t total=std::max(1,truncSat32(t->buildTime/std::max(u.type->workerTime,0.01f)*kTick+0.5f));
     Unit* site=u.productionSiteId ? unit(u.productionSiteId) : nullptr;
     if (u.productionSiteId && (!site || !site->alive() || (site->hp<=Fixed() && !site->retailSite) || site->player!=player)) {
         u.productionSiteId=0; u.buildProgress=0;

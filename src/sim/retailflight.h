@@ -160,7 +160,7 @@ RetailFlightGoal retailFlightPatrolGoal(RetailFlightVector position,
         RetailFlightVector waypoint, int32_t nominalSpeed, Random random) {
     const int32_t dx=position.x-waypoint.x, dz=position.z-waypoint.z;
     const uint16_t heading=uint16_t(retailDirection(Fixed::raw(dx),Fixed::raw(dz)).v);
-    const int32_t distance=int32_t(std::sqrt(double(dx)*dx+double(dz)*dz));
+    const int32_t distance=truncSat32(std::sqrt(double(dx)*dx+double(dz)*dz));
     const int pixels=int16_t(uint32_t(distance)>>16);
     int ahead=(int(random(5))+8)*16, spread=int(random(5))*16;
     if (ahead+spread>pixels*3) ahead=spread=0;
@@ -196,7 +196,7 @@ inline RetailFlightNavigation retailFlightNavigation(RetailFlightVector position
         {destination.x - previousDestination.x, destination.y - previousDestination.y,
          destination.z - previousDestination.z}, previousHeading};
     const int32_t dx = position.x - destination.x, dz = position.z - destination.z;
-    const int32_t distance = int32_t(std::sqrt(double(dx) * dx + double(dz) * dz));
+    const int32_t distance = truncSat32(std::sqrt(double(dx) * dx + double(dz) * dz));
     if (distance > 160 * 65536 || cruisingController) result.destination.y = cruiseHeight;
     if (distance <= 320 * 65536 && hasHeading) result.heading = controllerHeading;
     else if (distance > 16 * 65536)

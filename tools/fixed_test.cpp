@@ -27,6 +27,30 @@ static void check(bool ok, const std::string& what, const std::string& detail = 
 int main() {
     std::printf("fixed_test -- deterministic 16.16 for sim positions\n");
 
+    // --- out-of-range float->int conversions are defined and platform-independent ---
+    {
+        check(Fixed::fromFloat(32767.5f).v == int32_t(32767.5 * 65536), "fromFloat in range exact");
+        check(Fixed::fromFloat(-1.5f).v == -98304 && Fixed::fromFloat(0.5f / 65536.f).v == 1,
+              "fromFloat rounds half away from zero");
+        check(Fixed::fromFloat(32768.0f).v == INT32_MAX && Fixed::fromFloat(1e30f).v == INT32_MAX,
+              "fromFloat saturates high");
+        check(Fixed::fromFloat(-32769.0f).v == INT32_MIN && Fixed::fromFloat(-1e30f).v == INT32_MIN,
+              "fromFloat saturates low");
+        check(Fixed::fromFloat(std::nanf("")).v == 0, "fromFloat(NaN) is 0");
+        check(Fixed::fromRetailNumber(1.99999) .v == int32_t(1.99999 * 65536) &&
+              Fixed::fromRetailNumber(-2.5).v == -163840, "fromRetailNumber truncates toward zero in range");
+        check(Fixed::fromRetailNumber(32768.0).v == INT32_MAX && Fixed::fromRetailNumber(1e300).v == INT32_MAX,
+              "fromRetailNumber saturates high");
+        check(Fixed::fromRetailNumber(-32768.0).v == INT32_MIN && Fixed::fromRetailNumber(-1e300).v == INT32_MIN,
+              "fromRetailNumber saturates low");
+        check(truncSat32(3e9) == INT32_MAX && truncSat32(-3e9) == INT32_MIN && truncSat32(-2.9) == -2 &&
+              truncSat32(std::nan("")) == 0, "truncSat32");
+        check(roundSat32(2147483647.0) == INT32_MAX && roundSat32(-1e12) == INT32_MIN &&
+              roundSat32(2.5) == 3 && roundSat32(-2.5) == -3, "roundSat32");
+        check(bamFromRadians(1e30f) == bamFromRadians(1e30f) && bamFromRadians(0.0f).v == 0,
+              "bamFromRadians huge input is defined");
+    }
+
     // --- exactness of the values positions actually take ---------------------
     check(Fixed::fromInt(568).toFloat() == 568.0f, "whole pixels are exact");
     check((Fixed::fromInt(600) - Fixed::fromInt(568)).toFloat() == 32.0f,
