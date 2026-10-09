@@ -354,7 +354,9 @@ footprint class (mixed footprints form one group per class but share one
   the point, or no gain at all for a window) first **re-chooses** a slot: the
   free slot it can still reach past the bodies standing now (BFS radius 24)
   with the lowest potential below its own, ties to the lowest cell, then the
-  lowest slot index; at most 3 times per member (`rechoose`). Then it settles
+  lowest slot index; at most 3 times per member (`rechoose`), and never while
+  it stands on its own slot (a re-choice from there walked a body across the
+  front of its own formation for a lower cell). Then it settles
   where it stands once its field potential is within `settleP`, which starts
   at the destination area's bound (the potential of the last of the
   ceil(1.25n) footprints nearest the point, so a half-disc at a wall and a

@@ -87,7 +87,8 @@ constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close 
 // stands once its field potential is within its bound `settleP`, which
 // starts at the destination area's bound plus kSettleSlack bodies and grows
 // by Retail's foot*32 px (kSettleGrow bodies) per window. At most
-// kRechoices re-choices of a free slot per member come first.
+// kRechoices re-choices of a free slot per member come first (none while it
+// stands on its own slot).
 constexpr int kSettleSlack=2,kSettleGrow=2;
 constexpr uint8_t kRechoices=3;
 constexpr int kSettleRing=64;                  // cells the queue test may visit per window
@@ -4868,7 +4869,12 @@ struct LegionNavigator::Impl {
         // as pressed.
         const bool press=pressed(u,p,*f,ox,oz,potential);
         if(!press&&stalledFor(m)<kCrowdWindow)return false;
-        if(m.rechoices<kRechoices) {
+        // A body standing on its own slot keeps it: the re-choice is for a
+        // slot walled off by bodies that settled first. Re-choosing from the
+        // slot itself took the lowest-potential free cell anywhere in the
+        // window and walked the body across the front of its own formation
+        // (liftflyers' open run: 8 cells sideways); it settles here instead.
+        if(m.rechoices<kRechoices&&m.goal!=oz*W+ox) {
             ++m.rechoices;
             if(rechoose(u,m,g,p,*f,potential)||!press)return false;
         }

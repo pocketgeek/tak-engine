@@ -24,7 +24,8 @@ constexpr uint32_t kNetVersion = 241;      // 241: Legion W3 -- one convoy per c
                                            //      slots handed out 32 a tick (at most 131072 ring cells of slot search) once the
                                            //      convoy closes; hold and stall clocks are tick stamps and rest is stride-free; one
                                            //      settle rule: a queued, pressed unit settles where it stands within its capped settle
-                                           //      reach (or one row behind its command's settled crowd) after up to 3 re-choices (the
+                                           //      reach (or one row behind its command's settled crowd) after up to 3 re-choices (none
+                                           //      while it stands on its own slot; the
                                            //      reach disc and 600-tick wait are gone; at a patrol waypoint the held crowd is the
                                            //      queue); a held formation unit re-aims its lane every 20 held ticks
                                            // 240: Legion W2 -- structures, units under construction and speed-0 units never pace or
