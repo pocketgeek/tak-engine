@@ -22,7 +22,8 @@ namespace tak::net {
 constexpr uint32_t kNetVersion = 241;      // 241: Legion W3 -- one convoy per click (Order::convoyTick and the open-convoy table are
                                            //      hashed) and Legion keys on it: one point, formation and settle chain per click,
                                            //      slots handed out 32 a tick (at most 131072 ring cells of slot search) once the
-                                           //      convoy closes; hold and stall clocks are tick stamps and rest is stride-free; one
+                                           //      convoy closes (a first part under 64 takes its formation at once, rebuilt if another
+                                           //      part joins); hold and stall clocks are tick stamps and rest is stride-free; one
                                            //      settle rule: a queued, pressed unit settles where it stands within its capped settle
                                            //      reach (or one row behind its command's settled crowd) after up to 3 re-choices (none
                                            //      while it stands on its own slot; the

@@ -107,6 +107,7 @@ constexpr int kFormationLineCells=640;         // ... for a member with a format
 // per sqrt(members) and kPivotMaxCells; below kPivotMinBodies bodies it
 // hugs (the inner file, as before).
 constexpr int kPivotMembers=16;
+constexpr int kUplinkPart=64;                  // orders the server applies per client per tick (net kCmdCapPerTick)
 constexpr size_t kSlotsPerTick=32;             // formation slots a point hands out per tick (A2)
 constexpr uint64_t kHandOutCells=131072;       // ... and the ring cells their searches may walk in that tick
 constexpr int kPivotChain=48;
@@ -1063,6 +1064,9 @@ struct LegionNavigator::Impl {
         // Members per 64-unit part (Member::part) over `ids`: the pinwheel's
         // per-part cap and threshold (C33). Derived, never hashed.
         std::map<uint32_t,int> partRefs;
+        // The formation was taken while the convoy was still open, by a first
+        // part under one uplink tick (see formationSlot); derived, never hashed.
+        bool provisional=false;
         // Per-part live centroid (px; sum x, sum z, count) on tick partTick,
         // for a point of several parts (see pivotAim). Derived, never hashed.
         std::map<uint32_t,std::array<int64_t,3>> partLive;uint32_t partTick=~0u;
@@ -3563,6 +3567,21 @@ struct LegionNavigator::Impl {
         const auto found=points.find(m.point);
         return found!=points.end()&&found->second.assigned&&found->second.limit>0;
     }
+    // Every member of the point gives its formation slot back (its goal is
+    // the click again) and the point is assigned afresh.
+    void releaseFormation(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
+        for(const int id:pt.ids) {
+            Member* mm=member(id);
+            const Unit* v=w.unit(id);
+            if(!mm||mm->point!=key||!v||!v->type)continue;
+            if(mm->slot>=0) {
+                slotCells(*mm,v->type->footX,v->type->footZ,false);
+                mm->goal=mm->requested;mm->lineCell=-1;markPass(*v,*mm);
+            }
+            if(mm->slot>=0||mm->slot==-2||mm->slot==-3)mm->slot=-1;
+        }
+        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;
+    }
     void takeFormation(Member& m,const Unit& u,int cell) {
         m.goal=cell;m.slot=0;m.lineCell=-1;markPass(u,m);
         slotCells(m,u.type->footX,u.type->footZ,true);
@@ -3577,7 +3596,8 @@ struct LegionNavigator::Impl {
         return found==m.pt->partRefs.end()?0:found->second;
     }
     // Every member sent to one point in one command gets its slot by
-    // formation, once its convoy has closed (kSlotsPerTick a tick): its
+    // formation, once its convoy has closed (or at once for a first part
+    // under one uplink tick, see formationSlot), kSlotsPerTick a tick: its
     // offset from the members' centroid, scaled so the formation's spread matches the packed disc that many bodies occupy,
     // placed around the point. Members are served front first (farthest
     // along the centroid->point direction), so the front of the crowd takes
@@ -3729,7 +3749,24 @@ struct LegionNavigator::Impl {
         // member too (refs 1): it can still re-choose a walled-off slot.
         if(!cached||(cached->refs<2&&!cached->assigned))return false;
         auto& pt=*cached;
-        if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)&&!commandOpen(m.point)) {pt.tried=true;assignFormation(pt,m.point);}
+        // A2 waits for the convoy to close, so a click the uplink splits over
+        // several ticks forms one formation. A first part under one uplink
+        // tick (kUplinkPart) is the whole click as far as the server can
+        // tell: it takes its formation at once, provisionally, and if another
+        // part joins the point before the convoy closes the formation is
+        // rebuilt over every part then. (Waiting the convoy's 9-plus ticks
+        // without slots walked small groups -- the flyer fixtures' 40,
+        // doorplug's 60 -- the first stretch by the shared field alone,
+        // bunched on the line to the click.)
+        if(pt.provisional&&!commandOpen(m.point)) {
+            pt.provisional=false;
+            if(pt.partRefs.size()>1)releaseFormation(pt,m.point);
+        }
+        const bool early=!pt.assigned&&pt.partRefs.size()<=1&&pt.refs<kUplinkPart&&commandOpen(m.point);
+        if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)&&(early||!commandOpen(m.point))) {
+            pt.tried=true;assignFormation(pt,m.point);
+            pt.provisional=early&&pt.assigned;
+        }
         if(!pt.assigned||pt.limit<=0)return true;
         if(!pt.queue.empty()&&pt.handTick!=w.tickCounter_)handOut(pt,m.point);
         if(m.slot==-3)return true;   // queued for its slot: steers by the shared field

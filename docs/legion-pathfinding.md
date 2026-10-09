@@ -1141,7 +1141,12 @@ the group issue and the soft-obstacle command key use `convoyTick`, so a
 selection over 64 units is one point, one formation and one settle chain.
 Formation slots wait until the convoy can no longer be joined, then are handed
 out `kSlotsPerTick` (32) a tick, front first; the rest steer by the shared field
-meanwhile. The pinwheel ranks a member within its 64-unit part (its order's
+meanwhile. A first part under one uplink tick (64 orders) is the whole click as
+far as the server can tell, so it takes its formation at once, provisionally;
+if another part joins the point before the convoy closes, every slot is given
+back and the formation is rebuilt over all parts then (W3 round 4: waiting
+without slots walked small groups the first stretch bunched on the line to the
+click -- legion_landedflyers' stand against the flyers came from that). The pinwheel ranks a member within its 64-unit part (its order's
 `issuedTick`, `Member::part`) against that part's live centroid. A2 was parked
 once at W3 (the corner gate counted far tails that completed mid-route as
 arrivals); measured again on top of the settle rule with physical arrival, it
