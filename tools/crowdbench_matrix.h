@@ -159,6 +159,7 @@ inline UnitType churnStructure() {
 struct Member {
     int id=0,player=0,epoch=0,commandTick=0,firstMove=-1,firstAdmission=-1,firstRoute=-1,firstPendingClear=-1;
     int rest=0,arrivedTick=-1,retiredTick=-1,crossedTick=-1,stamp=-1;
+    int approachTick=-1;   // first tick Legion held this unit at its approach point (state 5)
     int stillSince=0;      // last tick this member moved or had no orders (age classes)
     int initialX=0,initialZ=0,previousX=0,previousZ=0;
     float gx=0,gz=0,alternateX=0,alternateZ=0,radius=32;
@@ -473,7 +474,7 @@ inline int run(const Options& o) {
         world.order(m.id,m.gx,m.gz,false);const auto& u=*world.unit(m.id);
         m.commandTick=tick;++m.epoch;m.firstMove=m.firstAdmission=m.firstRoute=-1;
         m.firstPendingClear=-1;m.pending=RetailReplayProbe::pending(world,m.id);
-        m.rest=0;m.arrivedTick=m.retiredTick=-1;m.stamp=u.routeStamp;
+        m.rest=0;m.arrivedTick=m.retiredTick=m.approachTick=-1;m.stamp=u.routeStamp;
         m.initialX=u.x.v;m.initialZ=u.z.v;
         if(m.epoch==1)m.straight=std::hypot(double(u.x.toFloat()-m.gx),double(u.z.toFloat()-m.gz));
     };
@@ -796,6 +797,7 @@ inline int run(const Options& o) {
                 m.pending=pending;
                 if(!moved&&!u.orders.empty())++m.stalled;
                 m.near=std::hypot(double(u.x.toFloat()-m.gx),double(u.z.toFloat()-m.gz))<=m.radius;
+                if(legionNav&&m.approachTick<0&&legionState(m.id)==5)m.approachTick=tick;
                 if(u.orders.empty()&&m.retiredTick<0)m.retiredTick=tick;
                 if(!u.orders.empty())m.retiredTick=-1;
                 if(u.alive()&&u.orders.empty()&&u.speed.v==0&&m.near&&!moved) {
@@ -851,7 +853,11 @@ inline int run(const Options& o) {
     int arrived=0,physical=0,retired=0,crossed=0,illegalFinal=0,alive=0,finalCommand=0;
     uint64_t stalled=0;double totalPath=0,totalStraight=0,maxDistance=0;
     std::vector<int> arrivalTimes,firstMoves,firstAdmissions,firstRoutes,firstPendingClears;
+    std::vector<int> approachTimes,retiredTimes,approachWaits;   // unreachable: AR-11 per-unit instrument
     for(const auto& m:members)if(m.moving) {
+        if(m.approachTick>=0)approachTimes.push_back(m.approachTick);
+        if(m.retiredTick>=0)retiredTimes.push_back(m.retiredTick);
+        if(m.approachTick>=0&&m.retiredTick>=0)approachWaits.push_back(std::max(0,m.retiredTick-m.approachTick));
         const auto& u=*world.unit(m.id);alive+=u.alive();retired+=u.orders.empty();
         finalCommand=std::max(finalCommand,m.commandTick);
         physical+=m.near&&m.legal;illegalFinal+=!m.legal;crossed+=m.crossedTick>=0;
@@ -898,6 +904,16 @@ inline int run(const Options& o) {
         sum/times.size(),percentile(times,.5),percentile(times,.95),percentile(times,.99),setupMs,eventMs);
     std::printf("\"alive\":%d,\"physical_in_goal\":%d,\"orders_complete\":%d,\"arrived_settled\":%d,\"arrival_rest_ticks\":%d,\"all_arrived_tick\":%d,\"arrival_tick_p50\":%d,\"arrival_tick_p95\":%d,\"max_goal_distance_px\":%.4f,",
         alive,physical,retired,arrived,restTicks,allAt,milestone(arrivalTimes,totalMoving,.5),milestone(arrivalTimes,totalMoving,.95),maxDistance);
+    // AR-11 (unreachable only, so no other row gains a key): when each unit reached its approach point
+    // (Legion's state 5, read-only) and when its orders emptied; the wait is the gap between the two.
+    if(o.scenario=="unreachable") {
+        std::sort(approachWaits.begin(),approachWaits.end());
+        std::printf("\"approach_arrived\":%zu,\"approach_arrive_tick_p50\":%d,\"approach_arrive_tick_p95\":%d,\"approach_arrive_tick_max\":%d,",
+            approachTimes.size(),milestone(approachTimes,totalMoving,.5),milestone(approachTimes,totalMoving,.95),milestone(approachTimes,totalMoving,1.0));
+        std::printf("\"orders_retired_tick_p50\":%d,\"orders_retired_tick_p95\":%d,\"orders_retired_tick_max\":%d,\"approach_wait_max\":%d,\"approach_wait_p50\":%d,",
+            milestone(retiredTimes,totalMoving,.5),milestone(retiredTimes,totalMoving,.95),milestone(retiredTimes,totalMoving,1.0),
+            approachWaits.empty()?-1:approachWaits.back(),approachWaits.empty()?-1:approachWaits[(approachWaits.size()-1)/2]);
+    }
     std::printf("\"final_command_tick\":%d,\"whole_group_latest_order_ticks\":%d,\"authored_goal_radius_px\":%.4f,",finalCommand,allAt<0?-1:allAt-finalCommand,members.empty()?0:members.front().radius);
     std::printf("\"first_move_tick_p50\":%d,\"first_move_tick_p95\":%d,\"admission_stamp_tick_p95\":%d,\"initial_segment_available_tick_p95\":%d,\"pending_clear_tick_p95\":%d,\"stalled_unit_ticks\":%llu,\"path_length_px\":%.4f,\"path_to_initial_straight_ratio\":%.6f,",
         milestone(firstMoves,totalMoving,.5),milestone(firstMoves,totalMoving,.95),milestone(firstAdmissions,totalMoving,.95),milestone(firstRoutes,totalMoving,.95),

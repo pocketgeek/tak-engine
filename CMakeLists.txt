@@ -1363,6 +1363,10 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
   add_test(NAME crowdbench_matrix COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/crowdbench_matrix_test.py")
+  # AR-11 probe: crowdbench `unreachable` 200x1, per-unit approach arrival and order completion.
+  add_test(NAME legion_unreachable_orders COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tools/legion_unreachable_test.py" "$<TARGET_FILE:crowdbench>")
+  set_tests_properties(legion_unreachable_orders PROPERTIES LABELS "legion;w2" TIMEOUT 300)
   add_test(NAME navigation_determinism COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/navigation_determinism_test.py"
     "$<TARGET_FILE:navigation_checkpoint_test>"
