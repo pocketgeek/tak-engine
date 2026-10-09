@@ -3658,6 +3658,14 @@ struct LegionNavigator::Impl {
         // A slot walled off by bodies that settled first, or none left for
         // this member (-2: it walks to the point), is re-chosen only by the
         // settle rule (rechoose), once the body is queued and pressed.
+        // A held member re-aims its own lane every 20 held ticks (the
+        // bodies round it have moved since it last swept it; restDue wakes
+        // a resting body for it). Its slot stays. This is the lane sweep the
+        // every-20-held re-choice did on the way, where no area cell is in
+        // its reach: without it a held army stops spreading round the
+        // bodies in front of it (battle-field 2x500: 454 of A's 500 died
+        // instead of 376, and Legion work rose 15%).
+        if(m.slot>=0&&laneDue(m))m.lineCell=-1;
         if(m.slot>=0||m.slot==-2)return true;
         const int64_t ox=ux-pt.centreX,oz=uz-pt.centreZ;
         const int cell=formationCell(u,p,groupComp(g,p),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
@@ -3763,10 +3771,17 @@ struct LegionNavigator::Impl {
         m.rest=true;m.restX=u.x.v;m.restZ=u.z.v;m.restHp=u.hp.v;m.restEpoch=epoch;m.restRing=ring;
         return false;
     }
+    // A held formation member re-sweeps its lane on these ticks (see
+    // formationSlot).
+    bool laneDue(const Member& m) const {
+        if(m.state!=Holding||m.slot<0)return false;
+        const uint32_t held=heldFor(m);
+        return held>=20&&held%20==0;
+    }
     // Does a timed reader of this held body decide on this tick? (See heldRest.)
     bool restDue(const Unit& u,const Member& m) const {
         const uint32_t now=w.tickCounter_,stall=stalledFor(m),n=m.holdUpdates;
-        if(now-m.windowTick>=kCrowdWindow||stall==20)return true;
+        if(now-m.windowTick>=kCrowdWindow||stall==20||laneDue(m))return true;
         if(n==6||n==12||n==60||n==m.nextDetour)return true;
         if(m.approach&&(uint32_t(u.id)+now)%kApproachLook==0)return true;
         return m.passUntil==now;
