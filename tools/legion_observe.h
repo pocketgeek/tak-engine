@@ -72,8 +72,16 @@
 //   ground body (landed flyers included) is stamped into an epoch-stamped id
 //   grid; the ring of cells round a member's footprint is walked:
 //   contact_own (a same-group member with orders), contact_other (a body
-//   with orders outside the group), contact_settled (a body without orders).
-//   Permille of member samples. No pair loop.
+//   with orders outside the group): permille of member samples. No pair loop.
+//   contact_settled (user decision W3-1, 2026-10-09) is judged PER ARRIVED
+//   UNIT and leaves out the unit's own command: the member samples touching
+//   a body without orders that another command (selection) issued, or no
+//   command at all, x1000 / the members arrived at the end (at least 1). A
+//   command is one selection: noteSelection() labels its units (a click of
+//   450 lands in 64-unit parts and stays one command); a unit never labelled
+//   counts its group as its command. Bodies settling behind their own army
+//   are what a one-order click does by design, so they are not counted, and
+//   a mode that delivers more units is not charged for the bodies it parks.
 // - Walls (when a static mask or legality provider is set). Per footprint
 //   class, a two-pass chessboard chamfer distance transform over the legal
 //   origins; clearance = cells of free ground between the footprint and the
@@ -222,6 +230,18 @@ public:
     }
     void staticChanged() {dt_.clear();}
 
+    // One command (selection) issued to `ids`: they are one another's own
+    // command for contact_settled until a later selection relabels them. A
+    // shift-queued order keeps its units' current command.
+    void noteSelection(const std::vector<int>& ids) {
+        ++selections_;
+        for(int id:ids) {
+            auto it=std::lower_bound(selection_.begin(),selection_.end(),std::pair<int,int64_t>{id,INT64_MIN});
+            if(it!=selection_.end()&&it->first==id)it->second=selections_;
+            else selection_.insert(it,{id,selections_});
+        }
+    }
+
     void work(std::string_view name,uint64_t value) {workSeries(name).pending+=value;}
     void workCumulative(std::string_view name,uint64_t total) {
         auto& s=workSeries(name);
@@ -315,7 +335,10 @@ public:
         put("spacing_samples",spacingSamples_);
         put("contact_own_permille",detail::permille(contactOwn_,spacingSamples_));
         put("contact_other_permille",detail::permille(contactOther_,spacingSamples_));
-        put("contact_settled_permille",detail::permille(contactSettled_,spacingSamples_));
+        {   // W3-1: per arrived unit (see the header).
+            int64_t arrived=0;for(const auto& gs:groupStats_)arrived+=gs.arrived;
+            put("contact_settled_permille",detail::permille(contactSettled_,std::max<int64_t>(arrived,1)));
+        }
         if(bw_>0) {
             put("wall_samples",wallSamples_);put("wall_touch_permille",detail::permille(wallTouch_,wallSamples_));
             put("wall_near_samples",int64_t(near_.size()));
@@ -845,12 +868,13 @@ private:
             ++spacingSamples_;
             const int ox=sim::footprintOrigin(u->x,m.fx),oz=sim::footprintOrigin(u->z,m.fz);
             bool own=false,other=false,settled=false;
+            const int64_t mine=commandOf(m.id);
             auto look=[&](int x,int z) {
                 const int id=bodyAt(x,z);
                 if(!id||id==m.id)return;
                 const auto* v=w.unit(id);
                 if(!v)return;
-                if(v->orders.empty())settled=true;
+                if(v->orders.empty()) {if(commandOf(id)!=mine)settled=true;}
                 else if(memberGroup(id)==m.group)own=true;
                 else other=true;
             };
@@ -858,6 +882,14 @@ private:
             for(int j=0;j<m.fz;++j) {look(ox-1,oz+j);look(ox+m.fx,oz+j);}
             contactOwn_+=own;contactOther_+=other;contactSettled_+=settled;
         }
+    }
+    // The command a unit's order came from: its last noted selection, else
+    // its group (negative), else none (a unit of no group: its own id).
+    int64_t commandOf(int id) const {
+        const auto it=std::lower_bound(selection_.begin(),selection_.end(),std::pair<int,int64_t>{id,INT64_MIN});
+        if(it!=selection_.end()&&it->first==id)return it->second;
+        const int g=memberGroup(id);
+        return g>=0?-1-int64_t(g):INT64_MIN+id;
     }
     int memberGroup(int id) const {
         // Members are few next to the map; a sorted id index keeps this O(log n).
@@ -958,6 +990,7 @@ private:
     int64_t waitingHeld_=0,waitingNoProgress_=0,parkedHeld_=0,parkedNoProgress_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;
     int64_t spacingSamples_=0,contactOwn_=0,contactOther_=0,contactSettled_=0;
+    std::vector<std::pair<int,int64_t>> selection_;int64_t selections_=0;   // (unit id, command), sorted
     int64_t wallSamples_=0,wallTouch_=0;std::vector<int> near_;
     // id grid and the pair count grid
     int gw_=0,gh_=0;uint32_t epoch_=0,cepoch_=0;

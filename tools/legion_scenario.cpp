@@ -467,6 +467,11 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
+        // contact_settled's command identity (W3-1): one directive is one selection, whatever the
+        // uplink splits it into; a shift-queued or appended order keeps its units' command.
+        if (o)
+            for (const auto& od : s.orders)
+                if (od.tick == t && !od.queue && !od.append) o->noteSelection(feed.selection(od));
         const size_t landed = feed.apply(t);
         if (landed) { commands += int64_t(landed); lastCommand = t; }
         w.tick(1.f / 30);

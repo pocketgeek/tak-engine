@@ -159,23 +159,30 @@ void laneCase() {
 // it, B1 (10,12) below A1, S a settled ungrouped body at (8,10) left of A1, F
 // a far settled body. Rings: A1 touches A2 (own), B1 (other), S (settled);
 // A2 touches A1 (own) and B1 at (11,12) (other); B1 touches A1 and A2 (other)
-// and S diagonally at (9,11) (settled). 3 samples per decision tick: own 2/3,
-// other 3/3, settled 2/3.
+// and S diagonally at (9,11) (settled). G, a settled member of A at (14,10),
+// touches A2: its own command (the group, nothing noted), so not counted. 3
+// samples per decision tick: own 2/3, other 3/3. contact_settled (W3-1) is
+// per arrived unit, none arrived (read as 1): A1-S and B1-S on 2 decision
+// ticks = 4000. Noting one selection {A1, A2, B1, S} makes S their own
+// command and G (still its group's) foreign: A2-G twice = 2000.
 // Pair proximity A x B (centre cells within 2): A1 (11,11)-B1 (11,13) and
 // A2 (13,11)-B1: 2 contacts of 2 pairs.
 void spacingCase() {
     Scene s;const auto t=mover(2);
     const int a1=s.spawn(t,10*16+16,10*16+16),a2=s.spawn(t,12*16+16,10*16+16),b1=s.spawn(t,10*16+16,12*16+16);
-    const int st=s.spawn(t,8*16+16,10*16+16),far=s.spawn(t,60*16+16,60*16+16);(void)far;(void)st;
+    const int st=s.spawn(t,8*16+16,10*16+16),far=s.spawn(t,60*16+16,60*16+16);(void)far;
+    const int g=s.spawn(t,14*16+16,10*16+16);
     for(int id:{a1,a2,b1})s.order(id,80*16,80*16);
-    obs::Config cfg;cfg.groups={{"A",{a1,a2},0,0},{"B",{b1},0,0}};cfg.pairs={{"A","B",2}};
-    obs::Observer o(cfg);
-    for(int tick=0;tick<20;++tick)o.sample(s.world,tick);   // decision ticks 0 and 10
+    obs::Config cfg;cfg.groups={{"A",{a1,a2,g},0,0},{"B",{b1},0,0}};cfg.pairs={{"A","B",2}};
+    obs::Observer o(cfg),noted(cfg);
+    noted.noteSelection({a1,a2,b1,st});
+    for(int tick=0;tick<20;++tick) {o.sample(s.world,tick);noted.sample(s.world,tick);}   // decision ticks 0 and 10
     const auto k=o.report();
     expect("spacing",k,"spacing_samples",6);
     expect("spacing",k,"contact_own_permille",667);
     expect("spacing",k,"contact_other_permille",1000);
-    expect("spacing",k,"contact_settled_permille",667);
+    expect("spacing",k,"contact_settled_permille",4000);
+    expect("spacing",noted.report(),"contact_settled_permille",2000);
     expect("spacing",k,"pair.A.B.pairs",4);
     expect("spacing",k,"pair.A.B.contacts",4);
     expect("spacing",k,"pair.A.B.permille_x100",100000);
