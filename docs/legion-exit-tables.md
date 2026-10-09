@@ -60,7 +60,7 @@ retake of the click keys and this update.
 
 | Gate | Result |
 |---|---|
-| `legion_check check` (gate offsets, both modes, serial == workers; oden-win, head `a858c231`) | **3 fail**, all Retail floor at click level (below), 16676 keys, 1269 licensed, 111 floor exceptions in the run, 768 per-body reads report-only. Before rulings (f)-(h): 13 fail (per-body keys of the one-body groups) |
+| `legion_check check` (gate offsets, both modes, serial == workers; oden-win, head `a858c231`) | **PASS** after ruling (i) (oden-win, head `f938ccd6` = `a858c231` + the retaken baseline + the three ruling-(i) exceptions; all 91 scenarios, both modes, serial == workers on all 182 lines): 16676 keys, 0 failed, 1269 licensed, 113 floor exceptions in the run, 768 per-body reads report-only; ratchet applied (3 references), re-run PASS with 0 ratchets. At `a858c231`, before ruling (i): 3 fail (the click-level floor, below); before rulings (f)-(h): 13 fail (per-body keys of the one-body groups) |
 | Retail-floor exceptions (non-spread, whole file) | 185 -> 167 at the round-4 licensing (59 first-read keys added at the step-0 base, 6 decision exceptions, 36 dropped by (1), 47 cleared by the ratchet) -> 122 under ruling (f) (48 per-body dropped, 3 click keys added at the base) |
 | Legion ctests | Linux after (f)-(h) (optimized Debug, `a858c231` + the retaken baseline, same selection): 213 of 214 -- only crowdheld (W5). Before, Linux (optimized Debug, the exit baseline; legion, navigation_determinism, replay, observer, convoy, issue_selection, movement_orders): 213 of 214 -- only legion_acceptance_crowdheld_legion fails (pre-existing, W5); every `legion_check_*` passes. oden-win (`0d2dcd58`, before the legion_cost retake): 173 of 176 -- battle-assault / battle-field-2x60 (fixed by the retake) and crowdheld |
 | `legion_cost` | scaling ok (W(4N)/W(N) 0.39 / 0.72, slot cells 0.44 / 0.61, upkeep 1.00); battle-assault, 2x60, 2x250, 2x500 ok |
@@ -68,12 +68,14 @@ retake of the click keys and this update.
 | crowdbench screen | the Mac (`a858c231`): identical to the exit run's screen -- 1576 differences against the committed W0 screen baseline, the same rows and values (no sim change) |
 | Retail | every Retail state hash equal to round 4's; no Retail key moved against the step-0 base |
 
-### Open: 3 click-level floor failures (for the lead)
+### Floor exceptions of lead ruling (i): 3 click-level failures, accepted until W7
 
 Ruling (f) retires the 13 per-body failures; read at click level, three clicks that pass the floor at the step-0
 base fail it at the head (the same A2 cause the per-body keys showed: one formation for the whole click walks
-some bodies to slots farther round than Retail's stop-where-near). Core-five median; the eleven gate offsets for
-reference (a 24-body t90 is not a small-count key, so the gate reads the core five):
+some bodies to slots farther round than Retail's stop-where-near; crossing-group arrival about 5% slower than
+Retail). Lead ruling (i), 2026-10-09: they are Retail-floor exceptions, cluster MV-09, "accepted until W7
+(crossing/opposing traffic)"; **W7's exit must bring them within Retail** (x1.1). Core-five median; the eleven
+gate offsets for reference (a 24-body t90 is not a small-count key, so the gate reads the core five):
 
 | Key | base Legion | head Legion | Retail | floor (x1.1) | head / Retail on the eleven |
 |---|---|---|---|---|---|
@@ -81,9 +83,10 @@ reference (a 24-body t90 is not a small-count key, so the gate reads the core fi
 | aware-seen `click.a00.t90` | 1968 | 2065 | 1877 | 2064.7 | 2046 / 1940 (passes) |
 | aware-unseen `click.b00.t90` | 2055 | 2207 | 1929 | 2121.9 | 2128 / 1951 (passes) |
 
-Every other click passes the floor at the head (aware-attack `click.b00.t90` now passes: its base exception
-clears at the next ratchet). Needs a ruling: floor exceptions (MV-09, decision 2) or a fix (W5). No ratchet was
-applied (the check does not pass).
+The aware-attack `click.b00.t90` exception cleared (it passes the floor at the head) and is removed. With the
+three exceptions in `tools/scenarios/baseline.json` the check passes (below); the ratchet was then applied through
+`legion_check` (3 references raised: aware-attack `click.b00.done` never -> 2150, aware-headon `click.a00.done`
+2563 -> 2297, aware-unseen `click.b00.done` 2889 -> 2397) and the check re-run: PASS, 0 ratchets.
 
 ### W5 / W9 hard exit gates carried from W3
 

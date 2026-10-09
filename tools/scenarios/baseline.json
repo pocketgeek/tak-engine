@@ -171788,6 +171788,28 @@
    ],
    "reason": "W3 exit ratchet (lead ruling W3 round 4 (4); task-w3-b2 final head, all 91 scenarios, both modes, the gate offsets, serial == workers): every key better than its reference by more than its band raises the reference; Retail-floor exceptions that pass again are cleared. Applied with legion_check's own apply_ratchet although the check still has 13 open Retail-floor failures (per-body t90 / arrived keys of the one-body aware-* and motion-* groups, first read with the convoy-sized disc of ruling (1); listed in docs/legion-exit-tables.md \"W3 exit\" for the lead): those keys are not ratcheted and nothing they gate is relaxed.",
    "when": "2026-10-09T23:30:00Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [
+    {
+     "key": "aware-attack/legion/click.b00.done",
+     "new": 2150,
+     "old": -1
+    },
+    {
+     "key": "aware-headon/legion/click.a00.done",
+     "new": 2297,
+     "old": 2563
+    },
+    {
+     "key": "aware-unseen/legion/click.b00.done",
+     "new": 2397,
+     "old": 2889
+    }
+   ],
+   "reason": "W3 exit ratchet after lead ruling (i) (task-w3-b2, all 91 scenarios, both modes, the gate offsets, serial == workers; oden-win)",
+   "when": "2026-10-09T20:03:47Z"
   }
  ],
  "references": {
@@ -171817,6 +171839,7 @@
   },
   "aware-attack": {
    "legion": {
+    "click.b00.done": 2150,
     "contact_settled_permille": 0,
     "gate.mid.crossings": 0,
     "wall_touch_near_permille": 0,
@@ -171871,6 +171894,7 @@
   },
   "aware-headon": {
    "legion": {
+    "click.a00.done": 2297,
     "contact_settled_permille": 0,
     "gate.mid.crossings": 0,
     "wall_touch_near_permille": 0,
@@ -171928,6 +171952,7 @@
   },
   "aware-unseen": {
    "legion": {
+    "click.b00.done": 2397,
     "contact_settled_permille": 0,
     "gate.mid.crossings": 0,
     "wall_touch_near_permille": 0,
