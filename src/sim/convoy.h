@@ -82,6 +82,15 @@ public:
     // Erase every convoy no order at `now` can join. Idempotent per tick.
     void prune(uint32_t now);
     void clear();
+    // Can an order still join a convoy of `player` that opened at `first`
+    // (any class)? Legion's deferred slot assignment (A2) waits while it can.
+    bool joinable(int player,uint32_t first,uint32_t now) const {
+        for(uint8_t cls=0;cls<3;++cls)
+            for(auto it=table_.lower_bound({player,cls,first,0});it!=table_.end()&&
+                std::get<0>(it->first)==player&&std::get<1>(it->first)==cls&&std::get<2>(it->first)==first;++it)
+                if(open(it->second,now))return true;
+        return false;
+    }
     bool empty() const {return table_.empty();}
     size_t size() const {return table_.size();}
     uint64_t checksum() const;
