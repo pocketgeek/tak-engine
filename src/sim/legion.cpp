@@ -81,9 +81,16 @@ constexpr int kClusterCells=16;
 constexpr int kFieldMargin=32;                 // bounded field window margin (cells), at least
 constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
 constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
-constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
-constexpr uint32_t kFarSettle=1800;            // still ticks before a body pressed against its crowd beyond the crowd's reach settles there
 constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close enough" settling at a crowd
+// The settle rule (see settleWindow, PLAN 3.1 T1-B): a body queued back to
+// its destination's settled crowd and pressed against it settles where it
+// stands once its field potential is within its bound `settleP`, which
+// starts at the destination area's bound plus kSettleSlack bodies and grows
+// by Retail's foot*32 px (kSettleGrow bodies) per window. At most
+// kRechoices re-choices of a free slot per member come first.
+constexpr int kSettleSlack=2,kSettleGrow=2;
+constexpr uint8_t kRechoices=3;
+constexpr int kSettleRing=64;                  // cells the queue test may visit per window
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
 constexpr int kLaneSpan=8;                    // passage lane grid: strips narrower than this (origins)
@@ -313,6 +320,9 @@ struct LegionNavigator::Impl {
         // the point outward and nobody has to cross a settled body.
         struct Slots {std::vector<int> cells;std::vector<uint8_t> taken;bool built=false,stale=false;uint16_t reach=0;};
         std::map<int,Slots> slots;
+        // The destination area's bound per goal (see areaBound): (field
+        // serial, (members, bound)). A function of the field, never hashed.
+        std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> areaBounds;
         // Group awareness (see awareScan): the movers (by command) its
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
@@ -441,10 +451,15 @@ struct LegionNavigator::Impl {
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
-        // pixel distance to the requested point then (see crowdSettle), and
+        // pixel distance to the requested point then (see settleWindow), and
         // the start of the run of still windows that ends there (kNoTick:
-        // the last window was not still).
+        // the last window was not still; read by production exits).
         uint32_t windowTick=0;int64_t windowDist=-1;uint32_t stillSince=kNoTick;
+        // The settle rule (settleWindow): the potential bound (0 not yet
+        // set), whether the last window found this body queued back to its
+        // destination's settled crowd, and the slot re-choices it has made.
+        // Hashed only when set (PLAN 3.0, C27).
+        uint32_t settleP=0;bool queued=false;uint8_t rechoices=0;
         // Long-held throttle (see heldRest): what the last full update of a
         // held body saw -- its position, hit points, the static epoch and
         // the occupants of every origin around it. Hashed.
@@ -588,6 +603,27 @@ struct LegionNavigator::Impl {
     // whose own goal it walls in. Capped per body: no endless shuffling.
     struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
     std::map<int,Anchor> anchors;
+    // Settled arrivals per destination (player, requested point): the crowd
+    // a settling body's reach is sized by (see settleReach). A function of
+    // `anchors`, kept with it by setAnchor/dropAnchor; never hashed.
+    std::map<std::tuple<int,int32_t,int32_t>,int> anchorsAt;
+    static std::tuple<int,int32_t,int32_t> destination(const std::tuple<int,uint32_t,int32_t,int32_t>& p) {
+        return {std::get<0>(p),std::get<2>(p),std::get<3>(p)};
+    }
+    void setAnchor(int id,const Anchor& a) {
+        dropAnchor(id);
+        anchors[id]=a;markAnchor(id,true);++anchorsAt[destination(a.point)];
+    }
+    std::map<int,Anchor>::iterator dropAnchor(std::map<int,Anchor>::iterator it) {
+        const auto d=anchorsAt.find(destination(it->second.point));
+        if(d!=anchorsAt.end()&&--d->second<=0)anchorsAt.erase(d);
+        markAnchor(it->first,false);
+        return anchors.erase(it);
+    }
+    void dropAnchor(int id) {
+        if(const auto it=anchors.find(id);it!=anchors.end())dropAnchor(it);
+        else markAnchor(id,false);
+    }
     // Unit id -> whether it has an entry in `anchors` (a dense mirror): the
     // yield and crowd checks reject a non-anchor body without a tree walk.
     std::vector<uint8_t> anchorMark;
@@ -1763,7 +1799,7 @@ struct LegionNavigator::Impl {
             if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
         };
         leave(u.id);
-        anchors.erase(u.id);markAnchor(u.id,false);yielding.erase(u.id);approachDone.erase(u.id);
+        dropAnchor(u.id);yielding.erase(u.id);approachDone.erase(u.id);
         // A body setting off is no soft obstacle any more (its own group's
         // first field is built right now, before the next scan).
         if(!softCells.empty()&&u.type) {
@@ -2628,6 +2664,15 @@ struct LegionNavigator::Impl {
         if(dist!=s.arrivals)fail("completion distance histogram does not sum to arrivals");
         if(s.midrouteCompletions>s.outsideAreaCompletions||s.outsideAreaCompletions>s.arrivals)
             fail("mid-route completions exceed outside-area completions or arrivals");
+        {
+            // anchorsAt against a count of every anchor (settleReach).
+            std::map<std::tuple<int,int32_t,int32_t>,int> count;
+            for(const auto& [id,a]:anchors) {
+                ++count[destination(a.point)];
+                if(!isAnchor(id))fail("an anchor is not marked");
+            }
+            if(count!=anchorsAt)fail("anchorsAt differs from a count of the anchors");
+        }
         if(s.completionDistMax*s.arrivals<s.completionDistSum)fail("completion distance sum exceeds max x arrivals");
         if(s.schedGroupVisits>s.groupLoopIters)fail("scheduler visits exceed group loop iterations");
         uint64_t calls=0;
@@ -2878,7 +2923,7 @@ struct LegionNavigator::Impl {
             // (The completed leg itself lingers until World retires it.)
             const Unit* u=w.unit(it->first);
             if(!u||!u->alive()||(!u->orders.empty()&&!(u->orders[World::currentLeg(u->orders)].mission.pending&0x500)))
-                {yielding.erase(it->first);markAnchor(it->first,false);it=anchors.erase(it);}
+                {yielding.erase(it->first);it=dropAnchor(it);}
             else ++it;
         }
         for(auto it=approachDone.begin();it!=approachDone.end();) {
@@ -3239,13 +3284,6 @@ struct LegionNavigator::Impl {
     // the route left it (gap6: one body short of the area, order never
     // complete in 3 of 5 offsets). Resting bodies walk neither.
     void holdStall(Member& m) const {m.stallTick=std::min(m.stallTick+1,w.tickCounter_);}
-    // A walled-off slot is re-chosen every 20 held ticks (held 20, 40, ...).
-    // A resting body (heldRest) is woken on those ticks (restDue).
-    bool rechoiceDue(const Member& m) const {
-        if(m.state!=Holding)return false;
-        const uint32_t held=heldFor(m);
-        return held>=20&&held%20==0;
-    }
     void complete(Unit& u,Member& m,bool contact) {
         // The nearest reachable point to an unreachable goal is not a
         // completion: the body stops there and its order is retired after
@@ -3268,7 +3306,7 @@ struct LegionNavigator::Impl {
         completionStats(u,m);
         if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
-        anchors[u.id]=Anchor{m.goal,0,m.point};markAnchor(u.id,true);
+        setAnchor(u.id,Anchor{m.goal,0,m.point});
         leave(u.id);
     }
     // Where a leg completed, from its click (Stats only): the distance
@@ -3491,48 +3529,6 @@ struct LegionNavigator::Impl {
 #endif
         return best;
     }
-    // A member walled off from its slot: breadth-first over legal origins
-    // whose footprint no other body covers (window of 24 cells), and take the
-    // reached free slot cell nearest the point. Reached means a way in
-    // exists past the bodies standing now.
-    int reachableFormationCell(const Unit& u,const Plane& p,const Point& pt,int64_t px,int64_t pz) const {
-        constexpr int R=24,S=2*R+1;
-        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
-        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
-        auto open=[&](int x,int z) {
-            if(!legal(p,x,z))return false;
-            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
-                const int cx=x+i,cz=z+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-                if(o&&o!=u.id)return false;
-            }
-            return true;
-        };
-        std::vector<uint8_t> seen(size_t(S)*S,0);
-        std::vector<int> queue;queue.reserve(size_t(S)*S);
-        seen[size_t(R*S+R)]=1;queue.push_back(R*S+R);
-        int best=-1;int64_t bestD=0;
-        for(size_t head=0;head<queue.size();++head) {
-            const int local=queue[head],lx=local%S,lz=local/S,x=ox+lx-R,z=oz+lz-R;
-            const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
-            const int64_t d=(cx-px)*(cx-px)+(cz-pz)*(cz-pz);
-            if(d<=pt.limit*pt.limit&&(best<0||d<bestD)) {
-                bool clear=true;
-                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt.cells.count((z+j)*W+x+i);
-                if(clear) {best=z*W+x;bestD=d;}
-            }
-            for(const auto& dd:kDirections) {
-                const int nlx=lx+dd[0],nlz=lz+dd[1];
-                if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
-                if(!step(p,x,z,dd[0],dd[1])||!open(x+dd[0],z+dd[1]))continue;
-                if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
-                seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
-            }
-        }
-        stats.rechoiceBfsCells+=queue.size();stats.slotSearchCells+=queue.size();
-        return best;
-    }
     bool formationMember(const Member& m) const {
         if(m.pt)return m.pt->assigned&&m.pt->limit>0;
         const auto found=points.find(m.point);
@@ -3647,8 +3643,7 @@ struct LegionNavigator::Impl {
     }
     // Shared points: formation slots (assigned once for the whole point; a
     // later joiner maps its own offset the same way). A member walled off
-    // from its slot re-chooses the free cell nearest itself every 20 held
-    // held ticks (rechoiceDue), inside the same area.
+    // from its slot re-chooses one only through the settle rule (rechoose).
     bool formationSlot(const Unit& u,Member& m,const Group& g,const Plane& p) {
         Point* cached=m.pt;
         if(!cached) {auto found=points.find(m.point);cached=found==points.end()?nullptr:&found->second;}
@@ -3660,22 +3655,10 @@ struct LegionNavigator::Impl {
         if(!pt.assigned||pt.limit<=0)return true;
         const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
-        if(m.slot>=0) {
-            if(!rechoiceDue(m))return true;
-            slotCells(m,u.type->footX,u.type->footZ,false);
-            const int cell=reachableFormationCell(u,p,pt,px,pz);
-            if(cell>=0) {m.goal=cell;markPass(u,m);}
-            slotCells(m,u.type->footX,u.type->footZ,true);m.lineCell=-1;
-            return true;
-        }
-        // No free cell was left for this member: it walks to the point and
-        // looks again (by reachability) only while it is held.
-        if(m.slot==-2) {
-            if(!rechoiceDue(m))return true;
-            const int cell=reachableFormationCell(u,p,pt,px,pz);
-            if(cell>=0)takeFormation(m,u,cell);
-            return true;
-        }
+        // A slot walled off by bodies that settled first, or none left for
+        // this member (-2: it walks to the point), is re-chosen only by the
+        // settle rule (rechoose), once the body is queued and pressed.
+        if(m.slot>=0||m.slot==-2)return true;
         const int64_t ox=ux-pt.centreX,oz=uz-pt.centreZ;
         const int cell=formationCell(u,p,groupComp(g,p),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
         if(cell>=0)takeFormation(m,u,cell);else m.slot=-2;
@@ -3691,18 +3674,9 @@ struct LegionNavigator::Impl {
         // slots: a chaser's goal is a unit, ended by its owner, not a spot.
         if(!policy(m.kind).area)return;
         if(formationSlot(u,m,g,p))return;
-        bool nearest=false;
-        if(m.slot>=0) {
-            // A claimed slot walled off by bodies that settled first is
-            // re-chosen every 20 held ticks: take the nearest free slot,
-            // which fills the area from the side this member stands on.
-            if(!rechoiceDue(m))return;
-            auto found=g.slots.find(m.requested);
-            if(found==g.slots.end())return;
-            if(size_t(m.slot)<found->second.taken.size())found->second.taken[size_t(m.slot)]=0;
-            slotCells(m,u.type->footX,u.type->footZ,false);
-            m.slot=-1;nearest=true;
-        }
+        // A claimed slot walled off by bodies that settled first is
+        // re-chosen only by the settle rule (rechoose).
+        if(m.slot>=0)return;
         const auto sharing=g.sharing.find(m.requested);
         if(sharing==g.sharing.end()||sharing->second<2)return;
         auto& s=slotsFor(m,g,p,m.requested,sharing->second,u.type->footX,u.type->footZ);
@@ -3713,8 +3687,7 @@ struct LegionNavigator::Impl {
         // Back-to-front: claim the free slot farthest along this member's
         // own approach direction (ties: nearest the approach axis). Every
         // later arrival then finds the cells between it and its slot still
-        // empty, so nobody has to cross a settled body. A member re-claiming
-        // after being walled off takes the nearest free slot instead.
+        // empty, so nobody has to cross a settled body.
         const int seedX=m.requested%W,seedZ=m.requested/W;
         const int64_t ax=seedX-ux,az=seedZ-uz;
         int best=-1;int64_t bestScore=0,bestSide=0;
@@ -3725,12 +3698,8 @@ struct LegionNavigator::Impl {
             // and claim it again, forever.
             if(!legal(p,s.cells[i]%W,s.cells[i]/W)||g.field->at(size_t(s.cells[i]))==kUnreached)continue;
             const int64_t cx=s.cells[i]%W,cz=s.cells[i]/W;
-            int64_t score,side;
-            if(nearest) {score=-((cx-ux)*(cx-ux)+(cz-uz)*(cz-uz));side=0;}
-            else {
-                score=(cx-seedX)*ax+(cz-seedZ)*az;
-                side=std::abs((cx-seedX)*az-(cz-seedZ)*ax);
-            }
+            const int64_t score=(cx-seedX)*ax+(cz-seedZ)*az;
+            const int64_t side=std::abs((cx-seedX)*az-(cz-seedZ)*ax);
             if(best<0||score>bestScore||(score==bestScore&&side<bestSide)) {best=int(i);bestScore=score;bestSide=side;}
         }
         if(best<0)return;
@@ -3779,8 +3748,8 @@ struct LegionNavigator::Impl {
     // A skipped update stands for the hold the full update would have
     // reached with nothing changed (it counts toward holdUpdates as that
     // hold would), and the body is woken on every tick where a clock it
-    // reads crosses a threshold: its crowd window, a slot re-choice, the
-    // stall thresholds of contactArrival, the hold-update back-offs, an
+    // reads crosses a threshold: its crowd window (the settle rule and its
+    // slot re-choice), contactArrival's stall threshold, the hold-update back-offs, an
     // approach look and the end of a lane pass. So the rest stride changes
     // only when a body sees changes outside its ring, never when its own
     // timers fire (AR-05: the stride used to shift every timed decision of
@@ -3796,9 +3765,8 @@ struct LegionNavigator::Impl {
     }
     // Does a timed reader of this held body decide on this tick? (See heldRest.)
     bool restDue(const Unit& u,const Member& m) const {
-        const uint32_t now=w.tickCounter_,held=heldFor(m),stall=stalledFor(m),n=m.holdUpdates;
-        if(now-m.windowTick>=kCrowdWindow||held%20==0)return true;
-        if(stall==20||stall==kAreaSettle||stall==2*kAreaSettle)return true;
+        const uint32_t now=w.tickCounter_,stall=stalledFor(m),n=m.holdUpdates;
+        if(now-m.windowTick>=kCrowdWindow||stall==20)return true;
         if(n==6||n==12||n==60||n==m.nextDetour)return true;
         if(m.approach&&(uint32_t(u.id)+now)%kApproachLook==0)return true;
         return m.passUntil==now;
@@ -3917,9 +3885,10 @@ struct LegionNavigator::Impl {
                     (uint32_t(u.id)+w.tickCounter_)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
         }
         // Close enough: a body that gained less than half a body on its
-        // point over the last window, pressed against the settled crowd
-        // already standing there, settles where it is (see crowdSettle).
-        // Checked before detours and shuffles, which otherwise run forever.
+        // point over the last window, queued back to the settled crowd
+        // already standing there and pressed against it, settles where it
+        // is (see settleWindow). Checked before detours and shuffles, which
+        // otherwise run forever.
         if(w.tickCounter_-m.windowTick>=kCrowdWindow) {
             const int64_t dx=(int64_t(u.x.v)-std::get<2>(m.point))>>16,dz=(int64_t(u.z.v)-std::get<3>(m.point))>>16;
             const int64_t dist=isqrtFloor(uint64_t(dx*dx+dz*dz));
@@ -3928,20 +3897,8 @@ struct LegionNavigator::Impl {
             if(!still)m.stillSince=kNoTick;
             else if(m.stillSince==kNoTick)m.stillSince=m.windowTick;
             m.windowTick=w.tickCounter_;m.windowDist=dist;
-            if(still) {
-                // A crowd of an earlier order (or idle bodies) already stands
-                // there: one window. A crowd of this same order is still
-                // forming, and the area logic (contactArrival) brings its
-                // late members in: only after twice the in-area wait.
-                const int crowd=crowdSettle(u,m,g,ox,oz,dist);
-                // Inside a formation's area (and its two-body margin) that
-                // logic decides alone; this only ends the wait outside it,
-                // where a late member otherwise never settles. (Settling
-                // there too cost sharedgoal 200 eight arrivals, seeds 0/7/42.)
-                const bool outside=!(m.pt&&m.pt->assigned&&m.pt->limit>0)||dist>m.pt->limit+2*body;
-                const uint32_t still=m.windowTick-m.stillSince;
-                if(crowd==2||(crowd==1&&outside&&still>=2*kAreaSettle)||(crowd==3&&outside&&still>=kFarSettle)) {complete(u,m,true);return;}
-            }
+            if(!still)m.queued=false;
+            else if(settleWindow(u,m,g,p,ox,oz,dist)) {complete(u,m,true);return;}
         }
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
@@ -4683,76 +4640,291 @@ struct LegionNavigator::Impl {
     // Returns 0 (not here), 1 (touching only this same order's arrivals),
     // 2 (touching an earlier order's arrival or an idle body) or 3 (beyond
     // the reach, touching an arrival of this destination).
-    int crowdSettle(const Unit& u,const Member& m,const Group& g,int ox,int oz,int64_t dist) const {
-        if(m.approach||m.goal<0)return 0;
-        const int fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+    // The settle rule (PLAN 3.1 T1-B), run once per crowd window by a body
+    // that gained less than half a body on its point over the window.
+    //  - Queued: a body touching it (the ring kSettleRing bounds) and nearer
+    //    the point is a settled arrival of this destination, an idle body of
+    //    the player, or a held member of this destination that is itself
+    //    queued; or (a shared point) it stands inside the destination area
+    //    itself. A chain that can only start at the destination's own
+    //    crowd, so a jam on the way never queues.
+    //  - A settled crowd of an earlier order, or idle bodies, already
+    //    standing there: one window (within the crowd's reach).
+    //  - Otherwise (destination areas only) a queued body pressed against
+    //    the crowd (no free neighbour nearer the point, or no gain for the
+    //    window) first re-chooses a
+    //    free slot it can still reach (rechoose, kRechoices times), then
+    //    settles where it stands once its potential is within settleP. The
+    //    bound starts at the destination area's (areaBound) plus
+    //    kSettleSlack bodies and grows by kSettleGrow bodies per window, but
+    //    no completion is farther from the click than twice the crowd's
+    //    reach, the bound the old far rule allowed (C29).
+    // Every settle is connected (the field's way in is not much longer
+    // than the straight line: no settling behind a wall) and outside a
+    // factory's exit lane.
+    bool settleWindow(const Unit& u,Member& m,Group& g,const Plane& p,int ox,int oz,int64_t dist) {
+        m.queued=false;
+        if(m.approach||m.goal<0)return false;
+        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+        if(!f)return false;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int64_t body=int64_t(foot)*16;
+        const uint16_t potential=f->at(size_t(oz*W+ox));
+        if(potential==kUnreached)return false;
         const int64_t px=int64_t(std::get<2>(m.point)),pz=int64_t(std::get<3>(m.point));
-        auto sameDestination=[&](const Anchor& a) {
-            if(std::get<0>(a.point)!=u.player)return false;
-            const int64_t ax=(int64_t(std::get<2>(a.point))-px)>>16,az=(int64_t(std::get<3>(a.point))-pz)>>16;
+        const bool area=policy(m.kind).area;
+        auto sameDestination=[&](const std::tuple<int,uint32_t,int32_t,int32_t>& q) {
+            if(std::get<0>(q)!=u.player)return false;
+            const int64_t ax=(int64_t(std::get<2>(q))-px)>>16,az=(int64_t(std::get<3>(q))-pz)>>16;
             return ax*ax+az*az<=4*body*body;
         };
-        // Touching: a settled body of this destination within one body,
-        // nearer the point than this one.
-        int touching=0;bool anchored=false;
+        auto nearer=[&](const Unit& other) {
+            const int qx=footprintOrigin(other.x,fx),qz=footprintOrigin(other.z,fz);
+            if(qx>=0&&qz>=0&&qx<W&&qz<height()) {
+                const uint16_t q=f->at(size_t(qz*W+qx));
+                if(q!=kUnreached)return q<potential;
+            }
+            const int64_t dx=(int64_t(other.x.v)-px)>>16,dz=(int64_t(other.z.v)-pz)>>16;
+            return dx*dx+dz*dz<dist*dist;
+        };
+        // Nearer the point: by the field's potential at the other body's
+        // origin where the field reaches it, else by pixel distance.
+        bool queued=false,foreign=false;
+        const int r=foot<=5?2:1;
         uint64_t ring=0;
-        for(int j=-foot;j<fz+foot&&(touching<2||!anchored);++j)for(int i=-foot;i<fx+foot&&(touching<2||!anchored);++i) {
+        for(int j=-r;j<fz+r&&!foreign&&ring<uint64_t(kSettleRing);++j)for(int i=-r;i<fx+r&&!foreign&&ring<uint64_t(kSettleRing);++i) {
+            if(i>=0&&i<fx&&j>=0&&j<fz)continue;
             ++ring;
             const int cx=ox+i,cz=oz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
             const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
-            if(!other||other->player!=u.player||!other->type||other->type->isStructure())continue;
-            // Settled for this destination: a Legion arrival there, or an
-            // idle body (standing nearer the point, so inside its crowd).
-            const auto a=isAnchor(o)?anchors.find(o):anchors.end();
-            if(a!=anchors.end()?!sameDestination(a->second):!other->orders.empty())continue;
-            const int64_t qx=(int64_t(other->x.v)-px)>>16,qz=(int64_t(other->z.v)-pz)>>16;
-            if(qx*qx+qz*qz>=dist*dist)continue;
-            // Same order: same player and issue tick (a group's members may
-            // each name their own point of one lattice).
-            const bool own=a!=anchors.end()&&std::get<1>(a->second.point)==std::get<1>(m.point);
-            touching=std::max(touching,own?1:2);
-            anchored=anchored||a!=anchors.end();
+            if(!other||other->player!=u.player||!other->type||other->type->isStructure()||!nearer(*other))continue;
+            if(isAnchor(o)) {
+                const auto a=anchors.find(o);
+                if(!sameDestination(a->second.point))continue;
+                // A settled crowd of another order: one window. Its own
+                // order's crowd at this very point is the destination area
+                // it settles into (a lattice of per-unit points is not one).
+                if(std::get<1>(a->second.point)!=std::get<1>(m.point))foreign=true;
+                else queued=queued||(area&&destination(a->second.point)==destination(m.point));
+            } else if(other->orders.empty())foreign=true;
+            else if(area&&!queued) {
+                const Member* peer=member(o);
+                queued=peer&&peer->queued&&peer->state==Holding&&destination(peer->point)==destination(m.point);
+            }
         }
         stats.crowdWindowRingCells+=ring;
-        if(!touching)return 0;
-        // Reach: four times the packed disc of everyone settled there (and
-        // this body), plus two bodies.
-        int64_t count=1;
-        for(const auto& [id,a]:anchors)if(sameDestination(a))++count;
-        stats.crowdSettleVisits+=anchors.size();
-        const int64_t reach=4*body*isqrtFloor(uint64_t(count)*100000000/31416)/100+2*body;
-        // Out to twice that, a body touching a settled ARRIVAL of this
-        // destination (a link of the crowd itself, not merely an idle body)
-        // also counts, after a much longer wait (3): a crowd stretched along
-        // the way in (arrivals from one side settle on its near face) left
-        // its late arrivals pressed against it, orders held forever, standing
-        // exactly where a settled body would stand.
-        const bool far=dist>reach;
-        if(far&&(!anchored||dist>2*reach))return 0;
-        // Connected: the field's way to the destination area is not much
-        // longer than the straight line (no settling behind a wall).
-        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
-        if(!f)return 0;
-        const uint16_t potential=f->at(size_t(oz*width()+ox));
+        // The chain's first link: a shared point's member standing inside
+        // the destination area itself is at the crowd.
+        if(area&&!queued&&!foreign&&shared(g,m)&&potential<=areaBound(g,m,fx,fz,body))queued=true;
+        if(!queued&&!foreign)return false;
         // Soft obstacles (an idle crowd standing there) charge kSoftFactor
         // per step in a softened field.
         const int64_t factor=f->softened?kSoftFactor:1;
-        if(potential==kUnreached||int64_t(potential)>factor*((dist*kDiagonal)/16+int64_t(3*foot*kOrthogonal)))return 0;
-        // Never in a same-player factory's exit lane: from the factory's
-        // centre to past where its output is put down.
-        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
-        stats.crowdSettleVisits+=w.units_.size();
-        for(const auto& s:w.units_) {
-            if(!s.alive()||s.player!=u.player||!s.type||!s.type->producesUnits())continue;
-            const int64_t sx=s.x.v>>16,sz=s.z.v>>16;
-            const int64_t half=int64_t(s.type->footX)*8+body;
-            if(ux>=sx-half&&ux<=sx+half&&uz>=sz&&uz<=sz+int64_t(s.type->footZ)*8+60+body)return 0;
+        auto connected=[&](int64_t d) {return int64_t(potential)<=factor*((d*kDiagonal)/16+int64_t(3*foot*kOrthogonal));};
+        const int64_t reach=settleReach(m,body);
+        if(foreign&&dist<=reach&&connected(dist)&&!inExitLane(u,body))return true;
+        if(!area)return false;
+        m.queued=true;
+        // Pressed: no free neighbour nearer the point. A body with one free
+        // that gained nothing for a whole window all the same (its own
+        // steering, toward its slot, takes no step, or steps to and fro)
+        // re-chooses its slot, and once its re-choices are spent it counts
+        // as pressed.
+        const bool press=pressed(u,p,*f,ox,oz,potential);
+        if(!press&&stalledFor(m)<kCrowdWindow)return false;
+        if(m.rechoices<kRechoices) {
+            ++m.rechoices;
+            if(rechoose(u,m,g,p,*f,potential)||!press)return false;
         }
-        return far?3:touching;
+        const uint32_t grow=uint32_t(kSettleGrow*foot*kOrthogonal);
+        const uint32_t cap=uint32_t(std::min<int64_t>(0xfffe,factor*((2*reach*kDiagonal)/16+int64_t(3*foot*kOrthogonal))));
+        if(!m.settleP)m.settleP=std::min(cap,areaBound(g,m,fx,fz,body)+uint32_t(kSettleSlack*foot*kOrthogonal));
+        if(potential<=m.settleP&&dist<=2*reach&&connected(dist)&&!inExitLane(u,body))return true;
+        m.settleP=std::min(cap,m.settleP+grow);
+        return false;
+    }
+    // A destination several members share (or a formation slot's).
+    bool shared(const Group& g,const Member& m) const {
+        if(m.slot!=-1)return true;
+        const auto peak=g.peak.find(m.requested);
+        if(peak!=g.peak.end()&&peak->second>1)return true;
+        const Point* pt=m.pt;
+        if(!pt) {const auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
+        return pt&&pt->assigned&&pt->limit>0;
+    }
+    // Pressed: no neighbour origin nearer the point (lower potential) that
+    // the body could step into now.
+    bool pressed(const Unit& u,const Plane& p,const Field& f,int ox,int oz,uint16_t potential) const {
+        const int W=width();
+        for(const auto& d:kDirections) {
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const uint16_t v=f.at(size_t((oz+d[1])*W+ox+d[0]));
+            if(v==kUnreached||v>=potential)continue;
+            if(stepFree(u,ox,oz,ox+d[0],oz+d[1]))return false;
+        }
+        return true;
+    }
+    // The reach of the crowd settled at this member's destination: four
+    // times the packed disc of everyone settled there (and this body), plus
+    // two bodies (the crowdSettle reach at b8a4110, its count kept by
+    // anchorsAt instead of a walk of every anchor).
+    int64_t settleReach(const Member& m,int64_t body) const {
+        const auto at=anchorsAt.find(destination(m.point));
+        const int64_t count=1+(at==anchorsAt.end()?0:at->second);
+        return 4*body*isqrtFloor(uint64_t(count)*100000000/31416)/100+2*body;
+    }
+    // The destination area's bound: the potential of the last of the
+    // ceil(1.25n) footprints nearest the point by field potential (n the
+    // members the point was given to), packed as slotsFor packs slots, so
+    // it follows walls (a half-disc at a wall, a strip in a dead end). A
+    // distinct goal's is a body plus 4 px (Retail's radius + 4). Cached per
+    // goal and field: a function of the finished field, never hashed.
+    uint32_t areaBound(Group& g,const Member& m,int fx,int fz,int64_t body) {
+        const auto peak=g.peak.find(m.requested);
+        const int n=peak==g.peak.end()?1:peak->second;
+        if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
+        const Field& f=*g.field;
+        auto& cached=g.areaBounds[m.requested];
+        if(cached.first==f.serial&&cached.second.first==n)return cached.second.second;
+        const int count=(5*n+3)/4;
+        const int W=width(),H=height(),sx=m.requested%W,sz=m.requested/W,foot=std::max(fx,fz);
+        uint32_t bound=0;
+        for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
+            const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
+            const int x1=std::min(W-1,sx+radius),z1=std::min(H-1,sz+radius);
+            std::vector<std::pair<uint16_t,int>> order;
+            stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
+            const Plane& p=plane(g.plane);
+            for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
+                if(legal(p,x,z)&&f.at(size_t(z*W+x))!=kUnreached)order.push_back({f.at(size_t(z*W+x)),z*W+x});
+            std::sort(order.begin(),order.end());
+            const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
+            std::vector<uint8_t> used(size_t(bw)*bh,0);
+            int packed=0;
+            for(const auto& [v,cell]:order) {
+                const int x=cell%W-x0,z=cell/W-z0;
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used[size_t(z+j)*bw+x+i];
+                if(!clear)continue;
+                for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used[size_t(z+j)*bw+x+i]=1;
+                bound=v;
+                if(++packed>=count)break;
+            }
+            if(packed>=count)break;
+        }
+        cached={f.serial,{n,bound}};
+        return bound;
+    }
+    // Re-choice (C2, C28): the free slot of this member's destination it can
+    // still reach past the bodies standing now (breadth-first over legal
+    // origins no other body covers, window of 24 cells) with the lowest
+    // potential below its own, ties to the lowest cell index, then the
+    // lowest slot index. Formation points take any free cell of the area;
+    // packed points their free packed slots. Returns whether it took one.
+    bool rechoose(const Unit& u,Member& m,Group& g,const Plane& p,const Field& f,uint16_t potential) {
+        if(m.requested<0||m.approach)return false;
+        Point* pt=m.pt;
+        if(!pt) {auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
+        const bool formation=pt&&pt->assigned&&pt->limit>0;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        Group::Slots* slots=nullptr;
+        if(!formation) {
+            const auto sharing=g.sharing.find(m.requested);
+            if(sharing==g.sharing.end()||sharing->second<2)return false;
+            slots=&slotsFor(m,g,p,m.requested,sharing->second,fx,fz);
+        }
+        constexpr int R=24,S=2*R+1;
+        const int W=width();
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        auto open=[&](int x,int z) {
+            if(!legal(p,x,z))return false;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=x+i,cz=z+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(o&&o!=u.id)return false;
+            }
+            return true;
+        };
+        std::vector<uint8_t> seen(size_t(S)*S,0);
+        std::vector<int> queue;queue.reserve(size_t(S)*S);
+        seen[size_t(R*S+R)]=1;queue.push_back(R*S+R);
+        for(size_t head=0;head<queue.size();++head) {
+            const int local=queue[head],lx=local%S,lz=local/S,x=ox+lx-R,z=oz+lz-R;
+            for(const auto& dd:kDirections) {
+                const int nlx=lx+dd[0],nlz=lz+dd[1];
+                if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
+                if(!step(p,x,z,dd[0],dd[1])||!open(x+dd[0],z+dd[1]))continue;
+                if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
+                seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
+            }
+        }
+        stats.rechoiceBfsCells+=queue.size();stats.slotSearchCells+=queue.size();
+        auto reached=[&](int cell) {
+            const int lx=cell%W-ox+R,lz=cell/W-oz+R;
+            return lx>=0&&lz>=0&&lx<S&&lz<S&&seen[size_t(lz*S+lx)];
+        };
+        int best=-1,bestSlot=-1;uint16_t bestV=potential;
+        if(formation) {
+            // This member's own cells are free to it.
+            if(m.slot>=0)slotCells(m,fx,fz,false);
+            const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
+            for(const int local:queue) {
+                const int x=ox+local%S-R,z=oz+local/S-R,cell=z*W+x;
+                const uint16_t v=f.at(size_t(cell));
+                if(v==kUnreached||v>bestV||(v==bestV&&(best<0||cell>best)))continue;
+                if(v==potential)continue;
+                const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
+                if((cx-px)*(cx-px)+(cz-pz)*(cz-pz)>pt->limit*pt->limit)continue;
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt->cells.count((z+j)*W+x+i);
+                if(clear) {best=cell;bestV=v;}
+            }
+            if(best<0||best==m.goal) {if(m.slot>=0)slotCells(m,fx,fz,true);return false;}
+            m.goal=best;m.slot=0;m.lineCell=-1;markPass(u,m);
+            slotCells(m,fx,fz,true);
+            return true;
+        }
+        for(size_t i=0;i<slots->cells.size();++i) {
+            const int cell=slots->cells[i];
+            if(slots->taken[i]||int(i)==m.slot)continue;
+            const uint16_t v=f.at(size_t(cell));
+            if(v==kUnreached||v>=potential)continue;
+            if(best>=0&&(v>bestV||(v==bestV&&cell>=best)))continue;
+            if(!legal(p,cell%W,cell/W)||!reached(cell)||!slotFree(m,cell,fx,fz))continue;
+            best=cell;bestSlot=int(i);bestV=v;
+        }
+        if(best<0)return false;
+        if(m.slot>=0) {
+            if(size_t(m.slot)<slots->taken.size())slots->taken[size_t(m.slot)]=0;
+            slotCells(m,fx,fz,false);
+        }
+        slots->taken[size_t(bestSlot)]=1;m.slot=bestSlot;m.goal=best;m.lineCell=-1;markPass(u,m);
+        slotCells(m,fx,fz,true);
+        return true;
+    }
+    // Factory exit lanes (from the factory's centre to past where its output
+    // is put down), per static epoch: a settle rule never settles a body in
+    // one of its own player's. Derived from the structures, never hashed.
+    struct ExitLane {int id=0;int64_t x=0,z=0,hx=0,hz=0;};
+    std::vector<ExitLane> exitLanes;uint64_t exitLanesEpoch=~0ull;
+    bool inExitLane(const Unit& u,int64_t body) {
+        if(exitLanesEpoch!=epoch) {
+            exitLanes.clear();exitLanesEpoch=epoch;
+            for(const auto& s:w.units_)if(s.alive()&&s.type&&s.type->producesUnits())
+                exitLanes.push_back({s.id,s.x.v>>16,s.z.v>>16,int64_t(s.type->footX)*8,int64_t(s.type->footZ)*8+60});
+            stats.crowdSettleVisits+=w.units_.size();
+        }
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
+        for(const auto& l:exitLanes) {
+            if(ux<l.x-l.hx-body||ux>l.x+l.hx+body||uz<l.z||uz>l.z+l.hz+body)continue;
+            const Unit* s=w.unit(l.id);
+            if(s&&s->alive()&&s->player==u.player)return true;
+        }
+        return false;
     }
     // The holder rule (AR-11, PLAN section 0 row 11: an unreachable order
     // drops as soon as the unit reaches its nearest reachable spot). An
@@ -4790,85 +4962,47 @@ struct LegionNavigator::Impl {
         stats.crowdWindowRingCells+=ring;
         return found;
     }
-    // A body pressed against settled bodies inside its goal's area has
-    // arrived: the destination is an area, and the cells nearer the point
-    // are taken. Distinct-goal members use one body width; members sharing a
-    // point use the packed disc that many bodies of this size occupy.
+    // A body pressed against settled bodies on its own distinct goal has
+    // arrived: the goal is taken and the cells nearer it are filled. A
+    // shared point's members (several sent there, or a formation slot)
+    // settle by the settle rule alone (settleWindow).
     bool contactArrival(const Unit& u,const Member& m) const {
-        if(stalledFor(m)<20)return false;
+        if(stalledFor(m)<20||m.approach||m.slot!=-1)return false;
         auto group=groups.find(m.group);
         if(group==groups.end())return false;
-        // Shared points are counted by the requested point; a member's own
-        // goal is its claimed slot once it has one.
-        // The area is sized by everyone the point was given to, including
-        // members that already settled there.
         const auto sharing=group->second.peak.find(m.requested);
-        const int count=sharing==group->second.peak.end()?1:sharing->second;
-        const int body=std::max(u.type->footX,u.type->footZ)*16;
-        // Packed disc of `count` bodies: body*sqrt(count/pi), plus a body.
-        const int64_t radius=count>1?int64_t(body)+int64_t(body)*isqrtFloor(uint64_t(count)*100000000/31416)/100:body;
-        const int W=width();
-        const int point=count>1?m.requested:m.goal;
-        const Fixed gx=centre(point%W,u.type->footX),gz=centre(point/W,u.type->footZ);
-        int64_t dx=(int64_t(u.x.v)-gx.v)>>16,dz=(int64_t(u.z.v)-gz.v)>>16;
-        // A member of a shared point held still for ten seconds within one
-        // body of the packed disc is at the destination area: its slot is
-        // gone (covered, or walled off by bodies that settled first) and
-        // waiting longer cannot make one.
-        bool formation=false;
+        if(sharing!=group->second.peak.end()&&sharing->second>1)return false;
         if(const Point* pt=m.pt?m.pt:[&]()->const Point* {const auto f=points.find(m.point);return f==points.end()?nullptr:&f->second;}();
-           !m.approach&&(count>1||m.slot!=-1)&&pt&&pt->assigned&&pt->limit>0) {
-            // Formation slots: the area is the whole point's (every class
-            // sent there), measured from the requested point itself.
-            formation=true;
-            dx=(int64_t(u.x.v)>>16)-(int64_t(std::get<2>(m.point))>>16);
-            dz=(int64_t(u.z.v)>>16)-(int64_t(std::get<3>(m.point))>>16);
-            const int64_t limit=pt->limit;
-            // Walled out at the ring edge by settled bodies: after twice the
-            // in-area stand-still, within two bodies of the area, it settles
-            // (bounded: a formation member never waits forever). At the
-            // in-area wait (300) it settled bodies a re-choice would still
-            // have brought in: sharedgoal 200 lost 4 arrivals (seeds 0/7/42).
-            if(dx*dx+dz*dz>limit*limit)
-                return stalledFor(m)>=2*kAreaSettle&&dx*dx+dz*dz<=(limit+2*body)*(limit+2*body);
-            if(stalledFor(m)>=kAreaSettle)return true;
-        } else {
-            if(count>1&&stalledFor(m)>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
-            if(dx*dx+dz*dz>radius*radius)return false;
+           pt&&pt->assigned&&pt->limit>0)return false;
+        const int body=std::max(u.type->footX,u.type->footZ)*16;
+        const int W=width();
+        const Fixed gx=centre(m.goal%W,u.type->footX),gz=centre(m.goal/W,u.type->footZ);
+        const int64_t dx=(int64_t(u.x.v)-gx.v)>>16,dz=(int64_t(u.z.v)-gz.v)>>16;
+        if(dx*dx+dz*dz>int64_t(body)*body)return false;
+        // A distinct goal is only "full" if another body stands on it;
+        // otherwise settling short could plug the lane a neighbour needs.
+        bool taken=false;
+        const int gx0=m.goal%W,gz0=m.goal/W;
+        for(int j=0;j<u.type->footZ&&!taken;++j)for(int i=0;i<u.type->footX&&!taken;++i) {
+            const int cx=gx0+i,cz=gz0+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            taken=o&&o!=u.id;
         }
-        if(count==1&&!formation) {
-            // A distinct goal is only "full" if another body stands on it;
-            // otherwise settling short could plug the lane a neighbour needs.
-            bool taken=false;
-            const int gx0=m.goal%W,gz0=m.goal/W;
-            for(int j=0;j<u.type->footZ&&!taken;++j)for(int i=0;i<u.type->footX&&!taken;++i) {
-                const int cx=gx0+i,cz=gz0+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-                taken=o&&o!=u.id;
-            }
-            if(!taken)return false;
-        }
-        // Only settled neighbours (idle, or already arrived) make an area full.
+        if(!taken)return false;
+        // Only settled neighbours (idle, or already arrived) make it full.
         const int fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
-        bool settled=false;
-        for(int j=-1;j<=fz&&!settled;++j)for(int i=-1;i<=fx&&!settled;++i) {
+        for(int j=-1;j<=fz;++j)for(int i=-1;i<=fx;++i) {
             const int cx=ox+i,cz=oz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
             const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
             if(!other||other->player!=u.player)continue;
-            if(other->orders.empty()||other->orders[World::currentLeg(other->orders)].mission.pending&0x500)settled=true;
-            // Members of a shared point that are themselves pressed still
-            // inside the area count as its filled part.
-            else if(count>1||formation) {
-                const Member* peer=member(o);
-                settled=peer&&peer->group==m.group&&peerStalledFor(*peer)>=20;
-            }
+            if(other->orders.empty()||other->orders[World::currentLeg(other->orders)].mission.pending&0x500)return true;
         }
-        return settled;
+        return false;
     }
     uint64_t checksum() const {
         uint64_t h=mix(0x4c4547494f4eull,epoch);
@@ -4925,6 +5059,7 @@ struct LegionNavigator::Impl {
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
+            if(m.settleP||m.queued||m.rechoices) {h=mix(h,0x736574746c65ull);h=mix(h,m.settleP);h=mix(h,uint64_t(m.queued)|uint64_t(m.rechoices)<<8);}
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);}
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));

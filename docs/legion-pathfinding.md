@@ -333,31 +333,38 @@ footprint class (mixed footprints form one group per class but share one
   to its target that is statically legal, in the group's component, clear of
   every cell already claimed at the point, and inside the limit. A member
   that joins later maps its own offset with the stored transform. A member
-  that gets no cell (`slot=-2`) walks to the point and looks again only while
-  held. If fewer than two members can take part at the first attempt, the
+  that gets no cell (`slot=-2`) walks to the point and looks again only by the
+  settle rule's re-choice. If fewer than two members can take part at the first attempt, the
   point retries every 16 ticks. Approach members take no slot and do not size
   the area.
 * **Straight lanes**: a member with a formation slot probes the direct line
   out to 640 cells instead of 160, so the crowd does not funnel into a file
   by descending the shared field.
-* **Slot re-choice**: a member held for 20 ticks (and every 20 after)
-  re-chooses. A BFS (radius 24) over origins that no other body covers finds
-  the reachable free cell nearest the point. This stays active for the last
-  member of an assigned point too. A member's own re-registration pins its
-  point, so the formation and the cells arrived bodies claimed survive it.
-* **Settling**: inside the limit, a member that has been still for 300 ticks
-  (`kAreaSettle`) settles, as does one pressed against settled bodies or
-  against still members of the same point. A member walled out at the ring
-  edge settles after 600 still ticks if it is within the limit plus two body
-  widths.
-* **Close enough** (`crowdSettle`): a body that stopped gaining on its point
-  settles where it stands when it touches a same-player body already settled
-  for that destination (or idle) and nearer the point, within four packed-disc
-  radii of that crowd plus two bodies, on a field-connected spot outside any
-  factory exit lane. Out to twice that reach, touching a settled arrival of
-  the destination (not merely an idle body) also settles it, after 1800
-  still ticks (`kFarSettle`): a crowd fed from one side grows toward its
-  arrivals, and its last ones otherwise held forever against its face.
+* **Settling** (`settleWindow`, PLAN 3.1 T1-B, one rule): once per 45-tick
+  window, a body that gained less than half a body on its point over the
+  window looks at the bodies touching it (a ring of at most 64 cells) that
+  stand nearer the point. It is *queued* when one of them is a settled arrival
+  of its own order at that point, an idle body of the player, or a held member
+  of the same point that is itself queued, or when (a shared point) it stands
+  inside the destination area itself: the chain can only start at the
+  destination's own crowd, so a jam on the way never queues. A settled crowd
+  of an earlier order, or idle bodies, settles it in one window within the
+  crowd's reach (four packed-disc radii of everyone settled there plus two
+  bodies). Otherwise a queued body that is *pressed* (no free neighbour nearer
+  the point, or no gain at all for a window) first **re-chooses** a slot: the
+  free slot it can still reach past the bodies standing now (BFS radius 24)
+  with the lowest potential below its own, ties to the lowest cell, then the
+  lowest slot index; at most 3 times per member (`rechoose`). Then it settles
+  where it stands once its field potential is within `settleP`, which starts
+  at the destination area's bound (the potential of the last of the
+  ceil(1.25n) footprints nearest the point, so a half-disc at a wall and a
+  strip in a dead end) plus two bodies, a body plus 4 px for a distinct goal,
+  and grows by Retail's foot*32 px per window. No settle is farther from the
+  click than twice the crowd's reach, the bound of the old far rule (C29), and
+  every settle is field-connected and outside any factory exit lane. A member
+  on a distinct goal also arrives when pressed within a body of its goal and
+  the goal is taken (`contactArrival`). There are no other time-outs: the
+  300/600/1800-tick waits and the every-20-held re-choice are gone.
 * The older per-goal packed slots (built inside-out by field potential,
   claimed back to front along each member's approach) remain as the fallback
   when no formation applies. Claims skip slots that are now illegal or

@@ -76,9 +76,9 @@ public:
         uint64_t demandResumes=0,fieldsPaused=0;   // paused builds (0 until paused builds exist)
         uint64_t stillUnitsProcessed=0;  // bodies scanStill sampled
         // ---- army throughput (T1 I4) ---------------------------------------
-        uint64_t crowdWindowRingCells=0;   // crowdSettle's touching ring
-        uint64_t crowdSettleVisits=0;      // crowdSettle's anchor and factory scans
-        uint64_t rechoiceBfsCells=0;       // reachableFormationCell
+        uint64_t crowdWindowRingCells=0;   // the settle rule's queue ring (settle-chain cells) and the holder rule's ring
+        uint64_t crowdSettleVisits=0;      // units walked to rebuild the factory exit lanes
+        uint64_t rechoiceBfsCells=0;       // the settle rule's slot re-choice (rechoose)
         uint64_t formationRingCells=0;     // formationCell
         uint64_t moveCallsByState[8]={};   // move() per member state (0 none .. 5 trapped)
         uint64_t joinIterations=0;         // registerMove's group-join scan
