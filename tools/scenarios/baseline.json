@@ -8966,6 +8966,20 @@
    "mode": "legion",
    "reason": "W3 exit (task-w3-b2 final head): A2 (one point and formation per click) and B (one settle rule; crowdSettle, sameDestination and the every-20-held re-choice deleted) move work between classes; this scenario's total Legion work (total, per-tick max and p99) stays within 1.10x of its W3 step-0 base, the W3 B declared tolerance (PLAN 3.0) (base 5455, exit 9470)",
    "scenario": "wall-4x50"
+  },
+  {
+   "factor": 1.29,
+   "key": "click.b00.done",
+   "mode": "legion",
+   "reason": "W3 A2/B movement shape (one formation per click, settle where you stand): incidental, first gated at click level by lead ruling W3 final exit (f); the click's t90 passes its band (base 2098, exit 2702)",
+   "scenario": "aware-seen"
+  },
+  {
+   "key": "click.u01.done",
+   "max": -1,
+   "mode": "legion",
+   "reason": "lead ruling W3 final exit (g): motion-cross g.u11 (a body of the west click u01) never stops inside the click's disc at 7 of 11 gate offsets, so the click is never done (base 2860); the click-level t90 and arrived pass the Retail floor (Retail's click is never done either). W3-4-class steering gap, W5 hard exit gate: W5 must make u11 arrive (W3 exit: never)",
+   "scenario": "motion-cross"
   }
  ],
  "entries": {
@@ -9997,6 +10011,70 @@
   },
   "aware-attack": {
    "legion": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2152
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1667
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2032
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 23
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1714
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2166
+    },
     "contact_other_permille": {
      "band": 1.2,
      "dir": "lower",
@@ -11329,6 +11407,70 @@
     }
    },
    "retail": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 23
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1878
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2060
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2081
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1674
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1954
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -11383,6 +11525,70 @@
   },
   "aware-cross": {
    "legion": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2329
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1759
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1947
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1459
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1134
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1332
+    },
     "contact_other_permille": {
      "band": 1.2,
      "dir": "lower",
@@ -12643,6 +12849,70 @@
     }
    },
    "retail": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1865
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1604
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1759
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1564
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1213
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1418
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -12697,6 +12967,70 @@
   },
   "aware-headon": {
    "legion": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2563
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1724
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2066
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2487
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1787
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2134
+    },
     "contact_other_permille": {
      "band": 1.2,
      "dir": "lower",
@@ -13957,6 +14291,70 @@
     }
    },
    "retail": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1992
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1729
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1925
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2124
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1767
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2037
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -14011,6 +14409,70 @@
   },
   "aware-seen": {
    "legion": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2161
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1738
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1968
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2098
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1673
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1951
+    },
     "contact_other_permille": {
      "dir": "lower",
      "reason": "W0: offset spread 1.21 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 552 x1.20",
@@ -15270,6 +15732,70 @@
     }
    },
    "retail": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2024
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1715
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1877
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2127
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1702
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1929
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -15324,6 +15850,70 @@
   },
   "aware-unseen": {
    "legion": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2358
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1712
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2206
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2889
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1721
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2055
+    },
     "contact_other_permille": {
      "dir": "lower",
      "reason": "W3 exit (task-w3-b2 final head): bound moved 458 -> 483. W3 A2/B: one formation per click packs a click's bodies closer: incidental (was: W0: offset spread 1.36 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 483 x1.20)",
@@ -16511,6 +17101,70 @@
     }
    },
    "retail": {
+    "click.a00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.a00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2024
+    },
+    "click.a00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1715
+    },
+    "click.a00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1877
+    },
+    "click.b00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.b00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2127
+    },
+    "click.b00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1702
+    },
+    "click.b00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1929
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -98511,6 +99165,70 @@
      "since": "W0",
      "value": 419
     },
+    "click.u00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 19
+    },
+    "click.u00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2337
+    },
+    "click.u00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u01.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.u01.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2860
+    },
+    "click.u01.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 1848
+    },
+    "click.u01.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2670
+    },
     "contact_other_permille": {
      "dir": "lower",
      "reason": "W3 exit (task-w3-b2 final head): bound moved 248 -> 257. W3 A2/B: one formation per click packs a click's bodies closer: incidental (was: W0: offset spread 1.22 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 248 x1.20)",
@@ -99698,6 +100416,70 @@
     }
    },
    "retail": {
+    "click.u00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 14
+    },
+    "click.u00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2875
+    },
+    "click.u00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u01.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 22
+    },
+    "click.u01.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u01.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2428
+    },
+    "click.u01.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2887
+    },
     "contact_settled_permille": {
      "band": 1.2,
      "dir": "lower",
@@ -99759,6 +100541,38 @@
      "rule": "band",
      "since": "W0",
      "value": 0
+    },
+    "click.u00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 39
+    },
+    "click.u00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2285
+    },
+    "click.u00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
     },
     "contact_other_permille": {
      "band": 1.1,
@@ -100892,6 +101706,38 @@
     }
    },
    "retail": {
+    "click.u00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 37
+    },
+    "click.u00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2470
+    },
+    "click.u00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
     "contact_settled_permille": {
      "band": 1.2,
      "dir": "lower",
@@ -100953,6 +101799,38 @@
      "rule": "band",
      "since": "W0",
      "value": 125
+    },
+    "click.u00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 24
+    },
+    "click.u00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 2934
+    },
+    "click.u00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
     },
     "contact_other_permille": {
      "band": 1.1,
@@ -102078,6 +102956,38 @@
     }
    },
    "retail": {
+    "click.u00.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": 17
+    },
+    "click.u00.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u00.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
+    "click.u00.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W3 final-exit ruling (f) retake: the click-level progress keys of the one-body aware-* / motion-* groups, from the W3 step-0 sim (7a01f7bb, branch w3b5-base: w3b4-base plus the click-level observer), oden-win, the gate offsets",
+     "rule": "band",
+     "since": "W3-exit-f",
+     "value": -1
+    },
     "contact_settled_permille": {
      "band": 1.2,
      "dir": "lower",
@@ -143008,12 +143918,6 @@
   },
   {
    "cluster": "MV-06",
-   "key": "g.u17.t90",
-   "reason": "still fails legion <= retail x1.1 on the gate offsets at the W3 round 4 retake (the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion never vs retail 1174; fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion never vs retail 1161",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-06",
    "key": "reversals",
    "median5": true,
    "mode": "legion",
@@ -149739,288 +150643,6 @@
    "scenario": "wall-4x50"
   },
   {
-   "cluster": "MV-09",
-   "key": "g.b16.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2022 vs retail 1709",
-   "scenario": "aware-attack"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b17.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2001 vs retail 1672",
-   "scenario": "aware-attack"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b18.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1735 vs retail 1544",
-   "scenario": "aware-attack"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b21.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2049 vs retail 1777",
-   "scenario": "aware-attack"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b22.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2165 vs retail 1587",
-   "scenario": "aware-attack"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b23.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1939 vs retail 1663",
-   "scenario": "aware-attack"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a06.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1819 vs retail 1613",
-   "scenario": "aware-cross"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a13.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1812 vs retail 1644",
-   "scenario": "aware-cross"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a18.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1692 vs retail 1500",
-   "scenario": "aware-cross"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a19.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1761 vs retail 1519",
-   "scenario": "aware-cross"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a20.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1645 vs retail 1484",
-   "scenario": "aware-cross"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a23.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1712 vs retail 1549",
-   "scenario": "aware-cross"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b18.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1459 vs retail 1289",
-   "scenario": "aware-cross"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a00.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1920 vs retail 1721",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a06.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2060 vs retail 1698",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b16.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1995 vs retail 1784",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b17.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2242 vs retail 1800",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b20.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1956 vs retail 1731",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b21.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2174 vs retail 1802",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b22.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1912 vs retail 1677",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b23.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1920 vs retail 1716",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a01.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1927 vs retail 1717",
-   "scenario": "aware-seen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b22.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1930 vs retail 1614",
-   "scenario": "aware-seen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a00.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2141 vs retail 1795",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a01.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2102 vs retail 1717",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a02.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2036 vs retail 1777",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a04.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1964 vs retail 1776",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a06.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2005 vs retail 1760",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.a12.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1958 vs retail 1779",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b11.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1916 vs retail 1713",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b16.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1991 vs retail 1769",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b17.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1967 vs retail 1786",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b20.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1851 vs retail 1645",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b21.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2070 vs retail 1791",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b22.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2029 vs retail 1614",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "g.b23.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1965 vs retail 1617",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u32.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2263 vs retail 2047",
-   "scenario": "motion-cross"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u08.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2285 vs retail 2056",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u18.arrived",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 0 vs retail 1",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u18.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion never vs retail 2746",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u19.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 2671 vs retail 2373",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u25.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1909 vs retail 1727",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u29.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 1854 vs retail 1631",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u30.arrived",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 0 vs retail 1",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u30.t90",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion never vs retail 2735",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u38.arrived",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 0 vs retail 1",
-   "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-12",
-   "key": "g.u32.arrived",
-   "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion 0 vs retail 1",
-   "scenario": "motion-wall"
-  },
-  {
    "cluster": "AR-08",
    "key": "g.C.t90",
    "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion never vs retail 7890",
@@ -151659,6 +152281,442 @@
    "mode": "legion",
    "reason": "offset spread 2567..3288 exceeds the band at the W3 exit (task-w3-b2 final head); its Retail-floor exception, which also gated it on median-of-5, was cleared by the W3 exit ratchet (the key passes the floor again)",
    "scenario": "tail-open570"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.arrived",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 21..24 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1728..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1937..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.arrived",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 21..24 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1874..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1976..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "reason": "fails legion <= retail x1.1 at W3-exit-f: legion 2166 vs retail 1954",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 2053..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1941..2300 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1720..2434 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1762..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1268..1615 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1312..2302 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at W3-exit-f: legion 1947 vs retail 1759",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1732..2062 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t50",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1150..1281 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1470..1656 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2176..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1990..2233 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2231..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1858..2060 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1895..2304 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1852..2280 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 2017..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1927..2164 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2142..2827 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1927..2174 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1937..2527 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1804..2054 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1859..2291 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t50",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1599..1770 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1855..2053 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1916..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2297..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t50",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1674..1864 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2025..2240 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2260..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at W3-exit-f: legion 2206 vs retail 1877",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1859..2291 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t50",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1599..1770 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t90",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1855..2053 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.done",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 1916..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.arrived",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 18..21 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-cross"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.t50",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2198..2524 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-cross"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u01.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2764..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-cross"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.arrived",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 12..15 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-cross"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.arrived",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 31..41 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-open"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.arrived",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 23..27 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-wall"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.t50",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 2766..never exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-wall"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.arrived",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 13..19 exceeds the band at W3-exit-f; gated on median-of-5 offsets",
+   "scenario": "motion-wall"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t50",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 1624..1792 exceeds the band on the W3 exit head (task-w3-b2), first read by the click-level keys of lead ruling W3 final exit (f); gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 1876..2383 exceeds the band on the W3 exit head (task-w3-b2), first read by the click-level keys of lead ruling W3 final exit (f); gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.b00.t50",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 1595..1775 exceeds the band on the W3 exit head (task-w3-b2), first read by the click-level keys of lead ruling W3 final exit (f); gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u01.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 2519..2882 exceeds the band on the W3 exit head (task-w3-b2), first read by the click-level keys of lead ruling W3 final exit (f); gated on median-of-5 offsets",
+   "scenario": "motion-cross"
+  },
+  {
+   "cluster": "MV-12",
+   "key": "click.u00.arrived",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 35..39 exceeds the band on the W3 exit head (task-w3-b2), first read by the click-level keys of lead ruling W3 final exit (f); gated on median-of-5 offsets",
+   "scenario": "motion-open"
   }
  ],
  "history": [
