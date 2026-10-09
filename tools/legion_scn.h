@@ -103,6 +103,7 @@ struct Scenario {
     bool crusades = false;            // `crusades on`: the Crusades balance overlay (unitscb/canbuildcb)
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
+    bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
     MapSpec map;
     std::vector<TypeSpec> types;
     std::vector<GroupSpec> groups;
@@ -259,6 +260,10 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             need(2, 2);
             if (w[1] != "all" && w[1] != "none") c.fail("explored all|none");
             s.explored = w[1] == "all";
+        } else if (k == "probe") {
+            need(2, 2);
+            if (w[1] != "approach") c.fail("probe approach");
+            s.probeApproach = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
         else if (k == "map") {
             if (haveMap) c.fail("a second 'map'");
@@ -303,7 +308,9 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
                 t.turn = int(c.integer(w[4], 1, 65535));
                 t.accel = c.number(w[5]);
                 t.speed = c.number(w[6]);
-                if (t.accel <= 0 || t.speed <= 0) c.fail("accel and speed must be positive");
+                // A mover with speed 0 is the Keep: canmove set, maxVel 0 (isStructure).
+                if (t.accel <= 0 || t.speed < 0 || (t.speed == 0 && t.kind != TypeSpec::Mover))
+                    c.fail("accel and speed must be positive (a mover may have speed 0)");
                 at = 7;
             } else if (kind == "structure") {
                 if (w.size() < 5) c.fail("structure takes FOOTX FOOTZ");
@@ -485,6 +492,7 @@ inline std::string format(const Scenario& s) {
       << (s.crusades ? "\ncrusades on" : "")
       << "\nexplored " << (s.explored ? "all" : "none") << "\n";
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
+    if (s.probeApproach) o << "probe approach\n";
     switch (s.map.kind) {
     case MapSpec::Ascii:
         o << "map ascii\n";

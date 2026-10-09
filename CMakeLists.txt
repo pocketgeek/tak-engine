@@ -315,6 +315,12 @@ foreach(legion_probe settlelatency doorplug)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS legion)
 endforeach()
+# W2 step 0 probes (AR-03 structsquad / factorysquad, RB-04 patrolrepair): measurement only; they
+# print the values the W2 steps move and assert determinism, not the targets.
+foreach(legion_probe structsquad factorysquad patrolrepair)
+  add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
+  set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;w2")
+endforeach()
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
@@ -373,6 +379,22 @@ foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
+endforeach()
+# W2 step 0 fixtures: AR-03 structure/Keep in an Alt+N squad, AR-11 unreachable orders and the
+# ~8200-tick maze approach walk (`probe approach` keys). Run in both modes; the second form
+# also checks every key against baseline.json over five offsets (tools/legion_check.py), so a
+# later W2 step that makes one worse fails here and one that improves it prints RATCHET (nightly:
+# five offsets cost ~20 s, past the per-commit CI budget).
+foreach(legion_scn structsquad structsquad-keep unreach-200 mazeapproach)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w2" TIMEOUT 600)
+  if(NOT WIN32)
+    add_test(NAME legion_check_${legion_scn}
+             COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                     --offsets 0,1,-1,2,-2 --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+    set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w2;nightly" TIMEOUT 900)
+  endif()
 endforeach()
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
@@ -1347,6 +1369,10 @@ find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
   add_test(NAME crowdbench_matrix COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/crowdbench_matrix_test.py")
+  # AR-11 probe: crowdbench `unreachable` 200x1, per-unit approach arrival and order completion.
+  add_test(NAME legion_unreachable_orders COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tools/legion_unreachable_test.py" "$<TARGET_FILE:crowdbench>")
+  set_tests_properties(legion_unreachable_orders PROPERTIES LABELS "legion;w2" TIMEOUT 300)
   add_test(NAME navigation_determinism COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/navigation_determinism_test.py"
     "$<TARGET_FILE:navigation_checkpoint_test>"

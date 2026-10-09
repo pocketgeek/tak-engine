@@ -2088,7 +2088,7 @@ std::string t1Counters(World& w) {
     s+=buf;
     return s;
 }
-struct ProbeRun {std::string text;uint64_t hash=0;};
+struct ProbeRun {std::string text;uint64_t hash=0;int a=-1,b=-1,c=-1;};   // a, b, c: probe-specific numbers for W2_REQUIRE
 // Determinism: the same run again and with workers prints and hashes the same.
 void checkRepeatable(const char* name,const std::function<ProbeRun(bool)>& run,const ProbeRun& serial) {
     const ProbeRun again=run(true),workers=run(false);
@@ -2461,6 +2461,177 @@ void doorplug() {
     }
     checkRepeatable("doorplug",[](bool serial) {return doorplugRun(112,serial);},mouth);
 }
+
+// ---- W2 step 0 probes (PLAN 3.4 AR-03, 3.5 RB-04): measurement only. Like the T1
+// probes they assert determinism (a repeat and a workers run give the same text
+// and hash), never the W2 targets, which the later steps raise: the printed
+// values are the "can fail" record and the commit message quotes them.
+
+// AR-03: a formation (Alt+1 = squad -1) of 20 movers that also holds a member
+// with no speed. FormAgg takes the slowest member's baseSpeed. Modes: 0 the
+// movers alone, 1 a 4x4 structure, 2 a mover still under construction,
+// 3 a Keep (canmove with maxVel 0), 4 the structure in a group (+1) squad,
+// 5 a 6x6 builder factory (isBuilder, workerTime) in the house's place.
+// Target (3.4): modes 1-3 reach 20/20 by 1350, as mode 0 does (1299).
+ProbeRun structsquadRun(int mode,bool serial) {
+    Fixture f(200,80,serial);f.publish();
+    const auto type=mover(2);
+    UnitType house{};house.id=house.name="legion-house";house.canMove=false;house.maxHp=100;house.footX=house.footZ=4;
+    house.maxVel=Fixed();house.buildTime=1;
+    UnitType keep=mover(4);keep.id=keep.name="legion-keep";keep.maxVel=Fixed();
+    std::vector<int> ids;
+    for(int i=0;i<20;++i)ids.push_back(f.spawn(type,14+(i%5)*3,30+(i/5)*4));
+    int extra=-1;
+    if(mode==1||mode==4)extra=f.spawn(house,40,50);
+    UnitType factory=house;factory.id=factory.name="legion-factory-s";factory.footX=factory.footZ=6;factory.isBuilder=true;factory.workerTime=1000;
+    if(mode==5)extra=f.spawn(factory,40,50);
+    if(mode==2) {extra=f.spawn(type,40,50);}
+    if(mode==3)extra=f.spawn(keep,40,50);
+    f.start();
+    if(mode==2)f.world.unit(extra)->underConstruction=true;
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd kind,int id,int target,float x,float z) {
+        tak::net::Command c;c.kind=kind;c.player=0;c.unitId=id;c.targetId=target;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    for(int id:ids)command(tak::net::Cmd::SetSquad,id,mode==4?1:-1,0,0);
+    if(extra>0)command(tak::net::Cmd::SetSquad,extra,mode==4?1:-1,0,0);
+    for(int t=0;t<60;++t)f.world.tick(1.f/30);
+    for(int id:ids)command(tak::net::Cmd::Move,id,0,150*16,40*16);
+    int firstDone=-1,allDone=-1;
+    for(int t=0;t<1500;++t) {
+        f.world.tick(1.f/30);
+        int done=0;for(int id:ids)done+=f.world.unit(id)->orders.empty();
+        if(done&&firstDone<0)firstDone=t;
+        if(done==int(ids.size())&&allDone<0)allDone=t;
+    }
+    int done=0;long meanX=0;
+    for(int id:ids) {done+=f.world.unit(id)->orders.empty();meanX+=f.world.unit(id)->x.floorInt()/16;}
+    ProbeRun r;char buf[200];
+    std::snprintf(buf,sizeof buf,"structsquad mode=%d done=%d/%zu first_done=%d all_done=%d mean_x_cells=%ld (start 14-26, goal 150)",
+        mode,done,ids.size(),firstDone,allDone,meanX/long(ids.size()));
+    r.text=buf;r.hash=f.world.stateHash();r.a=done;r.b=allDone;return r;
+}
+// W2_REQUIRE=1 turns the W2 targets into asserts (off in ctest until the step that meets them lands).
+bool requireW2() {return std::getenv("W2_REQUIRE")!=nullptr;}
+void structsquad() {
+    for(int mode=0;mode<=5;++mode) {
+        const auto r=structsquadRun(mode,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        if(requireW2())check(r.a==20&&r.b>=0&&r.b<=1350,"AR-03: a formation with a structure or immobile member must arrive 20/20 by tick 1350");
+        checkRepeatable("structsquad",[&](bool serial) {return structsquadRun(mode,serial);},r);
+    }
+}
+
+// AR-03: a squad-member factory's produced units join its squad (the documented
+// inheritance, sim.cpp "Auto-join"), the factory is a structure, and the army
+// that comes out is ordered 80 cells away. mode 0: factory in no squad; 1: in
+// formation -1; 2: in group +1. `direct` skips production: the movers stand
+// west of the factory from the start (the audit's probe_factorysquad), all in
+// the factory's squad. Target (3.4): modes 1 and 2 arrive as mode 0.
+ProbeRun factorysquadRun(int mode,int movers,bool serial,bool direct=false) {
+    Fixture f(200,80,serial);f.publish();
+    const auto type=mover(2);
+    UnitType factory{};factory.id=factory.name="legion-factory";factory.footX=6;factory.footZ=6;factory.maxHp=1000;
+    factory.isBuilder=true;factory.workerTime=1000;factory.buildTime=1;
+    const int fid=direct?f.spawn(factory,40,50):f.spawn(factory,30,40);
+    std::vector<int> standing;
+    if(direct)for(int i=0;i<movers;++i)standing.push_back(f.spawn(type,14+(i%4)*3,36+(i/4)*3));
+    f.start();
+    TypeRegistry registry;
+    auto command=[&](tak::net::Cmd kind,int id,int target,float x,float z) {
+        tak::net::Command c;c.kind=kind;c.player=0;c.unitId=id;c.targetId=target;c.x=x;c.z=z;c.queue=0;
+        applyCommand(f.world,registry,c);
+    };
+    if(mode)command(tak::net::Cmd::SetSquad,fid,mode==1?-1:1,0,0);
+    if(direct&&mode)for(int id:standing)command(tak::net::Cmd::SetSquad,id,mode==1?-1:1,0,0);
+    if(!direct)f.world.setRepeat(fid,&type);
+    std::vector<int> made=standing;int stopped=0;
+    for(int t=0;t<4000&&!stopped&&!direct;++t) {
+        f.world.tick(1.f/30);
+        made.clear();
+        for(const auto& u:f.world.units())if(u.id!=fid&&u.alive()&&!u.underConstruction&&u.type==&type)made.push_back(u.id);
+        if(int(made.size())>=movers) {f.world.stop(fid);stopped=t;}
+    }
+    check(int(made.size())>=movers,"factorysquad: the factory produced no army");
+    made.resize(size_t(movers));
+    int squadded=0;for(int id:made)squadded+=f.world.unit(id)->squad!=0;
+    for(int t=0;t<60;++t)f.world.tick(1.f/30);
+    const float startX=f.world.unit(made.front())->x.toFloat();
+    for(int id:made)command(tak::net::Cmd::Move,id,0,110*16,40*16);
+    int allDone=-1;
+    for(int t=0;t<3000;++t) {
+        f.world.tick(1.f/30);
+        int done=0;for(int id:made)done+=f.world.unit(id)->orders.empty();
+        if(done==movers&&allDone<0)allDone=t;
+    }
+    int done=0;long moved=0;
+    for(int id:made) {done+=f.world.unit(id)->orders.empty();moved+=long(f.world.unit(id)->x.toFloat()-startX)/16;}
+    ProbeRun r;char buf[200];
+    std::snprintf(buf,sizeof buf,"factorysquad%s mode=%d movers=%d squadded=%d done=%d/%d all_done=%d mean_moved_cells=%ld",
+        direct?"-direct":"",mode,movers,squadded,done,movers,allDone,moved/long(movers));
+    r.text=buf;r.hash=f.world.stateHash();r.a=done;r.b=allDone;return r;
+}
+void factorysquad() {
+    for(bool direct:{false,true})for(int movers:{1,4,12})for(int mode=0;mode<=2;++mode) {
+        const auto r=factorysquadRun(mode,movers,true,direct);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        if(requireW2()) {
+            const auto base=factorysquadRun(0,movers,true,direct);
+            check(r.a==movers&&r.b>=0&&r.b*100<=base.b*105,"AR-03: units of a squad-member factory must arrive as fast as without the squad");
+        }
+        if(movers==12)checkRepeatable("factorysquad",[&](bool serial) {return factorysquadRun(mode,movers,serial,direct);},r);
+    }
+}
+
+// RB-04: a Legion builder on patrol meets a damaged own structure beside its route:
+// the repair detour (an Order with patrolRepair) is a leg Legion does not route
+// today, so Retail steers it and queues a Retail search. `retail_ticks` counts
+// the ticks a patrol-repair leg is current while LegionNavigator::mission() says
+// None (Retail's steering); `legion_ticks` the ticks Legion routes it.
+// Target (3.5): retail_ticks 0, legion_ticks > 0, repaired and patrol resumed.
+ProbeRun patrolrepairRun(bool serial) {
+    Fixture f(128,96,serial);f.publish();
+    UnitType builder{};builder.id=builder.name="legion-worker";builder.isBuilder=builder.canMove=builder.canReclaim=builder.canPatrol=true;
+    builder.upright=true;builder.maxHp=100;builder.footX=builder.footZ=2;builder.maxVel=Fixed::fromInt(3);
+    builder.accel=builder.brake=Fixed::fromInt(10);builder.turnRate=builder.turnInPlaceRate=10000;builder.halfCellTicks=3;
+    builder.sight=160;builder.sightHeight=24;builder.workerTime=100;builder.buildDist=80;builder.storage=10000;builder.buildTime=1;
+    UnitType lode{};lode.id=lode.name="legion-lode";lode.side="ARA";lode.maxHp=100;lode.maxVel=Fixed();
+    lode.footX=lode.footZ=4;lode.buildTime=100;lode.buildCost=10;
+    const int id=f.spawn(builder,16,32);
+    const int damaged=f.spawn(lode,40,37);
+    f.start();
+    f.world.unit(damaged)->hp=Fixed::fromInt(25);
+    f.world.blockFoot(lode,float((40+g_shift)*16),float((37+g_shift)*16),true);
+    f.world.player(0).mana=10000;
+    f.world.patrol(id,64*16,32*16);
+    bool repaired=false,resumed=false;int repairTicks=0,retailTicks=0,legionTicks=0;
+    for(int t=0;t<2400;++t) {
+        f.world.tick(1.f/30);
+        const auto& u=*f.world.unit(id);
+        if(!u.orders.empty()) {
+            const auto& leg=u.orders[World::currentLeg(u.orders)];
+            if(leg.patrolRepair) {
+                ++repairTicks;
+                const auto* nav=f.world.legionNavigator();
+                (nav&&nav->mission(u)!=LegionMission::None?legionTicks:retailTicks)++;
+            }
+        }
+        if(f.world.unit(damaged)->hp==Fixed::fromInt(100))repaired=true;
+        if(repaired&&u.x.toFloat()>50*16)resumed=true;
+    }
+    int waypoints=0;for(const auto& o:f.world.unit(id)->orders)waypoints+=o.goal&&o.patrol;
+    ProbeRun r;char buf[220];
+    std::snprintf(buf,sizeof buf,"patrolrepair repaired=%d resumed=%d patrol_waypoints=%d repair_leg_ticks=%d retail_ticks=%d legion_ticks=%d",
+        int(repaired),int(resumed),waypoints,repairTicks,retailTicks,legionTicks);
+    r.text=buf;r.hash=f.world.stateHash();r.a=retailTicks;r.b=legionTicks;r.c=repaired&&resumed;return r;
+}
+void patrolrepair() {
+    const auto r=patrolrepairRun(true);
+    std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+    if(requireW2())check(r.a==0&&r.b>0&&r.c,"RB-04: a patrol-repair leg must be routed by Legion (0 Retail ticks), the repair done and the patrol resumed");
+    checkRepeatable("patrolrepair",patrolrepairRun,r);
+}
 }
 
 int main(int argc,char** argv) {
@@ -2473,7 +2644,8 @@ int main(int argc,char** argv) {
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
-        {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug}};
+        {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
+        {"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

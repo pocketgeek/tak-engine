@@ -43055,6 +43055,1051 @@
     }
    }
   },
+  "mazeapproach": {
+   "legion": {
+    "approach.arrive.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8670
+    },
+    "approach.arrive.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8203
+    },
+    "approach.arrive.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8670
+    },
+    "approach.arrived_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "approach.complete.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 9001
+    },
+    "approach.complete.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 9001
+    },
+    "approach.complete.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 9001
+    },
+    "approach.complete_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "approach.dropped_unarrived_n": {
+     "dir": "lower",
+     "reason": "safety key: the maze approach walk (about 8200 ticks) is never stopped mid-route; W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": 0
+    },
+    "approach.wait.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1333
+    },
+    "approach.wait.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 642
+    },
+    "contact_other_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "contact_own_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 171
+    },
+    "contact_settled_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.complete_dist_max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 12
+    },
+    "g.A.complete_dist_median": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 11
+    },
+    "g.A.complete_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "g.A.complete_outside_radius": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "g.A.dead": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.left_behind": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "g.A.n": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "g.A.orders_done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.radius_px": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 67
+    },
+    "g.A.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "parked_no_progress": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "reversals": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    },
+    "spins": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": 0
+    },
+    "stopped_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 103
+    },
+    "walk_in_place": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "wall_touch_near_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 900
+    },
+    "wall_touch_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 900
+    },
+    "work.detour_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 119
+    },
+    "work.detour_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detour_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 924
+    },
+    "work.detours.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.detours.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detours.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.field_work.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 39480
+    },
+    "work.field_work.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 46560
+    },
+    "work.field_work_first_solo.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 39480
+    },
+    "work.field_work_first_solo.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work_first_solo.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 46560
+    },
+    "work.fields_built.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_built.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_built.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.fields_started_by_kind_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_started_by_kind_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_started_by_kind_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.group_loop_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.group_loop_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.group_loop_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 310
+    },
+    "work.groups.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.groups.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.groups.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.held_rechecks.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.held_rechecks.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.held_rechecks.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 465
+    },
+    "work.holds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.holds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.holds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 6
+    },
+    "work.join_iterations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 7
+    },
+    "work.join_iterations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.join_iterations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 7
+    },
+    "work.legion_total.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 39633
+    },
+    "work.legion_total.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 156
+    },
+    "work.legion_total.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 750691
+    },
+    "work.line_sweeps.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 15
+    },
+    "work.line_sweeps.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 14
+    },
+    "work.line_sweeps.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 92413
+    },
+    "work.mission_legs_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.mission_legs_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.mission_legs_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.move_calls_by_state_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.move_calls_by_state_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.move_calls_by_state_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 32311
+    },
+    "work.move_calls_by_state_2.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.move_calls_by_state_2.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.move_calls_by_state_2.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 581
+    },
+    "work.move_calls_by_state_3.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.move_calls_by_state_3.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.move_calls_by_state_3.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.move_calls_by_state_5.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.move_calls_by_state_5.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.move_calls_by_state_5.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3104
+    },
+    "work.moves.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.moves.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.moves.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 35773
+    },
+    "work.pass_scan_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 96
+    },
+    "work.pass_scan_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 96
+    },
+    "work.pass_scan_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 316961
+    },
+    "work.pass_scans.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.pass_scans.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.pass_scans.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 13211
+    },
+    "work.pass_scans_skipped.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.pass_scans_skipped.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.pass_scans_skipped.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 17264
+    },
+    "work.plane_builds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.plane_builds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.plane_builds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.registrations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.registrations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.registrations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.sched_group_visits.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.sched_group_visits.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.sched_group_visits.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3
+    },
+    "work.slides.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.slides.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.slides.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 72
+    },
+    "work.still_units_processed.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.still_units_processed.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.still_units_processed.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 132
+    },
+    "work.trace_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 99
+    },
+    "work.trace_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 71
+    },
+    "work.trace_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 385339
+    },
+    "work.trapped.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.trapped.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.trapped.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.waiting_member_ticks.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.waiting_member_ticks.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.waiting_member_ticks.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    }
+   },
+   "retail": {
+    "hash@-1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "2d52a3546ece71af"
+    },
+    "hash@-2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "73ba1dcf846345e3"
+    },
+    "hash@0": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "2d52a3546ece71af"
+    },
+    "hash@1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "4a838e05a7f60293"
+    },
+    "hash@2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "4a838e05a7f60293"
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    }
+   }
+  },
   "mazeform": {
    "legion": {
     "contact_other_permille": {
@@ -65625,6 +66670,3096 @@
     }
    }
   },
+  "structsquad": {
+   "legion": {
+    "contact_other_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "contact_own_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 276
+    },
+    "contact_settled_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.complete_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.complete_outside_radius": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.dead": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.left_behind": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "g.A.n": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "g.A.orders_done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.radius_px": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 151
+    },
+    "g.A.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "parked_no_progress": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "region.goal.inside": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "reversals": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    },
+    "spins": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": 0
+    },
+    "stopped_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "walk_in_place": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "wall_touch_near_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "wall_touch_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.arrivals.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.arrivals.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.arrivals.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.aware_pairs.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.aware_pairs.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.aware_pairs.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 49
+    },
+    "work.completion_dist_0.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.completion_dist_0.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.completion_dist_0.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.crowd_window_ring_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 144
+    },
+    "work.crowd_window_ring_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.crowd_window_ring_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 468
+    },
+    "work.detour_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detour_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detour_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detours.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detours.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detours.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 148944
+    },
+    "work.field_work.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 148944
+    },
+    "work.field_work_first_slot.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 110320
+    },
+    "work.field_work_first_slot.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work_first_slot.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 110320
+    },
+    "work.field_work_first_solo.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 38624
+    },
+    "work.field_work_first_solo.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work_first_solo.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 38624
+    },
+    "work.fields_built.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.fields_built.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_built.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.fields_started_by_kind_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.fields_started_by_kind_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_started_by_kind_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.formation_ring_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 719
+    },
+    "work.formation_ring_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.formation_ring_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 719
+    },
+    "work.group_loop_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 81
+    },
+    "work.group_loop_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.group_loop_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 147
+    },
+    "work.groups.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.groups.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.groups.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3
+    },
+    "work.held_rechecks.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.held_rechecks.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.held_rechecks.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.holds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.holds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.holds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 6
+    },
+    "work.join_iterations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 79
+    },
+    "work.join_iterations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.join_iterations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 79
+    },
+    "work.legion_total.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 152434
+    },
+    "work.legion_total.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1417
+    },
+    "work.legion_total.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 451459
+    },
+    "work.line_sweeps.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.line_sweeps.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 14
+    },
+    "work.line_sweeps.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3198
+    },
+    "work.mission_arrivals_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.mission_arrivals_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.mission_arrivals_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.mission_legs_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 40
+    },
+    "work.mission_legs_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.mission_legs_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 42
+    },
+    "work.move_calls_by_state_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 21
+    },
+    "work.move_calls_by_state_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 21
+    },
+    "work.move_calls_by_state_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 30420
+    },
+    "work.move_calls_by_state_2.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.move_calls_by_state_2.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.move_calls_by_state_2.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 11
+    },
+    "work.move_calls_by_state_3.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.move_calls_by_state_3.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.move_calls_by_state_3.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 21
+    },
+    "work.moves.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 21
+    },
+    "work.moves.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 21
+    },
+    "work.moves.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 30452
+    },
+    "work.pass_scan_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 384
+    },
+    "work.pass_scan_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 384
+    },
+    "work.pass_scan_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 50745
+    },
+    "work.pass_scans.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 14
+    },
+    "work.pass_scans.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 13
+    },
+    "work.pass_scans.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1934
+    },
+    "work.pass_scans_skipped.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.pass_scans_skipped.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.pass_scans_skipped.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 28010
+    },
+    "work.plane_builds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.plane_builds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.plane_builds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.rechoice_bfs_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.rechoice_bfs_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.rechoice_bfs_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.registrations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 40
+    },
+    "work.registrations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.registrations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 42
+    },
+    "work.sched_group_visits.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.sched_group_visits.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.sched_group_visits.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.slides.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3
+    },
+    "work.slides.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.slides.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 27
+    },
+    "work.slot_search_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 719
+    },
+    "work.slot_search_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.slot_search_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 719
+    },
+    "work.still_units_processed.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.still_units_processed.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.still_units_processed.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 35
+    },
+    "work.trace_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2666
+    },
+    "work.trace_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1304
+    },
+    "work.trace_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 246414
+    }
+   },
+   "retail": {
+    "hash@-1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "ee71cf6fd4326482"
+    },
+    "hash@-2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "fd7cc8820a0a9731"
+    },
+    "hash@0": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "b30cb359e198d0c8"
+    },
+    "hash@1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "0a6908df37712275"
+    },
+    "hash@2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "b19af6155d3c49c4"
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    }
+   }
+  },
+  "structsquad-keep": {
+   "legion": {
+    "contact_other_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "contact_own_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 594
+    },
+    "contact_settled_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.complete_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.complete_outside_radius": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.dead": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.left_behind": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "g.A.n": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "g.A.orders_done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.radius_px": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 151
+    },
+    "g.A.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "parked_no_progress": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "region.goal.inside": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "reversals": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    },
+    "spins": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": 0
+    },
+    "stopped_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 845
+    },
+    "walk_in_place": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "wall_touch_near_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "wall_touch_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.crowd_window_ring_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 504
+    },
+    "work.crowd_window_ring_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 216
+    },
+    "work.crowd_window_ring_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 22104
+    },
+    "work.detour_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 544
+    },
+    "work.detour_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detour_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 7857
+    },
+    "work.detours.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.detours.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detours.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 15
+    },
+    "work.field_work.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 110120
+    },
+    "work.field_work.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 110120
+    },
+    "work.field_work_first_slot.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 110120
+    },
+    "work.field_work_first_slot.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work_first_slot.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 110120
+    },
+    "work.fields_built.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_built.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_built.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_started_by_kind_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_started_by_kind_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_started_by_kind_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.formation_ring_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 719
+    },
+    "work.formation_ring_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.formation_ring_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 719
+    },
+    "work.group_loop_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 40
+    },
+    "work.group_loop_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.group_loop_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 90
+    },
+    "work.groups.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.groups.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.groups.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.held_rechecks.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 18
+    },
+    "work.held_rechecks.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 18
+    },
+    "work.held_rechecks.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 22271
+    },
+    "work.holds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 12
+    },
+    "work.holds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.holds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 55
+    },
+    "work.join_iterations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 39
+    },
+    "work.join_iterations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.join_iterations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 39
+    },
+    "work.legion_total.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 113545
+    },
+    "work.legion_total.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 9556
+    },
+    "work.legion_total.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1650717
+    },
+    "work.line_sweeps.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.line_sweeps.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 5
+    },
+    "work.line_sweeps.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 799
+    },
+    "work.mission_legs_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 40
+    },
+    "work.mission_legs_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.mission_legs_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 40
+    },
+    "work.move_calls_by_state_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.move_calls_by_state_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.move_calls_by_state_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4681
+    },
+    "work.move_calls_by_state_2.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 19
+    },
+    "work.move_calls_by_state_2.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 19
+    },
+    "work.move_calls_by_state_2.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 25279
+    },
+    "work.move_calls_by_state_3.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.move_calls_by_state_3.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.move_calls_by_state_3.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.moves.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.moves.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.moves.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 18942
+    },
+    "work.pass_scans_skipped.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.pass_scans_skipped.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 20
+    },
+    "work.pass_scans_skipped.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 14520
+    },
+    "work.plane_builds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.plane_builds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.plane_builds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.rechoice_bfs_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 24972
+    },
+    "work.rechoice_bfs_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8748
+    },
+    "work.rechoice_bfs_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1381284
+    },
+    "work.registrations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 40
+    },
+    "work.registrations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.registrations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 40
+    },
+    "work.sched_group_visits.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.sched_group_visits.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.sched_group_visits.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.slides.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3
+    },
+    "work.slides.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.slides.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 51
+    },
+    "work.slot_search_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 24972
+    },
+    "work.slot_search_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8748
+    },
+    "work.slot_search_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1382003
+    },
+    "work.trace_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2666
+    },
+    "work.trace_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 658
+    },
+    "work.trace_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 105398
+    }
+   },
+   "retail": {
+    "hash@-1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "15348f4bf0713825"
+    },
+    "hash@-2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "a80d4929b38c58ed"
+    },
+    "hash@0": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "dd8f58362e902ee7"
+    },
+    "hash@1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "dd44a4328cd4b38d"
+    },
+    "hash@2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "b9d1c8875059441d"
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    }
+   }
+  },
+  "unreach-200": {
+   "legion": {
+    "approach.arrive.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "approach.arrive.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "approach.arrive.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "approach.arrived_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 57
+    },
+    "approach.complete.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 9005
+    },
+    "approach.complete.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 9002
+    },
+    "approach.complete.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 9004
+    },
+    "approach.complete_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "approach.dropped_unarrived_n": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 143
+    },
+    "approach.wait.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "approach.wait.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8345
+    },
+    "contact_other_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "contact_own_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 992
+    },
+    "contact_settled_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.arrived": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.complete_dist_max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 138
+    },
+    "g.A.complete_dist_median": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 101
+    },
+    "g.A.complete_n": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "g.A.complete_outside_radius": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "g.A.dead": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.left_behind": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "g.A.n": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "g.A.orders_done": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "g.A.radius_px": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 478
+    },
+    "g.A.t50": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "g.A.t90": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": -1
+    },
+    "parked_no_progress": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "reversals": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    },
+    "spins": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": 0
+    },
+    "stopped_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 942
+    },
+    "walk_in_place": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "wall_touch_near_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 21
+    },
+    "wall_touch_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.aware_pairs.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 16
+    },
+    "work.aware_pairs.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.aware_pairs.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 257
+    },
+    "work.detour_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 632
+    },
+    "work.detour_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.detour_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 21827
+    },
+    "work.detours.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.detours.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.detours.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 28
+    },
+    "work.field_work.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 86000
+    },
+    "work.field_work.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 86000
+    },
+    "work.field_work_first_solo.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 86000
+    },
+    "work.field_work_first_solo.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.field_work_first_solo.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 86000
+    },
+    "work.fields_built.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_built.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_built.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_shared.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_shared.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_shared.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3
+    },
+    "work.fields_started_by_kind_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.fields_started_by_kind_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.fields_started_by_kind_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.group_loop_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 384
+    },
+    "work.group_loop_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.group_loop_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2032
+    },
+    "work.groups.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.groups.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.groups.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.held_rechecks.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 160
+    },
+    "work.held_rechecks.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 157
+    },
+    "work.held_rechecks.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1209346
+    },
+    "work.holds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 10
+    },
+    "work.holds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.holds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1539
+    },
+    "work.join_iterations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 383
+    },
+    "work.join_iterations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.join_iterations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 828
+    },
+    "work.legion_total.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 91976
+    },
+    "work.legion_total.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1751
+    },
+    "work.legion_total.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1940759
+    },
+    "work.line_sweeps.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 64
+    },
+    "work.line_sweeps.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 28
+    },
+    "work.line_sweeps.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 11037
+    },
+    "work.mission_legs_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 128
+    },
+    "work.mission_legs_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.mission_legs_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 400
+    },
+    "work.move_calls_by_state_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.move_calls_by_state_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.move_calls_by_state_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 104429
+    },
+    "work.move_calls_by_state_2.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 162
+    },
+    "work.move_calls_by_state_2.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 160
+    },
+    "work.move_calls_by_state_2.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1243868
+    },
+    "work.move_calls_by_state_3.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 64
+    },
+    "work.move_calls_by_state_3.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.move_calls_by_state_3.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.move_calls_by_state_5.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 57
+    },
+    "work.move_calls_by_state_5.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 57
+    },
+    "work.move_calls_by_state_5.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 456332
+    },
+    "work.moves.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.moves.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.moves.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1196634
+    },
+    "work.pass_scan_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 48
+    },
+    "work.pass_scan_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 24
+    },
+    "work.pass_scan_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2856
+    },
+    "work.pass_scans.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2
+    },
+    "work.pass_scans.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.pass_scans.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 119
+    },
+    "work.pass_scans_skipped.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.pass_scans_skipped.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.pass_scans_skipped.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 698238
+    },
+    "work.plane_builds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.plane_builds.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.plane_builds.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.registrations.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 128
+    },
+    "work.registrations.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.registrations.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 400
+    },
+    "work.sched_group_visits.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.sched_group_visits.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.sched_group_visits.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4
+    },
+    "work.share_scan_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1
+    },
+    "work.share_scan_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.share_scan_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 3
+    },
+    "work.slides.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 19
+    },
+    "work.slides.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 8
+    },
+    "work.slides.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 2483
+    },
+    "work.still_units_processed.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    },
+    "work.still_units_processed.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.still_units_processed.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 4000
+    },
+    "work.trace_cells.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 5848
+    },
+    "work.trace_cells.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 1751
+    },
+    "work.trace_cells.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 645756
+    },
+    "work.trapped.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 51
+    },
+    "work.trapped.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 0
+    },
+    "work.trapped.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 200
+    }
+   },
+   "retail": {
+    "hash@-1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "ba6afca0812ed6fe"
+    },
+    "hash@-2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "001a37a7e901dbac"
+    },
+    "hash@0": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "d5e0055dec6bd120"
+    },
+    "hash@1": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "4f0a7180823fe334"
+    },
+    "hash@2": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": "744b2d2e4dd5328e"
+    },
+    "serial_eq_workers": {
+     "dir": "lower",
+     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "eq",
+     "since": "W2s0",
+     "value": true
+    }
+   }
+  },
   "uturn": {
    "legion": {
     "contact_other_permille": {
@@ -73213,6 +77348,133 @@
    "mode": "legion",
    "reason": "fails legion <= retail x1.1 at W0: legion 1710 vs retail 1268 unit-ticks in terrain contact without progress; informational: crowdbench rows are not scenario-runner records, so legion_check.py does not evaluate this key; recorded so the W0 floor list is complete (screen: tools/crowdbench_screen.py, 6000 ticks, seed 0, turn rate 2500)",
    "scenario": "crowdbench/trapped/200x1"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "contact_own_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 163..186 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "mazeapproach"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 825..912 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "mazeapproach"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 825..912 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "mazeapproach"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "stopped_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..8 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "contact_own_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 200..313 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "contact_other_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 18..28 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "g.H.arrived",
+   "reason": "fails legion <= retail x1.1 at W2s0: legion 0 vs retail 1",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "g.H.t90",
+   "reason": "fails legion <= retail x1.1 at W2s0: legion never vs retail 0",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "stopped_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 714..854 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "structsquad-keep"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "g.A.arrived",
+   "reason": "fails legion <= retail x1.1 at W2s0: legion 0 vs retail 20",
+   "scenario": "structsquad-keep"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "g.A.t90",
+   "reason": "fails legion <= retail x1.1 at W2s0: legion never vs retail 1262",
+   "scenario": "structsquad-keep"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "reversals",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1..25 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 1..2 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 16..29 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "approach.arrived_n",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 52..70 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "approach.dropped_unarrived_n",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 130..148 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "approach.complete.t90",
+   "median5": true,
+   "reason": "fails legion <= retail x1.1 at W2s0: legion 9004 vs retail 2419",
+   "scenario": "unreach-200"
   }
  ],
  "history": [
