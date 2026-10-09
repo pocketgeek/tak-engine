@@ -292,7 +292,10 @@ void motionCase() {
 // px off (12 cells). Packed disc: 400*9*5*113/355 = 5729 px^2 (75 px). Their
 // orders end at ticks 5,10,15,20,25. Arrived: 1,2,3 (t50 at 15: 3*2 >= 5),
 // 4, then the outlier is outside: t90/done never, left_behind 1. Completion
-// distances 1,1,1,1,12 cells: median 1, max 12, one outside.
+// distances 1,1,1,1,12 cells: median 1, max 12, one outside. Read as five
+// one-body groups of one click (ruling W3 final exit (f); each disc sized for
+// the convoy's 5): click.c has the group's numbers, each group's own t90 is
+// its body's (g0 at 5, g4 never) and click_n is 5.
 void progressCase() {
     Scene s;const auto t=mover(2);
     const int cx=480,cz=480;
@@ -301,11 +304,24 @@ void progressCase() {
     for(auto [dx,dz]:off)ids.push_back(s.spawn(t,cx+dx,cz+dz));
     for(int id:ids)s.order(id,cx,cz);
     obs::Config cfg;cfg.groups={{"g",ids,cx,cz}};
-    obs::Observer o(cfg);
+    obs::Config one;
+    for(size_t i=0;i<ids.size();++i) {
+        obs::Group g{"g"+std::to_string(i),{ids[i]},cx,cz};g.discN=5;g.click="c";one.groups.push_back(g);
+    }
+    obs::Observer o(cfg),clicked(one);
     for(int tick=100;tick<140;++tick) {
         for(size_t i=0;i<ids.size();++i)if(tick-100==5*int(i+1))s.done(ids[i]);
-        o.sample(s.world,tick);
+        o.sample(s.world,tick);clicked.sample(s.world,tick);
     }
+    const auto c=clicked.report();
+    expect("progress",c,"click.c.n",5);
+    expect("progress",c,"click.c.arrived",4);
+    expect("progress",c,"click.c.t50",15);
+    expect("progress",c,"click.c.t90",-1);
+    expect("progress",c,"click.c.done",-1);
+    expect("progress",c,"g.g0.t90",5);
+    expect("progress",c,"g.g4.t90",-1);
+    expect("progress",c,"g.g4.click_n",5);
     const auto k=o.report();
     expect("progress",k,"g.g.radius_px",75);
     expect("progress",k,"g.g.t50",15);

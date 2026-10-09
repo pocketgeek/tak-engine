@@ -310,6 +310,19 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
             if (groupConvoy[h] == groupConvoy[g]) n += int(cfg.groups[h].ids.size());
         cfg.groups[g].discN = n;
     }
+    // Lead ruling W3 final exit (f): one-body groups whose clicks one convoy merged (aware-*, motion-*) are judged on
+    // the Retail floor at click level -- the convoy's arrived / t90 / done -- in both modes; the observer reads every
+    // group of such a convoy as one click, named by its first group (the per-body keys stay, report-only).
+    for (size_t g = 0; g < cfg.groups.size(); ++g) {
+        if (!groupConvoy[g] || !cfg.groups[g].click.empty()) continue;
+        int groups = 0;
+        bool oneBody = false;
+        for (size_t h = g; h < cfg.groups.size(); ++h)
+            if (groupConvoy[h] == groupConvoy[g]) { ++groups; oneBody |= cfg.groups[h].ids.size() == 1; }
+        if (groups < 2 || !oneBody) continue;
+        for (size_t h = g; h < cfg.groups.size(); ++h)
+            if (groupConvoy[h] == groupConvoy[g]) cfg.groups[h].click = cfg.groups[g].name;
+    }
     for (const auto& sh : s.shapes) {
         const float x0 = std::min(sh.x0, sh.x1), x1 = std::max(sh.x0, sh.x1);
         const float z0 = std::min(sh.z0, sh.z1), z1 = std::max(sh.z0, sh.z1);

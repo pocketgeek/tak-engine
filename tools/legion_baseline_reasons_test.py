@@ -227,6 +227,67 @@ class Gate(unittest.TestCase):
         self.assertEqual(doc["exceptions"], exc)
         self.assertEqual(doc["history"][0]["cleared_exceptions"], [])
 
+    def test_ratchet_converts_the_spread_a_cleared_floor_exception_masked(self):
+        # Ruling (h), W3 final exit: a floor exception also covers its key's offset spread (exception_for
+        # reads it). When the ratchet clears it, that spread must stay excepted, or the next check fails.
+        exc = [{"scenario": S, "key": "g.A.t90", "cluster": "MV-11", "reason": "known"},
+               {"scenario": S, "key": "g.A.t50", "cluster": "MV-11", "reason": "known"}]
+        doc = baseline({"g.A.t90": entry(1000, band=1.20), "g.A.t50": entry(1000, band=1.20)}, exceptions=exc)
+        retail = rec({"g.A.t90": 500, "g.A.t50": 500}, mode="retail")
+        five = [0, 1, -1, 2, -2]
+        legion = rec({"g.A.t90": 540, "g.A.t50": 540}, offsets=five,
+                     varying={"g.A.t90": [540, 900, 540, 400, 540]})   # spread 400..900; t50 steady
+        r = run_check(doc, legion, retail)
+        self.assertTrue(r.ok, r.fails)
+        self.assertEqual(len(r.cleared), 1)                     # t90 passes the floor now; t50 is no floor key
+        self.assertEqual(sorted(r.masked), [(S, "legion", "g.A.t90")])
+        lc.apply_ratchet(doc, r, "cleared", "2026-01-01T00:00:00Z")
+        self.assertEqual(doc["history"][0]["cleared_exceptions"], [S + "/g.A.t90"])
+        spread = [x for x in doc["exceptions"] if x["key"] == "g.A.t90"]
+        self.assertEqual(len(spread), 1)
+        self.assertTrue(lc.is_spread_exception(spread[0]), spread[0])
+        self.assertEqual((spread[0]["mode"], spread[0]["cluster"]), ("legion", "MV-11"))
+        self.assertEqual(lc.validate_baseline(doc), [])
+        r = run_check(doc, legion, retail)                      # the unmasked spread would fail here
+        self.assertTrue(r.ok, r.fails)
+        self.assertEqual(r.cleared, [])
+        # a cleared floor exception whose key is steady leaves nothing behind
+        doc = baseline({"g.A.t90": entry(1000, band=1.20)}, exceptions=[dict(exc[0])])
+        r = run_check(doc, rec({"g.A.t90": 540}, offsets=five), retail)
+        lc.apply_ratchet(doc, r, "cleared", "2026-01-01T00:00:00Z")
+        self.assertEqual(doc["exceptions"], [])
+
+    def test_one_body_groups_of_a_click_are_judged_at_click_level(self):
+        # Ruling (f), W3 final exit: a one-body group inside a multi-body click (g.X.click_n > 1) is
+        # report-only on arrived / t50 / t90 / done; the click's keys carry the band and the floor.
+        doc = baseline({"g.a.t90": entry(1000), "g.a.arrived": entry(1, dir="higher"),
+                        "click.a.t90": entry(1000), "g.p.t90": entry(1000)})
+        lk = {"g.a.n": 1, "g.a.click_n": 24, "g.a.t90": -1, "g.a.arrived": 0, "click.a.n": 24,
+              "click.a.t90": 1050, "g.p.n": 20, "g.p.t90": 1000}
+        rk = {"g.a.n": 1, "g.a.click_n": 24, "g.a.t90": 900, "g.a.arrived": 1, "click.a.n": 24,
+              "click.a.t90": 1000, "g.p.n": 20, "g.p.t90": 1000}
+        r = run_check(doc, rec(lk), rec(rk, mode="retail"))
+        self.assertTrue(r.ok, r.fails)                          # never / 0 on the body: report-only
+        self.assertEqual(r.report_only, 2)                      # g.a.t90 and g.a.arrived on the floor
+        self.assertTrue(lc.is_report_only("g.a.done", rec(lk)))
+        self.assertFalse(lc.is_report_only("g.a.complete_n", rec(lk)))
+        self.assertFalse(lc.is_report_only("g.p.t90", rec(lk)))      # twenty bodies: its own group
+        # the click is gated: its band and the Retail floor
+        r = run_check(doc, rec(dict(lk, **{"click.a.t90": 1300})), rec(rk, mode="retail"))
+        self.assertFalse(r.ok)
+        self.assertTrue(any("click.a.t90" in f and "Retail floor" in f for f in r.fails), r.fails)
+        # a group alone (no click_n) keeps its floor
+        alone = {k: v for k, v in lk.items() if k != "g.a.click_n"}
+        r = run_check(doc, rec(alone), rec({k: v for k, v in rk.items() if k != "g.a.click_n"}, mode="retail"))
+        self.assertFalse(r.ok)
+        # a retake takes no entry and no floor exception for the per-body keys
+        base = lc.empty_baseline()
+        lc.write_base(base, {(S, "legion"): rec(lk), (S, "retail"): rec(rk, mode="retail")}, "step 0", "W0",
+                      ["*"], False, [("*", "MV-12")])
+        self.assertNotIn("g.a.t90", base["entries"][S]["legion"])
+        self.assertIn("click.a.t90", base["entries"][S]["legion"])
+        self.assertEqual(base["exceptions"], [])
+
     def test_offset_spread_exception_is_not_a_floor_exception(self):
         # Ruling (c), 2026-10-09: a spread exception gates the key on median-of-5; it never
         # licenses the Retail floor (it hid wall-4x50 and motion-cross floor failures).
