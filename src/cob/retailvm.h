@@ -9,6 +9,14 @@
 
 namespace tak::cob {
 
+class RetailVm;
+#ifndef NDEBUG
+// Debug instrument hook (src/sim/simprobe.h, TAK_SIMSTATS): told about every thread start
+// and every zero-elapsed run, so the sim's sleep-skip probe can see a VM touched from
+// outside its own tick. It observes only; release builds have no hook.
+inline thread_local void (*gRetailVmTouch)(const RetailVm*) = nullptr;
+#endif
+
 // Integer thread interpreter observed at 56c540 / 56c870 / 56c8b0.
 // Piece operations and engine queries belong to the host. Unlike the display
 // VM, a CALL occupies another one of the sixteen slots and suspends its caller.
@@ -47,6 +55,9 @@ public:
     uint32_t activeThreadMask() const { return threadMask_; }
 
     int start(const File& file,int script,std::span<const uint32_t> args={}) {
+#ifndef NDEBUG
+        if (gRetailVmTouch) gRetailVmTouch(this);
+#endif
         if (script<0 || size_t(script)>=file.scripts.size()) return -1;
         const uint32_t free=~threadMask_&0xffffu;
         if(free) {

@@ -413,6 +413,9 @@
                 { std::lock_guard<std::mutex> lk(inboxMutex_); simInbox_.push_back(std::move(job)); }
                 inboxCv_.notify_one();
             } else {
+#ifndef NDEBUG
+                PaceSpan jobSpan(paceJobWallNs_, &paceJobCpuNs_);
+#endif
                 for (const auto& c : bd.cmds) apply(c);
                 for (const auto& e : bd.events) applyEvent(e);
                 // Only the SIM half per bundle (speedMult() is 1 in net games): the
@@ -452,9 +455,22 @@
         if (netAuto_) {
             // Size the buffer to cover the measured bundle-arrival jitter, with an
             // RTT-scaled floor, clamped. Recomputed each frame so it tracks the link.
-            int kJit = int(std::ceil(mp_->arrivalJitterMs() / (1000.0f / 30.0f)));
-            int kRtt = int(std::ceil(mp_->rttMs() / 60.0f));   // gentle RTT floor
-            netDelay_ = std::clamp(2 + std::max(kJit, kRtt), 2, 16);
+            // Everything is in ticks at the CURRENT game speed (tickMs = 1000/(30*speed)): a
+            // reserve sized in 1x ticks is a handful of ms at 8x, shorter than one display frame.
+            // The frame term keeps at least one frame's worth of arrivals in hand, since a frame
+            // consumes up to frameMs/tickMs ticks at once.
+            const float sp = std::max(1, int(mp_->gameSpeed())) / 10.0f;
+            const float tickMs = 1000.0f / (30.0f * sp);
+            const uint64_t nowF = SDL_GetTicks64();
+            if (netFrameAt_) {
+                const float f = std::min(250.0f, float(nowF - netFrameAt_));
+                netFrameMs_ += 0.1f * (f - netFrameMs_);
+            }
+            netFrameAt_ = nowF;
+            int kJit = int(std::ceil(mp_->arrivalJitterMs() / tickMs));
+            int kRtt = int(std::ceil(mp_->rttMs() / 60.0f));   // gentle RTT floor (1x ticks, as before)
+            int kFrame = netFrameMs_ > tickMs ? int(std::ceil(netFrameMs_ / tickMs)) : 0;   // sub-tick frames: 1x unchanged
+            netDelay_ = std::clamp(2 + std::max({kJit, kRtt, kFrame}), 2, std::max(16, int(16.0f * sp)));
         }
         if (netDelay_ <= 0) {
             // Default: drain to the newest delivered bundle every frame.
@@ -555,6 +571,20 @@
                 fr.tick = netTick_;
             }
             fr.buffered = paceBuffered; fr.rate = paceRate; fr.fastForward = paceFF;
+            // What the frame shows: the pinned snapshot, interpolated the way the render does.
+            fr.shown = front().gameTick;
+            const double alpha = front().tickDurMs > 0.0f
+                ? std::clamp(double(nowMs - front().tickMs) / double(front().tickDurMs), 0.0, 1.0) : 1.0;
+            fr.td = double(fr.shown) - 1.0 + alpha;
+            fr.lockWaitUs = double(paceLockWaitNs_) / 1000.0;
+            paceLockWaitNs_ = 0;
+            const uint64_t now[5] = {paceWorldNs_.load(), paceCaptureNs_.load(), paceHashNs_.load(),
+                                     paceJobWallNs_.load(), paceJobCpuNs_.load()};
+            double* out[5] = {&fr.worldMs, &fr.captureMs, &fr.hashMs, &fr.jobWallMs, &fr.jobCpuMs};
+            for (size_t i = 0; i < 5; ++i) {
+                *out[i] = double(now[i] - paceSeenNs_[i]) / 1e6;
+                paceSeenNs_[i] = now[i];
+            }
             pace_.frame(fr);
         }
 #endif

@@ -2066,11 +2066,16 @@
         // Advance the sim in sub-steps capped at 1/30s so fast speeds (or a laggy
         // frame) can't move a unit far enough to tunnel a wall; effects/AI below use
         // the full scaled dt (they only interpolate, so a big step is harmless).
+        {
+#ifndef NDEBUG
+        PaceSpan worldSpan(paceWorldNs_);
+#endif
         for (float rem = dt, guard = 0; rem > 1e-5f && guard < 16; ++guard) {
             float step = std::min(rem, 1.0f / 30.0f);
             world_.tick(step);
             captureTransportEffects();
             rem -= step;
+        }
         }
         profSimTicks_ += int64_t(SDL_GetPerformanceCounter()) - _sim0;
         // God economy: the SIM summons gods now (World::summonReadyGods, called from
@@ -2141,6 +2146,9 @@
         // vectors from here would read them while they grow. The main thread picks
         // this up (see cosmeticStep) and does the work.
         if (previousOutcome == 0 && outcome_ != 0) replayWanted_.store(true, std::memory_order_relaxed);
+#ifndef NDEBUG
+        PaceSpan captureSpan(paceCaptureNs_);
+#endif
         captureFrame();   // snapshot post-tick unit state for the render (poses + read fields)
     }
 
@@ -2314,7 +2322,16 @@
                 ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
                 : int(u.underConstruction);
             s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
-            s.buildQueue = u.buildQueue; s.captureOrders(u);
+            // Orders/rally/areaVisited are read for the VIEWED player's units only (the order
+            // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
+            // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
+            // bulk of the capture cost at 10k units. Queues are tiny and only factories hold
+            // one, so an ally's stay visible for the HUD -- and every player's for a spectator
+            // or replay viewer, whose info panel shows any selected factory's queue.
+            if (u.player==localPlayer_) s.captureOrders(u);
+            else s.clearOrders();
+            if (u.player==localPlayer_ || alliedToLocal(u.player) || spectating_ || replayMode_) s.buildQueue = u.buildQueue;
+            else s.buildQueue.clear();
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.captureMovement(u);
             s.corpseAnimationTicks=u.corpseAnimationTicks();
@@ -4313,6 +4330,9 @@
             }
             uint64_t hash = 0, pos = 0;
             {
+#ifndef NDEBUG
+                PaceSpan jobSpan(paceJobWallNs_, &paceJobCpuNs_);
+#endif
                 std::lock_guard<std::mutex> lk(simMutex_);
                 for (const auto& c : job.bundle.cmds) apply(c);
                 for (const auto& e : job.bundle.events) applyEvent(e);
@@ -4351,6 +4371,7 @@
         std::lock_guard<std::mutex> lk(frameMutex_);
         renderReadIdx_ = published_;
         reading_ = published_;
+        placePreviewBusy_ = false;   // one failed try_lock per frame at most (canPlacePreview)
         if (!gameStartMs_ && front().gameTick > 0) gameStartMs_ = SDL_GetTicks64();
         // A previously selected enemy must stop exposing its live state on leaving sight.
         std::erase_if(selection_, [this](int id) {

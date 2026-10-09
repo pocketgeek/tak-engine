@@ -29,6 +29,7 @@
 #include "sim/retailgrade.h"
 #include "sim/retailmap.h"
 #include "cob/retailstate.h"
+#include "sim/simprobe.h"
 
 #include <algorithm>
 #include <atomic>
@@ -2216,6 +2217,9 @@ private:
     template <class F>
     void forEachNear(float x, float z, float radius, F&& fn, uint64_t players=~uint64_t(0)) const {
         if (gW_ <= 0) return;
+#ifndef NDEBUG
+        if (probe::kStats) probeNear(x, z, radius, players, false);
+#endif
         int r = int(radius / gCell_) + 1;
         int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
         for (int dz = -r; dz <= r; ++dz) {
@@ -2385,6 +2389,33 @@ private:
     bool gPlayersValid_=false;
     int gW_ = 0, gH_ = 0;
     float gCell_ = 32.0f, gOx_ = 0, gOz_ = 0;
+#ifndef NDEBUG
+    // TAK_SIMSTATS (simprobe.h) only. probeNear walks forEachNear's cells a second time and
+    // counts what the A2 culls would skip: an 8x8-cell block whose owner mask (built here,
+    // in rebuildGrid, only under the probe) has none of the wanted players, and, for
+    // findTarget (disk), a cell whose box lies wholly outside the search radius + 2 px.
+    std::vector<uint64_t> gBlockPlayersProbe_;
+    int gBlockWProbe_ = 0;
+    void probeNear(float x, float z, float radius, uint64_t players, bool disk) const;
+    // The A1 COB sleep-skip predicate, evaluated after every real tick and never acted on.
+    // wake: the first tick at which the VM must run (0 = every tick, UINT32_MAX = only after
+    // an outside start); debt: ticks it could have skipped since it last ran or was flushed.
+    // owner maps a VM to its unit, so a touch from outside (a thread start or zero-elapsed
+    // run; cob::gRetailVmTouch) can count the flush A1 would need and reset the wake.
+    struct ScriptSkipProbe {
+        std::vector<uint32_t> wake, debt;
+        std::unordered_map<const void*, int> owner;
+        int ticking = -1;
+    } scriptProbe_;
+    void probeScriptTouch(const void* vm);
+    void probeScriptBefore(int id, bool eligible);
+    void probeScriptAfter(int id, const cob::RetailScriptState& state, bool eligible);
+    // The world whose tick is running on this thread; the hook is installed only for the
+    // duration of World::tick, so a VM touched between ticks (a command applied before the
+    // tick) is not seen -- the probe slightly overcounts vm_skippable for those VMs.
+    static inline thread_local World* probeWorld_ = nullptr;
+    static void probeVmTouch(const cob::RetailVm* vm) { if (probeWorld_) probeWorld_->probeScriptTouch(vm); }
+#endif
 
     std::atomic<uint32_t> featGen_{0};   // see featGeneration()
     void bumpFeatGen() { featGen_.fetch_add(1, std::memory_order_release); }

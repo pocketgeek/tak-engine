@@ -385,8 +385,12 @@ private:
     float arrivalJitterMs_ = 0;
     void noteBundleArrival(uint64_t now) {
         if (lastBundleMs_) {
-            float late = float(now - lastBundleMs_) - 1000.0f / 30.0f;
-            arrivalJitterMs_ = std::max(std::max(0.0f, late), arrivalJitterMs_ - 0.4f);
+            // Lateness against the schedule at the CURRENT game speed: at 8x bundles are due every
+            // 4.2 ms, so measuring against the 1x 33 ms interval read every gap as early (jitter 0).
+            // The decay is 0.4 ms per 1x-tick of wall time, so it is per bundle / speed.
+            const float sp = float(std::max<int>(1, gameSpeed_)) / 10.0f;
+            float late = float(now - lastBundleMs_) - 1000.0f / (30.0f * sp);
+            arrivalJitterMs_ = std::max(std::max(0.0f, late), arrivalJitterMs_ - 0.4f / sp);
         }
         lastBundleMs_ = now;
     }

@@ -109,6 +109,7 @@
 #include <unordered_set>
 #include <memory>
 #include <mutex>
+#include <time.h>   // clock_gettime(CLOCK_THREAD_CPUTIME_ID): TAK_PACELOG worker CPU time
 #include <optional>
 #include <random>
 #include <set>
@@ -641,6 +642,9 @@ public:
     // spectator-only games came back "clean" while comparing nothing at all.
     uint64_t reportedHash(bool spectator, uint32_t tick) {
         if (spectator) return 0;
+#ifndef NDEBUG
+        PaceSpan span(paceHashNs_);
+#endif
         uint64_t h = world_.stateHash();
         if (fakeDesyncTick_ && tick >= fakeDesyncTick_) h ^= 0x9e3779b97f4a7c15ull;
         return h;
@@ -2165,6 +2169,7 @@ private:
     bool netAuto_ = false;       // auto (default): size the buffer to the link
     bool netBufReady_ = false;   // built the initial reserve
     float netAccum_ = 0;         // wall-clock tick accumulator (seconds)
+    uint64_t netFrameAt_ = 0; float netFrameMs_ = 0;   // smoothed render-frame interval (S1)
     uint64_t netStepMs_ = 0;     // last mpStep wall time
     long netBenchFrames_ = 0, netBenchStalls_ = 0;   // jitter-buffer stall metric
 public:
@@ -2186,6 +2191,45 @@ public:
     bool paceInit_ = false;
     uint32_t paceLastTick_ = 0;
     uint64_t paceLastMs_ = 0;
+    // TAK_PACELOG worker columns: ns accumulated by whichever thread runs the sim (the worker,
+    // or the main thread inline), read as per-frame deltas by the main thread. Lock waits are
+    // the render thread's own (canPlaceLocked / clearableAt, the per-frame placement checks).
+    std::atomic<uint64_t> paceWorldNs_{0}, paceCaptureNs_{0}, paceHashNs_{0}, paceJobWallNs_{0}, paceJobCpuNs_{0};
+    std::array<uint64_t, 5> paceSeenNs_{};
+    uint64_t paceLockWaitNs_ = 0;
+    static bool paceOn() {
+        static const bool on = [] { const char* v = tak::devEnv("TAK_PACELOG"); return v && *v && !(v[0] == '0' && !v[1]); }();
+        return on;
+    }
+    void lockSimTimed(std::unique_lock<std::mutex>& lk);
+    // Adds the wall ns of its scope to `acc` (and the thread-CPU ns to `cpu`, if given) when
+    // TAK_PACELOG is on.
+    struct PaceSpan {
+        std::atomic<uint64_t>& acc;
+        std::atomic<uint64_t>* cpu;
+        bool on;
+        std::chrono::steady_clock::time_point t0;
+        uint64_t c0 = 0;
+        explicit PaceSpan(std::atomic<uint64_t>& a, std::atomic<uint64_t>* c = nullptr) : acc(a), cpu(c), on(paceOn()) {
+            if (!on) return;
+            t0 = std::chrono::steady_clock::now();
+            if (cpu) c0 = threadCpuNs();
+        }
+        ~PaceSpan() {
+            if (!on) return;
+            acc += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+            if (cpu) *cpu += threadCpuNs() - c0;
+        }
+        static uint64_t threadCpuNs() {
+#ifdef CLOCK_THREAD_CPUTIME_ID
+            timespec ts{};
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+            return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
+#else
+            return 0;
+#endif
+        }
+    };
     tak::postrail::Writer postrail_;              // TAK_POSTRAIL: this playback's digest trail, for the head to read back
     void openPostrail(const char* path) { postrail_.open(path); }
 private:
@@ -2575,6 +2619,18 @@ private:
     // read. Placement-UX only and rare (a ghost while positioning a building), so the brief
     // wait for the current tick is invisible; uncontended and cheap when inline.
     bool canPlaceLocked(const tak::sim::UnitType* type, float x, float z);
+    // The PER-FRAME form for ghosts (drawGhost, build line, mana drag): the verdict is cached per
+    // (type, x, z, published tick), a miss does a try_lock (never a blocking wait), and once a
+    // try has failed this frame no more are made -- the previous verdict is reused instead. The
+    // click path keeps canPlaceLocked's blocking lock, so a placement is never decided on a guess.
+    struct PlacePreview {const tak::sim::UnitType* type=nullptr; float x=0,z=0; uint32_t tick=0;
+                         bool ok=false, clearable=false, haveClear=false;};
+    std::vector<PlacePreview> placePreview_;
+    bool placePreviewBusy_ = false;     // a try_lock failed this frame
+    bool placePreviewLast_ = true;      // last verdict handed out (the no-data fallback)
+    PlacePreview& placePreviewEntry(const tak::sim::UnitType* type, float x, float z);
+    bool canPlacePreview(const tak::sim::UnitType* type, float x, float z);
+    bool placePreviewClearable(const tak::sim::UnitType* type, float x, float z);
     // A site blocked ONLY by clearable features: collect those features' ids, so the
     // placement can queue reclaims ahead of the build instead of being refused.
     // Returns false when anything else blocks (terrain, a unit, a building, an
