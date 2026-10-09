@@ -4763,7 +4763,9 @@ struct LegionNavigator::Impl {
     //    bound starts at the destination area's (areaBound) plus
     //    kSettleSlack bodies and grows by kSettleGrow bodies per window, but
     //    no completion is farther from the click than twice the crowd's
-    //    reach, the bound the old far rule allowed (C29).
+    //    reach (the bound the old far rule allowed, C29) unless the body is
+    //    one row behind a settled arrival of its own command: the cap is
+    //    measured along a queue contiguous with the settled crowd.
     // Every settle is connected (the field's way in is not much longer
     // than the straight line: no settling behind a wall) and outside a
     // factory's exit lane.
@@ -4794,7 +4796,7 @@ struct LegionNavigator::Impl {
         };
         // Nearer the point: by the field's potential at the other body's
         // origin where the field reaches it, else by pixel distance.
-        bool queued=false,foreign=false;
+        bool queued=false,foreign=false;uint16_t front=kUnreached;
         const int r=foot<=5?2:1;
         uint64_t ring=0;
         for(int j=-r;j<fz+r&&!foreign&&ring<uint64_t(kSettleRing);++j)for(int i=-r;i<fx+r&&!foreign&&ring<uint64_t(kSettleRing);++i) {
@@ -4813,7 +4815,14 @@ struct LegionNavigator::Impl {
                 // order's crowd at this very point is the destination area
                 // it settles into (a lattice of per-unit points is not one).
                 if(std::get<1>(a->second.point)!=std::get<1>(m.point))foreign=true;
-                else queued=queued||(area&&destination(a->second.point)==destination(m.point));
+                else if(area&&destination(a->second.point)==destination(m.point)) {
+                    queued=true;
+                    // The settled row in front (its potential): the queue
+                    // behind it may settle one row further back (C29 below).
+                    const int qx=footprintOrigin(other->x,fx),qz=footprintOrigin(other->z,fz);
+                    if(qx>=0&&qz>=0&&qx<W&&qz<height())
+                        if(const uint16_t q=f->at(size_t(qz*W+qx));q!=kUnreached&&(front==kUnreached||q>front))front=q;
+                }
             } else if(other->orders.empty())foreign=true;
             else if(area&&!queued) {
                 const Member* peer=member(o);
@@ -4844,10 +4853,21 @@ struct LegionNavigator::Impl {
             ++m.rechoices;
             if(rechoose(u,m,g,p,*f,potential)||!press)return false;
         }
-        const uint32_t grow=uint32_t(kSettleGrow*foot*kOrthogonal);
-        const uint32_t cap=uint32_t(std::min<int64_t>(0xfffe,factor*((2*reach*kDiagonal)/16+int64_t(3*foot*kOrthogonal))));
-        if(!m.settleP)m.settleP=std::min(cap,areaBound(g,m,fx,fz,body)+uint32_t(kSettleSlack*foot*kOrthogonal));
-        if(potential<=m.settleP&&dist<=2*reach&&connected(dist)&&!inExitLane(u,body))return true;
+        const uint32_t grow=uint32_t(kSettleGrow*foot*kOrthogonal),slack=uint32_t(kSettleSlack*foot*kOrthogonal);
+        // C29, measured along the queue: no completion farther from the click
+        // than twice the crowd's reach, unless the body touches a settled
+        // arrival of its own command nearer the point -- then the settled
+        // crowd itself reaches back to it, and it may settle within one row
+        // (kSettleSlack bodies of potential) behind that arrival. A queue
+        // settles back from the crowd row by row and only while it is
+        // contiguous with it (a dead-end corridor's 120-body queue is longer
+        // than any straight-line cap); a jam that is not connected to the
+        // settled crowd by settled bodies never gains that reach.
+        const bool behind=front!=kUnreached&&uint32_t(potential)<=uint32_t(front)+slack;
+        uint32_t cap=uint32_t(std::min<int64_t>(0xfffe,factor*((2*reach*kDiagonal)/16+int64_t(3*foot*kOrthogonal))));
+        if(behind)cap=std::max(cap,std::min<uint32_t>(0xfffe,uint32_t(front)+slack));
+        if(!m.settleP)m.settleP=std::min(cap,areaBound(g,m,fx,fz,body)+slack);
+        if(potential<=m.settleP&&(dist<=2*reach||behind)&&connected(dist)&&!inExitLane(u,body))return true;
         m.settleP=std::min(cap,m.settleP+grow);
         return false;
     }

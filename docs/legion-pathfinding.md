@@ -360,11 +360,17 @@ footprint class (mixed footprints form one group per class but share one
   ceil(1.25n) footprints nearest the point, so a half-disc at a wall and a
   strip in a dead end) plus two bodies, a body plus 4 px for a distinct goal,
   and grows by Retail's foot*32 px per window. No settle is farther from the
-  click than twice the crowd's reach, the bound of the old far rule (C29), and
-  every settle is field-connected and outside any factory exit lane. A member
-  on a distinct goal also arrives when pressed within a body of its goal and
-  the goal is taken (`contactArrival`). There are no other time-outs: the
-  300/600/1800-tick waits and the every-20-held re-choice are gone.
+  click than twice the crowd's reach, the bound of the old far rule (C29),
+  unless the body stands within one row (two bodies of potential) behind a
+  settled arrival of its own command: the cap is measured along a queue that
+  is contiguous with the settled crowd, so a dead-end queue settles back from
+  the crowd row by row however long it is, and a jam the settled crowd does
+  not reach never does. Every settle is field-connected and outside any
+  factory exit lane. A member on a distinct goal also arrives when pressed
+  within a body of its goal and the goal is taken (`contactArrival`). There are
+  no other time-outs: the 300/600/1800-tick waits are gone. The every-20-held
+  re-choice is gone too; what remains of it is the lane re-sweep: a held
+  formation member re-aims its own lane every 20 held ticks (`laneDue`).
 * The older per-goal packed slots (built inside-out by field potential,
   claimed back to front along each member's approach) remain as the fallback
   when no formation applies. Claims skip slots that are now illegal or
@@ -1268,17 +1274,13 @@ Rules that came out of using them:
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
     exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test;
     `battle-field-2x60:spins` and `ctest:crowdbench_matrix` are what watch them.
-* **Long queues into dead ends and large selections into pockets still end
-  short.** The settle rule only settles a body queued back to its own crowd
-  within twice that crowd's reach (the b8a4110 acceptance bound, kept so no
-  order completes farther from its click). A queue of 120 bodies into a
-  2- or 4-cell dead-end corridor is longer than that: about 70 of them stand
-  still with their orders open (`deadend-w4-n120-closed-plain:open_still900`),
-  and in a 2-cell corridor the queue jams at the mouth before it enters. A
-  615-body click into a wall pocket now completes 608 orders by tick 8000
-  (479 before W3), but most complete in the crowd outside the pocket: 154
-  arrive inside the authored radius (`pocket-615-open:g.A.arrived`). The
-  pocket target needs the merged one-point-per-click (A2), which is parked.
+* **A 2-cell dead-end corridor still jams at its mouth.** A queue of 120
+  bodies into a 4-cell corridor now settles back from the crowd row by row
+  (all 120 by tick 5500), and a 615-body click into a wall pocket arrives as
+  one point (606 inside the authored radius by tick 8000). In a 2-cell
+  corridor the queue jams at the mouth before it enters, so no settled crowd
+  reaches back to it and those orders stay open
+  (`deadend-w2-n120-closed-plain:g.A.complete_n`).
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially
