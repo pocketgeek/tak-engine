@@ -1,5 +1,118 @@
 {
- "accepted_regressions": [],
+ "accepted_regressions": [
+  {
+   "key": "contact_settled_permille",
+   "max": 27,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: members still walking touch their own retired, idle bodies (0 at the base: nobody was idle); under the Retail floor (Retail 45) (median of 5 offsets at W2 step 2: 24).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "contact_settled_permille",
+   "max": 3,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: the last two of the file touch the first two, retired, for up to 12 ticks before they settle (0 at the base); Retail 2 (median of 5 offsets at W2 step 2: 2).",
+   "scenario": "mazeapproach"
+  },
+  {
+   "key": "g.A.complete_dist_max",
+   "max": 16,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: the last body of the file settles behind its retired selection, one body farther from the click, instead of waiting there to the 9000-tick age test (median of 5 offsets at W2 step 2: 14).",
+   "scenario": "mazeapproach"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 294,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: retired bodies are idle and scanned as still bodies (median of 5 offsets at W2 step 2: 267).",
+   "scenario": "mazeapproach"
+  },
+  {
+   "key": "work.trace_cells.max",
+   "max": 163,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: the file's tail plans its last steps round its retired, idle head (median of 5 offsets at W2 step 2: 148).",
+   "scenario": "mazeapproach"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 66983,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: 200 retired bodies are idle and scanned as still bodies (median of 5 offsets at W2 step 2: 60893).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 221,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: 200 retired bodies are idle and scanned as still bodies (median of 5 offsets at W2 step 2: 200).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.detour_cells.max",
+   "max": 767,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: members still walking plan round retired, idle bodies (median of 5 offsets at W2 step 2: 697).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.detours.max",
+   "max": 3,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: members still walking plan round retired, idle bodies (median of 5 offsets at W2 step 2: 2).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.detours.total",
+   "max": 38,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: members still walking plan round retired, idle bodies (median of 5 offsets at W2 step 2: 34).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.line_sweeps.max",
+   "max": 104,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: members still walking re-test their lines past retired, idle bodies (median of 5 offsets at W2 step 2: 94).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.line_sweeps.p99",
+   "max": 35,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: members still walking re-test their lines past retired, idle bodies (median of 5 offsets at W2 step 2: 31).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.pass_scan_cells.max",
+   "max": 159,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: idle bodies are partable and scanned for passes (median of 5 offsets at W2 step 2: 144).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.pass_scan_cells.total",
+   "max": 5280,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: idle bodies are partable and scanned for passes (median of 5 offsets at W2 step 2: 4800).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.pass_scans.max",
+   "max": 7,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: idle bodies are partable and scanned for passes (median of 5 offsets at W2 step 2: 6).",
+   "scenario": "unreach-200"
+  },
+  {
+   "key": "work.pass_scans.total",
+   "max": 221,
+   "mode": "legion",
+   "reason": "W2 step 2 AR-11 (PLAN section 0 row 11, user decision 2026-10-08): an unreachable order drops on arrival at the approach point, and a member held behind its own selection's stopped bodies drops it where it stands (the holder rule). Bodies that used to stand with their order kept until tick ~9000 are idle from ~tick 400-640 on: idle bodies are partable and scanned for passes (median of 5 offsets at W2 step 2: 200).",
+   "scenario": "unreach-200"
+  }
+ ],
  "entries": {
   "aware-adjacent": {
    "legion": {
@@ -43334,6 +43447,30 @@
      "since": "W2s0",
      "value": 900
     },
+    "work.crowd_window_ring_cells.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W2 step 2 AR-11 holder rule (approachSettled): a held approach member that gained nothing for kApproachSettle = 12 ticks walks the one-body ring round its footprint, (fx+2f)(fz+2f) = 36 cells for these 2x2 movers, at most once per kApproachLook = 4 ticks (staggered by unit id). Declared per-unit bound: one ring per unit per tick (max, p99), one ring per unit per 4 ticks (total).",
+     "rule": "bound",
+     "since": "W2s2",
+     "value": 36
+    },
+    "work.crowd_window_ring_cells.p99": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W2 step 2 AR-11 holder rule (approachSettled): a held approach member that gained nothing for kApproachSettle = 12 ticks walks the one-body ring round its footprint, (fx+2f)(fz+2f) = 36 cells for these 2x2 movers, at most once per kApproachLook = 4 ticks (staggered by unit id). Declared per-unit bound: one ring per unit per tick (max, p99), one ring per unit per 4 ticks (total).",
+     "rule": "bound",
+     "since": "W2s2",
+     "value": 36
+    },
+    "work.crowd_window_ring_cells.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W2 step 2 AR-11 holder rule (approachSettled): a held approach member that gained nothing for kApproachSettle = 12 ticks walks the one-body ring round its footprint, (fx+2f)(fz+2f) = 36 cells for these 2x2 movers, at most once per kApproachLook = 4 ticks (staggered by unit id). Declared per-unit bound: one ring per unit per tick (max, p99), one ring per unit per 4 ticks (total).",
+     "rule": "bound",
+     "since": "W2s2",
+     "value": 90000
+    },
     "work.detour_cells.max": {
      "band": 1.1,
      "dir": "lower",
@@ -69002,6 +69139,30 @@
      "since": "W2s0",
      "value": 257
     },
+    "work.crowd_window_ring_cells.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W2 step 2 AR-11 holder rule (approachSettled): a held approach member that gained nothing for kApproachSettle = 12 ticks walks the one-body ring round its footprint, (fx+2f)(fz+2f) = 36 cells for these 2x2 movers, at most once per kApproachLook = 4 ticks (staggered by unit id). Declared per-unit bound: one ring per unit per tick (max, p99), one ring per unit per 4 ticks (total).",
+     "rule": "bound",
+     "since": "W2s2",
+     "value": 36
+    },
+    "work.crowd_window_ring_cells.p99": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W2 step 2 AR-11 holder rule (approachSettled): a held approach member that gained nothing for kApproachSettle = 12 ticks walks the one-body ring round its footprint, (fx+2f)(fz+2f) = 36 cells for these 2x2 movers, at most once per kApproachLook = 4 ticks (staggered by unit id). Declared per-unit bound: one ring per unit per tick (max, p99), one ring per unit per 4 ticks (total).",
+     "rule": "bound",
+     "since": "W2s2",
+     "value": 36
+    },
+    "work.crowd_window_ring_cells.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W2 step 2 AR-11 holder rule (approachSettled): a held approach member that gained nothing for kApproachSettle = 12 ticks walks the one-body ring round its footprint, (fx+2f)(fz+2f) = 36 cells for these 2x2 movers, at most once per kApproachLook = 4 ticks (staggered by unit id). Declared per-unit bound: one ring per unit per tick (max, p99), one ring per unit per 4 ticks (total).",
+     "rule": "bound",
+     "since": "W2s2",
+     "value": 86400
+    },
     "work.detour_cells.max": {
      "band": 1.1,
      "dir": "lower",
@@ -77499,6 +77660,30 @@
    "mode": "legion",
    "reason": "3-offset spread 8..9 exceeds the band at W2s1; gated on median-of-5 offsets",
    "scenario": "structsquad-keep"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "contact_settled_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "5-offset spread 19..31 exceeds the band at W2s2 (the step moved it off its base: retired bodies); gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "stopped_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "5-offset spread 81..124 exceeds the band at W2s2 (the step moved it off its base: retired bodies); gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-11",
+   "key": "stopped_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "5-offset spread 0..1 exceeds the band at W2s2 (the step moved it off its base: retired bodies); gated on median-of-5 offsets",
+   "scenario": "mazeapproach"
   }
  ],
  "history": [

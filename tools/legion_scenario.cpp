@@ -75,6 +75,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -264,6 +265,11 @@ std::vector<uint8_t> wallMask(const scn::Scenario& s, int W, int H) {
 //                                       after the last tick: what the units that have
 //                                       not reached the point are doing (diagnostic;
 //                                       not baselined, it depends on --ticks)
+//   approach.stopwait_p50 / _p90 / _max completion - the tick the unit last gained on its
+//                                       order's point (its distance to it fell 1 px under
+//                                       its best so far): how long a unit that stopped
+//                                       getting nearer kept its order (both modes; W2
+//                                       AR-11 holder rule; -1 none completed)
 //   approach.dropped_unarrived_n        orders emptied before the unit ever
 //                                       reached its point: a mid-route stop, or
 //                                       the 9000-tick walk grace running out
@@ -272,10 +278,13 @@ std::vector<uint8_t> wallMask(const scn::Scenario& s, int W, int H) {
 struct ApproachProbe {
     std::vector<int> ids;
     std::vector<int> arrive, complete;
+    std::vector<int> gain;      // last tick the distance to the order's point fell 1 px under its best
+    std::vector<double> best;   // least distance to the order's point so far (px)
     std::vector<char> had;   // the unit has had orders
     int endState[6] = {};    // member states after the last sample (units that still have orders)
     explicit ApproachProbe(const std::vector<int>& all)
-        : ids(all), arrive(all.size(), -1), complete(all.size(), -1), had(all.size(), 0) {}
+        : ids(all), arrive(all.size(), -1), complete(all.size(), -1), gain(all.size(), -1),
+          best(all.size(), 1e300), had(all.size(), 0) {}
     void sample(const tak::sim::World& w, const tak::sim::LegionNavigator* nav, int t) {
         std::fill(std::begin(endState), std::end(endState), 0);
         for (size_t i = 0; i < ids.size(); ++i) {
@@ -283,8 +292,13 @@ struct ApproachProbe {
             if (!u || !u->alive()) continue;
             if (nav && !u->orders.empty()) ++endState[std::clamp(nav->unitState(ids[i]), 0, 5)];
             if (nav && arrive[i] < 0 && nav->unitState(ids[i]) == 5) arrive[i] = t;
-            if (!u->orders.empty()) had[i] = 1;
-            else if (had[i] && complete[i] < 0) complete[i] = t;
+            if (!u->orders.empty()) {
+                const auto& leg = u->orders[tak::sim::World::currentLeg(u->orders)];
+                const auto [tx, tz] = leg.missionTarget.value_or(std::pair{leg.x, leg.z});
+                const double d = std::hypot(double(u->x.toFloat() - tx.toFloat()), double(u->z.toFloat() - tz.toFloat()));
+                if (gain[i] < 0 || d <= best[i] - 1.0) { best[i] = d; gain[i] = t; }
+                had[i] = 1;
+            } else if (had[i] && complete[i] < 0) complete[i] = t;
         }
     }
     static void milestones(obs::Keys& k, const std::string& p, std::vector<int> v, size_t n) {
@@ -297,13 +311,14 @@ struct ApproachProbe {
     void report(obs::Keys& k, bool legion) const {
         const size_t n = ids.size();
         k.emplace_back("approach.members", int64_t(n));
-        std::vector<int> a, c, wait;
+        std::vector<int> a, c, wait, stop;
         int64_t premature = 0;
         for (size_t i = 0; i < n; ++i) {
             if (arrive[i] >= 0) a.push_back(arrive[i]);
             if (complete[i] >= 0) c.push_back(complete[i]);
             if (arrive[i] >= 0 && complete[i] >= 0) wait.push_back(std::max(0, complete[i] - arrive[i]));
             if (legion && arrive[i] < 0 && complete[i] >= 0) ++premature;
+            if (gain[i] >= 0 && complete[i] >= 0) stop.push_back(std::max(0, complete[i] - gain[i]));
         }
         if (legion) {
             k.emplace_back("approach.arrived_n", int64_t(a.size()));
@@ -313,6 +328,15 @@ struct ApproachProbe {
         }
         k.emplace_back("approach.complete_n", int64_t(c.size()));
         milestones(k, "approach.complete", c, n);
+        std::sort(stop.begin(), stop.end());
+        k.emplace_back("approach.stopwait_p50", stop.empty() ? -1 : stop[(stop.size() - 1) / 2]);
+        k.emplace_back("approach.stopwait_p90", stop.empty() ? -1 : stop[(stop.size() * 9 + 9) / 10 - 1]);
+        k.emplace_back("approach.stopwait_max", stop.empty() ? -1 : int64_t(stop.back()));
+        if (std::getenv("TAK_APPROACH_STOPWAIT")) {
+            std::fprintf(stderr, "approach stopwait (%s):", legion ? "legion" : "retail");
+            for (int v : stop) std::fprintf(stderr, " %d", v);
+            std::fprintf(stderr, "\n");
+        }
         if (legion) {
             std::sort(wait.begin(), wait.end());
             k.emplace_back("approach.wait.t50", wait.empty() ? -1 : wait[(wait.size() - 1) / 2]);

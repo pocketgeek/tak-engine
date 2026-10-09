@@ -59,6 +59,23 @@ constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields wh
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
+// Ticks an approach member's order (an unreachable goal) is kept once the body
+// reaches its approach point, the nearest reachable spot: none, the order drops
+// there (user decision 2026-10-08, PLAN W2 AR-11). Timed from arrival, so the
+// walk to the point is never cut short; the walk's own limit is the
+// kTrappedRetire age test in move().
+constexpr uint32_t kApproachRetire=0;
+// Ticks without gaining on its point after which an approach member pressed
+// against bodies of its own selection that already stopped nearer that point
+// (arrived there, or settled behind them) has reached the nearest spot IT can
+// reach: its order drops where it stands (AR-11, see approachSettled). A body
+// that still gains, in a moving queue or on a long walk, restarts the window
+// each time. 30 and 45 left the bodies still to settle pressed against the
+// settled ones longer than Retail does (contact_settled_permille unreach-200
+// 47 / 56 against Retail 45, mazeapproach 3 / 5 against 2: the Retail floor);
+// 15 gives 26 and 2.
+constexpr uint32_t kApproachSettle=12;
+constexpr uint32_t kApproachLook=4;            // ticks between a held approach member's looks (staggered by id)
 constexpr int kClusterCells=16;
 constexpr int kFieldMargin=32;                 // bounded field window margin (cells), at least
 constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
@@ -388,6 +405,9 @@ struct LegionNavigator::Impl {
         // `goal` is the nearest reachable point to it, walked to and held
         // (order kept) until a static change re-resolves the real goal.
         bool approach=false;uint32_t approachSince=0;uint64_t approachEpoch=0;
+        // Approach members only (0 otherwise): the least distance still to
+        // go to the approach point so far, and the tick it last improved.
+        uint32_t gainBest=0,gainTick=0;
         int real=-1;                      // the unreachable goal origin an approach member stands in for
         int requested=-1;                 // the goal origin the order named
         int slot=-1;                      // claimed slot index (shared goals)
@@ -1727,7 +1747,7 @@ struct LegionNavigator::Impl {
             if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
         };
         leave(u.id);
-        anchors.erase(u.id);markAnchor(u.id,false);yielding.erase(u.id);
+        anchors.erase(u.id);markAnchor(u.id,false);yielding.erase(u.id);approachDone.erase(u.id);
         // A body setting off is no soft obstacle any more (its own group's
         // first field is built right now, before the next scan).
         if(!softCells.empty()&&u.type) {
@@ -1794,6 +1814,7 @@ struct LegionNavigator::Impl {
             if(near>=0) {
                 m.real=m.goal;m.goal=near;m.approach=true;m.approachEpoch=epoch;
                 m.approachSince=priorReal==m.real&&priorController==m.controller?priorSince:w.tickCounter_;
+                m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;
             }
         }
         m.requested=m.goal;
@@ -2844,6 +2865,10 @@ struct LegionNavigator::Impl {
                 {yielding.erase(it->first);markAnchor(it->first,false);it=anchors.erase(it);}
             else ++it;
         }
+        for(auto it=approachDone.begin();it!=approachDone.end();) {
+            const Unit* u=w.unit(it->first);
+            if(!u||!u->alive()||!u->orders.empty())it=approachDone.erase(it);else ++it;
+        }
         // A parted body that gets an order (or dies) forgets its partings.
         for(auto it=parts.begin();it!=parts.end();) {
             const Unit* u=w.unit(it->first);
@@ -2909,6 +2934,23 @@ struct LegionNavigator::Impl {
     // 328 -> 644 (Retail 1000 / 475), means of seeds 0/7/42.
     struct Part {uint8_t count=0;int8_t sx=0,sz=0;};
     std::map<int,Part> parts;
+    // Bodies whose approach order (an unreachable goal) dropped, idle since:
+    // unit id -> the member's point (player, issue tick, requested point).
+    // Forgotten on a new order or death. Read by approachSettled.
+    using PointKey=std::tuple<int,uint32_t,int32_t,int32_t>;
+    std::map<int,PointKey> approachDone;
+    // One selection: the same command (player and issue tick), or one click
+    // the uplink landed as several commands -- the convoy rule of the
+    // awareness scan: one player, within kConvoyTicks, to points within
+    // kConvoyCells.
+    static bool oneSelection(const PointKey& a,const PointKey& b) {
+        if(std::get<0>(a)!=std::get<0>(b))return false;
+        if(std::get<1>(a)==std::get<1>(b))return true;
+        const uint32_t ia=std::get<1>(a),ib=std::get<1>(b);
+        return (ia>ib?ia-ib:ib-ia)<=kConvoyTicks&&
+            std::abs(int64_t(std::get<2>(a))-std::get<2>(b))<=int64_t(kConvoyCells*16)<<16&&
+            std::abs(int64_t(std::get<3>(a))-std::get<3>(b))<=int64_t(kConvoyCells*16)<<16;
+    }
     bool partable(const Unit& u,int id) const {
         const Unit* b=w.unit(id);
         if(!b||!b->alive()||b->player!=u.player||!b->orders.empty()||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly)return false;
@@ -3160,8 +3202,9 @@ struct LegionNavigator::Impl {
         m.state=Holding;++m.held;
     }
     void complete(Unit& u,Member& m,bool contact) {
-        // The nearest reachable point to an unreachable goal is held, not
-        // completed: the order waits there for the terrain to open.
+        // The nearest reachable point to an unreachable goal is not a
+        // completion: the body stops there and its order is retired after
+        // kApproachRetire (see trapped), as Retail drops an unreachable goal.
         if(m.approach) {trapped(u,m);return;}
         // A goal its owner ends (combat in range, guard within reach) is
         // never declared reached by Legion: the body holds there, order kept.
@@ -3220,12 +3263,21 @@ struct LegionNavigator::Impl {
         // constant heading, no probing). The order is kept for a grace
         // period so a gate opening or a wall coming down (a new static
         // epoch) resumes it; after that the leg is retired as Retail retires
-        // an unreachable goal. Later queued legs proceed.
-        if(m.state!=Trapped) {
-            m.state=Trapped;m.trappedSince=m.approach?m.approachSince:w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;
-        }
+        // an unreachable goal. Later queued legs proceed. An approach member
+        // got here by reaching its nearest reachable spot (its approach
+        // point) or by outliving the walk's age limit: its grace,
+        // kApproachRetire, is timed from that arrival, never from the order,
+        // so a long walk is not cut short. The update that stops the body
+        // only stamps the clock; the retire test runs from the next update
+        // on (with kApproachRetire = 0 the order drops one update after
+        // arrival, and the body is seen standing at its point in between).
         u.speed=Fixed();u.turnReqBam=0;
-        if(w.tickCounter_-m.trappedSince<kTrappedRetire)return;
+        if(m.state!=Trapped) {
+            m.state=Trapped;m.trappedSince=w.tickCounter_;m.trappedEpoch=epoch;++stats.trapped;
+            return;
+        }
+        if(w.tickCounter_-m.trappedSince<(m.approach?kApproachRetire:kTrappedRetire))return;
+        if(m.approach)approachDone[u.id]=m.point;
         leave(u.id);
         w.dropLeg(u);
         u.routeStamp=-1;
@@ -3745,7 +3797,8 @@ struct LegionNavigator::Impl {
             if(clear||(rally&&m.stillWindows>=2*kExitWindows)) {complete(u,m,true);return;}
         }
         if(m.goal<0) {trapped(u,m);return;}
-        // Holding at the approach point, or out of grace while walking to it.
+        // Stopped at its approach point (retired by trapped), or still
+        // walking to it kTrappedRetire after the order (the walk's age limit).
         if(m.approach&&(m.state==Trapped||w.tickCounter_-m.approachSince>=kTrappedRetire)) {trapped(u,m);return;}
         auto group=groups.find(m.group);
         if(group==groups.end()) {registerMove(u);w.brakeGround(u);return;}
@@ -3774,6 +3827,24 @@ struct LegionNavigator::Impl {
             if(g.next&&!g.next->done)++stats.refreshDiscards;
             g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+        }
+        // The holder rule (approachSettled): checked before routes and
+        // side-steps, which a body held behind its own army otherwise walks
+        // for ever without gaining. Gain is measured here, every update, as
+        // the progress below measures it, so a route that gains keeps the
+        // body going. Only a held body, or one walking a way round still
+        // bodies, looks for its stopped selection: a free walk (which in a
+        // maze can gain nothing for a long stretch) never does. The look is
+        // staggered by unit id over kApproachLook ticks (the ring walk is
+        // the cost; a held crowd would otherwise pay it every tick).
+        if(m.approach) {
+            const uint32_t left=uint32_t(std::min<int64_t>(0xfffffff,
+                f&&f->at(size_t(here))!=kUnreached&&f->at(size_t(here))>0
+                    ? int64_t(f->at(size_t(here)))*64
+                    : (int64_t(m.goal%W-ox)*(m.goal%W-ox)+int64_t(m.goal/W-oz)*(m.goal/W-oz))));
+            if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
+            else if(w.tickCounter_-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
+                    (uint32_t(u.id)+w.tickCounter_)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
         }
         // Close enough: a body that gained less than half a body on its
         // point over the last window, pressed against the settled crowd
@@ -4606,6 +4677,42 @@ struct LegionNavigator::Impl {
         }
         return far?3:touching;
     }
+    // The holder rule (AR-11, PLAN section 0 row 11: an unreachable order
+    // drops as soon as the unit reaches its nearest reachable spot). An
+    // approach member that has gained nothing on its point for
+    // kApproachSettle ticks and touches (within one body) a body of its own
+    // selection (oneSelection) that already stopped nearer its approach
+    // point -- one that arrived there (Trapped, its order about to drop) or
+    // whose order already dropped (approachDone) -- stands at the nearest
+    // spot it can reach: the way on is filled by its own army, which will
+    // not move again. A body still gaining on its point never settles, and a
+    // body of another selection, or one of its own still walking, never
+    // settles it, so neither a moving queue nor a long walk is cut short.
+    bool approachSettled(const Unit& u,const Member& m) const {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+        const int64_t px=centre(m.goal%W,fx).v,pz=centre(m.goal/W,fz).v;
+        const int64_t dx=(int64_t(u.x.v)-px)>>16,dz=(int64_t(u.z.v)-pz)>>16;
+        const int64_t mine=dx*dx+dz*dz;
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        uint64_t ring=0;bool found=false;
+        for(int j=-foot;j<fz+foot&&!found;++j)for(int i=-foot;i<fx+foot&&!found;++i) {
+            ++ring;
+            const int cx=ox+i,cz=oz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)continue;
+            const Unit* other=w.unit(o);
+            if(!other||other->player!=u.player)continue;
+            bool own=false;
+            if(const auto d=approachDone.find(o);d!=approachDone.end())own=other->orders.empty()&&oneSelection(d->second,m.point);
+            else if(const Member* peer=member(o))own=peer->approach&&peer->state==Trapped&&oneSelection(peer->point,m.point);
+            if(!own)continue;
+            const int64_t qx=(int64_t(other->x.v)-px)>>16,qz=(int64_t(other->z.v)-pz)>>16;
+            found=qx*qx+qz*qz<mine;
+        }
+        stats.crowdWindowRingCells+=ring;
+        return found;
+    }
     // A body pressed against settled bodies inside its goal's area has
     // arrived: the destination is an area, and the cells nearer the point
     // are taken. Distinct-goal members use one body width; members sharing a
@@ -4729,6 +4836,10 @@ struct LegionNavigator::Impl {
         for(const auto& [id,y]:yielding) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(y.cell));h=mix(h,y.ticks);}
         h=mix(h,softSerial);h=mix(h,softHash);
         for(const auto& [id,st]:stills) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(st.x))<<32|uint32_t(st.z));h=mix(h,st.scans);}
+        for(const auto& [id,c]:approachDone) {
+            h=mix(h,0x61646f6e65ull);h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(std::get<0>(c)))<<32|std::get<1>(c));
+            h=mix(h,uint64_t(uint32_t(std::get<2>(c)))<<32|uint32_t(std::get<3>(c)));
+        }
         for(const auto& [id,n]:parts) {h=mix(h,uint64_t(id));h=mix(h,n.count);h=mix(h,uint64_t(uint8_t(n.sx))|uint64_t(uint8_t(n.sz))<<8);}
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
@@ -4738,6 +4849,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillWindows);
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
+            if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);}
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
