@@ -22,3 +22,8 @@ group A 0 m 48 rect 44 95 68 113 pitch=3
 gate top 101 0 101 47
 line east 104 0 104 140
 at 1 move A 150 110
+# Audit crossings (lanes2 laneRun wall): lane-order swaps between the first entries of z=60 west of the wall (lateral 98-x)
+# and east of it (lateral x-102) within 300 ticks, >= 2 cells at both (lane.cross.swaps / .pairs).
+# Audit abreast = distinct z/2 files over the strip x 97-102, z < 48 (gate.strip.files_x100).
+gate strip 97 0 103 48 lateral=z
+lane cross 0 60 98 60 102 60 200 60 bsign=-1 asign=1 window=300 mincells=2

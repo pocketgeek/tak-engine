@@ -16,6 +16,7 @@ struct TickInput {
 struct TickResult {
     std::vector<uint8_t> bundle;
     std::optional<uint64_t> hash;
+    uint64_t posDigest=0;                // World::posDigest on the ticks the replay trail records (every 10th hash tick)
     std::array<bool,net::kMaxSlots> defeated{};
     int missionOutcome=0;
     bool resourceLimited=false;

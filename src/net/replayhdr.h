@@ -33,7 +33,7 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 11;   // 11: independent pathfinding mode
+inline constexpr uint32_t kReplayFormat = 12;   // 12: checkpoints carry posDigest; 11: independent pathfinding mode
 
 // Simulation changes require the matching engine; do not emulate older rules.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
@@ -63,10 +63,19 @@ struct ReplayHeader {
 };
 
 // One recorded (tick, hash) pair from the ORIGINAL game.
+// Format 12 adds posDigest (World::posDigest: ids, types, owners, positions, hp and the
+// front order only, no bookkeeping), so a verifier can tell a hash-layout change (the
+// hash diverges, the digest does not) from a behaviour change (both diverge). 0 = the
+// recorder did not compute one (format < 12, or a tick it skipped). Not a net protocol
+// change: the digest travels in the file only.
 struct ReplayCheck {
     uint32_t tick = 0;
     uint64_t hash = 0;
+    uint64_t posDigest = 0;
 };
+
+// Bytes per checkpoint record in a file of this format.
+inline constexpr size_t replayCheckBytes(uint32_t fmt) { return fmt >= 12 ? 20 : 12; }
 
 inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     for (char ch : {'T', 'A', 'K', 'R'}) w.u8(uint8_t(ch));

@@ -193,10 +193,16 @@ void groupreuse() {
     for(int id:ids)check(legion->unitGroup(id)==group,"group order split into several groups");
     const auto s=f.world.legionStats();
     check(s.fieldsBuilt==1,"one group must build exactly one field, built "+std::to_string(s.fieldsBuilt));
-    for(int t=0;t<6000;++t)f.world.tick(1.f/30);
+    int routeSeen=0;   // the committed detour's length (observation hook), the longest sampled
+    for(int t=0;t<6000;++t) {
+        f.world.tick(1.f/30);
+        for(int id:ids)routeSeen=std::max(routeSeen,legion->routeLength(id));
+    }
     int arrived=0;
     for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
     const auto e=f.world.legionStats();
+    check(legion->routeLength(-1)==0,"routeLength of a non-member is not 0");
+    check((e.detours>0)==(routeSeen>0),"routeLength disagrees with the detours planned: "+std::to_string(e.detours)+" detours, longest route "+std::to_string(routeSeen));
     printLeft(f,ids);
     std::printf("  detours=%llu cells=%llu holds=%llu\n",(unsigned long long)f.world.legionStats().detours,(unsigned long long)f.world.legionStats().detourCells,(unsigned long long)f.world.legionStats().holds);
     std::printf("groupreuse arrived=%d fields=%llu work=%llu\n",arrived,(unsigned long long)e.fieldsBuilt,(unsigned long long)e.fieldWork);

@@ -36,6 +36,10 @@
 //                        the scenario's units with orders, sampled after the
 //                        tick the last command landed
 //   legion_groups_peak   Legion only: the most such groups on any tick
+//   truth.tT.*           a harvested situation (a `truth T ...` directive): truth.tT.n bodies alive in the
+//                        recording, truth.tT.within2_permille of them within 2 cells of the recording's
+//                        position T ticks in, truth.tT.moved_* the same for the bodies the recording
+//                        moved more than 2 cells (the ones that mean something)
 //   region.<name>.inside units whose centre cell is in the region at the end
 //
 // Shapes become observer probes:
@@ -170,6 +174,41 @@ bool timeKey(std::string_view k) {
 
 int cellLo(float v) { return int(std::floor(v)); }
 
+// A lane line: the segment's cells (a horizontal one is laid along x, its lateral cell is x; a vertical one
+// along z). A segment of extent covers floor(lo) .. ceil(hi)-1, a point its own cell.
+obs::Line laneLine(const scn::Scenario& s, float x0, float z0, float x1, float z1, int sign) {
+    auto span = [](float a, float b) {
+        const float lo = std::min(a, b), hi = std::max(a, b);
+        return std::pair<int, int>{cellLo(lo), hi > lo ? int(std::ceil(hi)) - 1 : cellLo(lo)};
+    };
+    (void)s;
+    obs::Line l;
+    const auto [xa, xb] = span(x0, x1);
+    const auto [za, zb] = span(z0, z1);
+    l.region = {xa, za, xb, zb};
+    l.lateral = z0 == z1 ? 0 : 1;
+    l.sign = sign;
+    return l;
+}
+
+// A group list of a `pair` shape: comma separated, a trailing '*' takes every group with that prefix.
+std::string expandGroups(const scn::Scenario& s, const std::string& list) {
+    std::string out;
+    size_t at = 0;
+    while (at <= list.size()) {
+        size_t e = list.find(',', at);
+        if (e == std::string::npos) e = list.size();
+        const std::string item = list.substr(at, e - at);
+        at = e + 1;
+        if (!item.empty() && item.back() == '*') {
+            const std::string prefix = item.substr(0, item.size() - 1);
+            for (const auto& g : s.groups)
+                if (g.name.compare(0, prefix.size(), prefix) == 0) out += (out.empty() ? "" : ",") + g.name;
+        } else out += (out.empty() ? "" : ",") + item;
+    }
+    return out;
+}
+
 // The observer's configuration for one built world.
 obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
     const auto& w = *b.world;
@@ -191,7 +230,7 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
         std::tie(og.clickX, og.clickZ) = centroid(g.name, false);
         // The last order that moves this group decides its click.
         for (const auto& o : s.orders) {
-            if (o.selection[0] != "all" && !std::count(o.selection.begin(), o.selection.end(), g.name)) continue;
+            if (!s.selects(o, size_t(&g - s.groups.data()))) continue;
             switch (o.verb) {
             case scn::Verb::Move: case scn::Verb::Fight: case scn::Verb::Patrol:
                 if (o.point) { og.clickX = int(std::lround(o.x * 16)); og.clickZ = int(std::lround(o.z * 16)); }
@@ -221,7 +260,39 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
                 g.lateral = (x1 - x0) >= (z1 - z0) ? 1 : 0;
                 g.region = {cellLo(x0), cellLo(z0), int(std::ceil(x1)) - 1, int(std::ceil(z1)) - 1};
             }
+            if (sh.lateral >= 0) g.lateral = sh.lateral;
+            if (sh.band) g.band = sh.band;
+            if (sh.minCount) g.minCount = sh.minCount;
+            if (sh.edge) g.edge = sh.edge;
+            if (sh.pairWindow) g.pairWindow = sh.pairWindow;
+            if (sh.flip) g.flipCells = sh.flip;
             cfg.gates.push_back(g);
+        } else if (sh.kind == "lane") {
+            obs::LaneOrder l;
+            l.name = sh.name;
+            l.before = laneLine(s, sh.x0, sh.z0, sh.x1, sh.z1, sh.beforeSign);
+            l.after = laneLine(s, sh.ax0, sh.az0, sh.ax1, sh.az1, sh.afterSign);
+            if (sh.window) l.window = sh.window;
+            if (sh.minCells) l.minCells = sh.minCells;
+            l.sameGroup = !sh.acrossGroups;
+            cfg.laneOrders.push_back(l);
+        } else if (sh.kind == "pair") {
+            obs::Pair p;
+            p.name = sh.name;
+            p.a = expandGroups(s, sh.a);
+            p.b = expandGroups(s, sh.b);
+            for (const std::string* list : {&p.a, &p.b}) {
+                size_t at = 0;
+                while (at <= list->size()) {
+                    size_t e = list->find(',', at);
+                    if (e == std::string::npos) e = list->size();
+                    if (list->empty() || !s.group(list->substr(at, e - at)))
+                        throw std::runtime_error(s.origin + ": pair '" + sh.name + "' names no group in '" + *list + "'");
+                    at = e + 1;
+                }
+            }
+            if (sh.cells) p.cells = sh.cells;
+            cfg.pairs.push_back(p);
         } else if (sh.kind == "line") {
             obs::Side side;
             side.name = sh.name;
@@ -391,6 +462,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         std::sort(ids.begin(), ids.end());
         return std::unique(ids.begin(), ids.end()) - ids.begin();
     };
+    // A harvested situation (`truth`): the recording's body positions TICK ticks in, against ours.
+    const auto startPos = s.truths.empty() ? std::vector<std::pair<int32_t, int32_t>>{} : scn::startPositions(s, *b);
+    std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
         const size_t landed = feed.apply(t);
@@ -407,6 +481,10 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                 if (lastCommand == int64_t(t)) groupsAfter = n;
             }
         }
+        for (const auto& tr : s.truths)
+            if (t + 1 == tr.tick && tr.pos.size() == all.size())
+                truthNow.push_back({tr.tick, scn::truthReport(s, *b, tr, startPos, offset,
+                                                              std::getenv("LEGION_TRUTH_DETAIL") ? "" : nullptr)});
         if ((t + 1) % 100 == 0) r.digest = mix(r.digest, w.stateHash());
     }
     r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -417,6 +495,13 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
         r.keys.emplace_back("commands", commands);
         r.keys.emplace_back("last_command_tick", lastCommand);
+        for (const auto& [tick, tr] : truthNow) {
+            const std::string pre = "truth.t" + std::to_string(tick) + ".";
+            r.keys.emplace_back(pre + "n", tr.n);
+            r.keys.emplace_back(pre + "within2_permille", tr.within2Permille());
+            r.keys.emplace_back(pre + "moved_n", tr.movedN);
+            r.keys.emplace_back(pre + "moved_within2_permille", tr.movedWithin2Permille());
+        }
         if (nav) {
             r.keys.emplace_back("legion_groups", groupsAfter);
             r.keys.emplace_back("legion_groups_peak", groupsPeak);

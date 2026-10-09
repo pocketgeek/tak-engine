@@ -250,9 +250,9 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
         });
     }
 }
-// MV-06's route-follower split needs the member's committed detour, which no
-// public LegionNavigator hook exposes yet. When a hook `int routeLength(int id)
-// const` exists the key is filled; until then route_crawl_samples prints null.
+// MV-06's route-follower split needs the member's committed detour, read through
+// LegionNavigator::routeLength(id) (cells left in its local detour route; read-only,
+// unhashed). A build whose navigator lacks the hook prints route_crawl_samples as null.
 template<class N> constexpr bool hasRouteHook() {return requires(const N& n) {n.routeLength(0);};}
 template<class N> int routeLengthOf(const N* nav,int id) {
     if constexpr(hasRouteHook<N>()) {return nav?nav->routeLength(id):0;}

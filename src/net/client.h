@@ -235,7 +235,8 @@ public:
     bool takeBundle(uint32_t tick, Bundle& out);
     size_t bufferedBundles() const { return bundles_.size(); }   // backlog depth
     void sendCommands(const std::vector<Command>& cmds);
-    void sendHash(uint32_t tick, uint64_t hash);
+    // posDigest rides only into the recorded replay trail (format 12), never onto the wire.
+    void sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest = 0);
 
     // Set once the server flags us desynced (fatal in M3; reconnect is M5).
     bool desynced() const { return desynced_; }

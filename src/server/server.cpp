@@ -337,7 +337,7 @@ struct Room {
     // few seconds and nothing else, so a divergence early on could not be located,
     // which is the one thing the trail is for. This is append-only and sampled
     // coarsely: an hour at 30Hz costs a few thousand entries, about 40KB.
-    std::vector<std::pair<uint32_t, uint64_t>> replayChecks;
+    std::vector<tak::net::ReplayCheck> replayChecks;
     bool refSuspect = false;                    // referee itself suspected desynced
     int8_t missionOutcomeSent = 0;              // campaign result already broadcast (0 = none)
     // durability (M5): the full bundle log for reconnect/replay, per-slot resume
@@ -713,7 +713,7 @@ Writer Server::replayBytes(Room& r) {
     // The referee's hash trail. Two identical reruns only prove the reruns agree;
     // this is what lets a replay say where it diverged from the real game.
     w.u32(uint32_t(r.replayChecks.size()));
-    for (const auto& [tk, hs] : r.replayChecks) { w.u32(tk); w.u64(hs); }
+    for (const auto& c : r.replayChecks) { w.u32(c.tick); w.u64(c.hash); w.u64(c.posDigest); }
     return w;
 }
 void Server::writeReplay(Room& r) {
@@ -1148,8 +1148,9 @@ void Server::finalizeCampaign(Room& r,bool abandoning) {
         }
         if(result.finalTick) {
             const auto tick=uint32_t(result.finalTick-1);
-            if(!r.replayChecks.empty() && r.replayChecks.back().first==tick)r.replayChecks.back().second=result.finalStateHash;
-            else r.replayChecks.emplace_back(tick,result.finalStateHash);
+            const uint64_t pd=r.ref?r.ref->posDigest():0;
+            if(!r.replayChecks.empty() && r.replayChecks.back().tick==tick)r.replayChecks.back()={tick,result.finalStateHash,pd};
+            else r.replayChecks.push_back({tick,result.finalStateHash,pd});
         }
         r.campaignResult=std::move(result);
         ++campaignActivityVersion_; ++campaignMatchGeneration_; // Frozen matches cease being active before durable completion.
@@ -2883,7 +2884,7 @@ void Server::finishTick(Room& r) {
     if(result.hash) {
         r.refHash[r.tick]=*result.hash;
         if(!replayDir_.empty() && (r.tick/uint32_t(kHashPeriod))%10==0)
-            r.replayChecks.emplace_back(r.tick,*result.hash);
+            r.replayChecks.push_back({r.tick,*result.hash,result.posDigest});
         while(r.refHash.size()>300)r.refHash.erase(r.refHash.begin());
     }
     if(!r.missionOutcomeSent && result.missionOutcome) {

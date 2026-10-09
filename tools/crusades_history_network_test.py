@@ -95,7 +95,7 @@ def history(peer, territory=1, cursor=None, limit=16):
                               'map_digest': reader.field().decode(), 'fingerprint': reader.num('<Q')}
             assert re.fullmatch('[0-9a-f]{64}', entry['replay']['digest'])
             assert 0 < entry['replay']['size'] <= 512 * 1024 * 1024
-            assert entry['replay']['format'] == 11
+            assert entry['replay']['format'] == 12
             assert entry['replay']['protocol'] == auth.VERSION
         assert entry['territory'] == territory and entry['recorded'] > 0
         entries.append(entry)

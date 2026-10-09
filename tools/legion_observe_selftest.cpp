@@ -181,6 +181,24 @@ void spacingCase() {
     expect("spacing",k,"pair.A.B.permille_x100",100000);
 }
 
+// A pair given as comma lists is the union of its groups: C (a2) joins A (a1) against B, so the
+// pairs and contacts equal spacingCase's A (a1, a2) against B, under the pair's own key.
+void pairListCase() {
+    Scene s;const auto t=mover(2);
+    const int a1=s.spawn(t,10*16+16,10*16+16),a2=s.spawn(t,12*16+16,10*16+16),b1=s.spawn(t,10*16+16,12*16+16);
+    for(int id:{a1,a2,b1})s.order(id,id==b1?10*16+16:80*16,80*16);
+    obs::Config cfg;cfg.groups={{"A",{a1},0,0},{"C",{a2},0,0},{"B",{b1},0,0}};
+    obs::Pair p;p.a="A,C";p.b="B";p.cells=2;p.name="ac";
+    obs::Pair bad;bad.a="A,Z";bad.b="B";bad.name="bad";
+    cfg.pairs={p,bad};
+    obs::Observer o(cfg);
+    for(int tick=0;tick<20;++tick)o.sample(s.world,tick);
+    const auto k=o.report();
+    expect("pairlist",k,"pair.ac.pairs",4);
+    expect("pairlist",k,"pair.ac.contacts",4);
+    expect("pairlist",k,"pair.bad.pairs",0);
+}
+
 // ---- walls: clearance and touch ------------------------------------------
 // A wall column at x cell 30. 2x2 origins x 29 and 30 overlap it (distance
 // 0); origin 28 is next to it (clearance 0: touching), 27 has one free cell
@@ -386,7 +404,7 @@ void sideWorkCase() {
 int main() {
     try {
         crossingsCase(0,false);
-        filesCase();laneCase();spacingCase();wallCase();motionCase();progressCase();stabilityCase();flyerCase();sideWorkCase();
+        filesCase();laneCase();spacingCase();pairListCase();wallCase();motionCase();progressCase();stabilityCase();flyerCase();sideWorkCase();
         const int real=failures;
         // The mutated metric must be caught by its sub-check.
         const int caught=crossingsCase(1,true);

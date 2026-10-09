@@ -20,6 +20,8 @@ legion_observe_selftest
 observer_neutral
 issue_selection_test
 legion_baseline_reasons
+legion_doc_links
+legion_doc_links_selftest
 # Retail comparison reports and the variants that need the retail install.
 !legion_acceptance_*_retail
 !legion_movement_orders*

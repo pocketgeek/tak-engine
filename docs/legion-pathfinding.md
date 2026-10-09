@@ -14,7 +14,9 @@ thousands of units at once. Code: `src/sim/legion.{h,cpp}`; hooks in
 `src/sim/sim.cpp` next to the Retail dispatch, and the
 group right-click in `src/client/gameview_hud.cpp`.
 
-This document describes Legion as of 4edb009. The historical five-mode
+This document describes Legion as of ae3df2d (after the W0 instruments, before
+the behaviour workstreams; per-commit history is in git, and each feature below
+names its commit). The historical five-mode
 comparison (Retail, Retail+, Flowfield, Cooperative, Legion) and its tables are
 in `docs/navigation-comparison-2026-10-05.md`; they are not repeated here.
 
@@ -127,8 +129,9 @@ because a field is "distance to the nearest seed of anyone": seeded with an
 army's whole goal lattice it pulls every body to the lattice's near edge.
 
 Field work runs at the start of `World::tick` under a deterministic quota of
-4M relaxations per tick, shared by plane debt and all fields in group-id
-order. A field resumes across ticks until done. Groups with no field start
+384k relaxations per tick (`kFieldQuota`), shared by plane debt and all fields
+in group-id order. A refresh of a group that already steers by a finished
+field gets a quarter of it (`kRefreshQuota`; see "Refresh allowance"). A field resumes across ticks until done. Groups with no field start
 before stale refreshes of older groups; served the other way round, constant
 churn restarted the refreshes every tick and starved new groups.
 
@@ -711,17 +714,19 @@ workers (`legion_movement_orders_trolls_maze`).
 
 ## Tests
 
-* `legion_world_test`, 31 cases: clearance, groupreuse, jagged, trapped,
-  crowdhold, replace, unreachable, quota, determinism, formation, slotblock,
-  deaths, deathsshared, splitgoal, farclick, churn, approachhold,
+* `legion_world_test`, 38 cases: clearance, groupreuse, jagged, trapped,
+  crowdhold, replace, unreachable, quota, pens, determinism, formation,
+  slotblock, deaths, deathsshared, splitgoal, farclick, churn, approachhold,
   approachopen, churnfield, approachchurn, legacyyield, planeincremental,
   planeprebuild, penstale, lattice, wallend (one body and a 12-body column
   round a `nav().block` wall's end on a legacy plane, without turning in
-  place). All pass. Boats and hovercraft: navalclearance, navalisland,
-  hovershore, navalmissions (see "Scope").
+  place), staticblock, squadformation, pinwheel, landedflyers, mixedformation,
+  liftflyers and aware. All pass. Boats and hovercraft: navalclearance,
+  navalisland, hovershore, navalmissions (see "Scope"). Their metrics come
+  from the shared observer (see "Instruments").
 * `legion_acceptance_test`, five checks run in all five modes; Legion
   asserts, the others report. singleunit, jagged, trapped and group pass for
-  Legion; crowdheld is a known failure (below).
+  Legion; crowdheld is a ratchet (61 of 64 in goal or better, below).
 * `navigation_determinism` and `legion_determinism`.
 * `legion_movement_orders` (`movement_orders_test --legion`): attack approach
   around terrain, chase of a moving target, guard follow, group patrol,
@@ -1002,11 +1007,129 @@ Acceptance:
 - crowdheld (still disabled) now reaches 62 of 64 in goal, up from 59, with 2
   units ever terrain-stuck, up from 1.
 
+## Features added after round 4
+
+Each entry names the commit that has the full description and the numbers.
+
+### Pinwheel (2650c3e, protocol 234)
+
+A formation sent round the end of a wall used to fold into one file at the
+tip: every shortest way past a convex wall end touches it, so members
+descending the shared field converge there whatever their place in the
+formation. A formation member of a point with 16 or more members now takes a
+rank when a turn of its descent chain beside a wall comes into its 48-cell
+look-ahead. Its side offset from the group's live centroid across the way to the
+turn, counted from the inner side (the inner file hugs as before), makes its
+descent chain beside the wall, offset outward by that radius, its own
+concentric arc round the end. It pursues the first arc point 6 or more cells
+ahead that is in a straight legal line, and when blocked flows round toward it
+rather than down the field. The arc shrinks to the free width beside the wall;
+the look-ahead stops at passages (the passage lanes keep single file) and
+within 32 cells of the destination (the area logic places the slots). The
+group's field window gets the arc margin. Ranks and the aim memo are hashed;
+the work is bounded. Seen in `corner-1x48:gate.top.files_x100` (files abreast
+at the corner), `uturn:gate.top.files_x100` and the `pinwheel` world test.
+
+### Clustered static repair (4a99092a)
+
+`refreshPlane` repairs component labels in a window round the bounding box of
+the changes it is handed. A sync with a corpse in one corner and a building in
+another handed it one box spanning most of the map, so each plane paid a near
+whole-map flood for a few dozen changed cells. It now splits the changed
+rectangles into clusters (boxes grown by the relabel margin plus the footprint
+that overlap) and refreshes each cluster as if it had arrived alone, in the
+order of each cluster's first rectangle. The labelling stays exact (the
+`planeincremental`, `planeprebuild`, `staticblock`, `pens`, `penstale`, `churn`
+and `churnfield` world tests). Exercised by
+`refreshchurn:work.refresh_completed.total`.
+
+### Shared fields (dec039e)
+
+Commands sent to one point at different ticks (an AI's squads, an attack-move
+order split into groups, repeated orders) each built their own whole-map
+field. A group starting a field now takes another group's field instead when
+it serves it as well: same plane at the current static epoch, same seeds, a
+window holding this group's, the same soft rule (the same command unless
+neither has settled arrivals of its own), started within one soft scan period.
+A finished field comes first, else one still building (advanced once, whoever's
+turn it is). Fields are `shared_ptr`; a shared field is never an eviction
+victim, and its start tick is hashed. The count of fields served this way is
+`battle-field-2x60:work.fields_shared.total`.
+
+### Refresh allowance (b565029)
+
+After a static change in a battle (a wreck, a dead building) every group whose
+field it reaches rebuilds its field while still steering by the old one. A
+refresh now takes at most a quarter of the field quota per tick
+(`kRefreshQuota = kFieldQuota / 4`); first fields, which steer nobody yet, keep
+the whole quota. Spread out, a refresh no longer restarts on the next static
+change: it keeps building, as a first field does, and is installed still stale
+so another follows. A refresh that a sharing group finished is installed
+without spending any allowance. The widening of a bounded field that cannot
+reach a body restarts as a first field, not as a refresh, so the body does not
+steer by a field that cannot reach it. `refreshchurn:work.refresh_completed.total`
+counts the installs.
+
+### Group awareness (9254f69)
+
+Opposing groups are aware of each other (when they can see each other) and path
+round each other as whole groups, unless they are attacking the other group.
+Every 30 ticks each moving formation of 8 or more (members of one command sent
+to one point) is a mover: its centroid, spread, and the corridor it sweeps over
+the next three scans. A Legion group whose way ahead (48 descent cells from its
+centroid) meets a mover plans round it as a whole: its next field charges the
+corridor like a soft obstacle, and its members' direct lines refuse to cross it.
+A mover stays in the plan until it has been off the way for two scans.
+Same-player and allied movers always count; an enemy mover only within
+`World::sightDistance` of some member, never for a group whose mission engages
+enemies (fight, attack, guard, patrol). One selection sent as several groups
+(one player, within 90 ticks, to points within 32 cells) never plans round
+itself, and a mover going the same way (within 60 degrees) is followed, not
+avoided. Head on, both groups keep right; on crossing ways only the group with
+the larger command key gives way. Measured by `aware-headon:pair.contacts.permille_x100`
+and the `aware-*` fixtures (`aware-unseen` is the awareness-off control: the
+enemy is out of sight).
+
+## Instruments
+
+What each tool sees, and what it cannot. A number is only as good as the
+instrument that produced it; the "blind to" column is where an earlier audit
+went wrong.
+
+| Instrument | Sees | Blind to |
+|---|---|---|
+| `legion_world_test` (38 cases) | arrival, spins, cell oscillation, legality, hold and detour counters on synthetic 2x2 movers (instant acceleration, flat 16-px cells, feature walls); per-case metrics from the shared observer | real turn rates, combat, timing, multi-group selections |
+| `legion_acceptance_test` | single unit, group, jagged, trapped, crowd-held, in all five-era modes | anything outside its seven fixtures |
+| crowdbench (`crowdbench`, `crowdbench_matrix`, the nightly screen) | 18 scenarios x two modes x several populations, deterministic keys only, Retail on the same binary | formation play: its orders are per-unit goals, which form no formation |
+| `.scn` scenarios and `legion_scenario` (`tools/scenarios/`) | the client's real order path (`issueSelection`: 64 commands per tick, the per-axis offsets for non-shared units, SetSquad), serial and `--workers`, three start offsets, the observer's keys | the AI, fog and economy; production; anything not in the file |
+| `tools/legion_observe.h` | progress, held-by-design vs no-progress age classes, lane crossings and files, contact and clearance, flyer metrics, per-tick work counters | wall time (never read); it is const and adds nothing to hashed state (`observer_neutral`) |
+| `tools/scenarios/baseline.json`, `--check` | the committed base: exact keys, one-sided bands, work counters, the Retail floor, exceptions with their clusters | nothing it was not asked to key; a new key needs a new base |
+| `legion_cost` | work per member-tick W(4N)/W(N) and slot-assignment work per slot | wall time |
+| situations (`tools/scenarios/situations/`, `scn_truth`) | a moment cut out of one of the user's recordings: exact bodies, the orders in flight, the next 600 ticks of commands, and the recording's own positions 300 ticks in | what is not in the snapshot: economy, scripts, AI, production, units in transports; the first 100 ticks follow the recording (two of six moments clear 90% of bodies within 2 cells) but by 300 none does (best 85%), because the Legion group and mission state of bodies already in flight is not in the file; so they gate nothing (README in that directory) |
+| replay checkpoints (format 12) | the state hash and `posDigest` at every checkpoint; the verifier reports "state diverged at tick T1; positions/hp/orders match until tick T2" (an older recording gets its digests from `TAK_POSTRAIL` run on the recording build) | a replay plays back exactly only on the build that recorded it |
+| `TAK_PACELOG`, `tools/pace_check.sh` | ticks published per rendered frame, sim inbox depth, the 512-tick fast-forward, bursts | the display path of a headless run (see `TAK_FRAME_MS`); report-only |
+| `tools/legion_timing.sh` | per-tick mean and p99 on an idle pinned core, A/B interleaved, N of 4 or more | never a gate: wall time is reported, not asserted |
+
+Rules that came out of using them:
+
+* **Retail and determinism checks are exact; a Legion hash is exact only for the
+  steps declared hash-identical; outcome keys and work counters are one-sided
+  bands against the current head's base; wall time is always reported and never
+  gated.** The policy is in the Legion improvement plan, section 3.0.
+* **A replay is not a regression medium.** It runs only on the build that
+  recorded it. After a behaviour change it diverges at the first changed
+  decision and the commands then address units that were never built. The
+  situations exist so a later build can still run the moment.
+* **A weakness without a scenario, key or test behind it is not a known
+  weakness.** `tools/legion_doc_links.py` (ctest `legion_doc_links`) fails when a
+  cited scenario, key or test does not exist, or when the field quota quoted
+  here differs from `kFieldQuota`.
+
 ## Known weaknesses
 
-* **Packed distinct goals: one acceptance check is registered DISABLED as a
-  known failure.** `legion_acceptance_crowdheld_legion` reaches 62 of 64 in
-  goal with 1 unit ever terrain-stuck (spin passes at 0; 59 and 1 before
+* **Packed distinct goals: the crowdheld acceptance check is a ratchet, not a
+  pass-all.** `legion_acceptance_crowdheld_legion` reaches 62 of 64 in
+  goal and passes at 61 or more with 1 unit ever terrain-stuck (spin passes at 0; 59 and 1 before
   speed-matched following). Since 2026-10-06 the observer gives a unit one
   progress window after it stops being trapped (as after a command), so the
   gate's front unit, already moving at full speed, no longer counts; the
@@ -1031,7 +1154,8 @@ Acceptance:
   goals and a way for deep owners to pass parked bodies, or an entry face
   chosen per late unit from the lanes still free. The in-game group
   right-click sends one shared point, so it uses formation slots instead and
-  is not affected.
+  is not affected. Measured by `ctest:legion_acceptance_crowdheld_legion`
+  (the 61/64 ratchet) and `ctest:legion_crowdhold`.
 * **Approaching an unreachable goal counts as trapped movement.** The
   acceptance and matrix observers classify a unit as Trapped whenever its
   origin cannot statically reach its goal disc, and any move or turn more
@@ -1046,7 +1170,8 @@ Acceptance:
   removed at tick 2000, the original orders kept) Legion now reaches the goal
   with 0 units, as Retail does (before: 200 of 200 and 1999 of 2000).
   Pockets under 256 origins still hold in place; a region just above that
-  threshold walks to its edge.
+  threshold walks to its edge. Measured by
+  `ctest:legion_unreachable` and `ctest:legion_acceptance_trapped_legion`.
 * **CPU cost at large populations is 20-50% above the cheapest mode.**
   Five-mode timing at a78d194 (before the review-4 fixes), 8 parallel
   P-cores, noisy, mean ms per tick at 2000 units: doors 3.99 against 2.77
@@ -1055,37 +1180,54 @@ Acceptance:
   cases. At 200 units it is the cheapest mode or tied in most cases. Field
   work is not the cost; counters point to per-unit steering: line sweeps (640
   cells for formation members, rerun on every origin change), descent, held
-  rechecks and the per-held-member slot re-choice BFS.
+  rechecks and the per-held-member slot re-choice BFS. Those counters are
+  `cost-open:work.line_sweeps.total`, `cost-open:work.held_rechecks.total` and
+  `cost-corner:work.slot_search_cells.total`; `ctest:legion_cost` gates the
+  growth of that work from N to 4N bodies.
 * **Remaining losses.** Opposing columns at 2000x1 cross about 1076 against
   about 1176 for Flowfield; opposing columns 500x1 and 250x8 at 50% moving
   also trail (in the latter, idle bodies stand between movers and their
   goals, which is idle-obstacle flow, not passing). Exploration at 2000
-  units ends with 0 arrivals in every mode.
+  units ends with 0 arrivals in every mode. The opposing-columns rows live in
+  the crowdbench screen (`ctest:crowdbench_matrix`); the nearest `.scn`
+  measure is `densehead:stopped_permille`.
 * **Open items from the review-4 fixes.**
-  * Under constant static churn a group's stale refresh restarts every tick
-    and never finishes; the group keeps steering by its last finished field.
+  * Under constant static churn a refresh no longer restarts on the next
+    change (b565029): it keeps building, is installed still stale, and another
+    follows. A refresh under a change every tick finishes about every 85 ticks
+    (`refreshchurn:work.refresh_completed.total` is 10 in 900 ticks; the control
+    without churn, `refreshchurn-control`, completes none).
   * A first field built across epoch changes mixes old and new plane
     legality. This is safe, because the mover re-proves every step, but it
-    can misdirect until the clean rebuild.
+    can misdirect until the clean rebuild. Not measured by a scenario of its
+    own; `refreshchurn:spins` shows no spin while it happens.
   * `assignFormation` is still a one-tick burst per point (up to 97x97 rings
     per member for a large shared click), and the 640-cell sweep and the
-    49x49 re-choice BFS are bounded per member, not globally.
+    49x49 re-choice BFS are bounded per member, not globally
+    (`split-450-open:work.formation_ring_cells.max`).
   * A walled-out formation member settling after 600 ticks can stand just
     outside the benchmark's authored radius: its order completes, but it does
-    not count as arrived_settled.
-  * Point cell claims do not follow a body that yielded.
+    not count as arrived_settled (`corner-8x56:g.A.complete_outside_radius`).
+  * Point cell claims do not follow a body that yielded
+    (`corner-4x50:stopped_permille`).
   * The review-4 fixes were not screened at 500 or 1000 units, with 4 or 8
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
-    exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test.
+    exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test;
+    `battle-field-2x60:spins` and `ctest:crowdbench_matrix` are what watch them.
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially
-  coherent can get spatially interleaved groups.
+  coherent can get spatially interleaved groups
+  (`split-450-open:g.A.arrived`, and the 8-group `corner-8x56:g.A.arrived`).
 * **Idle units of other players never step aside.** Only settled same-player
   Legion arrivals yield; everything else idle is a still body to route
-  around.
+  around (`strait-3x80:region.east.inside`: a selection that has to pass a
+  barrier of idle bodies).
 * **Fog**: Legion plans on the static plane as Retail's mover sees it. It does
-  not model unexplored terrain separately.
+  not model unexplored terrain separately. The one place fog shows is group
+  awareness, which sees an enemy mover only within sight
+  (`aware-unseen:pair.contacts.permille_x100` against
+  `aware-seen:pair.contacts.permille_x100`).
 
 ## Compatibility
 

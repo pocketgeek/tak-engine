@@ -379,6 +379,11 @@
         // (rejoin replay) stays responsive rather than freezing for seconds.
         tak::net::Bundle bd;
         int drained = 0;
+#ifndef NDEBUG
+        int paceBuffered = int(mp_->bufferedBundles());
+        float paceRate = 0;
+        bool paceFF = false;
+#endif
         auto simTick = [&] {
             // Our own commands coming back in this bundle are the server's
             // acknowledgement that it took them (lockstep relays every tick to
@@ -404,6 +409,7 @@
                 job.tick = netTick_;
                 job.wantHash = (netTick_ % uint32_t(tak::net::kHashPeriod) == 0);
                 job.spectator = mp_->isSpectator();
+                job.wantPos = job.wantHash && mp_->recording() && !job.spectator;
                 { std::lock_guard<std::mutex> lk(inboxMutex_); simInbox_.push_back(std::move(job)); }
                 inboxCv_.notify_one();
             } else {
@@ -421,7 +427,8 @@
                 // an all-AI room has no seated players to form a consensus). A spectator's
                 // hash is a progress ACK only, so skip the O(units) stateHash for it.
                 if (netTick_ % uint32_t(tak::net::kHashPeriod) == 0)
-                    mp_->sendHash(netTick_, reportedHash(mp_->isSpectator(), netTick_));
+                    mp_->sendHash(netTick_, reportedHash(mp_->isSpectator(), netTick_),
+                                  mp_->recording() && !mp_->isSpectator() ? world_.posDigest() : 0);
             }
             ++netTick_;
             ++drained;
@@ -484,6 +491,9 @@
             // A deep backlog (rejoin replay, or the client fell behind) is NOT jitter
             // -- fast-forward it back down to the target reserve instead of pacing.
             if (buffered > netDelay_ + 60) budget = 512;
+#ifndef NDEBUG
+            paceBuffered = buffered; paceRate = rate; paceFF = buffered > netDelay_ + 60;
+#endif
             budget = std::min(budget, 512);
             while (drained < budget && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: the wall clock wanted more ticks than we could play
@@ -521,9 +531,33 @@
         if (useSimThread_) {
             std::deque<HashJob> done;
             { std::lock_guard<std::mutex> lk(outboxMutex_); done.swap(simOutbox_); }
-            for (const auto& h : done) mp_->sendHash(h.tick, h.hash);
+            for (const auto& h : done) mp_->sendHash(h.tick, h.hash, h.pos);
             drainPendingNotice();   // apply any HUD notice the worker posted (god/mission/scenario)
         }
+#ifndef NDEBUG
+        if (!paceInit_) { paceInit_ = true; pace_.open(tak::devEnv("TAK_PACELOG")); }
+        if (pace_.on()) {
+            // What the player saw this frame: the worker's finished ticks with the sim thread on, the
+            // drained count inline. The wall clock is read here, so a long sim stall shows in wallMs.
+            const uint64_t nowMs = SDL_GetTicks64();
+            tak::PaceLog::Frame fr;
+            fr.wallMs = paceLastMs_ ? double(nowMs - paceLastMs_) : 0.0;
+            paceLastMs_ = nowMs;
+            if (useSimThread_) {
+                const uint32_t done = simProcessedTick_.load(std::memory_order_relaxed);
+                fr.ticks = int(done - paceLastTick_);
+                paceLastTick_ = done;
+                std::lock_guard<std::mutex> lk(inboxMutex_);
+                fr.inbox = int(simInbox_.size());
+                fr.tick = done;
+            } else {
+                fr.ticks = drained;
+                fr.tick = netTick_;
+            }
+            fr.buffered = paceBuffered; fr.rate = paceRate; fr.fastForward = paceFF;
+            pace_.frame(fr);
+        }
+#endif
         // Cosmetics once per frame, covering the game time actually played.
         if (drained > 0) cosmeticStep(float(drained) / 30.0f);
         // Spectator progress heartbeat: keep the server's flow-control ack FRESH even
@@ -641,8 +675,49 @@ void GameView::autoplayStep() {
         const char* e = tak::devEnv("TAK_AUTOPLAY");
         return e ? std::clamp(std::atoi(e), 0, 60) : 0;
     }();
-    if (!rate || spectating_ || replayMode_ || localPlayer_ < 0) return;
+    // TAK_AUTOPLAY_FORMATION: the human seat plays like a player who forms armies -- every 600 ticks it puts
+    // all its mobile units in formation 1 (Alt+1) and sends them to fight at the enemy's base, one command per
+    // unit through GameView::issue, so the client's rate credit spreads a big selection over the same ticks a
+    // real click does. Without it the --mpai human never forms a group and the AI never does, so no Legion group
+    // code runs at all in that harness.
+    static const bool formation = tak::devFlag("TAK_AUTOPLAY_FORMATION");
+    if ((!rate && !formation) || spectating_ || replayMode_ || localPlayer_ < 0) return;
     if (netTick_ < autoplayNext_) return;
+    if (formation) {
+        autoplayNext_ = netTick_ + 600u;
+        std::vector<int> mine;
+        float tx = -1, tz = -1;
+        {
+            std::lock_guard<std::mutex> lk(simMutex_);
+            for (const auto& u : world_.units()) {
+                if (!u.alive() || !u.type) continue;
+                if (int(u.player) == localPlayer_) {
+                    // The monarch stays home: sending it into the enemy base ends the game, and with it the run.
+                    if (u.type->maxVel > tak::sim::Fixed() && !u.type->commander && !u.embarked() && !u.underConstruction)
+                        mine.push_back(u.id);
+                } else if (!world_.allied(localPlayer_, int(u.player)) && (tx < 0 || (u.type->commander && !u.type->canFly))) {
+                    tx = u.x.toFloat(); tz = u.z.toFloat();   // the first enemy seen, or better, an enemy monarch
+                }
+            }
+        }
+        if (mine.empty() || tx < 0) return;
+        for (int id : mine) {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::SetSquad;
+            c.unitId = id;
+            c.targetId = -1;     // formation 1
+            issue(c);
+        }
+        for (int id : mine) {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::AttackMove;
+            c.unitId = id;
+            c.x = tx; c.z = tz;  // one shared point: the Legion group's click
+            c.queue = 0;
+            issue(c);
+        }
+        return;
+    }
 
     // Seed once, from the slot and the game seed: same game + same slot -> same order
     // stream, so a run reproduces. Different slots diverge, which is the point --

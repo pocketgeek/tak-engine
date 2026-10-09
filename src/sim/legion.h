@@ -158,6 +158,9 @@ public:
     // 3 waiting for its field) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
+    // Observation hook (read-only, never hashed): cells left in the unit's committed local detour route
+    // (0: none, or not a Legion member). MV-06's route-follower crawl samples read it.
+    int routeLength(int id) const;
     // Test hook: the unit's group field potential at an origin (-1 if none).
     int fieldPotential(int id,int originX,int originZ) const;
     // Test hook: the slot shape of the unit's formation (valid=false if it

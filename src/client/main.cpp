@@ -394,7 +394,30 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     std::fprintf(stderr, "replay: %s -- map '%s', %zu ticks%s (format %u, recorded by %s, %zu hash checkpoints)\n",
                  path.c_str(), rf.mapId.c_str(), rf.bundles.size(), rf.crusades ? " (Crusades)" : "",
                  rf.formatVersion, rf.engineVersion.empty() ? "an older build" : rf.engineVersion.c_str(), rf.checks.size());
+#ifndef NDEBUG
+    // TAK_POSTRAIL_REF=<file>: digests written by TAK_POSTRAIL on the recording build, for a recording that
+    // predates format 12. TAK_POSTRAIL=<file> writes this playback's own trail (src/client/postrail.h).
+    if (const char* ref = tak::devEnv("TAK_POSTRAIL_REF")) {
+        const auto trail = tak::postrail::load(ref);
+        for (auto& ck : rf.checks)
+            if (ck.posDigest == 0) if (auto it = trail.find(ck.tick); it != trail.end()) ck.posDigest = it->second;
+    }
+    view->openPostrail(tak::devEnv("TAK_POSTRAIL"));
+#endif
     view->setReplayChecks(std::move(rf.checks));
+#ifndef NDEBUG
+    // TAK_SITUATION=<tick>:<path>: write the world at <tick> and the next 600 ticks of commands as a .scn
+    // situation (src/client/situation.h). Debug builds only, like every TAK_* hook.
+    if (const auto req = tak::situation::parseRequest(tak::devEnv("TAK_SITUATION")); req.valid) {
+        tak::situation::Meta meta;
+        meta.mapId = rf.mapId;
+        meta.crusades = rf.crusades;
+        meta.players = int(rf.cfg.slots.size());
+        meta.seed = rf.cfg.startSeed;
+        meta.source = std::filesystem::path(path).filename().string() + " (engine " + (rf.engineVersion.empty() ? "unknown" : rf.engineVersion) + ")";
+        view->armSituation(req, meta);
+    }
+#endif
     view->startReplay(rf.cfg, std::move(rf.bundles), rf.mission);
     return view;
 }
@@ -1301,6 +1324,8 @@ int main(int argc, char** argv) {
         // FAIL when playback did not reproduce the recording. This returned 0
         // unconditionally, so an automated verify passed a recording it had just
         // detected diverging from -- the one thing the mode exists to catch.
+        if (const std::string why = gameView->replayDivergenceSummary(); !why.empty())
+            std::fprintf(stderr, "replay verify: %s\n", why.c_str());
         return gameView->replayDiverged() ? 1 : 0;
     }
     if (gameView && mp && mpHeadless) {
@@ -1315,6 +1340,10 @@ int main(int argc, char** argv) {
         // usual tight poll loop.
         bool bench = tak::devEnv("TAK_NETBENCH") != nullptr;
         if (bench) gameView->netEnableRttProbe();
+        // TAK_FRAME_MS=N: sleep N ms per loop iteration, standing in for the display's frame time (the
+        // interactive IN-04 run drew about 20 frames/s). tools/pace_check.sh sets it with TAK_PACELOG.
+        const int frameMs = tak::devEnv("TAK_FRAME_MS") ? std::clamp(std::atoi(tak::devEnv("TAK_FRAME_MS")), 1, 200)
+                                                         : (bench ? 16 : 2);
         while (true) {
             // Pin the snapshot for the iteration (mirrors the interactive render loop), so
             // cosmeticStep's front() reads can't tear against the worker under TAK_SIM_THREAD.
@@ -1337,7 +1366,7 @@ int main(int argc, char** argv) {
             }
             if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
             if (int(gameView->netTick()) >= limitTicks) break;
-            SDL_Delay(bench ? 16 : 2);   // ~60 fps for the benchmark
+            SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
         }
         // Flush + join the worker so the final world hash reflects every pushed tick (no read
         // race against a still-running worker). No-op when inline.

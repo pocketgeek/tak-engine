@@ -57,10 +57,18 @@ struct TypeSpec {
     std::string fbi;                  // Fbi: the unit's FBI name
 };
 
+// A harvested body (`spots`): exact fixed-point position (raw 16.16 px), heading (raw BAM, 65536 = 360
+// degrees), hit points (raw 16.16; 0 = the type's full health), individual speed (raw 16.16 px/tick: the
+// +-10% roll every body gets at birth, which decides who leads a column) and stance (0 = the type's defaults, else
+// standingOrder | moveState << 8 | fireState << 16 | (stance + 1) << 24: hold position, hold fire and the like) and
+// the recorded unit id (0 = next free) and the current speed (raw 16.16 px/tick: a body already on the move).
+struct Spot { int32_t x = 0, z = 0, heading = 0, hp = 0, speed = 0, stand = 0, id = 0, vel = 0; };   // speed: raw baseSpeed (0 = the spawn roll)
+
 struct GroupSpec {
     std::string name, type;
     int owner = 0, count = 0;
     bool rect = true;
+    std::vector<Spot> spots;                         // non-empty: `spots` form (rect = false, cells empty)
     int x0 = 0, z0 = 0, x1 = 0, z1 = 0, pitch = 0;   // rect: [x0,x1) x [z0,z1) in cells
     std::vector<std::pair<int, int>> cells;          // explicit cells
     int squad = 0;      // tick-0 SetSquad: +N group N (Ctrl+N), -N formation N (Alt+N)
@@ -70,7 +78,8 @@ struct GroupSpec {
 struct OrderSpec {
     uint32_t tick = 0;
     Verb verb = Verb::Move;
-    std::vector<std::string> selection;   // group names, or {"all"}
+    std::vector<std::string> selection;   // group names, or {"all"}, or body numbers "%N" (0-based, across groups in
+                                          // file order; a harvested click keeps the recording's selection order)
     bool point = false;                   // x/z given (cells)
     float x = 0, z = 0;
     std::string target;                   // @group (centroid for points, first member for units)
@@ -79,9 +88,31 @@ struct OrderSpec {
     bool append = false;
 };
 
-struct Shape {   // gate/line: a segment; region: a rectangle; cells
+struct Shape {   // gate/line: a segment; region: a rectangle; lane: two segments; pair: two group lists
     std::string kind, name;
     float x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    // gate options (0 or -1: the observer's default): lateral axis 0 x / 1 z, file band, members inside for a
+    // files sample, end-window depth, ticks between two entries of a pair, flip distance in cells.
+    int lateral = -1, band = 0, minCount = 0, edge = 0, pairWindow = 0, flip = 0;
+    // lane: the second segment (the "after" line), the sign of each line's lateral cell, the entry window in
+    // ticks and the least lateral distance of a swap (0: the observer's defaults).
+    float ax0 = 0, az0 = 0, ax1 = 0, az1 = 0;
+    int beforeSign = 1, afterSign = 1, window = 0, minCells = 0;
+    bool acrossGroups = false;       // lane across=all: pairs of different groups count too
+    // pair: comma lists of group names (a trailing '*' matches a name prefix) and the contact radius in cells.
+    std::string a, b;
+    int cells = 0;
+};
+
+// `churn`: a blocking map feature placed (and, with toggle, lifted again) every `every` ticks, as corpses and
+// burning features churn the static map in a battle. Event k lands at tick from + k*every (before that tick's
+// orders); its cell is (x + dx*(k % row), z + dz*(k / row)), or for toggle the cell of event k/2: even events
+// place, odd events lift.
+struct ChurnSpec {
+    int x = 0, z = 0, w = 1, h = 1, every = 1;
+    int dx = 0, dz = 0, row = 0;      // row 0: one row, never wraps
+    bool toggle = false;
+    uint32_t from = 0, until = 0;     // until 0: the run's end
 };
 
 struct MapSpec {
@@ -100,6 +131,7 @@ struct Scenario {
     int players = 2;
     std::vector<std::pair<int, int>> teams;
     bool weapons = false, explored = true;
+    std::vector<std::pair<uint32_t, uint16_t>> exploredRle;   // `explored rle N:HEX ...`: the recording's per-cell owner masks
     bool crusades = false;            // `crusades on`: the Crusades balance overlay (unitscb/canbuildcb)
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
@@ -109,10 +141,37 @@ struct Scenario {
     std::vector<GroupSpec> groups;
     std::vector<OrderSpec> orders;
     std::vector<Shape> shapes;
+    std::vector<ChurnSpec> churns;
+    // `truth TICK X,Z ...`: where the recording had every body (raw 16.16 px, group then member order) TICK
+    // ticks into the situation. The runner reports how many of our bodies are within 2 cells of theirs.
+    bool hasClock = false;            // `clock TICK RNG`: start the world on the recording's tick counter and game RNG
+    uint32_t clockTick = 0, clockRng = 0;
+    struct Truth {
+        uint32_t tick = 0;
+        std::vector<std::pair<int32_t, int32_t>> pos;
+    };
+    std::vector<Truth> truths;        // ascending ticks; a file may carry several (`truth 100 ...`, `truth 300 ...`)
 
     const TypeSpec* type(const std::string& n) const {
         for (const auto& t : types) if (t.name == n) return &t;
         return nullptr;
+    }
+    // The group a body number "#N" falls in (bodies are numbered across the groups in file order); -1 when out of range.
+    int groupOfBody(size_t n) const {
+        for (size_t g = 0; g < groups.size(); ++g) {
+            if (n < size_t(groups[g].count)) return int(g);
+            n -= size_t(groups[g].count);
+        }
+        return -1;
+    }
+    static bool isBodyToken(const std::string& t) { return t.size() > 1 && t[0] == '%'; }
+    static size_t bodyNumber(const std::string& t) { return size_t(std::strtoul(t.c_str() + 1, nullptr, 10)); }
+    // Does the order's selection include (a body of) group index `g`?
+    bool selects(const OrderSpec& o, size_t g) const {
+        if (o.selection[0] == "all") return true;
+        for (const auto& t : o.selection)
+            if (isBodyToken(t) ? groupOfBody(bodyNumber(t)) == int(g) : t == groups[g].name) return true;
+        return false;
     }
     const GroupSpec* group(const std::string& n) const {
         for (const auto& g : groups) if (g.name == n) return &g;
@@ -239,7 +298,7 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
         }
         if (k == "name") { need(2, 2); s.name = w[1]; }
         else if (k == "ticks") { need(2, 2); s.ticks = uint32_t(c.integer(w[1], 1, 10'000'000)); }
-        else if (k == "seed") { need(2, 2); s.seed = uint32_t(c.integer(w[1], 0, 0x7fffffff)); }
+        else if (k == "seed") { need(2, 2); s.seed = uint32_t(c.integer(w[1], 0, 0xffffffffL)); }
         else if (k == "players") { need(2, 2); s.players = int(c.integer(w[1], 1, 8)); }
         else if (k == "team") {
             need(3, 3);
@@ -257,9 +316,21 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (w[1] != "on" && w[1] != "off") c.fail("wanderers on|off");
             s.wanderers = w[1] == "on";
         } else if (k == "explored") {
-            need(2, 2);
-            if (w[1] != "all" && w[1] != "none") c.fail("explored all|none");
-            s.explored = w[1] == "all";
+            need(2, 1 << 20);
+            if (w[1] == "rle") {
+                // explored rle COUNT:HEX ... -- run-length coded owner masks, row-major over the whole map.
+                s.explored = false;
+                for (size_t at = 2; at < w.size(); ++at) {
+                    const auto colon = w[at].find(':');
+                    if (colon == std::string::npos) c.fail("explored rle entries are COUNT:HEX: '" + w[at] + "'");
+                    s.exploredRle.push_back({uint32_t(c.integer(w[at].substr(0, colon), 1, 1 << 28)),
+                                             uint16_t(std::strtoul(w[at].substr(colon + 1).c_str(), nullptr, 16))});
+                }
+            } else {
+                if (w[1] != "all" && w[1] != "none") c.fail("explored all|none|rle ...");
+                s.explored = w[1] == "all";
+                s.exploredRle.clear();
+            }
         } else if (k == "probe") {
             need(2, 2);
             if (w[1] != "approach") c.fail("probe approach");
@@ -376,7 +447,27 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
                 }
                 if (int(g.cells.size()) != g.count) c.fail("count " + std::to_string(g.count) + " but " +
                                                           std::to_string(g.cells.size()) + " cells");
-            } else c.fail("spawn is 'rect' or 'cells'");
+            } else if (w[5] == "spots") {
+                g.rect = false;
+                for (; at < w.size() && w[at].find('=') == std::string::npos; ++at) {
+                    std::vector<std::string> f;
+                    {
+                        std::string item = w[at];
+                        std::replace(item.begin(), item.end(), ',', ' ');
+                        f = words(item);
+                    }
+                    if (f.size() < 4 || f.size() > 8) c.fail("spots are X,Z,HEADING,HP[,SPEED[,STAND[,ID[,VEL]]]] (raw fixed-point): '" + w[at] + "'");
+                    g.spots.push_back({int32_t(c.integer(f[0], INT32_MIN, INT32_MAX)),
+                                       int32_t(c.integer(f[1], INT32_MIN, INT32_MAX)),
+                                       int32_t(c.integer(f[2], 0, 65535)), int32_t(c.integer(f[3], 0, INT32_MAX)),
+                                       f.size() >= 5 ? int32_t(c.integer(f[4], 0, INT32_MAX)) : 0,
+                                       f.size() >= 6 ? int32_t(c.integer(f[5], 0, INT32_MAX)) : 0,
+                                       f.size() >= 7 ? int32_t(c.integer(f[6], 0, INT32_MAX)) : 0,
+                                       f.size() == 8 ? int32_t(c.integer(f[7], INT32_MIN, INT32_MAX)) : 0});
+                }
+                if (int(g.spots.size()) != g.count) c.fail("count " + std::to_string(g.count) + " but " +
+                                                          std::to_string(g.spots.size()) + " spots");
+            } else c.fail("spawn is 'rect', 'cells' or 'spots'");
             for (; at < w.size(); ++at) {
                 const auto eq = w[at].find('=');
                 if (eq == std::string::npos) c.fail("expected key=value: '" + w[at] + "'");
@@ -402,8 +493,13 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
                 auto list = w[3];
                 std::replace(list.begin(), list.end(), ',', ' ');
                 o.selection = words(list);
-                for (const auto& n : o.selection)
-                    if (n != "all" && !s.group(n)) c.fail("unknown group '" + n + "' (groups come before orders)");
+                for (const auto& n : o.selection) {
+                    if (Scenario::isBodyToken(n)) {
+                        char* end = nullptr;
+                        std::strtoul(n.c_str() + 1, &end, 10);
+                        if (*end || s.groupOfBody(Scenario::bodyNumber(n)) < 0) c.fail("no body '" + n + "'");
+                    } else if (n != "all" && !s.group(n)) c.fail("unknown group '" + n + "' (groups come before orders)");
+                }
                 if (std::count(o.selection.begin(), o.selection.end(), "all") && o.selection.size() > 1)
                     c.fail("'all' stands alone");
             }
@@ -438,14 +534,93 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (!o.target.empty() && !s.group(o.target)) c.fail("unknown target group '" + o.target + "'");
             if (at != w.size()) c.fail("unexpected '" + w[at] + "'");
             s.orders.push_back(o);
-        } else if (k == "gate" || k == "line" || k == "region") {
-            need(6, 6);
+        } else if (k == "clock") {
+            need(3, 3);
+            s.hasClock = true;
+            s.clockTick = uint32_t(c.integer(w[1], 0, 0xffffffffL));
+            s.clockRng = uint32_t(c.integer(w[2], 0, 0xffffffffL));
+        } else if (k == "truth") {
+            if (w.size() < 2) c.fail("truth TICK X,Z ...");
+            Scenario::Truth tr;
+            tr.tick = uint32_t(c.integer(w[1], 1, 10'000'000));
+            if (!s.truths.empty() && tr.tick <= s.truths.back().tick) c.fail("truth ticks must ascend");
+            for (size_t at = 2; at < w.size(); ++at) {
+                const auto comma = w[at].find(',');
+                if (comma == std::string::npos) c.fail("truth entries are X,Z: '" + w[at] + "'");
+                tr.pos.push_back({int32_t(c.integer(w[at].substr(0, comma), INT32_MIN, INT32_MAX)),
+                                  int32_t(c.integer(w[at].substr(comma + 1), INT32_MIN, INT32_MAX))});
+            }
+            s.truths.push_back(std::move(tr));
+        } else if (k == "churn") {
+            need(6, 10);
+            ChurnSpec ch;
+            ch.x = int(c.integer(w[1], 0, 4095)); ch.z = int(c.integer(w[2], 0, 4095));
+            ch.w = int(c.integer(w[3], 1, 8)); ch.h = int(c.integer(w[4], 1, 8));
+            bool haveEvery = false;
+            for (size_t at = 5; at < w.size(); ++at) {
+                if (w[at] == "toggle") { ch.toggle = true; continue; }
+                const auto eq = w[at].find('=');
+                if (eq == std::string::npos) c.fail("expected key=value or toggle: '" + w[at] + "'");
+                const std::string key = w[at].substr(0, eq), val = w[at].substr(eq + 1);
+                if (key == "every") { ch.every = int(c.integer(val, 1, 1'000'000)); haveEvery = true; }
+                else if (key == "from") ch.from = uint32_t(c.integer(val, 0, 10'000'000));
+                else if (key == "until") ch.until = uint32_t(c.integer(val, 1, 10'000'000));
+                else if (key == "walk") {
+                    const auto a = val.find(','), b = val.find(',', a == std::string::npos ? a : a + 1);
+                    if (a == std::string::npos || b == std::string::npos) c.fail("walk=DX,DZ,ROW");
+                    ch.dx = int(c.integer(val.substr(0, a), -4096, 4096));
+                    ch.dz = int(c.integer(val.substr(a + 1, b - a - 1), -4096, 4096));
+                    ch.row = int(c.integer(val.substr(b + 1), 1, 1'000'000));
+                } else c.fail("unknown churn option '" + key + "'");
+            }
+            if (!haveEvery) c.fail("churn needs every=N");
+            if (ch.until && ch.until <= ch.from) c.fail("churn until must follow from");
+            s.churns.push_back(ch);
+        } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair") {
+            if (k == "pair") need(4, 5); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
             if (s.shape(w[1])) c.fail("shape '" + w[1] + "' defined twice");
             Shape sh;
             sh.kind = k;
             sh.name = w[1];
-            sh.x0 = c.number(w[2]); sh.z0 = c.number(w[3]); sh.x1 = c.number(w[4]); sh.z1 = c.number(w[5]);
-            if (k == "region" && (sh.x1 <= sh.x0 || sh.z1 <= sh.z0)) c.fail("empty region");
+            size_t at = 0;
+            if (k == "pair") {
+                sh.a = w[2]; sh.b = w[3];
+                at = 4;
+            } else {
+                sh.x0 = c.number(w[2]); sh.z0 = c.number(w[3]); sh.x1 = c.number(w[4]); sh.z1 = c.number(w[5]);
+                at = 6;
+                if (k == "region" && (sh.x1 <= sh.x0 || sh.z1 <= sh.z0)) c.fail("empty region");
+                if (k == "lane") {
+                    sh.ax0 = c.number(w[6]); sh.az0 = c.number(w[7]); sh.ax1 = c.number(w[8]); sh.az1 = c.number(w[9]);
+                    at = 10;
+                    if (sh.x0 != sh.x1 && sh.z0 != sh.z1) c.fail("lane's before line must be vertical or horizontal");
+                    if (sh.ax0 != sh.ax1 && sh.az0 != sh.az1) c.fail("lane's after line must be vertical or horizontal");
+                }
+            }
+            for (; at < w.size(); ++at) {
+                const auto eq = w[at].find('=');
+                if (eq == std::string::npos) c.fail("expected key=value: '" + w[at] + "'");
+                const std::string key = w[at].substr(0, eq), val = w[at].substr(eq + 1);
+                if (k == "gate" && key == "lateral") {
+                    if (val != "x" && val != "z") c.fail("lateral=x|z");
+                    sh.lateral = val == "z" ? 1 : 0;
+                } else if (k == "gate" && key == "band") sh.band = int(c.integer(val, 1, 64));
+                else if (k == "gate" && key == "mincount") sh.minCount = int(c.integer(val, 1, 100000));
+                else if (k == "gate" && key == "edge") sh.edge = int(c.integer(val, 1, 64));
+                else if (k == "gate" && key == "pairwindow") sh.pairWindow = int(c.integer(val, 1, 1'000'000));
+                else if (k == "gate" && key == "flip") sh.flip = int(c.integer(val, 1, 64));
+                else if (k == "lane" && key == "bsign") sh.beforeSign = int(c.integer(val, -1, 1));
+                else if (k == "lane" && key == "asign") sh.afterSign = int(c.integer(val, -1, 1));
+                else if (k == "lane" && key == "window") sh.window = int(c.integer(val, 1, 1'000'000));
+                else if (k == "lane" && key == "mincells") sh.minCells = int(c.integer(val, 1, 64));
+                else if (k == "lane" && key == "across") {
+                    if (val != "all" && val != "group") c.fail("across=all|group");
+                    sh.acrossGroups = val == "all";
+                } else if (k == "pair" && key == "cells") sh.cells = int(c.integer(val, 0, 32));
+                else c.fail("unknown option '" + key + "' for " + k);
+            }
+            if ((k == "lane" && (sh.beforeSign == 0 || sh.afterSign == 0)))
+                c.fail("bsign and asign are 1 or -1");
             s.shapes.push_back(sh);
         } else c.fail("unknown directive '" + k + "'");
     }
@@ -461,8 +636,9 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
         if (p >= s.players || t >= s.players) c.fail("team outside players");
     for (const auto& o : s.orders) {   // one click is one player's selection
         int owner = -1;
-        for (const auto& g : s.groups)
-            if (o.selection[0] == "all" || std::count(o.selection.begin(), o.selection.end(), g.name)) {
+        for (size_t gi = 0; gi < s.groups.size(); ++gi)
+            if (s.selects(o, gi)) {
+                const auto& g = s.groups[gi];
                 if (owner >= 0 && g.owner != owner) c.fail("an order's selection spans two players");
                 owner = g.owner;
             }
@@ -490,7 +666,12 @@ inline std::string format(const Scenario& s) {
     for (const auto& [p, t] : s.teams) o << "team " << p << " " << t << "\n";
     o << "weapons " << (s.weapons ? "on" : "off") << "\nwanderers " << (s.wanderers ? "on" : "off")
       << (s.crusades ? "\ncrusades on" : "")
-      << "\nexplored " << (s.explored ? "all" : "none") << "\n";
+      << "\n";
+    if (!s.exploredRle.empty()) {
+        o << "explored rle";
+        for (const auto& [n, v] : s.exploredRle) { char h[16]; std::snprintf(h, sizeof h, "%x", unsigned(v)); o << " " << n << ":" << h; }
+        o << "\n";
+    } else o << "explored " << (s.explored ? "all" : "none") << "\n";
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
     if (s.probeApproach) o << "probe approach\n";
     switch (s.map.kind) {
@@ -532,7 +713,16 @@ inline std::string format(const Scenario& s) {
     for (const auto& g : s.groups) {
         o << "group " << g.name << " " << g.owner << " " << g.type << " " << g.count;
         if (g.rect) o << " rect " << g.x0 << " " << g.z0 << " " << g.x1 << " " << g.z1;
-        else {
+        else if (!g.spots.empty()) {
+            o << " spots";
+            for (const auto& sp : g.spots) {
+                o << " " << sp.x << "," << sp.z << "," << sp.heading << "," << sp.hp;
+                if (sp.speed || sp.stand || sp.id || sp.vel) o << "," << sp.speed;
+                if (sp.stand || sp.id || sp.vel) o << "," << sp.stand;
+                if (sp.id || sp.vel) o << "," << sp.id;
+                if (sp.vel) o << "," << sp.vel;
+            }
+        } else {
             o << " cells";
             for (const auto& [x, z] : g.cells) o << " " << x << "," << z;
         }
@@ -541,9 +731,38 @@ inline std::string format(const Scenario& s) {
         if (g.weapons >= 0) o << " weapons=" << (g.weapons ? "on" : "off");
         o << "\n";
     }
-    for (const auto& sh : s.shapes)
-        o << sh.kind << " " << sh.name << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " "
-          << fmt(sh.z1) << "\n";
+    for (const auto& sh : s.shapes) {
+        o << sh.kind << " " << sh.name;
+        if (sh.kind == "pair") o << " " << sh.a << " " << sh.b;
+        else o << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " " << fmt(sh.z1);
+        if (sh.kind == "lane")
+            o << " " << fmt(sh.ax0) << " " << fmt(sh.az0) << " " << fmt(sh.ax1) << " " << fmt(sh.az1);
+        auto opt = [&](const char* key, int v, int none) { if (v != none) o << " " << key << "=" << v; };
+        if (sh.kind == "gate") {
+            if (sh.lateral >= 0) o << " lateral=" << (sh.lateral ? "z" : "x");
+            opt("band", sh.band, 0); opt("mincount", sh.minCount, 0); opt("edge", sh.edge, 0);
+            opt("pairwindow", sh.pairWindow, 0); opt("flip", sh.flip, 0);
+        } else if (sh.kind == "lane") {
+            opt("bsign", sh.beforeSign, 1); opt("asign", sh.afterSign, 1);
+            opt("window", sh.window, 0); opt("mincells", sh.minCells, 0);
+            if (sh.acrossGroups) o << " across=all";
+        } else if (sh.kind == "pair") opt("cells", sh.cells, 0);
+        o << "\n";
+    }
+    for (const auto& ch : s.churns) {
+        o << "churn " << ch.x << " " << ch.z << " " << ch.w << " " << ch.h << " every=" << ch.every;
+        if (ch.row) o << " walk=" << ch.dx << "," << ch.dz << "," << ch.row;
+        if (ch.toggle) o << " toggle";
+        if (ch.from) o << " from=" << ch.from;
+        if (ch.until) o << " until=" << ch.until;
+        o << "\n";
+    }
+    if (s.hasClock) o << "clock " << s.clockTick << " " << s.clockRng << "\n";
+    for (const auto& tr : s.truths) {
+        o << "truth " << tr.tick;
+        for (const auto& [x, z] : tr.pos) o << " " << x << "," << z;
+        o << "\n";
+    }
     for (const auto& r : s.orders) {
         o << "at " << r.tick << " " << detail::verbName(r.verb) << " ";
         for (size_t i = 0; i < r.selection.size(); ++i) o << (i ? "," : "") << r.selection[i];
@@ -768,6 +987,35 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
         const TypeSpec& spec = *s.type(g.type);
         const bool armed = g.weapons >= 0 ? g.weapons == 1 : s.weapons;
         std::vector<std::pair<int, int>> spots = g.cells;
+        if (!g.spots.empty()) {
+            auto& ids = b->groups[g.name];
+            for (const auto& sp : g.spots) {
+                // Exact: spawn near the spot, then set the raw fixed-point fields. The group's start offset is
+                // whole cells on both axes, as for every other form.
+                const int32_t ox = sp.x + opt.offset * 16 * 65536, oz = sp.z + opt.offset * 16 * 65536;
+                if (sp.id > 0) w.setNextUnitId(sp.id);
+                const int id = w.spawn(typeFor(spec, armed, int(ids.size())), float(ox) / 65536.f, float(oz) / 65536.f,
+                                       std::nullopt, g.owner);
+                if (id <= 0) throw std::runtime_error(s.origin + ": group '" + g.name + "' spawn failed");
+                if (auto* u = w.unit(id)) {
+                    u->x.v = ox; u->z.v = oz;
+                    u->homeX.v = ox; u->homeZ.v = oz;
+                    u->heading = Bam(sp.heading);
+                    u->tickStartHeadingBam = uint16_t(sp.heading);
+                    if (sp.hp > 0) u->hp.v = sp.hp;
+                    if (sp.speed > 0) u->baseSpeed.v = sp.speed;
+                    if (sp.vel) u->speed.v = sp.vel;
+                    if (sp.stand) {
+                        u->standingOrder = uint8_t(sp.stand & 0xff);
+                        u->moveState = uint8_t((sp.stand >> 8) & 0xff);
+                        u->fireState = uint8_t((sp.stand >> 16) & 0xff);
+                        u->stance = int((uint32_t(sp.stand) >> 24) & 0x7f) - 1;
+                    }
+                }
+                ids.push_back(id);
+            }
+            continue;
+        }
         if (g.rect) {
             const UnitType* first = typeFor(spec, armed, 0);
             const int pitch = g.pitch ? g.pitch : std::max(first->footX, first->footZ) + 1;
@@ -787,11 +1035,23 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
             ids.push_back(id);
         }
     }
-    if (s.explored) {
+    if (!s.exploredRle.empty()) {
+        w.updateNavigationExploration();
+        auto& known = const_cast<std::vector<uint16_t>&>(w.navigationExploration());
+        size_t at = 0;
+        for (const auto& [n, v] : s.exploredRle) {
+            if (at + n > known.size()) throw std::runtime_error(s.origin + ": `explored rle` is longer than the map");
+            std::fill(known.begin() + ptrdiff_t(at), known.begin() + ptrdiff_t(at + n), v);
+            at += n;
+        }
+        if (at != known.size()) throw std::runtime_error(s.origin + ": `explored rle` covers " + std::to_string(at) +
+                                                         " cells, the map has " + std::to_string(known.size()));
+    } else if (s.explored) {
         w.updateNavigationExploration();
         auto& known = const_cast<std::vector<uint16_t>&>(w.navigationExploration());
         std::fill(known.begin(), known.end(), 0xffff);
     }
+    if (s.hasClock) w.resumeClocks(s.clockTick, s.clockRng);
     return b;
 }
 
@@ -809,8 +1069,10 @@ public:
         // separate presses would evict each other (assignSquad replaces).
         for (const auto& g : s.groups) {
             if (!g.squad) continue;
-            auto same = std::find_if(pending_.begin(), pending_.end(),
-                                     [&](const OrderSpec& o) { return o.squad == g.squad; });
+            // Squad numbers are per player: one press per (owner, number).
+            auto same = std::find_if(pending_.begin(), pending_.end(), [&](const OrderSpec& o) {
+                return o.squad == g.squad && o.verb == Verb::Squad && s.group(o.selection[0])->owner == g.owner;
+            });
             if (same != pending_.end()) { same->selection.push_back(g.name); continue; }
             OrderSpec o;
             o.verb = Verb::Squad;
@@ -827,8 +1089,19 @@ public:
             for (int id : b_.groups.at(n))
                 if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
         };
+        auto addBody = [&](size_t n) {
+            for (const auto& g : s_.groups) {
+                if (n >= size_t(g.count)) { n -= size_t(g.count); continue; }
+                const int id = b_.groups.at(g.name)[n];
+                if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
+                return;
+            }
+        };
         if (o.selection[0] == "all") for (const auto& g : s_.groups) add(g.name);
-        else for (const auto& n : o.selection) add(n);
+        else for (const auto& n : o.selection) {
+            if (Scenario::isBodyToken(n)) addBody(Scenario::bodyNumber(n));
+            else add(n);
+        }
         return out;
     }
 
@@ -864,11 +1137,28 @@ public:
 
     // Apply tick `tick`'s commands; call before World::tick with tick == tickCount().
     size_t apply(uint32_t tick) {
+        applyChurn(tick);
         const auto cmds = commandsFor(tick);
         for (const auto& c : cmds) tak::sim::applyCommand(*b_.world, b_.registry, c);
         return cmds.size();
     }
     bool done() const { return next_ >= pending_.size() && link_.idle(); }
+
+    // The `churn` events due at `tick`: a blocking feature of the spec's size placed in the static map (an odd
+    // event of a toggle lifts the same cell again by re-adding it unblocked).
+    void applyChurn(uint32_t tick) {
+        for (const auto& ch : s_.churns) {
+            if (tick < ch.from || (ch.until && tick >= ch.until) || (tick - ch.from) % uint32_t(ch.every)) continue;
+            const int64_t k = (tick - ch.from) / uint32_t(ch.every);
+            const int64_t cell = ch.toggle ? k / 2 : k;
+            const int64_t row = ch.row ? ch.row : int64_t(1) << 40;
+            const int cx = ch.x + ch.dx * int(cell % row);
+            const int cz = ch.z + ch.dz * int(cell / row);
+            if (cx < 0 || cz < 0 || cx + ch.w > b_.width || cz + ch.h > b_.height) continue;
+            b_.world->addFeature(cz * b_.width + cx, float(cx * 16 + ch.w * 8), float(cz * 16 + ch.h * 8), 0.f, 1.f,
+                                 ch.w, ch.h, !ch.toggle || k % 2 == 0, -1, true);
+        }
+    }
 
 private:
     const Scenario& s_;
@@ -877,5 +1167,58 @@ private:
     std::vector<OrderSpec> pending_;
     size_t next_ = 0;
 };
+
+// ---- situations: the recording's own positions ------------------------------
+
+// Every body of the file in group then member order (the order `truth` is written in).
+inline std::vector<int> allBodies(const Scenario& s, const Built& b) {
+    std::vector<int> all;
+    for (const auto& g : s.groups)
+        for (int id : b.groups.at(g.name)) all.push_back(id);
+    return all;
+}
+
+inline std::vector<std::pair<int32_t, int32_t>> startPositions(const Scenario& s, const Built& b) {
+    std::vector<std::pair<int32_t, int32_t>> out;
+    for (int id : allBodies(s, b)) {
+        const auto* u = b.world->unit(id);
+        out.push_back({u ? u->x.v : 0, u ? u->z.v : 0});
+    }
+    return out;
+}
+
+struct TruthReport {
+    int64_t n = 0, within = 0, movedN = 0, movedWithin = 0;   // bodies, and those the recording moved > 2 cells
+    int64_t within2Permille() const { return n ? within * 1000 / n : 0; }
+    int64_t movedWithin2Permille() const { return movedN ? movedWithin * 1000 / movedN : 1000; }
+};
+
+// Compare our bodies with `truth` (call when the world has run `truthTick` ticks): a body matches when it is alive
+// and within 2 cells of the recording's position on both axes. Bodies dead in the recording are not counted.
+// `shift` cells is the build's start offset (it moved every spawn, so it moves the truth the same way).
+inline TruthReport truthReport(const Scenario& s, const Built& b, const Scenario::Truth& truth,
+                               const std::vector<std::pair<int32_t, int32_t>>& startPos, int offset,
+                               const char* detail = nullptr) {
+    TruthReport r;
+    const auto all = allBodies(s, b);
+    if (truth.pos.size() != all.size()) return r;
+    const int64_t two = int64_t(2) * 16 * 65536, shift = int64_t(offset) * 16 * 65536;
+    auto far = [&](int64_t a, int64_t t) { return a - t > two || t - a > two; };
+    for (size_t k = 0; k < all.size(); ++k) {
+        const auto [tx, tz] = truth.pos[k];
+        if (tx == INT32_MIN) continue;
+        const auto* u = b.world->unit(all[k]);
+        const bool in = u && u->alive() && !far(u->x.v, int64_t(tx) + shift) && !far(u->z.v, int64_t(tz) + shift);
+        const bool moved = far(startPos[k].first, int64_t(tx) + shift) || far(startPos[k].second, int64_t(tz) + shift);
+        ++r.n; r.within += in;
+        if (moved) { ++r.movedN; r.movedWithin += in; }
+        if (detail && u)
+            std::fprintf(stderr, "truth %s id=%d %s start=(%.1f,%.1f) truth=(%.1f,%.1f) ours=(%.1f,%.1f) moved=%d in=%d orders=%zu\n",
+                         u->type ? u->type->id.c_str() : "?", all[k], u->alive() ? "alive" : "dead", startPos[k].first / 1048576.0,
+                         startPos[k].second / 1048576.0, (int64_t(tx) + shift) / 1048576.0, (int64_t(tz) + shift) / 1048576.0,
+                         u->x.v / 1048576.0, u->z.v / 1048576.0, int(moved), int(in), u->orders.size());
+    }
+    return r;
+}
 
 }  // namespace tak::scn

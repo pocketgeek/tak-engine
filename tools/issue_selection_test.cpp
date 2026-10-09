@@ -562,6 +562,10 @@ group E 1 army 12 rect 26 14 62 22 pitch=4 weapons=on
 gate door 20 11 20 13
 line finish 40 0 40 24
 region home 0 0 18 24
+gate wide 10 0 20 24 lateral=z band=3 mincount=2 edge=3 pairwindow=200 flip=2
+lane swap 5 8 5 12 30 8 30 12 bsign=-1 window=100 mincells=3 across=all
+pair near A,B E* cells=3
+churn 40 9 2 2 every=5 walk=2,0,8 toggle until=60
 at 30 move F,A,B 50 8
 at 60 fight A,B @E queue
 at 90 attack F @E
@@ -674,7 +678,22 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
     roundTrip(kAscii, "ascii");
     const auto ascii = tak::scn::parse(kAscii, "ascii");
     check(ascii.map.width == 64 && ascii.map.height == 24, "ascii: size from the rows");
-    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 3, "ascii: counts");
+    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 6, "ascii: counts");
+    {
+        const auto& g = *ascii.shape("wide");
+        check(g.lateral == 1 && g.band == 3 && g.minCount == 2 && g.edge == 3 && g.pairWindow == 200 && g.flip == 2,
+              "ascii: gate options");
+        const auto& l = *ascii.shape("swap");
+        check(l.kind == "lane" && l.ax0 == 30 && l.az1 == 12 && l.beforeSign == -1 && l.afterSign == 1 &&
+                  l.window == 100 && l.minCells == 3 && l.acrossGroups,
+              "ascii: lane shape");
+        check(ascii.churns.size() == 1 && ascii.churns[0].x == 40 && ascii.churns[0].z == 9 &&
+                  ascii.churns[0].every == 5 && ascii.churns[0].dx == 2 && ascii.churns[0].row == 8 &&
+                  ascii.churns[0].toggle && ascii.churns[0].until == 60,
+              "ascii: churn");
+        const auto& p = *ascii.shape("near");
+        check(p.kind == "pair" && p.a == "A,B" && p.b == "E*" && p.cells == 3, "ascii: pair shape");
+    }
     check(ascii.group("A")->squad == -1 && ascii.group("E")->weapons == 1, "ascii: group options");
     check(ascii.orders[0].selection == std::vector<std::string>{"F", "A", "B"}, "ascii: selection order kept");
     check(ascii.orders[1].queue && ascii.orders[1].target == "E", "ascii: fight @E queue");
@@ -697,6 +716,15 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
             }
         }
         check(at0 == 24 && at30 == 34, "ascii: tick-0 Alt+1 (24) and the tick-30 click (34)");
+        // The churn: an event every 5 ticks from 0 to 55 (12 events: six cells, placed then lifted).
+        tak::scn::OrderFeed churn(ascii, *b);
+        const size_t before = b->world->features().size();
+        for (uint32_t t = 0; t < 120; ++t) churn.applyChurn(t);
+        const auto& fs = b->world->features();
+        check(fs.size() - before == 12, "ascii: churn lands 12 events");
+        check(fs[before].blocks && !fs[before + 1].blocks && fs[before + 2].x.toFloat() == 42 * 16 + 16 &&
+                  fs[before + 2].blocks,
+              "ascii: churn places on even events, lifts on odd, and walks a cell per pair");
     }
     determinism(ascii, "ascii", 300);
 
@@ -769,6 +797,47 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
             "user-gen1");
         roundTrip(tak::scn::format(user), "user-gen1");
         determinism(user, "user-gen1", 100, data);
+    }
+
+    // A harvested situation (`spots`, `%N` selection, `clock`, `truth`): the grammar round-trips, bodies spawn exactly
+    // (position, heading, hit points, individual speed, recorded id), and a click keeps the order of its `%N` list.
+    {
+        const std::string text =
+            "scn 1\nname situation\nticks 200\nseed 4000000000\nplayers 2\nweapons on\n"
+            "map flat 96 96\ntype m mover 2 2500 10 1.8\n"
+            "group a 0 m 3 spots 1638400,1638400,16384,3276800,70000,0,17,1000 2686976,1638400,0,0 1638400,2686976,65535,6553600,0,0,40,0\n"
+            "group b 1 m 1 spots 4194304,4194304,0,0\n"
+            "clock 1234 987654321\nat 3 move %2,%0,%1 50 50\ntruth 50 1,2 3,4 5,6 7,8\ntruth 100 1,2 -2147483648,-2147483648 3,4 5,6\n";
+        roundTrip(text, "situation");
+        const auto sc = tak::scn::parse(text, "situation");
+        check(sc.seed == 4000000000u && sc.hasClock && sc.clockTick == 1234 && sc.clockRng == 987654321u,
+              "situation: seed above 2^31 and the clock survive");
+        check(sc.groups[0].spots.size() == 3 && sc.groups[0].spots[0].id == 17 && sc.groups[0].spots[0].vel == 1000 &&
+              sc.groups[0].spots[2].id == 40 && sc.truths.size() == 2 && sc.truths[1].pos.size() == 4 && sc.truths[1].tick == 100,
+              "situation: spots and truth parsed");
+        check(sc.groupOfBody(3) == 1 && sc.groupOfBody(4) == -1, "situation: body numbers span the groups in file order");
+        tak::scn::BuildOptions opt;
+        auto b = tak::scn::build(sc, opt);
+        const auto& ids = b->groups.at("a");
+        const auto* u0 = b->world->unit(ids[0]);
+        const auto* u2 = b->world->unit(ids[2]);
+        check(ids[0] == 17 && ids[2] == 40 && u0 && u2, "situation: bodies take their recorded ids");
+        check(u0 && u0->x.v == 1638400 && u0->z.v == 1638400 && u0->heading.v == 16384 && u0->hp.v == 3276800 &&
+              u0->baseSpeed.v == 70000 && u0->speed.v == 1000, "situation: position, heading, hp, speed and velocity are exact");
+        check(u2 && u2->heading.v == 65535 && u2->hp.v == 6553600, "situation: the last body is exact too");
+        check(b->world->tickCount() == 1234 && b->world->gameRngState() == 987654321u, "situation: the world resumes the recorded clocks");
+        // The click lists bodies 2, 0, 1: hudCommands walks the selection in that order, so the commands come in it.
+        tak::scn::OrderFeed feed(sc, *b);
+        std::vector<int> order;
+        for (uint32_t t = 0; t < 8; ++t)
+            for (const auto& c : feed.commandsFor(t)) order.push_back(c.unitId);
+        check(order.size() == 3 && order[0] == ids[2] && order[1] == ids[0] && order[2] == ids[1],
+              "situation: a %N selection keeps the recording's command order");
+        // The shifted start offset moves the truth the same way (whole cells on both axes).
+        bool threw2 = false;
+        try { tak::scn::parse("scn 1\nmap flat 64 64\ntype m mover 2 2500 10 1.8\ngroup a 0 m 1 rect 0 0 4 4\nat 0 move %5 1 1\n", "bad%.scn"); }
+        catch (const std::runtime_error&) { threw2 = true; }
+        check(threw2, "situation: a body number past the last body is an error");
     }
 
     // Errors carry the file and line.

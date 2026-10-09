@@ -1,6 +1,8 @@
 // Real file loader: incompatible protocols and corrupt inner/outer records
 // must not silently launch a different simulation.
 #include "client/replayfile.h"
+#include "client/postrail.h"
+#include "legion_scn.h"
 #include "net/crypto.h"
 #include <filesystem>
 #include <fstream>
@@ -21,7 +23,7 @@ Writer recording(uint32_t protocol=kNetVersion,const Command& command=Command{},
  Writer bundle;bundle.u32(0);bundle.u32(1);bundle.cmd(command);bundle.u32(event?1:0);
  if(event){bundle.u8(event);bundle.u8(0);}if(innerTrailing)bundle.u8(99);
  file.u32(1);file.u32(uint32_t(bundle.b.size()));file.b.insert(file.b.end(),bundle.b.begin(),bundle.b.end());
- file.u32(1);file.u32(0);file.u64(1234);return file;
+ file.u32(1);file.u32(0);file.u64(1234);file.u64(5678);return file;
 }
 void run(){
  const auto root=std::filesystem::temp_directory_path()/("tak-replay-file-"+tak::crypto::toHex(tak::crypto::randomVec(12)));
@@ -61,6 +63,43 @@ void run(){
  bad=Command{};bad.player=kMaxSlots;check(!load(recording(kNetVersion,bad)),"invalid command player accepted");
  check(!load(recording(kNetVersion,Command{},255)),"unknown event accepted");
  check(load(recording(kNetVersion,Command{},uint8_t(Event::Kind::CampaignForfeit))),"real campaign forfeit event refused");
+ // Format 12: the checkpoint carries posDigest. A format-11 file (12-byte records) still loads, digest absent.
+ check(load(recording(),&decoded)&&decoded.formatVersion==12&&decoded.checks.size()==1&&decoded.checks[0].hash==1234&&
+       decoded.checks[0].posDigest==5678,"format 12 checkpoint lost its position digest");
+ {auto old=recording();old.b[4]=11;old.b.resize(old.b.size()-8);
+  check(load(old,&decoded)&&decoded.formatVersion==11&&decoded.checks.size()==1&&decoded.checks[0].hash==1234&&
+        decoded.checks[0].posDigest==0,"format 11 recording refused or misread");
+  auto stale=recording();stale.b[4]=11;
+  check(!load(stale),"format 11 file with format 12 records accepted");}
+ // The tracker separates a hash-layout change from changed play.
+ {using C=ReplayCheck;
+  const C ck[3]={{0,10,100},{300,20,200},{600,30,300}};
+  ReplayCheckTracker clean;for(const auto& c:ck)clean.observe(c,c.hash,[&]{return c.posDigest;});
+  check(!clean.stateDiverged()&&clean.summary().empty(),"matching playback reported a divergence");
+  ReplayCheckTracker layout;for(const auto& c:ck)layout.observe(c,c.hash+1,[&]{return c.posDigest;});
+  check(layout.stateDiverged()&&layout.stateTick()==0&&!layout.posDiverged()&&
+        layout.summary().find("hash layout change only")!=std::string::npos,"layout-only divergence not identified");
+  ReplayCheckTracker play;for(const auto& c:ck)play.observe(c,c.hash+1,[&]{return c.tick<300?c.posDigest:c.posDigest+1;});
+  check(play.stateDiverged()&&play.stateTick()==0&&play.posDiverged()&&play.posTick()==300&&
+        play.summary()=="state diverged at tick 0; positions/hp/orders match until tick 300 (hash layout changed first, behaviour later)",
+        "state-then-position divergence not reported with both ticks");
+  ReplayCheckTracker none;for(const auto& c:ck)none.observe(C{c.tick,c.hash,0},c.hash+1,[&]{return 0ull;});
+  check(none.stateDiverged()&&!none.haveDigest()&&none.summary().find("no position digest")!=std::string::npos,"old-format file claimed a digest");}
+ // World::posDigest: stable for equal worlds, sensitive to positions and orders, independent of the hash layout.
+ {const char* text="scn 1\nname pd\nticks 60\nmap flat 64 64\nplayers 2\ntype a mover 2 2500 10 1.8\n"
+                   "group g 0 a 4 rect 5 5 20 20\nat 1 move all 40 40\n";
+  auto digest=[&](bool order,int ticks){
+   auto scn=tak::scn::parse(text);if(!order)scn.orders.clear();
+   auto built=tak::scn::build(scn,{tak::sim::PathfindingMode::Legion,true,0,nullptr});
+   tak::scn::OrderFeed feed(scn,*built);
+   for(int t=0;t<ticks;++t){feed.apply(uint32_t(t));built->world->tick(1.f/30);}
+   check(tak::postrail::digest(*built->world)==built->world->posDigest(),"postrail digest is not World::posDigest");
+   return std::pair<uint64_t,uint64_t>{built->world->posDigest(),built->world->stateHash()};};
+  const auto a=digest(true,40),b=digest(true,40),idle=digest(false,40),later=digest(true,41);
+  check(a.first==b.first&&a.second==b.second,"posDigest not reproducible");
+  check(a.first!=idle.first,"posDigest blind to orders and movement");
+  check(a.first!=later.first,"posDigest blind to a tick of movement");
+  check(a.first!=a.second,"posDigest equals the state hash");}
 }
 }
 int main(){try{run();std::cout<<"PASS: "<<checks<<" replay file checks\n";return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}
