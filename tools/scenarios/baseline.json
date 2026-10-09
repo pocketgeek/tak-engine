@@ -141240,6 +141240,22 @@
    "mode": "retail",
    "reason": "offset spread 35971..43606 exceeds the 1.20 band at the W3-1 retake (base 7a01f7bb, new observer); gated on median-of-5 offsets",
    "scenario": "wall-4x50"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "gate.mid.crossings",
+   "median5": true,
+   "mode": "legion",
+   "reason": "accepted until W8 (user decision W3-2, 2026-10-09); W8 exit must bring within Retail. W3 (A2: one formation per click) reorders the lanes of a 200-body head-on / 150-boat strait crossing: legion 643 vs retail 204 at W3 B round 2 (b187f96d), median of 5 offsets; base 7a01f7bb passed the floor",
+   "scenario": "densehead"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "gate.strait.crossings",
+   "median5": true,
+   "mode": "legion",
+   "reason": "accepted until W8 (user decision W3-2, 2026-10-09); W8 exit must bring within Retail. W3 (A2: one formation per click) reorders the lanes of a 200-body head-on / 150-boat strait crossing: legion 20 vs retail 11 at W3 B round 2 (b187f96d), median of 5 offsets; base 7a01f7bb passed the floor",
+   "scenario": "strait-2x150"
   }
  ],
  "history": [
@@ -141632,6 +141648,12 @@
    "ratchets": [],
    "reason": "W3-1 instrument retake (user decision W3-1, 2026-10-09; lead decision on observer fix 6cee9294): contact_settled_permille redefined (per arrived unit, own command excluded) and the held classes re-read (completed-not-retired = held); every value, reference and exception of those keys retaken for both modes from the W3 step-0 base sim 7a01f7bb with the new observer (offsets 0,1,-1,2,-2). The old measure's contact_settled exceptions are dropped and recomputed on the new one, and its two W2 AR-11 accepted_regressions (unreach-200 max 27, mazeapproach max 3) are dropped: the W2 effect is part of the retaken base.",
    "when": "2026-10-09T12:00:00Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "W3-2 (user decision 2026-10-09): densehead gate.mid.crossings and strait-2x150 gate.strait.crossings recorded as Retail-floor exceptions, cluster MV-02, accepted until W8; the W8 exit must bring them within Retail",
+   "when": "2026-10-09T12:30:00Z"
   }
  ],
  "references": {
