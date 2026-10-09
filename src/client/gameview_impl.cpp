@@ -266,6 +266,9 @@
         int guard = 0;
         bool advanced = false;
         while (replayAccum_ >= 1.0f / 30.0f && replayTick_ < replayBundles_.size() && guard < 64) {
+#ifndef NDEBUG
+            if (situation_.armed()) situation_.observe(uint32_t(replayTick_), world_, replayBundles_);
+#endif
             const auto& bd = replayBundles_[replayTick_];
             for (const auto& c : bd.cmds) apply(c);
             for (const auto& e : bd.events) applyEvent(e);

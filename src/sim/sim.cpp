@@ -11238,6 +11238,17 @@ void World::tick(float dt) {
 }
 
 #ifndef NDEBUG
+void World::resumeClocks(uint32_t tick, uint32_t gameRng) {
+    // Spawn stamped the mover clocks with the counter as it stood; move them to the new one with it.
+    const uint32_t was = tickCounter_;
+    for (auto& u : units_) {
+        if (u.groundGradeTick == was) u.groundGradeTick = tick;
+        if (u.groundMoveTick == was) u.groundMoveTick = tick;
+    }
+    tickCounter_ = tick;
+    gameRng_ = gameRng;
+}
+
 uint64_t World::posDigest() const {
     uint64_t h = 1469598103934665603ULL;
     auto mix = [&h](uint64_t v) {

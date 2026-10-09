@@ -36,6 +36,10 @@
 //                        the scenario's units with orders, sampled after the
 //                        tick the last command landed
 //   legion_groups_peak   Legion only: the most such groups on any tick
+//   truth.tT.*           a harvested situation (a `truth T ...` directive): truth.tT.n bodies alive in the
+//                        recording, truth.tT.within2_permille of them within 2 cells of the recording's
+//                        position T ticks in, truth.tT.moved_* the same for the bodies the recording
+//                        moved more than 2 cells (the ones that mean something)
 //   region.<name>.inside units whose centre cell is in the region at the end
 //
 // Shapes become observer probes:
@@ -225,7 +229,7 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
         std::tie(og.clickX, og.clickZ) = centroid(g.name, false);
         // The last order that moves this group decides its click.
         for (const auto& o : s.orders) {
-            if (o.selection[0] != "all" && !std::count(o.selection.begin(), o.selection.end(), g.name)) continue;
+            if (!s.selects(o, size_t(&g - s.groups.data()))) continue;
             switch (o.verb) {
             case scn::Verb::Move: case scn::Verb::Fight: case scn::Verb::Patrol:
                 if (o.point) { og.clickX = int(std::lround(o.x * 16)); og.clickZ = int(std::lround(o.z * 16)); }
@@ -355,6 +359,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         std::sort(ids.begin(), ids.end());
         return std::unique(ids.begin(), ids.end()) - ids.begin();
     };
+    // A harvested situation (`truth`): the recording's body positions TICK ticks in, against ours.
+    const auto startPos = s.truths.empty() ? std::vector<std::pair<int32_t, int32_t>>{} : scn::startPositions(s, *b);
+    std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
         const size_t landed = feed.apply(t);
@@ -370,6 +377,10 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                 if (lastCommand == int64_t(t)) groupsAfter = n;
             }
         }
+        for (const auto& tr : s.truths)
+            if (t + 1 == tr.tick && tr.pos.size() == all.size())
+                truthNow.push_back({tr.tick, scn::truthReport(s, *b, tr, startPos, offset,
+                                                              std::getenv("LEGION_TRUTH_DETAIL") ? "" : nullptr)});
         if ((t + 1) % 100 == 0) r.digest = mix(r.digest, w.stateHash());
     }
     r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -379,6 +390,13 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         r.keys = o->report();
         r.keys.emplace_back("commands", commands);
         r.keys.emplace_back("last_command_tick", lastCommand);
+        for (const auto& [tick, tr] : truthNow) {
+            const std::string pre = "truth.t" + std::to_string(tick) + ".";
+            r.keys.emplace_back(pre + "n", tr.n);
+            r.keys.emplace_back(pre + "within2_permille", tr.within2Permille());
+            r.keys.emplace_back(pre + "moved_n", tr.movedN);
+            r.keys.emplace_back(pre + "moved_within2_permille", tr.movedWithin2Permille());
+        }
         if (nav) {
             r.keys.emplace_back("legion_groups", groupsAfter);
             r.keys.emplace_back("legion_groups_peak", groupsPeak);

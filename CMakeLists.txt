@@ -334,6 +334,10 @@ set_tests_properties(issue_selection_test PROPERTIES LABELS legion)
 # the file needs a retail install (--data).
 add_executable(legion_scenario tools/legion_scenario.cpp)
 target_link_libraries(legion_scenario PRIVATE tak-formats)
+# scn_truth: the situation fidelity check alone (no observer), small enough to build in the old trees that
+# recorded the user's replays (see tools/scn_truth.cpp).
+add_executable(scn_truth tools/scn_truth.cpp)
+target_link_libraries(scn_truth PRIVATE tak-formats)
 add_test(NAME legion_scenario_smoke
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/smoke-open.scn --mode both --json)
 add_test(NAME observer_neutral
@@ -770,6 +774,15 @@ if(TAK_TEST_DATA)
                      --data "${TAK_TEST_DATA}" --wanderers on --json)
     set_tests_properties(legion_motion_wall_wanderers_on PROPERTIES
                          SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
+    # Harvested situations (tools/scenarios/situations/README.txt): not faithful enough to gate on, so these only
+    # check that each file loads and runs deterministically, serial == workers, in both modes.
+    foreach(legion_situation r9-36060 r9-65850 r9-61930 r10-46292 r10-87332 r10-104540)
+        add_test(NAME legion_situation_${legion_situation}
+                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/situations/situation-${legion_situation}.scn
+                         --data "${TAK_TEST_DATA}" --offsets 0 --json)
+        set_tests_properties(legion_situation_${legion_situation} PROPERTIES
+                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+    endforeach()
     foreach(legion_route 21096 27459 36057 45941 54772 61923 65845)
         add_test(NAME legion_gen1_route_${legion_route}
                  COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gen1-route-${legion_route}.scn

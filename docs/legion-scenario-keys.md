@@ -64,6 +64,27 @@ audit's quantity, so do not compare them with an audit number:
 - gapsweep gaps 8, 14 and 20 (five groups share one navigator) and every fixture
   listed as KNOWN-FAILING in its header.
 
+## Situations (`tools/scenarios/situation-*.scn`)
+
+A situation is a moment cut out of one of the user's recordings by `TAK_SITUATION=<tick>:<path>` on
+a debug replay (`src/client/situation.h`): every live body with its exact position, heading, hit
+points, individual speed and recorded id, the orders in flight, the next 600 ticks of the human
+commands (clustered back into clicks that go through the client's HUD split and uplink), and the
+recording's own body positions 100 and 300 ticks in. It replaces the replay tick-switch A/Bs: the recording
+plays back exactly only on the build that made it, a situation runs on whatever the head is.
+
+Its keys beside the observer's:
+
+| Key | Definition |
+|---|---|
+| `truth.tT.n` | bodies alive in the recording T ticks in (T is 100 or 300) |
+| `truth.tT.within2_permille` | per mille of them whose centre is within 2 cells of the recording's on both axes |
+| `truth.tT.moved_n` / `truth.tT.moved_within2_permille` | the same for the bodies the recording moved by more than 2 cells |
+
+`truth.*` is a fidelity measure of the harvest, so it is meaningful on the build that recorded the
+replay (`scn_truth`, built in that tree): there it is the 90% bar a situation had to clear to be
+committed. On the head it is only a report of how far Legion has moved since the recording.
+
 ## Grammar added for these keys
 
 - `gate NAME x0 z0 x1 z1 [lateral=x|z] [band=N] [mincount=N] [edge=N] [pairwindow=N] [flip=N]`

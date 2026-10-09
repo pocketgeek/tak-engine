@@ -405,6 +405,19 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     view->openPostrail(tak::devEnv("TAK_POSTRAIL"));
 #endif
     view->setReplayChecks(std::move(rf.checks));
+#ifndef NDEBUG
+    // TAK_SITUATION=<tick>:<path>: write the world at <tick> and the next 600 ticks of commands as a .scn
+    // situation (src/client/situation.h). Debug builds only, like every TAK_* hook.
+    if (const auto req = tak::situation::parseRequest(tak::devEnv("TAK_SITUATION")); req.valid) {
+        tak::situation::Meta meta;
+        meta.mapId = rf.mapId;
+        meta.crusades = rf.crusades;
+        meta.players = int(rf.cfg.slots.size());
+        meta.seed = rf.cfg.startSeed;
+        meta.source = std::filesystem::path(path).filename().string() + " (engine " + (rf.engineVersion.empty() ? "unknown" : rf.engineVersion) + ")";
+        view->armSituation(req, meta);
+    }
+#endif
     view->startReplay(rf.cfg, std::move(rf.bundles), rf.mission);
     return view;
 }

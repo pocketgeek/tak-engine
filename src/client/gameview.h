@@ -34,6 +34,7 @@
 #include "hpi/hpi.h"
 #include "net/client.h"
 #include "client/replayfile.h"   // ReplayCheckTracker
+#include "client/situation.h"    // TAK_SITUATION (debug builds)
 #include "client/postrail.h"      // TAK_POSTRAIL (debug builds)
 #include <future>
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
@@ -2177,7 +2178,9 @@ private:
     std::vector<tak::net::ReplayCheck> replayChecks_;   // recorded (tick, hash) trail
     size_t replayCheckAt_ = 0;                    // next checkpoint to compare
 #ifndef NDEBUG
+    tak::situation::Harvester situation_;         // TAK_SITUATION: cut a .scn out of the recording
 public:
+    void armSituation(const tak::situation::Request& r, const tak::situation::Meta& m) { situation_.arm(r, m); }
     tak::postrail::Writer postrail_;              // TAK_POSTRAIL: this playback's digest trail, for the head to read back
     void openPostrail(const char* path) { postrail_.open(path); }
 private:

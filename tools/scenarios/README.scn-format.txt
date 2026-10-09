@@ -17,6 +17,8 @@ never names a pathfinding mode: the runner builds it once per mode.
   team P T
   weapons on|off                default for groups (default off)
   explored all|none             pre-explore the nav map (default all)
+  explored rle COUNT:HEX ...    the recording's per-cell owner masks, run-length coded over the whole
+                                map (situations; the count must cover the map)
   wanderers on|off              fbi types keep (default) or lose Standby_wander,
                                 the home-pull that re-orders idle wanderers every
                                 240 ticks (legion_scenario --wanderers overrides)
@@ -57,6 +59,10 @@ Groups (spawned in file order, members in row-major order):
                                 fills [X0,X1) x [Z0,Z1) every pitch cells
                                 (default: largest footprint + 1)
   group NAME OWNER TYPE COUNT cells X,Z X,Z ... [opts]
+  group NAME OWNER TYPE COUNT spots X,Z,HEADING,HP[,SPEED] ... [opts]
+                                harvested bodies, exact: raw 16.16 px position, raw BAM heading
+                                0..65535, raw 16.16 hit points (0 = full), raw 16.16 individual
+                                speed (0 = the spawn roll)
   opts: squad=fN|gN             Alt+N / Ctrl+N pressed at tick 0 (one press
                                 per number, over every group naming it)
         weapons=on|off
@@ -77,11 +83,22 @@ Orders (stable-sorted by tick; issued before World::tick at that tick):
   at TICK stop SEL
   at TICK squad SEL fN|gN|none [append]
   SEL is a comma list of groups (selection order = list order, then spawn
-  order) or 'all'; one order's selection belongs to one player.
+  order) or 'all'; one order's selection belongs to one player. A token
+  %N is body N (0-based, across the groups in file order): a harvested click
+  keeps the recording's selection order, which a group list cannot say.
   move = right-click on ground (Legion: surface movers share the point; flyers,
   bodies over 8 and every unit in other modes keep their offset from the
   selection centroid, clamped to +-60 px per axis). fight/patrol/guard = the
   armed F/P/G order, attack = right-click on an enemy, stop = the Stop key.
+
+Situations (tools/scenarios/situation-*.scn, cut by TAK_SITUATION; src/client/situation.h):
+  clock TICK RNG                start the world on the recording's tick counter and game RNG
+                                (World::resumeClocks, after every spawn)
+  truth TICK X,Z ...            where the recording had every body (raw 16.16 px, group then
+                                member order; INT32_MIN,INT32_MIN = dead) TICK ticks in; several
+                                lines, ascending. The runner reports truth.tTICK.n,
+                                .within2_permille and .moved_* (tools/scn_truth.cpp reports the
+                                same on an old build).
 
 Shapes (for the runner's metrics; never affect the world):
   gate NAME X0 Z0 X1 Z1         a segment
