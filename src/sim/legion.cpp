@@ -4833,6 +4833,12 @@ struct LegionNavigator::Impl {
         // The chain's first link: a shared point's member standing inside
         // the destination area itself is at the crowd.
         if(area&&!queued&&!foreign&&shared(g,m)&&potential<=areaBound(g,m,fx,fz,body))queued=true;
+        // A distinct goal's destination area is a body plus 4 px round its
+        // point (Retail's goal radius + 4): a member still for a window
+        // inside it has arrived, whoever stands on the goal itself (a lattice
+        // of per-unit points otherwise wedges bodies one step off their
+        // goals for good; the 600-tick wait used to end that).
+        if(area&&!shared(g,m)&&dist<=body+4&&!inExitLane(u,body))return true;
         if(!queued&&!foreign)return false;
         // Soft obstacles (an idle crowd standing there) charge kSoftFactor
         // per step in a softened field.
