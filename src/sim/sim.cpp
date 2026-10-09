@@ -4818,22 +4818,14 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
     // A builder mid-job -- constructing a site, repairing, reclaiming, holding
     // queued builds, or producing from a queue -- stays on task: it does NOT
     // auto-acquire a nearby enemy and wander off to fight while it should build.
-    bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
-                        hasQueuedWork(u) ||
-                        (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType));
+    // Every gate below is a pure test and the scan runs only if all of them pass,
+    // so their order is free: the cheap ones go first and the order-queue walk
+    // (hasQueuedWork) last, because most armed units fail the stride gate on any
+    // given tick and would otherwise walk their whole queue for nothing.
     // Auto-acquisition belongs to the FIRE order: only Fire At Will goes looking.
     // Hold Fire and Return Fire both wait to be handed a target (an explicit attack
     // order still works -- retail's hold-fire gate has a "forced" bypass for
     // exactly that).
-    bool acquiring = !busyBuilding && u.fireState == 2 &&
-                     (groundResponse || u.orders.empty() ||
-                      (u.orders.front().targetId == 0 &&
-                       (u.orders.front().attackMove || u.orders.front().patrol)) ||
-                      u.orders.front().guard);
-    auto canTarget = [&](const Unit& e) {
-        if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
-        return canAttackTarget(u,e);
-    };
     // Auto-acquisition is staggered across ticks by unit id: an idle armed unit
     // rescans for a target every kAcqStride ticks (~0.13s at 30Hz), not every
     // tick. That turns the dense-crowd O(n^2) neighbour scan into O(n^2/stride)
@@ -4841,8 +4833,40 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
     // Deterministic (id+tick, identical on every lockstep peer), so no desync. The
     // stride widens with the crowd (acqStride_, set at tick start) so massive battles
     // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
-    bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
-    if (acquiring && !isNeutralPlayer(u.player) && u.type->weapon.damage > 0 && acqTurn) {
+    const bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
+    const bool acquireGate = u.fireState == 2 && acqTurn && !isNeutralPlayer(u.player) &&
+        u.type->weapon.damage > 0 &&
+        (groundResponse || u.orders.empty() ||
+         (u.orders.front().targetId == 0 &&
+          (u.orders.front().attackMove || u.orders.front().patrol)) ||
+         u.orders.front().guard) &&
+        u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0 &&
+        (u.type->isStructure() || (u.buildQueue.empty() && !u.repeatType));
+    TAK_PROBE(if (acquireGate) ++probe::tl.acqGateWalks;
+              if (u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0) ++probe::tl.acqGateWalksBefore);
+    const bool acquiring = acquireGate && !hasQueuedWork(u);
+#ifndef NDEBUG
+    // TAK_VERIFY_ACQ_GATE: the gates in their original order (busyBuilding first)
+    // must decide exactly as the reordered ones.
+    static const bool verifyGate = probe::envOn("TAK_VERIFY_ACQ_GATE");
+    if (verifyGate) {
+        const bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
+                                  hasQueuedWork(u) ||
+                                  (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType));
+        const bool acquiringBefore = !busyBuilding && u.fireState == 2 &&
+                                     (groundResponse || u.orders.empty() ||
+                                      (u.orders.front().targetId == 0 &&
+                                       (u.orders.front().attackMove || u.orders.front().patrol)) ||
+                                      u.orders.front().guard);
+        if ((acquiringBefore && !isNeutralPlayer(u.player) && u.type->weapon.damage > 0 && acqTurn) != acquiring)
+            throw std::runtime_error("findTarget: reordered acquisition gates disagree with the original order");
+    }
+#endif
+    auto canTarget = [&](const Unit& e) {
+        if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
+        return canAttackTarget(u,e);
+    };
+    if (acquiring) {
         // The +90 is approach margin: room to notice something and walk to it. A
         // unit whose move order forbids leaving has no use for it -- it should
         // acquire only what it can already shoot, or it would lock onto something
@@ -5579,6 +5603,7 @@ void World::updateBodyIndex(const Unit& u) const {
 
 World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId) const {
     SearchBodyRect result{x,z,w,h,BodyCells(size_t(w)*h)};
+    TAK_PROBE(++probe::tl.bodyRects; if (size_t(w)*h>BodyCells::kInline) ++probe::tl.bodyRectsHeap);
     auto stamp=[&](const Unit& u,const std::array<int,4>* bounds=nullptr) {
         if (u.id==ignoreId || !u.alive() || u.embarked() || !u.type || (u.type->canFly && u.flightGroundMode!=1)) return;
         const int ux=bounds ? (*bounds)[0] : footprintOrigin(u.x,u.type->footX);
@@ -11492,7 +11517,8 @@ void World::tick(float dt) {
         std::fprintf(stderr, "SIMSTATS tick=%u units=%d vm_ticks=%llu vm_skippable=%llu vm_empty=%llu vm_debt_flushes=%llu"
                      " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
                      " near_cells_block_skippable=%llu near_cells_outside_disk=%llu acq_scans=%llu los_calls=%llu"
-                     " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu compact_moved=%llu passes=%llu\n",
+                     " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu compact_moved=%llu passes=%llu"
+                     " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu\n",
                      tickCounter_, alive, (unsigned long long)c.vmTicks, (unsigned long long)c.vmSkippable,
                      (unsigned long long)c.vmEmpty, (unsigned long long)c.vmDebtFlushes, (unsigned long long)c.nearScans,
                      (unsigned long long)c.nearCells, (unsigned long long)c.nearCellsMasked,
@@ -11500,7 +11526,9 @@ void World::tick(float dt) {
                      (unsigned long long)c.nearCellsOutsideDisk, (unsigned long long)c.acqScans,
                      (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
                      (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
-                     (unsigned long long)c.compactMoved, (unsigned long long)c.passes);
+                     (unsigned long long)c.compactMoved, (unsigned long long)c.passes,
+                     (unsigned long long)c.acqGateWalks, (unsigned long long)c.acqGateWalksBefore,
+                     (unsigned long long)c.bodyRects, (unsigned long long)c.bodyRectsHeap);
         probe::tl = {};   // work between ticks (commands, the state hash) counts toward the next line
     }
 #endif

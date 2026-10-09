@@ -9,6 +9,11 @@
 //                   near_scans / near_cells / near_cells_masked / near_blocks_skipped /
 //                   near_cells_block_skippable / near_cells_outside_disk / acq_scans /
 //                   los_calls (forEachNear and findTarget, for A2),
+//                   acq_gate_walks / acq_gate_walks_before (findTarget's order-queue walk,
+//                   hasQueuedWork: how many it makes, and how many the original gate
+//                   order -- that walk first -- would have made; A2a),
+//                   body_rects / body_rects_heap (searchBodyRect queries, and those too
+//                   large for BodyCells' inline buffer; A5),
 //                   refresh_rects / refresh_grade_evals / refresh_raw_grades (A3),
 //                   compact_moved, and passes (the census of full sweeps over units_ in
 //                   World::tick and the sim.cpp helpers it calls; Legion's own sweeps in
@@ -60,6 +65,7 @@ struct Counters {
     uint64_t nearScans = 0, nearCells = 0, nearCellsMasked = 0, nearBlocksSkipped = 0;
     uint64_t nearCellsBlockSkippable = 0, nearCellsOutsideDisk = 0, acqScans = 0, losCalls = 0;
     uint64_t refreshRects = 0, refreshGradeEvals = 0, refreshRawGrades = 0;
+    uint64_t acqGateWalks = 0, acqGateWalksBefore = 0, bodyRects = 0, bodyRectsHeap = 0;
     uint64_t compactMoved = 0, passes = 0;
 };
 // Per thread, like the TAK_PHASE accumulators: the server may tick rooms on several threads.
