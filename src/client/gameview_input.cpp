@@ -473,6 +473,46 @@
         return world_.canPlace(type, x, z, localPlayer_);
     }
 
+    GameView::PlacePreview& GameView::placePreviewEntry(const tak::sim::UnitType* type, float x, float z) {
+        for (auto& e : placePreview_)
+            if (e.type == type && e.x == x && e.z == z) return e;
+        if (placePreview_.size() >= 256) placePreview_.clear();   // a build line is a few dozen
+        placePreview_.push_back({type, x, z, ~0u});
+        return placePreview_.back();
+    }
+
+    bool GameView::canPlacePreview(const tak::sim::UnitType* type, float x, float z) {
+        PlacePreview& e = placePreviewEntry(type, x, z);
+        const uint32_t tick = front().gameTick;
+        if (e.tick != tick && !placePreviewBusy_) {
+            std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
+            if (!useSimThread_ || lk.try_lock()) {
+                e.ok = world_.canPlace(type, x, z, localPlayer_);
+                e.tick = tick; e.haveClear = false;
+            } else placePreviewBusy_ = true;
+        }
+        if (e.tick == ~0u) return placePreviewLast_;   // never computed and the worker is busy
+        return placePreviewLast_ = e.ok;
+    }
+
+    // Whether a blocked site is blocked only by clearable features (the ghost is not red-washed).
+    bool GameView::placePreviewClearable(const tak::sim::UnitType* type, float x, float z) {
+        PlacePreview& e = placePreviewEntry(type, x, z);
+        const uint32_t tick = front().gameTick;
+        if ((e.tick != tick || !e.haveClear) && !placePreviewBusy_) {
+            std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
+            if (!useSimThread_ || lk.try_lock()) {
+                const auto* builder = selectedBuilder();
+                std::vector<int> feats;
+                e.clearable = builder && builder->type->canReclaim &&
+                    world_.clearableForPlacement(type, x, z, feats, localPlayer_) && !feats.empty();
+                e.haveClear = true;
+                if (e.tick != tick) {e.ok = world_.canPlace(type, x, z, localPlayer_); e.tick = tick;}
+            } else placePreviewBusy_ = true;
+        }
+        return e.haveClear && e.clearable;
+    }
+
 #ifndef NDEBUG
     // TAK_PACELOG: how long the render thread waits for the sim worker on a per-frame check.
     void GameView::lockSimTimed(std::unique_lock<std::mutex>& lk) {

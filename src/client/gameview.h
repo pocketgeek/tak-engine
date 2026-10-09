@@ -2619,6 +2619,18 @@ private:
     // read. Placement-UX only and rare (a ghost while positioning a building), so the brief
     // wait for the current tick is invisible; uncontended and cheap when inline.
     bool canPlaceLocked(const tak::sim::UnitType* type, float x, float z);
+    // The PER-FRAME form for ghosts (drawGhost, build line, mana drag): the verdict is cached per
+    // (type, x, z, published tick), a miss does a try_lock (never a blocking wait), and once a
+    // try has failed this frame no more are made -- the previous verdict is reused instead. The
+    // click path keeps canPlaceLocked's blocking lock, so a placement is never decided on a guess.
+    struct PlacePreview {const tak::sim::UnitType* type=nullptr; float x=0,z=0; uint32_t tick=0;
+                         bool ok=false, clearable=false, haveClear=false;};
+    std::vector<PlacePreview> placePreview_;
+    bool placePreviewBusy_ = false;     // a try_lock failed this frame
+    bool placePreviewLast_ = true;      // last verdict handed out (the no-data fallback)
+    PlacePreview& placePreviewEntry(const tak::sim::UnitType* type, float x, float z);
+    bool canPlacePreview(const tak::sim::UnitType* type, float x, float z);
+    bool placePreviewClearable(const tak::sim::UnitType* type, float x, float z);
     // A site blocked ONLY by clearable features: collect those features' ids, so the
     // placement can queue reclaims ahead of the build instead of being refused.
     // Returns false when anything else blocks (terrain, a unit, a building, an

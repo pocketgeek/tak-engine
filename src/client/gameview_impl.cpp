@@ -4370,6 +4370,7 @@
         std::lock_guard<std::mutex> lk(frameMutex_);
         renderReadIdx_ = published_;
         reading_ = published_;
+        placePreviewBusy_ = false;   // one failed try_lock per frame at most (canPlacePreview)
         if (!gameStartMs_ && front().gameTick > 0) gameStartMs_ = SDL_GetTicks64();
         // A previously selected enemy must stop exposing its live state on leaving sight.
         std::erase_if(selection_, [this](int id) {

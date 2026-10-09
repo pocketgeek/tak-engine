@@ -1471,12 +1471,12 @@
             for (const auto& [x,z]:world_.manaSpots())
                 if (x>=std::min(bdX0_,mx) && x<=std::max(bdX0_,mx) &&
                     z>=std::min(bdZ0_,mz) && z<=std::max(bdZ0_,mz) && (noFog_ || cellVisibleR(x,z)))
-                    drawGhostAt(placing_,x,z,!canPlaceLocked(placing_,x,z));
+                    drawGhostAt(placing_,x,z,!canPlacePreview(placing_,x,z));
         } else if (buildDrag_ && placing_) {
             float mx, mz;
             pickWorld(mouseX_, mouseY_, mx, mz);
             for (auto& [x, z] : buildLinePositions(bdX0_, bdZ0_, mx, mz))
-                drawGhostAt(placing_, x, z, !canPlaceLocked(placing_, x, z));
+                drawGhostAt(placing_, x, z, !canPlacePreview(placing_, x, z));
         } else if (placing_) {
             drawGhost();
         }
@@ -3966,12 +3966,11 @@
         // unit/building -- a plain ghost where it can go, red-washed where it can't.
         float wx, wz;
         pickWorld(mouseX_, mouseY_, wx, wz);
-        bool ok = canPlaceLocked(placing_, wx, wz);
+        bool ok = canPlacePreview(placing_, wx, wz);
         // A site blocked only by clearable doodads isn't a refusal any more -- the
         // click sends the builder to clear it first -- so don't red-wash it. The
         // notice tells the player what the click will actually do.
-        std::vector<int> clearFeats;
-        if (!ok && clearableAt(placing_, wx, wz, clearFeats) && !clearFeats.empty())
+        if (!ok && placePreviewClearable(placing_, wx, wz))
             ok = true;
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         drawGhostAt(placing_, wx, wz, !ok);
