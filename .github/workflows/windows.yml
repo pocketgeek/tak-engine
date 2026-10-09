@@ -199,6 +199,17 @@ jobs:
           cmake --build build --target tdf_limits_test validationworker_test order_trail_test retail_search_scratch_test navigation_checkpoint_test navigation_telemetry_test replay_test
           bash tools/run-ctest-selection.sh build tdf_limits validationworker order_trail retail_search_scratch navigation_determinism crowdbench_matrix navigation_telemetry replay
 
+      # The per-commit Legion selection (PLAN 3.0 / T8 A8, <= 45 s on 4 cores): the World
+      # cases, the instrument selftests, the asset-free scenarios of label legion (the
+      # nightly and data-gated ones are not run here), the cost gate and the baseline
+      # reasons check. The movement/production/transport variants need game data.
+      - name: Legion navigation tests and scenarios
+        env:
+          CTEST_PARALLEL_LEVEL: 4
+        run: |
+          cmake --build build --target legion_world_test legion_observe_selftest issue_selection_test legion_scenario legion_acceptance_test
+          bash tools/run-ctest-selection.sh --exclude-labels 'nightly|data' --selection tools/legion_ci_selection.txt build
+
       - name: Verify fully static (only system DLL imports)
         run: |
           for binary in takclient takserver cartographer crusades_admin; do
