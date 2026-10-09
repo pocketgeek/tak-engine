@@ -304,7 +304,7 @@ cells to the own goal while on a straight line.
   `tick()` every tick, in id order: a straight step at ground speed without
   turning, ended by arrival, a refused step or 45 ticks. Each body yields at
   most 3 times. An anchor is forgotten when the unit dies or gets any new
-  order.
+  order (by event since W4: see "Upkeep on demand").
 * **Heading**: the body turns only on a committed step toward its route,
   with a 5.6° dead band. A refused step, a hold, a shuffle, a pass, a
   side-step, a detour route, a yield and a trapped stop never turn it.
@@ -1155,6 +1155,58 @@ Trapped ownership, W8's lane cap). `convoy_test`
 covers the click shapes (flyers first with saturated offsets, opposite
 corners, all-air, the 974-unit window at round trips 0/8/16/24, patrol, two
 clicks 48 px apart) and the index against the scan.
+
+### Upkeep on demand (W4, protocol 242)
+
+W4 (T7 Stage B) set out to make Legion's per-tick upkeep follow demand instead of
+the population: refresh only for groups that need it (B1), sample still bodies a
+thirtieth of the population a tick (B2), and erase the settled-arrival records on
+the event that ends them (B3). Only B3 landed; B1 and B2 are held on their branches
+(`task-w4-b1`, `task-w4-b2`) for lead decisions on their acceptance bounds.
+
+**Event-driven records (B3).** The anchors (settled arrivals, kept with the
+per-destination `anchorsAt` count), the approach-done records and the parting
+records used to be walked in full by `serviceYields` every tick to drop the ones
+whose unit had died or got a new order. Now `World::noteOrders(id)` reports every
+change of a unit's orders -- the order helpers (`order`, `loadInto` for unit and
+carrier, `unloadAt`, `patrol`, `orderWait`, `orderWaitAttack`, `guard`, `attack`,
+`queueBuild`, `queueManaBuildArea`, `reclaimArea`, `reclaim`, `repair`,
+`startEmote`, through a scoped reporter so every return path reports), `dropLeg`,
+`acquireTarget`, the ground, flight and construction mission dispatchers, the
+unload park leg and the two death edges -- and `LegionNavigator::ordersChanged`
+applies the old per-entry tests to that one unit (an anchor stays while the unit
+is alive and idle or still on its completed leg; the other records while it is
+alive and idle). Anchors drop through `dropAnchor`, so `anchorsAt` stays an exact
+count of live settled bodies for the settle rule. `registerMove` also erases the
+unit's parting record. A dense per-unit hint makes the event two vector reads for
+a unit with no record. `serviceYields` keeps only its yield-step loop over
+`yielding`. No hook sits in `findTarget`, `forEachNear` or the Retail mover.
+
+Writes to `Unit::orders` that bypass the helpers (morph and consume, a test's
+direct write) are caught by the backstop: `prune`'s hashed 256-a-tick cursor now
+walks the members and the three record maps in one id order (with no records it is
+the old members-only cursor), so a stale record lives at most
+ceil((members + records) / 256) ticks. `work.anchor_walk_iters` counts the
+cursor's ids: at most 256 a tick (pocket-615's per-tick max 616 -> 256).
+`legion_world_test b3events` checks that an order to a settled body drops its
+anchor inside the order call, a stop keeps it, and a death or a direct order write
+drops it within one tick.
+
+**Refresh policy (unchanged).** A stale field still refreshes for every group
+listed stale, active or not, at most `kRefreshQuota` (a quarter of the field quota)
+a tick, swapped in when done ("Refresh allowance"). The demand-driven variant (B1:
+a stale field refreshes only while a member moved in the last 2 ticks, is blocked
+outside its goal area, or an aware re-plan asked for it) removes all refresh work
+for parked groups beside construction (`legion_staticidle`), but refresh is under
+2% of the live 8-AI Ulasem benchmark's field work -- first builds are the rest --
+so it missed its benchmark bound and is held.
+
+**Still-body scan (unchanged).** `scanStill` still samples the whole population on
+every 30th tick and rebuilds the soft-obstacle stamps and `softHash` from a sorted
+walk. The striped variant (B2: bodies with `id % 30 == tick % 30` each tick, an
+order-independent incremental `softHash` checked against a full recompute under
+`TAK_LEGION_VERIFY`) cuts the 30th-tick spike from about 330 bodies to 25-26 but is
+held on its balance bound and three world-test moves.
 
 ## Instruments
 
