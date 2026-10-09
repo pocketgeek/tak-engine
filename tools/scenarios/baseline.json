@@ -9147,6 +9147,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 32
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 32
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 76608
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -10228,6 +10252,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 143962
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -11743,6 +11791,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 141552
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -13185,6 +13257,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 141562
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -14625,6 +14721,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 143952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -16067,6 +16187,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 143962
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -17322,6 +17466,30 @@
      "rule": "bound",
      "since": "W3-r4",
      "value": 16
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 256
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 256
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1023360
     },
     "work.aware_pairs.max": {
      "band": 1.1,
@@ -18775,6 +18943,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 256
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 256
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 518149
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -20284,6 +20476,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 256
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 256
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 912973
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -21834,6 +22050,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 156613
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -23325,6 +23565,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 158
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 335962
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -25044,6 +25308,30 @@
      "since": "W3-r4",
      "value": 47
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 448
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 448
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 3173634
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -26534,6 +26822,30 @@
      "since": "W3-r4",
      "value": 70
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 431952
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -27989,6 +28301,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 60
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 201
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 200
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1799520
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -29885,6 +30221,30 @@
      "since": "W3-r4",
      "value": 49
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 449
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 448
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 3165014
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -31365,6 +31725,30 @@
      "since": "W3-r4",
      "value": 40
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 100
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 100
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 239864
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -32693,6 +33077,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 101
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 100
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 199874
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -34088,6 +34496,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 20
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 959824
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -35563,6 +35995,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 1
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 887944
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -37079,6 +37535,30 @@
      "since": "W3-r4",
      "value": 16
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 959824
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -38578,6 +39058,30 @@
      "since": "W3-r4",
      "value": 21
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 887944
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -40069,6 +40573,30 @@
      "since": "W3-r4",
      "value": 484
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 319960
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -41552,6 +42080,30 @@
      "since": "W3-r4",
      "value": 445
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 296000
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -43034,6 +43586,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 471
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 319960
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -44574,6 +45150,30 @@
      "since": "W3-r4",
      "value": 385
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 296000
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -46112,6 +46712,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 215
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 959824
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -47740,6 +48364,30 @@
      "since": "W3-r4",
      "value": 194
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 887944
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -49367,6 +50015,30 @@
      "since": "W3-r4",
      "value": 229
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 959824
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -50977,6 +51649,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 232
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 121
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 887954
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -52589,6 +53285,30 @@
      "since": "W3-r4",
      "value": 168
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 41
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 319970
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -54119,6 +54839,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 153
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 296000
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -55675,6 +56419,30 @@
      "since": "W3-r4",
      "value": 479
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 41
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 319972
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -57189,6 +57957,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 472
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 296000
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -58728,6 +59520,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 246
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 959824
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -60315,6 +61131,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 247
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 121
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 887954
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -61951,6 +62791,30 @@
      "since": "W3-r4",
      "value": 242
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 959824
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -63561,6 +64425,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 230
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 887944
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -65197,6 +66085,30 @@
      "since": "W3-r4",
      "value": 232
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 319960
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -66687,6 +67599,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 257
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 296000
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -68194,6 +69130,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 195
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 319960
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -69709,6 +70669,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 193
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 40
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 296000
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -71307,6 +72291,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 397
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 397
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1192870
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -72795,6 +73803,30 @@
      "since": "W3-r4",
      "value": 20
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 287952
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -74149,6 +75181,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 5
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 899880
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -75857,6 +76913,30 @@
      "since": "W3-r4",
      "value": 41
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 121
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 120
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 899941
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -77464,6 +78544,30 @@
      "since": "W3-r4",
      "value": 81
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 287952
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -79039,6 +80143,30 @@
      "since": "W3-r4",
      "value": 57
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 241
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 240
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1198841
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -80412,6 +81540,30 @@
      "rule": "eq",
      "since": "W0",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 57
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 56
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 335991
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -81794,6 +82946,30 @@
      "rule": "eq",
      "since": "W0",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 63
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 62
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 402955
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -83186,6 +84362,30 @@
      "rule": "eq",
      "since": "W0",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 152
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 151
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1358779
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -84723,6 +85923,30 @@
      "since": "W0",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 152
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 151
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1358775
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -86259,6 +87483,30 @@
      "rule": "eq",
      "since": "W0",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 152
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 151
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1585282
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -87819,6 +89067,30 @@
      "rule": "eq",
      "since": "W0",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 443
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 443
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 2120687
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -89428,6 +90700,30 @@
      "since": "W0",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 443
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 443
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 3126323
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -90978,6 +92274,30 @@
      "since": "W3 exit",
      "value": 35
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 151
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 150
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1799792
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -92467,6 +93787,30 @@
      "since": "W3-r4",
      "value": 28
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 575962
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -93898,6 +95242,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 151
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 151
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 526442
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -95501,6 +96869,30 @@
      "since": "W3-r4",
      "value": 1000
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 4
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 4
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 39996
+    },
     "work.convoy_tests.max": {
      "dir": "lower",
      "per": "unit",
@@ -96541,6 +97933,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 35
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 65
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 64
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 575946
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -97981,6 +99397,30 @@
      "since": "W3-r4",
      "value": 20
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 417572
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -99382,6 +100822,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 143964
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -100712,6 +102176,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 143984
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -101969,6 +103457,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 10
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 143952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -103234,6 +104746,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 96
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 335952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -104517,6 +106053,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 305
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 304
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 2270999
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -106144,6 +107704,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 23
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 305
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 304
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 2239175
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -107796,6 +109380,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 616
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 615
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 3681741
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -109447,6 +111055,30 @@
      "since": "W3-r4",
      "value": 16
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 616
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 615
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 3113104
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -111073,6 +112705,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 8
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 8
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 7192
+    },
     "work.aware_pairs.max": {
      "band": 1.1,
      "dir": "lower",
@@ -112003,6 +113659,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 8
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 8
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 7192
+    },
     "work.aware_pairs.max": {
      "band": 1.1,
      "dir": "lower",
@@ -112859,6 +114539,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 47
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 287963
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -114366,6 +116070,30 @@
      "since": "W3-r4",
      "value": 58
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 193
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 192
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1151253
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -115664,6 +117392,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 57552
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -116920,6 +118672,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 450
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 450
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1133421
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -118329,6 +120105,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 33
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 287
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 283
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1030765
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -119755,6 +121555,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 431952
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -121130,6 +122954,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 151
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 150
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1349762
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -122580,6 +124428,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 49
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 431962
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -123873,6 +125745,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 431952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -125177,6 +127073,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 80
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 80
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 719904
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -126610,6 +128530,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 24
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 24
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 215976
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -127933,6 +129877,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 20
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 20
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 29980
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -128992,6 +130960,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 20
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 20
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 29980
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -130026,6 +132018,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 380
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 380
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 3916458
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -131638,6 +133654,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 304
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 304
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 2365776
+    },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
@@ -133240,6 +135280,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 571
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 570
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 6402848
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -134915,6 +136979,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 0
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 455
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 454
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 4176028
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -136695,6 +138783,30 @@
      "since": "W3-r4",
      "value": 0
     },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 200
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 200
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 1919584
+    },
     "work.aware_pairs.max": {
      "band": 1.1,
      "dir": "lower",
@@ -137759,6 +139871,30 @@
      "rule": "bound",
      "since": "W3-r4",
      "value": 42
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 287952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -139049,6 +141185,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 43
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 48
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 287952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -140546,6 +142706,30 @@
      "rule": "band",
      "since": "W3-r4",
      "value": 53
+    },
+    "work.anchor_walk_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 201
+    },
+    "work.anchor_walk_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 200
+    },
+    "work.anchor_walk_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "rule": "band",
+     "since": "W4 step 0",
+     "value": 2399520
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -142172,12 +144356,14 @@
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "still fails legion <= retail x1.1 on the gate offsets at the W3 round 4 retake (the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 388 vs retail 29; fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion 388 vs retail 30",
    "scenario": "bridgeform"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "still fails legion <= retail x1.1 on the gate offsets at the W3 round 4 retake (the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 158 vs retail 14; fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion 162 vs retail 15",
    "scenario": "bridgeform"
   },
@@ -142466,6 +144652,7 @@
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "still fails legion <= retail x1.1 on the gate offsets at the W3 round 4 retake (the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 70 vs retail 51; fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion 70 vs retail 51",
    "scenario": "corner-1x48"
   },
@@ -143695,12 +145882,14 @@
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "still fails legion <= retail x1.1 on the gate offsets at the W3 round 4 retake (the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 80 vs retail 13; fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion 80 vs retail 13",
    "scenario": "island-1x48"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "still fails legion <= retail x1.1 on the gate offsets at the W3 round 4 retake (the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 28 vs retail 5; fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion 29 vs retail 5",
    "scenario": "island-1x48"
   },
@@ -144207,6 +146396,7 @@
   {
    "cluster": "MV-12",
    "key": "contact_own_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion 869 vs retail 383",
    "scenario": "strait"
   },
@@ -144857,6 +147047,7 @@
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "still fails legion <= retail x1.1 on the gate offsets at the W3 round 4 retake (the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 120 vs retail 92; fails legion <= retail x1.1 at W0 (legion-w0 b081298): legion 121 vs retail 91",
    "scenario": "wall-4x50"
   },
@@ -145959,6 +148150,7 @@
   {
    "cluster": "MV-12",
    "key": "contact_own_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at W3: legion 946 vs retail 787",
    "scenario": "deadend-w2-n40-closed-plain"
   },
@@ -146212,6 +148404,7 @@
   {
    "cluster": "MV-12",
    "key": "contact_own_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at W3: legion 923 vs retail 753",
    "scenario": "deadend-w2-n40-room-plain"
   },
@@ -150245,168 +152438,196 @@
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 872 vs retail 286",
    "scenario": "deadend-w2-n40-closed-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 484 vs retail 21",
    "scenario": "deadend-w2-n40-closed-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 807 vs retail 282",
    "scenario": "deadend-w2-n40-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 445 vs retail 17",
    "scenario": "deadend-w2-n40-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 471 vs retail 23",
    "scenario": "deadend-w2-n40-room-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 724 vs retail 192",
    "scenario": "deadend-w2-n40-room-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 385 vs retail 13",
    "scenario": "deadend-w2-n40-room-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 194 vs retail 25",
    "scenario": "deadend-w4-n120-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 590 vs retail 468",
    "scenario": "deadend-w4-n120-room-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 232 vs retail 47",
    "scenario": "deadend-w4-n120-room-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 287 vs retail 52",
    "scenario": "deadend-w4-n40-closed-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 168 vs retail 34",
    "scenario": "deadend-w4-n40-closed-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 248 vs retail 188",
    "scenario": "deadend-w4-n40-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 153 vs retail 58",
    "scenario": "deadend-w4-n40-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 444 vs retail 379",
    "scenario": "deadend-w6-n120-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 247 vs retail 125",
    "scenario": "deadend-w6-n120-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 230 vs retail 122",
    "scenario": "deadend-w6-n120-room-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 355 vs retail 21",
    "scenario": "deadend-w6-n40-closed-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 232 vs retail 14",
    "scenario": "deadend-w6-n40-closed-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 395 vs retail 213",
    "scenario": "deadend-w6-n40-closed-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 321 vs retail 28",
    "scenario": "deadend-w6-n40-room-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 195 vs retail 17",
    "scenario": "deadend-w6-n40-room-plain"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 321 vs retail 201",
    "scenario": "deadend-w6-n40-room-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 193 vs retail 109",
    "scenario": "deadend-w6-n40-room-squad"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 155 vs retail 67",
    "scenario": "doorplug-124"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 41 vs retail 17",
    "scenario": "doorplug-124"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 1000 vs retail 475",
    "scenario": "mazeapproach"
   },
   {
    "cluster": "MV-02",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 round 4 retake (ruling (a) gate offsets; the W3 step-0 base sim (7a01f7bb, branch w3b3-base with the round-3 observer)): legion 1000 vs retail 475",
    "scenario": "mazeapproach"
   },
@@ -150645,6 +152866,7 @@
   {
    "cluster": "AR-08",
    "key": "g.C.t90",
+   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 exit ruling (1) retake (the W3 step-0 sim (7a01f7bb, branch w3b4-base: the round-3 observer plus the convoy-keyed command)): legion never vs retail 7890",
    "scenario": "wall-4x50"
   },
@@ -150669,18 +152891,21 @@
   {
    "cluster": "W5/W9",
    "key": "wall_touch_permille",
+   "median5": true,
    "reason": "user decision W3-4 (2026-10-09): a steering gap round a settled crowd (doorplug-112 wall touch) -- accepted for W3; W5/W9 HARD EXIT GATE: fixed by W5 (units that never arrive) / W9 (group re-shaping), this exception must be gone at that exit (W3 exit: legion 11 vs retail 8)",
    "scenario": "doorplug-112"
   },
   {
    "cluster": "W5/W9",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "user decision W3-4 (2026-10-09): a steering gap round a settled crowd (doorplug-112 wall touch near) -- accepted for W3; W5/W9 HARD EXIT GATE: fixed by W5 (units that never arrive) / W9 (group re-shaping), this exception must be gone at that exit (W3 exit: legion 64 vs retail 42)",
    "scenario": "doorplug-112"
   },
   {
    "cluster": "W5/W9",
    "key": "wall_touch_near_permille",
+   "median5": true,
    "reason": "user decision W3-4 (2026-10-09): a steering gap round a settled crowd (tail-corner380 wall touch near) -- accepted for W3; W5/W9 HARD EXIT GATE: fixed by W5 (units that never arrive) / W9 (group re-shaping), this exception must be gone at that exit (W3 exit: legion 2 vs retail 1)",
    "scenario": "tail-corner380"
   },
@@ -152732,6 +154957,646 @@
    "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 exit (2207 vs Retail 1929): crossing-group arrival ~5% slower than Retail under A2's one formation per click; lead ruling (i), accepted until W7; W7 exit must bring within Retail",
    "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..2 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..97 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..3 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..197 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..37 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..44 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..2 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..13 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 56..68 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "corner-4x50"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..38 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "cost-open"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 4..97 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 55..559 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 17..47 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 342..571 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..53 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 7..438 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 9..26 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 277..669 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-closed-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 3..14 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 55..180 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 12..34 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 251..484 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..40 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 9..378 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 7..14 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 238..547 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w2-n120-room-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 96..192 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 291..479 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 368..412 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 347..568 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-closed-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 284..506 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-closed-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 213..291 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 571..681 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 281..339 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 630..706 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w4-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 149..267 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 309..496 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 288..368 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 548..662 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-closed-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 152..246 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 339..483 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 189..275 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 386..536 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-room-plain"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 324..511 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-room-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 311..415 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "deadend-w6-n120-room-squad"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.door.crossings",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 0..6 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "doorplug-112"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.door.crossings",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..3 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "doorplug-124"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.door.crossings",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 2..57 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "doorplug-124"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.abreast.crossings",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..6 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "island-1x150"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.abreast.crossings",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..4 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "island-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 31..38 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "mazeform"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 26..32 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-304-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 53..65 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-304-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 55..78 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-304-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 199..277 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-304-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 37..59 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 89..149 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 83..113 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 330..391 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 35..60 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "sbend"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 89..136 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "sbend"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 48..67 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "slowturn"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 108..138 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "slowturn"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.topC1000.crossings",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "slowturn"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 26..46 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "split-450-pocket"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 67..115 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "split-450-pocket"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..52 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..19 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-2x150"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..14 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-2x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-3x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..44 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-3x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-3x80"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..46 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-3x80"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-4x24"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..41 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "strait-4x24"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..1 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "unreach-200"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "wall_touch_near_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 0..42 exceeds the band at W4 step 0; gated on median-of-5 offsets",
+   "scenario": "unreach-200"
   }
  ],
  "history": [
