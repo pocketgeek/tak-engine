@@ -2702,6 +2702,19 @@ private:
     int reading_ = -1;                  // buffer the render pinned this frame, or -1
     int renderReadIdx_ = 0;             // render-thread's pinned buffer (mirrors reading_)
     uint32_t captureCounter_ = 0;       // monotonic; each Frame.gen gets a unique value
+    // Parallel captureFrame (WE S5b). The per-unit record copy runs on its OWN small pool,
+    // never pool_: the render drives pool_ concurrently from the main thread, and two
+    // callers in one ThreadPool would interleave their jobs. Created on the first capture
+    // large enough to use it. The capturing thread is the only one that mutates world_
+    // (the sim worker, or the main thread inline) and it blocks inside parallelFor, so
+    // the pool's reads of world_ race nothing. captureSlots_ carries what the serial
+    // tail needs (ID table, live list, conjure-site lookup) without touching units_ again.
+    static constexpr unsigned kCaptureThreads = 4;
+    static constexpr size_t kCaptureMinParallel = 2000;
+    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false; };
+    std::unique_ptr<ThreadPool> capturePool_;
+    std::vector<CaptureSlot> captureSlots_;
+    void captureUnit(Frame& fb, const Frame& pf, size_t slot);
     const Frame& front() const { return frameBuf_[renderReadIdx_]; }
 public:
     // Render thread: pin the newest published buffer for this frame's reads, then release.

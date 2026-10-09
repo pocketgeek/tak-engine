@@ -1,3 +1,4 @@
+#include <cassert>
 #include "util/virtualpath.h"
 #include "client/retailaim.h"
 #include "gaf/nimbus.h"
@@ -2245,6 +2246,126 @@
         }
     }
 
+    // One unit's render record (WE S5b: runs on capturePool_, so it may touch only its own
+    // slot of fb.units / captureSlots_ and const reads of world_ and pf). The ID table, the
+    // live list and the conjure-site lookup are left to captureFrame's serial tail:
+    // World::unit may repair its ID table on a miss, so it is not a safe concurrent read.
+    void GameView::captureUnit(Frame& fb, const Frame& pf, size_t slot) {
+        const auto& u=world_.units()[slot];
+        UnitR& s=fb.units[slot];
+        if(s.id!=u.id)s=UnitR{};
+        captureSlots_[slot]={u.id,u.buildSiteId ? u.buildSiteId : u.productionSiteId,u.type!=nullptr};
+        if (!u.type) { s.seeded = false; s.type = nullptr; return; }
+        // Render-read fields, captured for ALL units (alive + dead-recent: the death
+        // animation and the deadFor>=4 cull both need a live value).
+        s.gen = fb.gen;
+        s.id = u.id; s.type = u.type; s.player = u.player;
+        if (s.scenarioName != u.scenarioName) s.scenarioName = u.scenarioName;
+        s.hp = u.hp.toFloat(); s.mana = u.mana; s.veteran = u.veteran;
+        s.deadFor = u.deadFor < 0 ? -1.0f : float(u.deadFor) / 30.0f;   // ticks -> seconds
+        s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
+        s.standingOrder = u.standingOrder;
+        s.weaponSlot = u.weaponSlot;
+        for(size_t w=0;w<s.weaponReloads.size();++w)
+            s.weaponReloads[w]=u.reloads[w];
+        s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
+        s.replacementModel=nullptr;s.replacementOpacity=-1;
+        if (u.underConstruction && u.lodestoneReplacement) {
+            const float progress=u.constructionFraction();
+            // An abandoned/damaged site fades out instead of keeping the old
+            // building solid until the last unconjure tick.
+            const float healthFade=std::clamp(u.hp.toFloat()/
+                (float(u.type->maxHp)*(0.05f+0.95f*progress)),0.0f,1.0f);
+            s.replacementOpacity=std::abs(2.0f*progress-1.0f)*healthFade;
+            if (progress<0.5f) {
+                const auto& old=*u.lodestoneReplacement;
+                s.replacementModel=old.type;
+                s.replacementX=old.x.toFloat();s.replacementZ=old.z.toFloat();
+                s.replacementHeading=tak::sim::radiansFromBam(old.heading);
+            }
+        }
+        s.cloaked = u.cloaked; s.cloakOn = u.cloakOn; s.active = u.active;
+        // The sim counts these in TICKS now (retail's representation); the HUD
+        // wants seconds, so the conversion happens here, at the render boundary.
+        s.frozenFor = float(u.frozenFor) / 30.0f;
+        s.stonedFor = float(u.stonedFor) / 30.0f;
+        s.paralyzedFor = float(u.paralyzedFor) / 30.0f;
+        s.selfDestructT = u.selfDestructT < 0 ? -1.0f : float(u.selfDestructT) / 30.0f;
+        s.hasConstructionEmitter=bool(u.constructionEmitter || u.cosmeticConstructionEmitter);
+        s.constructionEmissions=u.constructionEmissions;
+        if (u.constructionEmitter) s.constructionParticles=u.constructionEmitter->particles;
+        else if (u.cosmeticConstructionEmitter) s.constructionParticles=u.cosmeticConstructionEmitter->particles;
+        else s.constructionParticles.clear();
+        s.buildSiteId = u.buildSiteId; s.productionSiteId = u.productionSiteId;
+        s.reclaimId = u.reclaimId; s.repairId = u.repairId;
+        s.yardOpen = world_.scriptYardOpen(u.id);
+        s.scriptHealthPercent = int32_t(int16_t(u.hp.floorInt()))*100/std::max(u.maximumHp(),1);
+        s.constructionPercentLeft = u.retailSite
+            ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
+            : int(u.underConstruction);
+        s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
+        // Orders/rally/areaVisited are read for the VIEWED player's units only (the order
+        // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
+        // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
+        // bulk of the capture cost at 10k units. Queues are tiny and only factories hold
+        // one, so an ally's stay visible for the HUD -- and every player's for a spectator
+        // or replay viewer, whose info panel shows any selected factory's queue.
+        if (u.player==localPlayer_) s.captureOrders(u);
+        else s.clearOrders();
+        if (u.player==localPlayer_ || alliedToLocal(u.player) || spectating_ || replayMode_) s.buildQueue = u.buildQueue;
+        else s.buildQueue.clear();
+        s.cargo = u.cargo; s.repeatType = u.repeatType;
+        s.captureMovement(u);
+        s.corpseAnimationTicks=u.corpseAnimationTicks();
+        s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
+                        u.deadFor >= u.corpseAnimationTicks();
+        s.deathType = u.deathType;
+        s.severity = u.severity;
+        s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
+                                           : world_.corpseTypeOf(u.type);
+        s.corpseReclaimable=false;
+        if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
+            const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
+            s.corpseReclaimable=corpse.reclaimable;
+            s.corpseCellX=tak::sim::footprintOrigin(u.x,u.type->footX)+u.type->corpseAdjX;
+            s.corpseCellZ=tak::sim::footprintOrigin(u.z,u.type->footZ)+u.type->corpseAdjZ;
+            s.corpseFootX=corpse.fx;s.corpseFootZ=corpse.fz;
+        }
+        s.corpseStatue = u.corpseStatue >= 0;
+        // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
+        // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
+        s.justBuilt = u.justBuilt;
+        s.disco = u.alive() && world_.discoTarget(u.player, u.id);
+        s.headbang = u.alive() && world_.headbangTarget(u.player, u.id);
+        s.alliedToLocal = alliedToLocal(u.player);
+        // Pose: prev comes from the previously-published frame's curr for this SAME unit
+        // (id live last tick + matching type). Interpolate alive units between ticks;
+        // a dead unit holds its death pose. A big jump (teleport / id reuse) seeds fresh.
+        const UnitR* prev=pf.unit(u.id);
+        if(prev && prev->type!=u.type)prev=nullptr;
+        s.headingWord=u.heading.v;
+        s.captureOccupancy(u,world_.mapSea(),prev ? prev->animationOccupancy : 0);
+        s.captureMoveRate(u,prev ? std::bit_cast<int16_t>(uint16_t(u.heading.v-prev->headingWord)) : 0);
+        const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
+            u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1);
+        s.turnSpeedPercent=prev ? tak::sim::retailTurnAnimationPercent(
+            std::bit_cast<int16_t>(uint16_t(u.heading.v-prev->headingWord)),
+            uint16_t(u.type->turnRate),uint16_t(u.type->turnInPlaceRate),
+            multiplier.v,u.embarked()) : 0;
+        if (u.alive() && prev &&
+            std::abs(u.x.toFloat() - prev->x) <= 200.0f && std::abs(u.z.toFloat() - prev->z) <= 200.0f) {
+            s.px = prev->x; s.pz = prev->z; s.ph = prev->heading;   // UnitR already holds radians
+            s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
+            s.seeded = true;
+            s.turnReqBam = u.turnReqBam;   // sim's requested turn this tick (TurnDirection)
+        } else {
+            s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
+            s.px = s.x; s.pz = s.z; s.ph = s.heading;
+            s.turnReqBam = u.turnReqBam;
+            s.seeded = u.alive();   // dead holds its pose (never interpolated)
+        }
+    }
+
     void GameView::captureFrame() {
         // Pick a spare buffer to write: never the published one (the render may pin it on
         // its next beginFrame) and never the one the render is currently pinned on. With
@@ -2260,128 +2381,41 @@
         const Frame& pf = frameBuf_[published_]; // previously-published frame (last tick's poses)
         fb.gen = ++captureCounter_;     // records written this pass get gen==fb.gen (=> live this tick)
         fb.live.clear();
-        fb.units.resize(world_.units().size());
-        size_t slot=0;
-        for (const auto& u : world_.units()) {
-            UnitR& s=fb.units[slot];
-            if(s.id!=u.id)s=UnitR{};
-            if(fb.unitSlots.size()<=size_t(u.id))fb.unitSlots.resize(size_t(u.id)+1,-1);
-            fb.unitSlots[size_t(u.id)]=int32_t(slot++);
-            if (!u.type) { s.seeded = false; s.type = nullptr; continue; }
-            // Render-read fields, captured for ALL units (alive + dead-recent: the death
-            // animation and the deadFor>=4 cull both need a live value).
-            s.gen = fb.gen;
+        const size_t count=world_.units().size();
+        fb.units.resize(count);
+        captureSlots_.resize(count);
+        // The per-unit copy is memory-latency bound (first touch of each Unit), so it
+        // splits across capturePool_ near-linearly. Below kCaptureMinParallel the pool's
+        // wake/join costs more than it saves and the pass stays on this thread.
+        if (count >= kCaptureMinParallel) {
+            // Sole-mutator check: only the thread that ticks world_ may capture it, and it
+            // stays blocked in parallelFor for the whole pass, so the pool reads a world
+            // nobody is writing. A capture from any other thread would race the tick.
+            assert(std::this_thread::get_id() == (useSimThread_ ? simThread_.get_id() : mainThreadId_));
+            [[maybe_unused]] const auto* const unitsBefore=world_.units().data();
+            [[maybe_unused]] const uint32_t tickBefore=world_.tickCount();
+            if (!capturePool_) capturePool_=std::make_unique<ThreadPool>(kCaptureThreads);
+            capturePool_->parallelFor(count, [&](size_t b, size_t e) {
+                for (size_t i=b; i<e; ++i) captureUnit(fb, pf, i);
+            }, kCaptureMinParallel);
+            assert(world_.units().data()==unitsBefore && world_.units().size()==count &&
+                   world_.tickCount()==tickBefore);
+        } else {
+            for (size_t i=0; i<count; ++i) captureUnit(fb, pf, i);
+        }
+        // Serial tail, in slot order (the same order as before): the ID table, the compact
+        // live list, and the conjure flag for the few units that have a site.
+        for (size_t i=0; i<count; ++i) {
+            const CaptureSlot& c=captureSlots_[i];
+            if(fb.unitSlots.size()<=size_t(c.id))fb.unitSlots.resize(size_t(c.id)+1,-1);
+            fb.unitSlots[size_t(c.id)]=int32_t(i);
+            if (!c.typed) continue;
+            UnitR& s=fb.units[i];
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
-            s.id = u.id; s.type = u.type; s.player = u.player;
-            if (s.scenarioName != u.scenarioName) s.scenarioName = u.scenarioName;
-            s.hp = u.hp.toFloat(); s.mana = u.mana; s.veteran = u.veteran;
-            s.deadFor = u.deadFor < 0 ? -1.0f : float(u.deadFor) / 30.0f;   // ticks -> seconds
-            s.inTransport = u.inTransport; s.squad = u.squad; s.stance = u.stance;
-            s.standingOrder = u.standingOrder;
-            s.weaponSlot = u.weaponSlot;
-            for(size_t slot=0;slot<s.weaponReloads.size();++slot)
-                s.weaponReloads[slot]=u.reloads[slot];
-            s.underConstruction = u.underConstruction; s.buildBegun = u.buildBegun;
-            s.replacementModel=nullptr;s.replacementOpacity=-1;
-            if (u.underConstruction && u.lodestoneReplacement) {
-                const float progress=u.constructionFraction();
-                // An abandoned/damaged site fades out instead of keeping the old
-                // building solid until the last unconjure tick.
-                const float healthFade=std::clamp(u.hp.toFloat()/
-                    (float(u.type->maxHp)*(0.05f+0.95f*progress)),0.0f,1.0f);
-                s.replacementOpacity=std::abs(2.0f*progress-1.0f)*healthFade;
-                if (progress<0.5f) {
-                    const auto& old=*u.lodestoneReplacement;
-                    s.replacementModel=old.type;
-                    s.replacementX=old.x.toFloat();s.replacementZ=old.z.toFloat();
-                    s.replacementHeading=tak::sim::radiansFromBam(old.heading);
-                }
-            }
-            s.cloaked = u.cloaked; s.cloakOn = u.cloakOn; s.active = u.active;
-            // The sim counts these in TICKS now (retail's representation); the HUD
-            // wants seconds, so the conversion happens here, at the render boundary.
-            s.frozenFor = float(u.frozenFor) / 30.0f;
-            s.stonedFor = float(u.stonedFor) / 30.0f;
-            s.paralyzedFor = float(u.paralyzedFor) / 30.0f;
-            s.selfDestructT = u.selfDestructT < 0 ? -1.0f : float(u.selfDestructT) / 30.0f;
-            const int conjureSiteId=u.buildSiteId ? u.buildSiteId : u.productionSiteId;
             // Zero means no site. Looking it up would fall back to a full unit
             // scan for every non-conjuring unit in this per-tick snapshot.
-            const auto* conjureSite=conjureSiteId ? world_.unit(conjureSiteId) : nullptr;
+            const auto* conjureSite=c.site ? world_.unit(c.site) : nullptr;
             s.conjuring=conjureSite && conjureSite->underConstruction && conjureSite->buildBegun;
-            s.hasConstructionEmitter=bool(u.constructionEmitter || u.cosmeticConstructionEmitter);
-            s.constructionEmissions=u.constructionEmissions;
-            if (u.constructionEmitter) s.constructionParticles=u.constructionEmitter->particles;
-            else if (u.cosmeticConstructionEmitter) s.constructionParticles=u.cosmeticConstructionEmitter->particles;
-            else s.constructionParticles.clear();
-            s.buildSiteId = u.buildSiteId; s.productionSiteId = u.productionSiteId;
-            s.reclaimId = u.reclaimId; s.repairId = u.repairId;
-            s.yardOpen = world_.scriptYardOpen(u.id);
-            s.scriptHealthPercent = int32_t(int16_t(u.hp.floorInt()))*100/std::max(u.maximumHp(),1);
-            s.constructionPercentLeft = u.retailSite
-                ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
-                : int(u.underConstruction);
-            s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
-            // Orders/rally/areaVisited are read for the VIEWED player's units only (the order
-            // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
-            // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
-            // bulk of the capture cost at 10k units. Queues are tiny and only factories hold
-            // one, so an ally's stay visible for the HUD -- and every player's for a spectator
-            // or replay viewer, whose info panel shows any selected factory's queue.
-            if (u.player==localPlayer_) s.captureOrders(u);
-            else s.clearOrders();
-            if (u.player==localPlayer_ || alliedToLocal(u.player) || spectating_ || replayMode_) s.buildQueue = u.buildQueue;
-            else s.buildQueue.clear();
-            s.cargo = u.cargo; s.repeatType = u.repeatType;
-            s.captureMovement(u);
-            s.corpseAnimationTicks=u.corpseAnimationTicks();
-            s.corpsePhase = !u.alive() && u.deadFor < u.corpseUntil &&
-                            u.deadFor >= u.corpseAnimationTicks();
-            s.deathType = u.deathType;
-            s.severity = u.severity;
-            s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
-                                               : world_.corpseTypeOf(u.type);
-            s.corpseReclaimable=false;
-            if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
-                const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
-                s.corpseReclaimable=corpse.reclaimable;
-                s.corpseCellX=tak::sim::footprintOrigin(u.x,u.type->footX)+u.type->corpseAdjX;
-                s.corpseCellZ=tak::sim::footprintOrigin(u.z,u.type->footZ)+u.type->corpseAdjZ;
-                s.corpseFootX=corpse.fx;s.corpseFootZ=corpse.fz;
-            }
-            s.corpseStatue = u.corpseStatue >= 0;
-            // UnitR::speed is documented px/s and consumers (the flyer altitude servo,
-            // the MotionControl percentage) rely on that; the sim keeps px/TICK now.
-            s.justBuilt = u.justBuilt;
-            s.disco = u.alive() && world_.discoTarget(u.player, u.id);
-            s.headbang = u.alive() && world_.headbangTarget(u.player, u.id);
-            s.alliedToLocal = alliedToLocal(u.player);
-            // Pose: prev comes from the previously-published frame's curr for this SAME unit
-            // (id live last tick + matching type). Interpolate alive units between ticks;
-            // a dead unit holds its death pose. A big jump (teleport / id reuse) seeds fresh.
-            const UnitR* prev=pf.unit(u.id);
-            if(prev && prev->type!=u.type)prev=nullptr;
-            s.headingWord=u.heading.v;
-            s.captureOccupancy(u,world_.mapSea(),prev ? prev->animationOccupancy : 0);
-            s.captureMoveRate(u,prev ? std::bit_cast<int16_t>(uint16_t(u.heading.v-prev->headingWord)) : 0);
-            const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
-                u.groundTerrainFlags&0x1000 ? u.type->waterMult : tak::sim::Fixed::fromInt(1);
-            s.turnSpeedPercent=prev ? tak::sim::retailTurnAnimationPercent(
-                std::bit_cast<int16_t>(uint16_t(u.heading.v-prev->headingWord)),
-                uint16_t(u.type->turnRate),uint16_t(u.type->turnInPlaceRate),
-                multiplier.v,u.embarked()) : 0;
-            if (u.alive() && prev &&
-                std::abs(u.x.toFloat() - prev->x) <= 200.0f && std::abs(u.z.toFloat() - prev->z) <= 200.0f) {
-                s.px = prev->x; s.pz = prev->z; s.ph = prev->heading;   // UnitR already holds radians
-                s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
-                s.seeded = true;
-                s.turnReqBam = u.turnReqBam;   // sim's requested turn this tick (TurnDirection)
-            } else {
-                s.x = u.x.toFloat(); s.z = u.z.toFloat(); s.heading = tak::sim::radiansFromBam(u.heading);   // render boundary: radians
-                s.px = s.x; s.pz = s.z; s.ph = s.heading;
-                s.turnReqBam = u.turnReqBam;
-                s.seeded = u.alive();   // dead holds its pose (never interpolated)
-            }
         }
         // Player table snapshot for the HUD/scoreboard.
         fb.numPlayers = world_.numPlayers();
