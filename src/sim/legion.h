@@ -78,14 +78,15 @@ public:
         // ---- W4 step 0 instruments (observation only, never hashed) ----------
         // Gauges (running maxima, not per-tick work): the most bodies one
         // residue class (id % 30) of a scanStill pass holds (B2 stripes the scan
-        // by this residue; target <= 1.1x the mean), and the longest run of
+        // by this residue; bound: per-tick max <= 10% of the old 30th-tick
+        // spike, lead ruling W4 (k)), and the longest run of
         // consecutive ticks whose field quota was spent to zero.
         uint64_t stillPerResidueMax=0,quotaPegRunMax=0;
         // Ids prune's backstop cursor validates (members plus the anchors,
         // approachDone and parts records; at most 256 a tick since B3, which
         // erases those records by event instead of a whole walk); soft-hash recomputations checked by
-        // TAK_LEGION_VERIFY (0 until B2); refreshes left unstarted for want of
-        // demand (0 until B1).
+        // TAK_LEGION_VERIFY (B2: one a tick while it is on); stale refreshes
+        // left unstarted for want of demand (B1: one per inactive group visit).
         uint64_t anchorWalkIters=0,softHashVerifyTicks=0,refreshSuppressed=0;
         // ---- army throughput (T1 I4) ---------------------------------------
         uint64_t crowdWindowRingCells=0;   // the settle rule's queue ring (settle-chain cells) and the holder rule's ring

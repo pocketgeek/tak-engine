@@ -22,7 +22,11 @@ namespace tak::net {
 constexpr uint32_t kNetVersion = 242;      // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
                                            //      unit's orders change (World::noteOrders from the order helpers, mission dispatch,
                                            //      target acquisition and the death edge) instead of by a per-tick walk; prune's
-                                           //      hashed 256-a-tick backstop cursor also walks those records
+                                           //      hashed 256-a-tick backstop cursor also walks those records. A stale field
+                                           //      refreshes only for an active group (a Moving member in the last 2 ticks, a
+                                           //      blocked member, or the hashed demand flag the aware re-plan sets). scanStill
+                                           //      samples bodies by id % 30 each tick and keeps the soft stamps incrementally;
+                                           //      softHash is an order-independent sum over stamped cells and owned ids
                                            // 241: Legion W3 -- one convoy per click (Order::convoyTick and the open-convoy table are
                                            //      hashed) and Legion keys on it: one point, formation and settle chain per click,
                                            //      slots handed out 32 a tick (at most 131072 ring cells of slot search) once the

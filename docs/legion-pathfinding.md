@@ -1158,11 +1158,11 @@ clicks 48 px apart) and the index against the scan.
 
 ### Upkeep on demand (W4, protocol 242)
 
-W4 (T7 Stage B) set out to make Legion's per-tick upkeep follow demand instead of
-the population: refresh only for groups that need it (B1), sample still bodies a
-thirtieth of the population a tick (B2), and erase the settled-arrival records on
-the event that ends them (B3). Only B3 landed; B1 and B2 are held on their branches
-(`task-w4-b1`, `task-w4-b2`) for lead decisions on their acceptance bounds.
+W4 (T7 Stage B) makes Legion's per-tick upkeep follow demand instead of the
+population: a stale field refreshes only for a group that needs it (B1), still
+bodies are sampled a thirtieth of the population a tick (B2), and the
+settled-arrival records are erased on the event that ends them (B3). All three
+landed under one protocol bump (242).
 
 **Event-driven records (B3).** The anchors (settled arrivals, kept with the
 per-destination `anchorsAt` count), the approach-done records and the parting
@@ -1192,21 +1192,45 @@ cursor's ids: at most 256 a tick (pocket-615's per-tick max 616 -> 256).
 anchor inside the order call, a stop keeps it, and a death or a direct order write
 drops it within one tick.
 
-**Refresh policy (unchanged).** A stale field still refreshes for every group
-listed stale, active or not, at most `kRefreshQuota` (a quarter of the field quota)
-a tick, swapped in when done ("Refresh allowance"). The demand-driven variant (B1:
-a stale field refreshes only while a member moved in the last 2 ticks, is blocked
-outside its goal area, or an aware re-plan asked for it) removes all refresh work
-for parked groups beside construction (`legion_staticidle`), but refresh is under
-2% of the live 8-AI Ulasem benchmark's field work -- first builds are the rest --
-so it missed its benchmark bound and is held.
+**Demand-driven refresh (B1).** A static change still marks every field it reaches
+stale, but the scheduler starts a refresh (the stale-done pass) only for an
+**active** group: one whose member started its update Moving in the last 2 ticks,
+one with a **blocked** member, or one carrying the `demand` flag (set by the aware
+re-plan, cleared when the refresh swaps in; folded into the checksum with a tag
+when set). An inactive stale group stays listed and steers by its finished field;
+its refresh starts the tick it becomes active (`work.demand_resumes`), and each
+skipped visit counts `work.refresh_suppressed`. A refresh already under way keeps
+building (pausing it too cost crowdtrap arrivals), `kRefreshQuota` and swap-in at
+done are unchanged. Blocked is Retail's re-request (`kBlockedRetry` = 120 ticks):
+`stalledFor >= 120`, not a give-way holder (always false until W7), and either no
+finished field reaches it, or it stands outside its destination area with no legal
+step down the field clear of soft bodies (a body held only by its own command or
+by movers is not blocked: a refresh would give it the same way); each turn to
+blocked counts `work.blocked_rerequests`. `movingTick` and `blockedTick` are
+not hashed: they are functions of the last 2 ticks' hashed member updates, and no
+path rebuilds Legion from a snapshot (a mid-game `--mprejoin` stays in sync).
+`legion_staticidle`: parked guards beside continuous construction do no refresh
+work (764640 relaxations -> 0), and a pair held at a plugged gap re-plans through
+a gap that opens by the blocked rule alone. In the live 8-AI Ulasem benchmark
+refresh is under 2% of field work (first builds are the rest), so B1 hardly moves
+its totals there; paused solo first builds (C1) are the next W4 step.
 
-**Still-body scan (unchanged).** `scanStill` still samples the whole population on
-every 30th tick and rebuilds the soft-obstacle stamps and `softHash` from a sorted
-walk. The striped variant (B2: bodies with `id % 30 == tick % 30` each tick, an
-order-independent incremental `softHash` checked against a full recompute under
-`TAK_LEGION_VERIFY`) cuts the 30th-tick spike from about 330 bodies to 25-26 but is
-held on its balance bound and three world-test moves.
+**Striped still-body scan (B2).** `scanStill` samples each tick only the bodies
+whose `id % 30 == tick % 30`, with the same two-sample stillness rule per body, and
+adds or removes each stamp cell by cell: `soft`/`softKind` hold the lowest covering
+id (overlaps kept in `softStack`), with `softCounts`, `softOwner` (and per-command
+counts for `ownsArrivals`) and `liftSoftPlayers` kept in step. The whole-population
+rebuild and sort on every 30th tick are gone: the scan's per-tick peak falls from
+about 330 bodies in one tick of 30 to about 25 (Ulasem). `registerMove` and a
+landed flyer's take-off lift the body's whole stamp (its sample stays).
+`softHash` is a wrapping sum of `mix(cell, id, kind)` over stamped cells plus
+`mix(id, command)` over owned ids, so it is order-independent and maintained by
+add and remove; `softSerial` counts stamp changes. `softHashFull()` recomputes it
+from the stamps: under `TAK_LEGION_VERIFY` (on in the Legion world-test ctests) it
+is checked every tick, and the grid, owners, lift players and window counts once
+a scan period. The aware scan (residue 15) now reads a soft view that changes
+every tick (accepted; W7 re-checks). The stripe phase moves a few outcome keys
+within their seed spread (aware headon contacts, landedflyers, tail wave p90).
 
 ## Instruments
 
