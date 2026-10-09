@@ -5161,7 +5161,7 @@ struct LegionNavigator::Impl {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const uint16_t potential=f.at(size_t(oz*W+ox));
         const uint64_t command=g.soft?g.command:kNoSoft;
-        const int counts=softCells.empty()||command==kNoSoft?-1:softCountsFor(fx,fz);
+        const int counts=!softCellCount||command==kNoSoft?-1:softCountsFor(fx,fz);
         for(const auto& d:kDirections) {
             if(!step(p,ox,oz,d[0],d[1]))continue;
             const uint16_t v=f.at(size_t((oz+d[1])*W+ox+d[0]));
