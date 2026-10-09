@@ -14,6 +14,28 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+# Build speed (developer machines only; neither tool changes the code generated).
+# ccache: many worktrees build the same sources, so a shared compiler cache turns a
+# fresh build into mostly cache hits. Worktrees only share entries when ccache's
+# base_dir covers their paths (base_dir = / and hash_dir = false in ccache.conf).
+# mold: the build links ~300 executables against large static libraries, which GNU
+# ld spends much of an incremental build on. Both are used when found and can be
+# turned off; CI and release builds without them are unaffected.
+option(TAK_CCACHE "Use ccache as the compiler launcher when it is installed" ON)
+option(TAK_MOLD "Link with mold on Linux when it is installed" ON)
+if(TAK_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+  find_program(TAK_CCACHE_PROGRAM ccache)
+  if(TAK_CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${TAK_CCACHE_PROGRAM}")
+  endif()
+endif()
+if(TAK_MOLD AND UNIX AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  find_program(TAK_MOLD_PROGRAM mold)
+  if(TAK_MOLD_PROGRAM)
+    add_link_options(-fuse-ld=mold)
+  endif()
+endif()
+
 # Determinism: no floating-point contraction ANYWHERE. A contracted a*b+c is one
 # fused multiply-add (one rounding) instead of two, so the same source gives a
 # different last bit wherever the compiler fuses. GCC on baseline x86-64 has no FMA
