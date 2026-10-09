@@ -24,7 +24,7 @@
 # Environment (all optional):
 #   TAK_NIGHTLY_REPO      repository the worktree belongs to          (default /home/pocket_geek/TAK)
 #   TAK_NIGHTLY_WORKTREE  default $REPO/.claude/worktrees/legion-nightly
-#   TAK_NIGHTLY_REF       default legion-w0 (a local ref; nothing is fetched)
+#   TAK_NIGHTLY_REF       default origin/main (fetched first; set a local ref to skip the fetch)
 #   TAK_NIGHTLY_CORES     taskset list, default 16-23
 #   TAK_NIGHTLY_DATA      retail install for the data-gated scenarios, default $REPO/assets/game
 #   TAK_NIGHTLY_OUT       default ~/.local/share/tak-legion-nightly
@@ -34,7 +34,8 @@
 #                         screen baseline JSONL, frozen screen anchor JSONL, frozen anchor-b8a4110.json
 #   TAK_NIGHTLY_SCN_GLOB  shell glob of scenario names to run (default '*'; for trial runs)
 #   TAK_NIGHTLY_SCREEN_ARGS  extra crowdbench_screen.py arguments, e.g. "--scenarios open --seeds 0"
-#   TAK_NIGHTLY_OFFSETS   --offsets list for legion_scenario (default: the runner's)
+#   TAK_NIGHTLY_OFFSETS   --offsets list for legion_scenario (default 0,1,-1,2,-2: the
+#                         median-of-5 the committed baseline.json was taken with)
 #   TAK_NIGHTLY_STAGE_TIMEOUT  seconds per stage, default 3600 (builds get twice)
 set -u
 umask 022
@@ -42,7 +43,7 @@ umask 022
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 REPO=${TAK_NIGHTLY_REPO:-/home/pocket_geek/TAK}
 WT=${TAK_NIGHTLY_WORKTREE:-$REPO/.claude/worktrees/legion-nightly}
-REF=${TAK_NIGHTLY_REF:-legion-w0}
+REF=${TAK_NIGHTLY_REF:-origin/main}
 CORES=${TAK_NIGHTLY_CORES:-16-23}
 DATA=${TAK_NIGHTLY_DATA:-$REPO/assets/game}
 OUT_ROOT=${TAK_NIGHTLY_OUT:-$HOME/.local/share/tak-legion-nightly}
@@ -50,7 +51,7 @@ KEEP=${TAK_NIGHTLY_KEEP:-30}
 STAGE_TIMEOUT=${TAK_NIGHTLY_STAGE_TIMEOUT:-3600}
 SCN_GLOB=${TAK_NIGHTLY_SCN_GLOB:-*}
 SCREEN_EXTRA=${TAK_NIGHTLY_SCREEN_ARGS:-}
-OFFSETS=${TAK_NIGHTLY_OFFSETS:-}
+OFFSETS=${TAK_NIGHTLY_OFFSETS-0,1,-1,2,-2}
 
 UNIT_DIR=$HOME/.config/systemd/user
 BIN_DIR=$OUT_ROOT/bin
@@ -133,6 +134,7 @@ run_stage() {
 prepare_worktree() {
     set -e
     local sha
+    case "$REF" in origin/*) git -C "$REPO" fetch -q origin || echo "fetch failed; using the existing $REF";; esac
     sha=$(git -C "$REPO" rev-parse --verify "$REF^{commit}")
     if [ ! -e "$WT/.git" ]; then
         mkdir -p "$(dirname "$WT")"
