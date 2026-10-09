@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 240;      // 240: Legion W2 -- structures, units under construction and speed-0 units never pace or
+constexpr uint32_t kNetVersion = 241;      // 241: Legion W3 -- one convoy per click (Order::convoyTick and the open-convoy table are
+                                           //      hashed); hold and stall clocks are tick stamps and rest is stride-free; one
+                                           //      settle rule: a queued, pressed unit settles where it stands within its capped
+                                           //      settle reach after up to 3 re-choices (the reach disc and 600-tick wait are gone)
+                                           // 240: Legion W2 -- structures, units under construction and speed-0 units never pace or
                                            //      anchor an Alt+N formation (FormAgg sums Fixed); an unreachable order drops on
                                            //      arrival at its approach point, or when held behind its own stopped army (holder
                                            //      rule); a patrolling builder's repair detour is a Legion Repair leg
