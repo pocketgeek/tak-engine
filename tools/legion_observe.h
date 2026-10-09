@@ -986,8 +986,7 @@ public:
         static constexpr std::string_view k[]={
             "field_work","trace_cells","pass_scan_cells","slot_search_cells","group_loop_iters",
             "share_scan_iters","aware_pairs","held_rechecks","lift_members_walked","still_units_processed",
-            "crowd_window_ring_cells","crowd_settle_visits","detour_cells","softowner_lookups",
-            "pivot_part_ids"};
+            "crowd_window_ring_cells","crowd_settle_visits","detour_cells","softowner_lookups"};
         for(auto c:k)if(c==n)return true;
         return false;
     }
