@@ -3905,12 +3905,14 @@ struct LegionNavigator::Impl {
         // maze can gain nothing for a long stretch) never does. The look is
         // staggered by unit id over kApproachLook ticks (the ring walk is
         // the cost; a held crowd would otherwise pay it every tick).
+        // Gain is one measure, the field potential: where the field does not
+        // give one (not built yet, or this cell outside it) the window starts
+        // over, so switching between two scales can neither fake a gain nor
+        // hide one (it mixed potential x64 with squared cells).
         if(m.approach) {
-            const uint32_t left=uint32_t(std::min<int64_t>(0xfffffff,
-                f&&f->at(size_t(here))!=kUnreached&&f->at(size_t(here))>0
-                    ? int64_t(f->at(size_t(here)))*64
-                    : (int64_t(m.goal%W-ox)*(m.goal%W-ox)+int64_t(m.goal/W-oz)*(m.goal/W-oz))));
-            if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
+            const uint16_t left=f?f->at(size_t(here)):kUnreached;
+            if(left==kUnreached) {m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;}
+            else if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
             else if(w.tickCounter_-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
                     (uint32_t(u.id)+w.tickCounter_)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
         }
