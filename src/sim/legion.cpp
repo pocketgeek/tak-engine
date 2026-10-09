@@ -107,6 +107,7 @@ constexpr int kFormationLineCells=640;         // ... for a member with a format
 // hugs (the inner file, as before).
 constexpr int kPivotMembers=16;
 constexpr size_t kSlotsPerTick=32;             // formation slots a point hands out per tick (A2)
+constexpr uint64_t kHandOutCells=131072;       // ... and the ring cells their searches may walk in that tick
 constexpr int kPivotChain=48;
 constexpr int kPivotMaxCells=32;
 constexpr int kPivotMinBodies=2;
@@ -1101,6 +1102,9 @@ struct LegionNavigator::Impl {
     uint64_t resolvedEpoch=~0ull;
     // Observation only (see Stats); mutable so const helpers count work.
     mutable Stats stats;
+    // Ring cells formationCell has walked (the hand-out's per-tick budget
+    // reads it; Stats is observation only). Derived, never hashed.
+    mutable uint64_t ringCells=0;
     SlotShape lastShape;   // the last assignFormation's (I2 probe)
 #ifndef NDEBUG
     Stats verified;        // the Stats at the previous verifyIndexes
@@ -3538,7 +3542,7 @@ struct LegionNavigator::Impl {
                 for(int dx=-r;dx<=r;dx+=stride)test(dx,dz,best,bestD);
             }
         }
-        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;
+        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;ringCells+=cells;
 #ifndef NDEBUG
         if(gVerify) {
             // The walk of every square cell the ring search replaced (A6).
@@ -3646,11 +3650,17 @@ struct LegionNavigator::Impl {
     // The next kSlotsPerTick queued members of an assigned point take their
     // formation slots (their current offset, mapped as a later joiner's),
     // once per tick. A member that left, re-registered or died is dropped.
+    // A large formation's later joiners search far through claimed cells
+    // (a 120-body dead-end room: 8000 ring cells a member, 268k a tick at
+    // 32 slots), so the hand-out also stops, after its first slot, once
+    // the tick's searches have walked kHandOutCells ring cells; the rest
+    // wait a tick, steering by the shared field as before.
     void handOut(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
         pt.handTick=w.tickCounter_;
         const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
         size_t at=0,given=0;
-        for(;at<pt.queue.size()&&given<kSlotsPerTick;++at) {
+        const uint64_t ring0=ringCells;
+        for(;at<pt.queue.size()&&given<kSlotsPerTick&&(!given||ringCells-ring0<kHandOutCells);++at) {
             Member* mm=member(pt.queue[at]);const Unit* v=w.unit(pt.queue[at]);
             if(!mm||mm->point!=key||mm->slot!=-3)continue;
             const auto group=groups.find(mm->group);
