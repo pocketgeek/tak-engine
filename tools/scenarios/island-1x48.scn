@@ -20,3 +20,7 @@ gate lane 69 39 131 101
 gate abreast 100 20 100 120
 line far 150 0 150 140
 region goal 160 50 190 90
+# Audit definitions (lanes2 laneRun): abreast = distinct z/2 files over the strip x 95-105 (gate.strip.files_x100); crossings = lane-order
+# swaps between the first entries of x=70 and x=130 within 300 ticks, >= 2 cells at both (lane.cross.swaps / .pairs).
+gate strip 95 0 106 140 lateral=z
+lane cross 70 0 70 140 130 0 130 140 window=300 mincells=2

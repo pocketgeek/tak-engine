@@ -30,3 +30,8 @@ at 1 move A 150 110
 at 2 move B 150 110
 at 3 move C 150 110
 at 4 move D 150 110
+# Audit crossings (lanes2 laneRun wall): lane-order swaps between the first entries of z=60 west of the wall (lateral 98-x)
+# and east of it (lateral x-102) within 300 ticks, >= 2 cells at both (lane.cross.swaps / .pairs); pairs across all four groups, as the audit.
+# Audit abreast = distinct z/2 files over the strip x 97-102, z < 48 (gate.strip.files_x100).
+gate strip 97 0 103 48 lateral=z
+lane cross 0 60 98 60 102 60 200 60 bsign=-1 asign=1 window=300 mincells=2 across=all

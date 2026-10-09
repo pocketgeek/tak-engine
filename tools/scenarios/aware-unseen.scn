@@ -69,3 +69,5 @@ gate mid 100 42 100 99
 line farA 170 0 170 140
 region goalA 170 60 190 80
 region goalB 0 60 25 80
+# Audit contacts_permille: live ordered a-x-b pairs within 2 cells, every 10 ticks (key pair.contacts.permille_x100).
+pair contacts a* b* cells=2

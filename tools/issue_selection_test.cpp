@@ -562,6 +562,9 @@ group E 1 army 12 rect 26 14 62 22 pitch=4 weapons=on
 gate door 20 11 20 13
 line finish 40 0 40 24
 region home 0 0 18 24
+gate wide 10 0 20 24 lateral=z band=3 mincount=2 edge=3 pairwindow=200 flip=2
+lane swap 5 8 5 12 30 8 30 12 bsign=-1 window=100 mincells=3 across=all
+pair near A,B E* cells=3
 at 30 move F,A,B 50 8
 at 60 fight A,B @E queue
 at 90 attack F @E
@@ -674,7 +677,18 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
     roundTrip(kAscii, "ascii");
     const auto ascii = tak::scn::parse(kAscii, "ascii");
     check(ascii.map.width == 64 && ascii.map.height == 24, "ascii: size from the rows");
-    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 3, "ascii: counts");
+    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 6, "ascii: counts");
+    {
+        const auto& g = *ascii.shape("wide");
+        check(g.lateral == 1 && g.band == 3 && g.minCount == 2 && g.edge == 3 && g.pairWindow == 200 && g.flip == 2,
+              "ascii: gate options");
+        const auto& l = *ascii.shape("swap");
+        check(l.kind == "lane" && l.ax0 == 30 && l.az1 == 12 && l.beforeSign == -1 && l.afterSign == 1 &&
+                  l.window == 100 && l.minCells == 3 && l.acrossGroups,
+              "ascii: lane shape");
+        const auto& p = *ascii.shape("near");
+        check(p.kind == "pair" && p.a == "A,B" && p.b == "E*" && p.cells == 3, "ascii: pair shape");
+    }
     check(ascii.group("A")->squad == -1 && ascii.group("E")->weapons == 1, "ascii: group options");
     check(ascii.orders[0].selection == std::vector<std::string>{"F", "A", "B"}, "ascii: selection order kept");
     check(ascii.orders[1].queue && ascii.orders[1].target == "E", "ascii: fight @E queue");

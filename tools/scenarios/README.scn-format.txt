@@ -78,6 +78,27 @@ Shapes (for the runner's metrics; never affect the world):
   gate NAME X0 Z0 X1 Z1         a segment
   line NAME X0 Z0 X1 Z1         a segment
   region NAME X0 Z0 X1 Z1       a rectangle
+  gate options (a gate with unequal sides is a rectangle of centre cells; a segment
+  is a strip 8 cells wide):
+        lateral=x|z band=N mincount=N edge=N pairwindow=N flip=N
+        the lateral axis (default: the longer side), the file width in cells (2),
+        members inside for a files sample (3), the end-window depth (2), the
+        ticks between a crossing pair's entries (600) and its flip distance
+        (the body width)
+  lane NAME BX0 BZ0 BX1 BZ1 AX0 AZ0 AX1 AZ1 [bsign=-1|1] [asign=-1|1] [window=N]
+       [mincells=N] [across=all]
+        the observer's lane-order probe: the first entry of each member into a
+        line before a vertex and a line after it (each horizontal or vertical,
+        cells floor(lo)..ceil(hi)-1; the lateral cell is x on a horizontal line, z
+        on a vertical one, times its sign). Two members entering the first line
+        within `window` ticks (300) swap when their order flips by at least
+        `mincells` (2) at both lines. Pairs of one group, or of all groups with
+        across=all. Keys lane.NAME.pairs / .swaps / .swaps_permille.
+  pair NAME LISTA LISTB [cells=N]
+        proximity of live ordered members of LISTA x LISTB (comma lists of
+        groups, a trailing * is a name prefix) sampled every 10 ticks: pairs
+        whose centre cells are within `cells` (2) on both axes. Keys
+        pair.NAME.pairs / .contacts / .permille_x100.
 
 Start offset: the builder shifts every spawn by 0, +1 or -1 cells on both
 axes (BuildOptions::offset); orders, walls and shapes stay put.

@@ -79,9 +79,20 @@ struct OrderSpec {
     bool append = false;
 };
 
-struct Shape {   // gate/line: a segment; region: a rectangle; cells
+struct Shape {   // gate/line: a segment; region: a rectangle; lane: two segments; pair: two group lists
     std::string kind, name;
     float x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    // gate options (0 or -1: the observer's default): lateral axis 0 x / 1 z, file band, members inside for a
+    // files sample, end-window depth, ticks between two entries of a pair, flip distance in cells.
+    int lateral = -1, band = 0, minCount = 0, edge = 0, pairWindow = 0, flip = 0;
+    // lane: the second segment (the "after" line), the sign of each line's lateral cell, the entry window in
+    // ticks and the least lateral distance of a swap (0: the observer's defaults).
+    float ax0 = 0, az0 = 0, ax1 = 0, az1 = 0;
+    int beforeSign = 1, afterSign = 1, window = 0, minCells = 0;
+    bool acrossGroups = false;       // lane across=all: pairs of different groups count too
+    // pair: comma lists of group names (a trailing '*' matches a name prefix) and the contact radius in cells.
+    std::string a, b;
+    int cells = 0;
 };
 
 struct MapSpec {
@@ -431,14 +442,51 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (!o.target.empty() && !s.group(o.target)) c.fail("unknown target group '" + o.target + "'");
             if (at != w.size()) c.fail("unexpected '" + w[at] + "'");
             s.orders.push_back(o);
-        } else if (k == "gate" || k == "line" || k == "region") {
-            need(6, 6);
+        } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair") {
+            if (k == "pair") need(4, 5); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
             if (s.shape(w[1])) c.fail("shape '" + w[1] + "' defined twice");
             Shape sh;
             sh.kind = k;
             sh.name = w[1];
-            sh.x0 = c.number(w[2]); sh.z0 = c.number(w[3]); sh.x1 = c.number(w[4]); sh.z1 = c.number(w[5]);
-            if (k == "region" && (sh.x1 <= sh.x0 || sh.z1 <= sh.z0)) c.fail("empty region");
+            size_t at = 0;
+            if (k == "pair") {
+                sh.a = w[2]; sh.b = w[3];
+                at = 4;
+            } else {
+                sh.x0 = c.number(w[2]); sh.z0 = c.number(w[3]); sh.x1 = c.number(w[4]); sh.z1 = c.number(w[5]);
+                at = 6;
+                if (k == "region" && (sh.x1 <= sh.x0 || sh.z1 <= sh.z0)) c.fail("empty region");
+                if (k == "lane") {
+                    sh.ax0 = c.number(w[6]); sh.az0 = c.number(w[7]); sh.ax1 = c.number(w[8]); sh.az1 = c.number(w[9]);
+                    at = 10;
+                    if (sh.x0 != sh.x1 && sh.z0 != sh.z1) c.fail("lane's before line must be vertical or horizontal");
+                    if (sh.ax0 != sh.ax1 && sh.az0 != sh.az1) c.fail("lane's after line must be vertical or horizontal");
+                }
+            }
+            for (; at < w.size(); ++at) {
+                const auto eq = w[at].find('=');
+                if (eq == std::string::npos) c.fail("expected key=value: '" + w[at] + "'");
+                const std::string key = w[at].substr(0, eq), val = w[at].substr(eq + 1);
+                if (k == "gate" && key == "lateral") {
+                    if (val != "x" && val != "z") c.fail("lateral=x|z");
+                    sh.lateral = val == "z" ? 1 : 0;
+                } else if (k == "gate" && key == "band") sh.band = int(c.integer(val, 1, 64));
+                else if (k == "gate" && key == "mincount") sh.minCount = int(c.integer(val, 1, 100000));
+                else if (k == "gate" && key == "edge") sh.edge = int(c.integer(val, 1, 64));
+                else if (k == "gate" && key == "pairwindow") sh.pairWindow = int(c.integer(val, 1, 1'000'000));
+                else if (k == "gate" && key == "flip") sh.flip = int(c.integer(val, 1, 64));
+                else if (k == "lane" && key == "bsign") sh.beforeSign = int(c.integer(val, -1, 1));
+                else if (k == "lane" && key == "asign") sh.afterSign = int(c.integer(val, -1, 1));
+                else if (k == "lane" && key == "window") sh.window = int(c.integer(val, 1, 1'000'000));
+                else if (k == "lane" && key == "mincells") sh.minCells = int(c.integer(val, 1, 64));
+                else if (k == "lane" && key == "across") {
+                    if (val != "all" && val != "group") c.fail("across=all|group");
+                    sh.acrossGroups = val == "all";
+                } else if (k == "pair" && key == "cells") sh.cells = int(c.integer(val, 0, 32));
+                else c.fail("unknown option '" + key + "' for " + k);
+            }
+            if ((k == "lane" && (sh.beforeSign == 0 || sh.afterSign == 0)))
+                c.fail("bsign and asign are 1 or -1");
             s.shapes.push_back(sh);
         } else c.fail("unknown directive '" + k + "'");
     }
@@ -533,9 +581,24 @@ inline std::string format(const Scenario& s) {
         if (g.weapons >= 0) o << " weapons=" << (g.weapons ? "on" : "off");
         o << "\n";
     }
-    for (const auto& sh : s.shapes)
-        o << sh.kind << " " << sh.name << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " "
-          << fmt(sh.z1) << "\n";
+    for (const auto& sh : s.shapes) {
+        o << sh.kind << " " << sh.name;
+        if (sh.kind == "pair") o << " " << sh.a << " " << sh.b;
+        else o << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " " << fmt(sh.z1);
+        if (sh.kind == "lane")
+            o << " " << fmt(sh.ax0) << " " << fmt(sh.az0) << " " << fmt(sh.ax1) << " " << fmt(sh.az1);
+        auto opt = [&](const char* key, int v, int none) { if (v != none) o << " " << key << "=" << v; };
+        if (sh.kind == "gate") {
+            if (sh.lateral >= 0) o << " lateral=" << (sh.lateral ? "z" : "x");
+            opt("band", sh.band, 0); opt("mincount", sh.minCount, 0); opt("edge", sh.edge, 0);
+            opt("pairwindow", sh.pairWindow, 0); opt("flip", sh.flip, 0);
+        } else if (sh.kind == "lane") {
+            opt("bsign", sh.beforeSign, 1); opt("asign", sh.afterSign, 1);
+            opt("window", sh.window, 0); opt("mincells", sh.minCells, 0);
+            if (sh.acrossGroups) o << " across=all";
+        } else if (sh.kind == "pair") opt("cells", sh.cells, 0);
+        o << "\n";
+    }
     for (const auto& r : s.orders) {
         o << "at " << r.tick << " " << detail::verbName(r.verb) << " ";
         for (size_t i = 0; i < r.selection.size(); ++i) o << (i ? "," : "") << r.selection[i];
