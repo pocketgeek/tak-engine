@@ -10387,9 +10387,7 @@ void World::tick(float dt) {
             !u.underConstruction && u.baseSpeed.v > 0)
             if (FormAgg* f = formOf(u)) {
                 f->sx += u.x.v; f->sz += u.z.v; ++f->n;
-                // Retail's rule (51b890/4d95f0): the pace is the slowest member that is
-                // walking an order. An idle member left behind no longer slows the rest.
-                if (!u.orders.empty()) f->slowest = fxMin(f->slowest, u.baseSpeed);
+                f->slowest = fxMin(f->slowest, u.baseSpeed);
                 f->area += u.type->footX * u.type->footZ;
                 f->busy += !u.orders.empty();
             }
@@ -10871,9 +10869,7 @@ void World::tick(float dt) {
                 float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
                 float uToGoal = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
                 float cToGoal = detmath::len(cx - gx, cz - gz);
-                // Never below a quarter of the member's own speed (retail's floor).
-                if (uToGoal <= cToGoal + kFormBehind)
-                    target = fxMin(target, fxMax(f->slowest, Fixed::raw(u.baseSpeed.v / 4)));
+                if (uToGoal <= cToGoal + kFormBehind) target = fxMin(target, f->slowest);
             }
         }
         if (pathfindingMode_==PathfindingMode::Retail) retailGroupMaximum_=retailGroupLimit(u);
