@@ -495,6 +495,18 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
         r.keys.emplace_back("commands", commands);
         r.keys.emplace_back("last_command_tick", lastCommand);
+        // The convoy lookups' declared per-order bounds (PLAN 3.0: p99 <= 16,
+        // max <= 64 tests per order), which per-tick work.convoy_tests cannot
+        // show: the most for one order, orders over 16 (per mille, rounded
+        // up) and orders over 64. Legion only (Retail keeps no convoys).
+        if (mode == PathfindingMode::Legion) {
+            const auto c = w.convoyStats();
+            r.keys.emplace_back("convoy.orders", int64_t(c.orders));
+            r.keys.emplace_back("convoy.tests_max", int64_t(c.testsMax));
+            r.keys.emplace_back("convoy.over16_permille",
+                                c.orders ? int64_t((c.over16 * 1000 + c.orders - 1) / c.orders) : 0);
+            r.keys.emplace_back("convoy.over64", int64_t(c.over64));
+        }
         for (const auto& [tick, tr] : truthNow) {
             const std::string pre = "truth.t" + std::to_string(tick) + ".";
             r.keys.emplace_back(pre + "n", tr.n);

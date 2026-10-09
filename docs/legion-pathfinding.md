@@ -1117,7 +1117,9 @@ table at the start of the next tick. Lookups go through two ordered indexes
 (anchored convoys by anchor cell, unanchored ones by the 256 px tile of their
 first point), and each order's probes plus candidates are counted as
 `legion_convoy_tests` (crowdbench) and `work.convoy_tests` (the scenario
-observer, inside `work.legion_total`). `TAK_LEGION_VERIFY` checks every join
+observer, inside `work.legion_total`); the declared bound is per order (p99 at
+most 16, max at most 64), which `legion_scenario` reports as `convoy.tests_max`,
+`convoy.over16_permille` and `convoy.over64` and baseline.json gates. `TAK_LEGION_VERIFY` checks every join
 against a scan of the table and the indexes against a rebuild every tick.
 Nothing reads `convoyTick` yet (A2 keys Legion's groups on it); `convoy_test`
 covers the click shapes (flyers first with saturated offsets, opposite
