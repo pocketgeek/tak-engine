@@ -592,7 +592,7 @@ struct LegionNavigator::Impl {
     // cell (never farther than one cell from that goal origin, so it stays
     // inside its destination area) to open a lane for a same-player member
     // whose own goal it walls in. Capped per body: no endless shuffling.
-    struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
+    struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};uint32_t part=0;};
     std::map<int,Anchor> anchors;
     // Unit id -> whether it has an entry in `anchors` (a dense mirror): the
     // yield and crowd checks reject a non-anchor body without a tree walk.
@@ -954,7 +954,7 @@ struct LegionNavigator::Impl {
             if(isAnchor(u.id)) {
                 const auto a=anchors.find(u.id);
                 if(size_t(u.id)>=owner.size())owner.resize(size_t(u.id)+1,~0ull);
-                owner[size_t(u.id)]=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
+                owner[size_t(u.id)]=commandKey(std::get<0>(a->second.point),a->second.part);
                 ownerCmds.push_back(owner[size_t(u.id)]);
             }
         }
@@ -1834,8 +1834,11 @@ struct LegionNavigator::Impl {
         // unstamped); every patrol lap on its own; moving goals on the
         // shared re-seed grid.
         const uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
+        // Groups (fields) and their soft-obstacle command keys stay per
+        // 64-unit part (the order's issuedTick); the point -- formation,
+        // area, settling -- is the whole convoy's.
         const uint32_t issue=rule.moving?w.tickCounter_-w.tickCounter_%kReseedTicks:
-            rule.perController?uint32_t(leg.controller):command;
+            rule.perController?uint32_t(leg.controller):leg.issuedTick;
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
         auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
         if(fresh) {
@@ -1895,7 +1898,7 @@ struct LegionNavigator::Impl {
         stats.joinIterations+=joins;stats.groupLoopIters+=joins;
         if(!joined) {
             Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=issue;g.compCell=m.goal;g.approach=m.approach;g.kind=kind;
-            g.command=commandKey(u.player,std::get<1>(m.point));g.soft=!u.type->wanders;
+            g.command=commandKey(u.player,rule.area?leg.issuedTick:std::get<1>(m.point));g.soft=!u.type->wanders;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
             joined=&groups.emplace(g.id,std::move(g)).first->second;
             listGroup(*joined);
@@ -3292,7 +3295,7 @@ struct LegionNavigator::Impl {
         completionStats(u,m);
         if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
-        anchors[u.id]=Anchor{m.goal,0,m.point};markAnchor(u.id,true);
+        anchors[u.id]=Anchor{m.goal,0,m.point,m.part};markAnchor(u.id,true);
         leave(u.id);
     }
     // Where a leg completed, from its click (Stats only): the distance
@@ -5000,6 +5003,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);
             h=mix(h,uint64_t(std::get<0>(a.point)));h=mix(h,std::get<1>(a.point));
             h=mix(h,uint32_t(std::get<2>(a.point)));h=mix(h,uint32_t(std::get<3>(a.point)));
+            if(a.part!=std::get<1>(a.point)) {h=mix(h,0x70617274ull);h=mix(h,a.part);}
         }
         for(const auto& [id,y]:yielding) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(y.cell));h=mix(h,y.ticks);}
         h=mix(h,softSerial);h=mix(h,softHash);
