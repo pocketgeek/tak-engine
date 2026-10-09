@@ -4974,6 +4974,11 @@ struct LegionNavigator::Impl {
             }
             return true;
         };
+        // The search never climbs more than a row (kSettleSlack bodies of
+        // potential) above the body: a free slot reachable only by walking
+        // back round the crowd is no re-choice, and that walk is what made
+        // the search cost a whole 49x49 window per call.
+        const uint32_t climb=uint32_t(potential)+uint32_t(kSettleSlack*std::max(fx,fz)*kOrthogonal);
         std::vector<uint8_t> seen(size_t(S)*S,0);
         std::vector<int> queue;queue.reserve(size_t(S)*S);
         seen[size_t(R*S+R)]=1;queue.push_back(R*S+R);
@@ -4982,7 +4987,8 @@ struct LegionNavigator::Impl {
             for(const auto& dd:kDirections) {
                 const int nlx=lx+dd[0],nlz=lz+dd[1];
                 if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
-                if(!step(p,x,z,dd[0],dd[1])||!open(x+dd[0],z+dd[1]))continue;
+                if(!step(p,x,z,dd[0],dd[1]))continue;
+                if(const uint16_t v=f.at(size_t((z+dd[1])*W+x+dd[0]));v==kUnreached||v>climb||!open(x+dd[0],z+dd[1]))continue;
                 if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
                 seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
             }
