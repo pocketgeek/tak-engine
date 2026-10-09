@@ -650,36 +650,55 @@ struct LegionNavigator::Impl {
     // The route field is static terrain only, so a standing block of bodies
     // sits right on every member's shortest way and each one walks into it
     // and then has to wait or detour locally (the local detour cannot see
-    // round a block wider than its window). Every kStillScan ticks the
-    // ground bodies are sampled; one at the same exact position on
-    // kStillScans consecutive scans is still. A still body that is not a
+    // round a block wider than its window). Each ground body is sampled
+    // every kStillScan ticks, on its own residue (id % kStillScan == tick %
+    // kStillScan: the scan is striped, one slice of the bodies a tick, never
+    // the whole population at once); one at the same exact position on
+    // kStillScans consecutive samples is still. A still body that is not a
     // Legion member, or is a settled Legion arrival, stamps its cells into
     // `soft` (any player: idle, building, guarding, an enemy's). Moving
     // crowds never qualify: every Legion member on its way (moving, held,
     // waiting, trapped behind a gate) is excluded, and anything else must
-    // not have moved at all for a whole scan. A body that sets off as a
-    // Legion member stops counting at once (registerMove clears its cells);
-    // one ordered off otherwise stops at the next scan. A field already
+    // not have moved at all between two samples. A body that sets off as a
+    // Legion member stops counting at once (registerMove lifts its stamp);
+    // one ordered off otherwise stops at its next sample. A field already
     // built keeps its route: no re-planning when the block starts to move.
-    struct Still {int32_t x=0,z=0;uint16_t scans=0;};
-    std::vector<std::pair<int,Still>> stills;   // unit id -> last sampled position, ascending ids
-    std::vector<int32_t> soft;           // per cell: a soft body covering it (0 none)
-    std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival (see softCell)
-    std::vector<int> softCells;          // cells set in `soft`, ascending
-    std::vector<uint8_t> softPrior;      // scanStill scratch: a cell's kind before the rescan (all 0 between scans)
+    // Per unit id: its last sample (hashed in id order, as the whole-scan
+    // `stills` list was) and the stamp it holds. The stamp is derived from
+    // the sample, the body's type and the kind/owner folded into softHash.
+    struct SoftBody {
+        int32_t x=0,z=0;uint16_t scans=0;bool present=false;   // the sample
+        bool stamped=false;uint8_t kind=0;int player=0;          // the stamp
+        int ox=0,oz=0,fx=0,fz=0;uint64_t owner=~0ull;
+    };
+    std::vector<SoftBody> softBodies;    // by unit id
+    std::vector<int32_t> soft;           // per cell: the lowest id of the stamps covering it (0 none)
+    std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival, 3 a liftable flyer (see softCell)
+    size_t softCellCount=0;              // cells set in `soft`
+    // Cells two or more stamps cover: every covering id, ascending (`soft`
+    // holds the first). Rare (bodies do not overlap), so a map.
+    std::map<int,std::vector<int>> softStack;
     // Per unit id: the command (player, issue tick) a settled Legion arrival
     // belongs to, else ~0: a field never treats its own arrivals as soft.
     std::vector<uint64_t> softOwner;
-    // The distinct values of softOwner (~0 included when some id has no
-    // owner), ascending: "does any settled arrival belong to this command"
-    // is a binary search (Stats::softownerLookups counts the linear scans
-    // it replaced: none). Written with softOwner by scanStill alone; a
-    // function of it, never hashed.
-    std::vector<uint64_t> softOwnerCmds;
+    // The commands softOwner holds, each with its number of owned ids:
+    // "does any settled arrival belong to this command" is one lookup
+    // (Stats::softownerLookups counts the linear scans it replaced: none).
+    // Kept with softOwner by stamp/unstamp; a function of it, never hashed.
+    std::map<uint64_t,uint32_t> softOwnerCount;
     bool ownsArrivals(uint64_t command) const {
-        return std::binary_search(softOwnerCmds.begin(),softOwnerCmds.end(),command);
+        // ~0 marks an id without an owner: present whenever any id is owned.
+        return command==~0ull?!softOwnerCount.empty():softOwnerCount.count(command)>0;
     }
-    uint64_t softSerial=0,softHash=0;    // bumped whenever `soft` changes; its content hash
+    // softHash: an order-independent wrapping sum of one term per stamped
+    // cell (cell, id, kind) and one per owned id (id, command), kept by
+    // stamp/unstamp; softHashFull() recomputes it from the stamps
+    // (TAK_LEGION_VERIFY checks the two every tick). softSerial counts the
+    // stamp changes.
+    uint64_t softSerial=0,softHash=0;
+    static uint64_t softTerm(size_t c,int id,uint8_t kind) {return mix(mix(0x736f6674ull,uint64_t(c)<<32|uint32_t(id)),kind);}
+    static uint64_t ownerTerm(int id,uint64_t owner) {return mix(mix(0x6f776e6572ull,uint64_t(uint32_t(id))),owner);}
+    std::map<int,uint32_t> liftCells;    // player -> kind 3 cells it owns
     std::vector<int> liftSoftPlayers;    // owners of the kind 3 cells (liftable flyers), sorted unique
     // Landed flyers (mode 1) stand on the ground: retail stamps them into
     // its ground grid (5066f0, re-stamped by 51b370/4dafd2 on every mode or
@@ -862,8 +881,7 @@ struct LegionNavigator::Impl {
         // A flyer that took off is no soft obstacle any more (as a body
         // setting off as a member, see registerMove): clear it at once,
         // not at the next scan.
-        if(!softCells.empty())for(int id:groundedIds)if(!std::binary_search(ids.begin(),ids.end(),id))
-            for(int c:softCells)if(soft[size_t(c)]==id&&softKind[size_t(c)]) {countAll(c,softKind[size_t(c)],-1);softKind[size_t(c)]=0;}
+        for(int id:groundedIds)if(!std::binary_search(ids.begin(),ids.end(),id))unstamp(id);
         groundedIds.swap(ids);
     }
     static uint64_t commandKey(int player,uint32_t issue) {return uint64_t(uint32_t(player))<<32|issue;}
@@ -887,7 +905,7 @@ struct LegionNavigator::Impl {
     // SoftCounts; -1 none) answers without a walk unless a settled arrival
     // is near: none covered, or only bodies soft to every command.
     bool softAt(int x,int z,int fx,int fz,uint64_t command,int counts=-1) const {
-        if(softCells.empty()||command==kNoSoft)return false;
+        if(!softCellCount||command==kNoSoft)return false;
         if(counts>=0&&x>=0&&z>=0&&x<w.occW_&&z<w.occH_) {
             const uint32_t k=softCounts[size_t(counts)].at[size_t(z)*w.occW_+x];
             if(!(k&kCoverCount))return false;
@@ -904,7 +922,7 @@ struct LegionNavigator::Impl {
     // 1 passes within a cell of one (a stream keeps a lane off the block's
     // face instead of filing along it), 0 clear.
     int softLevel(int x,int z,int fx,int fz,uint64_t command,int counts,bool own=true,bool lift=true) const {
-        if(softCells.empty()||command==kNoSoft)return 0;
+        if(!softCellCount||command==kNoSoft)return 0;
         // The field asks this for every improving relaxation: answered from
         // the footprint's window counts, walking the window only near a
         // settled arrival (whose command matters).
@@ -953,97 +971,189 @@ struct LegionNavigator::Impl {
         SoftCounts k;k.fx=fx;k.fz=fz;
         const size_t n=size_t(w.occW_)*w.occH_;
         k.at.assign(n,0);
-        for(int c:softCells)if(softKind[size_t(c)])countCell(k,c,softKind[size_t(c)],1);
+        if(softCellCount)for(size_t c=0;c<soft.size();++c)if(softKind[c])countCell(k,int(c),softKind[c],1);
         softCounts.push_back(std::move(k));
         return int(softCounts.size()-1);
     }
+    template<class F> void forStampCells(const SoftBody& b,F&& fn) const {
+        for(int j=0;j<b.fz;++j)for(int i=0;i<b.fx;++i) {
+            const int cx=b.ox+i,cz=b.oz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            fn(size_t(cz)*w.occW_+cx);
+        }
+    }
+    void liftCount(int player,int delta) {
+        auto& n=liftCells[player];
+        n=uint32_t(int64_t(n)+delta);
+        if(n&&(delta<0||n>1))return;
+        if(!n)liftCells.erase(player);
+        liftSoftPlayers.clear();
+        for(const auto& [p,cells]:liftCells)liftSoftPlayers.push_back(p);
+    }
+    // Cell c's covering stamp becomes `id` of `kind` (0, 0: none). The
+    // window counts follow the kind (only a kind change moves them).
+    void cellSet(size_t c,int32_t id,uint8_t kind) {
+        const uint8_t k0=softKind[c];const int32_t o=soft[c];
+        if(k0!=kind) {
+            if(k0)countAll(int(c),k0,-1);
+            if(kind)countAll(int(c),kind,1);
+        }
+        if(k0==3)liftCount(softBodies[size_t(o)].player,-1);
+        if(kind==3)liftCount(softBodies[size_t(id)].player,1);
+        if(!o&&id)++softCellCount;
+        else if(o&&!id)--softCellCount;
+        soft[c]=id;softKind[c]=kind;
+    }
+    void stamp(int id) {
+        SoftBody& b=softBodies[size_t(id)];
+        b.stamped=true;
+        forStampCells(b,[&](size_t c) {
+            softHash+=softTerm(c,id,b.kind);
+            if(!soft[c]) {cellSet(c,id,b.kind);return;}
+            auto& v=softStack[int(c)];
+            if(v.empty())v.push_back(soft[c]);
+            v.insert(std::lower_bound(v.begin(),v.end(),id),id);
+            if(v.front()==id)cellSet(c,id,b.kind);
+        });
+        if(b.owner!=~0ull) {
+            if(size_t(id)>=softOwner.size())softOwner.resize(size_t(id)+1,~0ull);
+            softOwner[size_t(id)]=b.owner;++softOwnerCount[b.owner];
+            softHash+=ownerTerm(id,b.owner);
+        }
+        ++softSerial;
+    }
+    // Lifts id's stamp (none: nothing to do); its sample stays.
+    void unstamp(int id) {
+        if(id<=0||size_t(id)>=softBodies.size()||!softBodies[size_t(id)].stamped)return;
+        SoftBody& b=softBodies[size_t(id)];
+        forStampCells(b,[&](size_t c) {
+            softHash-=softTerm(c,id,b.kind);
+            const auto it=softStack.find(int(c));
+            if(it==softStack.end()) {cellSet(c,0,0);return;}
+            auto& v=it->second;
+            v.erase(std::lower_bound(v.begin(),v.end(),id));
+            const int first=v.front();
+            if(v.size()==1)softStack.erase(it);
+            if(soft[c]==id)cellSet(c,first,softBodies[size_t(first)].kind);
+        });
+        if(b.owner!=~0ull) {
+            softOwner[size_t(id)]=~0ull;
+            if(auto it=softOwnerCount.find(b.owner);--it->second==0)softOwnerCount.erase(it);
+            softHash-=ownerTerm(id,b.owner);
+        }
+        b.stamped=false;
+        ++softSerial;
+    }
+    // softHash from scratch: every stamp's terms (TAK_LEGION_VERIFY, C31).
+    uint64_t softHashFull() const {
+        uint64_t h=0;
+        for(size_t id=0;id<softBodies.size();++id) {
+            const SoftBody& b=softBodies[id];
+            if(!b.stamped)continue;
+            forStampCells(b,[&](size_t c) {h+=softTerm(c,int(id),b.kind);});
+            if(b.owner!=~0ull)h+=ownerTerm(int(id),b.owner);
+        }
+        return h;
+    }
+    // The unit with id `id`, through World's id -> slot table.
+    const Unit* bodyUnit(size_t id) const {
+        if(id>=w.unitSlotById_.size())return nullptr;
+        const int32_t slot=w.unitSlotById_[id];
+        if(slot<0)return nullptr;
+        if(size_t(slot)<w.units_.size()&&w.units_[size_t(slot)].id==int(id))return &w.units_[size_t(slot)];
+        return w.unit(int(id));
+    }
     void scanStill() {
-        if(w.tickCounter_%kStillScan!=0||w.occW_<=0)return;
-        std::vector<std::pair<int,Still>> next;next.reserve(stills.size()+16);
-        std::vector<int> cells;
-        std::vector<uint64_t> owner,ownerCmds;
+        if(w.occW_<=0)return;
         const size_t n=size_t(w.occW_)*w.occH_;
         if(soft.size()!=n) {
-            soft.assign(n,0);softKind.assign(n,0);softCells.clear();softCounts.clear();
+            soft.assign(n,0);softKind.assign(n,0);softCellCount=0;softStack.clear();softCounts.clear();
+            softOwner.clear();softOwnerCount.clear();liftCells.clear();liftSoftPlayers.clear();softHash=0;
+            for(auto& b:softBodies) {b.stamped=false;b.owner=~0ull;}
         }
-        std::vector<std::pair<int,int32_t>> stamps;
-        std::vector<uint8_t> liftable;
+        // This tick's slice: the ids on its residue (ids start at 1).
+        const uint32_t r=w.tickCounter_%kStillScan;
+        const size_t bound=std::max(softBodies.size(),w.unitSlotById_.size());
         uint64_t processed=0;
-        std::array<uint32_t,30> residue{};
-        for(const auto& u:w.units_) {
-            if(!u.alive()||u.embarked()||!u.type||(u.type->canFly&&u.flightGroundMode!=1)||u.type->isStructure())continue;
-            const Member* m=member(u.id);
-            if(m&&m->state!=Arrived)continue;
-            Still s;s.x=u.x.v;s.z=u.z.v;++processed;++residue[size_t(u.id)%30];
-            const auto old=std::lower_bound(stills.begin(),stills.end(),u.id,[](const auto& e,int id) {return e.first<id;});
-            if(old!=stills.end()&&old->first==u.id&&old->second.x==s.x&&old->second.z==s.z)
-                s.scans=uint16_t(std::min<int>(old->second.scans+1,kStillScans));
-            next.push_back({u.id,s});
-            if(s.scans<kStillScans)continue;
+        for(size_t id=r?r:kStillScan;id<bound;id+=kStillScan) {
+            const Unit* found=bodyUnit(id);
+            const Member* m=found?member(found->id):nullptr;
+            if(!found||!found->alive()||found->embarked()||!found->type||(found->type->canFly&&found->flightGroundMode!=1)||
+               found->type->isStructure()||(m&&m->state!=Arrived)) {
+                if(id<softBodies.size()&&softBodies[id].present) {
+                    unstamp(int(id));
+                    softBodies[id].present=false;softBodies[id].scans=0;
+                }
+                continue;
+            }
+            const Unit& u=*found;
+            ++processed;
+            if(id>=softBodies.size())softBodies.resize(id+1);
+            SoftBody& b=softBodies[id];
+            const bool same=b.present&&b.x==u.x.v&&b.z==u.z.v;
+            b.scans=same?uint16_t(std::min<int>(b.scans+1,kStillScans)):0;
+            b.present=true;b.x=u.x.v;b.z=u.z.v;
+            if(b.scans<kStillScans) {unstamp(int(id));continue;}
             const int fx=u.type->footX,fz=u.type->footZ;
             const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
-            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
-                const int cx=ox+i,cz=oz+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                stamps.push_back({cz*w.occW_+cx,u.id});
-            }
-            if(u.type->canFly&&w.legionLiftable(u,u.player)) {
-                if(size_t(u.id)>=liftable.size())liftable.resize(size_t(u.id)+1,0);
-                liftable[size_t(u.id)]=1;
-            }
+            uint64_t owner=~0ull;
             if(isAnchor(u.id)) {
                 const auto a=anchors.find(u.id);
-                if(size_t(u.id)>=owner.size())owner.resize(size_t(u.id)+1,~0ull);
-                owner[size_t(u.id)]=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
-                ownerCmds.push_back(owner[size_t(u.id)]);
+                owner=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
             }
+            const uint8_t kind=u.type->canFly&&w.legionLiftable(u,u.player)?3:owner!=~0ull?2:1;
+            if(b.stamped&&b.ox==ox&&b.oz==oz&&b.fx==fx&&b.fz==fz&&b.kind==kind&&b.owner==owner&&b.player==u.player)continue;
+            unstamp(int(id));
+            b.ox=ox;b.oz=oz;b.fx=fx;b.fz=fz;b.kind=kind;b.owner=owner;b.player=u.player;
+            stamp(int(id));
         }
         stats.stillUnitsProcessed+=processed;
-        stats.stillPerResidueMax=std::max<uint64_t>(stats.stillPerResidueMax,*std::max_element(residue.begin(),residue.end()));
-        std::sort(next.begin(),next.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
-        stills.swap(next);
-        std::sort(stamps.begin(),stamps.end());
-        // The window counts depend on each cell's kind alone, and their
-        // updates are additive: a cell soft before and after with the same
-        // kind would be removed and added back unchanged. Only cells whose
-        // kind changed are counted (in a still crowd that is almost none;
-        // re-counting every cell cost ~5-8 ms per scan at ~10k bodies).
-        if(softPrior.size()!=n)softPrior.assign(n,0);
-        for(int c:softCells) {
-            softPrior[size_t(c)]=softKind[size_t(c)];
-            soft[size_t(c)]=0;softKind[size_t(c)]=0;
-        }
-        uint64_t h=0x736f6674;
-        liftSoftPlayers.clear();
-        for(const auto& [c,id]:stamps)if(!soft[size_t(c)]) {
-            soft[size_t(c)]=id;softKind[size_t(c)]=size_t(id)<owner.size()&&owner[size_t(id)]!=~0ull?2:1;
-            if(size_t(id)<liftable.size()&&liftable[size_t(id)]) {
-                softKind[size_t(c)]=3;h=mix(h,0x6c696674u);
-                const int owner=w.unit(id)->player;
-                const auto at=std::lower_bound(liftSoftPlayers.begin(),liftSoftPlayers.end(),owner);
-                if(at==liftSoftPlayers.end()||*at!=owner)liftSoftPlayers.insert(at,owner);
-            }
-            if(const uint8_t prior=softPrior[size_t(c)];prior!=softKind[size_t(c)]) {
-                if(prior)countAll(c,prior,-1);
-                countAll(c,softKind[size_t(c)],1);
-            }
-            softPrior[size_t(c)]=0;
-            cells.push_back(c);h=mix(h,uint64_t(c)<<32|uint32_t(id));
-        }
-        for(int c:softCells)if(const uint8_t prior=softPrior[size_t(c)]) {
-            countAll(c,prior,-1);softPrior[size_t(c)]=0;
-        }
-        for(size_t i=0;i<owner.size();++i)if(owner[i]!=~0ull)h=mix(mix(h,i),owner[i]);
-        const bool changed=h!=softHash;
-        softHash=h;
-        // Each unit is visited once, so ownerCmds has one entry per owned
-        // id: any other id below owner.size() holds ~0.
-        if(ownerCmds.size()<owner.size())ownerCmds.push_back(~0ull);
-        std::sort(ownerCmds.begin(),ownerCmds.end());
-        ownerCmds.erase(std::unique(ownerCmds.begin(),ownerCmds.end()),ownerCmds.end());
-        softCells.swap(cells);softOwner.swap(owner);softOwnerCmds.swap(ownerCmds);
-        if(changed)++softSerial;
+        stats.stillPerResidueMax=std::max<uint64_t>(stats.stillPerResidueMax,processed);
     }
+#ifndef NDEBUG
+    // TAK_LEGION_VERIFY (C31): the incremental soft state against the
+    // stamps. The hash every tick; the grid, owner and window counts once a
+    // scan period.
+    template<class Fail> void verifySoft(Fail&& fail) {
+        ++stats.softHashVerifyTicks;
+        if(softHashFull()!=softHash)fail("softHash differs from its recompute over the stamps");
+        if(w.tickCounter_%kStillScan!=0||soft.empty())return;
+        std::vector<int32_t> first(soft.size(),0);
+        std::map<int,std::vector<int>> stack;
+        std::map<uint64_t,uint32_t> owners;
+        for(size_t id=0;id<softBodies.size();++id) {
+            const SoftBody& b=softBodies[id];
+            if(!b.stamped)continue;
+            if(!b.present||b.scans<kStillScans)fail("a stamp without a still sample");
+            forStampCells(b,[&](size_t c) {
+                if(!first[c])first[c]=int32_t(id);
+                else {auto& v=stack[int(c)];if(v.empty())v.push_back(first[c]);v.push_back(int(id));}
+            });
+            if(b.owner!=~0ull) {
+                ++owners[b.owner];
+                if(size_t(id)>=softOwner.size()||softOwner[id]!=b.owner)fail("softOwner differs from the stamp");
+            }
+        }
+        if(first!=soft)fail("soft differs from the stamps");
+        if(stack!=softStack)fail("softStack differs from the stamps");
+        if(owners!=softOwnerCount)fail("softOwnerCount differs from the stamps");
+        size_t cells=0;
+        std::map<int,uint32_t> lift;
+        for(size_t c=0;c<soft.size();++c) {
+            const uint8_t kind=soft[c]?softBodies[size_t(soft[c])].kind:0;
+            if(softKind[c]!=kind)fail("softKind differs from the covering stamp");
+            cells+=soft[c]!=0;
+            if(kind==3)++lift[softBodies[size_t(soft[c])].player];
+        }
+        if(cells!=softCellCount)fail("softCellCount differs from the grid");
+        if(lift!=liftCells)fail("liftCells differs from the grid");
+        for(const auto& k:softCounts) {
+            SoftCounts fresh;fresh.fx=k.fx;fresh.fz=k.fz;fresh.at.assign(soft.size(),0);
+            for(size_t c=0;c<soft.size();++c)if(softKind[c])countCell(fresh,int(c),softKind[c],1);
+            if(fresh.at!=k.at)fail("soft window counts differ from a recount");
+        }
+    }
+#endif
     // Cells claimed by arrival slots of every group sent to one point in one
     // command (mixed footprints form one group per class but share the area).
     // A shared point's members get their slots all at once, by formation:
@@ -1835,15 +1945,8 @@ struct LegionNavigator::Impl {
         dropAnchor(u.id);yielding.erase(u.id);approachDone.erase(u.id);
         // A body setting off is no soft obstacle any more (its own group's
         // first field is built right now, before the next scan).
-        if(!softCells.empty()&&u.type) {
-            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
-            for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
-                const int cx=ox+i,cz=oz+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const size_t c=size_t(cz)*w.occW_+cx;
-                if(soft[c]==u.id&&softKind[c]) {countAll(int(c),softKind[c],-1);softKind[c]=0;}
-            }
-        }
+        // Its sample stays: still and settled again, it stamps at its next one.
+        unstamp(u.id);
         const Kind kind=kindOf(u);
         if(kind==Kind::None) {unpin();return;}
         const Policy rule=policy(kind);
@@ -2720,13 +2823,8 @@ struct LegionNavigator::Impl {
         if(calls<s.moves)fail("move calls by state below moves");
         if(s.formationRingCells+s.rechoiceBfsCells>s.slotSearchCells)
             fail("slot search cells below the formation ring and re-choice cells");
-        if(s.blockedRerequests||s.demandResumes||s.fieldsPaused||s.refreshSuppressed||s.softHashVerifyTicks)fail("counters of mechanisms that do not exist yet are non-zero");
-        {
-            std::vector<uint64_t> cmds(softOwner);
-            std::sort(cmds.begin(),cmds.end());
-            cmds.erase(std::unique(cmds.begin(),cmds.end()),cmds.end());
-            if(cmds!=softOwnerCmds)fail("softOwnerCmds is not the sorted distinct softOwner");
-        }
+        if(s.blockedRerequests||s.demandResumes||s.fieldsPaused||s.refreshSuppressed)fail("counters of mechanisms that do not exist yet are non-zero");
+        verifySoft(fail);
         // The scheduler lists against a scan of every group.
         {
             size_t building=0,need=0,staleDone=0,built=0;
@@ -4105,9 +4203,9 @@ struct LegionNavigator::Impl {
                 // this command's own arrivals) is refused: the field plans
                 // round it.
                 const uint64_t command=g.soft?g.command:kNoSoft;
-                const int counts=softCells.empty()?-1:softCountsFor(fx,fz);
+                const int counts=!softCellCount?-1:softCountsFor(fx,fz);
                 m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz)&&
-                    (softCells.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}))&&
+                    (!softCellCount||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}))&&
                     // ... and so is a line through a mover the group plans round.
                     (g.avoidSeg.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {
                         const int64_t px=int64_t(cx)*16+fx*8,pz=int64_t(cz)*16+fz*8;
@@ -5249,7 +5347,9 @@ struct LegionNavigator::Impl {
         }
         for(const auto& [id,y]:yielding) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(y.cell));h=mix(h,y.ticks);}
         h=mix(h,softSerial);h=mix(h,softHash);
-        for(const auto& [id,st]:stills) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(st.x))<<32|uint32_t(st.z));h=mix(h,st.scans);}
+        for(size_t id=0;id<softBodies.size();++id)if(const SoftBody& st=softBodies[id];st.present) {
+            h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(st.x))<<32|uint32_t(st.z));h=mix(h,st.scans);
+        }
         for(const auto& [id,c]:approachDone) {
             h=mix(h,0x61646f6e65ull);h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(std::get<0>(c)))<<32|std::get<1>(c));
             h=mix(h,uint64_t(uint32_t(std::get<2>(c)))<<32|uint32_t(std::get<3>(c)));
