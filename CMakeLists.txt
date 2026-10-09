@@ -14,6 +14,26 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+# Determinism: no floating-point contraction ANYWHERE. A contracted a*b+c is one
+# fused multiply-add (one rounding) instead of two, so the same source gives a
+# different last bit wherever the compiler fuses. GCC on baseline x86-64 has no FMA
+# instruction to fuse into, but Apple Clang on arm64 contracts by default
+# (-ffp-contract=on), and a fused last bit is enough to split lockstep.
+#
+# This used to be set on tak-formats alone, which left everything compiled into the
+# executables contracting on a Mac: the server's AI (src/ai/ai.cpp, part of
+# takserver), whose `factory.z + sin(a)*r` door-clearing Move came out one ulp
+# different on macOS arm64 and made every Mac-hosted Legion game diverge from the
+# same game hosted on Linux/Windows from tick 3271 of the Inner Circle --mpai run;
+# and every sim header inlined into client/server code (retailaim.h & co.), where
+# the linker may keep the contracted copy of an inline function for the sim too.
+# Hence a directory-wide option, not a per-target one: a new target or source file
+# cannot opt out by forgetting. fp_contract_test proves it took effect.
+# Never enable -ffast-math either. See docs/multiplayer-design.md.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options(-ffp-contract=off)
+endif()
+
 # --- zlib / libjpeg / SDL2 are ALWAYS linked statically ------------------------
 # There is no switch for this. A dynamic build was only ever useful for bisecting a
 # system-library bug, and keeping the option around meant the shipped configuration was
@@ -212,16 +232,6 @@ if(UNIX AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   # is pinned where it is actually needed instead, inside the FFmpeg link group below.
 endif()
 
-# Determinism: the simulation (src/sim) must produce bit-identical results across
-# machines running the same binary for lockstep multiplayer. Disable floating-
-# point contraction (FMA fuses a*b+c differently on different CPUs) and never
-# enable -ffast-math on this library. See docs/multiplayer-design.md. (A fuller
-# cross-build contract -- a deterministic sin/cos/atan2 shim -- comes later; this
-# covers same-binary play, which is the v1 requirement.)
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(tak-formats PRIVATE -ffp-contract=off)
-endif()
-
 # --- Command-line tools -------------------------------------------------------
 
 add_executable(hpitool tools/hpitool.cpp)
@@ -232,6 +242,8 @@ target_link_libraries(crusades_balance_audit PRIVATE tak-formats)
 
 add_executable(detmath_test tools/detmath_test.cpp)
 target_link_libraries(detmath_test PRIVATE tak-formats)
+
+add_executable(fp_contract_test tools/fp_contract_test.cpp)
 
 add_executable(sim_driver_equiv_test tools/sim_driver_equiv_test.cpp)
 target_link_libraries(sim_driver_equiv_test PRIVATE tak-formats)
@@ -508,6 +520,7 @@ target_link_libraries(settings_test PRIVATE tak-formats)
 # to register those too.
 enable_testing()
 add_test(NAME detmath COMMAND detmath_test)
+add_test(NAME fp_contract COMMAND fp_contract_test)
 add_test(NAME sim_driver_equiv COMMAND sim_driver_equiv_test)
 add_test(NAME pathsearch COMMAND pathsearch_test)
 add_test(NAME retail_scheduler COMMAND retail_scheduler_test)

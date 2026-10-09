@@ -195,7 +195,9 @@ contract is stated, enforced, and narrow:
   implementation-independent. The practical deployment is: everyone runs the
   same release build for their platform *and* the sim is hardened as below.
 - The sim (and anything it calls) is compiled without `-ffast-math` and with
-  `-ffp-contract=off` pinned in CMake for those targets.
+  `-ffp-contract=off` pinned in CMake for EVERY target (a directory-wide
+  `add_compile_options`, so the server's AI and any sim header inlined into
+  client/server code are covered too -- see `fp_contract_test`).
 - The sim's transcendentals (`sin`/`cos`/`atan2`/`sqrt` in movement/turning)
   route through a small deterministic math shim (`sim/detmath`) rather than
   raw libm — libm results differ across implementations and versions even on
