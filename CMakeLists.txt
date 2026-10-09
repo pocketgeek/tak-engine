@@ -1409,6 +1409,10 @@ add_executable(crusades_client_network_test tools/crusades_client_network_test.c
 target_link_libraries(crusades_client_network_test PRIVATE tak-formats)
 add_test(NAME crusades_client_network COMMAND crusades_client_network_test)
 set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
+# TAK_PACELOG's summary (src/client/pacelog.h, header-only).
+add_executable(pacelog_test tools/pacelog_test.cpp)
+target_include_directories(pacelog_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME pacelog COMMAND pacelog_test)
 add_executable(replay_file_test tools/replay_file_test.cpp src/client/replayfile.cpp)
 target_link_libraries(replay_file_test PRIVATE tak-formats)
 add_test(NAME replay_file COMMAND replay_file_test)

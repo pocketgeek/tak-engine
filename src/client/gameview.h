@@ -36,6 +36,7 @@
 #include "client/replayfile.h"   // ReplayCheckTracker
 #include "client/situation.h"    // TAK_SITUATION (debug builds)
 #include "client/postrail.h"      // TAK_POSTRAIL (debug builds)
+#include "client/pacelog.h"       // TAK_PACELOG (debug builds)
 #include <future>
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
 #include "net/lockstep.h"
@@ -2181,6 +2182,10 @@ private:
     tak::situation::Harvester situation_;         // TAK_SITUATION: cut a .scn out of the recording
 public:
     void armSituation(const tak::situation::Request& r, const tak::situation::Meta& m) { situation_.arm(r, m); }
+    tak::PaceLog pace_;                           // TAK_PACELOG: per-frame ticks/backlog record (src/client/pacelog.h)
+    bool paceInit_ = false;
+    uint32_t paceLastTick_ = 0;
+    uint64_t paceLastMs_ = 0;
     tak::postrail::Writer postrail_;              // TAK_POSTRAIL: this playback's digest trail, for the head to read back
     void openPostrail(const char* path) { postrail_.open(path); }
 private:

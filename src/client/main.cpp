@@ -1340,6 +1340,10 @@ int main(int argc, char** argv) {
         // usual tight poll loop.
         bool bench = tak::devEnv("TAK_NETBENCH") != nullptr;
         if (bench) gameView->netEnableRttProbe();
+        // TAK_FRAME_MS=N: sleep N ms per loop iteration, standing in for the display's frame time (the
+        // interactive IN-04 run drew about 20 frames/s). tools/pace_check.sh sets it with TAK_PACELOG.
+        const int frameMs = tak::devEnv("TAK_FRAME_MS") ? std::clamp(std::atoi(tak::devEnv("TAK_FRAME_MS")), 1, 200)
+                                                         : (bench ? 16 : 2);
         while (true) {
             // Pin the snapshot for the iteration (mirrors the interactive render loop), so
             // cosmeticStep's front() reads can't tear against the worker under TAK_SIM_THREAD.
@@ -1362,7 +1366,7 @@ int main(int argc, char** argv) {
             }
             if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
             if (int(gameView->netTick()) >= limitTicks) break;
-            SDL_Delay(bench ? 16 : 2);   // ~60 fps for the benchmark
+            SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
         }
         // Flush + join the worker so the final world hash reflects every pushed tick (no read
         // race against a still-running worker). No-op when inline.
