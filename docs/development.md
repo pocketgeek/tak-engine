@@ -147,6 +147,39 @@ To collect packages privately, create a draft release for the pushed tag before
 the upload steps run. Upload workflows reuse that draft; publish it only after
 the platform checks, Windows signing and complete asset verification pass.
 
+## Faster verification loop
+
+- **Builds.** CMake uses `ccache` and `mold` automatically when they are installed
+  (a second build of the same sources, or of another worktree, is mostly cache hits).
+- **Targeted tests: `ctest -L quick -j 8`.** Every test that is not `nightly` and takes
+  under 5 s is labelled `quick` (about 255 tests, roughly 30 s at `-j 8`, against about
+  6 minutes for the full suite). Use it for a task's own checks; run the full suite
+  (`ctest -j 8`) before handing a change over. Other labels: `legion`, `w2`, `nightly`
+  (`ctest -L legion`, `-LE nightly`).
+- **Long tests start first.** `tools/ctest_costs.txt` lists the tests of 5 s or more;
+  CMake turns it into `COST` properties, so even in a fresh build dir (no
+  `CTestCostData.txt` yet) the 150 s scenario runs start at once instead of last. After adding a
+  slow test, or when timings move, regenerate it from a full local run:
+  `ctest --test-dir build-o2 -j 8 && tools/ctest_costs.py build-o2`.
+  The longest scenario tests (`legion_gen1_route_*`, `legion_situation_*`) are split
+  into parallel parts (per start offset and per mode respectively); `legion_scenario`
+  checks serial == workers per mode and offset and gates nothing across them, so the
+  parts together are exactly the old test.
+- **Exact-identity harness: `tools/legion_identity.sh --base <build> --cand <build>`.**
+  Base results are cached under `~/.cache/tak-identity/<base commit>/<build type>-v<N>/`
+  (every replay, golden, `--mpai` game, ctest run, `check-determinism.sh` and crowdbench
+  matrix row), so a chain of steps runs each base once and only the candidate afterwards.
+  The cache is used only for a clean base tree whose build dir builds (`cmake --build`
+  is run first); only complete, successful base results are stored; the candidate is
+  never read from the cache, so a hashed-state change always shows as DIFF; a run that passes
+  with every row SAME also stores the candidate's results under the candidate's own commit, so in
+  a chain A->B, B->C the second step finds its base warm. `--no-cache` ignores it,
+  `-j N --cores a-b` sets the job width and CPU list, and crowdbench now starts beside the
+  tail of the replays instead of after them. Bump `HARNESS_VERSION` in
+  `tools/legion_identity.py` when a base row's definition changes. The 2-hour
+  replays are platform independent, so running them on the Windows or macOS test hosts
+  is possible but not automated (follow-up): the harness relies on `taskset`/`setsid`.
+
 ## Developer launch modes
 
 Release clients accept `--data` and `--version` and launch games through the

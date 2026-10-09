@@ -6,6 +6,25 @@
 #   tools/legion_identity.sh --base <build-dir> --cand <build-dir>
 #       [--quick] [--replays <dir>] [--data <install>] [--cores a-b]
 #       [--verify] [--out <dir>] [--skip <section,...>] [--mpai-time <s>]
+#       [-j <n>] [--no-cache] [--cache-dir <dir>]
+#
+# Speed: the base side is deterministic, so every base result is cached under
+# ~/.cache/tak-identity/<base commit>/<build type>-v<harness version>/ (a chain of
+# steps runs each base only once). A run that passes with every row SAME also stores
+# the candidate's results under the CANDIDATE's commit (if its tree is clean and its
+# build dir builds): they are what a base run of it would produce, so in a chain A->B,
+# B->C the second step finds its base already cached. The
+# cache is used only when the base tree is CLEAN and its build dir is up to date
+# with the sources (otherwise "base cache disabled: <why>" is printed and nothing
+# is read or written); only complete, successful base results are stored (a
+# replay that diverged, a failed ctest, an --mpai with err, are never cached).
+# Every hit is printed ("cache hit: <row>") and listed in meta.txt. --no-cache
+# neither reads nor writes the cache; --cache-dir (or TAK_IDENTITY_CACHE) moves
+# it. The candidate is never read from the cache, so a difference is always
+# detected against real, fresh candidate output. Bump HARNESS_VERSION in legion_identity.py
+# when a base row's definition changes. -j <n> sets the job width (default: the
+# number of CPUs in --cores, e.g. --cores 20-23 -j 4); crowdbench starts as soon
+# as every replay/golden job has been launched instead of after the longest one.
 #
 # Both build dirs need takclient, takserver, crowdbench, navigation_checkpoint_test
 # and the test executables of the ctest selection below. Debug builds
@@ -44,7 +63,7 @@ set -u
 
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2; }
 
-BASE= CAND= QUICK=0 VERIFY=0 OUT= SKIP= MPAI_TIME=
+BASE= CAND= QUICK=0 VERIFY=0 OUT= SKIP= MPAI_TIME= JOBS= NOCACHE=0 CACHE_DIR=
 REPLAYS=/home/pocket_geek/TAK/.claude/worktrees/agent-aee1376d023cc8440/build-lsp/replays
 DATA=
 CORES=$(taskset -cp $$ 2>/dev/null | sed 's/.*: //')
@@ -60,6 +79,9 @@ while [ $# -gt 0 ]; do
         --out) OUT=$2; shift 2;;
         --skip) SKIP=$2; shift 2;;
         --mpai-time) MPAI_TIME=$2; shift 2;;
+        -j) JOBS=$2; shift 2;;
+        --no-cache) NOCACHE=1; shift;;
+        --cache-dir) CACHE_DIR=$2; shift 2;;
         -h|--help) usage;;
         *) echo "unknown argument: $1" >&2; usage;;
     esac
@@ -73,6 +95,7 @@ CAND=$(cd "$CAND" && pwd) || exit 2
 mkdir -p "$OUT/base" "$OUT/cand" "$OUT/replays" "$OUT/xdg" || exit 2
 OUT=$(cd "$OUT" && pwd)
 NCORES=$(python3 -c "import sys;print(sum(int(b)-int(a)+1 if '-' in p else 1 for p in sys.argv[1].split(',') if p for a,b in [p.split('-') if '-' in p else (p,p)]))" "$CORES")
+[ -z "$JOBS" ] || NCORES=$JOBS
 [ -n "$MPAI_TIME" ] || { [ $QUICK = 1 ] && MPAI_TIME=60 || MPAI_TIME=300; }
 skipped() { case ",$SKIP," in *",$1,"*) return 0;; esac; return 1; }
 
@@ -100,6 +123,30 @@ skipped mpai && MPAI_RUNS=0
 skipped replays && REPLAY_NAMES=
 # A release takclient cannot run the replay or --mpai harness; the report shows SKIP rows.
 BOTH_DEBUG=$(( DEBUG[base] && DEBUG[cand] ))
+# --- base result cache ----------------------------------------------------------
+BKEY= CACHE_HITS=() CACHE_STORED=0
+[ -z "$CACHE_DIR" ] || export TAK_IDENTITY_CACHE=$CACHE_DIR
+if [ $NOCACHE = 0 ]; then
+    BKEY=$($PY cache-key --src "${SRC[base]}" --build "$BASE" --type "${TYPE[base]}-d${DEBUG[base]}-data$(printf %s "$DATA" | sha256sum | cut -c1-6)") || BKEY=
+    [ -n "$BKEY" ] && mkdir -p "$BKEY"
+fi
+cache_get() {  # row id -> 0 on a hit (the files are restored into $OUT/base)
+    [ -n "$BKEY" ] && $PY cache-get --dir "$BKEY" --row "$1" --out "$OUT/base" || return 1
+    CACHE_HITS+=("$1"); echo "legion_identity: cache hit: $1"
+}
+put_all() {  # key dir -- store every complete, valid result found in <dir> (a no-op for rows already cached)
+    local key=$1 dir=$2 mode run name
+    for mode in legion retail; do
+        for run in $(seq 1 $MPAI_RUNS); do $PY cache-put --dir "$key" --row "mpai$MPAI_TIME-$mode-$run" --out "$dir" || true; done
+        $PY cache-put --dir "$key" --row "golden-$mode" --out "$dir" || true
+    done
+    for name in $REPLAY_NAMES; do
+        [ -f "$REPLAYS/$name.takrep" ] && $PY cache-put --dir "$key" --row "replay-$name-$(sha256sum "$REPLAYS/$name.takrep" | cut -c1-12)" --out "$dir" || true
+    done
+    $PY cache-put --dir "$key" --row ctest --out "$dir" || true
+    $PY cache-put --dir "$key" --row determinism --out "$dir" || true
+}
+store_base() { [ -z "$BKEY" ] || put_all "$BKEY" "$OUT/base"; }
 {
     echo "base=$BASE"; echo "cand=$CAND"
     for role in base cand; do
@@ -109,7 +156,8 @@ BOTH_DEBUG=$(( DEBUG[base] && DEBUG[cand] ))
     done
     echo "quick=$QUICK"; echo "verify=$VERIFY"; echo "cores=$CORES"; echo "data=$DATA"
     echo "replays=$(echo $REPLAY_NAMES | tr ' ' ,)"; echo "replay_dir=$REPLAYS"
-    echo "mpai_runs=$MPAI_RUNS"; echo "mpai_time=$MPAI_TIME"
+    echo "mpai_runs=$MPAI_RUNS"; echo "mpai_time=$MPAI_TIME"; echo "jobs=$NCORES"
+    echo "base_cache=${BKEY:-off}"
 } > "$OUT/meta.txt"
 : > "$OUT/timings.txt"
 echo "legion_identity: base ${TYPE[base]} $BASE"
@@ -186,6 +234,7 @@ if [ $MPAI_RUNS -gt 0 ] && [ $BOTH_DEBUG = 1 ]; then
     for role in base cand; do
         for mode in legion retail; do
             for run in $(seq 1 $MPAI_RUNS); do
+                [ $role = base ] && cache_get "mpai$MPAI_TIME-$mode-$run" && continue
                 mpai_game $role $mode $run &
                 PIDS+=($!); MPAI_PIDS+=($!)
             done
@@ -218,6 +267,7 @@ if [ -n "$REPLAY_NAMES" ] && [ $BOTH_DEBUG = 1 ]; then
         for role in base cand; do
             src=$REPLAYS/$name.takrep
             [ -f "$src" ] || { echo "missing replay $src" > "$OUT/$role/replay-$name.log"; continue; }
+            [ $role = base ] && cache_get "replay-$name-$(sha256sum "$src" | cut -c1-12)" && continue
             dst=$OUT/replays/$name-p${PROTO[$role]}.takrep
             [ -f "$dst" ] || $PY patch-replay "$src" "$dst" "${PROTO[$role]}" >> "$OUT/replays/patch.log" || continue
             xdg=$(mktemp -d "$OUT/xdg/replay-$role-$name.XXXX")
@@ -232,31 +282,42 @@ if ! skipped golden; then
     for role in base cand; do
         mapfile -t renv < <(role_env "$role")
         for mode in legion retail; do
+            [ $role = base ] && cache_get "golden-$mode" && continue
             pool_run "$OUT/$role/golden-$mode.txt" "$OUT" env "${renv[@]}" timeout -k 10 1200 \
                 taskset -c "$CORES" "${BUILD[$role]}/navigation_checkpoint_test" $mode serial
         done
     done
 fi
+# Every replay/golden job is launched (the long 2h replays first); the crowdbench
+# matrix starts now, beside the tail of the pool, instead of idling cores behind it.
+CB_PID=
+if ! skipped crowdbench; then
+    TC=$(date +%s)
+    args=(crowdbench --out "$OUT" --base "$BASE/crowdbench" --cand "$CAND/crowdbench" --cores "$CORES" --jobs "$NCORES")
+    [ $QUICK = 1 ] && args+=(--quick)
+    [ $VERIFY = 1 ] && args+=(--verify)
+    [ -n "$BKEY" ] && args+=(--base-cache "$BKEY")
+    launch "$OUT/crowdbench.log" "$OUT" $PY "${args[@]}"
+    CB_PID=$LAUNCHED
+fi
 pool_wait 1
 section_time replays+golden $TR
 echo "legion_identity: replays and golden done ($(( $(date +%s) - TR )) s)"
+store_base
 
 # --- crowdbench ---------------------------------------------------------------
-if ! skipped crowdbench; then
-    TC=$(date +%s)
-    args=(crowdbench --out "$OUT" --base "$BASE/crowdbench" --cand "$CAND/crowdbench" --cores "$CORES")
-    [ $QUICK = 1 ] && args+=(--quick)
-    [ $VERIFY = 1 ] && args+=(--verify)
-    launch "$OUT/crowdbench.log" "$OUT" $PY "${args[@]}"
-    wait $LAUNCHED || echo "legion_identity: crowdbench runner failed (see $OUT/crowdbench.log)"
+if [ -n "$CB_PID" ]; then
+    wait $CB_PID || echo "legion_identity: crowdbench runner failed (see $OUT/crowdbench.log)"
     section_time crowdbench $TC
     echo "legion_identity: crowdbench done ($(( $(date +%s) - TC )) s)"
+    grep "from the cache" "$OUT/crowdbench.log" | sed 's/^/legion_identity: cache hit: /'
 fi
 
 # --- ctest ----------------------------------------------------------------------
 if ! skipped ctest; then
     TT=$(date +%s)
     for role in base cand; do
+        [ $role = base ] && cache_get ctest && continue
         mapfile -t renv < <(role_env "$role")
         launch "$OUT/$role/ctest.log" "$OUT" env "${renv[@]}" taskset -c "$CORES" \
             ctest --test-dir "${BUILD[$role]}" -j "$NCORES" --timeout 1800 \
@@ -265,6 +326,7 @@ if ! skipped ctest; then
             --test-output-size-passed 4000000 --test-output-size-failed 4000000
         wait $LAUNCHED
     done
+    store_base
     section_time ctest $TT
     echo "legion_identity: ctest done ($(( $(date +%s) - TT )) s)"
 fi
@@ -272,8 +334,11 @@ fi
 # --- check-determinism.sh (once per distinct source tree) ----------------------
 if ! skipped determinism; then
     TD=$(date +%s)
-    launch "$OUT/base/determinism.log" "$OUT" taskset -c "$CORES" sh "${SRC[base]}/tools/check-determinism.sh"
-    wait $LAUNCHED
+    if ! cache_get determinism; then
+        launch "$OUT/base/determinism.log" "$OUT" taskset -c "$CORES" sh "${SRC[base]}/tools/check-determinism.sh"
+        wait $LAUNCHED
+        store_base
+    fi
     if [ "${SRC[cand]}" = "${SRC[base]}" ]; then
         cp "$OUT/base/determinism.log" "$OUT/cand/determinism.log"
     else
@@ -286,8 +351,24 @@ fi
 if [ ${#MPAI_PIDS[@]} -gt 0 ]; then
     echo "legion_identity: waiting for the mpai games"
     for pid in "${MPAI_PIDS[@]}"; do wait "$pid"; done
+    store_base
     section_time mpai $TM
 fi
 section_time total $T0
+echo "cache_hits=${CACHE_HITS[*]:-none}" >> "$OUT/meta.txt"
 rm -rf "$OUT/xdg"
 $PY report --out "$OUT"
+RC=$?
+# Promotion: a fully passing run proves every candidate result equals the base one, so a clean,
+# built candidate's results are exactly what a base run of that commit would produce. Store them
+# under the candidate's commit: the next step of a chain (this cand as its base) then starts warm.
+if [ $RC = 0 ] && [ $NOCACHE = 0 ] && [ $VERIFY = 0 ] && [ $BOTH_DEBUG = 1 ] && [ -n "$BKEY" ] \
+        && [ "${SRC[cand]}" != "${SRC[base]}" ]; then
+    CKEY=$($PY cache-key --src "${SRC[cand]}" --build "$CAND" --type "${TYPE[cand]}-d${DEBUG[cand]}-data$(printf %s "$DATA" | sha256sum | cut -c1-6)") || CKEY=
+    if [ -n "$CKEY" ] && [ "$CKEY" != "$BKEY" ]; then
+        mkdir -p "$CKEY"
+        put_all "$CKEY" "$OUT/cand"
+        $PY cache-promote --dir "$CKEY" --out "$OUT" || true
+    fi
+fi
+exit $RC
