@@ -10,6 +10,56 @@ added, that step 0's base. Scenario keys are medians over the start offsets
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W3 B round 2 (2026-10-09): B fixed with A2 on top; the Retail floor still fails on A2's arrivals
+
+Head: `task-w3-b2` = the exit attempt plus round 2: (1) a held formation member re-aims its lane
+every 20 held ticks, (2) A2 re-landed on the settle rule (convoy-keyed point, 32 slots a tick),
+(3) C29 measured along the queue (one row behind a settled arrival of the same command), an
+observer fix (a completed, unretired leg is a stand, not parked without progress), (4) the slot
+re-choice never searches more than a row uphill, (5) a distinct goal's member still for a window
+within body + 4 px of its point has arrived; Legion golden regenerated, protocol 241 note updated.
+Measured against the W3 step-0 base (`baseline.json`), optimized Debug, all 91 scenarios, both
+modes, offsets 0,1,-1,2,-2, serial == workers on all 182 lines, Retail state hashes equal to the
+exit attempt's on every scenario. Not an exit: `baseline.json` is not ratcheted.
+
+`legion_check check`: 16460 keys, 1666 failed, 3770 ratchets; 169 floor exceptions now pass the
+floor (132 with B and the lane re-aim alone, before A2). Diagnosis: `scratchpad/shared/w3-b2-diagnosis.md`.
+
+### The exit attempt's failures, now
+
+| Exit-attempt failure | Round 2 |
+|---|---|
+| Retail floor: doorplug-124 B arrived 47 (Retail 52) | 57 (base 59); B t90 never -> 6962 (base 7196); A done never (one A body settles 1 cell outside the disc; base 3268) |
+| tail-wave W arrived 136 (150) | 150 |
+| corner-1x448 top crossings 6 (4) | 4 |
+| motion-cross / split-450-open contact_settled 28 / 7 (23 / 6) | 32 / 22: still failing, now from A2 (below) |
+| parked_no_progress aware-unseen / island-1x48 / strait-2x48 1 / 1 / 2 (0) | 0 / 0 / 0 (observer: the completing tick of a long-still body) |
+| battle-field-2x500 total x1.15, 2x250 p99 x1.12 | x0.895 / x0.749 (lane re-aim: the battle ended later without it; A lost 454 instead of 376) |
+| cost-open / motion-open / smoke-open p99 x1.17-1.20 | x0.95 / x1.06 / x0.83 (bounded re-choice search) |
+| legion_cost battle mop-up 2x500 field work 4.36M -> 48.4M | 0 (Legion total 268k in the window); battle-assault march / contactA fields built over 1.10x |
+| doorplug B t90 never, A done never | B 6962; A never (above) |
+| crowdbench jagged / opposingcolumns 200x1 -5.3% / -3.0% | 185 / 194 (-2.6% / -2.5%, within 3%); every Retail row identical |
+| deadend w4 n120 and w4 n40 closed short | every w4 and w6 case settled == n (w4 n120 closed 49 -> 120 by tick 5500); w2 n40 25 -> 33-40; w2 n120 still jams at the 2-cell mouth (4 / 0 / 2 / 0) |
+| pocket t90 never, midroute 46 -> 72 | 615-open arrived 152 -> 606, t90 4144, midroute 0; 615-wall arrived 453 (>= 400) |
+| mixed2 spins 30 -> 140 | 64 (bound 30 x1.20: still over) |
+
+### New Retail-floor failures (A2's arrivals)
+
+| Key | Base / now / Retail | Cause |
+|---|---|---|
+| contact_settled_permille: split-450-open, pocket-615-wall, corner-4x50, motion-cross, battle-field 2x250 / 2x500 | 6 / 22 / 6; 7 / 28 / 12; 31 / 45 / 34; 22 / 32 / 23; 0 / 1-6 / 0 | ordered bodies touching bodies without orders: with one point per click 3x more bodies arrive and settle (split arrived 104 -> 342, Retail 55), and the tail walks past them |
+| densehead gate.mid.crossings | 157 / 643 / 204 | one formation per 200-body click reorders the lanes in the head-on crossing (per-part groups only halve it) |
+| strait-2x150 gate.strait.crossings | 0 / 20 / 11 | same, 150 boats |
+| corner-8x56 gate.top.crossings | 1 / 3 / 1 | noise-level key (per-offset 0..25 in both modes) |
+| aware-cross g.a09.t90 | - / 1767 / 1601 (floor 1761) | |
+| tail-corner380 wall_touch_near_permille | 0 / 2 / 1 | |
+
+Other open items: deadend room work max x1.11-1.21 (A2's slot hand-out, 32 a tick); corner-4x50
+reversals 93 -> 136-150 (band 1.20); `pivot_part_ids` (A2's work class) has no baseline entry;
+`legion_landedflyers` now fails (layout 0 stuck median 1651 vs 1411, foot 3 230 vs 224) and
+`legion_liftflyers` still fails; `legion_cost`'s held_rechecks / detours were over at the step-0
+head already. `--mpai` not re-run on this head.
+
 ## W3 exit attempt (2026-10-09): the gates are not met
 
 Head: `task-w3-exit` = W3 steps 0a/0b (T1-T tick stamps, holder rule in one unit, fixtures),
