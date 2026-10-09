@@ -374,6 +374,22 @@ foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
 endforeach()
+# W2 step 0 fixtures: AR-03 structure/Keep in an Alt+N squad, AR-11 unreachable orders and the
+# ~8200-tick maze approach walk (`probe approach` keys). Run in both modes; the second form
+# also checks every key against baseline.json over five offsets (tools/legion_check.py), so a
+# later W2 step that makes one worse fails here and one that improves it prints RATCHET (nightly:
+# five offsets cost ~20 s, past the per-commit CI budget).
+foreach(legion_scn structsquad structsquad-keep unreach-200 mazeapproach)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w2" TIMEOUT 600)
+  if(NOT WIN32)
+    add_test(NAME legion_check_${legion_scn}
+             COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                     --offsets 0,1,-1,2,-2 --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+    set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w2;nightly" TIMEOUT 900)
+  endif()
+endforeach()
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
