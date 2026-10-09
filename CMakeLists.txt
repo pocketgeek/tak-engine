@@ -315,6 +315,12 @@ foreach(legion_probe settlelatency doorplug)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS legion)
 endforeach()
+# W2 step 0 probes (AR-03 structsquad / factorysquad, RB-04 patrolrepair): measurement only; they
+# print the values the W2 steps move and assert determinism, not the targets.
+foreach(legion_probe structsquad factorysquad patrolrepair)
+  add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
+  set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;w2")
+endforeach()
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
