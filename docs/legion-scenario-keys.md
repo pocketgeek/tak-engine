@@ -74,3 +74,19 @@ audit's quantity, so do not compare them with an audit number:
 `churn` is the one directive that edits the world mid-run: `OrderFeed::apply`
 places the feature before the tick's orders, so every consumer of the feed (the
 runner, the tests) sees the same schedule.
+
+## Tier-2 counter cost (W0 follow-up A2)
+
+Release, crowdbench `--mode legion --units 2000 --players 1 --moving-percent 100 --ticks 600 --seed 1`,
+cores 18-21 (no SMT siblings), 14 interleaved A/B pairs (alternating order), A = counters always on,
+B = tier-2 counters (traceCells, passScanCells, groupLoopIters, shareScanIters, awarePairs) summed in
+debug builds only. Identical hash for A and B in both scenarios (no sim state touched).
+
+| scenario   | median A ms/tick | median B ms/tick | paired B/A median | 95% CI (bootstrap) |
+|------------|------------------|------------------|-------------------|--------------------|
+| open       | 1.652            | 1.652            | 0.990             | [0.974, 1.008]     |
+| sharedgoal | 1.149            | 1.164            | 1.016             | [1.006, 1.026]     |
+
+Gating the counters off did not make a tick cheaper (open is within noise, sharedgoal reads slightly
+slower), so the always-on counters stay: the "> 1% and CI excludes 1%" rule for moving them behind
+NDEBUG is not met.
