@@ -95,6 +95,17 @@ struct Shape {   // gate/line: a segment; region: a rectangle; lane: two segment
     int cells = 0;
 };
 
+// `churn`: a blocking map feature placed (and, with toggle, lifted again) every `every` ticks, as corpses and
+// burning features churn the static map in a battle. Event k lands at tick from + k*every (before that tick's
+// orders); its cell is (x + dx*(k % row), z + dz*(k / row)), or for toggle the cell of event k/2: even events
+// place, odd events lift.
+struct ChurnSpec {
+    int x = 0, z = 0, w = 1, h = 1, every = 1;
+    int dx = 0, dz = 0, row = 0;      // row 0: one row, never wraps
+    bool toggle = false;
+    uint32_t from = 0, until = 0;     // until 0: the run's end
+};
+
 struct MapSpec {
     enum Kind { Ascii, Flat, Gen1, Snapshot };
     Kind kind = Flat;
@@ -119,6 +130,7 @@ struct Scenario {
     std::vector<GroupSpec> groups;
     std::vector<OrderSpec> orders;
     std::vector<Shape> shapes;
+    std::vector<ChurnSpec> churns;
 
     const TypeSpec* type(const std::string& n) const {
         for (const auto& t : types) if (t.name == n) return &t;
@@ -442,6 +454,31 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (!o.target.empty() && !s.group(o.target)) c.fail("unknown target group '" + o.target + "'");
             if (at != w.size()) c.fail("unexpected '" + w[at] + "'");
             s.orders.push_back(o);
+        } else if (k == "churn") {
+            need(6, 10);
+            ChurnSpec ch;
+            ch.x = int(c.integer(w[1], 0, 4095)); ch.z = int(c.integer(w[2], 0, 4095));
+            ch.w = int(c.integer(w[3], 1, 8)); ch.h = int(c.integer(w[4], 1, 8));
+            bool haveEvery = false;
+            for (size_t at = 5; at < w.size(); ++at) {
+                if (w[at] == "toggle") { ch.toggle = true; continue; }
+                const auto eq = w[at].find('=');
+                if (eq == std::string::npos) c.fail("expected key=value or toggle: '" + w[at] + "'");
+                const std::string key = w[at].substr(0, eq), val = w[at].substr(eq + 1);
+                if (key == "every") { ch.every = int(c.integer(val, 1, 1'000'000)); haveEvery = true; }
+                else if (key == "from") ch.from = uint32_t(c.integer(val, 0, 10'000'000));
+                else if (key == "until") ch.until = uint32_t(c.integer(val, 1, 10'000'000));
+                else if (key == "walk") {
+                    const auto a = val.find(','), b = val.find(',', a == std::string::npos ? a : a + 1);
+                    if (a == std::string::npos || b == std::string::npos) c.fail("walk=DX,DZ,ROW");
+                    ch.dx = int(c.integer(val.substr(0, a), -4096, 4096));
+                    ch.dz = int(c.integer(val.substr(a + 1, b - a - 1), -4096, 4096));
+                    ch.row = int(c.integer(val.substr(b + 1), 1, 1'000'000));
+                } else c.fail("unknown churn option '" + key + "'");
+            }
+            if (!haveEvery) c.fail("churn needs every=N");
+            if (ch.until && ch.until <= ch.from) c.fail("churn until must follow from");
+            s.churns.push_back(ch);
         } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair") {
             if (k == "pair") need(4, 5); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
             if (s.shape(w[1])) c.fail("shape '" + w[1] + "' defined twice");
@@ -597,6 +634,14 @@ inline std::string format(const Scenario& s) {
             opt("window", sh.window, 0); opt("mincells", sh.minCells, 0);
             if (sh.acrossGroups) o << " across=all";
         } else if (sh.kind == "pair") opt("cells", sh.cells, 0);
+        o << "\n";
+    }
+    for (const auto& ch : s.churns) {
+        o << "churn " << ch.x << " " << ch.z << " " << ch.w << " " << ch.h << " every=" << ch.every;
+        if (ch.row) o << " walk=" << ch.dx << "," << ch.dz << "," << ch.row;
+        if (ch.toggle) o << " toggle";
+        if (ch.from) o << " from=" << ch.from;
+        if (ch.until) o << " until=" << ch.until;
         o << "\n";
     }
     for (const auto& r : s.orders) {
@@ -917,11 +962,28 @@ public:
 
     // Apply tick `tick`'s commands; call before World::tick with tick == tickCount().
     size_t apply(uint32_t tick) {
+        applyChurn(tick);
         const auto cmds = commandsFor(tick);
         for (const auto& c : cmds) tak::sim::applyCommand(*b_.world, b_.registry, c);
         return cmds.size();
     }
     bool done() const { return next_ >= pending_.size() && link_.idle(); }
+
+    // The `churn` events due at `tick`: a blocking feature of the spec's size placed in the static map (an odd
+    // event of a toggle lifts the same cell again by re-adding it unblocked).
+    void applyChurn(uint32_t tick) {
+        for (const auto& ch : s_.churns) {
+            if (tick < ch.from || (ch.until && tick >= ch.until) || (tick - ch.from) % uint32_t(ch.every)) continue;
+            const int64_t k = (tick - ch.from) / uint32_t(ch.every);
+            const int64_t cell = ch.toggle ? k / 2 : k;
+            const int64_t row = ch.row ? ch.row : int64_t(1) << 40;
+            const int cx = ch.x + ch.dx * int(cell % row);
+            const int cz = ch.z + ch.dz * int(cell / row);
+            if (cx < 0 || cz < 0 || cx + ch.w > b_.width || cz + ch.h > b_.height) continue;
+            b_.world->addFeature(cz * b_.width + cx, float(cx * 16 + ch.w * 8), float(cz * 16 + ch.h * 8), 0.f, 1.f,
+                                 ch.w, ch.h, !ch.toggle || k % 2 == 0, -1, true);
+        }
+    }
 
 private:
     const Scenario& s_;

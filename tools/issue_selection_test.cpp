@@ -565,6 +565,7 @@ region home 0 0 18 24
 gate wide 10 0 20 24 lateral=z band=3 mincount=2 edge=3 pairwindow=200 flip=2
 lane swap 5 8 5 12 30 8 30 12 bsign=-1 window=100 mincells=3 across=all
 pair near A,B E* cells=3
+churn 40 9 2 2 every=5 walk=2,0,8 toggle until=60
 at 30 move F,A,B 50 8
 at 60 fight A,B @E queue
 at 90 attack F @E
@@ -686,6 +687,10 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
         check(l.kind == "lane" && l.ax0 == 30 && l.az1 == 12 && l.beforeSign == -1 && l.afterSign == 1 &&
                   l.window == 100 && l.minCells == 3 && l.acrossGroups,
               "ascii: lane shape");
+        check(ascii.churns.size() == 1 && ascii.churns[0].x == 40 && ascii.churns[0].z == 9 &&
+                  ascii.churns[0].every == 5 && ascii.churns[0].dx == 2 && ascii.churns[0].row == 8 &&
+                  ascii.churns[0].toggle && ascii.churns[0].until == 60,
+              "ascii: churn");
         const auto& p = *ascii.shape("near");
         check(p.kind == "pair" && p.a == "A,B" && p.b == "E*" && p.cells == 3, "ascii: pair shape");
     }
@@ -711,6 +716,15 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
             }
         }
         check(at0 == 24 && at30 == 34, "ascii: tick-0 Alt+1 (24) and the tick-30 click (34)");
+        // The churn: an event every 5 ticks from 0 to 55 (12 events: six cells, placed then lifted).
+        tak::scn::OrderFeed churn(ascii, *b);
+        const size_t before = b->world->features().size();
+        for (uint32_t t = 0; t < 120; ++t) churn.applyChurn(t);
+        const auto& fs = b->world->features();
+        check(fs.size() - before == 12, "ascii: churn lands 12 events");
+        check(fs[before].blocks && !fs[before + 1].blocks && fs[before + 2].x.toFloat() == 42 * 16 + 16 &&
+                  fs[before + 2].blocks,
+              "ascii: churn places on even events, lifts on odd, and walks a cell per pair");
     }
     determinism(ascii, "ascii", 300);
 

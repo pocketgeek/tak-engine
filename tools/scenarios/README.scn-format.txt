@@ -61,6 +61,15 @@ Groups (spawned in file order, members in row-major order):
                                 per number, over every group naming it)
         weapons=on|off
 
+Churn (static-map edits; the world changes mid-run, unlike every other directive):
+  churn X Z W H every=N [walk=DX,DZ,ROW] [toggle] [from=T] [until=T]
+                                a blocking feature of W x H cells placed every N
+                                ticks from tick T (default 0) to U (default the
+                                end), before that tick's orders. Event k lands on
+                                cell (X + DX*(k % ROW), Z + DZ*(k / ROW)); with
+                                'toggle' even events place and odd events lift
+                                it again, and the cell advances every two events.
+
 Orders (stable-sorted by tick; issued before World::tick at that tick):
   at TICK move|fight|patrol SEL X Z [queue]
   at TICK move|fight|patrol SEL @GROUP [queue]   the group's centroid then

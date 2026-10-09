@@ -364,7 +364,7 @@ endforeach()
 # (a report, not an assert): each file's header says which.
 foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
                    aware-adjacent liftstream island-1x48 strait mixed2 strait-4x24 strait-3x48 strait-2x48
-                   refreshchurn)
+                   refreshchurn refreshchurn-control)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
