@@ -10,6 +10,71 @@ added, that step 0's base. Scenario keys are medians over the start offsets
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W3 exit attempt (2026-10-09): the gates are not met
+
+Head: `task-w3-exit` = W3 steps 0a/0b (T1-T tick stamps, holder rule in one unit, fixtures),
+step 1 (A1 convoy table), step 2 (A2 parked), step 3 (B one settle rule) and protocol 241.
+Measured against the W3 step-0 base (`baseline.json` values, retaken at step 0b; A1 reproduced
+it with 0 failures, so every move below is B's). Optimized Debug, all 91 scenarios, both
+modes, offsets 0,1,-1,2,-2, serial == workers on all 182 lines; Retail state hashes equal on
+every scenario. **The exit is not taken**: `baseline.json` is not ratcheted and carries no new
+`accepted_regressions`, because some failures cannot be licensed (below).
+
+`legion_check check --require-all`: 16460 keys, **1192 failed** (1161 distinct keys), 1996
+ratchets, 348 floor exceptions. By kind: 975 band losses (849 work counters, 126 outcome
+keys), 150 new offset-spread exceptions, 29 unbaselined work counters (zero at the base:
+`rechoice_bfs_cells`, `held_rechecks`, `outside_area_completions`, completion-distance bins), 30 outcome bounds, and **8 Retail-floor failures**.
+3649 keys moved by more than 5% (every scenario; `legion_check exit-table` against the
+step-0 base regenerates the full list).
+
+### Gates that fail
+
+| Gate (PLAN) | Result |
+|---|---|
+| Retail floor: a passing key may not start failing (3.0, not licensable) | 8 keys: doorplug-124 `g.B.arrived` 47 vs Retail 52; tail-wave `g.W.arrived` 136 vs 150; corner-1x448 `gate.top.crossings` 6 vs 4; motion-cross `contact_settled_permille` 28 vs 23; split-450-open `contact_settled_permille` 7 vs 6; `parked_no_progress` on aware-unseen 1, island-1x48 1, strait-2x48 2 (Retail 0) |
+| B declared tolerance: total Legion work within 1.10x on every scenario | battle-field-2x500 total 266.0M -> 306.9M (+15%: field work +32%, first-solo +24%, first-slot x2.4); battle-field-2x250 p99 251230 -> 282389; cost-open p99 5063 -> 5945; motion-open p99 1125 -> 1347; smoke-open p99 1611 -> 1893 |
+| 3.1 gate: doorplug, a later order still passes | doorplug-124: B arrived 59 -> 47, B t90 7196 -> never, A done 3268 -> never, still900_ever 0 -> 1 (`side.past.high` 120 unchanged) |
+| 3.1 gate: crowdbench jagged/opposingcolumns within 3% | jagged 200x1 orders complete 190 -> 180 (-5.3%); opposingcolumns 200x1 199 -> 193 (-3.0%); doors 2000 unchanged (the screen has no bridges 2000 row) |
+| `legion_cost` counter baseline | fails; scaling (C19) passes. Battle mopup windows: 2x500 field work 4.36M -> 48.4M, fields built 73 -> 373, Legion total 35.9M -> 52.5M; 2x60 slot search 23654 -> 282546. cost-corner/cost-open held_rechecks and detours were already over at the step-0 head (the stamps) |
+| B acceptance: deadend settled == n | not met (scn, orders complete at 8000, base -> head): w2 n120 4/0/8/0 -> 4/0/8/0; w4 n120 49/44/79/71 -> 50/45/79/74; w4 n40 closed 40/39 -> 37/32 (worse; `open_still900` 0/1 -> 3/8); every w6 case and the other n40 cases complete |
+| A / MV-01 acceptance: pocket open >= 600 arrived, t90 <= 5800 / 4500 | not met: needs A2 (parked). Orders complete 615-open 479 -> 608, 615-wall 155 -> 182, 304-open 242 -> 297, 304-wall 150 -> 170, but arrived 152 -> 154, 122 -> 113, 93 -> 90, 78 -> 74 and t90 never (Retail 297 / 114 / 304 / 263) |
+| B: `midroute_completions == 0` in pocket | not met: 615-open 46 -> 72, 615-wall 10 -> 17, 304-open 10 -> 13, 304-wall 6 -> 8 (maze, mazeform, doorplug, crowdbench groupdetour stay 0) |
+| AR-08 no worse (deadend) | deadend-w6 `complete_dist_max` 86 -> 94 (n120 closed plain), 28 -> 37 (n40 closed squad), 25 -> 30; pocket max 79 -> 104 (304-open), 149 -> 163, 58 -> 72, 60 -> 76 |
+| Other losses named in the B commit, still present | mixed2 spins 30 -> 140 (bound 30); battle-field-2x60 `g.A.arrived` 10 -> 7; 2x250 `g.B.arrived` 2 -> 0; `legion_liftflyers` fails ("group did not go round the enemy flyers"). `legion_acceptance_crowdheld_legion` fails as at the step-0 head |
+
+Report-only for W3 (gated from the W4 exit): `--cumulative` puts battle-field 2x60/2x250/2x500
+and battle-assault total Legion work above the W0 base (2x500 total 271.6M W0 -> 306.9M;
+battle-assault max 484465 -> 487871).
+
+### What passes
+
+| Check | Result |
+|---|---|
+| T (tick stamps) | squadformation p90 2746 (<= 3600; B's <= 3500 too), max 5086, 120/120; settlelatency strides 1/2/4 byte-identical, serial == repeat == workers |
+| A1 convoy checks (`convoy_test`, `issue_selection_test`) | pass: flyers first and saturated, opposite corners, all-air 100, 974 units at round trips 0/8/16 one convoy and 24 split, patrol with return legs, two clicks 48 px apart, index == scan on 1e4 streams; `convoy.tests_max` <= 15 per order everywhere |
+| B: tail `open_still900 == 0` | 0 on open304 / open570 / corner380 / wave (`still900_ever` 0 / 2 -> 1 / 0 / 0) |
+| B: sharedgoal 2000 pending@6000 <= 120 | 230 -> 80 (orders complete 1770 -> 1920) |
+| AR-08 sharedgoal no worse | 2000x1 outside 765 -> 788, median 52.4 -> 49.0, max 113.0 -> 105.8 (b8a4110 bar 110); 500x4 outside 518 -> 250, max 53.6 -> 45.3; 200x1 outside 7 -> 5, max 29.0 -> 26.5 |
+| crowdbench screen | all 43 Retail rows identical; 35 of 43 Legion rows moved; orders complete, arrived settled and crossings unchanged on doors 2000, bridges 200, crowdtrap, groupdetour 200 and maze 500/2000 |
+| C19 scaling (`legion_cost`) | steady W(4N)/W(N) 0.38 corner, 0.77 open (<= 1.5); slot cells per slot 400/100 0.47 / 0.26 (<= 2.2); upkeep 1.00 |
+| Determinism | navigation goldens (Legion regenerated at 75883677, Retail unchanged), serial == workers on every scenario; `--mpai` Inner Circle 300 s seed 1 unchanged under 241: Legion 136218d83cbf7af8 (twice), Retail b240750e5765c02b |
+
+### AR-04 probe after W3
+
+The audit's probes (`auditpocket`, `auditfactory`, and `ar04lone`, a lone unit ordered into
+the centre of its own idle crowd), never committed, run on W2's head 7c490b2f and on this head:
+
+| Case | W2 head | This head |
+|---|---|---|
+| member packed inside its idle crowd, 7x7 / 5x9 / 3x5, stride 2, with or without flyers | never leaves (Holding) | unchanged: never leaves (Retail drops the order at 167-182) |
+| same, loose (stride 3) / edge member of a 7x1 row | done 556 / 377 | unchanged |
+| lone unit into its idle crowd, stride 2, 4x4 .. 7x7 | done 631-721 | unchanged |
+| lone unit into a 9x9 crowd (stride 2) / a 7x7 crowd at stride 3 | never / never | **1081 / 1081** |
+| factory exit lane, rally 6 / 10 cells below, every 150 ticks: orders held in the lane | 13 / 12 of 60 | 12 / 12 |
+| same, rally on the factory / every 40 ticks / diagonal (+10,+8) / 14 cells below | 14 / 13 / 6 / 1 | 13 / 13 / **12** / **3** |
+
+The idle-crowd pocket is still open on this head (the packed member and the exit lane).
+
 ## W3 step 0b: the base after the tick stamps
 
 Head: `task-w3-stamps` dfeb51ca (W3 step 0a, the T1-T tick stamps, on W2's 7c490b2f)
