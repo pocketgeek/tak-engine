@@ -155,7 +155,7 @@ def selftest(root):
     scn_ref = next((r for r in refs if r[0] != 'ctest' and re.fullmatch(r'[a-z0-9-]+', r[0])), None)
     cmake = read(root, CMAKE)
     # a ctest cited by a literal add_test name (the foreach-generated ones have no single line to rename)
-    ctest_ref = next((r for r in refs if r[0] == 'ctest' and 'NAME ' + r[1] in cmake.replace('\n', ' ')), None)
+    ctest_ref = next((r for r in refs if r[0] == 'ctest' and re.search(r'NAME ' + re.escape(r[1]) + r'(\s|\))', cmake)), None)
     if not scn_ref or not ctest_ref:
         print('selftest: the doc cites no scenario or no ctest', file=sys.stderr)
         return 2
