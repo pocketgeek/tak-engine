@@ -10110,6 +10110,7 @@ void World::tick(float dt) {
 #ifndef NDEBUG
     probe::PmuSample _pmuTick, _pmuSep, _pmuPro;
     if (g_phase && probe::kPmu) { probe::pmuReset(); _pmuTick = probe::pmuRead(); }
+    if (probe::kStats) probe::allocMark();
     // The A1 probe hears about VMs touched from outside their own tick, for this tick only.
     struct ProbeHook {
         bool on;
@@ -11518,7 +11519,8 @@ void World::tick(float dt) {
                      " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
                      " near_cells_block_skippable=%llu near_cells_outside_disk=%llu acq_scans=%llu los_calls=%llu"
                      " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu compact_moved=%llu passes=%llu"
-                     " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu\n",
+                     " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu"
+                     "%s\n",
                      tickCounter_, alive, (unsigned long long)c.vmTicks, (unsigned long long)c.vmSkippable,
                      (unsigned long long)c.vmEmpty, (unsigned long long)c.vmDebtFlushes, (unsigned long long)c.nearScans,
                      (unsigned long long)c.nearCells, (unsigned long long)c.nearCellsMasked,
@@ -11528,7 +11530,8 @@ void World::tick(float dt) {
                      (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
                      (unsigned long long)c.compactMoved, (unsigned long long)c.passes,
                      (unsigned long long)c.acqGateWalks, (unsigned long long)c.acqGateWalksBefore,
-                     (unsigned long long)c.bodyRects, (unsigned long long)c.bodyRectsHeap);
+                     (unsigned long long)c.bodyRects, (unsigned long long)c.bodyRectsHeap,
+                     probe::allocFields().c_str());
         probe::tl = {};   // work between ticks (commands, the state hash) counts toward the next line
     }
 #endif
