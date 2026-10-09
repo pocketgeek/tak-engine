@@ -4789,7 +4789,7 @@ struct LegionNavigator::Impl {
         const uint16_t potential=f->at(size_t(oz*W+ox));
         if(potential==kUnreached)return false;
         const int64_t px=int64_t(std::get<2>(m.point)),pz=int64_t(std::get<3>(m.point));
-        const bool area=policy(m.kind).area;
+        const bool area=policy(m.kind).area,waypoint=policy(m.kind).passThrough;
         auto sameDestination=[&](const std::tuple<int,uint32_t,int32_t,int32_t>& q) {
             if(std::get<0>(q)!=u.player)return false;
             const int64_t ax=(int64_t(std::get<2>(q))-px)>>16,az=(int64_t(std::get<3>(q))-pz)>>16;
@@ -4835,8 +4835,11 @@ struct LegionNavigator::Impl {
                 }
             } else if(other->orders.empty())foreign=true;
             else if(area&&!queued) {
+                // A waypoint (patrol) arrival never anchors, so its crowd has
+                // no settled chain start: there a held member of the same
+                // destination nearer the waypoint is the queue itself.
                 const Member* peer=member(o);
-                queued=peer&&peer->queued&&peer->state==Holding&&destination(peer->point)==destination(m.point);
+                queued=peer&&(peer->queued||waypoint)&&peer->state==Holding&&destination(peer->point)==destination(m.point);
             }
         }
         stats.crowdWindowRingCells+=ring;
