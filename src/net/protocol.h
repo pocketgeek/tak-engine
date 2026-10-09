@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 241;      // 241: Legion W3 -- one convoy per click (Order::convoyTick and the open-convoy table are
+constexpr uint32_t kNetVersion = 242;      // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
+                                           //      unit's orders change (World::noteOrders from the order helpers, mission dispatch,
+                                           //      target acquisition and the death edge) instead of by a per-tick walk; prune's
+                                           //      hashed 256-a-tick backstop cursor also walks those records
+                                           // 241: Legion W3 -- one convoy per click (Order::convoyTick and the open-convoy table are
                                            //      hashed) and Legion keys on it: one point, formation and settle chain per click,
                                            //      slots handed out 32 a tick (at most 131072 ring cells of slot search) once the
                                            //      convoy closes (a first part under 64 takes its formation at once, rebuilt if another
