@@ -610,6 +610,8 @@ inline tak::sim::UnitType synth(const TypeSpec& t, bool armed) {
         u.turnRate = t.turn;
         u.turnInPlaceRate = t.turn;
         u.halfCellTicks = 3;
+    } else {
+        u.maxVel = Fixed();   // isStructure(); UnitType defaults maxVel to 1 (a slow mover)
     }
     switch (t.kind) {
     case TypeSpec::Flyer:

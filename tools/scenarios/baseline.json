@@ -66675,1091 +66675,1011 @@
     "contact_other_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 20
+     "since": "W2s1",
+     "value": 0
     },
     "contact_own_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 276
+     "since": "W2s1",
+     "value": 322
     },
     "contact_settled_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 9
     },
     "g.A.arrived": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 20
+    },
+    "g.A.complete_dist_max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 6
+    },
+    "g.A.complete_dist_median": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 3
     },
     "g.A.complete_n": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 20
     },
     "g.A.complete_outside_radius": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "g.A.dead": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "g.A.done": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": -1
+     "since": "W2s1",
+     "value": 1300
     },
     "g.A.left_behind": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 20
+     "since": "W2s1",
+     "value": 0
     },
     "g.A.n": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "g.A.orders_done": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "g.A.radius_px": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 151
     },
     "g.A.t50": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": -1
+     "since": "W2s1",
+     "value": 1272
     },
     "g.A.t90": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": -1
+     "since": "W2s1",
+     "value": 1291
     },
     "parked_no_progress": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "region.goal.inside": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 20
     },
     "reversals": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "serial_eq_workers": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": true
     },
     "spins": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "stopped_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 11
     },
     "walk_in_place": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "wall_touch_near_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "wall_touch_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 2
     },
     "work.arrivals.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 1
     },
     "work.arrivals.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 20
     },
     "work.aware_pairs.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.aware_pairs.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.aware_pairs.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 49
+     "since": "W2s1",
+     "value": 41
     },
-    "work.completion_dist_0.max": {
+    "work.completion_dist_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 2
     },
-    "work.completion_dist_0.p99": {
+    "work.completion_dist_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
-    "work.completion_dist_0.total": {
+    "work.completion_dist_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
+     "value": 6
+    },
+    "work.completion_dist_2.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
      "value": 1
     },
-    "work.crowd_window_ring_cells.max": {
+    "work.completion_dist_2.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 144
-    },
-    "work.crowd_window_ring_cells.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
-    "work.crowd_window_ring_cells.total": {
+    "work.completion_dist_2.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 468
+     "since": "W2s1",
+     "value": 8
+    },
+    "work.completion_dist_3.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.completion_dist_3.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 0
+    },
+    "work.completion_dist_3.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 6
+    },
+    "work.completion_dist_sum.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 7
+    },
+    "work.completion_dist_sum.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.completion_dist_sum.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 58
+    },
+    "work.contact_arrivals.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 2
+    },
+    "work.contact_arrivals.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 0
+    },
+    "work.contact_arrivals.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 19
     },
     "work.detour_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 1164
     },
     "work.detour_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.detour_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.detours.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.detours.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.detours.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 8360
     },
     "work.field_work.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 148944
+     "since": "W2s1",
+     "value": 110120
     },
     "work.field_work.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.field_work.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 148944
+     "since": "W2s1",
+     "value": 110120
     },
     "work.field_work_first_slot.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 110320
+     "since": "W2s1",
+     "value": 110120
     },
     "work.field_work_first_slot.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.field_work_first_slot.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 110320
-    },
-    "work.field_work_first_solo.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 38624
-    },
-    "work.field_work_first_solo.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.field_work_first_solo.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 38624
+     "since": "W2s1",
+     "value": 110120
     },
     "work.fields_built.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 1
     },
     "work.fields_built.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.fields_built.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 1
     },
     "work.fields_started_by_kind_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 1
     },
     "work.fields_started_by_kind_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.fields_started_by_kind_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 1
     },
     "work.formation_ring_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 719
     },
     "work.formation_ring_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.formation_ring_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 719
     },
     "work.group_loop_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 81
+     "since": "W2s1",
+     "value": 40
     },
     "work.group_loop_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 1
     },
     "work.group_loop_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 147
+     "since": "W2s1",
+     "value": 83
     },
     "work.groups.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 1
     },
     "work.groups.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.groups.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 3
-    },
-    "work.held_rechecks.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.held_rechecks.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.held_rechecks.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 1
     },
     "work.holds.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 2
     },
     "work.holds.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.holds.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 6
+     "since": "W2s1",
+     "value": 15
     },
     "work.join_iterations.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 79
+     "since": "W2s1",
+     "value": 39
     },
     "work.join_iterations.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.join_iterations.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 79
+     "since": "W2s1",
+     "value": 39
     },
     "work.legion_total.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 152434
+     "since": "W2s1",
+     "value": 113545
     },
     "work.legion_total.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1417
+     "since": "W2s1",
+     "value": 2250
     },
     "work.legion_total.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 451459
+     "since": "W2s1",
+     "value": 299447
     },
     "work.line_sweeps.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.line_sweeps.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 14
+     "since": "W2s1",
+     "value": 20
     },
     "work.line_sweeps.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 3198
+     "since": "W2s1",
+     "value": 2643
     },
     "work.mission_arrivals_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 2
     },
     "work.mission_arrivals_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 1
     },
     "work.mission_arrivals_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 20
     },
     "work.mission_legs_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 40
     },
     "work.mission_legs_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.mission_legs_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 42
+     "since": "W2s1",
+     "value": 40
     },
     "work.move_calls_by_state_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 21
+     "since": "W2s1",
+     "value": 20
     },
     "work.move_calls_by_state_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 21
+     "since": "W2s1",
+     "value": 20
     },
     "work.move_calls_by_state_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 30420
+     "since": "W2s1",
+     "value": 25159
     },
     "work.move_calls_by_state_2.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 7
     },
     "work.move_calls_by_state_2.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 4
     },
     "work.move_calls_by_state_2.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 11
+     "since": "W2s1",
+     "value": 170
     },
     "work.move_calls_by_state_3.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.move_calls_by_state_3.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.move_calls_by_state_3.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 21
+     "since": "W2s1",
+     "value": 20
     },
     "work.moves.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 21
+     "since": "W2s1",
+     "value": 20
     },
     "work.moves.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 21
+     "since": "W2s1",
+     "value": 20
     },
     "work.moves.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 30452
-    },
-    "work.pass_scan_cells.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 384
-    },
-    "work.pass_scan_cells.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 384
-    },
-    "work.pass_scan_cells.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 50745
-    },
-    "work.pass_scans.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 14
-    },
-    "work.pass_scans.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 13
-    },
-    "work.pass_scans.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1934
+     "since": "W2s1",
+     "value": 25348
     },
     "work.pass_scans_skipped.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.pass_scans_skipped.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.pass_scans_skipped.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 28010
+     "since": "W2s1",
+     "value": 22865
     },
     "work.plane_builds.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.plane_builds.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.plane_builds.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
-    },
-    "work.rechoice_bfs_cells.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.rechoice_bfs_cells.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.rechoice_bfs_cells.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 1
     },
     "work.registrations.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 40
     },
     "work.registrations.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.registrations.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 42
+     "since": "W2s1",
+     "value": 40
     },
     "work.sched_group_visits.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
+     "since": "W2s1",
+     "value": 1
     },
     "work.sched_group_visits.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.sched_group_visits.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 2
-    },
-    "work.slides.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 3
-    },
-    "work.slides.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
-    },
-    "work.slides.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 27
     },
     "work.slot_search_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 719
     },
     "work.slot_search_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.slot_search_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 719
     },
     "work.still_units_processed.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 20
     },
     "work.still_units_processed.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 0
     },
     "work.still_units_processed.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 35
+     "since": "W2s1",
+     "value": 160
     },
     "work.trace_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 2666
     },
     "work.trace_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1304
+     "since": "W2s1",
+     "value": 2250
     },
     "work.trace_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 246414
+     "since": "W2s1",
+     "value": 179964
     }
    },
    "retail": {
     "hash@-1": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
-     "value": "ee71cf6fd4326482"
+     "since": "W2s1",
+     "value": "15348f4bf0713825"
     },
     "hash@-2": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
-     "value": "fd7cc8820a0a9731"
+     "since": "W2s1",
+     "value": "a80d4929b38c58ed"
     },
     "hash@0": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
-     "value": "b30cb359e198d0c8"
+     "since": "W2s1",
+     "value": "dd8f58362e902ee7"
     },
     "hash@1": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
-     "value": "0a6908df37712275"
+     "since": "W2s1",
+     "value": "dd44a4328cd4b38d"
     },
     "hash@2": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
-     "value": "b19af6155d3c49c4"
+     "since": "W2s1",
+     "value": "b9d1c8875059441d"
     },
     "serial_eq_workers": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": true
     }
    }
@@ -67769,899 +67689,1011 @@
     "contact_other_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "contact_own_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 594
+     "since": "W2s1",
+     "value": 322
     },
     "contact_settled_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 9
     },
     "g.A.arrived": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 20
+    },
+    "g.A.complete_dist_max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 6
+    },
+    "g.A.complete_dist_median": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 3
     },
     "g.A.complete_n": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 20
     },
     "g.A.complete_outside_radius": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "g.A.dead": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "g.A.done": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": -1
+     "since": "W2s1",
+     "value": 1300
     },
     "g.A.left_behind": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 20
+     "since": "W2s1",
+     "value": 0
     },
     "g.A.n": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "g.A.orders_done": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "g.A.radius_px": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 151
     },
     "g.A.t50": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": -1
+     "since": "W2s1",
+     "value": 1272
     },
     "g.A.t90": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": -1
+     "since": "W2s1",
+     "value": 1291
     },
     "parked_no_progress": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "region.goal.inside": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 0
+     "since": "W2s1",
+     "value": 20
     },
     "reversals": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "serial_eq_workers": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": true
     },
     "spins": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "stopped_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 845
+     "since": "W2s1",
+     "value": 11
     },
     "walk_in_place": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "wall_touch_near_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "wall_touch_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
-    "work.crowd_window_ring_cells.max": {
+    "work.arrivals.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 504
+     "since": "W2s1",
+     "value": 2
     },
-    "work.crowd_window_ring_cells.p99": {
+    "work.arrivals.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 216
+     "since": "W2s1",
+     "value": 1
     },
-    "work.crowd_window_ring_cells.total": {
+    "work.arrivals.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 22104
+     "since": "W2s1",
+     "value": 20
+    },
+    "work.aware_pairs.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.aware_pairs.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.aware_pairs.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 41
+    },
+    "work.completion_dist_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 2
+    },
+    "work.completion_dist_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 0
+    },
+    "work.completion_dist_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 6
+    },
+    "work.completion_dist_2.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.completion_dist_2.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 0
+    },
+    "work.completion_dist_2.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 8
+    },
+    "work.completion_dist_3.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.completion_dist_3.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 0
+    },
+    "work.completion_dist_3.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 6
+    },
+    "work.completion_dist_sum.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 7
+    },
+    "work.completion_dist_sum.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.completion_dist_sum.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 58
+    },
+    "work.contact_arrivals.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 2
+    },
+    "work.contact_arrivals.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 0
+    },
+    "work.contact_arrivals.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 19
     },
     "work.detour_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 544
+     "since": "W2s1",
+     "value": 1164
     },
     "work.detour_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.detour_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 7857
-    },
-    "work.detours.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.detours.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.detours.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 15
+     "since": "W2s1",
+     "value": 8360
     },
     "work.field_work.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 110120
     },
     "work.field_work.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.field_work.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 110120
     },
     "work.field_work_first_slot.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 110120
     },
     "work.field_work_first_slot.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.field_work_first_slot.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 110120
     },
     "work.fields_built.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.fields_built.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.fields_built.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.fields_started_by_kind_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.fields_started_by_kind_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.fields_started_by_kind_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.formation_ring_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 719
     },
     "work.formation_ring_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.formation_ring_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 719
     },
     "work.group_loop_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 40
     },
     "work.group_loop_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.group_loop_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 90
+     "since": "W2s1",
+     "value": 83
     },
     "work.groups.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.groups.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.groups.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
-    },
-    "work.held_rechecks.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 18
-    },
-    "work.held_rechecks.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 18
-    },
-    "work.held_rechecks.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 22271
     },
     "work.holds.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 12
+     "since": "W2s1",
+     "value": 2
     },
     "work.holds.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "since": "W2s1",
+     "value": 0
     },
     "work.holds.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 55
+     "since": "W2s1",
+     "value": 15
     },
     "work.join_iterations.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 39
     },
     "work.join_iterations.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.join_iterations.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 39
     },
     "work.legion_total.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 113545
     },
     "work.legion_total.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 9556
+     "since": "W2s1",
+     "value": 2250
     },
     "work.legion_total.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1650717
+     "since": "W2s1",
+     "value": 299447
     },
     "work.line_sweeps.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.line_sweeps.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 5
+     "since": "W2s1",
+     "value": 20
     },
     "work.line_sweeps.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 799
+     "since": "W2s1",
+     "value": 2643
+    },
+    "work.mission_arrivals_1.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 2
+    },
+    "work.mission_arrivals_1.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 1
+    },
+    "work.mission_arrivals_1.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 20
     },
     "work.mission_legs_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 40
     },
     "work.mission_legs_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.mission_legs_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 40
     },
     "work.move_calls_by_state_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 8
+     "since": "W2s1",
+     "value": 20
     },
     "work.move_calls_by_state_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 8
+     "since": "W2s1",
+     "value": 20
     },
     "work.move_calls_by_state_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 4681
+     "since": "W2s1",
+     "value": 25159
     },
     "work.move_calls_by_state_2.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 19
+     "since": "W2s1",
+     "value": 7
     },
     "work.move_calls_by_state_2.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 19
+     "since": "W2s1",
+     "value": 4
     },
     "work.move_calls_by_state_2.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 25279
+     "since": "W2s1",
+     "value": 170
     },
     "work.move_calls_by_state_3.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.move_calls_by_state_3.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.move_calls_by_state_3.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.moves.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.moves.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.moves.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 18942
+     "since": "W2s1",
+     "value": 25348
     },
     "work.pass_scans_skipped.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.pass_scans_skipped.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 20
     },
     "work.pass_scans_skipped.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 14520
+     "since": "W2s1",
+     "value": 22865
     },
     "work.plane_builds.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.plane_builds.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.plane_builds.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
-    },
-    "work.rechoice_bfs_cells.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 24972
-    },
-    "work.rechoice_bfs_cells.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 8748
-    },
-    "work.rechoice_bfs_cells.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1381284
     },
     "work.registrations.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 40
     },
     "work.registrations.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.registrations.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 40
     },
     "work.sched_group_visits.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
     },
     "work.sched_group_visits.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 0
     },
     "work.sched_group_visits.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 1
-    },
-    "work.slides.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 3
-    },
-    "work.slides.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.slides.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 51
     },
     "work.slot_search_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 24972
+     "since": "W2s1",
+     "value": 719
     },
     "work.slot_search_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 8748
+     "since": "W2s1",
+     "value": 0
     },
     "work.slot_search_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 1382003
+     "since": "W2s1",
+     "value": 719
+    },
+    "work.still_units_processed.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 20
+    },
+    "work.still_units_processed.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 0
+    },
+    "work.still_units_processed.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s1",
+     "value": 160
     },
     "work.trace_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": 2666
     },
     "work.trace_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 658
+     "since": "W2s1",
+     "value": 2250
     },
     "work.trace_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "band",
-     "since": "W2s0",
-     "value": 105398
+     "since": "W2s1",
+     "value": 179964
     }
    },
    "retail": {
     "hash@-1": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": "15348f4bf0713825"
     },
     "hash@-2": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": "a80d4929b38c58ed"
     },
     "hash@0": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": "dd8f58362e902ee7"
     },
     "hash@1": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": "dd44a4328cd4b38d"
     },
     "hash@2": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": "b9d1c8875059441d"
     },
     "serial_eq_workers": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 1 (AR-03) base: the structure no longer paces the formation; every Legion key equals the same 20 movers without the structure (intended), median of 5 offsets, band 1.10",
      "rule": "eq",
-     "since": "W2s0",
+     "since": "W2s1",
      "value": true
     }
    }
@@ -77374,62 +77406,6 @@
    "scenario": "mazeapproach"
   },
   {
-   "cluster": "AR-03",
-   "key": "stopped_permille",
-   "median5": true,
-   "mode": "legion",
-   "reason": "3-offset spread 0..8 exceeds the band at W2s0; gated on median-of-5 offsets",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "contact_own_permille",
-   "median5": true,
-   "mode": "legion",
-   "reason": "3-offset spread 200..313 exceeds the band at W2s0; gated on median-of-5 offsets",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "contact_other_permille",
-   "median5": true,
-   "mode": "legion",
-   "reason": "3-offset spread 18..28 exceeds the band at W2s0; gated on median-of-5 offsets",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "g.H.arrived",
-   "reason": "fails legion <= retail x1.1 at W2s0: legion 0 vs retail 1",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "g.H.t90",
-   "reason": "fails legion <= retail x1.1 at W2s0: legion never vs retail 0",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "stopped_permille",
-   "median5": true,
-   "mode": "legion",
-   "reason": "3-offset spread 714..854 exceeds the band at W2s0; gated on median-of-5 offsets",
-   "scenario": "structsquad-keep"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "g.A.arrived",
-   "reason": "fails legion <= retail x1.1 at W2s0: legion 0 vs retail 20",
-   "scenario": "structsquad-keep"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "g.A.t90",
-   "reason": "fails legion <= retail x1.1 at W2s0: legion never vs retail 1262",
-   "scenario": "structsquad-keep"
-  },
-  {
    "cluster": "AR-11",
    "key": "reversals",
    "median5": true,
@@ -77475,6 +77451,54 @@
    "median5": true,
    "reason": "fails legion <= retail x1.1 at W2s0: legion 9004 vs retail 2419",
    "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "stopped_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 10..12 exceeds the band at W2s1; gated on median-of-5 offsets",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "contact_own_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 269..385 exceeds the band at W2s1; gated on median-of-5 offsets",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "contact_settled_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 8..9 exceeds the band at W2s1; gated on median-of-5 offsets",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "stopped_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 10..12 exceeds the band at W2s1; gated on median-of-5 offsets",
+   "scenario": "structsquad-keep"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "contact_own_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 269..385 exceeds the band at W2s1; gated on median-of-5 offsets",
+   "scenario": "structsquad-keep"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "contact_settled_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 8..9 exceeds the band at W2s1; gated on median-of-5 offsets",
+   "scenario": "structsquad-keep"
   }
  ],
  "history": [

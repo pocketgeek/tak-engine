@@ -2534,6 +2534,7 @@ ProbeRun factorysquadRun(int mode,int movers,bool serial,bool direct=false) {
     const auto type=mover(2);
     UnitType factory{};factory.id=factory.name="legion-factory";factory.footX=6;factory.footZ=6;factory.maxHp=1000;
     factory.isBuilder=true;factory.workerTime=1000;factory.buildTime=1;
+    factory.maxVel=Fixed();   // a structure: UnitType defaults maxVel to 1 (a slow 6x6 mover)
     const int fid=direct?f.spawn(factory,40,50):f.spawn(factory,30,40);
     std::vector<int> standing;
     if(direct)for(int i=0;i<movers;++i)standing.push_back(f.spawn(type,14+(i%4)*3,36+(i/4)*3));

@@ -10360,14 +10360,20 @@ void World::tick(float dt) {
     // Formations (Unit::squad < 0): each tick, compute the group's centre + slowest
     // member speed, then walk idle stragglers back toward the centre so they congregate.
     // The mover below paces grouped members to `slowest`; members behind the centre
-    // (relative to the goal) keep their own speed to catch up. Deterministic: the sums
-    // accumulate in unit-index order and use only basic arithmetic + detmath::len.
+    // (relative to the goal) keep their own speed to catch up. Only bodies that can walk
+    // count: a structure, a unit still under construction or a type with no speed stays
+    // in the squad (produced units inherit it) but never sets the centre or the pace --
+    // a building's speed of 0 used to pace the whole army to a standstill. Deterministic:
+    // the sums are int64 of Fixed raw values, accumulated in unit-index order.
     constexpr float kFormBehind = 48.0f;   // sprint if this far behind the group (goal-relative)
     constexpr float kFormRejoin = 140.0f;  // an idle member at least this far from the centre may rejoin
     struct FormAgg {
-        double sx = 0, sz = 0; int n = 0; float slowest = 1e9f;
+        int64_t sx = 0, sz = 0; int n = 0;
+        Fixed slowest = Fixed::raw(std::numeric_limits<int32_t>::max());
         int area = 0;   // footprint cells of its mobile members
         int busy = 0;   // mobile members still carrying out an order
+        float cx() const { return Fixed::raw(int32_t(sx / n)).toFloat(); }
+        float cz() const { return Fixed::raw(int32_t(sz / n)).toFloat(); }
     };
     FormAgg forms[kMaxPlayers][11] = {};   // [player][1..10]; slot 0 unused
     auto formOf = [&](const Unit& u) -> FormAgg* {
@@ -10377,14 +10383,13 @@ void World::tick(float dt) {
         return &forms[u.player][-u.squad];
     };
     for (auto& u : units_)
-        if (u.alive() && u.type && u.squad < 0)
+        if (u.alive() && u.type && u.squad < 0 && !u.type->isStructure() &&
+            !u.underConstruction && u.baseSpeed.v > 0)
             if (FormAgg* f = formOf(u)) {
-                f->sx += u.x.toFloat(); f->sz += u.z.toFloat(); ++f->n;
-                f->slowest = std::min(f->slowest, u.baseSpeed.toFloat());
-                if (!u.type->isStructure()) {
-                    f->area += u.type->footX * u.type->footZ;
-                    f->busy += !u.orders.empty();
-                }
+                f->sx += u.x.v; f->sz += u.z.v; ++f->n;
+                f->slowest = fxMin(f->slowest, u.baseSpeed);
+                f->area += u.type->footX * u.type->footZ;
+                f->busy += !u.orders.empty();
             }
     if (pathfindingMode_==PathfindingMode::Retail) tickRetailGroups();
     planLegionFlightStations();
@@ -10418,7 +10423,7 @@ void World::tick(float dt) {
         // arrives one by one), not stragglers: pulling them back to a centre
         // that still trails behind the gap sent them into the column.
         if (!f || f->n <= 1 || f->busy) continue;
-        float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
+        const float cx = f->cx(), cz = f->cz();
         // A straggler is outside the native formation radius (51d1e0 at level
         // 3: twice the root of the members' footprint area, in cells), never
         // nearer than kFormRejoin. A fixed radius alone called every outer
@@ -10856,7 +10861,7 @@ void World::tick(float dt) {
         // catching up from behind the group's centre.
         if (u.squad < 0 && !u.orders.empty() && u.orders.front().targetId == 0) {
             if (FormAgg* f = formOf(u); f && f->n > 1) {
-                float cx = float(f->sx / f->n), cz = float(f->sz / f->n);
+                const float cx = f->cx(), cz = f->cz();
                 // "Behind the centre" is measured against the leg the group is
                 // walking NOW -- against the last QUEUED leg a straggler check
                 // would compare everyone to a point nobody is heading for yet.
@@ -10864,7 +10869,7 @@ void World::tick(float dt) {
                 float gx = legEnd.x.toFloat(), gz = legEnd.z.toFloat();
                 float uToGoal = detmath::len(u.x.toFloat() - gx, u.z.toFloat() - gz);
                 float cToGoal = detmath::len(cx - gx, cz - gz);
-                if (uToGoal <= cToGoal + kFormBehind) target = fxMin(target, Fixed::fromFloat(f->slowest));
+                if (uToGoal <= cToGoal + kFormBehind) target = fxMin(target, f->slowest);
             }
         }
         if (pathfindingMode_==PathfindingMode::Retail) retailGroupMaximum_=retailGroupLimit(u);
