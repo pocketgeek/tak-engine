@@ -33,6 +33,10 @@
 #include "gui/gui.h"
 #include "hpi/hpi.h"
 #include "net/client.h"
+#include "client/replayfile.h"   // ReplayCheckTracker
+#include "client/situation.h"    // TAK_SITUATION (debug builds)
+#include "client/postrail.h"      // TAK_POSTRAIL (debug builds)
+#include "client/pacelog.h"       // TAK_PACELOG (debug builds)
 #include <future>
 #include "util/procmetrics.h"   // benchmark: cross-platform CPU/RSS sampling
 #include "net/lockstep.h"
@@ -608,7 +612,8 @@ public:
     // as it passes it, so playback can say WHERE it stopped matching what happened
     // rather than merely running to the end and looking plausible.
     void setReplayChecks(std::vector<tak::net::ReplayCheck> c) { replayChecks_ = std::move(c); }
-    bool replayDiverged() const { return replayDiverged_; }
+    bool replayDiverged() const { return replayTracker_.stateDiverged(); }
+    std::string replayDivergenceSummary() const { return replayTracker_.summary(); }
     // Advance playback by `dt` (real seconds), scaled by the game-speed control;
     // Pause freezes it. Applies each recorded bundle then ticks the world.
     void replayStep(float dt);
@@ -2173,7 +2178,19 @@ private:
     bool replaySaved_ = false;                    // this game's replay already written
     std::vector<tak::net::ReplayCheck> replayChecks_;   // recorded (tick, hash) trail
     size_t replayCheckAt_ = 0;                    // next checkpoint to compare
-    bool replayDiverged_ = false;                 // reported once, then stays quiet
+#ifndef NDEBUG
+    tak::situation::Harvester situation_;         // TAK_SITUATION: cut a .scn out of the recording
+public:
+    void armSituation(const tak::situation::Request& r, const tak::situation::Meta& m) { situation_.arm(r, m); }
+    tak::PaceLog pace_;                           // TAK_PACELOG: per-frame ticks/backlog record (src/client/pacelog.h)
+    bool paceInit_ = false;
+    uint32_t paceLastTick_ = 0;
+    uint64_t paceLastMs_ = 0;
+    tak::postrail::Writer postrail_;              // TAK_POSTRAIL: this playback's digest trail, for the head to read back
+    void openPostrail(const char* path) { postrail_.open(path); }
+private:
+#endif
+    ReplayCheckTracker replayTracker_;            // first state divergence + first position divergence
     // Set by the SIM thread when the result lands; the MAIN thread does the writing.
     // The net client's recorded bundles and hashes are appended from the main thread,
     // so serializing them off-thread would read a growing vector.
@@ -2505,8 +2522,8 @@ private:
     // mutated ONLY by the worker (under simMutex_); the render reads the published snapshot,
     // and its remaining live-world_ read (canPlace) takes simMutex_. Off for headless/replay
     // (inline path) unless wantSimThread_ (TAK_SIM_THREAD) forces it on for verification.
-    struct SimJob { tak::net::Bundle bundle; uint32_t tick = 0; bool wantHash = false; bool spectator = false; };
-    struct HashJob { uint32_t tick = 0; uint64_t hash = 0; };
+    struct SimJob { tak::net::Bundle bundle; uint32_t tick = 0; bool wantHash = false; bool spectator = false; bool wantPos = false; };
+    struct HashJob { uint32_t tick = 0; uint64_t hash = 0; uint64_t pos = 0; };
     std::thread::id mainThreadId_ = std::this_thread::get_id();   // set at construction (main thread)
     std::thread simThread_;
     std::mutex simMutex_;               // guards world_ mutation (worker) vs live reads (canPlace)

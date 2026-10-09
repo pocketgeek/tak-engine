@@ -799,6 +799,47 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
         determinism(user, "user-gen1", 100, data);
     }
 
+    // A harvested situation (`spots`, `%N` selection, `clock`, `truth`): the grammar round-trips, bodies spawn exactly
+    // (position, heading, hit points, individual speed, recorded id), and a click keeps the order of its `%N` list.
+    {
+        const std::string text =
+            "scn 1\nname situation\nticks 200\nseed 4000000000\nplayers 2\nweapons on\n"
+            "map flat 96 96\ntype m mover 2 2500 10 1.8\n"
+            "group a 0 m 3 spots 1638400,1638400,16384,3276800,70000,0,17,1000 2686976,1638400,0,0 1638400,2686976,65535,6553600,0,0,40,0\n"
+            "group b 1 m 1 spots 4194304,4194304,0,0\n"
+            "clock 1234 987654321\nat 3 move %2,%0,%1 50 50\ntruth 50 1,2 3,4 5,6 7,8\ntruth 100 1,2 -2147483648,-2147483648 3,4 5,6\n";
+        roundTrip(text, "situation");
+        const auto sc = tak::scn::parse(text, "situation");
+        check(sc.seed == 4000000000u && sc.hasClock && sc.clockTick == 1234 && sc.clockRng == 987654321u,
+              "situation: seed above 2^31 and the clock survive");
+        check(sc.groups[0].spots.size() == 3 && sc.groups[0].spots[0].id == 17 && sc.groups[0].spots[0].vel == 1000 &&
+              sc.groups[0].spots[2].id == 40 && sc.truths.size() == 2 && sc.truths[1].pos.size() == 4 && sc.truths[1].tick == 100,
+              "situation: spots and truth parsed");
+        check(sc.groupOfBody(3) == 1 && sc.groupOfBody(4) == -1, "situation: body numbers span the groups in file order");
+        tak::scn::BuildOptions opt;
+        auto b = tak::scn::build(sc, opt);
+        const auto& ids = b->groups.at("a");
+        const auto* u0 = b->world->unit(ids[0]);
+        const auto* u2 = b->world->unit(ids[2]);
+        check(ids[0] == 17 && ids[2] == 40 && u0 && u2, "situation: bodies take their recorded ids");
+        check(u0 && u0->x.v == 1638400 && u0->z.v == 1638400 && u0->heading.v == 16384 && u0->hp.v == 3276800 &&
+              u0->baseSpeed.v == 70000 && u0->speed.v == 1000, "situation: position, heading, hp, speed and velocity are exact");
+        check(u2 && u2->heading.v == 65535 && u2->hp.v == 6553600, "situation: the last body is exact too");
+        check(b->world->tickCount() == 1234 && b->world->gameRngState() == 987654321u, "situation: the world resumes the recorded clocks");
+        // The click lists bodies 2, 0, 1: hudCommands walks the selection in that order, so the commands come in it.
+        tak::scn::OrderFeed feed(sc, *b);
+        std::vector<int> order;
+        for (uint32_t t = 0; t < 8; ++t)
+            for (const auto& c : feed.commandsFor(t)) order.push_back(c.unitId);
+        check(order.size() == 3 && order[0] == ids[2] && order[1] == ids[0] && order[2] == ids[1],
+              "situation: a %N selection keeps the recording's command order");
+        // The shifted start offset moves the truth the same way (whole cells on both axes).
+        bool threw2 = false;
+        try { tak::scn::parse("scn 1\nmap flat 64 64\ntype m mover 2 2500 10 1.8\ngroup a 0 m 1 rect 0 0 4 4\nat 0 move %5 1 1\n", "bad%.scn"); }
+        catch (const std::runtime_error&) { threw2 = true; }
+        check(threw2, "situation: a body number past the last body is an error");
+    }
+
     // Errors carry the file and line.
     bool threw = false;
     try { tak::scn::parse("scn 1\nmap flat 64 64\ngroup A 0 nope 3 rect 0 0 9 9\n", "bad.scn"); }

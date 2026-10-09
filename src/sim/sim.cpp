@@ -11238,6 +11238,42 @@ void World::tick(float dt) {
 }
 
 #ifndef NDEBUG
+void World::resumeClocks(uint32_t tick, uint32_t gameRng) {
+    // Spawn stamped the mover clocks with the counter as it stood; move them to the new one with it.
+    const uint32_t was = tickCounter_;
+    for (auto& u : units_) {
+        if (u.groundGradeTick == was) u.groundGradeTick = tick;
+        if (u.groundMoveTick == was) u.groundMoveTick = tick;
+    }
+    tickCounter_ = tick;
+    gameRng_ = gameRng;
+}
+
+uint64_t World::posDigest() const {
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&h](uint64_t v) {
+        for (int i = 0; i < 8; ++i) { h ^= (v >> (i * 8)) & 0xFF; h *= 1099511628211ULL; }
+    };
+    for (const auto& u : units_) {
+        mix(uint64_t(uint32_t(u.id)));
+        uint64_t t = 1469598103934665603ULL;   // the type NAME, not its pointer or registry index
+        if (u.type) for (unsigned char c : u.type->name) { t ^= c; t *= 1099511628211ULL; }
+        mix(t);
+        mix(uint64_t(uint32_t(u.player)));
+        mix(uint64_t(uint32_t(u.x.v)));
+        mix(uint64_t(uint32_t(u.z.v)));
+        mix(uint64_t(uint32_t(u.hp.v)));
+        if (u.orders.empty()) { mix(0); continue; }
+        const Order& o = u.orders.front();
+        mix(1 + (o.load ? 2u : 0u) + (o.unload ? 4u : 0u) + (o.attackMove ? 8u : 0u) + (o.patrol ? 16u : 0u) +
+            (o.guard ? 32u : 0u) + (o.waitAttack ? 64u : 0u) + (o.buildType ? 128u : 0u) + (o.wait > 0 ? 256u : 0u));
+        mix(uint64_t(uint32_t(o.targetId)));
+        mix(uint64_t(uint32_t(o.x.v)));
+        mix(uint64_t(uint32_t(o.z.v)));
+    }
+    return h;
+}
+
 // See sim.h. Recomputes the same quantities stateHash() folds, but grouped, so a
 // mismatch can be attributed to a component instead of a 64-bit number.
 void World::hashTrace() const {

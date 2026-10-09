@@ -334,6 +334,10 @@ set_tests_properties(issue_selection_test PROPERTIES LABELS legion)
 # the file needs a retail install (--data).
 add_executable(legion_scenario tools/legion_scenario.cpp)
 target_link_libraries(legion_scenario PRIVATE tak-formats)
+# scn_truth: the situation fidelity check alone (no observer), small enough to build in the old trees that
+# recorded the user's replays (see tools/scn_truth.cpp).
+add_executable(scn_truth tools/scn_truth.cpp)
+target_link_libraries(scn_truth PRIVATE tak-formats)
 add_test(NAME legion_scenario_smoke
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/smoke-open.scn --mode both --json)
 add_test(NAME observer_neutral
@@ -399,6 +403,14 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_baseline_reasons_test.py
                    ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
   set_tests_properties(legion_baseline_reasons PROPERTIES LABELS legion TIMEOUT 120)
+  # docs/legion-pathfinding.md stays tied to the instruments: every Known weakness cites a fixture and key (or a
+  # test) that exists, and the quoted field quota is kFieldQuota. The selftest renames one cited scenario, key and
+  # test in a copy and fails unless each is caught (tools/legion_doc_links.py).
+  add_test(NAME legion_doc_links
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_doc_links.py --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME legion_doc_links_selftest
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_doc_links.py --root ${CMAKE_SOURCE_DIR} --selftest)
+  set_tests_properties(legion_doc_links legion_doc_links_selftest PROPERTIES LABELS legion TIMEOUT 120)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
@@ -770,6 +782,15 @@ if(TAK_TEST_DATA)
                      --data "${TAK_TEST_DATA}" --wanderers on --json)
     set_tests_properties(legion_motion_wall_wanderers_on PROPERTIES
                          SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
+    # Harvested situations (tools/scenarios/situations/README.txt): not faithful enough to gate on, so these only
+    # check that each file loads and runs deterministically, serial == workers, in both modes.
+    foreach(legion_situation r9-36060 r9-65850 r9-61930 r10-46292 r10-87332 r10-104540)
+        add_test(NAME legion_situation_${legion_situation}
+                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/situations/situation-${legion_situation}.scn
+                         --data "${TAK_TEST_DATA}" --offsets 0 --json)
+        set_tests_properties(legion_situation_${legion_situation} PROPERTIES
+                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+    endforeach()
     foreach(legion_route 21096 27459 36057 45941 54772 61923 65845)
         add_test(NAME legion_gen1_route_${legion_route}
                  COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gen1-route-${legion_route}.scn
@@ -1396,6 +1417,10 @@ add_executable(crusades_client_network_test tools/crusades_client_network_test.c
 target_link_libraries(crusades_client_network_test PRIVATE tak-formats)
 add_test(NAME crusades_client_network COMMAND crusades_client_network_test)
 set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
+# TAK_PACELOG's summary (src/client/pacelog.h, header-only).
+add_executable(pacelog_test tools/pacelog_test.cpp)
+target_include_directories(pacelog_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME pacelog COMMAND pacelog_test)
 add_executable(replay_file_test tools/replay_file_test.cpp src/client/replayfile.cpp)
 target_link_libraries(replay_file_test PRIVATE tak-formats)
 add_test(NAME replay_file COMMAND replay_file_test)

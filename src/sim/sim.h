@@ -1352,6 +1352,15 @@ public:
     bool benchmarkMode() const { return benchEndTick_ > 0; }
     uint32_t benchmarkEndTick() const { return benchEndTick_; }
     uint32_t tickCount() const { return tickCounter_; }   // ticks elapsed (benchmark timing)
+    // Situation tools only (client/situation.h, tools/legion_scn.h): the game RNG state, and a way to start a rebuilt
+    // world on the clocks of the recording it was cut from. Per-tick cadences key on the tick counter and every dice
+    // roll on the RNG, so a situation that starts at tick 0 with a fresh seed walks a different dice stream. Never
+    // called by the game itself.
+    uint32_t gameRngState() const { return gameRng_; }
+    void resumeClocks(uint32_t tick, uint32_t gameRng);
+    // The id the next spawn takes. A rebuilt situation gives every body its recorded id: schedulers stagger by id, so
+    // ids that only keep the recording's order (1, 2, 3 ...) run their rechecks on other ticks.
+    void setNextUnitId(int id) { nextId_ = id; }
     // Build per-domain nav grids from heights + sea level. `features` is the
     // map's raw per-cell feature plane if available: retail stores per-cell
     // attributes in it as special values -- 0xFFFB marks ROAD cells (the
@@ -1806,6 +1815,13 @@ public:
         bool bypassPrimaryGeometry=false,std::optional<std::array<int32_t,3>> targetShot={},
         uint16_t proximityRadius=0) const;
     uint64_t stateHash() const;
+    // A coarse, layout-independent digest for replay verification: FNV over (id, type,
+    // owner, x, z, hp, front order kind and target) in unit-id order and nothing else --
+    // no Legion bookkeeping, scripts, nav or RNG. Never folded into stateHash and never
+    // read by the sim. A replay whose stateHash diverges but whose posDigest still
+    // matches changed a hash LAYOUT (or hidden state); one whose posDigest diverges too
+    // changed behaviour.
+    uint64_t posDigest() const;
     // Read-only invariant check for the incrementally maintained grade hashes.
     bool searchGradeChecksumsValid() const;
     // Test hook: build every existing plane's shape afresh both ways (the

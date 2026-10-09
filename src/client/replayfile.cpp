@@ -115,12 +115,13 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     if (fmt >= 6) {
         uint32_t nchecks = r.u32();
         if (!r.ok) return false;
-        if (uint64_t(nchecks) * 12 > uint64_t(r.end - r.p)) return false;   // u32 + u64 each
+        if (uint64_t(nchecks) * tak::net::replayCheckBytes(fmt) > uint64_t(r.end - r.p)) return false;   // u32 + u64 (+ u64 from format 12)
         out.checks.reserve(nchecks);
         for (uint32_t i = 0; i < nchecks; ++i) {
             tak::net::ReplayCheck c;
             c.tick = r.u32();
             c.hash = r.u64();
+            if (fmt >= 12) c.posDigest = r.u64();
             if (!r.ok) return false;
             out.checks.push_back(c);
         }
@@ -175,7 +176,7 @@ std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,
     // from the game as it was actually played -- not merely that two reruns agree.
     const auto& checks = mp.hashLog();
     w.u32(uint32_t(checks.size()));
-    for (const auto& c : checks) { w.u32(c.tick); w.u64(c.hash); }
+    for (const auto& c : checks) { w.u32(c.tick); w.u64(c.hash); w.u64(c.posDigest); }
     // Named by the game and a timestamp, so several replays coexist and a rerun of
     // the same game does not overwrite the earlier one.
     std::string path = dir + "game-" + std::to_string(room.id) + "-" +
