@@ -10256,10 +10256,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -10272,10 +10272,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 143962 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 143962
+     "since": "W4 exit",
+     "value": 143952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -13260,10 +13260,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -13276,10 +13276,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 141562 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 141562
+     "since": "W4 exit",
+     "value": 141552
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -16190,10 +16190,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -16206,10 +16206,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 143962 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 143962
+     "since": "W4 exit",
+     "value": 143952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -18963,10 +18963,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 518149 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 518149
+     "since": "W4 exit",
+     "value": 518138
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -20496,10 +20496,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 912973 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 912973
+     "since": "W4 exit",
+     "value": 912896
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -22069,10 +22069,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 156613 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 156613
+     "since": "W4 exit",
+     "value": 156595
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -23569,10 +23569,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -23585,10 +23585,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 335962 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 335962
+     "since": "W4 exit",
+     "value": 335952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -25311,26 +25311,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 448 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 448
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 448 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 448
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 3173634 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 3173634
+     "since": "W4 exit",
+     "value": 2303360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -28305,10 +28305,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 201 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 201
+     "since": "W4 exit",
+     "value": 200
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -28321,10 +28321,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1799520 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1799520
+     "since": "W4 exit",
+     "value": 1799500
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -30224,26 +30224,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 449 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 449
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 448 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 448
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 3165014 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 3165014
+     "since": "W4 exit",
+     "value": 2303280
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -33081,10 +33081,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 101 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 101
+     "since": "W4 exit",
+     "value": 100
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -33097,10 +33097,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 199874 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 199874
+     "since": "W4 exit",
+     "value": 199864
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -51653,10 +51653,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 121 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 121
+     "since": "W4 exit",
+     "value": 120
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -51669,10 +51669,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 887954 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 887954
+     "since": "W4 exit",
+     "value": 887944
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -53288,10 +53288,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 41 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 41
+     "since": "W4 exit",
+     "value": 40
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -53304,10 +53304,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 319970 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 319970
+     "since": "W4 exit",
+     "value": 319960
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -56422,10 +56422,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 41 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 41
+     "since": "W4 exit",
+     "value": 40
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -56438,10 +56438,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 319972 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 319972
+     "since": "W4 exit",
+     "value": 319960
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -61135,10 +61135,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 121 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 121
+     "since": "W4 exit",
+     "value": 120
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -61151,10 +61151,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 887954 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 887954
+     "since": "W4 exit",
+     "value": 887944
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -72294,26 +72294,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 397 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 397
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 397 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 397
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1192870 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1192870
+     "since": "W4 exit",
+     "value": 1023360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -76916,10 +76916,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 121 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 121
+     "since": "W4 exit",
+     "value": 120
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -76932,10 +76932,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 899941 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 899941
+     "since": "W4 exit",
+     "value": 899880
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -80146,10 +80146,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 241 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 241
+     "since": "W4 exit",
+     "value": 240
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -80162,10 +80162,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1198841 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1198841
+     "since": "W4 exit",
+     "value": 1198800
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -81544,10 +81544,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 57 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 57
+     "since": "W4 exit",
+     "value": 56
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -81560,10 +81560,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 335991 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 335991
+     "since": "W4 exit",
+     "value": 335944
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -82950,10 +82950,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 63 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 63
+     "since": "W4 exit",
+     "value": 62
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -82966,10 +82966,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 402955 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 402955
+     "since": "W4 exit",
+     "value": 402938
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -84366,10 +84366,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 152 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 152
+     "since": "W4 exit",
+     "value": 151
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -84382,10 +84382,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1358779 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1358779
+     "since": "W4 exit",
+     "value": 1358739
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -85926,10 +85926,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 152 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 152
+     "since": "W4 exit",
+     "value": 151
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -85942,10 +85942,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1358775 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1358775
+     "since": "W4 exit",
+     "value": 1358739
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -87487,10 +87487,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 152 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 152
+     "since": "W4 exit",
+     "value": 151
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -87503,10 +87503,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1585282 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1585282
+     "since": "W4 exit",
+     "value": 1585239
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -89071,26 +89071,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 443 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 443
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 443 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 443
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 2120687 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 2120687
+     "since": "W4 exit",
+     "value": 1663360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -90703,26 +90703,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 443 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 443
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 443 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 443
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 3126323 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 3126323
+     "since": "W4 exit",
+     "value": 2303360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -92277,10 +92277,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 151 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 151
+     "since": "W4 exit",
+     "value": 150
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -92293,10 +92293,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1799792 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1799792
+     "since": "W4 exit",
+     "value": 1799742
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -93790,10 +93790,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -93806,10 +93806,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 575962 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 575962
+     "since": "W4 exit",
+     "value": 575952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -95246,26 +95246,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 151 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 151
+     "since": "W4 exit",
+     "value": 150
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 151 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 151
+     "since": "W4 exit",
+     "value": 150
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 526442 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 526442
+     "since": "W4 exit",
+     "value": 526392
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -97937,10 +97937,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 65 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 65
+     "since": "W4 exit",
+     "value": 64
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -97953,10 +97953,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 575946 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 575946
+     "since": "W4 exit",
+     "value": 575936
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -99400,10 +99400,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -99416,10 +99416,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 417572 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 417572
+     "since": "W4 exit",
+     "value": 417552
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -100825,10 +100825,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -100841,10 +100841,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 143964 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 143964
+     "since": "W4 exit",
+     "value": 143952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -102179,26 +102179,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 143984 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 143984
+     "since": "W4 exit",
+     "value": 143952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -106057,26 +106057,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 305 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 305
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 304 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 304
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 2270999 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 2270999
+     "since": "W4 exit",
+     "value": 2047360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -107708,26 +107708,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 305 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 305
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 304 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 304
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 2239175 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 2239175
+     "since": "W4 exit",
+     "value": 2047360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -109383,26 +109383,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 616 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 616
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 615 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 615
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 3681741 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 3681741
+     "since": "W4 exit",
+     "value": 2047360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -111058,26 +111058,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 616 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 616
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 615 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 615
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 3113104 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 3113104
+     "since": "W4 exit",
+     "value": 2047360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -114543,10 +114543,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -114559,10 +114559,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 287963 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 287963
+     "since": "W4 exit",
+     "value": 287952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -116073,10 +116073,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 193 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 193
+     "since": "W4 exit",
+     "value": 192
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -116089,10 +116089,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1151253 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1151253
+     "since": "W4 exit",
+     "value": 1151232
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -118676,26 +118676,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 450 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 450
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 450 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 450
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1133421 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1133421
+     "since": "W4 exit",
+     "value": 1023360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -120109,26 +120109,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 287 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 287
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 283 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 283
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1030765 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1030765
+     "since": "W4 exit",
+     "value": 1023360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -122958,10 +122958,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 151 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 151
+     "since": "W4 exit",
+     "value": 150
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -122974,10 +122974,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 1349762 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 1349762
+     "since": "W4 exit",
+     "value": 1349742
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -124431,10 +124431,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 49 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 49
+     "since": "W4 exit",
+     "value": 48
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -124447,10 +124447,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 431962 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 431962
+     "since": "W4 exit",
+     "value": 431952
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -132022,26 +132022,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 380 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 380
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 380 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 380
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 3916458 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 3916458
+     "since": "W4 exit",
+     "value": 3071360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -133657,26 +133657,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 304 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 304
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 304 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 304
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 2365776 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 2365776
+     "since": "W4 exit",
+     "value": 2047360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -135284,26 +135284,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 571 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 571
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 570 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 570
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 6402848 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 6402848
+     "since": "W4 exit",
+     "value": 3071360
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -136983,26 +136983,26 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 455 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 455
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 454 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 454
+     "since": "W4 exit",
+     "value": 256
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 4176028 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 4176028
+     "since": "W4 exit",
+     "value": 2670014
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -142710,10 +142710,10 @@
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 201 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 201
+     "since": "W4 exit",
+     "value": 200
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -142726,10 +142726,10 @@
     "work.anchor_walk_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W4 step 0 (instrument-only): the new anchor_walk_iters work class (serviceYields map entries plus prune ids; not in legion_total) taken at the step-0 head; B3 drives it to the backstop cursor (<= 256 a tick)",
+     "reason": "W4 exit retake (task-w4-exit, 2026-10-09): B3 erases anchor, approach and parting records on World::noteOrders; the only walk left is prune's 256-a-tick backstop cursor over members plus records (was 2399520 at W4 step 0)",
      "rule": "band",
-     "since": "W4 step 0",
-     "value": 2399520
+     "since": "W4 exit",
+     "value": 2399500
     },
     "work.arrivals.max": {
      "band": 1.1,
@@ -174675,6 +174675,228 @@
    ],
    "reason": "W3 exit ratchet after lead ruling (i) (task-w3-b2, all 91 scenarios, both modes, the gate offsets, serial == workers; oden-win)",
    "when": "2026-10-09T20:03:47Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [
+    {
+     "key": "corner-1x448/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 448
+    },
+    {
+     "key": "corner-1x448/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 448
+    },
+    {
+     "key": "corner-1x448/legion/work.anchor_walk_iters.total",
+     "new": 2303360,
+     "old": 3173634
+    },
+    {
+     "key": "corner-8x56/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 449
+    },
+    {
+     "key": "corner-8x56/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 448
+    },
+    {
+     "key": "corner-8x56/legion/work.anchor_walk_iters.total",
+     "new": 2303280,
+     "old": 3165014
+    },
+    {
+     "key": "densehead/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 397
+    },
+    {
+     "key": "densehead/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 397
+    },
+    {
+     "key": "densehead/legion/work.anchor_walk_iters.total",
+     "new": 1023360,
+     "old": 1192870
+    },
+    {
+     "key": "gen1-route-61923/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 443
+    },
+    {
+     "key": "gen1-route-61923/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 443
+    },
+    {
+     "key": "gen1-route-61923/legion/work.anchor_walk_iters.total",
+     "new": 1663360,
+     "old": 2120687
+    },
+    {
+     "key": "gen1-route-65845/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 443
+    },
+    {
+     "key": "gen1-route-65845/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 443
+    },
+    {
+     "key": "gen1-route-65845/legion/work.anchor_walk_iters.total",
+     "new": 2303360,
+     "old": 3126323
+    },
+    {
+     "key": "pocket-304-open/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 305
+    },
+    {
+     "key": "pocket-304-open/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 304
+    },
+    {
+     "key": "pocket-304-open/legion/work.anchor_walk_iters.total",
+     "new": 2047360,
+     "old": 2270999
+    },
+    {
+     "key": "pocket-304-wall/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 305
+    },
+    {
+     "key": "pocket-304-wall/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 304
+    },
+    {
+     "key": "pocket-615-open/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 616
+    },
+    {
+     "key": "pocket-615-open/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 615
+    },
+    {
+     "key": "pocket-615-open/legion/work.anchor_walk_iters.total",
+     "new": 2047360,
+     "old": 3681741
+    },
+    {
+     "key": "pocket-615-wall/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 616
+    },
+    {
+     "key": "pocket-615-wall/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 615
+    },
+    {
+     "key": "pocket-615-wall/legion/work.anchor_walk_iters.total",
+     "new": 2047360,
+     "old": 3113104
+    },
+    {
+     "key": "split-450-open/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 450
+    },
+    {
+     "key": "split-450-open/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 450
+    },
+    {
+     "key": "split-450-open/legion/work.anchor_walk_iters.total",
+     "new": 1023360,
+     "old": 1133421
+    },
+    {
+     "key": "split-450-pocket/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 287
+    },
+    {
+     "key": "split-450-pocket/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 283
+    },
+    {
+     "key": "tail-corner380/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 380
+    },
+    {
+     "key": "tail-corner380/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 380
+    },
+    {
+     "key": "tail-corner380/legion/work.anchor_walk_iters.total",
+     "new": 3071360,
+     "old": 3916458
+    },
+    {
+     "key": "tail-open304/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 304
+    },
+    {
+     "key": "tail-open304/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 304
+    },
+    {
+     "key": "tail-open304/legion/work.anchor_walk_iters.total",
+     "new": 2047360,
+     "old": 2365776
+    },
+    {
+     "key": "tail-open570/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 571
+    },
+    {
+     "key": "tail-open570/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 570
+    },
+    {
+     "key": "tail-open570/legion/work.anchor_walk_iters.total",
+     "new": 3071360,
+     "old": 6402848
+    },
+    {
+     "key": "tail-wave/legion/work.anchor_walk_iters.max",
+     "new": 256,
+     "old": 455
+    },
+    {
+     "key": "tail-wave/legion/work.anchor_walk_iters.p99",
+     "new": 256,
+     "old": 454
+    },
+    {
+     "key": "tail-wave/legion/work.anchor_walk_iters.total",
+     "new": 2670014,
+     "old": 4176028
+    }
+   ],
+   "reason": "W4 exit (task-w4-exit, 2026-10-09): B3 event-driven records; prune's backstop cursor bounds work.anchor_walk_iters at 256 a tick",
+   "when": "2026-10-09T22:30:46Z"
   }
  ],
  "references": {
@@ -175144,6 +175366,9 @@
     "g.H.left_behind": 55,
     "wall_touch_near_permille": 88,
     "wall_touch_permille": 47,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2303360,
     "work.arrivals.max": 3,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 0,
@@ -175341,6 +175566,9 @@
     "g.H.left_behind": 55,
     "wall_touch_near_permille": 90,
     "wall_touch_permille": 49,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2303280,
     "work.arrivals.total": 286,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 0,
@@ -176864,6 +177092,9 @@
     "reversals": 73,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 1023360,
     "work.aware_pairs.max": 4,
     "work.aware_pairs.p99": 2,
     "work.aware_pairs.total": 160,
@@ -177447,6 +177678,9 @@
     "g.g_zontroll.complete_outside_radius": 0,
     "g.g_zontroll.left_behind": 124,
     "region.goal.inside": 190,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 1663360,
     "work.arrivals.max": 3,
     "work.arrivals.total": 194,
     "work.aware_pairs.max": 1,
@@ -177529,6 +177763,9 @@
     "g.g_zontroll.complete_outside_radius": 8,
     "g.g_zontroll.left_behind": 39,
     "region.goal.inside": 225,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2303360,
     "work.arrivals.max": 3,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
@@ -178000,6 +178237,9 @@
     "stopped_permille": 36,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2047360,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
     "work.aware_pairs.total": 127,
@@ -178094,6 +178334,8 @@
     "stopped_permille": 220,
     "wall_touch_near_permille": 60,
     "wall_touch_permille": 23,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
     "work.aware_pairs.total": 172,
@@ -178176,6 +178418,9 @@
     "stopped_permille": 32,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2047360,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
     "work.aware_pairs.total": 132,
@@ -178275,6 +178520,9 @@
     "stopped_permille": 277,
     "wall_touch_near_permille": 75,
     "wall_touch_permille": 16,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2047360,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
     "work.aware_pairs.total": 159,
@@ -178472,6 +178720,9 @@
     "stopped_permille": 31,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 1023360,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
     "work.aware_pairs.total": 118,
@@ -178547,6 +178798,8 @@
     "region.goal.inside": 47,
     "wall_touch_near_permille": 82,
     "wall_touch_permille": 33,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
     "work.aware_pairs.total": 92,
@@ -178906,6 +179159,9 @@
     "stopped_permille": 37,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 3071360,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,
     "work.aware_pairs.total": 218,
@@ -178991,6 +179247,9 @@
     "stopped_permille": 50,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2047360,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.total": 60,
     "work.completion_dist_1.total": 2,
@@ -179078,6 +179337,9 @@
     "stopped_permille": 117,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 3071360,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.total": 60,
     "work.completion_dist_6.max": 8,
@@ -179161,6 +179423,9 @@
     "region.goal.inside": 45,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.anchor_walk_iters.max": 256,
+    "work.anchor_walk_iters.p99": 256,
+    "work.anchor_walk_iters.total": 2670014,
     "work.arrivals.max": 10,
     "work.aware_pairs.max": 1,
     "work.aware_pairs.p99": 1,

@@ -12,6 +12,113 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W4 exit (2026-10-09): demand-driven upkeep -- B3 only (protocol 242)
+
+Head: `task-w4-exit` = `task-w4-s0` (`3891dac7`) + `task-w4-b3` (`a24717a4`, merged `--no-ff`) + step 4 + this exit.
+**Landed: B3** (event-driven erasure of anchors, approach-done and parting records through
+`World::noteOrders`; prune's hashed 256-a-tick backstop cursor walks members plus records). **Not landed:**
+B1 (demand-driven refresh, `task-w4-b1`: missed its live-Ulasem bounds -- relaxations 0.94-1.03x base vs
+<= 0.55, refresh_idle 0.35-0.42x vs <= 0.30 -- because refresh is under 2% of the benchmark's field work) and
+B2 (striped `scanStill`, `task-w4-b2`: the 1.1x residue-balance bound and three world-test moves over 2%);
+both wait for lead decisions, so `legion_staticidle` stays `WILL_FAIL` and the incremental-softHash verify
+gate does not apply yet. C1 is out of scope. Measured on Linux (local, optimized Debug) and the Mac
+(scenario-set half, base crowdbench screen); oden-win not run (host unavailable). Scenario results are
+platform-independent.
+
+Step 4: protocol 241 -> 242 with its note (`src/net/protocol.h`), `replay_test` asserts 242 and refuses 241.
+The Legion navigation golden is **unchanged** (all 24 Legion checkpoints and all 24 Retail checkpoints equal
+the file, serial == workers: none of its runs has more than 256 members plus records, so the backstop cursor
+walks exactly what the members-only cursor did). `--mpai` Inner Circle 300 s seed 1 (`takserver --local`,
+clean `XDG_DATA_HOME`): Legion **136218d83cbf7af8** twice, Retail b240750e5765c02b -- both unchanged, so the
+recorded hashes stay. `docs/legion-pathfinding.md` "Upkeep on demand" documents the event records and the
+(unchanged) refresh policy and still-body scan.
+
+### Gates on the exit head
+
+| Gate | Result |
+|---|---|
+| Scenario set (`legion_check check --cumulative --require-all`, all 91 files, both modes, gate offsets, serial == workers on all 182 lines) | **PASS**: 16949 keys, 0 failed, 43 ratchets (all `work.anchor_walk_iters`), 1269 licensed, 113 floor exceptions in the run, 768 report-only. Every result line is identical to `task-w4-b3`'s sweep (hashes included). Against the step-0 sweep every observer, work, gauge and churn key is identical except `work.anchor_walk_iters`; Retail hashes identical; Legion hashes differ on 17 of 91 files (members + records over 256: the hashed cursor) |
+| Ratchet + baseline | ratchet applied (43 references); the 108 `work.anchor_walk_iters` entry values retaken with a W4-exit reason; re-check PASS, 0 ratchets. No `accepted_regressions` added (no loss to license) |
+| Retail-floor exceptions | 124 (non-spread), the same as at the W3 close (`0767dfab`) and step 0: not grown, none added or cleared |
+| Cumulative combat cost (`legion_cost.py battle --cumulative`, first gated here) | **PASS**, per-tick max / p99 vs the W0 base (x1.00): 2x60 393639 / 107751 vs 393639 / 107751 (1.000 / 1.000); 2x250 396709 / 188095 vs 2287518 / 1256335 (0.173 / 0.150); 2x500 405292 / 230724 vs 2775448 / 1318758 (0.146 / 0.175); battle-assault 480635 / 403369 vs 2766914 / 1139626 (0.174 / 0.354). Identical to step 0 |
+| `legion_cost` scaling | ok (whole-run ratio 0.56 / 0.67); cost-corner / cost-open N400 `anchor_walk_iters` 720322 -> 613760 and 625732 -> 511360 (retaken) |
+| Field-quota peg run | equal to step 0 on every scenario: battle-assault **47** (= base; over the 30 of brief section 2, pre-existing at step 0 and untouched by B3), 2x500 9, 2x250 8, 2x60 2, refreshchurn* 0-21 |
+| crowdbench screen (86 rows, seed 0, both modes) | head (local) vs the step-0 head `3891dac7` (the Mac): every outcome and counter key identical in all 86 rows except `legion_anchor_walk_iters` (36 rows) and the state hash of 16 Legion rows; every Retail row identical |
+| Exact | Retail golden and hashes unchanged; `check-determinism.sh` OK (golden dcef618cd2e4d558); `check-detmath` OK; serial == workers everywhere; observer_neutral and convoy verify in ctest pass |
+| Reconnect | Ulasem host + joiner + 6 AIs (Legion), joiner killed after 150 s and rejoined with `--mprejoin`: no DESYNCED/suspect; host and joiner both end at 76d4181251c4c264 at tick 9000 |
+| ctest, full | Release 393 / 396 and optimized Debug 406 / 409. Failing: `legion_acceptance_crowdheld_legion` (pre-existing, W5 hard gate), `cobanim` (the worktree has no `assets/extracted`), `crusades_hardening_network` (passes when re-run alone; load flake, triage pending). `legion_b3events` passes |
+
+### Post-W4 cost baseline (C21)
+
+The caps 3.0 declares against the post-W4 head read: `tools/scenarios/post-w4-cost.json` (every scenario's
+Legion `work.legion_total` max / p99 / total, gauges and churn bins on this head; e.g. aware-headon per-tick max
+99210, aware-cross 209270, battle-field-2x60 393549, 2x250 396040, 2x500 406021, battle-assault 491285 as the
+runner reports them), the battle window tables above, and the live 8-AI Ulasem benchmark
+`tools/scenarios/ulasem-w4-exit.json` (`TAK_BENCH=4`, Legion, 7200 ticks, referee == client, no desync):
+
+| seed | units max | field_work / unit-tick (x step 0) | refresh idle | refresh moving | quota_peg_run_max | anchor_walk_iters / unit-tick (x step 0) | still_per_residue_max |
+|---|---|---|---|---|---|---|---|
+| 0 | 3549 | 136.55 (0.98) | 0.501 | 1.101 | 1098 | 0.0973 (0.89) | 28 |
+| 1 | 3555 | 144.61 (1.02) | 0.842 | 0.896 | 3517 | 0.0983 (0.90) | 26 |
+| 2 | 3507 | 143.74 (1.01) | 1.032 | 0.983 | 3521 | 0.0975 (0.88) | 25 |
+
+Churn bins flat (max/min of bins 2-4: 1.06 / 1.01 / 1.00). The live game is not reproducible run to run (the
+same tree gave seed 0 hash bb99707028c0036b here and d29171633db05dde in B3's run), so per-seed ratios to step
+0 compare two different games: field work is within 2%; the quota peg run of seeds 1 and 2 (3517 / 3521 vs
+1479 / 2506) is game-dependent, not a B3 effect (B3 does no field work).
+
+### Every key that moved by more than 5% against the step-0 base
+
+All 44 are `work.anchor_walk_iters` (Legion), all intended (B3: the cursor bounds the walk at 256 a tick).
+No Retail key and no outcome key moved.
+
+| key | old | new | change | kind |
+|---|---|---|---|---|
+| corner-1x448/legion/work.anchor_walk_iters.max | 448 | 256 | -42.9% | intended |
+| corner-1x448/legion/work.anchor_walk_iters.p99 | 448 | 256 | -42.9% | intended |
+| corner-1x448/legion/work.anchor_walk_iters.total | 3173634 | 2303360 | -27.4% | intended |
+| corner-8x56/legion/work.anchor_walk_iters.max | 449 | 256 | -43.0% | intended |
+| corner-8x56/legion/work.anchor_walk_iters.p99 | 448 | 256 | -42.9% | intended |
+| corner-8x56/legion/work.anchor_walk_iters.total | 3165014 | 2303280 | -27.2% | intended |
+| densehead/legion/work.anchor_walk_iters.max | 397 | 256 | -35.5% | intended |
+| densehead/legion/work.anchor_walk_iters.p99 | 397 | 256 | -35.5% | intended |
+| densehead/legion/work.anchor_walk_iters.total | 1192870 | 1023360 | -14.2% | intended |
+| gen1-route-61923/legion/work.anchor_walk_iters.max | 443 | 256 | -42.2% | intended |
+| gen1-route-61923/legion/work.anchor_walk_iters.p99 | 443 | 256 | -42.2% | intended |
+| gen1-route-61923/legion/work.anchor_walk_iters.total | 2120687 | 1663360 | -21.6% | intended |
+| gen1-route-65845/legion/work.anchor_walk_iters.max | 443 | 256 | -42.2% | intended |
+| gen1-route-65845/legion/work.anchor_walk_iters.p99 | 443 | 256 | -42.2% | intended |
+| gen1-route-65845/legion/work.anchor_walk_iters.total | 3126323 | 2303360 | -26.3% | intended |
+| pocket-304-open/legion/work.anchor_walk_iters.max | 305 | 256 | -16.1% | intended |
+| pocket-304-open/legion/work.anchor_walk_iters.p99 | 304 | 256 | -15.8% | intended |
+| pocket-304-open/legion/work.anchor_walk_iters.total | 2270999 | 2047360 | -9.8% | intended |
+| pocket-304-wall/legion/work.anchor_walk_iters.max | 305 | 256 | -16.1% | intended |
+| pocket-304-wall/legion/work.anchor_walk_iters.p99 | 304 | 256 | -15.8% | intended |
+| pocket-304-wall/legion/work.anchor_walk_iters.total | 2239175 | 2047360 | -8.6% | intended |
+| pocket-615-open/legion/work.anchor_walk_iters.max | 616 | 256 | -58.4% | intended |
+| pocket-615-open/legion/work.anchor_walk_iters.p99 | 615 | 256 | -58.4% | intended |
+| pocket-615-open/legion/work.anchor_walk_iters.total | 3681741 | 2047360 | -44.4% | intended |
+| pocket-615-wall/legion/work.anchor_walk_iters.max | 616 | 256 | -58.4% | intended |
+| pocket-615-wall/legion/work.anchor_walk_iters.p99 | 615 | 256 | -58.4% | intended |
+| pocket-615-wall/legion/work.anchor_walk_iters.total | 3113104 | 2047360 | -34.2% | intended |
+| split-450-open/legion/work.anchor_walk_iters.max | 450 | 256 | -43.1% | intended |
+| split-450-open/legion/work.anchor_walk_iters.p99 | 450 | 256 | -43.1% | intended |
+| split-450-open/legion/work.anchor_walk_iters.total | 1133421 | 1023360 | -9.7% | intended |
+| split-450-pocket/legion/work.anchor_walk_iters.max | 287 | 256 | -10.8% | intended |
+| split-450-pocket/legion/work.anchor_walk_iters.p99 | 283 | 256 | -9.5% | intended |
+| tail-corner380/legion/work.anchor_walk_iters.max | 380 | 256 | -32.6% | intended |
+| tail-corner380/legion/work.anchor_walk_iters.p99 | 380 | 256 | -32.6% | intended |
+| tail-corner380/legion/work.anchor_walk_iters.total | 3916458 | 3071360 | -21.6% | intended |
+| tail-open304/legion/work.anchor_walk_iters.max | 304 | 256 | -15.8% | intended |
+| tail-open304/legion/work.anchor_walk_iters.p99 | 304 | 256 | -15.8% | intended |
+| tail-open304/legion/work.anchor_walk_iters.total | 2365776 | 2047360 | -13.5% | intended |
+| tail-open570/legion/work.anchor_walk_iters.max | 571 | 256 | -55.2% | intended |
+| tail-open570/legion/work.anchor_walk_iters.p99 | 570 | 256 | -55.1% | intended |
+| tail-open570/legion/work.anchor_walk_iters.total | 6402848 | 3071360 | -52.0% | intended |
+| tail-wave/legion/work.anchor_walk_iters.max | 455 | 256 | -43.7% | intended |
+| tail-wave/legion/work.anchor_walk_iters.p99 | 454 | 256 | -43.6% | intended |
+| tail-wave/legion/work.anchor_walk_iters.total | 4176028 | 2670014 | -36.1% | intended |
+
 ## W4 step 0 (2026-10-09): instruments, the staticidle fixture and the base for B1/B2/B3 (no sim change)
 
 Head: `task-w4-s0` = `task-w3-b2` (through the W3 close-out rulings (e)-(i), `0767dfab`) + instrument-only commits.
