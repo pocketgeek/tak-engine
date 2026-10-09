@@ -13,6 +13,7 @@
 #include "gaf/nimbus.h"
 #include "gaf/animationtiming.h"
 #include "sim/detmath.h"
+#include "sim/simprobe.h"
 #include "sim/mission.h"
 #include "sim/scenario.h"
 #include "sim/retailreach.h"
@@ -28,6 +29,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <tuple>
 #include <array>
 #include <atomic>
@@ -47,6 +49,35 @@ static const bool g_phase = getenv("TAK_PHASE") != nullptr;
 static thread_local double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
 static thread_local double g_tcomb = 0, g_scriptMs = 0, g_moveMs = 0, g_navMs = 0;
 static thread_local double g_exploreMs = 0;   // navigation exploration; part of sep
+// Part of "other": the tick prologue (everything between the navigator's upkeep and the
+// per-unit loop, less burn and vis), and the once-a-second retired-unit compaction, which
+// runs after the tick total is taken and is reported beside it.
+static thread_local double g_prologueMs = 0, g_compactMs = 0;
+
+namespace {
+// One TAK_PHASE bucket: its wall time, and in a debug build with TAK_PMU also the PMU
+// deltas over the same span (src/sim/simprobe.h).
+struct PhaseSpan {
+    double& acc;
+    std::chrono::steady_clock::time_point t0;
+#ifndef NDEBUG
+    int phase;
+    probe::PmuSample p0;
+#endif
+    PhaseSpan(double& a, [[maybe_unused]] int ph) : acc(a), t0(std::chrono::steady_clock::now()) {
+#ifndef NDEBUG
+        phase = ph;
+        if (probe::kPmu) p0 = probe::pmuRead();
+#endif
+    }
+    ~PhaseSpan() {
+        acc += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+#ifndef NDEBUG
+        if (probe::kPmu) probe::pmuAdd(phase, p0);
+#endif
+    }
+};
+} // namespace
 
 namespace {
 
@@ -897,6 +928,7 @@ Unit* World::unit(int id) {
     }
     // Restored retail fixtures can reorder or author IDs directly. Repair only
     // that lookup; normal spawn/compaction paths maintain the table eagerly.
+    TAK_PASS();
     for(size_t i=0;i<units_.size();++i)if(units_[i].id==id) {
         if(unitSlotById_.size()<=size_t(id))unitSlotById_.resize(size_t(id)+1,-1);
         unitSlotById_[size_t(id)]=int32_t(i);return &units_[i];
@@ -923,6 +955,7 @@ void World::compactRetiredUnits() {
     for(const auto& storm:storms_)referenced.insert(storm.fromId);
     for(const auto& blast:deathBlasts_)referenced.insert(blast.fromId);
     size_t write=0;
+    TAK_PASS();
     for(size_t read=0;read<units_.size();++read) {
         auto& u=units_[read];
         if(!u.alive() && u.deadFor>=kRetiredTicks+30 && u.corpseUntil==0 &&
@@ -936,7 +969,7 @@ void World::compactRetiredUnits() {
             if(size_t(u.id)<unitSlotById_.size())unitSlotById_[size_t(u.id)]=-1;
             continue;
         }
-        if(write!=read)units_[write]=std::move(u);
+        if(write!=read) {TAK_PROBE(++probe::tl.compactMoved);units_[write]=std::move(u);}
         const int id=units_[write].id;
         if(unitSlotById_.size()<=size_t(id))unitSlotById_.resize(size_t(id)+1,-1);
         unitSlotById_[size_t(id)]=int32_t(write++);
@@ -2325,6 +2358,7 @@ void World::tickRetailGroups() {
     std::array<std::array<bool,100>,kMaxPlayers> members{};
     std::array<std::vector<RetailGroupUnit>,kMaxPlayers> roster;
     std::array<std::vector<size_t>,kMaxPlayers> index;
+    TAK_PASS();
     for (size_t i=0;i<units_.size();++i) {
         Unit& u=units_[i];
         if (!u.alive() || !u.type || u.player<0 || u.player>=kMaxPlayers) continue;
@@ -2450,6 +2484,7 @@ void World::planLegionFlightStations() {
                !u.type->isStructure() && !u.underConstruction && !u.embarked();
     };
     bool flyers=false;
+    TAK_PASS();
     for (const auto& u:units_) {
         if (!member(u)) continue;
         auto& g=groups[size_t(u.player)][size_t(-u.squad)];
@@ -2479,6 +2514,7 @@ void World::planLegionFlightStations() {
     }
     if (!flyers) return;
     std::array<std::array<int,11>,kMaxPlayers> slots{};
+    TAK_PASS();
     for (size_t i=0;i<units_.size();++i) {
         const Unit& u=units_[i];
         if (!member(u) || !u.type->canFly || !legionStationOrder(u)) continue;
@@ -4738,6 +4774,7 @@ static bool meleeInRange(const UnitType* a, const UnitType* b, float dx, float d
 // not a projectile blocker; sight grids still consult the shared obstacle overlay.
 // Ground-only combat retains its existing sight test and navigation is unchanged.
 bool World::combatLineOfSight(const Unit& from,const Unit& to) const {
+    TAK_PROBE(++probe::tl.losCalls);
     const bool naval=from.type->domain==UnitType::Domain::Water ||
                      to.type->domain==UnitType::Domain::Water;
     return (naval?navalSight_:nav_).losBetween(from.x.toFloat(),from.z.toFloat(),to.x.toFloat(),to.z.toFloat(),
@@ -4842,6 +4879,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
         uint64_t enemies=~uint64_t(0);
         for (int player=0;player<numPlayers() && player<64;++player)
             if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
+        TAK_PROBE(++probe::tl.acqScans; probeNear(u.x.toFloat(), u.z.toFloat(), ar, enemies, true));
         forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || isNeutralPlayer(e.player) || allied(e.player, u.player) || !e.type) return;
@@ -5512,6 +5550,7 @@ void World::rebuildBodyIndex() const {
     bodyTileBounds_.assign(units_.size(),{-1,-1,-1,-1});
     bodyFootprints_.resize(units_.size());
     bodyIndexValid_=true;
+    TAK_PASS();
     for (const auto& u:units_) updateBodyIndex(u);
 }
 
@@ -5583,15 +5622,17 @@ World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId
         if (verify) {
             const auto indexed=result.cells;
             std::fill(result.cells.begin(),result.cells.end(),nullptr);
+            TAK_PASS();
             for (const auto& u:units_) stamp(u);
             if (result.cells!=indexed) throw std::runtime_error("body spatial index differs from full occupancy scan");
         }
 #endif
-    } else for (const auto& u:units_) stamp(u);
+    } else { TAK_PASS(); for (const auto& u:units_) stamp(u); }
     return result;
 }
 
 bool World::gatePassageAt(int x,int z) const {
+    TAK_PASS();
     for (const auto& gate:units_) {
         if (!gate.alive() || gate.embarked() || !gate.type || !gate.type->gate) continue;
         const auto& type=*gate.type;
@@ -5620,6 +5661,7 @@ bool World::gateWantsOpen(const Unit& gate) const {
 void World::tickAutomaticGates() {
     // Gate policy runs at simulation cadence. The skirmish AI scheduler is
     // intentionally independent of retail's planner; the proximity rule is not.
+    TAK_PASS();
     for (auto& gate:units_) {
         if (!gate.alive() || gate.underConstruction || !gate.type || !gate.type->gate ||
             !players_[size_t(gate.player)].automaticGates) continue;
@@ -5671,10 +5713,14 @@ void World::refreshSearchRect(SearchGradePlane& plane,int x,int z,int w,int h) {
     const int x0=std::max(0,x-plane.footX),z0=std::max(0,z-plane.footZ);
     const int x1=std::min(width,x+w+1),z1=std::min(height,z+h+1);
     if (x1<=x0 || z1<=z0) return;
+    TAK_PROBE(++probe::tl.refreshRects; probe::tl.refreshGradeEvals+=uint64_t(x1-x0)*uint64_t(z1-z0));
     const auto bodies=searchBodyRect(x0-1,z0-1,x1-x0+plane.footX+2,z1-z0+plane.footZ+2);
     for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx) {
         const int grade=retailCachedFootprintGrade(cx,cz,plane.footX,plane.footZ,
-            [&](int qx,int qz,int qw,int qh) { return rawSearchGrade(plane,qx,qz,qw,qh,&bodies); });
+            [&](int qx,int qz,int qw,int qh) {
+                TAK_PROBE(++probe::tl.refreshRawGrades);
+                return rawSearchGrade(plane,qx,qz,qw,qh,&bodies);
+            });
         const size_t index=size_t(cz)*width+cx;
         setSearchCell(plane,index,uint8_t((plane.cells[index]&8)|grade));
     }
@@ -5735,6 +5781,7 @@ void World::buildSearchPlane(SearchGradePlane& plane) {
     // so stamping in that order and overwriting leaves the same body's grade.
     std::vector<uint8_t> body(cell.size(),0xff);
     bool anyBody=false;
+    TAK_PASS();
     for (const auto& u:units_) {
         if (!u.alive() || u.embarked() || !u.type || (u.type->canFly && u.flightGroundMode!=1)) continue;
         const auto& type=*u.type;
@@ -5846,6 +5893,7 @@ void World::prepareSearchGrade(int id,bool lastRetry) {
     if (!searchGradeBatch_ || !searchGradeBodiesValid_) {
         if (paths_.profiling()) ++searchGradeBodyRebuilds_;
         searchGradeBodies_.clear();
+        TAK_PASS();
         for (const auto& u:units_) {
             if (!u.type || !u.alive() || u.embarked() || (u.type->canFly && u.flightGroundMode!=1)) continue;
             searchGradeBodies_.push_back({u.id,0x1000001u,u.groundGradeTick,!u.type->isStructure(),
@@ -5967,6 +6015,7 @@ void World::rebuildOccupancy() {
     // the same destination using a stale snapshot of this grid.
     for (int pass = 0; pass < 2; ++pass) {
         const bool wantParked = (pass == 1);
+        TAK_PASS();
         for (const auto& u : units_) {
             if (!u.alive() || u.embarked() || !u.type) continue;
             if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
@@ -5994,6 +6043,7 @@ void World::rebuildGrid() {
     auto inGrid = [](const Unit& u) {
         return u.alive() && !u.embarked() && u.type;
     };
+    TAK_PASS();
     for (const auto& u : units_) {
         if (!inGrid(u)) continue;
         any = true;
@@ -6012,6 +6062,7 @@ void World::rebuildGrid() {
     gTouched_.clear();
     gPlayersValid_=true;
     gNext_.assign(units_.size(), -1);
+    TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         const Unit& u = units_[i];
         if (!inGrid(u)) continue;
@@ -6024,7 +6075,103 @@ void World::rebuildGrid() {
         if (unsigned(u.player)<64) gPlayers_[size_t(c)]|=uint64_t(1)<<u.player;
         else gPlayersValid_=false; // unrepresentable owners require the full traversal
     }
+#ifndef NDEBUG
+    if (probe::kStats) {
+        gBlockWProbe_ = (gW_ + 7) / 8;
+        gBlockPlayersProbe_.assign(size_t(gBlockWProbe_) * size_t((gH_ + 7) / 8), 0);
+        if (gPlayersValid_)
+            for (size_t cell : gTouched_)
+                gBlockPlayersProbe_[size_t((int(cell) / gW_) >> 3) * size_t(gBlockWProbe_) + size_t((int(cell) % gW_) >> 3)] |=
+                    gPlayers_[cell];
+    }
+#endif
 }
+
+#ifndef NDEBUG
+void World::probeNear(float x, float z, float radius, uint64_t players, bool disk) const {
+    auto& c = probe::tl;
+    if (!disk) ++c.nearScans;
+    const int r = int(radius / gCell_) + 1;
+    const int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
+    const float reach = (radius + 2.0f) * (radius + 2.0f);
+    const bool blocks = gPlayersValid_ && gBlockWProbe_ > 0 && !gBlockPlayersProbe_.empty();
+    for (int dz = -r; dz <= r; ++dz) {
+        const int gz = cz + dz;
+        if (gz < 0 || gz >= gH_) continue;
+        int lastBlock = -1;
+        for (int dx = -r; dx <= r; ++dx) {
+            const int gx = cx + dx;
+            if (gx < 0 || gx >= gW_) continue;
+            if (disk) {
+                const float x0 = gOx_ + float(gx) * gCell_, z0 = gOz_ + float(gz) * gCell_;
+                const float ex = std::max({x0 - x, 0.0f, x - (x0 + gCell_)});
+                const float ez = std::max({z0 - z, 0.0f, z - (z0 + gCell_)});
+                if (ex * ex + ez * ez > reach) ++c.nearCellsOutsideDisk;
+                continue;
+            }
+            ++c.nearCells;
+            const size_t cell = size_t(gz) * gW_ + gx;
+            if (gPlayersValid_ && !(gPlayers_[cell] & players)) ++c.nearCellsMasked;
+            if (!blocks) continue;
+            const int b = (gz >> 3) * gBlockWProbe_ + (gx >> 3);
+            if (!(gBlockPlayersProbe_[size_t(b)] & players)) {
+                ++c.nearCellsBlockSkippable;
+                if (b != lastBlock) ++c.nearBlocksSkipped;   // one jump per block run in a row
+                lastBlock = b;
+            }
+        }
+    }
+}
+
+void World::probeScriptBefore(int id, bool eligible) {
+    auto& p = scriptProbe_;
+    const size_t i = size_t(id);
+    if (p.wake.size() <= i) { p.wake.resize(i + 1, 0); p.debt.resize(i + 1, 0); }
+    ++probe::tl.vmTicks;
+    if (eligible && p.wake[i] > tickCounter_) {
+        ++probe::tl.vmSkippable;
+        ++p.debt[i];
+        if (p.wake[i] == UINT32_MAX) ++probe::tl.vmEmpty;
+    } else p.debt[i] = 0;   // due: A1 folds the debt into this real tick
+    p.ticking = id;
+}
+
+void World::probeScriptAfter(int id, const cob::RetailScriptState& state, bool eligible) {
+    auto& p = scriptProbe_;
+    p.ticking = -1;
+    p.owner[&state.vm] = id;
+    const uint64_t now = tickCounter_;
+    uint64_t wake = eligible ? UINT32_MAX : 0;
+    if (eligible) {
+        for (uint32_t m = state.vm.activeThreadMask(); m; m &= m - 1) {
+            const auto& t = state.vm.threads[size_t(std::countr_zero(m))];
+            const uint32_t f = t.words[0];
+            if ((f & 0xff000000u) == 0x2000000u) {
+                const uint32_t w = f & 0xf00000u;
+                if (w == 0x400000u) {   // sleeping: runs again when its remaining count reaches 0
+                    wake = std::min<uint64_t>(wake, now + uint64_t(std::max<int32_t>(std::bit_cast<int32_t>(t.words[3]), 1)));
+                    continue;
+                }
+                if (w == 0x800000u) continue;   // waiting for a child in this VM: the child decides
+            }
+            wake = std::min<uint64_t>(wake, now + 1);   // ready, or waiting on a turn/move
+        }
+        bool moving = state.activePieceMask() != 0;
+        for (size_t k = 64; !moving && k < state.pieces.size(); ++k) moving = state.pieces[k].active;
+        if (moving) wake = std::min<uint64_t>(wake, now + 1);
+    }
+    p.wake[size_t(id)] = uint32_t(std::min<uint64_t>(wake, UINT32_MAX));
+}
+
+void World::probeScriptTouch(const void* vm) {
+    auto& p = scriptProbe_;
+    const auto it = p.owner.find(vm);
+    if (it == p.owner.end() || it->second == p.ticking || size_t(it->second) >= p.wake.size()) return;
+    const size_t i = size_t(it->second);
+    if (p.debt[i]) { ++probe::tl.vmDebtFlushes; p.debt[i] = 0; }
+    p.wake[i] = 0;
+}
+#endif
 
 const Unit* World::lodestoneUpgradeSource(const UnitType* type,float x,float z,int player) const {
     if (!type || !type->onMana || !type->isStructure() || player<0 || manaSpots_.empty()) return nullptr;
@@ -6069,6 +6216,7 @@ std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomi
     std::vector<std::vector<int>> buckets;
     if(!type->isStructure()) {
         buckets.resize(size_t(bw)*bh);
+        TAK_PASS();
         for(size_t i=0;i<units_.size();++i) {
             if(cancelled())return {};
             const auto& u=units_[i];if(!u.alive())continue;
@@ -6124,6 +6272,7 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
         // One lodestone per deposit. Some Sacred Stones register as two adjacent
         // spots (~22-40px apart); a 44px exclusion merges those into one deposit
         // so a second lodestone can't squeeze onto the same stone.
+        TAK_PASS();
         for (const auto& u : units_) {
             if (&u==replacing || !u.alive() || !u.type || !u.type->onMana) continue;
             float dx = u.x.toFloat() - sx, dz = u.z.toFloat() - sz;
@@ -6244,7 +6393,7 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
         return dx * dx + dz * dz < min * min;
     };
     if(candidates) {for(int index:*candidates)if(overlaps(units_[size_t(index)]))return false;}
-    else {for(const auto& u:units_)if(overlaps(u))return false;}
+    else {TAK_PASS();for(const auto& u:units_)if(overlaps(u))return false;}
     return true;
 }
 
@@ -6419,6 +6568,7 @@ void World::tickManaBuildArea(Unit& b) {
     // the same one. Unit order is the deterministic units_ order.
     struct Claim {const UnitType* type;Fixed x,z;};
     std::vector<Claim> claims;std::vector<uint32_t> scouted;
+    TAK_PASS();
     for (const auto& u:units_) {
         if (u.id==b.id || !u.alive() || !allied(u.player,b.player)) continue;
         bool firstArea=true;
@@ -6928,6 +7078,7 @@ void World::tickReclaimArea(Unit& b) {
     // identically on the headless server and all clients.
     const int width=hW_/2,height=hH_/2;
     std::vector<uint8_t> visible(size_t(width)*height,0);
+    TAK_PASS();
     for (const auto& u:units_) {
         // Cargo footprints are live too (4f6a60 has no attachment test).
         if (!u.alive() || !u.type || u.underConstruction || !allied(u.player,b.player)) continue;
@@ -7760,6 +7911,7 @@ void World::tickRetailAiStrike(int owner,unsigned index) {
         return std::bit_cast<int32_t>(uint32_t((x*x)>>32)+uint32_t((z*z)>>32));
     };
     const int threatRadius=(radius*3)/2;
+    TAK_PASS();
     for (const auto& enemy:units_) if (enemy.alive() && !allied(owner,enemy.player) &&
         distance(center->first,center->second,enemy.x.v,enemy.z.v)<=threatRadius*threatRadius)
         unsupported("nearby combat");
@@ -7849,6 +8001,7 @@ void World::tickRetailAiBase(int owner,unsigned index) {
     for (int id:squad.members) if (const Unit* u=unit(id);u && u->alive() && u->type->isStructure())
         footprint+=u->type->footX+u->type->footZ;
     const int radius=retailAiBaseRadius(footprint,0);
+    TAK_PASS();
     for (const auto& enemy:units_) if (enemy.alive() && !allied(owner,enemy.player)) {
         const int64_t dx=std::bit_cast<int32_t>(uint32_t(center->first)-uint32_t(enemy.x.v));
         const int64_t dz=std::bit_cast<int32_t>(uint32_t(center->second)-uint32_t(enemy.z.v));
@@ -7856,6 +8009,7 @@ void World::tickRetailAiBase(int owner,unsigned index) {
         if (distance<=radius*radius) unsupported("nearby threat response");
     }
     unsigned population=0;
+    TAK_PASS();
     for (const auto& u:units_) if (u.alive() && u.player==owner) ++population;
     for (int id:squad.members) {
         Unit* u=unit(id);
@@ -7988,6 +8142,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
 // buildcost/buildtime rate (KINGDOMS.icd 0x51d3e0 -> 0x51f7b0 -> 0x429d90). Dividing
 // by the full count -- damaged or not -- is what stops it being absurd in a crowd.
 void World::tickHealAuras() {
+    TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& s = units_[i];
         if (!s.alive() || s.embarked() || !s.type || s.type->auras.empty() ||
@@ -8059,11 +8214,13 @@ void World::tickAuras(float dt) {
     // Every unit's buffs relax back toward 1.0; aura projectors then refresh the
     // units in their radius, so a buff holds while in range and fades on leaving.
     float relax = std::min(1.0f, 2.0f * dt * float(stride));   // catch up skipped ticks
+    TAK_PASS();
     for (auto& u : units_) {
         if (!u.alive()) continue;
         u.atkBuff += (1.0f - u.atkBuff) * relax;
         u.armBuff += (1.0f - u.armBuff) * relax;
     }
+    TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& s = units_[i];
         if (!s.alive() || s.embarked() || !s.type || s.type->auras.empty() ||
@@ -8130,6 +8287,7 @@ void World::tickAbilities(float dt) {
     // the eligibility re-check inside the loop still runs, so a corpse taken by an
     // earlier caster is skipped by a later one exactly as before.
     corpseIdx_.clear();
+    TAK_PASS();
     for (size_t j = 0; j < units_.size(); ++j)
         if (isCorpse(units_[j])) corpseIdx_.push_back(uint32_t(j));
     // No early return when the list is empty, deliberately. The per-caster loop below
@@ -8141,6 +8299,7 @@ void World::tickAbilities(float dt) {
     // empty corpseIdx_ that inner loop is already a no-op -- so the walk stays O(n),
     // which is the whole point of collecting the corpses once. (Found by review.)
 
+    TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
         if (!u.alive() || !u.type || u.underConstruction || u.incapacitated() ||
@@ -8403,6 +8562,7 @@ void World::visGather() {
     reveals.clear();
     misses.clear();
     reveals.reserve(units_.size());
+    TAK_PASS();
     for (const auto& u : units_) {
         // Shared team vision: every allied, built, living unit reveals fog.
         if (!u.alive() || !u.type || u.underConstruction || !allied(u.player, visPlayer_))
@@ -8554,6 +8714,7 @@ void World::summonReadyGods() {
         // identically, so the sum -- and therefore the spawn point -- is bit-identical.
         float cx = 0, cz = 0;
         int n = 0;
+        TAK_PASS();
         for (const auto& u : units_)
             if (u.alive() && u.player == int(t) && u.type && !u.underConstruction) {
                 cx += u.x.toFloat();
@@ -8594,6 +8755,7 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
     // spot and the later unit stops in the doorway when traffic blocks arrival.
     std::vector<std::pair<float,float>> reserved;
     const Unit* departing=departingId ? unit(departingId) : nullptr;
+    if(departing)TAK_PASS();
     if(departing)for(const auto& u:units_) {
         if(!u.alive() || !u.type || u.underConstruction || u.orders.empty())continue;
         const auto& o=u.orders[currentLeg(u.orders)];
@@ -8902,6 +9064,7 @@ void World::retireAirOccupant(Unit& u) {
 std::span<const int> World::updateAirOccupancy() {
     if (airOccupancy_.width()!=hW_ || airOccupancy_.height()!=hH_) airOccupancy_.reset(hW_,hH_);
     std::vector<Unit*> flyers;
+    TAK_PASS();
     for (auto& u:units_) {
         if (!u.type || !u.type->canFly) continue;
         if (u.alive()) flyers.push_back(&u);
@@ -9229,7 +9392,16 @@ void World::tickUnitScript(Unit& u) {
     auto& factory=*script;
     const auto& file=*u.type->script();
     ScriptHost host{*this,u,factory};
-    if (!factory.deathStopValue) factory.state.tick(file,1,host);
+    if (!factory.deathStopValue) {
+#ifndef NDEBUG
+        const bool probing=probe::kStats;
+        if (probing) probeScriptBefore(u.id,!factory.dying && !u.type->productionScript);
+#endif
+        factory.state.tick(file,1,host);
+#ifndef NDEBUG
+        if (probing) probeScriptAfter(u.id,factory.state,!factory.dying && !factory.deathStopValue && !u.type->productionScript);
+#endif
+    }
     if (factory.dying) { updateCorpseWindow(u);return; }
     const bool activated=!u.underConstruction && !u.buildQueue.empty();
     if (u.type->productionScript && activated!=factory.activated) {
@@ -9906,15 +10078,29 @@ void World::tick(float dt) {
         std::sort(units_.begin(),units_.end(),[](const auto& a,const auto& b){return a.id<b.id;});
     // The profiled tick starts here, so navigator upkeep (Legion
     // field and plane work) and feature burning are inside the total.
-    std::chrono::steady_clock::time_point _tk0, _sep0;
+    std::chrono::steady_clock::time_point _tk0, _sep0, _pro0;
     if (g_phase) { _tk0 = std::chrono::steady_clock::now();
                    g_tcomb = g_scriptMs = g_moveMs = g_navMs = 0;
-                   g_visMs = g_burnMs = g_gridMs = g_exploreMs = 0; }
+                   g_visMs = g_burnMs = g_gridMs = g_exploreMs = g_prologueMs = g_compactMs = 0; }
+#ifndef NDEBUG
+    probe::PmuSample _pmuTick, _pmuSep, _pmuPro;
+    if (g_phase && probe::kPmu) { probe::pmuReset(); _pmuTick = probe::pmuRead(); }
+    // The A1 probe hears about VMs touched from outside their own tick, for this tick only.
+    struct ProbeHook {
+        bool on;
+        explicit ProbeHook(World* w) : on(probe::kStats) {
+            if (on) { probeWorld_ = w; cob::gRetailVmTouch = &World::probeVmTouch; }
+        }
+        ~ProbeHook() { if (on) { probeWorld_ = nullptr; cob::gRetailVmTouch = nullptr; } }
+    } probeHook{this};
+#endif
     if (!tickCounter_) updateNavigationExploration();
     ++tickCounter_;
     {
-        const auto _n0 = g_phase ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        std::optional<PhaseSpan> _nav;
+        if (g_phase) _nav.emplace(g_navMs, probe::kNav);
         if(isLegionPathfinding(pathfindingMode_)) {
+            TAK_PASS();
             for(const auto& u:units_) {
                 if(size_t(u.id)>=legionTickStart_.size()) {
                     legionTickStart_.resize(size_t(u.id)+1);legionTickStartAt_.resize(size_t(u.id)+1,0);
@@ -9926,9 +10112,11 @@ void World::tick(float dt) {
             if(!legion_)legion_=std::make_unique<LegionNavigator>(*this);
             legion_->tick();
         }
-        if (g_phase) g_navMs += std::chrono::duration<double, std::milli>(
-                                    std::chrono::steady_clock::now() - _n0).count();
     }
+    if (g_phase) _pro0 = std::chrono::steady_clock::now();
+#ifndef NDEBUG
+    if (g_phase && probe::kPmu) _pmuPro = probe::pmuRead();
+#endif
     // 51b890 runs before unit updates. Active squads publish whether they
     // contain any completed mobile members (50b7a0), dirtying only on change.
     for (auto& player:players_) if (player.retailAi) {
@@ -9943,6 +10131,7 @@ void World::tick(float dt) {
             if (squad.parameters[8]!=int(populated)) { squad.parameters[8]=int(populated);squad.dirty=1; }
         }
     }
+    TAK_PASS();
     for (auto& _u : units_) {
         _u.turnReqBam = 0;   // requested-turn display field, refreshed below
         _u.tickStartHeadingBam=uint16_t(_u.heading.v);
@@ -9951,10 +10140,9 @@ void World::tick(float dt) {
     hashTrace();   // TAK_HASHTRACE=lo:hi -- per-component dump, EVERY tick on both peers
 #endif
     {
-        auto _b = std::chrono::steady_clock::now();
+        std::optional<PhaseSpan> _burn;
+        if (g_phase) _burn.emplace(g_burnMs, probe::kBurn);
         tickBurning();   // feature fire: spread + burn-out (deterministic, hashed)
-        if (g_phase) g_burnMs += std::chrono::duration<double, std::milli>(
-                                     std::chrono::steady_clock::now() - _b).count();
     }
     // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
     // the client sim and the referee run the identical plan (built in setupMatch), so
@@ -9990,6 +10178,7 @@ void World::tick(float dt) {
     // re-anchor of the segment). The fix is to improve the mover until units stop
     // needing a search -- at which point this zero costs nothing -- NOT to put the
     // budget back. Deliberate call: be faithful now, sharpen the steering later.
+    TAK_PASS();
     for (auto& u : units_) {
         u.justFired=false;u.firedWeapons=0;u.fireAnimations=0;u.weaponAnimations.clear();u.justBuilt=0;
         for(const auto& event:u.pendingWeaponAnimations)
@@ -10002,6 +10191,7 @@ void World::tick(float dt) {
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
+    TAK_PASS();
     for (auto& u : units_) {
         // A unit under construction contributes no economy until it finishes -- a
         // half-built lodestone must not add its mana income or storage capacity yet.
@@ -10045,6 +10235,7 @@ void World::tick(float dt) {
         auto& tm=players_[player];
         if (!tm.retailResources) { tm.creditMana(tm.income*dt);continue; }
         float demand=0;
+        TAK_PASS();
         for (const auto& builder:units_) {
             if (builder.player!=int(player) || !builder.alive() || builder.underConstruction ||
                 builder.embarked()) continue;
@@ -10127,15 +10318,18 @@ void World::tick(float dt) {
     summonReadyGods();
 
     // Both factory and mobile construction keep their sites alive this tick.
+    TAK_PASS();
     for (auto& u : units_)
         if (u.alive() && u.underConstruction) u.beingBuilt = false;
     // Factory missions run in unit order below. Protect their existing sites
     // from orphan decay while the producer still owns an active build.
+    TAK_PASS();
     for (const auto& producer:units_)
         if (producer.alive() && producer.hp>Fixed() && !producer.incapacitated() &&
             !producer.embarked() && !producer.underConstruction && !producer.buildQueue.empty() && producer.productionSiteId)
             if (auto* site=unit(producer.productionSiteId);site && site->alive() &&
                 (site->hp>Fixed() || site->retailSite) && site->player==producer.player) site->beingBuilt=true;
+    TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
         u.constructionHolding=false;
@@ -10150,6 +10344,7 @@ void World::tick(float dt) {
         else if (u.alive() && u.type && u.reclaimId) tickReclaim(u, dt);
         else if (u.alive() && u.type && u.repairId) tickRepair(u, dt);
     }
+    TAK_PASS();
     for (auto& u : units_)
         if (u.alive() && u.type && u.underConstruction && !u.beingBuilt && !(u.retailSite && u.retailSite->mission))
             decayConstruction(u, dt);
@@ -10165,10 +10360,9 @@ void World::tick(float dt) {
         // flight simply skips the beat. Fog is client-only display, never hashed.
         visTimer_ = 0.25f;
         {
-        auto _v = std::chrono::steady_clock::now();
+        std::optional<PhaseSpan> _vis;
+        if (g_phase) _vis.emplace(g_visMs, probe::kVis);
         updateVisibility();
-        if (g_phase) g_visMs += std::chrono::duration<double, std::milli>(
-                                    std::chrono::steady_clock::now() - _v).count();
     }
     }
 
@@ -10347,6 +10541,7 @@ void World::tick(float dt) {
     // identical on every lockstep peer.
     {
         uint32_t live = 0;
+        TAK_PASS();
         for (const auto& u : units_) if (u.alive() && u.type) ++live;
         acqStride_ = std::clamp<uint32_t>(4 + live / 700, 4, 16);
         // (Goal quantization used to coarsen with the crowd here as well -- 2x2 cell
@@ -10382,6 +10577,7 @@ void World::tick(float dt) {
             pathfindingMode_==PathfindingMode::Retail) return nullptr;
         return &forms[u.player][-u.squad];
     };
+    TAK_PASS();
     for (auto& u : units_)
         if (u.alive() && u.type && u.squad < 0 && !u.type->isStructure() &&
             !u.underConstruction && u.baseSpeed.v > 0)
@@ -10414,6 +10610,7 @@ void World::tick(float dt) {
         }
         return false;
     };
+    TAK_PASS();
     for (auto& u : units_) {
         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
         if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
@@ -10433,6 +10630,17 @@ void World::tick(float dt) {
             order(u.id, cx, cz, false);
     }
 
+    // The prologue ends here: burn and vis have their own buckets.
+    if (g_phase) g_prologueMs = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - _pro0).count() - g_burnMs - g_visMs;
+#ifndef NDEBUG
+    if (g_phase && probe::kPmu) {
+        probe::pmuAdd(probe::kPrologue, _pmuPro);
+        for (int i = 0; i < 4; ++i)
+            probe::tlPmu[probe::kPrologue].v[i] -= probe::tlPmu[probe::kBurn].v[i] + probe::tlPmu[probe::kVis].v[i];
+    }
+#endif
+    TAK_PASS();
     for (size_t unitIndex=0;unitIndex<units_.size();++unitIndex) {
 #if defined(__GNUC__) || defined(__clang__)
         // Fetch upcoming thread flags while the current unit runs. This is
@@ -10452,9 +10660,8 @@ void World::tick(float dt) {
         if (units_[unitIndex].alive() && units_[unitIndex].cosmeticConstructionEmitter)
             units_[unitIndex].cosmeticConstructionEmitter->advance();
         if (g_phase) {
-            const auto start=std::chrono::steady_clock::now();
+            PhaseSpan span(g_scriptMs,probe::kScripts);
             tickUnitScript(units_[unitIndex]);
-            g_scriptMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
         } else tickUnitScript(units_[unitIndex]);
         if (units_[unitIndex].retailSite && units_[unitIndex].retailSite->mission)
             tickRetailGetBuilt(units_[unitIndex]);
@@ -10660,9 +10867,8 @@ void World::tick(float dt) {
         tickManaBuildArea(u);
         tickPatrolRepair(u);
         if (g_phase) {
-            const auto start=std::chrono::steady_clock::now();
+            PhaseSpan span(g_moveMs,probe::kMovement);
             tickGroundMission(u);
-            g_moveMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
         } else tickGroundMission(u);
         if (plainFlightPatrol(u)) tickFlightPatrol(u);
         tickGuardNoMove(u);
@@ -10808,7 +11014,7 @@ void World::tick(float dt) {
             u.orders[currentOrder].unload && u.orders[currentOrder].transportUnloadApproach;
         if (!u.orders.empty() && (u.orders.front().load || u.orders.front().unload || routedSurfaceUnload))
             groundMovementHandled=tickTransport(u, dt);
-        else if (g_phase) { auto _c0=std::chrono::steady_clock::now(); tickCombat(u, dt, groundMovementHandled); g_tcomb += std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-_c0).count(); }
+        else if (g_phase) { PhaseSpan span(g_tcomb,probe::kCombat); tickCombat(u, dt, groundMovementHandled); }
         else tickCombat(u, dt, groundMovementHandled);
 
         if (groundMovementHandled) continue;
@@ -10874,9 +11080,8 @@ void World::tick(float dt) {
         }
         if (pathfindingMode_==PathfindingMode::Retail) retailGroupMaximum_=retailGroupLimit(u);
         if (g_phase) {
-            const auto start=std::chrono::steady_clock::now();
+            PhaseSpan span(g_moveMs,probe::kMovement);
             tickNavigationMovement(u,target);
-            g_moveMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
         } else tickNavigationMovement(u,target);
         retailGroupMaximum_=Fixed();
 
@@ -10977,6 +11182,7 @@ void World::tick(float dt) {
                     ai.initialized=true;
                     if (ai.scenarioDeadline && tickCounter_>=ai.scenarioDeadline)
                         unsupported("scenario assignment");
+                    TAK_PASS();
                     for (auto& member:units_) {
                         if (member.player!=owner || !member.alive() || member.underConstruction ||
                             !member.type || member.type->isStructure()) continue;
@@ -11041,6 +11247,7 @@ void World::tick(float dt) {
             const int owner=int(&player-players_.data());
             unsigned population=0;
             for (auto& entry:cache.entries) entry.inputs.count=entry.inputs.completed=0;
+            TAK_PASS();
             for (const auto& member:units_) {
                 if (member.player!=owner || !member.alive()) continue;
                 ++population;
@@ -11166,14 +11373,16 @@ void World::tick(float dt) {
     deathBlasts_.clear();
 
     if (g_phase) _sep0 = std::chrono::steady_clock::now();
+#ifndef NDEBUG
+    if (g_phase && probe::kPmu) _pmuSep = probe::pmuRead();
+#endif
     // Separation: push overlapping mobile units apart. The spatial hash limits
     // each unit to its ~3x3 neighbourhood, so this is O(n) not O(n^2). Each pair
     // is handled once (by the lower index), so the result matches the old loop.
     {
-        auto _g = std::chrono::steady_clock::now();
+        std::optional<PhaseSpan> _grid;
+        if (g_phase) _grid.emplace(g_gridMs, probe::kGrid);
         rebuildGrid();   // units moved this tick; rebuild for accurate neighbours
-        if (g_phase) g_gridMs += std::chrono::duration<double, std::milli>(
-                                     std::chrono::steady_clock::now() - _g).count();
     }
     tickAbilities(dt);   // reclaim / resurrect corpses (uses the fresh grid)
     tickAuras(dt);       // AdjustArmor/Attack stat auras (uses the fresh grid)
@@ -11197,31 +11406,27 @@ void World::tick(float dt) {
     // Win/defeat is derived from unit state on every sim (clients + referee),
     // so all peers agree on the tick a team is eliminated / the game is won.
     {
-        const auto _x0 = g_phase ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        std::optional<PhaseSpan> _explore;
+        if (g_phase) _explore.emplace(g_exploreMs, probe::kExplore);
         updateNavigationExploration();
-        if (g_phase) g_exploreMs += std::chrono::duration<double, std::milli>(
-                                        std::chrono::steady_clock::now() - _x0).count();
     }
     updateOutcome();
+    // The tick total stops here (as it always has); the compaction below is timed on its own.
+    double phaseSep = 0, phaseTotal = 0;
     if (g_phase) {
         auto _end = std::chrono::steady_clock::now();
-        double tsep = std::chrono::duration<double,std::milli>(_end-_sep0).count();
-        double ttot = std::chrono::duration<double,std::milli>(_end-_tk0).count();
-        static double thr = getenv("TAK_PHASE_MS") ? atof(getenv("TAK_PHASE_MS")) : 15.0;
-        if (ttot > thr) {   // only report a stall (threshold tunable via TAK_PHASE_MS)
-            int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
-            // flow= and path= used to sit here; the flow fields and the inline
-            // A* are both gone, so the counters were always zero.
-            std::fprintf(stderr, "SIMPHASE tick=%.1fms combat=%.1f sep=%.1f explore=%.1f vis=%.1f burn=%.1f grid=%.1f scripts=%.1f movement=%.1f nav=%.1f other=%.1f units=%d\n",
-                         ttot, g_tcomb, tsep, g_exploreMs, g_visMs, g_burnMs, g_gridMs, g_scriptMs, g_moveMs, g_navMs,
-                         ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs - g_scriptMs - g_moveMs - g_navMs, alive);
-        }
+        phaseSep = std::chrono::duration<double,std::milli>(_end-_sep0).count();
+        phaseTotal = std::chrono::duration<double,std::milli>(_end-_tk0).count();
+#ifndef NDEBUG
+        if (probe::kPmu) { probe::pmuAdd(probe::kSep, _pmuSep); probe::pmuAdd(probe::kTotal, _pmuTick); }
+#endif
     }
     // Campaign mission runner: feed this tick's build/death events into the "god"
     // script, then advance it (VM + triggers + win/lose). Runs on every peer (build
     // & death events queue VM threads; the spawns/orders happen in step()), so the
     // mission stays in lockstep with no relayed actions.
     if (mission_) {
+        TAK_PASS();
         for (auto& u : units_)
             if (u.justBuilt) mission_->unitBuilt(*this, u.justBuilt);
         for (int id : justDied_) mission_->unitDied(*this, id);
@@ -11236,10 +11441,69 @@ void World::tick(float dt) {
     }
     // Unit COBs ran before the movers above, so GET 33 on the next tick reads
     // this tick's actual wrapped heading delta, not the mover's unclamped request.
+    TAK_PASS();
     for (auto& u:units_)
         u.animationTurnBam=std::bit_cast<int16_t>(
             uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam));
-    compactRetiredUnits();
+    {
+        std::optional<PhaseSpan> _compact;
+        if (g_phase) _compact.emplace(g_compactMs, probe::kCompact);
+        compactRetiredUnits();
+    }
+    if (g_phase) {
+        const double ttot = phaseTotal, tsep = phaseSep;
+        static double thr = getenv("TAK_PHASE_MS") ? atof(getenv("TAK_PHASE_MS")) : 15.0;
+        if (ttot > thr) {   // only report a stall (threshold tunable via TAK_PHASE_MS)
+            int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
+            // flow= and path= used to sit here; the flow fields and the inline
+            // A* are both gone, so the counters were always zero. prologue= is a part
+            // of other=; compact= is outside tick= (it runs after the total is taken).
+            std::fprintf(stderr, "SIMPHASE tick=%.2fms combat=%.2f sep=%.2f explore=%.2f vis=%.2f burn=%.2f grid=%.2f scripts=%.2f movement=%.2f nav=%.2f other=%.2f units=%d prologue=%.2f compact=%.2f\n",
+                         ttot, g_tcomb, tsep, g_exploreMs, g_visMs, g_burnMs, g_gridMs, g_scriptMs, g_moveMs, g_navMs,
+                         ttot - g_tcomb - tsep - g_visMs - g_burnMs - g_gridMs - g_scriptMs - g_moveMs - g_navMs, alive,
+                         g_prologueMs, g_compactMs);
+#ifndef NDEBUG
+            if (probe::kPmu) {
+                // Per phase: cycles, instructions, cycles stalled on L1-miss loads, LLC misses
+                // (user mode, this thread). "other" is tick minus every named bucket; unlike
+                // SIMPHASE's other= it does not subtract grid a second time (grid is inside sep).
+                probe::PmuSample other = probe::tlPmu[probe::kTotal];
+                for (int ph : {probe::kCombat, probe::kSep, probe::kVis, probe::kBurn, probe::kScripts,
+                               probe::kMovement, probe::kNav})
+                    for (int i = 0; i < 4; ++i) other.v[i] -= probe::tlPmu[ph].v[i];
+                std::string line = "SIMPMU t=" + std::to_string(tickCounter_) + " units=" + std::to_string(alive);
+                auto add = [&](const char* name, const probe::PmuSample& v) {
+                    char b[160];
+                    std::snprintf(b, sizeof b, " %s=%llu/%llu/%llu/%llu", name, (unsigned long long)v.v[0],
+                                  (unsigned long long)v.v[1], (unsigned long long)v.v[2], (unsigned long long)v.v[3]);
+                    line += b;
+                };
+                for (int ph = 0; ph < probe::kPhases; ++ph) add(probe::kPhaseNames[ph], probe::tlPmu[ph]);
+                add("other", other);
+                std::fprintf(stderr, "%s\n", line.c_str());
+            }
+#endif
+        }
+    }
+#ifndef NDEBUG
+    if (probe::kStats) {
+        const auto& c = probe::tl;
+        int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
+        std::fprintf(stderr, "SIMSTATS tick=%u units=%d vm_ticks=%llu vm_skippable=%llu vm_empty=%llu vm_debt_flushes=%llu"
+                     " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
+                     " near_cells_block_skippable=%llu near_cells_outside_disk=%llu acq_scans=%llu los_calls=%llu"
+                     " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu compact_moved=%llu passes=%llu\n",
+                     tickCounter_, alive, (unsigned long long)c.vmTicks, (unsigned long long)c.vmSkippable,
+                     (unsigned long long)c.vmEmpty, (unsigned long long)c.vmDebtFlushes, (unsigned long long)c.nearScans,
+                     (unsigned long long)c.nearCells, (unsigned long long)c.nearCellsMasked,
+                     (unsigned long long)c.nearBlocksSkipped, (unsigned long long)c.nearCellsBlockSkippable,
+                     (unsigned long long)c.nearCellsOutsideDisk, (unsigned long long)c.acqScans,
+                     (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
+                     (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
+                     (unsigned long long)c.compactMoved, (unsigned long long)c.passes);
+        probe::tl = {};   // work between ticks (commands, the state hash) counts toward the next line
+    }
+#endif
 }
 
 void World::resumeClocks(uint32_t tick, uint32_t gameRng) {
@@ -11500,6 +11764,7 @@ uint64_t World::stateHash() const {
     }
     checkpoint("grades");
     if(!retiredOwners_.empty()) {mix(0x52455449524544ull);mix(retiredHash_);mix(uint32_t(nextId_));}
+    TAK_PASS();
     for (const auto& u : units_) {
         mix(uint64_t(u.id));
         mix(uint64_t(u.player));
@@ -11913,6 +12178,7 @@ uint64_t World::stateHash() const {
     for (const auto& [id,footprint]:corpseFootprints_) {
         mix(uint32_t(id));mix(uint32_t(footprint.x));mix(uint32_t(footprint.z));mix(uint32_t(footprint.type));mix(uint32_t(footprint.damage));
     }
+    TAK_PASS();
     for (const auto& corpse:units_) if (!corpse.alive() &&
         (corpse.deadFor<kRetiredTicks || corpseFootprints_.contains(corpse.id))) {
         mix(uint32_t(corpse.id));mix(uint32_t(corpse.deadFor));mix(uint32_t(corpse.corpseUntil));
@@ -11957,6 +12223,7 @@ uint64_t World::stateHash() const {
         // GET40 makes scores and future attribution authoritative in campaigns.
         mix(scoreAutomaticDisabled_);
         for(const auto& p:players_) mix(uint32_t(p.score));
+        TAK_PASS();
         for(const auto& u:units_) mix(uint32_t(u.lastHitPlayer));
         mission_->foldHash(h);
     }
@@ -12088,6 +12355,7 @@ int World::updateOutcome() {
     std::vector<int> aliveByPlayer(players_.size(), 0);
     // Living Monarch (commander unit) per player, for the monarch-loss rule.
     std::vector<int> monarchByPlayer(players_.size(), 0);
+    TAK_PASS();
     for (const auto& u : units_)
         if (u.alive() && u.type &&
             u.player >= 0 && u.player < numPlayers()) {

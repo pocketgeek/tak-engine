@@ -464,15 +464,36 @@
     }
 
     bool GameView::canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
-        std::lock_guard<std::mutex> lk(simMutex_);
+        std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
+#ifndef NDEBUG
+        lockSimTimed(lk);
+#else
+        lk.lock();
+#endif
         return world_.canPlace(type, x, z, localPlayer_);
     }
+
+#ifndef NDEBUG
+    // TAK_PACELOG: how long the render thread waits for the sim worker on a per-frame check.
+    void GameView::lockSimTimed(std::unique_lock<std::mutex>& lk) {
+        if (!paceOn()) { lk.lock(); return; }
+        const auto t0 = std::chrono::steady_clock::now();
+        lk.lock();
+        paceLockWaitNs_ += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - t0).count());
+    }
+#endif
 
     bool GameView::clearableAt(const tak::sim::UnitType* type, float x, float z,
                                std::vector<int>& outFeatures) {
         const auto* builder=selectedBuilder();
         if (!builder || !builder->type->canReclaim) return false;
-        std::lock_guard<std::mutex> lk(simMutex_);
+        std::unique_lock<std::mutex> lk(simMutex_, std::defer_lock);
+#ifndef NDEBUG
+        lockSimTimed(lk);
+#else
+        lk.lock();
+#endif
         return world_.clearableForPlacement(type, x, z, outFeatures, localPlayer_);
     }
 

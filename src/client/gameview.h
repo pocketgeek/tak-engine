@@ -109,6 +109,7 @@
 #include <unordered_set>
 #include <memory>
 #include <mutex>
+#include <time.h>   // clock_gettime(CLOCK_THREAD_CPUTIME_ID): TAK_PACELOG worker CPU time
 #include <optional>
 #include <random>
 #include <set>
@@ -641,6 +642,9 @@ public:
     // spectator-only games came back "clean" while comparing nothing at all.
     uint64_t reportedHash(bool spectator, uint32_t tick) {
         if (spectator) return 0;
+#ifndef NDEBUG
+        PaceSpan span(paceHashNs_);
+#endif
         uint64_t h = world_.stateHash();
         if (fakeDesyncTick_ && tick >= fakeDesyncTick_) h ^= 0x9e3779b97f4a7c15ull;
         return h;
@@ -2186,6 +2190,45 @@ public:
     bool paceInit_ = false;
     uint32_t paceLastTick_ = 0;
     uint64_t paceLastMs_ = 0;
+    // TAK_PACELOG worker columns: ns accumulated by whichever thread runs the sim (the worker,
+    // or the main thread inline), read as per-frame deltas by the main thread. Lock waits are
+    // the render thread's own (canPlaceLocked / clearableAt, the per-frame placement checks).
+    std::atomic<uint64_t> paceWorldNs_{0}, paceCaptureNs_{0}, paceHashNs_{0}, paceJobWallNs_{0}, paceJobCpuNs_{0};
+    std::array<uint64_t, 5> paceSeenNs_{};
+    uint64_t paceLockWaitNs_ = 0;
+    static bool paceOn() {
+        static const bool on = [] { const char* v = tak::devEnv("TAK_PACELOG"); return v && *v && !(v[0] == '0' && !v[1]); }();
+        return on;
+    }
+    void lockSimTimed(std::unique_lock<std::mutex>& lk);
+    // Adds the wall ns of its scope to `acc` (and the thread-CPU ns to `cpu`, if given) when
+    // TAK_PACELOG is on.
+    struct PaceSpan {
+        std::atomic<uint64_t>& acc;
+        std::atomic<uint64_t>* cpu;
+        bool on;
+        std::chrono::steady_clock::time_point t0;
+        uint64_t c0 = 0;
+        explicit PaceSpan(std::atomic<uint64_t>& a, std::atomic<uint64_t>* c = nullptr) : acc(a), cpu(c), on(paceOn()) {
+            if (!on) return;
+            t0 = std::chrono::steady_clock::now();
+            if (cpu) c0 = threadCpuNs();
+        }
+        ~PaceSpan() {
+            if (!on) return;
+            acc += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
+            if (cpu) *cpu += threadCpuNs() - c0;
+        }
+        static uint64_t threadCpuNs() {
+#ifdef CLOCK_THREAD_CPUTIME_ID
+            timespec ts{};
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+            return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
+#else
+            return 0;
+#endif
+        }
+    };
     tak::postrail::Writer postrail_;              // TAK_POSTRAIL: this playback's digest trail, for the head to read back
     void openPostrail(const char* path) { postrail_.open(path); }
 private:

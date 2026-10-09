@@ -413,6 +413,9 @@
                 { std::lock_guard<std::mutex> lk(inboxMutex_); simInbox_.push_back(std::move(job)); }
                 inboxCv_.notify_one();
             } else {
+#ifndef NDEBUG
+                PaceSpan jobSpan(paceJobWallNs_, &paceJobCpuNs_);
+#endif
                 for (const auto& c : bd.cmds) apply(c);
                 for (const auto& e : bd.events) applyEvent(e);
                 // Only the SIM half per bundle (speedMult() is 1 in net games): the
@@ -555,6 +558,20 @@
                 fr.tick = netTick_;
             }
             fr.buffered = paceBuffered; fr.rate = paceRate; fr.fastForward = paceFF;
+            // What the frame shows: the pinned snapshot, interpolated the way the render does.
+            fr.shown = front().gameTick;
+            const double alpha = front().tickDurMs > 0.0f
+                ? std::clamp(double(nowMs - front().tickMs) / double(front().tickDurMs), 0.0, 1.0) : 1.0;
+            fr.td = double(fr.shown) - 1.0 + alpha;
+            fr.lockWaitUs = double(paceLockWaitNs_) / 1000.0;
+            paceLockWaitNs_ = 0;
+            const uint64_t now[5] = {paceWorldNs_.load(), paceCaptureNs_.load(), paceHashNs_.load(),
+                                     paceJobWallNs_.load(), paceJobCpuNs_.load()};
+            double* out[5] = {&fr.worldMs, &fr.captureMs, &fr.hashMs, &fr.jobWallMs, &fr.jobCpuMs};
+            for (size_t i = 0; i < 5; ++i) {
+                *out[i] = double(now[i] - paceSeenNs_[i]) / 1e6;
+                paceSeenNs_[i] = now[i];
+            }
             pace_.frame(fr);
         }
 #endif

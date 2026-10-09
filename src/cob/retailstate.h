@@ -103,6 +103,9 @@ struct RetailScriptState {
     };
 
     template<class Host> void tick(const File& file,int32_t elapsed,Host& host) {
+#ifndef NDEBUG
+        if (!elapsed && gRetailVmTouch) gRetailVmTouch(&vm);
+#endif
         Adapter<Host> adapter{*this,host};
         vm.tick(file,elapsed,adapter);
 #ifndef NDEBUG
@@ -148,6 +151,9 @@ struct RetailScriptState {
         vm.threads[size_t(slot)].words[2]=count-1u;
         return true;
     }
+
+    // The derived active-piece index (pieces 0-63), for instruments.
+    uint64_t activePieceMask() const { return activePieces_; }
 
     template<class Host> bool query(const File& file,int script,std::array<uint32_t,4>& args,Host& host) {
         const int slot=vm.start(file,script,args);

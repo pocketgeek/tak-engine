@@ -43,5 +43,5 @@ SP=$!
 trap 'kill $SP 2>/dev/null; wait $SP 2>/dev/null' EXIT
 for _ in $(seq 1 90); do grep -qi listening "$work/server.log" && break; sleep 1; done
 taskset -c "$CPUS" "$BUILD/takclient" game "$MAP" --data "$DATA" --server 127.0.0.1 --serverport "$PORT" --mpai --time "$SECS" > "$work/client.log" 2>&1
-grep -E '^(PACE|mp-headless done)' "$work/client.log"
-echo "logs: $work (pace.txt: wall_ms ticks tick inbox buffered rate fast_forward, one line per frame)"
+grep -E '^(PACE|PACEWORK|mp-headless done)' "$work/client.log"
+echo "logs: $work (pace.txt: wall_ms ticks tick inbox buffered rate fast_forward shown td lock_wait_us world_ms capture_ms hash_ms job_wall_ms job_cpu_ms, one line per frame)"

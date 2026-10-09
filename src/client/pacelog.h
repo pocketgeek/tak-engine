@@ -10,6 +10,14 @@
 // or over twice the nominal tick count (the median), the longest burst and where, p99 frame
 // ms, inbox p99 and the fast-forward count. TAK_PACELOG=<path> also writes the records, one
 // line each, to <path>. Report-only: tools/pace_check.sh runs it, no gate reads it.
+//
+// The presentation and worker columns (WE E0.1) follow the original seven on each record line:
+//   shown (the tick of the snapshot the frame displays), td (the display time: shown - 1 plus the
+//   interpolation fraction the render uses), render-thread simMutex_ wait in us, and the sim
+//   worker's (or the inline drain's) time over the ticks it finished since the previous frame:
+//   world ms (World::tick + transport-effect capture), capture ms (captureFrame), hash ms (the
+//   reported state hash), and the wall and thread-CPU ms of those jobs (wall/CPU > 1.1 is
+//   preemption). At exit a second line, PACEWORK, gives the per-tick means and the lock waits.
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -27,6 +35,10 @@ public:
         float rate = 0;
         bool fastForward = false;
         uint32_t tick = 0;   // sim tick reached at the end of the frame
+        uint32_t shown = 0;  // tick of the displayed snapshot
+        double td = 0;       // display time in ticks (shown - 1 + interpolation fraction)
+        double lockWaitUs = 0;
+        double worldMs = 0, captureMs = 0, hashMs = 0, jobWallMs = 0, jobCpuMs = 0;
     };
 
     // "1" (or any value that is not a path): summary only. Anything with a '/' or '.' is a file.
@@ -42,8 +54,9 @@ public:
         if (!on_) return;
         frames_.push_back(fr);
         if (f_)
-            std::fprintf(f_, "%.3f %d %u %d %d %.3f %d\n", fr.wallMs, fr.ticks, fr.tick, fr.inbox, fr.buffered,
-                         double(fr.rate), fr.fastForward ? 1 : 0);
+            std::fprintf(f_, "%.3f %d %u %d %d %.3f %d %u %.3f %.1f %.3f %.3f %.3f %.3f %.3f\n", fr.wallMs, fr.ticks,
+                         fr.tick, fr.inbox, fr.buffered, double(fr.rate), fr.fastForward ? 1 : 0, fr.shown, fr.td,
+                         fr.lockWaitUs, fr.worldMs, fr.captureMs, fr.hashMs, fr.jobWallMs, fr.jobCpuMs);
     }
 
     struct Summary {
@@ -102,6 +115,29 @@ public:
         return out + "}";
     }
 
+    // Per-tick means of the worker columns and the render-thread lock waits, over frames from `skip`.
+    std::string work(size_t skip = 0) const {
+        double ticks = 0, world = 0, capture = 0, hash = 0, wall = 0, cpu = 0, waitMax = 0, waitSum = 0;
+        size_t waited = 0, frames = 0;
+        for (size_t i = skip; i < frames_.size(); ++i) {
+            const auto& fr = frames_[i];
+            ++frames;
+            ticks += fr.ticks; world += fr.worldMs; capture += fr.captureMs; hash += fr.hashMs;
+            wall += fr.jobWallMs; cpu += fr.jobCpuMs;
+            waitSum += fr.lockWaitUs;
+            waitMax = std::max(waitMax, fr.lockWaitUs);
+            if (fr.lockWaitUs > 0) ++waited;
+        }
+        char b[320];
+        const double t = std::max(1.0, ticks);
+        std::snprintf(b, sizeof b,
+                      "PACEWORK ticks=%.0f world_ms=%.3f capture_ms=%.3f hash_ms=%.3f job_wall_ms=%.3f wall_cpu=%.3f"
+                      " lock_wait_frames=%zu/%zu lock_wait_us_sum=%.0f lock_wait_us_max=%.0f",
+                      ticks, world / t, capture / t, hash / t, wall / t, cpu > 0 ? wall / cpu : 0.0, waited, frames,
+                      waitSum, waitMax);
+        return b;
+    }
+
     ~PaceLog() {
         if (f_) std::fclose(f_);
         // The first second of frames is the initial buffer fill and the load: not pacing.
@@ -110,6 +146,7 @@ public:
             double t = 0;
             while (skip < frames_.size() && t < 1000.0) t += frames_[skip++].wallMs;
             std::fprintf(stderr, "%s\n", format(summarize(skip)).c_str());
+            std::fprintf(stderr, "%s\n", work(skip).c_str());
         }
     }
 
