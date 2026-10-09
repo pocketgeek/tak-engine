@@ -1024,6 +1024,14 @@
      "since": "W0",
      "value": 523
     },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 562
+    },
     "parked_no_progress": {
      "band": 1.1,
      "dir": "lower",
@@ -2298,6 +2306,14 @@
      "since": "W0",
      "value": "4074c152688a2965"
     },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 863
+    },
     "serial_eq_workers": {
      "dir": "lower",
      "reason": "serial == workers on hash, digest and keys (PLAN 3.0 exact)",
@@ -2348,6 +2364,14 @@
      "rule": "band",
      "since": "W0",
      "value": 664
+    },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 559
     },
     "parked_no_progress": {
      "band": 1.1,
@@ -3551,6 +3575,14 @@
      "since": "W0",
      "value": "ff40a4f239dc91d0"
     },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 699
+    },
     "serial_eq_workers": {
      "dir": "lower",
      "reason": "serial == workers on hash, digest and keys (PLAN 3.0 exact)",
@@ -3601,6 +3633,14 @@
      "rule": "band",
      "since": "W0",
      "value": 532
+    },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 386
     },
     "parked_no_progress": {
      "band": 1.1,
@@ -4804,6 +4844,14 @@
      "since": "W0",
      "value": "8aeb87ed6676a972"
     },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 853
+    },
     "serial_eq_workers": {
      "dir": "lower",
      "reason": "serial == workers on hash, digest and keys (PLAN 3.0 exact)",
@@ -4853,6 +4901,14 @@
      "rule": "band",
      "since": "W0",
      "value": 496
+    },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 390
     },
     "parked_no_progress": {
      "band": 1.1,
@@ -6056,6 +6112,14 @@
      "since": "W0",
      "value": "646f9e31330d7dca"
     },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 815
+    },
     "serial_eq_workers": {
      "dir": "lower",
      "reason": "serial == workers on hash, digest and keys (PLAN 3.0 exact)",
@@ -6105,6 +6169,14 @@
      "rule": "band",
      "since": "W0",
      "value": 483
+    },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 783
     },
     "parked_no_progress": {
      "band": 1.1,
@@ -7235,6 +7307,14 @@
      "rule": "eq",
      "since": "W0",
      "value": "dc69b59db56ea38a"
+    },
+    "pair.contacts.permille_x100": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 815
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -38945,6 +39025,22 @@
      "since": "W0",
      "value": 967
     },
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 623
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 87
+    },
     "parked_no_progress": {
      "dir": "lower",
      "reason": "W0: offset spread inf exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 1 x1.20",
@@ -40173,6 +40269,14 @@
     }
    },
    "retail": {
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 450
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -40207,6 +40311,14 @@
      "rule": "eq",
      "since": "W0",
      "value": "985cffacebb3b053"
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 83
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -40337,6 +40449,22 @@
      "rule": "band",
      "since": "W0",
      "value": 890
+    },
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 301
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 34
     },
     "parked_no_progress": {
      "band": 1.1,
@@ -41425,6 +41553,14 @@
     }
    },
    "retail": {
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 560
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -41459,6 +41595,14 @@
      "rule": "eq",
      "since": "W0",
      "value": "2a8c2ba3c67c7f77"
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 135
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -66951,6 +67095,14 @@
      "since": "W0",
      "value": 2193
     },
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 466
+    },
     "gate.top.crossings": {
      "band": 1.2,
      "dir": "lower",
@@ -66966,6 +67118,14 @@
      "rule": "band",
      "since": "W0",
      "value": 475
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 143
     },
     "parked_no_progress": {
      "band": 1.1,
@@ -68046,6 +68206,14 @@
     }
    },
    "retail": {
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 185
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -68080,6 +68248,14 @@
      "rule": "eq",
      "since": "W0",
      "value": "a2c4ddf36a2240a6"
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 216
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -68372,6 +68548,14 @@
      "since": "W0",
      "value": -1
     },
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 476
+    },
     "gate.top.crossings": {
      "band": 1.2,
      "dir": "lower",
@@ -68387,6 +68571,14 @@
      "rule": "band",
      "since": "W0",
      "value": 480
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 187
     },
     "parked_no_progress": {
      "dir": "lower",
@@ -69610,6 +69802,14 @@
     }
    },
    "retail": {
+    "gate.strip.files_x100": {
+     "band": 1.1,
+     "dir": "higher",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 177
+    },
     "hash@-1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
@@ -69644,6 +69844,14 @@
      "rule": "eq",
      "since": "W0",
      "value": "840b0c427afbd62c"
+    },
+    "lane.cross.swaps_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W0 follow-up: audit-defined lane, strip and pair keys (lane.cross.swaps_permille, gate.strip.files_x100, pair.contacts.permille_x100), median of 5 offsets, band 1.10; the lanes and strip keys reproduce the audit's laneRun, the pair keys its aware contacts",
+     "rule": "band",
+     "since": "W0-followups",
+     "value": 217
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -73213,6 +73421,232 @@
    "mode": "legion",
    "reason": "fails legion <= retail x1.1 at W0: legion 1710 vs retail 1268 unit-ticks in terrain contact without progress; informational: crowdbench rows are not scenario-runner records, so legion_check.py does not evaluate this key; recorded so the W0 floor list is complete (screen: tools/crowdbench_screen.py, 6000 ticks, seed 0, turn rate 2500)",
    "scenario": "crowdbench/trapped/200x1"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 374..672 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 749..900 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 367..1249 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 655..983 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-cross"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 304..526 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 764..928 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 276..563 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 763..965 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-seen"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 657..976 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "pair.contacts.permille_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 763..965 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 585..659 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x150"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 73..136 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x150"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "gate.strip.crossings",
+   "reason": "fails legion <= retail x1.1 at W0-followups: legion 86 vs retail 47; the strip gate is a report-only pw.py count (the audit crossings are lane.cross.*)",
+   "scenario": "island-1x150"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 407..516 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x150"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 71..91 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x150"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 282..342 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 17..57 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 529..610 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 112..199 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "island-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 444..505 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 97..188 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-1x48"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "gate.strip.crossings",
+   "reason": "fails legion <= retail x1.1 at W0-followups: legion 7 vs retail 4; the strip gate is a report-only pw.py count (the audit crossings are lane.cross.*)",
+   "scenario": "wall-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 153..188 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 174..233 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-1x48"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 431..510 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-4x50"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 167..213 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-4x50"
+  },
+  {
+   "cluster": "MV-02",
+   "key": "gate.strip.crossings",
+   "reason": "fails legion <= retail x1.1 at W0-followups: legion 8 vs retail 3; the strip gate is a report-only pw.py count (the audit crossings are lane.cross.*)",
+   "scenario": "wall-4x50"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.strip.files_x100",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 162..222 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-4x50"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "lane.cross.swaps_permille",
+   "median5": true,
+   "mode": "retail",
+   "reason": "3-offset spread 172..227 exceeds the band at W0-followups; gated on median-of-5 offsets",
+   "scenario": "wall-4x50"
   }
  ],
  "history": [
@@ -73221,6 +73655,12 @@
    "ratchets": [],
    "reason": "W0 first committed base: legion-w0 head b081298 (b8a4110 sim, W0 instruments, W1 A1-A8 exact perf steps; Legion state hashes identical to b8a4110), optimized Debug and Release, start offsets 0,+1,-1,+2,-2 (median-of-5), both modes, serial == workers. Gated families: work.* counters (band 1.10), safety keys (spins, walk_in_place, illegal overlap: eq where 0), outcome keys g.*.arrived/done/t90/complete_*/left_behind, side.*.t90, gate.*.files/crossings, reversals, stopped, contact_*/wall_touch*, parked_no_progress, flyer keys, region.*.inside (one-sided bands 1.10-1.20); Retail: state hashes and serial_eq_workers (eq). Per-body g.* keys of aware-*, motion-* and battle-assault are not baselined (one-body groups); diagnostics stop_go/sideways/backward/back/statue_ticks/crawl_samples/waiting_no_progress/clearance/spacing are report-only here (offset spread far above any band) and are added by the workstream whose theme gates them, except sideways/backward/stop_go on motion-* and stop_go on uturn which are gated. Legion state hashes are not baselined (declared hash-identity steps use tools/legion_identity.sh); keys whose offset spread exceeds 1.20 are listed under exceptions (median5, gated on the 5-offset run). Retail-floor failures are listed under exceptions with their cluster.",
    "when": "2026-10-08T00:00:00Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "W0 follow-up 1: added the audit-defined keys lane.cross.swaps_permille (laneRun lane-order swaps), gate.strip.files_x100 (abreast strips) and pair.contacts.permille_x100 (aware contacts) for wall-1x48, wall-4x50, island-1x48, island-1x150, aware-cross/headon/seen/unseen/attack: median of 5 offsets, both modes, band 1.10; no existing value changed",
+   "when": "2026-10-08T12:00:00Z"
   }
  ],
  "references": {},
