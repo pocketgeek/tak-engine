@@ -12,6 +12,62 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W4 step 0 (2026-10-09): instruments, the staticidle fixture and the base for B1/B2/B3 (no sim change)
+
+Head: `task-w4-s0` = `task-w3-b2` (through the W3 close-out rulings (e)-(i), `0767dfab`) + instrument-only commits.
+Every Legion and Retail state hash is unchanged: the Windows scenario sweep (all 91 files, both modes, the 11 gate
+offsets, serial == workers) passes `legion_check check` with 0 failed, 0 ratchets after the baseline commit, and
+`--mpai` Inner Circle 300 s seed 1 matches the W3 exit (below).
+
+**Added (observation only, never hashed).** `Stats`: `stillPerResidueMax` (most bodies one `id % 30` residue of a
+scanStill pass holds; B2 stripes by it) and `quotaPegRunMax` (longest run of ticks whose field quota was spent to
+zero), both running maxima reported by the runner as `gauge.*` keys, not per-tick work; `anchorWalkIters`
+(serviceYields' map entries + prune's ids; a `work.*` key outside `legion_total`, baselined for every scenario);
+`softHashVerifyTicks` and `refreshSuppressed` (0 until B2 / B1; the NDEBUG invariant that the unbuilt-mechanism
+counters are zero now covers them). The runner adds `churn.bin<k>`: total Legion work per 1500-tick bin.
+`TAK_LPROBE` lines carry `units` and the new counters. `tools/ulasem_counters.py` reduces a live Ulasem run's LPROBE
+lines to per-unit-tick values.
+
+**staticidle** (`legion_world_test staticidle`, ctest `legion_staticidle`, registered WILL_FAIL until B1 lands): twelve
+guards hold beside an idle friend with a finished field while a cell inside the field's reach is toggled every 10
+ticks for 600 ticks. Step-0 head: 60 refreshes, 764640 relaxations, all `field_work_refresh_idle`; B1 must make it
+0. (A group needs live members to exist, so "parked" means holding with orders: groups die with their last member.)
+Part 2 (passes): a parked group whose route a new wall cuts, ordered on again, re-plans and arrives (field work
+133920, 883 ticks).
+
+**W0-base comparison, battle-field / battle-assault** (`legion_cost.py battle --cumulative`, exits 0): total Legion work
+per-tick max / p99 / run total as a fraction of the W0 base. 2x60 1.000 / 1.000 / 1.000 (its base was retaken equal);
+2x250 0.173 / 0.150 / 0.219; 2x500 0.146 / 0.175 / 0.279; battle-assault 0.174 / 0.354 / 0.376. All at or below
+x1.00, so the cumulative combat gate passes at the step-0 head. Field-quota peg runs (`gauge.quota_peg_run_max`):
+battle-assault **47** (over 30; the gate is "not longer than base" -- this is the base), 2x500 9, 2x250 8, 2x60 2;
+churn scenarios (`refreshchurn*`) 0-21; all in `tools/scenarios/w4-step0-gauges.json` with every scenario's churn bins.
+
+**Live 8-AI Ulasem benchmark** (`TAK_BENCH=4`, Legion, 240 s = 7200 ticks, seeds 0/1/2, client and referee equal;
+`tools/scenarios/ulasem-w4-s0.json`, reproduce with `ulasem_counters.py`). Hashes at tick 7200 (seed 0/1/2):
+b4cf5e143fecdd5d / ecc7c95e6fcf140d / 989a2274822c0c1a (this seeding, not the --mpai game).
+
+| seed | units max | unit-ticks | field_work / unit-tick | first builds | refresh idle | refresh moving | quota_peg_run_max | anchor_walk_iters / unit-tick |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 3571 | 18.65M | 139.09 | 98.4% (84.98 slot + 51.62 solo) | 1.33 | 1.17 | 1149 | 0.109 |
+| 1 | 3543 | 18.60M | 142.43 | 98.7% | 0.85 | 0.89 | 1479 | 0.110 |
+| 2 | 3499 | 18.73M | 142.41 | 98.6% | 1.03 | 0.92 | 2506 | 0.111 |
+
+Churn (field_work per 1500-tick bin, seed 0): 474M, 544M, 549M, 567M (bins 2-4 within 4%).
+
+**Findings the B1/B2 steps must absorb.**
+- Refresh work is about 1.7% of the benchmark's relaxations (refresh idle + moving = 1.2-2.5 per unit-tick of 139-142);
+  98%+ is first builds, and refreshes almost stop after the first ~1000 ticks (seeds 0 and 2: no refresh work after
+  probe tick 1100; seed 1: last at 5700): the field quota is pegged for 1100-2500 consecutive ticks and the first-build
+  loops are served before the refresh loops. So B1's acceptance "relaxations per unit-tick <= 55% of base" and "refresh idle <= 30% of
+  base" cannot be met by suppressing refreshes in this benchmark: the relaxation total is first builds (C1's target,
+  `fieldWorkFirstSolo` -30%). The 55% bound needs a lead decision (re-aim at C1, or measure B1 on staticidle and the
+  scenario set).
+- `stillPerResidueMax` is 26-27 against a mean of about 11 bodies per residue in the benchmark (2.4x; B2's bound is
+  1.1x): `id % 30` is not an even split of the still population. B2 needs a different stripe key (or the bound a
+  different reading).
+- `anchorWalkIters` is about 0.11 per unit-tick (about 2.0M over the run, the four per-tick map walks); prune's
+  backstop cursor is at most 256 a tick.
+
 ## W3 exit (2026-10-09): one order, one army; tails settle (protocol 241)
 
 Head: `task-w3-b2` = round 4 + the exit commits below (no sim change after round 4's `05513052`: every
