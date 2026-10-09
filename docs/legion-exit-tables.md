@@ -12,6 +12,102 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W3 exit (2026-10-09): one order, one army; tails settle (protocol 241)
+
+Head: `task-w3-b2` = round 4 + the exit commits below (no sim change after round 4's `05513052`: every
+scenario state hash, Legion and Retail, equals round 4's on all offsets; `--mpai` unchanged). Measured on
+oden-win (scenario results are platform-independent), optimized Debug, all 91 scenarios, both modes, the gate
+offsets (small-count keys on the median of 0,+-1..+-5 or the file's `gateoffsets`, every other key on the core
+five), serial == workers on all 182 lines. Base: the W3 step-0 sim `7a01f7bb` with the exit observer (branch
+`w3b4-base` = `w3b3-base` + the convoy-keyed command).
+
+Landed in W3 (protocol 241; details in the round sections below): A1 one convoy per click
+(`Order::convoyTick`, the hashed open-convoy table); A2 Legion keys on the convoy -- one point, formation and
+settle chain per click, slots handed out 32 a tick once the convoy closes (a first part under 64 orders takes
+its formation at once); B one settle rule -- a queued, pressed unit settles where it stands within its capped
+reach after up to 3 re-choices (none while on its own slot); tick-stamp hold and stall clocks with stride-free
+rest; a held formation unit re-aims its lane every 20 held ticks.
+
+Exit commits: `27c04ef2` observer (ruling (1)), `0d2dcd58` legion_liftflyers bound (W3-4), `28c07765`
+legion_cost windows (ruling (3)), the baseline commit (rulings (1), (2), (4); W3-3, W3-4), this section and
+`docs/legion-exit-w3-moves.md` (the full move table).
+
+### Lead rulings W3 round 4 (1)-(6) and user decisions W3-3 / W3-4, applied
+
+| Item | Applied |
+|---|---|
+| (1) key commands by convoy, both modes | `legion_scenario` runs the file's clicks through a `ConvoyTable` of its own (never the world's), each as one shared order at its click on its directive tick; the observer keys contact_settled's own command AND a group's packed arrival disc by that convoy (the disc sized for every body of the convoy). 20 scenarios read differently (wall-4x50, corner-4x50 / 8x56 / 1x448, mixed2, the gen1 routes, aware-* and motion-*, whose one-body groups share one click); no state hash moves. 179 entries retaken from the step-0 sim (oden-win), 26 spread exceptions added / 30 dropped, 36 floor exceptions dropped (the per-group discs undercounted arrivals: corner-* and gen1 `g.*.arrived`, wall-4x50 B), 59 added for keys that fail the floor at that base (per-body aware-* / motion-* t90s first read on a disc, MV-09 / MV-12; corner-4x50 D and wall-4x50 C / D t90 never, AR-08). wall-4x50 now: A arrived 49 vs Retail 50, contact_settled 0 (one command) |
+| (2) deadend-w6-n120-closed-plain `g.A.arrived` 19 vs Retail 26 | floor exception AR-08, user decision 3 + the dead-end AR-08 decision |
+| (3) legion_cost battle-assault march / contactA, battle-field-2x60 windows | retaken with reasons (battle-assault's base was field-budget starved; 2x60 after round 4 fix (2)); the W0-flagged combat entries keep their W0 values. `legion_cost` scaling and all four battle files pass |
+| (4) exit licensing redone on the final head | round 3's pinned licensing stripped (1310 licenses, 8 moved bounds restored, 106 first-non-zero entries, 158 W3-exit spread exceptions); every remaining loss re-licensed by cause: 1267 `accepted_regressions` (1113 work-class moves under the W3 B declared tolerance, the rest AR-08 / decision 3, the dead-end decision, A2/B shape as incidental; strait-2x48 `g.B.done` never under ruling (d)), 13 bounds, 186 spread exceptions, 97 entries for counters first non-zero here; ratchet: 3717 references raised, 47 floor exceptions cleared (13 spread exceptions they also carried re-added) |
+| (5) crowdheld | pre-existing at the step-0 head; recorded as a W5 hard gate (below) |
+| (6), W3-4 | doorplug-112 `wall_touch_permille` 11 vs 8 and `wall_touch_near_permille` 64 vs 42, tail-corner380 `wall_touch_near_permille` 2 vs 1: floor exceptions, cluster W5/W9; doorplug-124 `g.A.done` (never at +1 and -4 of 11): spread exception, W5/W9; legion_liftflyers own-run detour bound open + 3 (`kLiftDetourSlack`, own 5 vs open 2). All W5/W9 hard exit gates |
+| W3-3 | corner-1x448 `gate.top.crossings` 4 vs 0 and corner-8x56 3 vs 2: floor exceptions MV-02, until W8 (W8 must bring ALL lane crossings within Retail, W3-2's densehead / strait-2x150 included) |
+
+### Gates on the final head
+
+| Gate | Result |
+|---|---|
+| `legion_check check` (gate offsets, both modes, serial == workers) | **13 fail**, all Retail floor, 16564 keys, 1267 licensed, 156 floor exceptions in the run. The 13 are per-body keys of the one-body aware-* / motion-* groups, read on a disc for the first time by ruling (1): they pass at the step-0 base and fail at the head (below). Not licensed: a floor failure needs a decision |
+| Retail-floor exceptions (non-spread, whole file) | 185 -> 167 (59 first-read keys added at the step-0 base, 6 decision exceptions, 36 dropped by (1), 47 cleared by the ratchet) |
+| Legion ctests | Linux (optimized Debug, the exit baseline; legion, navigation_determinism, replay, observer, convoy, issue_selection, movement_orders): 213 of 214 -- only legion_acceptance_crowdheld_legion fails (pre-existing, W5); every `legion_check_*` passes. oden-win (`0d2dcd58`, before the legion_cost retake): 173 of 176 -- battle-assault / battle-field-2x60 (fixed by the retake) and crowdheld |
+| `legion_cost` | scaling ok (W(4N)/W(N) 0.39 / 0.72, slot cells 0.44 / 0.61, upkeep 1.00); battle-assault, 2x60, 2x250, 2x500 ok |
+| `--mpai` Inner Circle 300 s seed 1 | oden-win: Legion 136218d83cbf7af8, Retail b240750e5765c02b (unchanged); the Mac: Retail b240750e5765c02b |
+| crowdbench screen | see below |
+| Retail | every Retail state hash equal to round 4's; no Retail key moved against the step-0 base |
+
+### Open: the 13 floor failures (for the lead)
+
+Per-body t90 (and `arrived`) of the one-body observer groups of aware-* and motion-*. Their 24 / 48 bodies are
+one click, so under ruling (1) each reads arrival on the click's disc; before, each body had its own 33 px disc
+and both modes read `never`, so the floor passed trivially. On the step-0 base they pass; on the head:
+
+| Key | step-0 base Legion | head Legion | Retail |
+|---|---|---|---|
+| aware-cross g.a12.t90 | 1815 | 1937 | 1693 |
+| aware-headon g.a02.t90 | 1855 | 1892 | 1704 |
+| aware-seen g.a00 / a02 / a06 .t90 | 1927 / 1880 / 1847 | 1982 / 1982 / 1981 | 1795 / 1777 / 1760 |
+| aware-unseen g.a05 / a07 / a13 .t90 | 1806 / 1906 / 1864 | 1937 / 1963 / 1937 | 1734 / 1764 / 1759 |
+| motion-cross g.u11.t90 | 2674 | never (at 7 of 11 offsets) | 2703 |
+| motion-cross g.u16.t90 | 2317 | 2571 | 2314 |
+| motion-open g.u16 / u32 .t90 | 2316 / 2364 | 2792 / 2409 | 2363 / 2171 |
+| motion-open g.u43.arrived | 1 | 0 | 1 |
+
+The aware-* keys are within per-body offset noise of the floor (per offset the head spans e.g. 1639..2612 on
+aware-cross a12, Retail 1592..1798); motion-open u16 is a steady +20% (every offset 2477..2927 vs base
+2247..2388), and motion-cross u11 is a "never" (ruling (d): a real bug, one body of the one-click group that does
+not stop inside the click's disc at 7 of 11 offsets). A2's one formation for the whole click walks some bodies to
+slots farther round than Retail's stop-where-near. Needs a ruling: exceptions (MV-09 / MV-12, decision 2), a
+floor for one-body groups judged on the click as a whole, or a fix (W5).
+
+### W5 / W9 hard exit gates carried from W3
+
+| Item | W3 exit | W5 / W9 must |
+|---|---|---|
+| doorplug-112 wall touch / near (W3-4) | 11 vs Retail 8, 64 vs 42 | within Retail x1.1; exceptions gone |
+| tail-corner380 wall touch near (W3-4) | 2 vs 1 | within Retail x1.1 |
+| doorplug-124 `g.A.done` (W3-4) | never at 2 of 11 offsets | completes at every gate offset |
+| legion_liftflyers own-run detour (W3-4) | 5 vs open 2 (bound open + 3) | open + 1 (`kLiftDetourSlack` back to 1) |
+| crowdheld_legion (ruling (5)) | `units_ever_terrain_stuck` 1, one unit 5 cells short at tick 7198 (as at the step-0 head) | the ctest passes |
+
+### Headline keys (Legion, step-0 base -> exit; Retail on the same binary)
+
+| Fixture | Key | Base | W3 exit | Retail | Kind |
+|---|---|---|---|---|---|
+| pocket-304-open | g.A.arrived | 93 | 284 | 304 | intended (T1 pocket) |
+| pocket-615-open | g.A.arrived | 152 | 606 | 297 | intended |
+| tail-open570 | g.A.t90 | never | 2793 | 7790 | intended (tails settle) |
+| tail-wave | g.A.arrived | 100 | 172 | 288 | intended |
+| deadend-w4-n120-closed-plain | g.A.complete_n | 49 | 120 | 120 | intended (settled == n) |
+| doorplug-124 | g.A.done | 3268 | 1982 | 1921 | intended (never at 2 of 11, W3-4) |
+| wall-4x50 | g.D.arrived | 18 | 34 | 49 | intended (one convoy) |
+| corner-8x56 | reversals | 271 | 307 | 237 | incidental, licensed |
+| densehead | gate.mid.crossings | 146 | 523 | 208 | W3-2 exception (W8) |
+| mixed2 | spins | 30 | 117 | 4855 | incidental, licensed (escort flyers, W6) |
+
+Every key that moved by more than 5% (7068: 2934 intended, 4134 incidental; no Retail key):
+[legion-exit-w3-moves.md](legion-exit-w3-moves.md).
+
 ## W3 round 4 (2026-10-09): the lead's measurement rulings applied; two fixes -- the exit is still not passed
 
 Head: `task-w3-b2` = round 3 + origin/main 41fa2d7a (merged) + round 4. Measured on `05513052`, optimized

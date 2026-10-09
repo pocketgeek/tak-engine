@@ -809,6 +809,11 @@ armies:
 - **Groups plan together.** A group's order is planned once for the whole group,
   and the group heads for the destination as a body, not as a column of
   individuals.
+- **One order per click.** A right-click is one order however big the
+  selection is: the whole army gets one destination area and one formation,
+  even though a selection over 64 units reaches the game in parts over a few
+  ticks. Quick clicks that send parts of an army to the same spot a moment
+  apart join that one order too.
 - **Arrivals settle.** Units take up places around the destination point, and
   once they are close they stop. Large groups do not keep shuffling forever:
   the last units of a group, pressed against the group's own crowd with no way
