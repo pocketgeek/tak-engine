@@ -87,11 +87,25 @@ def login(port, fingerprint, user='Alice'):
     return peer
 
 
+def loopback_aliases():
+    # Linux and Windows route all of 127.0.0.0/8 to loopback; macOS only
+    # configures 127.0.0.1 on lo0 unless aliases are added by an admin.
+    for n in (2, 17):
+        probe = socket.socket()
+        try:
+            probe.bind(('127.0.0.' + str(n), 0))
+        except OSError:
+            return False
+        finally:
+            probe.close()
+    return True
+
+
 def closed(peer):
     peer.socket.settimeout(3)
     try:
         assert peer.socket.recv(1) == b'', 'connection still accepted'
-    except ConnectionResetError:
+    except ConnectionError:  # reset (POSIX) or aborted (Windows)
         pass
 
 
@@ -191,15 +205,18 @@ def boundaries(binary, data, root):
             assert (reply.num('<B'), reply.num('<B')) == (0, 4)
 
         # Independently addressed peers share a global work ceiling as well.
-        time.sleep(1.05)
-        with contextlib.ExitStack() as stack:
-            peers = [stack.enter_context(contextlib.closing(Peer(port, '127.0.0.' + str(n)))) for n in range(1, 18)]
-            for peer in peers[:16]:
-                peer.socket.sendall(frame('CrusadesGetAllegiance', auth.field('synthetic')) * 64)
-                assert len(peer.drain_barrier()[auth.MSG['CrusadesAllegianceResult']]) == 64
-            peers[-1].send('CrusadesGetAllegiance', auth.field('synthetic'))
-            reply = peers[-1].receive('CrusadesAllegianceResult')
-            assert (reply.num('<B'), reply.num('<B')) == (0, 4)
+        if not loopback_aliases():
+            print('skipping the multi-address ceiling check: 127.0.0.2+ is not bindable on this host')
+        else:
+            time.sleep(1.05)
+            with contextlib.ExitStack() as stack:
+                peers = [stack.enter_context(contextlib.closing(Peer(port, '127.0.0.' + str(n)))) for n in range(1, 18)]
+                for peer in peers[:16]:
+                    peer.socket.sendall(frame('CrusadesGetAllegiance', auth.field('synthetic')) * 64)
+                    assert len(peer.drain_barrier()[auth.MSG['CrusadesAllegianceResult']]) == 64
+                peers[-1].send('CrusadesGetAllegiance', auth.field('synthetic'))
+                reply = peers[-1].receive('CrusadesAllegianceResult')
+                assert (reply.num('<B'), reply.num('<B')) == (0, 4)
 
         # Invalid frame lengths and a burst of tiny frames cannot monopolize
         # the event loop; a valid peer continues to answer afterward.
@@ -224,7 +241,7 @@ def boundaries(binary, data, root):
                     peer.send('Ping')
                     peer.receive('Pong')
                     accepted.append(peer)
-                except (RuntimeError, ConnectionResetError, BrokenPipeError):
+                except (RuntimeError, ConnectionError):
                     rejected += 1
             assert len(accepted) <= 64 and rejected >= 8, (len(accepted), rejected)
             # Keep these unauthenticated sockets busy: pings must not extend
@@ -237,7 +254,7 @@ def boundaries(binary, data, root):
                         peer.send('Ping')
                         peer.receive('Pong')
                         live.append(peer)
-                    except (RuntimeError, ConnectionResetError, BrokenPipeError):
+                    except (RuntimeError, ConnectionError):
                         pass
                 accepted = live
                 if accepted:
