@@ -81,9 +81,9 @@ public:
         // by this residue; target <= 1.1x the mean), and the longest run of
         // consecutive ticks whose field quota was spent to zero.
         uint64_t stillPerResidueMax=0,quotaPegRunMax=0;
-        // Map entries serviceYields walks (anchors, approachDone, parts,
-        // yielding) plus the ids prune validates (B3 drives this to the
-        // backstop cursor alone); soft-hash recomputations checked by
+        // Ids prune's backstop cursor validates (members plus the anchors,
+        // approachDone and parts records; at most 256 a tick since B3, which
+        // erases those records by event instead of a whole walk); soft-hash recomputations checked by
         // TAK_LEGION_VERIFY (0 until B2); refreshes left unstarted for want of
         // demand (0 until B1).
         uint64_t anchorWalkIters=0,softHashVerifyTicks=0,refreshSuppressed=0;
@@ -168,6 +168,10 @@ public:
     // A supported leg became current (order, queued leg, controller reset).
     void registerMove(Unit&);
     void cancel(int id);
+    // The unit's orders changed (a leg gained or retired, a mission step, its
+    // death): drop the settled-arrival, parting and yield records it no
+    // longer qualifies for. World::noteOrders calls it.
+    void ordersChanged(int id);
     // Start-of-tick service: static plane freshness and field work quota.
     void tick();
     // One movement update for a supported unit, replacing Retail steering.
@@ -184,6 +188,9 @@ public:
     // 3 waiting for its field) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
+    // Test hook: the unit's settled-arrival records, as bits: 1 anchor,
+    // 2 approach done, 4 parted, 8 yielding.
+    int recordsForTest(int id) const;
     // Observation hook (read-only, never hashed): cells left in the unit's committed local detour route
     // (0: none, or not a Legion member). MV-06's route-follower crawl samples read it.
     int routeLength(int id) const;

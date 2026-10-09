@@ -1171,6 +1171,48 @@ void legacyyield() {
     check(u.x.toFloat()/16>20,"walker did not reach the settled body");
 }
 
+// B3 (T7): settled-arrival records are erased by events, not by a walk of
+// every record each tick. A settled body that gets a non-Legion order (wait,
+// guard, attack) or a new move loses its anchor in the order call itself
+// (World::noteOrders), one that dies loses it on the death edge, and one
+// whose orders change behind every helper (a direct write) loses it to
+// prune's backstop cursor. A stop keeps it (the body is idle and settled).
+void b3events() {
+    Fixture f(96,64);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<12;++i)ids.push_back(f.spawn(type,8+(i%4)*3,10+(i/4)*3));
+    f.start();
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((50+(int(i)%4)*4)*16),float((20+int(i)/4*4)*16),false);
+    for(int t=0;t<1500;++t) {
+        f.world.tick(1.f/30);
+        bool all=true;for(int id:ids)all&=f.world.unit(id)->orders.empty();
+        if(all)break;
+    }
+    const auto* legion=f.world.legionNavigator();
+    for(int id:ids)check(f.world.unit(id)->orders.empty(),"a body did not arrive");
+    for(int id:ids)check(legion->recordsForTest(id)&1,"an arrival has no anchor");
+    f.world.orderWait(ids[0],5.f,false);
+    f.world.guard(ids[1],ids[5],false);
+    f.world.attackMove(ids[2],80*16,50*16,false);
+    f.world.order(ids[3],80*16,40*16,false);
+    f.world.stop(ids[4]);
+    f.world.orderWait(ids[6],5.f,true);
+    // Same tick, no Legion service in between: the order calls erased them.
+    for(int k:{0,1,2,3,6})check(!(legion->recordsForTest(ids[size_t(k)])&1),"an ordered body kept its anchor");
+    for(int k:{4,5,7,8,9,10,11})check(legion->recordsForTest(ids[size_t(k)])&1,"an idle body lost its anchor");
+    f.world.unit(ids[7])->hp=Fixed();
+    Order wait;wait.x=f.world.unit(ids[8])->x;wait.z=f.world.unit(ids[8])->z;wait.wait=150;
+    f.world.unit(ids[8])->orders.push_back(wait);   // behind every helper: the backstop's
+    f.world.tick(1.f/30);
+    check(!f.world.unit(ids[7])->alive(),"hp=0 did not kill the body");
+    check(!(legion->recordsForTest(ids[7])&1),"a dead body kept its anchor");
+    check(!(legion->recordsForTest(ids[8])&1),"the backstop missed a direct order write");
+    for(int k:{4,5,9,10,11})check(legion->recordsForTest(ids[size_t(k)])&1,"an idle body lost its anchor");
+    std::printf("b3events ok anchor_walk_iters=%llu\n",(unsigned long long)f.world.legionStats().anchorWalkIters);
+}
+
 // Legacy nav-grid world (no placement plane): bodies sent past the end of a
 // blocked wall must round it, alone and as a queued column. The proven line
 // passed the wall's corner a fraction of a pixel away; one update's step
@@ -2783,7 +2825,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
+        {"staticidle",staticidle},{"b3events",b3events},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

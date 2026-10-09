@@ -1907,6 +1907,12 @@ public:
     // instead of joining (a patrol's return leg).
     void order(int unitId, float x, float z, bool queue, ConvoyClass cls = ConvoyClass::Move,
                std::optional<uint32_t> convoyCopy = std::nullopt);
+    // A unit's orders changed (a leg gained or retired, a mission step, its
+    // death): Legion drops the settled-arrival and parting records the unit
+    // no longer qualifies for. The order helpers, dropLeg, acquireTarget, the
+    // ground/flight/construction mission dispatchers and the death edge call
+    // it. Touches Legion state only (a no-op without Legion).
+    void noteOrders(int unitId);
 
     // ---- order-queue helpers ------------------------------------------------
     // One issued order can expand into a whole route, so Unit::orders mixes

@@ -1630,6 +1630,19 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
 
 }
 
+void World::noteOrders(int unitId) {
+    if (legion_) legion_->ordersChanged(unitId);
+}
+
+namespace {
+// Reports a unit's orders to Legion when an order helper returns (every
+// return path), after the helper's own changes (World::noteOrders).
+struct OrdersNote {
+    World& w; int id;
+    ~OrdersNote() { w.noteOrders(id); }
+};
+} // namespace
+
 void World::dropLeg(Unit& u) {
     if (u.orders.empty()) return;
     // The request belongs to the departing movement controller, not to the
@@ -1643,6 +1656,7 @@ void World::dropLeg(Unit& u) {
         if (u.orders[end].controller && uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
     } else u.routeStamp=-1;
     u.orders.erase(u.orders.begin(), u.orders.begin() + long(end) + 1);
+    noteOrders(u.id);
 }
 
 // Production buildings and infinitely producing mobile builders hold rally orders:
@@ -1720,6 +1734,7 @@ uint32_t World::joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z) {
 }
 
 void World::order(int unitId, float x, float z, bool queue, ConvoyClass cls, std::optional<uint32_t> convoyCopy) {
+    OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
     // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
@@ -2008,6 +2023,7 @@ void World::tickFlightPatrol(Unit& u) {
         }
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    noteOrders(u.id);
 }
 
 void World::tickFlightMovement(Unit& u, bool persistent) {
@@ -2953,6 +2969,7 @@ void World::tickGroundMission(Unit& u) {
         if (u.orders[end].controller==host.replaceController)
             u.orders.erase(u.orders.begin(),u.orders.begin()+long(end));
     }
+    noteOrders(u.id);
 }
 
 RetailCostSearch::Costs World::searchCosts(const Unit& u) const {
@@ -3406,6 +3423,7 @@ bool World::canLoadInto(int unitId,int transportId) const {
 }
 
 void World::loadInto(int unitId, int transportId, bool queue) {
+    OrdersNote note{*this,unitId};
     if (!canLoadInto(unitId,transportId)) return;
     Unit* u=unit(unitId);
     if (!queue) {
@@ -3424,6 +3442,7 @@ void World::loadInto(int unitId, int transportId, bool queue) {
     o.transportProductionAhead=queue ? uint32_t(u->buildQueue.size()) : 0;
     u->orders.push_back(o);
     Unit* carrier=unit(transportId);
+    OrdersNote carrierNote{*this,transportId};
     {
         // GROUND_PICKUP and VTOL_PICKUP both own a reciprocal carrier mission.
         // Only its active passenger may enter the transfer stage.
@@ -3441,6 +3460,7 @@ void World::loadInto(int unitId, int transportId, bool queue) {
 }
 
 void World::unloadAt(int transportId, float x, float z, Fixed destinationY, bool queue) {
+    OrdersNote note{*this,transportId};
     Unit* t = unit(transportId);
     if (!t || !t->alive() || !t->type || !t->type->canTransport ||
         (!queue && t->cargo.empty())) return;
@@ -3858,6 +3878,7 @@ bool World::tickTransport(Unit& u, float dt) {
             int16_t(next ? next->type->footX : 0),int16_t(next ? next->type->footZ : 0));
         park.mission.flags=0x200u;
         c->orders.push_back(park);
+        noteOrders(c->id);
     }
     o.transportPassenger=0;
     if (u.cargo.empty()) {
@@ -3895,6 +3916,7 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
 }
 
 void World::patrol(int unitId, float x, float z) {
+    OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
     // canmove=1 with no velocity (the CLAUDE.md gotcha). Gating on canMove let a
@@ -3983,6 +4005,7 @@ void World::queuePatrol(int unitId, float x, float z) {
 }
 
 void World::orderWait(int unitId, float seconds, bool queue) {
+    OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
     if (!queue) {
@@ -3997,6 +4020,7 @@ void World::orderWait(int unitId, float seconds, bool queue) {
 }
 
 void World::orderWaitAttack(int unitId, bool queue) {
+    OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
     if (!queue) {
@@ -4011,6 +4035,7 @@ void World::orderWaitAttack(int unitId, bool queue) {
 }
 
 void World::guard(int unitId, int targetId, bool queue) {
+    OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     Unit* t = unit(targetId);
     if (!u || !t || !u->alive() || !t->alive() || u->id == t->id) return;
@@ -4143,6 +4168,7 @@ void World::setSquad(int unitId, int squad) {
 }
 
 void World::attack(int unitId, int targetId, bool queue) {
+    OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
     // A production building sends its OUTPUT at the target rather than shooting it
@@ -4973,6 +4999,7 @@ bool World::acquireTarget(Unit& u,bool missionPoll) {
     cancelPath(u); u.routeStamp=-1;
     u.orders.insert(u.orders.begin(),{Fixed(),Fixed(),target});
     u.orders.front().autoTarget=true; u.orders.front().goal=true;
+    noteOrders(u.id);
     return true;
 }
 
@@ -6529,6 +6556,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
 }
 
 void World::queueBuild(int builderId, const UnitType* type, float x, float z, bool queue) {
+    OrdersNote note{*this,builderId};
     if (!buildAllowed(type)) return;
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
@@ -6564,6 +6592,7 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
 
 void World::queueManaBuildArea(int builderId,const UnitType* type,
                              float x0,float z0,float x1,float z1,bool queue) {
+    OrdersNote note{*this,builderId};
     Unit* b=unit(builderId);
     if (!buildAllowed(type) || !type->onMana || !b || !b->alive() || !b->type ||
         !b->type->isBuilder || b->type->isStructure() || b->underConstruction || b->repeatType ||
@@ -7080,6 +7109,7 @@ void World::tickBurning() {
 static constexpr float kReclaimRate = 120.0f;   // work units per second
 
 void World::reclaimArea(int builderId,float x0,float z0,float x1,float z1,bool queue) {
+    OrdersNote note{*this,builderId};
     Unit* b=unit(builderId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder ||
         !b->type->canMove || !b->type->canReclaim ||
@@ -7179,6 +7209,7 @@ void World::tickReclaimArea(Unit& b) {
 }
 
 void World::reclaim(int builderId, int featureId, bool queue) {
+    OrdersNote note{*this,builderId};
     Unit* b = unit(builderId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder ||
         !b->type->canMove || !b->type->canReclaim)
@@ -7370,6 +7401,7 @@ void World::tickPatrolRepair(Unit& b) {
 }
 
 void World::repair(int builderId, int targetId, bool queue) {
+    OrdersNote note{*this,builderId};
     Unit* b = unit(builderId);
     Unit* t = unit(targetId);
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove) return;
@@ -7473,6 +7505,7 @@ void World::tickRepair(Unit& b, float dt) {
 }
 
 void World::startEmote(int player, int unitId, bool disco, bool append) {
+    OrdersNote note{*this,unitId};
     if (player < 0 || player >= int(players_.size())) return;
     const auto* u = unit(unitId);
     if (!u || !u->alive() || u->player != player || !u->type || u->type->isStructure()) return;
@@ -7713,6 +7746,7 @@ void World::tickRetailConstruction(Unit& builder) {
         }
     } host{*this,builder};
     retailDispatchMissions(tickCounter_,builder.missionEvents,host);
+    noteOrders(builder.id);
 }
 
 void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon) {
@@ -10848,6 +10882,7 @@ void World::tick(float dt) {
             // accumulate for the rest of the match.
             retireAirOccupant(u);
             u.deadFor = 0; u.orders.clear(); u.speed = Fixed();
+            noteOrders(u.id);
             // Refresh the old body before a corpse offset moves the record.
             for (auto& plane:searchGrades_)
                 refreshSearchRect(plane,footprintOrigin(u.x,u.type->footX),
@@ -11028,7 +11063,7 @@ void World::tick(float dt) {
                 u.x=Fixed::raw(point[0]);u.groundY=Fixed::raw(point[1]);u.z=Fixed::raw(point[2]);
                 updateBodyIndex(u);
             }
-            else { if (mission_ || scenario_) justDied_.push_back(u.id); retireAirOccupant(u); u.deadFor = 0; }  // transport lost with all hands
+            else { if (mission_ || scenario_) justDied_.push_back(u.id); retireAirOccupant(u); u.deadFor = 0; noteOrders(u.id); }  // transport lost with all hands
             continue;
         }
         // Frozen / petrified / paralyzed: the unit is inert this tick.

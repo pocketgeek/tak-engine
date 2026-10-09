@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -622,6 +623,38 @@ struct LegionNavigator::Impl {
     void setAnchor(int id,const Anchor& a) {
         dropAnchor(id);
         anchors[id]=a;markAnchor(id,true);++anchorsAt[destination(a.point)];
+    }
+    // ---- event-driven erasure (T7 B3) -----------------------------------
+    // A settled body stays an anchor while it is alive and idle, or stands
+    // on the leg it completed (that leg lingers until World retires it).
+    // Parted bodies, approach-done bodies and yield steps need an idle body.
+    // These used to be walked whole every tick; now an entry is checked when
+    // its unit's orders change (World::noteOrders: the order helpers, leg
+    // retirement, the mission dispatchers, the death edge), on registerMove,
+    // and by prune's bounded cursor as the backstop.
+    static bool settledBody(const Unit* u) {
+        return u&&u->alive()&&(u->orders.empty()||(u->orders[World::currentLeg(u->orders)].mission.pending&0x500));
+    }
+    static bool idleBody(const Unit* u) {return u&&u->alive()&&u->orders.empty();}
+    // Unit id -> it may have an entry in approachDone, parts or yielding (a
+    // hint: set on insert, cleared when a check finds none). Lets the orders
+    // event skip the tree lookups for the units in none of the maps.
+    std::vector<uint8_t> watchMark;
+    void markWatch(int id) {
+        if(id<0)return;
+        if(size_t(id)>=watchMark.size())watchMark.resize(size_t(id)+1,0);
+        watchMark[size_t(id)]=1;
+    }
+    // Erase this unit's stale entries (anchors through dropAnchor, so
+    // anchorsAt stays a count of live settled bodies).
+    void validate(int id) {
+        const bool watched=id>=0&&size_t(id)<watchMark.size()&&watchMark[size_t(id)];
+        if(!watched&&!isAnchor(id))return;
+        const Unit* u=w.unit(id);
+        if(isAnchor(id)&&!settledBody(u)) {yielding.erase(id);dropAnchor(id);}
+        if(!watched||idleBody(u))return;
+        approachDone.erase(id);parts.erase(id);yielding.erase(id);
+        watchMark[size_t(id)]=0;
     }
     std::map<int,Anchor>::iterator dropAnchor(std::map<int,Anchor>::iterator it) {
         const auto d=anchorsAt.find(destination(it->second.point));
@@ -1832,7 +1865,8 @@ struct LegionNavigator::Impl {
             if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
         };
         leave(u.id);
-        dropAnchor(u.id);yielding.erase(u.id);approachDone.erase(u.id);
+        dropAnchor(u.id);yielding.erase(u.id);approachDone.erase(u.id);parts.erase(u.id);
+        if(size_t(u.id)<watchMark.size())watchMark[size_t(u.id)]=0;
         // A body setting off is no soft obstacle any more (its own group's
         // first field is built right now, before the next scan).
         if(!softCells.empty()&&u.type) {
@@ -2941,42 +2975,56 @@ struct LegionNavigator::Impl {
     // are freed. The death edge also cancels directly.
     void prune() {
         constexpr size_t kPrunePerTick=256;
-        if(members.empty()) {pruneCursor=0;return;}
-        std::vector<int> ids;
-        auto it=members.lower_bound(pruneCursor);
-        for(size_t n=0;n<kPrunePerTick&&n<members.size();++n) {
-            if(it==members.end())it=members.begin();
-            ids.push_back(it->first);++it;
+        if(members.empty()&&anchors.empty()&&approachDone.empty()&&parts.empty()) {pruneCursor=0;return;}
+        // The backstop (B3): one cursor in id order over the members and the
+        // anchors, approachDone and parts maps, kPrunePerTick distinct ids a
+        // tick, wrapping once. Their entries are erased by the orders event
+        // and registerMove; this catches whatever no event reported. With no
+        // records it is exactly the members-only cursor it replaced.
+        auto im=members.lower_bound(pruneCursor);auto ia=anchors.lower_bound(pruneCursor);
+        auto ic=approachDone.lower_bound(pruneCursor);auto ip=parts.lower_bound(pruneCursor);
+        auto head=[&] {
+            int id=INT_MAX;
+            if(im!=members.end())id=std::min(id,im->first);
+            if(ia!=anchors.end())id=std::min(id,ia->first);
+            if(ic!=approachDone.end())id=std::min(id,ic->first);
+            if(ip!=parts.end())id=std::min(id,ip->first);
+            return id;
+        };
+        // (id, 1 member | 2 record) in visit order.
+        std::vector<std::pair<int,int>> ids;
+        const int start=pruneCursor;bool wrapped=false;
+        int at=head();
+        while(ids.size()<kPrunePerTick) {
+            if(at==INT_MAX) {
+                if(wrapped||start==0)break;
+                wrapped=true;
+                im=members.begin();ia=anchors.begin();ic=approachDone.begin();ip=parts.begin();
+                at=head();
+                if(at==INT_MAX)break;
+            }
+            if(wrapped&&at>=start)break;
+            int what=0;
+            if(im!=members.end()&&im->first==at) {what|=1;++im;}
+            if(ia!=anchors.end()&&ia->first==at) {what|=2;++ia;}
+            if(ic!=approachDone.end()&&ic->first==at) {what|=2;++ic;}
+            if(ip!=parts.end()&&ip->first==at) {what|=2;++ip;}
+            ids.push_back({at,what});
+            at=head();
         }
-        pruneCursor=it==members.end()?0:it->first;
+        pruneCursor=at==INT_MAX?0:at;
         stats.anchorWalkIters+=ids.size();
-        for(int id:ids) {
-            const Unit* u=w.unit(id);
-            if(u&&u->alive()&&!u->embarked()&&!u->orders.empty()&&supports(*u))continue;
-            leave(id);
+        for(const auto& [id,what]:ids) {
+            if(what&1) {
+                const Unit* u=w.unit(id);
+                if(!(u&&u->alive()&&!u->embarked()&&!u->orders.empty()&&supports(*u)))leave(id);
+            }
+            if(what&2) {markWatch(id);validate(id);}
         }
     }
-    // A settled body that is no longer idle (new order, death) forgets its
-    // anchor. Yield steps advance one update per tick in id order: straight
+    // Yield steps advance one update per tick in id order: straight
     // toward the target cell, no turning, then a full stop.
     void serviceYields() {
-        stats.anchorWalkIters+=anchors.size()+approachDone.size()+parts.size()+yielding.size();
-        for(auto it=anchors.begin();it!=anchors.end();) {
-            // (The completed leg itself lingers until World retires it.)
-            const Unit* u=w.unit(it->first);
-            if(!u||!u->alive()||(!u->orders.empty()&&!(u->orders[World::currentLeg(u->orders)].mission.pending&0x500)))
-                {yielding.erase(it->first);it=dropAnchor(it);}
-            else ++it;
-        }
-        for(auto it=approachDone.begin();it!=approachDone.end();) {
-            const Unit* u=w.unit(it->first);
-            if(!u||!u->alive()||!u->orders.empty())it=approachDone.erase(it);else ++it;
-        }
-        // A parted body that gets an order (or dies) forgets its partings.
-        for(auto it=parts.begin();it!=parts.end();) {
-            const Unit* u=w.unit(it->first);
-            if(!u||!u->alive()||!u->orders.empty())it=parts.erase(it);else ++it;
-        }
         for(auto it=yielding.begin();it!=yielding.end();) {
             Unit* u=w.unit(it->first);
             if(!u||!u->alive()||!u->orders.empty()) {it=yielding.erase(it);continue;}
@@ -3130,7 +3178,7 @@ struct LegionNavigator::Impl {
             for(int q=0;q<count;++q) {
                 const Unit& b=*w.unit(ids[size_t(q)]);
                 const int bx=footprintOrigin(b.x,b.type->footX),bz=footprintOrigin(b.z,b.type->footZ);
-                auto& part=parts[ids[size_t(q)]];++part.count;
+                auto& part=parts[ids[size_t(q)]];++part.count;markWatch(ids[size_t(q)]);
                 part.sx=int8_t(std::clamp(cells[size_t(q)]%W-bx,-1,1));part.sz=int8_t(std::clamp(cells[size_t(q)]/W-bz,-1,1));
                 yielding[ids[size_t(q)]]=Yield{cells[size_t(q)],0};
             }
@@ -3221,7 +3269,7 @@ struct LegionNavigator::Impl {
         }
         for(int k=0;k<count;++k) {
             ++anchors[ids[size_t(k)]].yields;
-            yielding[ids[size_t(k)]]=Yield{cells[size_t(k)],0};
+            yielding[ids[size_t(k)]]=Yield{cells[size_t(k)],0};markWatch(ids[size_t(k)]);
         }
         return true;
     }
@@ -3402,7 +3450,7 @@ struct LegionNavigator::Impl {
             return;
         }
         if(w.tickCounter_-m.trappedSince<(m.approach?kApproachRetire:kTrappedRetire))return;
-        if(m.approach)approachDone[u.id]=m.point;
+        if(m.approach) {approachDone[u.id]=m.point;markWatch(u.id);}
         leave(u.id);
         w.dropLeg(u);
         u.routeStamp=-1;
@@ -5284,6 +5332,7 @@ bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
 LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindOf(u);}
 void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
 void LegionNavigator::cancel(int id) {impl_->leave(id);}
+void LegionNavigator::ordersChanged(int id) {impl_->validate(id);}
 void LegionNavigator::tick() {impl_->tick();}
 void LegionNavigator::move(Unit& u,Fixed maximum) {impl_->move(u,maximum);impl_->markPass(u.id);}
 uint64_t LegionNavigator::checksum() const {return impl_->checksum();}
@@ -5334,6 +5383,9 @@ bool LegionNavigator::planeMatchesRebuild(const Unit& u) {
 int LegionNavigator::unitState(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:int(found->second.state);
+}
+int LegionNavigator::recordsForTest(int id) const {
+    return (impl_->anchors.count(id)?1:0)|(impl_->approachDone.count(id)?2:0)|(impl_->parts.count(id)?4:0)|(impl_->yielding.count(id)?8:0);
 }
 int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
