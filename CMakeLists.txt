@@ -331,7 +331,10 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
-  set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion)
+  # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
+  # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.
+  # Costs these 38 cases ~17 s -> ~44 s in total at -O2 (the longest, squadformation, 6 -> 11 s).
+  set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
 # T1 probes for W3 (measurement only; they assert determinism, not bounds).
 foreach(legion_probe settlelatency doorplug)
