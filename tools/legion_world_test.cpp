@@ -2585,12 +2585,15 @@ void factorysquad() {
 }
 
 // RB-04: a Legion builder on patrol meets a damaged own structure beside its route:
-// the repair detour (an Order with patrolRepair) is a leg Legion does not route
-// today, so Retail steers it and queues a Retail search. `retail_ticks` counts
-// the ticks a patrol-repair leg is current while LegionNavigator::mission() says
-// None (Retail's steering); `legion_ticks` the ticks Legion routes it.
-// Target (3.5): retail_ticks 0, legion_ticks > 0, repaired and patrol resumed.
-ProbeRun patrolrepairRun(bool serial) {
+// the repair detour is an Order with patrolRepair. `retail_ticks` counts the ticks
+// a patrol-repair leg is current while LegionNavigator::mission() says None
+// (Retail's steering); `legion_ticks` the ticks Legion routes it;
+// `retail_searches` the Retail path requests queued during the run.
+// Target (3.5): retail_ticks 0, retail_searches 0, legion_ticks > 0, repaired and
+// patrol resumed. The `-moving` variant repairs a mobile ally that walks out of
+// reach (but stays inside the leash) once the repair has begun: tickRepair
+// refreshes the leg's point, and the builder must follow it.
+ProbeRun patrolrepairRun(bool serial,bool moving) {
     Fixture f(128,96,serial);f.publish();
     UnitType builder{};builder.id=builder.name="legion-worker";builder.isBuilder=builder.canMove=builder.canReclaim=builder.canPatrol=true;
     builder.upright=true;builder.maxHp=100;builder.footX=builder.footZ=2;builder.maxVel=Fixed::fromInt(3);
@@ -2598,14 +2601,18 @@ ProbeRun patrolrepairRun(bool serial) {
     builder.sight=160;builder.sightHeight=24;builder.workerTime=100;builder.buildDist=80;builder.storage=10000;builder.buildTime=1;
     UnitType lode{};lode.id=lode.name="legion-lode";lode.side="ARA";lode.maxHp=100;lode.maxVel=Fixed();
     lode.footX=lode.footZ=4;lode.buildTime=100;lode.buildCost=10;
+    UnitType ally=builder;ally.id=ally.name="legion-ally";ally.isBuilder=false;ally.buildTime=100;ally.buildCost=10;
+    builder.workerTime=moving?10:100;if(moving)builder.buildDist=16;
     const int id=f.spawn(builder,16,32);
-    const int damaged=f.spawn(lode,40,37);
+    const int damaged=moving?f.spawn(ally,24,32):f.spawn(lode,40,37);
     f.start();
-    f.world.unit(damaged)->hp=Fixed::fromInt(25);
-    f.world.blockFoot(lode,float((40+g_shift)*16),float((37+g_shift)*16),true);
+    f.world.unit(damaged)->hp=Fixed::fromInt(moving?20:25);
+    if(!moving)f.world.blockFoot(lode,float((40+g_shift)*16),float((37+g_shift)*16),true);
     f.world.player(0).mana=10000;
+    const auto searches0=f.world.pathStats().requests();
     f.world.patrol(id,64*16,32*16);
-    bool repaired=false,resumed=false;int repairTicks=0,retailTicks=0,legionTicks=0;
+    bool repaired=false,resumed=false,started=false,moved=false;int repairTicks=0,retailTicks=0,legionTicks=0;
+    float chase=0;Fixed x0,z0;
     for(int t=0;t<2400;++t) {
         f.world.tick(1.f/30);
         const auto& u=*f.world.unit(id);
@@ -2617,20 +2624,28 @@ ProbeRun patrolrepairRun(bool serial) {
                 (nav&&nav->mission(u)!=LegionMission::None?legionTicks:retailTicks)++;
             }
         }
+        // The ally walks off (4 cells across and 2 down, out of reach) once the repair has
+        // begun; `chase_px` is how far the builder then walks before the repair is done.
+        if(moved&&!repaired)chase=std::max(chase,std::hypot((u.x-x0).toFloat(),(u.z-z0).toFloat()));
+        started|=f.world.unit(damaged)->hp>Fixed::fromInt(20);
+        if(moving&&started&&!moved) {f.world.order(damaged,float((28+g_shift)*16),float((34+g_shift)*16),false);moved=true;x0=u.x;z0=u.z;}
         if(f.world.unit(damaged)->hp==Fixed::fromInt(100))repaired=true;
         if(repaired&&u.x.toFloat()>50*16)resumed=true;
     }
+    const long searches=long(f.world.pathStats().requests()-searches0);
     int waypoints=0;for(const auto& o:f.world.unit(id)->orders)waypoints+=o.goal&&o.patrol;
-    ProbeRun r;char buf[220];
-    std::snprintf(buf,sizeof buf,"patrolrepair repaired=%d resumed=%d patrol_waypoints=%d repair_leg_ticks=%d retail_ticks=%d legion_ticks=%d",
-        int(repaired),int(resumed),waypoints,repairTicks,retailTicks,legionTicks);
-    r.text=buf;r.hash=f.world.stateHash();r.a=retailTicks;r.b=legionTicks;r.c=repaired&&resumed;return r;
+    ProbeRun r;char buf[260];
+    std::snprintf(buf,sizeof buf,"patrolrepair%s repaired=%d resumed=%d patrol_waypoints=%d repair_leg_ticks=%d retail_ticks=%d legion_ticks=%d retail_searches=%ld chase_px=%d",
+        moving?"-moving":"",int(repaired),int(resumed),waypoints,repairTicks,retailTicks,legionTicks,searches,int(chase));
+    r.text=buf;r.hash=f.world.stateHash();r.a=retailTicks+int(searches);r.b=legionTicks;r.c=repaired&&resumed&&waypoints==2&&(!moving||chase>=16);return r;
 }
 void patrolrepair() {
-    const auto r=patrolrepairRun(true);
-    std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
-    if(requireW2())check(r.a==0&&r.b>0&&r.c,"RB-04: a patrol-repair leg must be routed by Legion (0 Retail ticks), the repair done and the patrol resumed");
-    checkRepeatable("patrolrepair",patrolrepairRun,r);
+    for(bool moving:{false,true}) {
+        const auto r=patrolrepairRun(true,moving);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        if(requireW2())check(r.a==0&&r.b>0&&r.c,"RB-04: a patrol-repair leg must be routed by Legion (0 Retail ticks and searches), the repair done and the patrol resumed");
+        checkRepeatable(moving?"patrolrepair-moving":"patrolrepair",[&](bool serial) {return patrolrepairRun(serial,moving);},r);
+    }
 }
 }
 
