@@ -26,6 +26,12 @@
 //   Group::discN). t50/t90/done are the first ticks
 //   half/90%/all of the group had arrived; left_behind is the rest at the end.
 //   orders_done is the first tick every live member's orders were empty.
+//   Click level (lead ruling W3 final exit (f)): groups that name one
+//   Group::click (one-body groups whose clicks one convoy merged: aware-*,
+//   motion-*) are also read as one command: click.<name>.n/arrived/t50/t90/
+//   done over all their bodies (each against its own group's disc), and each
+//   such group reports g.<name>.click_n, the click's bodies. A one-body
+//   group's own arrived/t90 is then report-only (tools/legion_check.py).
 // - Completion (AR-08). When a member's orders empty, its distance from the
 //   click (whole cells) is recorded: complete_outside_radius counts those
 //   beyond the packed-disc limit; complete_dist_median/max summarise them.
@@ -141,6 +147,9 @@ struct Group {
     // Bodies of the command (convoy) the group's click joined, its own among
     // them; 0: the group alone. Sizes the packed disc (lead ruling W3 round 4 (1)).
     int discN=0;
+    // The click (named by its first group) this group is read at, beside its own keys; empty:
+    // none. Set for one-body groups whose clicks one convoy merged (ruling W3 final exit (f)).
+    std::string click;
 };
 struct Gate {
     std::string name;
@@ -213,6 +222,13 @@ public:
             }
         }
         groupStats_.resize(cfg_.groups.size());
+        for(size_t g=0;g<cfg_.groups.size();++g) {
+            const auto& name=cfg_.groups[g].click;
+            if(name.empty())continue;
+            auto it=std::find_if(clicks_.begin(),clicks_.end(),[&](const ClickStats& c) {return c.name==name;});
+            if(it==clicks_.end()) {clicks_.push_back(ClickStats{});clicks_.back().name=name;it=clicks_.end()-1;}
+            it->groups.push_back(int(g));
+        }
         gateStats_.resize(cfg_.gates.size());
         sideStats_.resize(cfg_.sides.size());
         pairStats_.resize(cfg_.pairs.size());
@@ -304,6 +320,7 @@ public:
             put(p+"n",n);put(p+"radius_px",detail::isqrt(gs.radius2));
             put(p+"arrived",gs.arrived);put(p+"t50",gs.t50);put(p+"t90",gs.t90);put(p+"done",gs.done);
             put(p+"left_behind",n-gs.arrived-gs.dead);put(p+"dead",gs.dead);put(p+"orders_done",gs.ordersDone);
+            for(const auto& c:clicks_)if(c.name==cfg_.groups[g].click)put(p+"click_n",c.n);
             put(p+"complete_n",int64_t(dists.size()));put(p+"complete_outside_radius",outside);
             put(p+"complete_dist_median",dists.empty()?-1:dists[(dists.size()-1)/2]);
             put(p+"complete_dist_max",dists.empty()?-1:dists.back());
@@ -315,6 +332,10 @@ public:
                 put(p+"hover_max",hoverMax);put(p+"land_delay_max",landDelayMax);
                 put(p+"illegal_overlap_ticks",gs.illegalOverlap);
             }
+        }
+        for(const auto& c:clicks_) {
+            const std::string p="click."+c.name+".";
+            put(p+"n",c.n);put(p+"arrived",c.arrived);put(p+"t50",c.t50);put(p+"t90",c.t90);put(p+"done",c.done);
         }
         put("spins",spins_);put("reversals",reversals_);put("stop_go",stopGo_);
         put("sideways",sideways_);put("backward",backward_);put("back",back_);
@@ -443,9 +464,11 @@ private:
     };
     struct GroupStats {
         int64_t radius2=0;int foot=0;
-        int arrived=0,dead=0;int64_t t50=-1,t90=-1,done=-1,ordersDone=-1;
+        int n=0,arrived=0,dead=0;int64_t t50=-1,t90=-1,done=-1,ordersDone=-1;
         int64_t awayMax=0,awaySum=0,awaySamples=0,illegalOverlap=0;
     };
+    // A click read as one command (ruling W3 final exit (f)): its groups' bodies together.
+    struct ClickStats {std::string name;std::vector<int> groups;int n=0,arrived=0;int64_t t50=-1,t90=-1,done=-1;};
     struct GateStats {int64_t samples=0,files=0,spread=0;};
     struct SideStats {int64_t high=0,low=0,t90=-1;};
     struct PairStats {std::vector<char> a,b;int64_t pairs=0,contacts=0;};   // a, b: per group index
@@ -655,6 +678,15 @@ private:
             if(gs.t90<0&&n&&arrived*10>=n*9)gs.t90=at;
             if(gs.done<0&&n&&arrived==n)gs.done=at;
             if(gs.ordersDone<0&&n&&!ordersLeft)gs.ordersDone=at;
+            gs.n=n;
+        }
+        for(auto& c:clicks_) {
+            c.n=0;c.arrived=0;
+            for(int g:c.groups) {c.n+=groupStats_[size_t(g)].n;c.arrived+=groupStats_[size_t(g)].arrived;}
+            const int64_t at=tick-start_;
+            if(c.t50<0&&c.n&&c.arrived*2>=c.n)c.t50=at;
+            if(c.t90<0&&c.n&&c.arrived*10>=c.n*9)c.t90=at;
+            if(c.done<0&&c.n&&c.arrived==c.n)c.done=at;
         }
     }
 
@@ -991,6 +1023,7 @@ private:
     std::vector<Member> m_;
     mutable std::vector<std::pair<int,int>> memberIndex_;
     std::vector<GroupStats> groupStats_;
+    std::vector<ClickStats> clicks_;
     std::vector<GateStats> gateStats_;
     std::vector<SideStats> sideStats_;
     std::vector<PairStats> pairStats_;
