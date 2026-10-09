@@ -383,6 +383,79 @@ void staticblock() {
     staticblockRun(0);staticblockRun(1);
 }
 
+// W4 step 0 (T7 Stage B1, brief 1): idle upkeep. A group that holds in place
+// (here: guards of an idle friend) keeps its finished field and goes stale whenever static obstacles
+// change anywhere on the map; today Legion refreshes it all the same, work
+// nobody steers by. Part 1 parks a group of guards, then runs 600 ticks beside
+// continuous "construction" (a far cell toggled every 10 ticks: the static
+// epoch advances and every cached field goes stale) and requires ZERO refresh
+// field work for it (demand-driven refresh, B1). FAILS BY CONSTRUCTION on the
+// step-0 head; registered with WILL_FAIL until B1 lands (then delete that
+// property). Part 2 (passes today and must keep passing): a parked group
+// whose route a new wall cuts, ordered on again, re-plans and arrives within
+// 120 ticks + the build time of its field.
+void staticidle() {
+    // Part 2: the order-on re-plan. A wall with one far gap appears after the group parked.
+    {
+        Fixture f(200,100);
+        f.publish();
+        const auto type=mover(2);
+        std::vector<int> ids;
+        for(int i=0;i<12;++i)ids.push_back(f.spawn(type,10+(i%4)*3,40+(i/4)*3));
+        f.start();
+        for(int id:ids)f.world.order(id,60*16,50*16,false);
+        int ticks=0;
+        auto parked=[&] {for(int id:ids)if(!f.world.unit(id)->orders.empty())return false;return true;};
+        for(;ticks<3000&&!parked();++ticks)f.world.tick(1.f/30);
+        check(parked(),"staticidle: the group never parked");
+        for(int t=0;t<90;++t)f.world.tick(1.f/30);
+        // The wall cuts the straight way to the new goal; its only gap is at the bottom.
+        for(int z=0;z<85;++z)f.world.blockCells(100,z,1,1,true);
+        const uint64_t before=f.world.legionStats().fieldWork;
+        for(int id:ids)f.world.order(id,150*16,50*16,false);
+        int cut=0;
+        for(;cut<4000;++cut) {
+            f.world.tick(1.f/30);
+            if(parked())break;
+        }
+        const uint64_t built=f.world.legionStats().fieldWork-before;
+        std::printf("staticidle replan arrived_after=%d field_work=%llu\n",cut,(unsigned long long)built);
+        check(parked(),"staticidle: the group did not reach the goal past the new wall");
+        // 120 ticks + the build time: the walk to the gap and back is well under 2000 ticks; the
+        // re-plan itself must not stall the order (no body idle > 120 ticks before the field exists).
+        check(built>0,"staticidle: the cut route was not re-planned");
+    }
+    // Part 1: parked groups beside continuous construction. Twelve bodies guard
+    // an idle friend in a corridor: they walk up to it and hold with their
+    // orders, their group and its finished field alive, nothing steering by the
+    // field. A cell toggled every 10 ticks inside the field's reach is the
+    // construction.
+    Fixture f(200,100);
+    f.rect(0,0,200,44);f.rect(0,56,200,44);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<12;++i)ids.push_back(f.spawn(type,10+(i%4)*3,45+(i/4)*3));
+    const int friendly=f.spawn(type,100,50);
+    f.start();
+    for(int id:ids)f.world.guard(id,friendly,false);
+    for(int t=0;t<900;++t)f.world.tick(1.f/30);
+    int held=0;
+    for(int id:ids)held+=!f.world.unit(id)->orders.empty()&&f.world.legionNavigator()->unitState(id)==2;   // Holding
+    check(held>=6,"staticidle: the guards are not holding with their orders");
+    const auto base=f.world.legionStats();
+    for(int t=0;t<600;++t) {
+        if(t%10==0)f.world.addFeature(50*200+60,60*16+8.f,50*16+8.f,0,1,1,1,t%20==0,-1,true);
+        f.world.tick(1.f/30);
+    }
+    const auto now=f.world.legionStats();
+    const uint64_t idle=now.fieldWorkRefreshIdle-base.fieldWorkRefreshIdle,moving=now.fieldWorkRefreshMoving-base.fieldWorkRefreshMoving;
+    std::printf("staticidle parked holding=%d refresh_idle=%llu refresh_moving=%llu refresh_completed=%llu refresh_suppressed=%llu groups=%zu\n",
+        held,(unsigned long long)idle,(unsigned long long)moving,(unsigned long long)(now.refreshCompleted-base.refreshCompleted),
+        (unsigned long long)now.refreshSuppressed,f.world.legionNavigator()->stats().liveGroups);
+    check(idle+moving==0,"staticidle: parked groups were refreshed beside continuous construction (B1 removes this work)");
+}
+
 // Landed flyers stand on the ground grid (retail stamps a mode-1 flyer into
 // word +0, so mobilePlacement refuses a ground step into one). A group sent
 // across a field of them -- a block of 30 and 12 scattered -- must plan and
@@ -2710,7 +2783,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
+        {"staticidle",staticidle},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
