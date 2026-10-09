@@ -45,6 +45,7 @@ import datetime
 import fnmatch
 import json
 import math
+import re
 import sys
 
 INF = float("inf")
@@ -167,6 +168,15 @@ def flatten(path):
             for m, keys in modes.items():
                 for k, e in keys.items():
                     v = e.get("value") if isinstance(e, dict) else e
+                    if isinstance(e, dict) and e.get("rule") == "bound":
+                        # A bound's value is a limit, not a measurement: a W0 spread bound
+                        # stores its median x band ("bound at median N x1.20"), so the move is
+                        # read against N; a declared bound (per unit, ...) has no base value.
+                        mm = re.search(r"at median (-?[0-9.]+)", e.get("reason", ""))
+                        if not mm:
+                            continue
+                        v = float(mm.group(1))
+                        v = int(v) if v == int(v) else v
                     if isinstance(v, (int, float)) and not isinstance(v, bool):
                         out[(s, m, k)] = v
         return out
@@ -422,6 +432,12 @@ def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False)
     return rpt
 
 
+def is_spread_exception(x):
+    """An exception written for a key's offset spread (write_base / step-0 retakes), not for
+    the Retail floor."""
+    return bool(x.get("median5")) and "offset spread" in x.get("reason", "")[:24]
+
+
 def apply_ratchet(doc, rpt, reason, when):
     refs = doc.setdefault("references", {})
     moved = []
@@ -433,6 +449,11 @@ def apply_ratchet(doc, rpt, reason, when):
     keep = []
     for x in doc.get("exceptions", []):
         tag = "%s/legion/%s " % (x["scenario"], x["key"])
+        # An offset-spread exception (median-of-5 gating) is not a floor exception: the key's
+        # spread does not go away when its median passes the Retail floor, so it is kept.
+        if is_spread_exception(x):
+            keep.append(x)
+            continue
         if any(c.startswith(tag) for c in rpt.cleared):
             cleared.append("%s/%s" % (x["scenario"], x["key"]))
         else:

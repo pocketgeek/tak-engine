@@ -817,6 +817,13 @@ armies:
 - **Going round obstacles.** Groups route round parked crowds of units and round
   landed flyers instead of pushing into them. Your own idle units step aside to
   let a group through.
+- **Unreachable orders end where the unit stops.** Ordered to a place it cannot
+  reach, a unit walks to the nearest spot it can reach, and its order ends there,
+  so it is free for the next one at once. Units queued behind their own army end
+  their orders where they stand. (A unit sealed in where nothing at all can be
+  reached still waits up to five minutes for a way to open.)
+- **Buildings do not hold a formation.** A building or an unfinished unit in an
+  Alt+number formation no longer slows the formation to a standstill.
 - **No spinning.** A unit that is truly trapped stops and waits, instead of
   circling on the spot. Units are not caught on jagged terrain unless they really
   are boxed in.

@@ -77607,13 +77607,6 @@
    "scenario": "unreach-200"
   },
   {
-   "cluster": "AR-11",
-   "key": "approach.complete.t90",
-   "median5": true,
-   "reason": "fails legion <= retail x1.1 at W2s0: legion 9004 vs retail 2419",
-   "scenario": "unreach-200"
-  },
-  {
    "cluster": "AR-03",
    "key": "stopped_permille",
    "median5": true,
@@ -77692,8 +77685,362 @@
    "ratchets": [],
    "reason": "W0 first committed base: legion-w0 head b081298 (b8a4110 sim, W0 instruments, W1 A1-A8 exact perf steps; Legion state hashes identical to b8a4110), optimized Debug and Release, start offsets 0,+1,-1,+2,-2 (median-of-5), both modes, serial == workers. Gated families: work.* counters (band 1.10), safety keys (spins, walk_in_place, illegal overlap: eq where 0), outcome keys g.*.arrived/done/t90/complete_*/left_behind, side.*.t90, gate.*.files/crossings, reversals, stopped, contact_*/wall_touch*, parked_no_progress, flyer keys, region.*.inside (one-sided bands 1.10-1.20); Retail: state hashes and serial_eq_workers (eq). Per-body g.* keys of aware-*, motion-* and battle-assault are not baselined (one-body groups); diagnostics stop_go/sideways/backward/back/statue_ticks/crawl_samples/waiting_no_progress/clearance/spacing are report-only here (offset spread far above any band) and are added by the workstream whose theme gates them, except sideways/backward/stop_go on motion-* and stop_go on uturn which are gated. Legion state hashes are not baselined (declared hash-identity steps use tools/legion_identity.sh); keys whose offset spread exceeds 1.20 are listed under exceptions (median5, gated on the 5-offset run). Retail-floor failures are listed under exceptions with their cluster.",
    "when": "2026-10-08T00:00:00Z"
+  },
+  {
+   "cleared_exceptions": [
+    "unreach-200/approach.complete.t90"
+   ],
+   "ratchets": [
+    {
+     "key": "mazeapproach/legion/approach.complete.t50",
+     "new": 7686,
+     "old": 9001
+    },
+    {
+     "key": "mazeapproach/legion/approach.wait.done",
+     "new": 1,
+     "old": 1333
+    },
+    {
+     "key": "mazeapproach/legion/approach.wait.t50",
+     "new": 1,
+     "old": 642
+    },
+    {
+     "key": "mazeapproach/legion/contact_own_permille",
+     "new": 63,
+     "old": 171
+    },
+    {
+     "key": "mazeapproach/legion/stopped_permille",
+     "new": 1,
+     "old": 103
+    },
+    {
+     "key": "mazeapproach/legion/work.detour_cells.max",
+     "new": 0,
+     "old": 119
+    },
+    {
+     "key": "mazeapproach/legion/work.detour_cells.total",
+     "new": 0,
+     "old": 924
+    },
+    {
+     "key": "mazeapproach/legion/work.detours.max",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "mazeapproach/legion/work.detours.total",
+     "new": 0,
+     "old": 2
+    },
+    {
+     "key": "mazeapproach/legion/work.held_rechecks.max",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "mazeapproach/legion/work.held_rechecks.p99",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "mazeapproach/legion/work.held_rechecks.total",
+     "new": 0,
+     "old": 465
+    },
+    {
+     "key": "mazeapproach/legion/work.holds.total",
+     "new": 2,
+     "old": 6
+    },
+    {
+     "key": "mazeapproach/legion/work.move_calls_by_state_2.p99",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "mazeapproach/legion/work.move_calls_by_state_2.total",
+     "new": 7,
+     "old": 581
+    },
+    {
+     "key": "mazeapproach/legion/work.move_calls_by_state_5.max",
+     "new": 1,
+     "old": 4
+    },
+    {
+     "key": "mazeapproach/legion/work.move_calls_by_state_5.p99",
+     "new": 0,
+     "old": 4
+    },
+    {
+     "key": "mazeapproach/legion/work.move_calls_by_state_5.total",
+     "new": 4,
+     "old": 3104
+    },
+    {
+     "key": "mazeapproach/legion/work.moves.total",
+     "new": 31995,
+     "old": 35773
+    },
+    {
+     "key": "unreach-200/legion/approach.arrive.done",
+     "new": 572,
+     "old": -1
+    },
+    {
+     "key": "unreach-200/legion/approach.arrive.t50",
+     "new": 478,
+     "old": -1
+    },
+    {
+     "key": "unreach-200/legion/approach.arrive.t90",
+     "new": 515,
+     "old": -1
+    },
+    {
+     "key": "unreach-200/legion/approach.arrived_n",
+     "new": 200,
+     "old": 57
+    },
+    {
+     "key": "unreach-200/legion/approach.complete.done",
+     "new": 573,
+     "old": 9005
+    },
+    {
+     "key": "unreach-200/legion/approach.complete.t50",
+     "new": 479,
+     "old": 9002
+    },
+    {
+     "key": "unreach-200/legion/approach.complete.t90",
+     "new": 516,
+     "old": 9004
+    },
+    {
+     "key": "unreach-200/legion/approach.dropped_unarrived_n",
+     "new": 0,
+     "old": 143
+    },
+    {
+     "key": "unreach-200/legion/approach.wait.done",
+     "new": 1,
+     "old": -1
+    },
+    {
+     "key": "unreach-200/legion/approach.wait.t50",
+     "new": 1,
+     "old": 8345
+    },
+    {
+     "key": "unreach-200/legion/contact_own_permille",
+     "new": 847,
+     "old": 992
+    },
+    {
+     "key": "unreach-200/legion/reversals",
+     "new": 0,
+     "old": 4
+    },
+    {
+     "key": "unreach-200/legion/stopped_permille",
+     "new": 114,
+     "old": 942
+    },
+    {
+     "key": "unreach-200/legion/wall_touch_near_permille",
+     "new": 16,
+     "old": 21
+    },
+    {
+     "key": "unreach-200/legion/wall_touch_permille",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "unreach-200/legion/work.aware_pairs.total",
+     "new": 223,
+     "old": 257
+    },
+    {
+     "key": "unreach-200/legion/work.detour_cells.p99",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "unreach-200/legion/work.detour_cells.total",
+     "new": 11977,
+     "old": 21827
+    },
+    {
+     "key": "unreach-200/legion/work.group_loop_iters.p99",
+     "new": 0,
+     "old": 4
+    },
+    {
+     "key": "unreach-200/legion/work.group_loop_iters.total",
+     "new": 904,
+     "old": 2032
+    },
+    {
+     "key": "unreach-200/legion/work.held_rechecks.max",
+     "new": 12,
+     "old": 160
+    },
+    {
+     "key": "unreach-200/legion/work.held_rechecks.p99",
+     "new": 4,
+     "old": 157
+    },
+    {
+     "key": "unreach-200/legion/work.held_rechecks.total",
+     "new": 888,
+     "old": 1209346
+    },
+    {
+     "key": "unreach-200/legion/work.holds.total",
+     "new": 921,
+     "old": 1539
+    },
+    {
+     "key": "unreach-200/legion/work.legion_total.total",
+     "new": 838393,
+     "old": 1940759
+    },
+    {
+     "key": "unreach-200/legion/work.move_calls_by_state_1.total",
+     "new": 87100,
+     "old": 104429
+    },
+    {
+     "key": "unreach-200/legion/work.move_calls_by_state_2.max",
+     "new": 81,
+     "old": 162
+    },
+    {
+     "key": "unreach-200/legion/work.move_calls_by_state_2.p99",
+     "new": 47,
+     "old": 160
+    },
+    {
+     "key": "unreach-200/legion/work.move_calls_by_state_2.total",
+     "new": 10821,
+     "old": 1243868
+    },
+    {
+     "key": "unreach-200/legion/work.move_calls_by_state_5.max",
+     "new": 7,
+     "old": 57
+    },
+    {
+     "key": "unreach-200/legion/work.move_calls_by_state_5.p99",
+     "new": 0,
+     "old": 57
+    },
+    {
+     "key": "unreach-200/legion/work.move_calls_by_state_5.total",
+     "new": 200,
+     "old": 456332
+    },
+    {
+     "key": "unreach-200/legion/work.moves.total",
+     "new": 95406,
+     "old": 1196634
+    },
+    {
+     "key": "unreach-200/legion/work.pass_scans_skipped.total",
+     "new": 77792,
+     "old": 698238
+    },
+    {
+     "key": "unreach-200/legion/work.slides.p99",
+     "new": 7,
+     "old": 8
+    },
+    {
+     "key": "unreach-200/legion/work.slides.total",
+     "new": 1933,
+     "old": 2483
+    },
+    {
+     "key": "unreach-200/legion/work.trapped.max",
+     "new": 7,
+     "old": 51
+    }
+   ],
+   "reason": "W2 exit (protocol 240; legion-w2 a0e1ad44 + protocol note): AR-03 structures never pace an Alt+N formation, AR-11 unreachable orders drop on arrival at the approach point and by the holder rule, RB-04 patrol-repair detours are Legion Repair legs. The intended improvements on unreach-200 and mazeapproach (orders complete 9005 -> 573 / approach wait 8345 -> 1; maze walk never cut, dropped_unarrived 0) and their work savings raise the references; optimized Debug, all 56 scenarios, both modes, offsets 0,1,-1,2,-2, serial == workers.",
+   "when": "2026-10-09T08:35:02Z"
   }
  ],
- "references": {},
+ "references": {
+  "mazeapproach": {
+   "legion": {
+    "approach.complete.t50": 7686,
+    "approach.wait.done": 1,
+    "approach.wait.t50": 1,
+    "contact_own_permille": 63,
+    "stopped_permille": 1,
+    "work.detour_cells.max": 0,
+    "work.detour_cells.total": 0,
+    "work.detours.max": 0,
+    "work.detours.total": 0,
+    "work.held_rechecks.max": 0,
+    "work.held_rechecks.p99": 0,
+    "work.held_rechecks.total": 0,
+    "work.holds.total": 2,
+    "work.move_calls_by_state_2.p99": 0,
+    "work.move_calls_by_state_2.total": 7,
+    "work.move_calls_by_state_5.max": 1,
+    "work.move_calls_by_state_5.p99": 0,
+    "work.move_calls_by_state_5.total": 4,
+    "work.moves.total": 31995
+   }
+  },
+  "unreach-200": {
+   "legion": {
+    "approach.arrive.done": 572,
+    "approach.arrive.t50": 478,
+    "approach.arrive.t90": 515,
+    "approach.arrived_n": 200,
+    "approach.complete.done": 573,
+    "approach.complete.t50": 479,
+    "approach.complete.t90": 516,
+    "approach.dropped_unarrived_n": 0,
+    "approach.wait.done": 1,
+    "approach.wait.t50": 1,
+    "contact_own_permille": 847,
+    "reversals": 0,
+    "stopped_permille": 114,
+    "wall_touch_near_permille": 16,
+    "wall_touch_permille": 0,
+    "work.aware_pairs.total": 223,
+    "work.detour_cells.p99": 0,
+    "work.detour_cells.total": 11977,
+    "work.group_loop_iters.p99": 0,
+    "work.group_loop_iters.total": 904,
+    "work.held_rechecks.max": 12,
+    "work.held_rechecks.p99": 4,
+    "work.held_rechecks.total": 888,
+    "work.holds.total": 921,
+    "work.legion_total.total": 838393,
+    "work.move_calls_by_state_1.total": 87100,
+    "work.move_calls_by_state_2.max": 81,
+    "work.move_calls_by_state_2.p99": 47,
+    "work.move_calls_by_state_2.total": 10821,
+    "work.move_calls_by_state_5.max": 7,
+    "work.move_calls_by_state_5.p99": 0,
+    "work.move_calls_by_state_5.total": 200,
+    "work.moves.total": 95406,
+    "work.pass_scans_skipped.total": 77792,
+    "work.slides.p99": 7,
+    "work.slides.total": 1933,
+    "work.trapped.max": 7
+   }
+  }
+ },
  "version": 1
 }

@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 239;      // 239: override packages carry whole files (TOV2); area build nearest first; Legion shared goal fields + bounded rebuilds,
+constexpr uint32_t kNetVersion = 240;      // 240: Legion W2 -- structures, units under construction and speed-0 units never pace or
+                                           //      anchor an Alt+N formation (FormAgg sums Fixed); an unreachable order drops on
+                                           //      arrival at its approach point, or when held behind its own stopped army (holder
+                                           //      rule); a patrolling builder's repair detour is a Legion Repair leg
+                                           // 239: override packages carry whole files (TOV2); area build nearest first; Legion shared goal fields + bounded rebuilds,
                                            //      no walking in place, idle allied landed flyers lift for passing ground units,
                                            //      formation flyers cruise/land promptly, moving groups plan round each other
                                            // 238: Legion clustered static-map repair; held Legion units rest between updates

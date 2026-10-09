@@ -223,16 +223,33 @@ cells to the own goal while on a straight line.
   ticks, and the same pocket opened at tick 300, where the unit resumes and
   arrives.
 * **Approaching an unreachable goal**: an approach member walks to its
-  nearest reachable point and, on arrival or contact, enters the same Trapped
-  state (zero speed, constant heading, order kept) instead of completing. On a
-  static epoch change it re-registers only if its stand-in no longer holds
-  (`approachValid`): the body left the point's region, the point became
-  illegal or unreachable, or the real goal became illegal or joined the
-  body's region. Otherwise its walk, detours and timers are kept. The 5-minute
-  retire counts from the first time this order's goal was found unreachable,
-  and also applies while the member is still walking. `legion_approachhold`,
-  `legion_approachopen` and `legion_approachchurn` cover holding, resuming
-  when the wall goes, and churn that must not reset the clock.
+  nearest reachable point. The walk is never cut short: its only limit is the
+  5-minute age test (9000 ticks from the first time this order's goal was
+  found unreachable), which bounds a walk that never arrives. On arrival or
+  contact it enters the Trapped state (zero speed, constant heading) for one
+  update, and then its order is dropped (`kApproachRetire = 0`, timed from the
+  arrival; protocol 240): an unreachable order ends as soon as the unit
+  reaches the nearest spot it can, and queued legs continue. A unit queued
+  behind its own army is treated the same way (the holder rule): once it has
+  gained nothing on its point for 12 ticks (`kApproachSettle`) and is held,
+  it looks at the one-body ring round its footprint (staggered over 4 ticks
+  by id) for a body of its own selection (same player and click, or one click
+  the uplink split into several commands) that already stopped nearer the
+  point -- an approach member just arrived there, or one whose approach
+  order already dropped. If one is there, the spot it stands on is its
+  nearest reachable spot, and its order drops the same way. A member still
+  gaining, or one blocked only by other selections or by its own army still
+  walking, never settles. Genuinely terrain-trapped orders (above) keep their
+  5-minute wait. A static epoch change while the member still walks
+  re-registers it only if its stand-in no longer holds (`approachValid`): the
+  body left the point's region, the point became illegal or unreachable, or
+  the real goal became illegal or joined the body's region. A gate that opens
+  after the order dropped does not move the unit (the order is gone).
+  `legion_approachhold`, `legion_approachopen`, `legion_approachchurn`,
+  `legion_unreachable_orders` and the `unreach-200` / `mazeapproach`
+  scenarios cover dropping at the point, the queue behind it, resuming when
+  the wall goes during the walk, churn that must not reset the clock, and a
+  ~8200-tick maze walk that must never be stopped mid-route.
 * **Crowd-blocked**: a route exists but bodies occupy it. The unit first
   **flows around** the blockage by stepping to any free legal neighbour that
   strictly reduces its distance still to go. The step is committed until the
@@ -344,6 +361,15 @@ footprint class (mixed footprints form one group per class but share one
   unreachable, so a corpse or building on a slot cannot cause a re-claim
   livelock (`legion_slotblock`). Approach members never claim slots: they
   queue to their stand-in point in the order they come.
+
+**Alt+N formations** keep Legion's pacing rule (`World::tick`, `squad < 0`):
+members walk at the slowest member's individual speed and stragglers rejoin at
+rest. Only bodies that can walk count (protocol 240): a structure, a unit
+still under construction or one with no speed stays in the formation (units
+it produces still inherit it) but never sets its centre, area, busy count or
+pace, so a building in an Alt+N selection no longer holds the army at a
+standstill (`legion_structsquad`, `legion_factorysquad`, `structsquad*.scn`).
+The centre sums are integers of the Fixed positions, and the pace is a Fixed.
 
 The in-game right-click in Legion mode sends one shared point for ground
 units, boats and hovercraft with footprints up to 8 whose order is not
@@ -730,7 +756,10 @@ parked outside the repository with the measurement notes.
   crowdheld spin check with 156 and 226 spin ticks.
 * Immediate retirement of trapped orders: failed the crowdheld and trapped
   acceptance checks, since a gate that reopens loses the army. Replaced by
-  the 5-minute grace.
+  the 5-minute grace. Approach orders (a reachable stand-in point exists) do
+  drop at once on arrival since protocol 240 (the user's rule: an unreachable
+  order ends at the nearest reachable spot); terrain-trapped orders keep the
+  grace.
 * LRU field eviction: thrashed, because every live group uses its field
   every tick. Replaced by the 300-tick tenure.
 
@@ -1011,9 +1040,13 @@ Acceptance:
   the unreachable scenario, and in recovery and recovery-passive before the
   wall clears: Legion scores 200/2000 there, as Retail and Retail+ do, while
   Flowfield and Cooperative score 0 because they never move (and arrive 0 in
-  recovery 2000, where Legion arrives 1999 of 2000). Units already at their point
-  have zero spin and do not move. Pockets under 256 origins still hold in
-  place; a region just above that threshold walks to its edge.
+  recovery 2000, where Legion arrives 2000 of 2000 since protocol 240, 1999
+  before). Units already at their point have zero spin and do not move, and
+  since protocol 240 their orders drop there: in recovery-passive (the wall
+  removed at tick 2000, the original orders kept) Legion now reaches the goal
+  with 0 units, as Retail does (before: 200 of 200 and 1999 of 2000).
+  Pockets under 256 origins still hold in place; a region just above that
+  threshold walks to its edge.
 * **CPU cost at large populations is 20-50% above the cheapest mode.**
   Five-mode timing at a78d194 (before the review-4 fixes), 8 parallel
   P-cores, noisy, mean ms per tick at 2000 units: doors 3.99 against 2.77

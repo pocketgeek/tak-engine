@@ -216,6 +216,17 @@ class Gate(unittest.TestCase):
         doc = self.floor_doc(exceptions=exc)
         self.assertFalse(run_check(doc, rec({"g.A.t90": 1300}), retail).ok)
 
+    def test_ratchet_keeps_offset_spread_exceptions(self):
+        exc = [{"scenario": S, "key": "g.A.t90", "cluster": "AR-11", "mode": "legion", "median5": True,
+                "reason": "3-offset spread 900..1200 exceeds the band at W2s0; gated on median-of-5 offsets"}]
+        retail = rec({"g.A.t90": 500}, mode="retail")
+        doc = self.floor_doc(exceptions=exc)
+        r = run_check(doc, rec({"g.A.t90": 540}, offsets=[0, 1, -1, 2, -2]), retail)  # passes the floor
+        self.assertEqual(len(r.cleared), 1)
+        lc.apply_ratchet(doc, r, "spread stays", "2026-01-01T00:00:00Z")
+        self.assertEqual(doc["exceptions"], exc)
+        self.assertEqual(doc["history"][0]["cleared_exceptions"], [])
+
     def test_median5_exception_needs_five_offsets(self):
         exc = [{"scenario": S, "key": "g.A.t90", "cluster": "MV-11", "reason": "noisy", "median5": True}]
         retail = rec({"g.A.t90": 500}, mode="retail")
@@ -361,6 +372,21 @@ class Cli(unittest.TestCase):
         self.assertIn("| scn/legion/d | 0 | 3 | new | incidental (within band) |", out)
         self.assertNotIn("scn/legion/b", out)                                  # 4% is not a move
         self.assertIn("3 keys moved by more than 5%; 1 intended, 2 incidental", out)
+
+    def test_exit_table_reads_a_spread_bound_at_its_median(self):
+        base = self.path("base.json")
+        json.dump({"entries": {S: {"legion": {
+            "a": {"rule": "bound", "dir": "lower", "value": 663,
+                  "reason": "W0: offset spread 1.21 exceeds band 1.20 ...: one-sided bound at median 552 x1.20"},
+            "b": {"rule": "bound", "dir": "lower", "value": 36, "per": "unit", "reason": "declared bound"},
+            "c": {"rule": "band", "dir": "lower", "value": 100, "reason": "r"}}}}}, open(base, "w"))
+        new = self.write_run("new.jsonl", rec({"a": 552, "b": 9, "c": 130}))
+        code, out = self.call("exit-table", "--baseline", self.path("none.json"), "--results", new, "--base", base)
+        self.assertEqual(code, 0)
+        self.assertNotIn("scn/legion/a", out)                                  # median 552 -> 552
+        self.assertNotIn("scn/legion/b", out)                                  # a limit, not a base
+        self.assertIn("| scn/legion/c | 100 | 130 | +30.0% |", out)
+        self.assertIn("1 keys moved by more than 5%", out)
 
     def test_anchor_diff_prints_cumulative_drift_and_never_gates(self):
         anchor = self.path("anchor.json")
