@@ -676,7 +676,7 @@ def row_files(row):
         return [f"replay-{row[len('replay-'):].rsplit('-', 1)[0]}.log"]
     if row.startswith("golden-"):
         return [f"{row}.txt"]
-    if row == "ctest":
+    if row.startswith("ctest"):
         return ["ctest.log", "ctest.xml"]
     if row == "determinism":
         return ["determinism.log"]
@@ -692,11 +692,13 @@ def valid_row(row, files):
             match = MPAI_DONE.search(text(row_files(row)[0]))
             return bool(match) and match[4] == "none"
         if row.startswith("replay-"):
+            # A replay "diverged" from its recording (an older sim) still plays back
+            # deterministically; the report compares that outcome base vs cand too.
             log = text(row_files(row)[0])
-            return bool(REPLAY_DONE.search(log)) and not REPLAY_DIVERGED.search(log)
+            return bool(REPLAY_DONE.search(log)) and any(HASHDETAIL.match(l) for l in log.splitlines())
         if row.startswith("golden-"):
             return len([l for l in text(row_files(row)[0]).splitlines() if l.startswith("mode=")]) == 24
-        if row == "ctest":
+        if row.startswith("ctest"):
             tests = parse_junit(files / "ctest.xml")
             return bool(tests) and all(t["status"] == "run" for t in tests.values())
         if row == "determinism":

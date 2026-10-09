@@ -46,15 +46,17 @@
 #   crowdbench  the matrix in legion_identity.py (full: 504 rows per build, both
 #               modes, seeds 0/1/2, serial and --workers; --quick: 12 rows).
 #   ctest       ctest -R '^(legion_|retail|sim_driver_equiv$|navigation_determinism$)'
-#               on each build: pass/fail, and any hash= values a test prints.
+#               on each build (with --quick also -LE nightly): pass/fail, and any
+#               hash= values a test prints.
 #   determinism tools/check-determinism.sh in each build's source tree.
 #
 # --verify sets TAK_LEGION_VERIFY=1 on every candidate run (an unknown variable
 # is ignored by builds without the verify scaffold). Output: a table on stdout,
 # <out>/identity.txt (every row), <out>/identity.json, and all raw logs. Exit 0
 # only if every row is SAME (or SKIP) and every test passes. Wall time on 4 cores
-# (Debug -O2): full about 77 min (the crowdbench matrix is 67 of them), --quick
-# about 4 min (bounded by the 60 s --mpai games).
+# (Debug -O2), cold: full about 77 min (the crowdbench matrix is 67 of them);
+# --quick is bounded by its ctest section. With the base cached, the base half of
+# every section (about half the CPU time) is skipped.
 #
 # Processes: every process this script starts gets its own process group, and on
 # exit or interrupt only those groups are signalled (by exact id). Nothing is
@@ -119,6 +121,10 @@ done
 DATA=$(cd "$DATA" && pwd) || { echo "no game data dir; pass --data" >&2; exit 2; }
 if [ $QUICK = 1 ]; then REPLAY_NAMES="L-bench R-bench"; else REPLAY_NAMES="L-bench L-2h R-bench R-2h"; fi
 MPAI_RUNS=2
+# --quick leaves out the tests labelled nightly (each of the 150 selected tests is a scenario or
+# situation run of up to minutes: they were 90% of a quick run); the full run keeps all of them.
+CT_ROW=ctest CT_LABELS=()
+[ $QUICK = 1 ] && { CT_ROW=ctest-quick; CT_LABELS=(-LE nightly); }
 skipped mpai && MPAI_RUNS=0
 skipped replays && REPLAY_NAMES=
 # A release takclient cannot run the replay or --mpai harness; the report shows SKIP rows.
@@ -143,7 +149,7 @@ put_all() {  # key dir -- store every complete, valid result found in <dir> (a n
     for name in $REPLAY_NAMES; do
         [ -f "$REPLAYS/$name.takrep" ] && $PY cache-put --dir "$key" --row "replay-$name-$(sha256sum "$REPLAYS/$name.takrep" | cut -c1-12)" --out "$dir" || true
     done
-    $PY cache-put --dir "$key" --row ctest --out "$dir" || true
+    $PY cache-put --dir "$key" --row "$CT_ROW" --out "$dir" || true
     $PY cache-put --dir "$key" --row determinism --out "$dir" || true
 }
 store_base() { [ -z "$BKEY" ] || put_all "$BKEY" "$OUT/base"; }
@@ -317,11 +323,11 @@ fi
 if ! skipped ctest; then
     TT=$(date +%s)
     for role in base cand; do
-        [ $role = base ] && cache_get ctest && continue
+        [ $role = base ] && cache_get "$CT_ROW" && continue
         mapfile -t renv < <(role_env "$role")
         launch "$OUT/$role/ctest.log" "$OUT" env "${renv[@]}" taskset -c "$CORES" \
             ctest --test-dir "${BUILD[$role]}" -j "$NCORES" --timeout 1800 \
-            -R '^(legion_|retail|sim_driver_equiv$|navigation_determinism$)' \
+            "${CT_LABELS[@]}" -R '^(legion_|retail|sim_driver_equiv$|navigation_determinism$)' \
             --output-junit "$OUT/$role/ctest.xml" \
             --test-output-size-passed 4000000 --test-output-size-failed 4000000
         wait $LAUNCHED

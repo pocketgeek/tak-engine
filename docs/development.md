@@ -174,7 +174,8 @@ the platform checks, Windows signing and complete asset verification pass.
   never read from the cache, so a hashed-state change always shows as DIFF; a run that passes
   with every row SAME also stores the candidate's results under the candidate's own commit, so in
   a chain A->B, B->C the second step finds its base warm. `--no-cache` ignores it,
-  `-j N --cores a-b` sets the job width and CPU list, and crowdbench now starts beside the
+  `-j N --cores a-b` sets the job width and CPU list, `--quick` also leaves the `nightly` tests out of
+  its ctest section (they were 90% of a quick run), and crowdbench now starts beside the
   tail of the replays instead of after them. Bump `HARNESS_VERSION` in
   `tools/legion_identity.py` when a base row's definition changes. The 2-hour
   replays are platform independent, so running them on the Windows or macOS test hosts
