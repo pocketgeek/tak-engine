@@ -2322,7 +2322,15 @@
                 ? int(tak::sim::retailConstructionPercent(u.retailSite->progress.remaining))
                 : int(u.underConstruction);
             s.buildProgress = float(u.buildProgress) / 30.0f;   // ticks -> seconds
-            s.buildQueue = u.buildQueue; s.captureOrders(u);
+            // Orders/rally/areaVisited are read for the VIEWED player's units only (the order
+            // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
+            // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
+            // bulk of the capture cost at 10k units. Queues are tiny and only factories hold
+            // one, so an ally's stay visible for the HUD.
+            if (u.player==localPlayer_) s.captureOrders(u);
+            else s.clearOrders();
+            if (u.player==localPlayer_ || alliedToLocal(u.player)) s.buildQueue = u.buildQueue;
+            else s.buildQueue.clear();
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.captureMovement(u);
             s.corpseAnimationTicks=u.corpseAnimationTicks();

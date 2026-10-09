@@ -106,6 +106,7 @@ struct UnitR {
         for (const auto& o : unit.orders)
             if (o.manaBuildArea) {areaVisited=o.manaBuildArea->visited;break;}
     }
+    void clearOrders() {orders.clear();rally.clear();areaVisited.clear();}
     const std::vector<RenderOrder>& displayedOrders() const {
         return type && (type->producesUnits() || repeatType) ? rally : orders;
     }
