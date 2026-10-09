@@ -11237,7 +11237,6 @@ void World::tick(float dt) {
     compactRetiredUnits();
 }
 
-#ifndef NDEBUG
 void World::resumeClocks(uint32_t tick, uint32_t gameRng) {
     // Spawn stamped the mover clocks with the counter as it stood; move them to the new one with it.
     const uint32_t was = tickCounter_;
@@ -11274,6 +11273,7 @@ uint64_t World::posDigest() const {
     return h;
 }
 
+#ifndef NDEBUG
 // See sim.h. Recomputes the same quantities stateHash() folds, but grouped, so a
 // mismatch can be attributed to a component instead of a 64-bit number.
 void World::hashTrace() const {
