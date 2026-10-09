@@ -383,17 +383,17 @@ void staticblock() {
     staticblockRun(0);staticblockRun(1);
 }
 
-// W4 step 0 (T7 Stage B1, brief 1): idle upkeep. A group that holds in place
-// (here: guards of an idle friend) keeps its finished field and goes stale whenever static obstacles
-// change anywhere on the map; today Legion refreshes it all the same, work
-// nobody steers by. Part 1 parks a group of guards, then runs 600 ticks beside
-// continuous "construction" (a far cell toggled every 10 ticks: the static
-// epoch advances and every cached field goes stale) and requires ZERO refresh
-// field work for it (demand-driven refresh, B1). FAILS BY CONSTRUCTION on the
-// step-0 head; registered with WILL_FAIL until B1 lands (then delete that
-// property). Part 2 (passes today and must keep passing): a parked group
-// whose route a new wall cuts, ordered on again, re-plans and arrives within
-// 120 ticks + the build time of its field.
+// W4 (T7 Stage B1): idle upkeep. A group that holds in place (here: guards
+// of an idle friend) keeps its finished field and goes stale whenever static
+// obstacles change anywhere on the map; before B1 Legion refreshed it all the
+// same, work nobody steers by. Part 1 parks a group of guards, then runs 600
+// ticks beside continuous "construction" (a far cell toggled every 10 ticks:
+// the static epoch advances and every cached field goes stale) and requires
+// ZERO refresh field work for it (failed by construction on the W4 step-0
+// head: 60 refreshes, 764640 relaxations). Part 2: a parked group whose route
+// a new wall cuts, ordered on again, re-plans and arrives. Part 3: a group
+// held at a plugged gap re-plans through a gap that opens, by the blocked
+// re-request alone (no member moves), as soon as the base does.
 void staticidle() {
     // Part 2: the order-on re-plan. A wall with one far gap appears after the group parked.
     {
@@ -424,6 +424,46 @@ void staticidle() {
         // 120 ticks + the build time: the walk to the gap and back is well under 2000 ticks; the
         // re-plan itself must not stall the order (no body idle > 120 ticks before the field exists).
         check(built>0,"staticidle: the cut route was not re-planned");
+    }
+    // Part 3: the blocked re-request. A pair sent through the one gap in a
+    // wall finds it plugged by another player's idle body: both end up
+    // holding (the group is inactive). A second gap, closed by a feature,
+    // then opens (a static change): no member moves, so only the blocked
+    // re-request (a member held kBlockedRetry ticks outside its area on a way
+    // only soft bodies close) starts the refresh that finds the new gap. Base
+    // (refresh on every change) and B1 both arrive at once; without the
+    // blocked rule the refresh waits for a body to move again.
+    {
+        Fixture f(200,100);
+        f.rect(100,0,2,48);f.rect(100,50,2,2);f.rect(100,54,2,46);   // the second gap (z 52-53): a feature closes it
+        f.publish();
+        const auto type=mover(2);
+        const int plug=f.spawn(type,101,49,1);   // another player's idle body in the gap
+        std::vector<int> ids;
+        for(int i=0;i<2;++i)ids.push_back(f.spawn(type,80,46+i*4));
+        f.start();
+        auto gate=[&](bool closed) {f.world.addFeature(52*200+100,101*16.f,53*16.f,0,1,2,2,closed,-1,true);};
+        gate(true);
+        for(int t=0;t<90;++t)f.world.tick(1.f/30);   // the plug has stood still a while
+        for(int id:ids)f.world.order(id,150*16,50*16,false);
+        auto parked=[&] {for(int id:ids)if(!f.world.unit(id)->orders.empty())return false;return true;};
+        for(int t=0;t<900;++t)f.world.tick(1.f/30);
+        int holding=0;
+        for(int id:ids)holding+=f.world.legionNavigator()->unitState(id)==2;
+        if(std::getenv("STATIC_VERBOSE"))std::printf("  plug at %.1f,%.1f\n",f.world.unit(plug)->x.toFloat()/16,f.world.unit(plug)->z.toFloat()/16);
+        if(std::getenv("STATIC_VERBOSE"))for(int id:ids)std::printf("  unit %d state %d at %.0f,%.0f\n",id,f.world.legionNavigator()->unitState(id),f.world.unit(id)->x.toFloat()/16,f.world.unit(id)->z.toFloat()/16);
+        check(!parked(),"staticidle: the plugged group arrived before the second gap opened");
+        gate(false);
+        int open=0;
+        for(;open<3000&&!parked();++open)f.world.tick(1.f/30);
+        const auto s=f.world.legionStats();
+        std::printf("staticidle blocked holding=%d arrived_after=%d blocked_rerequests=%llu refresh_suppressed=%llu demand_resumes=%llu\n",holding,open,
+            (unsigned long long)s.blockedRerequests,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.demandResumes);
+        check(parked(),"staticidle: a blocked group did not re-plan through the gap that opened");
+        // Measured: 549 ticks at the step-0 base (refresh on every change) and with B1 (the plugged
+        // body had been blocked > 120 ticks, so the refresh starts at once); 892 with the blocked
+        // rule removed (the refresh waits until a body happens to move). Bound: base + 120.
+        check(open<=549+120,"staticidle: the blocked re-request did not start the refresh in time");
     }
     // Part 1: parked groups beside continuous construction. Twelve bodies guard
     // an idle friend in a corridor: they walk up to it and hold with their

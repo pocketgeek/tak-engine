@@ -344,10 +344,10 @@ foreach(legion_probe structsquad factorysquad patrolrepair)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;w2")
 endforeach()
-# W4 step 0: staticidle fails by construction on the step-0 head (parked groups are refreshed beside
-# continuous construction); WILL_FAIL until B1 (demand-driven refresh) lands, then remove the property.
+# W4: staticidle -- parked groups beside continuous construction do no refresh work (B1, demand-driven
+# refresh); it failed by construction on the step-0 head.
 add_test(NAME legion_staticidle COMMAND legion_world_test staticidle)
-set_tests_properties(legion_staticidle PROPERTIES LABELS "legion;w4" WILL_FAIL TRUE)
+set_tests_properties(legion_staticidle PROPERTIES LABELS "legion;w4")
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)

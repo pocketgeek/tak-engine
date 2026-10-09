@@ -34,6 +34,10 @@ constexpr uint64_t kFieldQuota=384'000;
 // in a battle a whole-map refresh otherwise ran the full quota for a dozen
 // ticks, a spike over the 8x budget each time.
 constexpr uint64_t kRefreshQuota=kFieldQuota/4;
+// A stale field is refreshed only for an active group (see active): a member
+// moving, or one blocked -- no progress for this many ticks outside its
+// destination area (Retail's blocked re-request) -- or an explicit demand.
+constexpr uint32_t kBlockedRetry=120;
 // A body held this many ticks (past every early reaction:
 // yields, first detours) is fully re-evaluated only every kRestStride ticks,
 // staggered by unit id, unless something around it changed (heldRest).
@@ -332,9 +336,21 @@ struct LegionNavigator::Impl {
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
         std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
-        // Last tick a member started its update Moving (Stats only: the
-        // field work split; never hashed, never read by a decision).
-        uint32_t movingTick=~0u-8;
+        // Demand-driven refresh (see active): the last tick a member started
+        // its update Moving, the last tick a member was blocked (no progress
+        // for kBlockedRetry ticks outside its destination area), and the
+        // explicit demand of a re-plan that is not a static change (aware
+        // re-plan; cleared when a replacement swaps in). Decision state.
+        // demand is folded into checksum with a tag when set (C27). The two
+        // stamps are not: each is a function of the last two ticks' member
+        // updates, whose inputs are hashed, and no path rebuilds Legion from
+        // a snapshot (a rejoining client replays the bundle log from tick 0
+        // and recomputes them; checked by a mid-game rejoin at W4).
+        uint32_t movingTick=~0u-8,blockedTick=~0u-8;
+        bool demand=false;
+        // Stats only (never hashed): a stale refresh was suppressed while
+        // the group was inactive (demandResumes counts its resumption).
+        bool suppressed=false;
         // The scheduler lists the group is on and its byBuilt key (see
         // listGroup). Derived, never hashed.
         bool onBuilding=false,onNeedField=false,onStaleDone=false,onByBuilt=false;
@@ -553,6 +569,16 @@ struct LegionNavigator::Impl {
     static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done)||g.next;}
     static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
     static bool wantsStaleDone(const Group& g) {return g.field&&g.stale&&!g.next;}
+    // B1, demand-driven refresh: does anybody steer by this group's field?
+    // A member started its update Moving or was blocked in the last two
+    // ticks (a resting body updates at least every kRestStride ticks), or a
+    // re-plan that is not a static change asked for it (demand). A stale
+    // field of an inactive group keeps steering and stays shareable; its
+    // refresh starts the tick the group becomes active.
+    bool active(const Group& g) const {
+        const uint32_t now=w.tickCounter_;
+        return now-g.movingTick<=2||now-g.blockedTick<=2||g.demand;
+    }
     void listGroup(Group& g) {
         auto put=[&](std::set<int>& ids,bool& on,bool want) {
             if(want==on)return;
@@ -2084,7 +2110,7 @@ struct LegionNavigator::Impl {
                 else if(g.field) {
                     if(g.next&&!g.next->done)++stats.refreshDiscards;
                     ++stats.refreshCompleted;
-                    g.field=std::move(shared);g.next.reset();g.stale=false;restaleSlots(g);
+                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);
                 }
                 else g.field=std::move(shared);
                 listGroup(g);
@@ -2120,7 +2146,7 @@ struct LegionNavigator::Impl {
 #endif
             if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
             if(victim->next&&!victim->next->done)++stats.refreshDiscards;
-            victim->field.reset();victim->next.reset();victim->stale=false;++stats.fieldEvictions;
+            victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;++stats.fieldEvictions;
             listGroup(*victim);
         }
         g.built=w.tickCounter_;
@@ -2631,7 +2657,7 @@ struct LegionNavigator::Impl {
             }
             if(f.done) {
                 ++stats.fieldsBuilt;
-                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;restaleSlots(g);++stats.refreshCompleted;}
+                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;restaleSlots(g);++stats.refreshCompleted;}
                 listGroup(g);
             }
         };
@@ -2682,6 +2708,14 @@ struct LegionNavigator::Impl {
                 Group& g=groups.find(id)->second;
                 if((g.field&&(!g.stale||!g.field->done))||g.next)continue;
                 if((pass==0)!=(g.field==nullptr))continue;
+                // B1: nobody steers by an inactive group's stale field; it
+                // stays listed and refreshes the tick the group is active
+                // (refresh suppressed / demand resumes count the visits). A
+                // refresh already under way keeps building whatever its group
+                // does (pausing it measured worse: crowdtrap 200x1 arrived
+                // settled -4% on every seed).
+                if(pass==1&&!active(g)) {++stats.refreshSuppressed;g.suppressed=true;continue;}
+                if(pass==1&&g.suppressed) {++stats.demandResumes;g.suppressed=false;}
                 plane(g.plane);settle();
                 if(budget==0)break;
                 // With the refresh allowance spent, a stale group only takes a
@@ -2710,14 +2744,14 @@ struct LegionNavigator::Impl {
         const Stats& s=stats;
         std::fprintf(stderr,"LPROBE tick=%u units=%zu groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
-            " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu fields_paused=%llu"
+            " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu"
             " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
             w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
             (unsigned long long)s.refreshDeferred,(unsigned long long)s.blockedRerequests,(unsigned long long)s.lifts,
             (unsigned long long)s.liftMembersWalked,(unsigned long long)s.liftMembersSkipped,(unsigned long long)s.waitingMemberTicks,
-            (unsigned long long)s.demandResumes,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
+            (unsigned long long)s.demandResumes,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
             (unsigned long long)s.stillPerResidueMax,(unsigned long long)s.quotaPegRunMax,(unsigned long long)s.anchorWalkIters,
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
             probeSyncMs,probeStampMs,probeLiftMs);
@@ -2754,7 +2788,8 @@ struct LegionNavigator::Impl {
         if(calls<s.moves)fail("move calls by state below moves");
         if(s.formationRingCells+s.rechoiceBfsCells>s.slotSearchCells)
             fail("slot search cells below the formation ring and re-choice cells");
-        if(s.blockedRerequests||s.demandResumes||s.fieldsPaused||s.refreshSuppressed||s.softHashVerifyTicks)fail("counters of mechanisms that do not exist yet are non-zero");
+        if(s.fieldsPaused||s.softHashVerifyTicks)fail("counters of mechanisms that do not exist yet are non-zero");
+        if(s.demandResumes>s.refreshSuppressed)fail("more demand resumes than suppressed refreshes");
         {
             std::vector<uint64_t> cmds(softOwner);
             std::sort(cmds.begin(),cmds.end());
@@ -2963,7 +2998,7 @@ struct LegionNavigator::Impl {
             g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);
             if(replan&&g.field&&g.field->done) {
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
-                g.next.reset();g.stale=true;
+                g.next.reset();g.stale=true;g.demand=true;   // not a static change: refresh even if idle (C6)
                 listGroup(g);
             }
         }
@@ -3960,6 +3995,10 @@ struct LegionNavigator::Impl {
         if(m.approach&&(uint32_t(u.id)+now)%kApproachLook==0)return true;
         return m.passUntil==now;
     }
+    // A member holding to give way to crossing traffic waits on purpose and
+    // is never "blocked" for B1's re-request (C16). Always false until W7
+    // adds the give-way hold; every blocked reader tests it.
+    static bool giveWayHolder(const Member&) {return false;}
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
         Member* found=member(u.id);
@@ -4050,7 +4089,7 @@ struct LegionNavigator::Impl {
         // ticks since the quarter-quota allowance, kRefreshQuota.)
         if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
             if(g.next&&!g.next->done)++stats.refreshDiscards;
-            g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);listGroup(g);
+            g.full=true;g.field.reset();g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
@@ -4136,6 +4175,22 @@ struct LegionNavigator::Impl {
                     : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
             if(left<m.progress) {m.progress=left;m.stallTick=w.tickCounter_;m.detourCount=0;}
             if(stalledFor(m)>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
+            // B1: a member blocked kBlockedRetry ticks outside its destination
+            // area, and not arrived by contact just above, makes its group
+            // active (see active): Retail's blocked re-request. Blocked means
+            // a re-plan could help: no finished field, or no step down the
+            // field from here that is legal and clear of soft bodies (a
+            // static change cut the way, or bodies standing still close it,
+            // which a refresh plans round). A body held only by its own
+            // command's bodies or by movers on a free way down is not: a
+            // refresh would give it the same way (guards queued at an idle
+            // friend hold like this for good: staticidle).
+            if(stalledFor(m)>=kBlockedRetry&&!giveWayHolder(m)&&
+               (!f||!f->done||f->at(size_t(here))==kUnreached||
+                (!freeDescent(u,g,p,*f,ox,oz)&&f->at(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
+                if(w.tickCounter_-g.blockedTick>2)++stats.blockedRerequests;
+                g.blockedTick=w.tickCounter_;
+            }
             // Nothing contactArrival reads changes before drive asks again
             // in this update (no step was taken, no goal or slot changes).
             contactRefused=&m;
@@ -4999,6 +5054,23 @@ struct LegionNavigator::Impl {
         if(!pt) {const auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
         return pt&&pt->assigned&&pt->limit>0;
     }
+    // A step from (ox,oz) down the field (a neighbour origin with lower
+    // potential) that is legal on the plane and not onto a soft obstacle of
+    // the group's command, whoever moves through it now (see move's B1 test:
+    // a body held only on such a way is held by bodies a re-plan does not
+    // plan round -- its own, or movers -- and a refresh would not help it).
+    bool freeDescent(const Unit& u,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint16_t potential=f.at(size_t(oz*W+ox));
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const int counts=softCells.empty()||command==kNoSoft?-1:softCountsFor(fx,fz);
+        for(const auto& d:kDirections) {
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const uint16_t v=f.at(size_t((oz+d[1])*W+ox+d[0]));
+            if(v!=kUnreached&&v<potential&&!softAt(ox+d[0],oz+d[1],fx,fz,command,counts))return true;
+        }
+        return false;
+    }
     // Pressed: no neighbour origin nearer the point (lower potential) that
     // the body could step into now.
     bool pressed(const Unit& u,const Plane& p,const Field& f,int ox,int oz,uint16_t potential) const {
@@ -5276,6 +5348,7 @@ struct LegionNavigator::Impl {
                 h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32);
             }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
+            if(g.demand)h=mix(h,0x64656d616e64ull);
             for(const auto& [seed,slot]:g.slots) {
                 h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);h=mix(h,slot.stale);
                 for(size_t i=0;i<slot.cells.size();++i)h=mix(h,uint64_t(slot.cells[i])<<1|slot.taken[i]);
