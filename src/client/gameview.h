@@ -102,6 +102,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <cassert>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -2702,6 +2703,45 @@ private:
     int reading_ = -1;                  // buffer the render pinned this frame, or -1
     int renderReadIdx_ = 0;             // render-thread's pinned buffer (mirrors reading_)
     uint32_t captureCounter_ = 0;       // monotonic; each Frame.gen gets a unique value
+    // Parallel captureFrame (WE S5b). The per-unit record copy runs on its OWN small pool,
+    // never pool_: the render drives pool_ concurrently from the main thread, and two
+    // callers in one ThreadPool would interleave their jobs. Created on the first capture
+    // large enough to use it. The capturing thread is the only one that mutates world_
+    // (the sim worker, or the main thread inline) and it blocks inside parallelFor, so
+    // the pool's reads of world_ race nothing. captureSlots_ carries what the serial
+    // tail needs (ID table, live list, conjure-site lookup) without touching units_ again.
+    static constexpr unsigned kCaptureThreads = 4;
+    static constexpr size_t kCaptureMinParallel = 2000;
+    // Units per pool job. Whole blocks keep each thread's writes to the per-slot side
+    // arrays (captureSlots_, transportFlags_) off the other threads' cache lines.
+    static constexpr size_t kCaptureBlock = 64;
+    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false; };
+    std::unique_ptr<ThreadPool> capturePool_;
+    std::vector<CaptureSlot> captureSlots_;
+    std::vector<uint8_t> transportFlags_;   // captureTransportEffects: per slot, 1 = weapon packet, 2 = flyer
+    void captureUnit(Frame& fb, const Frame& pf, size_t slot);
+    // perUnit(slot) for every slot of world_.units(): on capturePool_ from kCaptureMinParallel
+    // units up, serially below. perUnit may write only its own slot's outputs and read world_.
+    // Sole-mutator check: only the thread that ticks world_ may run this (the sim worker, or
+    // the main thread inline), and it stays blocked in parallelFor for the whole pass, so the
+    // pool reads a world nobody is writing. units_ storage, size and tick must not move.
+    template <class F> void forEachUnitSlot(F&& perUnit) {
+        const size_t count = world_.units().size();
+        if (count < kCaptureMinParallel) {
+            for (size_t i = 0; i < count; ++i) perUnit(i);
+            return;
+        }
+        assert(std::this_thread::get_id() == (useSimThread_ ? simThread_.get_id() : mainThreadId_));
+        [[maybe_unused]] const auto* const unitsBefore = world_.units().data();
+        [[maybe_unused]] const uint32_t tickBefore = world_.tickCount();
+        if (!capturePool_) capturePool_ = std::make_unique<ThreadPool>(kCaptureThreads);
+        capturePool_->parallelFor((count + kCaptureBlock - 1) / kCaptureBlock, [&](size_t b, size_t e) {
+            const size_t end = std::min(count, e * kCaptureBlock);
+            for (size_t i = b * kCaptureBlock; i < end; ++i) perUnit(i);
+        }, 1);
+        assert(world_.units().data() == unitsBefore && world_.units().size() == count &&
+               world_.tickCount() == tickBefore);
+    }
     const Frame& front() const { return frameBuf_[renderReadIdx_]; }
 public:
     // Render thread: pin the newest published buffer for this frame's reads, then release.

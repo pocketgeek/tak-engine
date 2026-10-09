@@ -859,19 +859,27 @@ if(TAK_TEST_DATA)
                          SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
     # Harvested situations (tools/scenarios/situations/README.txt): not faithful enough to gate on, so these only
     # check that each file loads and runs deterministically, serial == workers, in both modes.
+    # Each of these is one of the longest tests in the suite (50-150 s), so it is split into independent
+    # parts that run in parallel: legion_scenario checks serial == workers per (mode, offset) and gates
+    # nothing across them, so the union of the parts is exactly the unsplit run.
     foreach(legion_situation r9-36060 r9-65850 r9-61930 r10-46292 r10-87332 r10-104540)
-        add_test(NAME legion_situation_${legion_situation}
-                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/situations/situation-${legion_situation}.scn
-                         --data "${TAK_TEST_DATA}" --offsets 0 --json)
-        set_tests_properties(legion_situation_${legion_situation} PROPERTIES
-                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        foreach(legion_part legion retail)
+            add_test(NAME legion_situation_${legion_situation}_${legion_part}
+                     COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/situations/situation-${legion_situation}.scn
+                             --data "${TAK_TEST_DATA}" --offsets 0 --mode ${legion_part} --json)
+            set_tests_properties(legion_situation_${legion_situation}_${legion_part} PROPERTIES
+                                 SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        endforeach()
     endforeach()
     foreach(legion_route 21096 27459 36057 45941 54772 61923 65845)
-        add_test(NAME legion_gen1_route_${legion_route}
-                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gen1-route-${legion_route}.scn
-                         --data "${TAK_TEST_DATA}" --json)
-        set_tests_properties(legion_gen1_route_${legion_route} PROPERTIES
-                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        foreach(legion_part 0 1 -1)
+            string(REPLACE "-" "m" legion_part_name "${legion_part}")
+            add_test(NAME legion_gen1_route_${legion_route}_o${legion_part_name}
+                     COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gen1-route-${legion_route}.scn
+                             --data "${TAK_TEST_DATA}" --offsets ${legion_part} --json)
+            set_tests_properties(legion_gen1_route_${legion_route}_o${legion_part_name} PROPERTIES
+                                 SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        endforeach()
     endforeach()
 endif()
 target_link_libraries(footprobe PRIVATE tak-formats)
@@ -1686,4 +1694,36 @@ elseif(WIN32)
   include(CPack)
 elseif(APPLE)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
+endif()
+
+# Test scheduling and the `quick` label. tools/ctest_costs.txt lists the tests that take
+# 5 s or more on an optimized Debug build (`<test> <seconds>`, longest first). Each gets a
+# COST so ctest starts the longest first (ctest's own CTestCostData.txt only exists after a
+# first run in a build dir; this is the fresh-checkout default and the lower bound that
+# keeps a long test from being scheduled last). Every other test that is not `nightly` is
+# labelled `quick`: `ctest -L quick -j N` is the targeted run for task agents (about a
+# minute of wall time at -j 8; it still covers every area). Refresh the file after adding a
+# slow test: tools/ctest_costs.py build-o2 (see docs/development.md).
+set(TAK_CTEST_COSTS "${CMAKE_SOURCE_DIR}/tools/ctest_costs.txt")
+if(EXISTS "${TAK_CTEST_COSTS}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TAK_CTEST_COSTS}")
+  file(STRINGS "${TAK_CTEST_COSTS}" tak_cost_lines)
+  set(tak_slow_tests "")
+  foreach(tak_line IN LISTS tak_cost_lines)
+    if(tak_line MATCHES "^([A-Za-z0-9_.+-]+)[ \t]+([0-9.]+)")
+      if(TEST ${CMAKE_MATCH_1})
+        set_tests_properties(${CMAKE_MATCH_1} PROPERTIES COST ${CMAKE_MATCH_2})
+        list(APPEND tak_slow_tests ${CMAKE_MATCH_1})
+      endif()
+    endif()
+  endforeach()
+  get_property(tak_all_tests DIRECTORY PROPERTY TESTS)
+  foreach(tak_test IN LISTS tak_all_tests)
+    if(NOT tak_test IN_LIST tak_slow_tests)
+      get_test_property(${tak_test} LABELS tak_labels)
+      if(NOT tak_labels MATCHES "nightly")
+        set_property(TEST ${tak_test} APPEND PROPERTY LABELS quick)
+      endif()
+    endif()
+  endforeach()
 endif()
