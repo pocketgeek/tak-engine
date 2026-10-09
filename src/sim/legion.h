@@ -81,6 +81,7 @@ public:
         uint64_t rechoiceBfsCells=0;       // the settle rule's slot re-choice (rechoose)
         uint64_t formationRingCells=0;     // formationCell
         uint64_t moveCallsByState[8]={};   // move() per member state (0 none .. 5 trapped)
+        uint64_t pivotPartIds=0;           // pivotAim's per-part centroid pass (ids of points of 2+ parts)
         uint64_t joinIterations=0;         // registerMove's group-join scan
         // ---- completions (T1) ------------------------------------------------
         // Completed legs farther than the destination area (formation limit,
@@ -123,7 +124,7 @@ public:
         f("waiting_member_ticks",s.waitingMemberTicks);f("demand_resumes",s.demandResumes);f("fields_paused",s.fieldsPaused);
         f("still_units_processed",s.stillUnitsProcessed);
         f("crowd_window_ring_cells",s.crowdWindowRingCells);f("crowd_settle_visits",s.crowdSettleVisits);
-        f("rechoice_bfs_cells",s.rechoiceBfsCells);f("formation_ring_cells",s.formationRingCells);
+        f("rechoice_bfs_cells",s.rechoiceBfsCells);f("formation_ring_cells",s.formationRingCells);f("pivot_part_ids",s.pivotPartIds);
         array("move_calls_by_state",s.moveCallsByState,8);f("join_iterations",s.joinIterations);
         f("midroute_completions",s.midrouteCompletions);f("outside_area_completions",s.outsideAreaCompletions);
         array("completion_dist",s.completionDist,10);f("completion_dist_sum",s.completionDistSum);f("completion_dist_max",s.completionDistMax);

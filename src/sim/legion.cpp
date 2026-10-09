@@ -106,6 +106,7 @@ constexpr int kFormationLineCells=640;         // ... for a member with a format
 // per sqrt(members) and kPivotMaxCells; below kPivotMinBodies bodies it
 // hugs (the inner file, as before).
 constexpr int kPivotMembers=16;
+constexpr size_t kSlotsPerTick=32;             // formation slots a point hands out per tick (A2)
 constexpr int kPivotChain=48;
 constexpr int kPivotMaxCells=32;
 constexpr int kPivotMinBodies=2;
@@ -441,7 +442,12 @@ struct LegionNavigator::Impl {
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
         uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
         int8_t passRX=0,passRZ=0;         // the side it moved over to
-        std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
+        std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, command (convoy) tick, requested point
+        // The 64-unit part of the click this member's order came in (the
+        // order's own issuedTick; the point's tick is the convoy's, A2). The
+        // pinwheel ranks a member within its part (C33). Hashed when it
+        // differs from the point's tick.
+        uint32_t part=0;
         Point* pt=nullptr;         // points[point]: alive while this member holds its ref
         std::vector<int> route;           // committed local detour around still bodies
         // Pinwheel (see pivotAim): the member's distance off a wall end it
@@ -593,7 +599,7 @@ struct LegionNavigator::Impl {
         if(slot.pt) {
             auto& ids=slot.pt->ids;
             const auto at=std::lower_bound(ids.begin(),ids.end(),id);
-            if(at==ids.end()||*at!=id)ids.insert(at,id);
+            if(at==ids.end()||*at!=id) {ids.insert(at,id);++slot.pt->partRefs[slot.part];}
         }
     }
     // Settled Legion arrivals: the goal origin each one completed on, and how
@@ -1052,6 +1058,17 @@ struct LegionNavigator::Impl {
         int64_t liveX=0,liveZ=0;uint32_t liveTick=~0u;
         int64_t awareX=0,awareZ=0;bool awareSeen=false;   // centroid (px) at the last awareScan (hashed)
         SlotShape shape;   // I2 probe, set by assignFormation (never hashed)
+        // Members per 64-unit part (Member::part) over `ids`: the pinwheel's
+        // per-part cap and threshold (C33). Derived, never hashed.
+        std::map<uint32_t,int> partRefs;
+        // Per-part live centroid (px; sum x, sum z, count) on tick partTick,
+        // for a point of several parts (see pivotAim). Derived, never hashed.
+        std::map<uint32_t,std::array<int64_t,3>> partLive;uint32_t partTick=~0u;
+        // Deferred slot assignment (A2): members still waiting for a slot,
+        // front first, handed out kSlotsPerTick a tick (hashed while not
+        // empty); handTick is the tick of the last hand-out (a per-tick
+        // guard, never hashed).
+        std::vector<int> queue;uint32_t handTick=~0u;
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
     void slotCells(const Member& m,int fx,int fz,bool claim) {
@@ -1755,7 +1772,11 @@ struct LegionNavigator::Impl {
             slotCells(found->second,u->type->footX,u->type->footZ,false);
         if(auto point=points.find(found->second.point);point!=points.end()) {
             auto& ids=point->second.ids;
-            if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
+            if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id) {
+                ids.erase(at);
+                auto& parts=point->second.partRefs;
+                if(auto part=parts.find(found->second.part);part!=parts.end()&&--part->second<=0)parts.erase(part);
+            }
             if(--point->second.refs<=0)points.erase(point);
         }
         auto group=groups.find(found->second.group);
@@ -1844,10 +1865,13 @@ struct LegionNavigator::Impl {
         }
         Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
-        // The command a member belongs to: the order's issue tick; every
-        // patrol lap on its own; moving goals on the shared re-seed grid.
+        // The command a member belongs to: the order's convoy (one click,
+        // however many ticks the uplink split it over; its issue tick when
+        // unstamped); every patrol lap on its own; moving goals on the
+        // shared re-seed grid.
+        const uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
         const uint32_t issue=rule.moving?w.tickCounter_-w.tickCounter_%kReseedTicks:
-            rule.perController?uint32_t(leg.controller):leg.issuedTick;
+            rule.perController?uint32_t(leg.controller):command;
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
         auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
         if(fresh) {
@@ -1872,7 +1896,7 @@ struct LegionNavigator::Impl {
         m.requested=m.goal;
         // A kind without a shared destination area gets a point of its own
         // (keyed by the unit), so no formation or area logic joins it.
-        m.point={rule.area?u.player:-1-u.id,rule.area?leg.issuedTick:issue,tx.v,tz.v};
+        m.point={rule.area?u.player:-1-u.id,rule.area?command:issue,tx.v,tz.v};m.part=leg.issuedTick;
         {auto& pt=points[m.point];++pt.refs;m.pt=&pt;}
         unpin();
         if(m.goal<0) {putMember(u.id,m);return;}   // trapped on first move
@@ -3538,9 +3562,18 @@ struct LegionNavigator::Impl {
         m.goal=cell;m.slot=0;m.lineCell=-1;markPass(u,m);
         slotCells(m,u.type->footX,u.type->footZ,true);
     }
-    // Every member sent to one point in one command gets its slot at once,
-    // by formation: its offset from the members' centroid, scaled so the
-    // formation's spread matches the packed disc that many bodies occupy,
+    // The pinwheel's strength for a member: its 64-unit part's members
+    // (C33); the point's refs while the point is a single part, as before
+    // A2 merged a click's parts into one point.
+    int partRefs(const Member& m) const {
+        if(!m.pt)return 0;
+        if(m.pt->partRefs.size()<=1)return m.pt->refs;
+        const auto found=m.pt->partRefs.find(m.part);
+        return found==m.pt->partRefs.end()?0:found->second;
+    }
+    // Every member sent to one point in one command gets its slot by
+    // formation, once its convoy has closed (kSlotsPerTick a tick): its
+    // offset from the members' centroid, scaled so the formation's spread matches the packed disc that many bodies occupy,
     // placed around the point. Members are served front first (farthest
     // along the centroid->point direction), so the front of the crowd takes
     // the far side of the area and nobody has to cross a settled body.
@@ -3593,7 +3626,14 @@ struct LegionNavigator::Impl {
         }
         std::sort(order.begin(),order.end(),[](const auto& a,const auto& b) {
             return std::get<0>(a)!=std::get<0>(b)?std::get<0>(a)<std::get<0>(b):std::get<1>(a)<std::get<1>(b);});
+        // At most kSlotsPerTick slots now, front first; the rest queue in
+        // that order (slot -3) and are handed out on the next ticks (see
+        // handOut), steering by the shared field meanwhile.
+        pt.handTick=w.tickCounter_;
+        size_t given=0;
         for(const auto& [key2,id,mm]:order) {
+            if(given>=kSlotsPerTick) {mm->slot=-3;pt.queue.push_back(id);continue;}
+            ++given;
             const Unit* v=w.unit(id);
             const Group& gg=groups.find(mm->group)->second;
             const Plane& pp=plane(gg.plane);
@@ -3602,6 +3642,33 @@ struct LegionNavigator::Impl {
             if(cell>=0)takeFormation(*mm,*v,cell);
         }
         slotShape(pt,list,ax,az,px,pz);
+    }
+    // The next kSlotsPerTick queued members of an assigned point take their
+    // formation slots (their current offset, mapped as a later joiner's),
+    // once per tick. A member that left, re-registered or died is dropped.
+    void handOut(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
+        pt.handTick=w.tickCounter_;
+        const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
+        size_t at=0,given=0;
+        for(;at<pt.queue.size()&&given<kSlotsPerTick;++at) {
+            Member* mm=member(pt.queue[at]);const Unit* v=w.unit(pt.queue[at]);
+            if(!mm||mm->point!=key||mm->slot!=-3)continue;
+            const auto group=groups.find(mm->group);
+            if(!v||!v->type||group==groups.end()) {mm->slot=-1;continue;}
+            ++given;
+            const Plane& pp=plane(group->second.plane);
+            const int64_t ox=(v->x.v>>16)-pt.centreX,oz=(v->z.v>>16)-pt.centreZ;
+            const int cell=formationCell(*v,pp,groupComp(group->second,pp),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
+            if(cell>=0)takeFormation(*mm,*v,cell);else mm->slot=-2;
+        }
+        pt.queue.erase(pt.queue.begin(),pt.queue.begin()+std::ptrdiff_t(at));
+    }
+    // Can the point's command still grow? A click's orders arrive over
+    // several ticks (the 64-per-tick uplink); its convoy stays joinable for
+    // up to kGapTicks after its last order (sim/convoy.h). Slots wait for it
+    // to close, so the formation is sized and ranked over the whole click.
+    bool commandOpen(const std::tuple<int,uint32_t,int32_t,int32_t>& key) const {
+        return std::get<0>(key)>=0&&w.convoys().joinable(std::get<0>(key),std::get<1>(key),w.tickCounter_);
     }
     // I2 slot-shape probe (observation only, never hashed): the members'
     // spread and their slots' layout in the approach frame (along: centroid
@@ -3651,8 +3718,10 @@ struct LegionNavigator::Impl {
         // member too (refs 1): it can still re-choose a walled-off slot.
         if(!cached||(cached->refs<2&&!cached->assigned))return false;
         auto& pt=*cached;
-        if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)) {pt.tried=true;assignFormation(pt,m.point);}
+        if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)&&!commandOpen(m.point)) {pt.tried=true;assignFormation(pt,m.point);}
         if(!pt.assigned||pt.limit<=0)return true;
+        if(!pt.queue.empty()&&pt.handTick!=w.tickCounter_)handOut(pt,m.point);
+        if(m.slot==-3)return true;   // queued for its slot: steers by the shared field
         const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
         // A slot walled off by bodies that settled first, or none left for
@@ -4009,7 +4078,7 @@ struct LegionNavigator::Impl {
             if(potential==kUnreached) {trapped(u,m);return;}
             int cell=aimCell(u,m,p,*f,ox,oz);
             if(cell<0) {hold(u,m);return;}
-            if(f->done&&m.pivotR>=0&&m.slot>=0&&m.pt&&m.pt->refs>=kPivotMembers&&formationMember(m)) {
+            if(f->done&&m.pivotR>=0&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;}
             }
@@ -4123,20 +4192,41 @@ struct LegionNavigator::Impl {
                 const int64_t cross=ax*bz-az*bx;
                 if(cross*cross*4>=(ax*ax+az*az)*(bx*bx+bz*bz)) {turn=i+6;side=cross>0?1:-1;}
             }
-            const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(m.pt->refs,0))))*foot*3/2);
+            const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(partRefs(m),0))))*foot*3/2);
             if(turn<0)return -1;
-            // Rank: the member's side offset from the group's live centroid
+            // Rank: the member's side offset from its part's live centroid
             // across the way to the turn, measured from the inner (turn)
-            // side; the centre file keeps half the group's packed width.
+            // side; the centre file keeps half the part's packed width.
             auto& pt=*m.pt;
-            if(pt.liveTick!=w.tickCounter_) {
-                int64_t sx=0,sz=0,count=0;
-                for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
-                pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
+            int64_t liveX,liveZ;
+            if(pt.partRefs.size()<=1) {
+                if(pt.liveTick!=w.tickCounter_) {
+                    int64_t sx=0,sz=0,count=0;
+                    for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
+                    pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
+                }
+                liveX=pt.liveX;liveZ=pt.liveZ;
+            } else {
+                // A point of several parts (one click split by the uplink,
+                // A2): each part ranks against its own centroid (C33), so
+                // the merged selection is never ranked as one. One pass
+                // over the point's ids per tick, counted as pivot work.
+                if(pt.partTick!=w.tickCounter_) {
+                    pt.partTick=w.tickCounter_;pt.partLive.clear();
+                    for(const int id:pt.ids) {
+                        const Member* mm=member(id);const Unit* v=w.unit(id);
+                        if(!mm||!v)continue;
+                        auto& a=pt.partLive[mm->part];a[0]+=v->x.v>>16;a[1]+=v->z.v>>16;++a[2];
+                    }
+                    stats.pivotPartIds+=pt.ids.size();
+                }
+                const auto found=pt.partLive.find(m.part);
+                const int64_t count=found==pt.partLive.end()?0:found->second[2];
+                liveX=count?found->second[0]/count:0;liveZ=count?found->second[1]/count:0;
             }
-            const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-pt.liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-pt.liveZ;
+            const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-liveZ;
             const int64_t tl=isqrtFloor(uint64_t(tx*tx+tz*tz));
-            const int64_t lat=tl?(tx*((u.z.v>>16)-pt.liveZ)-tz*((u.x.v>>16)-pt.liveX))/tl:0;   // px, + right of the way
+            const int64_t lat=tl?(tx*((u.z.v>>16)-liveZ)-tz*((u.x.v>>16)-liveX))/tl:0;   // px, + right of the way
             const int rank=int(std::clamp<int64_t>(cap/2-side*lat/16,0,cap));
             m.pivotR=int16_t(rank>=kPivotMinBodies*foot?rank:-1);
             if(m.pivotR<0)return -1;
@@ -5053,6 +5143,7 @@ struct LegionNavigator::Impl {
                 h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));}
             for(int c:point.cells)h=mix(h,uint64_t(c));
             if(point.awareSeen) {h=mix(h,uint64_t(point.awareX));h=mix(h,uint64_t(point.awareZ));}
+            if(!point.queue.empty()) {h=mix(h,0x71756575ull);for(const int id:point.queue)h=mix(h,uint64_t(id));}
         }
         for(const auto& [id,a]:anchors) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);
@@ -5079,6 +5170,7 @@ struct LegionNavigator::Impl {
             if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);}
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
+            if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
             if(m.kind!=Kind::Move) {

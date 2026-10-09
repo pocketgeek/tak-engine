@@ -1128,11 +1128,17 @@ observer, inside `work.legion_total`); the declared bound is per order (p99 at
 most 16, max at most 64), which `legion_scenario` reports as `convoy.tests_max`,
 `convoy.over16_permille` and `convoy.over64` and baseline.json gates. `TAK_LEGION_VERIFY` checks every join
 against a scan of the table and the indexes against a rebuild every tick.
-Legion's steering does not read `convoyTick`: A2 (keying the shared point,
-formation, deferred slots and settling on the convoy) was parked at W3 because
-the corner fixtures regressed, so a selection over 64 units is still one point
-per 64-unit part. Later workstreams key on the convoy directly (W6 flight
-stations, W7 Trapped ownership, W8's lane cap). `convoy_test`
+Legion keys on the convoy (A2): the shared point (formation, area, settling),
+the group issue and the soft-obstacle command key use `convoyTick`, so a
+selection over 64 units is one point, one formation and one settle chain.
+Formation slots wait until the convoy can no longer be joined, then are handed
+out `kSlotsPerTick` (32) a tick, front first; the rest steer by the shared field
+meanwhile. The pinwheel ranks a member within its 64-unit part (its order's
+`issuedTick`, `Member::part`) against that part's live centroid. A2 was parked
+once at W3 (the corner gate counted far tails that completed mid-route as
+arrivals); measured again on top of the settle rule with physical arrival, it
+lands. Later workstreams key on the convoy directly (W6 flight stations, W7
+Trapped ownership, W8's lane cap). `convoy_test`
 covers the click shapes (flyers first with saturated offsets, opposite
 corners, all-air, the 974-unit window at round trips 0/8/16/24, patrol, two
 clicks 48 px apart) and the index against the scan.
