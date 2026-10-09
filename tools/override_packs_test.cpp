@@ -6,7 +6,7 @@ using namespace tak;
 int main(){
  auto root=std::filesystem::temp_directory_path()/("tak-packs-"+crypto::toHex(crypto::randomVec(8)));
  int failures=0;auto check=[&](bool value,const char* label){if(!value){std::cerr<<"FAIL: "<<label<<'\n';++failures;}};
- auto put=[&](const std::string& path,const std::string& value){auto p=root/std::filesystem::u8path(path);std::filesystem::create_directories(p.parent_path());std::ofstream(p)<<value;};
+ auto put=[&](const std::string& path,const std::string& value){auto p=root/std::filesystem::u8path(path);std::filesystem::create_directories(p.parent_path());std::ofstream(p,std::ios::binary)<<value;};
  auto rejects=[&](auto fn,const char* label){bool caught=false;try{fn();}catch(const std::exception&){caught=true;}check(caught,label);};
  try{
   put("overrides/root-only.wav","forbidden");put("overrides/Alpha/sounds/test.wav","a");put("overrides/Zeta/sounds/test.wav","z");

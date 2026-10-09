@@ -16,7 +16,7 @@ same shared functions:
 
 `GameView::apply` is a one-line wrapper over `applyCommand` used by *both* paths,
 and the server referee calls the same free function. Same code, same registry,
-same math (`-ffp-contract=off` on the whole sim library, plus the `detmath` shim
+same math (`-ffp-contract=off` on every target, plus the `detmath` shim
 for cross-build determinism). So combat, economy, pathfinding, and AI *decisions*
 cannot diverge in their rules — there is no separate "single-player sim."
 

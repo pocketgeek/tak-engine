@@ -150,8 +150,8 @@ jobs:
 
       - name: Rendering, navigation and validation regressions
         run: |
-          cmake --build build --target tdf_limits_test validationworker_test order_trail_test retail_search_scratch_test navigation_checkpoint_test navigation_telemetry_test replay_test
-          bash tools/run-ctest-selection.sh build tdf_limits validationworker order_trail retail_search_scratch navigation_determinism crowdbench_matrix navigation_telemetry replay
+          cmake --build build --target tdf_limits_test validationworker_test order_trail_test retail_search_scratch_test navigation_checkpoint_test navigation_telemetry_test replay_test fp_contract_test
+          bash tools/run-ctest-selection.sh build fp_contract tdf_limits validationworker order_trail retail_search_scratch navigation_determinism crowdbench_matrix navigation_telemetry replay
 
       # The per-commit Legion selection (PLAN 3.0 / T8 A8, <= 45 s on 4 cores): the World
       # cases, the instrument selftests, the asset-free scenarios of label legion (the

@@ -32,9 +32,13 @@ contract today:
 - **No RNG in the sim.** All variation comes from ordered state.
 - **Fixed timestep** (1/30 s), fixed iteration orders, `mixf` hashes the *exact*
   float bits (`src/sim/sim.cpp` `stateHash`).
-- **`-ffp-contract=off`** on `tak-formats` (which holds `sim.cpp`,
-  `matchsetup.cpp`, `ai.cpp`), so the compiler never fuses `a*b+c` into an FMA
-  that rounds differently on different CPUs. **No `-ffast-math`.**
+- **`-ffp-contract=off`** on EVERY target (directory-wide in CMakeLists.txt), so
+  the compiler never fuses `a*b+c` into an FMA that rounds differently on
+  different CPUs. **No `-ffast-math`.** It used to be set on `tak-formats` only,
+  which missed `src/ai/ai.cpp` (a `takserver` source, not part of the library):
+  Apple Clang on arm64 contracts by default, so a Mac-hosted server's AI issued a
+  door-clearing Move one ulp off (`factory.z + sin(a)*r`) and the game diverged
+  from the same game hosted on Linux/Windows. `fp_contract_test` guards it.
 
 Why that is *not yet* enough for cross-build play:
 
