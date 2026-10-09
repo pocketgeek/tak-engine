@@ -4,6 +4,7 @@ import importlib.util
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -133,7 +134,7 @@ SCREEN_SPEC.loader.exec_module(screen)
 
 class ScreenTests(unittest.TestCase):
     def args(self, *extra):
-        parser_args = ["--binary", __file__, "--output", "/dev/null"] + list(extra)
+        parser_args = ["--binary", __file__, "--output", os.devnull] + list(extra)
         captured = {}
         def fake(binary, cases, cpus, jobs, timeout, progress=None):
             captured.update(cases=cases, cpus=cpus, jobs=jobs)

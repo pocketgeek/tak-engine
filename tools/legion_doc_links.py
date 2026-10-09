@@ -142,8 +142,9 @@ def check(root):
 
     if os.path.isdir(os.path.join(root, '.git')) or os.path.isfile(os.path.join(root, '.git')):
         for h in re.findall(r'(?i)\bas of ([0-9a-f]{7,40})\b', doc):
-            r = subprocess.run(['git', '-C', root, 'cat-file', '-e', h + '^{commit}'], capture_output=True)
-            if r.returncode != 0:
+            # cat-file -t, not 'h^{commit}': MSYS git behind a mingw python drops the braces
+            r = subprocess.run(['git', '-C', root, 'cat-file', '-t', h], capture_output=True, text=True)
+            if r.returncode != 0 or r.stdout.strip() != 'commit':
                 problems.append(f'"as of {h}": not a commit of this repository')
     return problems, cited
 
