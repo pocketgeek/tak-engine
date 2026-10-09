@@ -1128,7 +1128,11 @@ observer, inside `work.legion_total`); the declared bound is per order (p99 at
 most 16, max at most 64), which `legion_scenario` reports as `convoy.tests_max`,
 `convoy.over16_permille` and `convoy.over64` and baseline.json gates. `TAK_LEGION_VERIFY` checks every join
 against a scan of the table and the indexes against a rebuild every tick.
-Nothing reads `convoyTick` yet (A2 keys Legion's groups on it); `convoy_test`
+Legion's steering does not read `convoyTick`: A2 (keying the shared point,
+formation, deferred slots and settling on the convoy) was parked at W3 because
+the corner fixtures regressed, so a selection over 64 units is still one point
+per 64-unit part. Later workstreams key on the convoy directly (W6 flight
+stations, W7 Trapped ownership, W8's lane cap). `convoy_test`
 covers the click shapes (flyers first with saturated offsets, opposite
 corners, all-air, the 974-unit window at round trips 0/8/16/24, patrol, two
 clicks 48 px apart) and the index against the scan.
@@ -1248,15 +1252,27 @@ Rules that came out of using them:
     per member for a large shared click), and the 640-cell sweep and the
     49x49 re-choice BFS are bounded per member, not globally
     (`split-450-open:work.formation_ring_cells.max`).
-  * A walled-out formation member settling after 600 ticks can stand just
-    outside the benchmark's authored radius: its order completes, but it does
-    not count as arrived_settled (`corner-8x56:g.A.complete_outside_radius`).
+  * A member queued behind its own crowd settles where it stands, out to twice
+    the crowd's reach, so it can stand outside the benchmark's authored radius:
+    its order completes, but it does not count as arrived_settled
+    (`corner-8x56:g.A.complete_outside_radius`).
   * Point cell claims do not follow a body that yielded
     (`corner-4x50:stopped_permille`).
   * The review-4 fixes were not screened at 500 or 1000 units, with 4 or 8
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
     exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test;
     `battle-field-2x60:spins` and `ctest:crowdbench_matrix` are what watch them.
+* **Long queues into dead ends and large selections into pockets still end
+  short.** The settle rule only settles a body queued back to its own crowd
+  within twice that crowd's reach (the b8a4110 acceptance bound, kept so no
+  order completes farther from its click). A queue of 120 bodies into a
+  2- or 4-cell dead-end corridor is longer than that: about 70 of them stand
+  still with their orders open (`deadend-w4-n120-closed-plain:open_still900`),
+  and in a 2-cell corridor the queue jams at the mouth before it enters. A
+  615-body click into a wall pocket now completes 608 orders by tick 8000
+  (479 before W3), but most complete in the crowd outside the pocket: 154
+  arrive inside the authored radius (`pocket-615-open:g.A.arrived`). The
+  pocket target needs the merged one-point-per-click (A2), which is parked.
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially

@@ -810,7 +810,11 @@ armies:
   and the group heads for the destination as a body, not as a column of
   individuals.
 - **Arrivals settle.** Units take up places around the destination point, and
-  once they are close they stop. Large groups do not keep shuffling forever.
+  once they are close they stop. Large groups do not keep shuffling forever:
+  the last units of a group, pressed against the group's own crowd with no way
+  further in, stop where they stand and are free for their next order, instead
+  of edging round the crowd for minutes. At a wall or in a dead end the
+  destination area follows the wall or the corridor.
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow.
