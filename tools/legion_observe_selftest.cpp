@@ -165,6 +165,10 @@ void laneCase() {
 // per arrived unit, none arrived (read as 1): A1-S and B1-S on 2 decision
 // ticks = 4000. Noting one selection {A1, A2, B1, S} makes S their own
 // command and G (still its group's) foreign: A2-G twice = 2000.
+// Commands key by convoy (ruling W3 round 4 (1)): {A1, A2, B1} and {S} noted
+// as two selections of one convoy are one command, as the single selection
+// (2000); in two convoys S is foreign again: A1-S, B1-S and A2-G = 6000. A
+// group whose click joined a convoy of 12 bodies (discN) reads that disc.
 // Pair proximity A x B (centre cells within 2): A1 (11,11)-B1 (11,13) and
 // A2 (13,11)-B1: 2 contacts of 2 pairs.
 void spacingCase() {
@@ -174,10 +178,21 @@ void spacingCase() {
     const int g=s.spawn(t,14*16+16,10*16+16);
     for(int id:{a1,a2,b1})s.order(id,80*16,80*16);
     obs::Config cfg;cfg.groups={{"A",{a1,a2,g},0,0},{"B",{b1},0,0}};cfg.pairs={{"A","B",2}};
-    obs::Observer o(cfg),noted(cfg);
+    obs::Observer o(cfg),noted(cfg),oneConvoy(cfg),twoConvoys(cfg);
     noted.noteSelection({a1,a2,b1,st});
-    for(int tick=0;tick<20;++tick) {o.sample(s.world,tick);noted.sample(s.world,tick);}   // decision ticks 0 and 10
+    oneConvoy.noteSelection({a1,a2,b1},7);oneConvoy.noteSelection({st},7);
+    twoConvoys.noteSelection({a1,a2,b1},7);twoConvoys.noteSelection({st},8);
+    auto disc=cfg;disc.groups[0].discN=12;
+    obs::Observer wide(disc);
+    for(int tick=0;tick<20;++tick) {   // decision ticks 0 and 10
+        o.sample(s.world,tick);noted.sample(s.world,tick);oneConvoy.sample(s.world,tick);
+        twoConvoys.sample(s.world,tick);wide.sample(s.world,tick);
+    }
     const auto k=o.report();
+    expect("spacing",oneConvoy.report(),"contact_settled_permille",2000);
+    expect("spacing",twoConvoys.report(),"contact_settled_permille",6000);
+    expect("spacing",k,"g.A.radius_px",58);           // 3 bodies, 2x2: 16*3*1.25*sqrt(3/pi)
+    expect("spacing",wide.report(),"g.A.radius_px",117);   // the convoy's 12
     expect("spacing",k,"spacing_samples",6);
     expect("spacing",k,"contact_own_permille",667);
     expect("spacing",k,"contact_other_permille",1000);

@@ -78,6 +78,7 @@
 // bad file, 77 the file needs --data (ctest SKIP).
 #include "legion_observe.h"
 #include "legion_scn.h"
+#include "sim/convoy.h"
 
 #include <algorithm>
 #include <chrono>
@@ -217,6 +218,45 @@ std::string expandGroups(const scn::Scenario& s, const std::string& list) {
     return out;
 }
 
+// The convoy each directive's click joins (lead ruling W3 round 4 (1)): under A1 (user decision 2) the clicks one
+// convoy merges are one order -- wall-4x50's four selections of 50 sent to one point on ticks 1-4 are one command
+// -- so the observer keys a command, and sizes a group's arrival disc, by convoy, in both modes. The directives run
+// through a ConvoyTable of their own (never the world's: Retail keeps none), in tick order, each as one shared
+// order at its click with its selection's owner and class, joined on its directive tick. A queued or appended
+// directive, or one without a point (a target group's centroid, Attack, Guard, Stop, Squad), joins none: 0.
+std::vector<uint32_t> directiveConvoys(const scn::Scenario& s) {
+    std::vector<uint32_t> out(s.orders.size(), 0);
+    std::vector<size_t> byTick(s.orders.size());
+    for (size_t i = 0; i < byTick.size(); ++i) byTick[i] = i;
+    std::stable_sort(byTick.begin(), byTick.end(),
+                     [&](size_t a, size_t b) { return s.orders[a].tick < s.orders[b].tick; });
+    auto owner = [&](const scn::OrderSpec& o) {
+        const std::string& t = o.selection[0];
+        if (t == "all") return s.groups.empty() ? 0 : s.groups[0].owner;
+        if (scn::Scenario::isBodyToken(t)) {
+            const int g = s.groupOfBody(scn::Scenario::bodyNumber(t));
+            return g >= 0 ? s.groups[size_t(g)].owner : 0;
+        }
+        const auto* g = s.group(t);
+        return g ? g->owner : 0;
+    };
+    tak::sim::ConvoyTable table;
+    for (size_t i : byTick) {
+        const auto& o = s.orders[i];
+        if (o.queue || o.append || !o.point || o.selection.empty()) continue;
+        tak::sim::ConvoyClass cls;
+        switch (o.verb) {
+        case scn::Verb::Move: cls = tak::sim::ConvoyClass::Move; break;
+        case scn::Verb::Fight: cls = tak::sim::ConvoyClass::Fight; break;
+        case scn::Verb::Patrol: cls = tak::sim::ConvoyClass::Patrol; break;
+        default: continue;
+        }
+        const auto raw = [](float cells) { return int32_t(std::lround(double(cells) * 16 * 65536)); };
+        out[i] = table.join(owner(o), cls, raw(o.x), raw(o.z), true, o.tick).id;
+    }
+    return out;
+}
+
 // The observer's configuration for one built world.
 obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
     const auto& w = *b.world;
@@ -231,14 +271,24 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
         return n ? std::pair<int, int>{int(x / n), int(z / n)} : std::pair<int, int>{0, 0};
     };
     obs::Config cfg;
+    const auto convoys = directiveConvoys(s);
+    std::vector<uint32_t> groupConvoy;   // the convoy of the order that decides each group's click (0: none)
     for (const auto& g : s.groups) {
         obs::Group og;
         og.name = g.name;
         og.ids = b.groups.at(g.name);
         std::tie(og.clickX, og.clickZ) = centroid(g.name, false);
+        groupConvoy.push_back(0);
         // The last order that moves this group decides its click.
         for (const auto& o : s.orders) {
             if (!s.selects(o, size_t(&g - s.groups.data()))) continue;
+            switch (o.verb) {
+            case scn::Verb::Move: case scn::Verb::Fight: case scn::Verb::Patrol:
+            case scn::Verb::Attack: case scn::Verb::Guard:
+                groupConvoy.back() = convoys[size_t(&o - s.orders.data())];
+                break;
+            default: break;
+            }
             switch (o.verb) {
             case scn::Verb::Move: case scn::Verb::Fight: case scn::Verb::Patrol:
                 if (o.point) { og.clickX = int(std::lround(o.x * 16)); og.clickZ = int(std::lround(o.z * 16)); }
@@ -251,6 +301,14 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
             }
         }
         cfg.groups.push_back(std::move(og));
+    }
+    // Groups whose clicks one convoy merged share one disc, sized for all of them.
+    for (size_t g = 0; g < cfg.groups.size(); ++g) {
+        if (!groupConvoy[g]) continue;
+        int n = 0;
+        for (size_t h = 0; h < cfg.groups.size(); ++h)
+            if (groupConvoy[h] == groupConvoy[g]) n += int(cfg.groups[h].ids.size());
+        cfg.groups[g].discN = n;
     }
     for (const auto& sh : s.shapes) {
         const float x0 = std::min(sh.x0, sh.x1), x1 = std::max(sh.x0, sh.x1);
@@ -451,6 +509,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<int> all;
     for (const auto& g : s.groups)
         for (int id : b->groups.at(g.name)) all.push_back(id);
+    const auto convoys = directiveConvoys(s);
     if (observe) {
         o.emplace(configFor(s, *b));
         if (s.map.kind == scn::MapSpec::Ascii || s.map.kind == scn::MapSpec::Flat)
@@ -475,11 +534,13 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
-        // contact_settled's command identity (W3-1): one directive is one selection, whatever the
-        // uplink splits it into; a shift-queued or appended order keeps its units' command.
+        // contact_settled's command identity (W3-1, ruling W3 round 4 (1)): one convoy is one command,
+        // whatever the uplink splits it into and however many selections it merged; a shift-queued or
+        // appended order keeps its units' command.
         if (o)
             for (const auto& od : s.orders)
-                if (od.tick == t && !od.queue && !od.append) o->noteSelection(feed.selection(od));
+                if (od.tick == t && !od.queue && !od.append)
+                    o->noteSelection(feed.selection(od), convoys[size_t(&od - s.orders.data())]);
         const size_t landed = feed.apply(t);
         if (landed) { commands += int64_t(landed); lastCommand = t; }
         w.tick(1.f / 30);

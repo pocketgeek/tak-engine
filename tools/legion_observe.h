@@ -21,7 +21,9 @@
 // - Progress. A member has ARRIVED when its orders are empty, its speed is 0
 //   and its centre lies inside the packed-disc limit of its group's click
 //   point: 16*(foot+1)*sqrt(N/pi)*1.25 px (foot: the group's largest
-//   footprint side, N: the group size). t50/t90/done are the first ticks
+//   footprint side, N: the bodies of the command its click belongs to --
+//   the group's own size unless several groups' clicks join one convoy,
+//   Group::discN). t50/t90/done are the first ticks
 //   half/90%/all of the group had arrived; left_behind is the rest at the end.
 //   orders_done is the first tick every live member's orders were empty.
 // - Completion (AR-08). When a member's orders empty, its distance from the
@@ -77,9 +79,13 @@
 //   UNIT and leaves out the unit's own command: the member samples touching
 //   a body without orders that another command (selection) issued, or no
 //   command at all, x1000 / the members arrived at the end (at least 1). A
-//   command is one selection: noteSelection() labels its units (a click of
-//   450 lands in 64-unit parts and stays one command); a unit never labelled
-//   counts its group as its command. Bodies settling behind their own army
+//   command is one convoy (lead ruling W3 round 4 (1), user decision 2: the
+//   clicks one convoy merges under A1 are one order): noteSelection() labels
+//   its units with the convoy the caller found for the click (a click of 450
+//   lands in 64-unit parts and stays one command; four selections clicked to
+//   one point on ticks 1-4 are one command), or as a command of its own when
+//   the click joins none; a unit never labelled counts its group as its
+//   command. The runner applies the same keying in both modes. Bodies settling behind their own army
 //   are what a one-order click does by design, so they are not counted, and
 //   a mode that delivers more units is not charged for the bodies it parks.
 // - Walls (when a static mask or legality provider is set). Per footprint
@@ -132,6 +138,9 @@ struct Group {
     std::string name;
     std::vector<int> ids;
     int clickX=0,clickZ=0;   // px
+    // Bodies of the command (convoy) the group's click joined, its own among
+    // them; 0: the group alone. Sizes the packed disc (lead ruling W3 round 4 (1)).
+    int discN=0;
 };
 struct Gate {
     std::string name;
@@ -230,15 +239,17 @@ public:
     }
     void staticChanged() {dt_.clear();}
 
-    // One command (selection) issued to `ids`: they are one another's own
-    // command for contact_settled until a later selection relabels them. A
-    // shift-queued order keeps its units' current command.
-    void noteSelection(const std::vector<int>& ids) {
-        ++selections_;
+    // One command issued to `ids`: they are one another's own command for
+    // contact_settled until a later selection relabels them. `convoy` (> 0)
+    // is the convoy the click joined: every selection noted with the same
+    // convoy is one command (ruling W3 round 4 (1)); 0 makes the selection a
+    // command of its own. A shift-queued order keeps its units' current command.
+    void noteSelection(const std::vector<int>& ids,uint32_t convoy=0) {
+        const int64_t cmd=convoy?kConvoyCommand+int64_t(convoy):++selections_;
         for(int id:ids) {
             auto it=std::lower_bound(selection_.begin(),selection_.end(),std::pair<int,int64_t>{id,INT64_MIN});
-            if(it!=selection_.end()&&it->first==id)it->second=selections_;
-            else selection_.insert(it,{id,selections_});
+            if(it!=selection_.end()&&it->first==id)it->second=cmd;
+            else selection_.insert(it,{id,cmd});
         }
     }
 
@@ -617,7 +628,7 @@ private:
         if(!gs.radius2) {
             int foot=1,n=0;
             for(const auto& m:m_)if(m.group==int(g)) {++n;foot=std::max(foot,m.foot);}
-            gs.foot=foot;gs.radius2=detail::discRadius2(foot,std::max(n,1));
+            gs.foot=foot;gs.radius2=detail::discRadius2(foot,std::max({n,cfg_.groups[g].discN,1}));
         }
         return gs.radius2;
     }
@@ -990,6 +1001,7 @@ private:
     int64_t waitingHeld_=0,waitingNoProgress_=0,parkedHeld_=0,parkedNoProgress_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;
     int64_t spacingSamples_=0,contactOwn_=0,contactOther_=0,contactSettled_=0;
+    static constexpr int64_t kConvoyCommand=int64_t(1)<<40;   // convoy commands, apart from plain selections
     std::vector<std::pair<int,int64_t>> selection_;int64_t selections_=0;   // (unit id, command), sorted
     int64_t wallSamples_=0,wallTouch_=0;std::vector<int> near_;
     // id grid and the pair count grid
