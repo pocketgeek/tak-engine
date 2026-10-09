@@ -4811,6 +4811,10 @@ int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
 }
+int LegionNavigator::routeLength(int id) const {
+    const auto found=impl_->members.find(id);
+    return found==impl_->members.end()?0:int(found->second.route.size());
+}
 }
 namespace tak::sim {
 int LegionNavigator::fieldPotential(int id,int x,int z) const {

@@ -62,7 +62,8 @@
 //   way, entering within pairWindow ticks, cross when their lateral order
 //   flips by at least flipCells (default: the group's body width) at both
 //   ends. LaneOrder (the MV-13 S-bend probe): the same flip test between the
-//   first entries into a line before a vertex and a line after it. Hug: a
+//   first entries into a line before a vertex and a line after it (pairs of
+//   one group unless sameGroup is off). Hug: a
 //   member is hugging a vertex when its lateral cell on entering the vertex's
 //   line is within `cells` of the tip; carry is the members that hug both
 //   vertices (kept separate from crossings).
@@ -143,6 +144,7 @@ struct LaneOrder {
     Line before,after;
     int window=300;
     int minCells=2;
+    bool sameGroup=true;     // false: pairs across groups count too (the audit's wall-4x50 probe)
 };
 struct Hug {
     std::string name;
@@ -156,8 +158,9 @@ struct Side {
     int at=0;                // centre cell; >= at is the far side
 };
 struct Pair {
-    std::string a,b;         // group names
+    std::string a,b;         // group names; a comma list is the union of its groups
     int cells=2;
+    std::string name;        // key stem "pair.<name>."; empty: "pair.<a>.<b>."
 };
 
 struct Config {
@@ -196,7 +199,7 @@ public:
         sideStats_.resize(cfg_.sides.size());
         pairStats_.resize(cfg_.pairs.size());
         for(size_t p=0;p<cfg_.pairs.size();++p) {
-            pairStats_[p].a=groupIndex(cfg_.pairs[p].a);pairStats_[p].b=groupIndex(cfg_.pairs[p].b);
+            pairStats_[p].a=groupSet(cfg_.pairs[p].a);pairStats_[p].b=groupSet(cfg_.pairs[p].b);
         }
         for(auto& m:m_) {
             m.gate.assign(cfg_.gates.size()*2,Mark{});
@@ -342,7 +345,7 @@ public:
             put(p+"high",s.high);put(p+"low",s.low);put(p+"t90",s.t90);
         }
         for(size_t i=0;i<cfg_.pairs.size();++i) {
-            const auto& s=pairStats_[i];const std::string p="pair."+cfg_.pairs[i].a+"."+cfg_.pairs[i].b+".";
+            const auto& s=pairStats_[i];const std::string p="pair."+(cfg_.pairs[i].name.empty()?cfg_.pairs[i].a+"."+cfg_.pairs[i].b:cfg_.pairs[i].name)+".";
             put(p+"pairs",s.pairs);put(p+"contacts",s.contacts);
             put(p+"permille_x100",s.pairs?(s.contacts*100000+s.pairs/2)/s.pairs:0);
         }
@@ -402,12 +405,24 @@ private:
     };
     struct GateStats {int64_t samples=0,files=0,spread=0;};
     struct SideStats {int64_t high=0,low=0,t90=-1;};
-    struct PairStats {int a=-1,b=-1;int64_t pairs=0,contacts=0;};
+    struct PairStats {std::vector<char> a,b;int64_t pairs=0,contacts=0;};   // a, b: per group index
     struct WorkSeries {std::string name;uint64_t pending=0,lastTotal=0;std::vector<uint64_t> values;};
 
     int groupIndex(const std::string& name) const {
         for(size_t g=0;g<cfg_.groups.size();++g)if(cfg_.groups[g].name==name)return int(g);
         return -1;
+    }
+    // Membership flags over the groups of a comma list; empty when any name is unknown.
+    std::vector<char> groupSet(const std::string& list) const {
+        std::vector<char> in(cfg_.groups.size(),0);
+        size_t at=0;
+        while(at<=list.size()) {
+            size_t e=list.find(',',at);if(e==std::string::npos)e=list.size();
+            const int g=groupIndex(list.substr(at,e-at));
+            if(g<0)return {};
+            in[size_t(g)]=1;at=e+1;
+        }
+        return in;
     }
     WorkSeries& workSeries(std::string_view name) {
         for(auto& s:work_)if(s.name==name)return s;
@@ -639,7 +654,7 @@ private:
         for(const auto& m:m_)if(m.lane[i*2].tick>=0&&m.lane[i*2+1].tick>=0)both.push_back(&m);
         for(size_t a=0;a<both.size();++a)for(size_t b=a+1;b<both.size();++b) {
             const auto& p=*both[a];const auto& q=*both[b];
-            if(p.group!=q.group)continue;
+            if(l.sameGroup&&p.group!=q.group)continue;
             if(std::abs(p.lane[i*2].tick-q.lane[i*2].tick)>l.window)continue;
             ++pairs;
             const int da=p.lane[i*2].lat-q.lane[i*2].lat,db=p.lane[i*2+1].lat-q.lane[i*2+1].lat;
@@ -842,7 +857,7 @@ private:
 
     void pairProximity(const sim::World& w) {
         for(auto& p:pairStats_) {
-            if(p.a<0||p.b<0)continue;
+            if(p.a.empty()||p.b.empty())continue;
             const int cells=cfg_.pairs[size_t(&p-pairStats_.data())].cells;
             if(countGrid_.size()!=size_t(std::max(gw_,0))*size_t(std::max(gh_,0))) {countGrid_.assign(size_t(gw_)*size_t(gh_),0);countEpoch_.assign(countGrid_.size(),0);cepoch_=0;}
             ++cepoch_;
@@ -852,7 +867,7 @@ private:
                 return u&&u->alive()&&!u->orders.empty()?u:nullptr;
             };
             for(const auto& m:m_) {
-                if(m.group!=p.b)continue;
+                if(!p.b[size_t(m.group)])continue;
                 const auto* u=live(m);if(!u)continue;
                 ++nb;
                 const int x=detail::centreCell(u->x),z=detail::centreCell(u->z);
@@ -862,7 +877,7 @@ private:
                 ++countGrid_[i];
             }
             for(const auto& m:m_) {
-                if(m.group!=p.a)continue;
+                if(!p.a[size_t(m.group)])continue;
                 const auto* u=live(m);if(!u)continue;
                 ++na;
                 const int x=detail::centreCell(u->x),z=detail::centreCell(u->z);

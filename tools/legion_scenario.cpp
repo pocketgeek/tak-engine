@@ -169,6 +169,41 @@ bool timeKey(std::string_view k) {
 
 int cellLo(float v) { return int(std::floor(v)); }
 
+// A lane line: the segment's cells (a horizontal one is laid along x, its lateral cell is x; a vertical one
+// along z). A segment of extent covers floor(lo) .. ceil(hi)-1, a point its own cell.
+obs::Line laneLine(const scn::Scenario& s, float x0, float z0, float x1, float z1, int sign) {
+    auto span = [](float a, float b) {
+        const float lo = std::min(a, b), hi = std::max(a, b);
+        return std::pair<int, int>{cellLo(lo), hi > lo ? int(std::ceil(hi)) - 1 : cellLo(lo)};
+    };
+    (void)s;
+    obs::Line l;
+    const auto [xa, xb] = span(x0, x1);
+    const auto [za, zb] = span(z0, z1);
+    l.region = {xa, za, xb, zb};
+    l.lateral = z0 == z1 ? 0 : 1;
+    l.sign = sign;
+    return l;
+}
+
+// A group list of a `pair` shape: comma separated, a trailing '*' takes every group with that prefix.
+std::string expandGroups(const scn::Scenario& s, const std::string& list) {
+    std::string out;
+    size_t at = 0;
+    while (at <= list.size()) {
+        size_t e = list.find(',', at);
+        if (e == std::string::npos) e = list.size();
+        const std::string item = list.substr(at, e - at);
+        at = e + 1;
+        if (!item.empty() && item.back() == '*') {
+            const std::string prefix = item.substr(0, item.size() - 1);
+            for (const auto& g : s.groups)
+                if (g.name.compare(0, prefix.size(), prefix) == 0) out += (out.empty() ? "" : ",") + g.name;
+        } else out += (out.empty() ? "" : ",") + item;
+    }
+    return out;
+}
+
 // The observer's configuration for one built world.
 obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
     const auto& w = *b.world;
@@ -220,7 +255,39 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
                 g.lateral = (x1 - x0) >= (z1 - z0) ? 1 : 0;
                 g.region = {cellLo(x0), cellLo(z0), int(std::ceil(x1)) - 1, int(std::ceil(z1)) - 1};
             }
+            if (sh.lateral >= 0) g.lateral = sh.lateral;
+            if (sh.band) g.band = sh.band;
+            if (sh.minCount) g.minCount = sh.minCount;
+            if (sh.edge) g.edge = sh.edge;
+            if (sh.pairWindow) g.pairWindow = sh.pairWindow;
+            if (sh.flip) g.flipCells = sh.flip;
             cfg.gates.push_back(g);
+        } else if (sh.kind == "lane") {
+            obs::LaneOrder l;
+            l.name = sh.name;
+            l.before = laneLine(s, sh.x0, sh.z0, sh.x1, sh.z1, sh.beforeSign);
+            l.after = laneLine(s, sh.ax0, sh.az0, sh.ax1, sh.az1, sh.afterSign);
+            if (sh.window) l.window = sh.window;
+            if (sh.minCells) l.minCells = sh.minCells;
+            l.sameGroup = !sh.acrossGroups;
+            cfg.laneOrders.push_back(l);
+        } else if (sh.kind == "pair") {
+            obs::Pair p;
+            p.name = sh.name;
+            p.a = expandGroups(s, sh.a);
+            p.b = expandGroups(s, sh.b);
+            for (const std::string* list : {&p.a, &p.b}) {
+                size_t at = 0;
+                while (at <= list->size()) {
+                    size_t e = list->find(',', at);
+                    if (e == std::string::npos) e = list->size();
+                    if (list->empty() || !s.group(list->substr(at, e - at)))
+                        throw std::runtime_error(s.origin + ": pair '" + sh.name + "' names no group in '" + *list + "'");
+                    at = e + 1;
+                }
+            }
+            if (sh.cells) p.cells = sh.cells;
+            cfg.pairs.push_back(p);
         } else if (sh.kind == "line") {
             obs::Side side;
             side.name = sh.name;

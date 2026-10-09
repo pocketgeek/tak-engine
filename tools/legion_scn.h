@@ -79,9 +79,31 @@ struct OrderSpec {
     bool append = false;
 };
 
-struct Shape {   // gate/line: a segment; region: a rectangle; cells
+struct Shape {   // gate/line: a segment; region: a rectangle; lane: two segments; pair: two group lists
     std::string kind, name;
     float x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    // gate options (0 or -1: the observer's default): lateral axis 0 x / 1 z, file band, members inside for a
+    // files sample, end-window depth, ticks between two entries of a pair, flip distance in cells.
+    int lateral = -1, band = 0, minCount = 0, edge = 0, pairWindow = 0, flip = 0;
+    // lane: the second segment (the "after" line), the sign of each line's lateral cell, the entry window in
+    // ticks and the least lateral distance of a swap (0: the observer's defaults).
+    float ax0 = 0, az0 = 0, ax1 = 0, az1 = 0;
+    int beforeSign = 1, afterSign = 1, window = 0, minCells = 0;
+    bool acrossGroups = false;       // lane across=all: pairs of different groups count too
+    // pair: comma lists of group names (a trailing '*' matches a name prefix) and the contact radius in cells.
+    std::string a, b;
+    int cells = 0;
+};
+
+// `churn`: a blocking map feature placed (and, with toggle, lifted again) every `every` ticks, as corpses and
+// burning features churn the static map in a battle. Event k lands at tick from + k*every (before that tick's
+// orders); its cell is (x + dx*(k % row), z + dz*(k / row)), or for toggle the cell of event k/2: even events
+// place, odd events lift.
+struct ChurnSpec {
+    int x = 0, z = 0, w = 1, h = 1, every = 1;
+    int dx = 0, dz = 0, row = 0;      // row 0: one row, never wraps
+    bool toggle = false;
+    uint32_t from = 0, until = 0;     // until 0: the run's end
 };
 
 struct MapSpec {
@@ -108,6 +130,7 @@ struct Scenario {
     std::vector<GroupSpec> groups;
     std::vector<OrderSpec> orders;
     std::vector<Shape> shapes;
+    std::vector<ChurnSpec> churns;
 
     const TypeSpec* type(const std::string& n) const {
         for (const auto& t : types) if (t.name == n) return &t;
@@ -431,14 +454,76 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (!o.target.empty() && !s.group(o.target)) c.fail("unknown target group '" + o.target + "'");
             if (at != w.size()) c.fail("unexpected '" + w[at] + "'");
             s.orders.push_back(o);
-        } else if (k == "gate" || k == "line" || k == "region") {
-            need(6, 6);
+        } else if (k == "churn") {
+            need(6, 10);
+            ChurnSpec ch;
+            ch.x = int(c.integer(w[1], 0, 4095)); ch.z = int(c.integer(w[2], 0, 4095));
+            ch.w = int(c.integer(w[3], 1, 8)); ch.h = int(c.integer(w[4], 1, 8));
+            bool haveEvery = false;
+            for (size_t at = 5; at < w.size(); ++at) {
+                if (w[at] == "toggle") { ch.toggle = true; continue; }
+                const auto eq = w[at].find('=');
+                if (eq == std::string::npos) c.fail("expected key=value or toggle: '" + w[at] + "'");
+                const std::string key = w[at].substr(0, eq), val = w[at].substr(eq + 1);
+                if (key == "every") { ch.every = int(c.integer(val, 1, 1'000'000)); haveEvery = true; }
+                else if (key == "from") ch.from = uint32_t(c.integer(val, 0, 10'000'000));
+                else if (key == "until") ch.until = uint32_t(c.integer(val, 1, 10'000'000));
+                else if (key == "walk") {
+                    const auto a = val.find(','), b = val.find(',', a == std::string::npos ? a : a + 1);
+                    if (a == std::string::npos || b == std::string::npos) c.fail("walk=DX,DZ,ROW");
+                    ch.dx = int(c.integer(val.substr(0, a), -4096, 4096));
+                    ch.dz = int(c.integer(val.substr(a + 1, b - a - 1), -4096, 4096));
+                    ch.row = int(c.integer(val.substr(b + 1), 1, 1'000'000));
+                } else c.fail("unknown churn option '" + key + "'");
+            }
+            if (!haveEvery) c.fail("churn needs every=N");
+            if (ch.until && ch.until <= ch.from) c.fail("churn until must follow from");
+            s.churns.push_back(ch);
+        } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair") {
+            if (k == "pair") need(4, 5); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
             if (s.shape(w[1])) c.fail("shape '" + w[1] + "' defined twice");
             Shape sh;
             sh.kind = k;
             sh.name = w[1];
-            sh.x0 = c.number(w[2]); sh.z0 = c.number(w[3]); sh.x1 = c.number(w[4]); sh.z1 = c.number(w[5]);
-            if (k == "region" && (sh.x1 <= sh.x0 || sh.z1 <= sh.z0)) c.fail("empty region");
+            size_t at = 0;
+            if (k == "pair") {
+                sh.a = w[2]; sh.b = w[3];
+                at = 4;
+            } else {
+                sh.x0 = c.number(w[2]); sh.z0 = c.number(w[3]); sh.x1 = c.number(w[4]); sh.z1 = c.number(w[5]);
+                at = 6;
+                if (k == "region" && (sh.x1 <= sh.x0 || sh.z1 <= sh.z0)) c.fail("empty region");
+                if (k == "lane") {
+                    sh.ax0 = c.number(w[6]); sh.az0 = c.number(w[7]); sh.ax1 = c.number(w[8]); sh.az1 = c.number(w[9]);
+                    at = 10;
+                    if (sh.x0 != sh.x1 && sh.z0 != sh.z1) c.fail("lane's before line must be vertical or horizontal");
+                    if (sh.ax0 != sh.ax1 && sh.az0 != sh.az1) c.fail("lane's after line must be vertical or horizontal");
+                }
+            }
+            for (; at < w.size(); ++at) {
+                const auto eq = w[at].find('=');
+                if (eq == std::string::npos) c.fail("expected key=value: '" + w[at] + "'");
+                const std::string key = w[at].substr(0, eq), val = w[at].substr(eq + 1);
+                if (k == "gate" && key == "lateral") {
+                    if (val != "x" && val != "z") c.fail("lateral=x|z");
+                    sh.lateral = val == "z" ? 1 : 0;
+                } else if (k == "gate" && key == "band") sh.band = int(c.integer(val, 1, 64));
+                else if (k == "gate" && key == "mincount") sh.minCount = int(c.integer(val, 1, 100000));
+                else if (k == "gate" && key == "edge") sh.edge = int(c.integer(val, 1, 64));
+                else if (k == "gate" && key == "pairwindow") sh.pairWindow = int(c.integer(val, 1, 1'000'000));
+                else if (k == "gate" && key == "flip") sh.flip = int(c.integer(val, 1, 64));
+                else if (k == "lane" && key == "bsign") sh.beforeSign = int(c.integer(val, -1, 1));
+                else if (k == "lane" && key == "asign") sh.afterSign = int(c.integer(val, -1, 1));
+                else if (k == "lane" && key == "window") sh.window = int(c.integer(val, 1, 1'000'000));
+                else if (k == "lane" && key == "mincells") sh.minCells = int(c.integer(val, 1, 64));
+                else if (k == "lane" && key == "across") {
+                    if (val != "all" && val != "group") c.fail("across=all|group");
+                    sh.acrossGroups = val == "all";
+                } else if (k == "pair" && key == "cells") sh.cells = int(c.integer(val, 0, 32));
+                else c.fail("unknown option '" + key + "' for " + k);
+            }
+            if ((k == "lane" && (sh.beforeSign == 0 || sh.afterSign == 0)))
+                c.fail("bsign and asign are 1 or -1");
             s.shapes.push_back(sh);
         } else c.fail("unknown directive '" + k + "'");
     }
@@ -533,9 +618,32 @@ inline std::string format(const Scenario& s) {
         if (g.weapons >= 0) o << " weapons=" << (g.weapons ? "on" : "off");
         o << "\n";
     }
-    for (const auto& sh : s.shapes)
-        o << sh.kind << " " << sh.name << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " "
-          << fmt(sh.z1) << "\n";
+    for (const auto& sh : s.shapes) {
+        o << sh.kind << " " << sh.name;
+        if (sh.kind == "pair") o << " " << sh.a << " " << sh.b;
+        else o << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " " << fmt(sh.z1);
+        if (sh.kind == "lane")
+            o << " " << fmt(sh.ax0) << " " << fmt(sh.az0) << " " << fmt(sh.ax1) << " " << fmt(sh.az1);
+        auto opt = [&](const char* key, int v, int none) { if (v != none) o << " " << key << "=" << v; };
+        if (sh.kind == "gate") {
+            if (sh.lateral >= 0) o << " lateral=" << (sh.lateral ? "z" : "x");
+            opt("band", sh.band, 0); opt("mincount", sh.minCount, 0); opt("edge", sh.edge, 0);
+            opt("pairwindow", sh.pairWindow, 0); opt("flip", sh.flip, 0);
+        } else if (sh.kind == "lane") {
+            opt("bsign", sh.beforeSign, 1); opt("asign", sh.afterSign, 1);
+            opt("window", sh.window, 0); opt("mincells", sh.minCells, 0);
+            if (sh.acrossGroups) o << " across=all";
+        } else if (sh.kind == "pair") opt("cells", sh.cells, 0);
+        o << "\n";
+    }
+    for (const auto& ch : s.churns) {
+        o << "churn " << ch.x << " " << ch.z << " " << ch.w << " " << ch.h << " every=" << ch.every;
+        if (ch.row) o << " walk=" << ch.dx << "," << ch.dz << "," << ch.row;
+        if (ch.toggle) o << " toggle";
+        if (ch.from) o << " from=" << ch.from;
+        if (ch.until) o << " until=" << ch.until;
+        o << "\n";
+    }
     for (const auto& r : s.orders) {
         o << "at " << r.tick << " " << detail::verbName(r.verb) << " ";
         for (size_t i = 0; i < r.selection.size(); ++i) o << (i ? "," : "") << r.selection[i];
@@ -854,11 +962,28 @@ public:
 
     // Apply tick `tick`'s commands; call before World::tick with tick == tickCount().
     size_t apply(uint32_t tick) {
+        applyChurn(tick);
         const auto cmds = commandsFor(tick);
         for (const auto& c : cmds) tak::sim::applyCommand(*b_.world, b_.registry, c);
         return cmds.size();
     }
     bool done() const { return next_ >= pending_.size() && link_.idle(); }
+
+    // The `churn` events due at `tick`: a blocking feature of the spec's size placed in the static map (an odd
+    // event of a toggle lifts the same cell again by re-adding it unblocked).
+    void applyChurn(uint32_t tick) {
+        for (const auto& ch : s_.churns) {
+            if (tick < ch.from || (ch.until && tick >= ch.until) || (tick - ch.from) % uint32_t(ch.every)) continue;
+            const int64_t k = (tick - ch.from) / uint32_t(ch.every);
+            const int64_t cell = ch.toggle ? k / 2 : k;
+            const int64_t row = ch.row ? ch.row : int64_t(1) << 40;
+            const int cx = ch.x + ch.dx * int(cell % row);
+            const int cz = ch.z + ch.dz * int(cell / row);
+            if (cx < 0 || cz < 0 || cx + ch.w > b_.width || cz + ch.h > b_.height) continue;
+            b_.world->addFeature(cz * b_.width + cx, float(cx * 16 + ch.w * 8), float(cz * 16 + ch.h * 8), 0.f, 1.f,
+                                 ch.w, ch.h, !ch.toggle || k % 2 == 0, -1, true);
+        }
+    }
 
 private:
     const Scenario& s_;
