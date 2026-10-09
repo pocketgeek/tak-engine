@@ -287,6 +287,14 @@ public:
         put("spins",spins_);put("reversals",reversals_);put("stop_go",stopGo_);
         put("sideways",sideways_);put("backward",backward_);put("back",back_);
         put("walk_in_place",walkInPlace_);put("statue_ticks",statue_);put("crawl_samples",crawl_);
+        {   // AR-01/AR-02 tails (W3 tail fixture): bodies whose order is open while they stood still 900+ ticks.
+            int64_t openStill=0,stillEver=0;
+            for(const auto& m:m_) {
+                if(!m.seen)continue;
+                openStill+=m.stillRun>=900;stillEver+=m.maxStillRun>=900;
+            }
+            put("open_still900",openStill);put("still900_ever",stillEver);
+        }
         put("waiting_held",waitingHeld_);put("waiting_no_progress",waitingNoProgress_);
         put("parked_held",parkedHeld_);put("parked_no_progress",parkedNoProgress_);
         put("decision_samples",ordered_);put("stopped_permille",detail::permille(stopped_,ordered_));
@@ -386,7 +394,7 @@ private:
         // legacy Motion: the last cells visited and when.
         std::vector<std::pair<int64_t,int64_t>> cells;
         bool moved=false,everMoved=false,hadOrders=false;
-        int stillRun=0,noHeadRun=0;
+        int stillRun=0,noHeadRun=0,maxStillRun=0;
         int completeDist=-1;bool completeOutside=false;
         // decision samples: positions at the last 11 samples (10 steps).
         std::vector<std::pair<int32_t,int32_t>> ring;
@@ -512,6 +520,7 @@ private:
             }
             // age classes
             m.stillRun=moved?0:m.stillRun+1;
+            m.maxStillRun=std::max(m.maxStillRun,m.stillRun);
             if(m.stillRun>=10) {
                 const int state=nav?nav->unitState(m.id):0;
                 const bool held=state>=2;
@@ -959,7 +968,8 @@ private:
 // sample() once per tick, after World::tick and before Observer::sample. It
 // reads World::legionStats() (a const copy) only. A counter enters the report
 // the first tick it moves (earlier ticks count 0), so a counter that never
-// moves has no keys: read a missing key as 0. Gauges (bytes, live_*) and the
+// moves has no keys: read a missing key as 0 (except midroute_completions, the safety
+// key W3 gates on, which is always present). Gauges (bytes, live_*) and the
 // running max completion_dist_max are not per-tick work and are skipped.
 // Retail worlds have no navigator: nothing is fed.
 //
@@ -987,7 +997,7 @@ public:
             if(i>=last_.size())last_.push_back(0);
             const uint64_t d=v>=last_[i]?v-last_[i]:0;last_[i++]=v;
             if(n=="bytes"||n.substr(0,5)=="live_"||n=="completion_dist_max")return;
-            if(d)obs.work(n,d);
+            if(d||n=="midroute_completions")obs.work(n,d);   // a safety key: always present, 0 when clean
             if(totalClass(n))total+=d;
         });
         obs.work("legion_total",total);

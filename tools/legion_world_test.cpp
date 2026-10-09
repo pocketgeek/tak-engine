@@ -244,8 +244,19 @@ void jaggedRun(int count,int stride,int foot,const char* label) {
         std::printf("  left id=%d at %.1f,%.1f goal %.1f,%.1f state=%d\n",id,u.x.toFloat()/16,u.z.toFloat()/16,
             u.orders.back().x.toFloat()/16,u.orders.back().z.toFloat()/16,f.world.legionNavigator()->unitState(id));
     }
-    std::printf("jagged %s arrived=%d/%zu spins=%llu reversals=%llu pressing=%llu\n",label,arrived,ids.size(),
-        (unsigned long long)motion.spins(),(unsigned long long)motion.reversals(),(unsigned long long)pressing);
+    // AR-08 (W3 no-worse keys): each unit has its own goal, so the completion distance is measured from
+    // that goal (cells); a unit counts as outside its radius when it finished more than 3 cells from it.
+    std::vector<double> own;int outside=0;
+    for(size_t i=0;i<ids.size();++i) {
+        const auto& u=*f.world.unit(ids[i]);
+        if(!u.orders.empty())continue;
+        const double d=std::hypot(u.x.toFloat()/16-double(44+int(i%4)*stride),u.z.toFloat()/16-double(62+int(i/4)*stride));
+        own.push_back(d);outside+=d>3;
+    }
+    std::printf("jagged %s arrived=%d/%zu spins=%llu reversals=%llu pressing=%llu complete_n=%zu complete_outside_radius=%d"
+        " complete_dist_median=%.1f complete_dist_max=%.1f\n",label,arrived,ids.size(),
+        (unsigned long long)motion.spins(),(unsigned long long)motion.reversals(),(unsigned long long)pressing,own.size(),outside,
+        own.empty()?-1.0:(std::sort(own.begin(),own.end()),own[(own.size()-1)/2]),own.empty()?-1.0:own.back());
     check(arrived==int(ids.size()),std::string("units stuck against jagged terrain: ")+label);
     check(motion.spins()==0,"units turned in place while stuck");
     check(pressing==0,"units pressed into terrain");
