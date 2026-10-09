@@ -602,7 +602,7 @@ The mission goals (`LegionMission`):
 | Attack | explicit and auto-acquired attacks, chases | the target unit, re-seeded | combat: `tickCombat` stops the body in range; Legion never completes it |
 | Guard | guard/follow | the guarded unit, re-seeded | guard: stops within 70 px; Legion never completes it |
 | Build | MobileBuild approaches (`buildRectangle`): single, queued, mana build area | the rectangle's `navigationCell`, else its nearest legal reachable perimeter origin | the rectangle itself (`accepts`): `0x500`; anywhere else `0x200` |
-| Repair | repair legs | the target's point | work: `tickRepair` starts at reach; Legion never completes it |
+| Repair | repair legs, and a patrolling builder's automatic repair detour (W2 RB-04) | the target's point | work: `tickRepair` starts at reach; Legion never completes it |
 | Reclaim | feature and corpse reclaims (also those an area reclaim queues) | the feature's point | work: `tickReclaim` starts at reach; Legion never completes it |
 | Load | passenger to its carrier, ground carrier to its passenger | the transport circle's centre | the native circle: `0x500` on `transportMission`; elsewhere `0x200` |
 | Unload | ground carrier's surface-unload approach | the drop point | as Load |
@@ -660,6 +660,11 @@ only for non-Move kinds.
 
 Area reclaim and the mana build area need no kind of their own: their
 approach steps are plain Moves and the work they queue is Reclaim/Build.
+A patrolling builder's automatic repair detour (`patrolRepair`) is an
+ordinary Repair leg (W2 RB-04; it was delegated to Retail before). The leash
+stays in `tickPatrolRepair`/`tickRepair`; when a mobile ally moves,
+`tickRepair` refreshes the leg's point and its `cancelPath` re-registers the
+member, so Legion follows it (`legion_patrolrepair`, `-moving` variant).
 Boats and hovercraft are routed too (see above). Still delegated to Retail:
 transport legs of flying or water carriers, and boats/hovercraft on legacy
 terrain-only worlds. Flyers stay native: flight is not pathfinding. The
