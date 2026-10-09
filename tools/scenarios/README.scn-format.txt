@@ -25,6 +25,11 @@ never names a pathfinding mode: the runner builds it once per mode.
   uplink R                      command window: at most 512 commands
                                 outstanding, round trip R ticks (default: none,
                                 only the server's 64-per-tick drain)
+  probe approach                the runner also reports the approach.* keys: per
+                                unit, the first tick Legion holds it at its
+                                approach point (an unreachable goal's nearest
+                                reachable spot) and the tick its orders empty.
+                                Meant for scenarios whose goal is unreachable.
 
 Map (exactly one):
   map ascii                     rows follow, closed by a line 'end':
@@ -40,6 +45,7 @@ Map (exactly one):
 
 Types:
   type NAME mover FOOT TURN ACCEL SPEED [opts]   ACCEL px/tick^2, SPEED px/tick
+                                (SPEED 0: the Keep, canmove with no velocity)
   type NAME flyer FOOT TURN ACCEL SPEED [cruise=80] [opts]   (VTOL standby)
   type NAME boat  FOOT TURN ACCEL SPEED [depth=13] [opts]
   type NAME hover FOOT TURN ACCEL SPEED [opts]

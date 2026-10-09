@@ -64,7 +64,7 @@ def is_time(key):
 
 
 def default_dir(key):
-    if key.endswith((".arrived", ".flyers_landed", ".inside", ".complete_n")):
+    if key.endswith((".arrived", ".flyers_landed", ".inside", ".complete_n", "approach.arrived_n")):
         return "higher"
     return "lower"
 

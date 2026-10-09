@@ -247,6 +247,83 @@ std::vector<uint8_t> wallMask(const scn::Scenario& s, int W, int H) {
     return m;
 }
 
+// `probe approach` (PLAN W2 step 0, AR-11): per unit, the first tick Legion holds
+// it at its approach point (member state 5, Trapped: the nearest reachable spot
+// of an unreachable goal) and the first tick its orders are empty. Read-only:
+// LegionNavigator::unitState and the unit's order list. Keys (ticks; -1 never):
+//   approach.members                    units watched
+//   approach.arrived_n / .arrive.t50 .t90 .done      reached the approach point
+//   approach.complete_n / .complete.t50 .t90 .done   orders emptied
+//   approach.wait.t50 / .wait.done      completion - arrival: median / worst
+//                                       (done -1 unless every unit did both)
+//   approach.arrive.first / .last       earliest / latest arrival that happened
+//   approach.wait.max                   worst completion - arrival among the units
+//                                       that did both
+//   approach.end_state_N                units whose Legion member state is N (1 moving,
+//                                       2 holding, 3 waiting, 4 arrived, 5 at the point)
+//                                       after the last tick: what the units that have
+//                                       not reached the point are doing (diagnostic;
+//                                       not baselined, it depends on --ticks)
+//   approach.dropped_unarrived_n        orders emptied before the unit ever
+//                                       reached its point: a mid-route stop, or
+//                                       the 9000-tick walk grace running out
+//                                       while the unit still queued in the crowd
+//                                       (Legion only; 0 on a lone walk)
+struct ApproachProbe {
+    std::vector<int> ids;
+    std::vector<int> arrive, complete;
+    std::vector<char> had;   // the unit has had orders
+    int endState[6] = {};    // member states after the last sample (units that still have orders)
+    explicit ApproachProbe(const std::vector<int>& all)
+        : ids(all), arrive(all.size(), -1), complete(all.size(), -1), had(all.size(), 0) {}
+    void sample(const tak::sim::World& w, const tak::sim::LegionNavigator* nav, int t) {
+        std::fill(std::begin(endState), std::end(endState), 0);
+        for (size_t i = 0; i < ids.size(); ++i) {
+            const auto* u = w.unit(ids[i]);
+            if (!u || !u->alive()) continue;
+            if (nav && !u->orders.empty()) ++endState[std::clamp(nav->unitState(ids[i]), 0, 5)];
+            if (nav && arrive[i] < 0 && nav->unitState(ids[i]) == 5) arrive[i] = t;
+            if (!u->orders.empty()) had[i] = 1;
+            else if (had[i] && complete[i] < 0) complete[i] = t;
+        }
+    }
+    static void milestones(obs::Keys& k, const std::string& p, std::vector<int> v, size_t n) {
+        std::sort(v.begin(), v.end());
+        const auto at = [&](size_t need) -> int64_t { return need >= 1 && need <= v.size() ? v[need - 1] : -1; };
+        k.emplace_back(p + ".t50", at((n + 1) / 2));
+        k.emplace_back(p + ".t90", at((n * 9 + 9) / 10));
+        k.emplace_back(p + ".done", at(n));
+    }
+    void report(obs::Keys& k, bool legion) const {
+        const size_t n = ids.size();
+        k.emplace_back("approach.members", int64_t(n));
+        std::vector<int> a, c, wait;
+        int64_t premature = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if (arrive[i] >= 0) a.push_back(arrive[i]);
+            if (complete[i] >= 0) c.push_back(complete[i]);
+            if (arrive[i] >= 0 && complete[i] >= 0) wait.push_back(std::max(0, complete[i] - arrive[i]));
+            if (legion && arrive[i] < 0 && complete[i] >= 0) ++premature;
+        }
+        if (legion) {
+            k.emplace_back("approach.arrived_n", int64_t(a.size()));
+            milestones(k, "approach.arrive", a, n);
+            k.emplace_back("approach.arrive.first", a.empty() ? -1 : *std::min_element(a.begin(), a.end()));
+            k.emplace_back("approach.arrive.last", a.empty() ? -1 : *std::max_element(a.begin(), a.end()));
+        }
+        k.emplace_back("approach.complete_n", int64_t(c.size()));
+        milestones(k, "approach.complete", c, n);
+        if (legion) {
+            std::sort(wait.begin(), wait.end());
+            k.emplace_back("approach.wait.t50", wait.empty() ? -1 : wait[(wait.size() - 1) / 2]);
+            k.emplace_back("approach.wait.done", wait.size() == n ? int64_t(wait.back()) : -1);
+            k.emplace_back("approach.wait.max", wait.empty() ? -1 : int64_t(wait.back()));
+            for (int st = 1; st <= 5; ++st) k.emplace_back("approach.end_state_" + std::to_string(st), endState[st]);
+            k.emplace_back("approach.dropped_unarrived_n", premature);
+        }
+    }
+};
+
 struct Run {
     std::string skipped;
     uint64_t hash = 0, digest = 0;
@@ -278,6 +355,8 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     }
     // The navigator is made on the world's first Legion tick: re-read it.
     const tak::sim::LegionNavigator* nav = nullptr;
+    std::optional<ApproachProbe> approach;
+    if (observe && s.probeApproach) approach.emplace(all);
     int64_t commands = 0, lastCommand = -1, groupsAfter = -1, groupsPeak = 0;
     std::vector<int> ids;
     auto legionGroups = [&]() -> int64_t {
@@ -297,6 +376,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         if (o) {
             navWork.sample(*o, w);
             o->sample(w, t);
+            if (approach) approach->sample(w, nav, int(t));
             if (nav) {
                 const int64_t n = legionGroups();
                 groupsPeak = std::max(groupsPeak, n);
@@ -310,6 +390,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     r.digest = mix(r.digest, r.hash);
     if (o) {
         r.keys = o->report();
+        if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
         r.keys.emplace_back("commands", commands);
         r.keys.emplace_back("last_command_tick", lastCommand);
         if (nav) {
