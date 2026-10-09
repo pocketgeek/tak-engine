@@ -136,6 +136,7 @@ struct Scenario {
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
     bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
+    std::vector<int> gateOffsets;     // `gateoffsets O,O,..`: legion_scenario's gate offsets where 0,+-1..+-5 leave the map
     MapSpec map;
     std::vector<TypeSpec> types;
     std::vector<GroupSpec> groups;
@@ -336,6 +337,15 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (w[1] != "approach") c.fail("probe approach");
             s.probeApproach = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
+        else if (k == "gateoffsets") {
+            need(2, 2);
+            s.gateOffsets.clear();
+            for (size_t at = 0; at <= w[1].size();) {
+                const size_t comma = std::min(w[1].find(',', at), w[1].size());
+                s.gateOffsets.push_back(int(c.integer(w[1].substr(at, comma - at), -64, 64)));
+                at = comma + 1;
+            }
+        }
         else if (k == "map") {
             if (haveMap) c.fail("a second 'map'");
             haveMap = true;
@@ -674,6 +684,11 @@ inline std::string format(const Scenario& s) {
     } else o << "explored " << (s.explored ? "all" : "none") << "\n";
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
     if (s.probeApproach) o << "probe approach\n";
+    if (!s.gateOffsets.empty()) {
+        o << "gateoffsets ";
+        for (size_t i = 0; i < s.gateOffsets.size(); ++i) o << (i ? "," : "") << s.gateOffsets[i];
+        o << "\n";
+    }
     switch (s.map.kind) {
     case MapSpec::Ascii:
         o << "map ascii\n";

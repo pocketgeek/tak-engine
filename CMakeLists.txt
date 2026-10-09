@@ -414,9 +414,9 @@ foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
 endforeach()
 # W2 step 0 fixtures: AR-03 structure/Keep in an Alt+N squad, AR-11 unreachable orders and the
 # ~8200-tick maze approach walk (`probe approach` keys). Run in both modes; the second form
-# also checks every key against baseline.json over five offsets (tools/legion_check.py), so a
-# later W2 step that makes one worse fails here and one that improves it prints RATCHET (nightly:
-# five offsets cost ~20 s, past the per-commit CI budget).
+# also checks every key against baseline.json over the gate's eleven offsets (tools/legion_check.py:
+# small-count keys on all eleven, the rest on the core five), so a later W2 step that makes one worse
+# fails here and one that improves it prints RATCHET (nightly: past the per-commit CI budget).
 foreach(legion_scn structsquad structsquad-keep unreach-200 mazeapproach)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
@@ -424,12 +424,12 @@ foreach(legion_scn structsquad structsquad-keep unreach-200 mazeapproach)
   if(NOT WIN32)
     add_test(NAME legion_check_${legion_scn}
              COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
-                     --offsets 0,1,-1,2,-2 --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+                     --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
     set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w2;nightly" TIMEOUT 900)
   endif()
 endforeach()
 # W3 step 0 fixtures (PLAN 4 W3 step 0): the pocket, deadend, tail and doorplug probes of legion_world_test as .scn files,
-# so the baseline gate (tools/legion_check.py) covers them over five start offsets and both modes. They report the
+# so the baseline gate (tools/legion_check.py) covers them over the eleven gate offsets and both modes. They report the
 # W3 targets rather than meet them (pocket t90, deadend settled == n, tail open_still900, doorplug B crossings), so
 # the baseline holds today's values and a W3 step that makes one worse fails here. Nightly: 2-60 s each per offset.
 foreach(legion_scn
@@ -449,7 +449,7 @@ foreach(legion_scn
   if(NOT WIN32)
     add_test(NAME legion_check_${legion_scn}
              COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
-                     --offsets 0,1,-1,2,-2 --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+                     --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
     set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w3;nightly" TIMEOUT 1800)
   endif()
 endforeach()

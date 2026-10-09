@@ -35,6 +35,13 @@ baseline.json
   KEYs: observer / work.* keys of the runner's "keys", `hash@OFFSET`, and
         `serial_eq_workers`.
 
+Offsets (lead rulings W3 round 3, 2026-10-09): a run on the gate offsets (0,+-1..+-5, or a file's
+`gateoffsets`; `legion_scenario --offsets gate`, the default of --check) is re-read here: the
+small-count keys (crossings, wall touch, the t90 of a group under 10 bodies) on the median of all
+its offsets, every other key on the core five 0,+-1,+-2. contact_settled's Retail floor is read
+only where both modes deliver >= 10 units, and an offset-spread exception is never a floor
+exception.
+
 Precedence (PLAN 3.0): eq/safety, then the Retail floor, then a declared
 tolerance or accepted regression, then the bands. A tolerance never licenses a
 Retail-floor failure; one with a `step` licenses its loss only when `--step`
@@ -57,6 +64,23 @@ COMBAT_SCENARIOS = ("battle-field*", "battle-assault*")
 COMBAT_KEYS = ("work.legion_total.total", "work.legion_total.max", "work.legion_total.p99")
 SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples")
 BAD_CLUSTERS = ("", "UNASSIGNED", "TODO", "?")
+# Offsets (lead ruling W3 round 3 (a), 2026-10-09). Every key is gated on the median of the five
+# core offsets, except the small-count keys: a handful of events decides them (corner crossings
+# span 0..10 in Retail itself), so they are gated on the median of all eleven, in both modes and
+# on the Retail floor. A run with the eleven offsets serves both: the other keys are re-read
+# over the core five. A t90 is small-count when its group has fewer than 10 members (90% of
+# them is then every one: the t90 is the last body's time). A scenario whose spawns the eleven
+# put off the map runs its own `gateoffsets` (cost-open: -4..6; corner-8x56 and corner-1x448
+# fill their map to 4 cells of two edges: -4..4): a record is wide with at least WIDE_MIN
+# offsets, the core five among them, and its small-count keys are read over all of them.
+CORE_OFFSETS = (0, 1, -1, 2, -2)
+WIDE_OFFSETS = (0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5)
+WIDE_MIN = 9
+WIDE_KEYS = ("gate.*.crossings", "wall_touch_permille", "wall_touch_near_permille")
+WIDE_T90_MAX_N = 9
+# Ruling (b): contact_settled is per arrived unit (W3-1), so its Retail floor is only read where
+# at least this many units arrive in both modes (the motion-* scenarios deliver 1-3).
+CONTACT_FLOOR_MIN_ARRIVED = 10
 
 
 # ---------------------------------------------------------------- key classes
@@ -78,6 +102,65 @@ def floor_dir(key):
             or key.startswith("wall_touch") or (key.startswith("contact_") and key.endswith("_permille"))):
         return "lower"
     return None
+
+
+def is_wide(key, rec):
+    """A small-count key, gated on the eleven offsets (ruling (a))."""
+    if any(fnmatch.fnmatch(key, g) for g in WIDE_KEYS):
+        return True
+    if key.startswith("g.") and key.endswith(".t90"):
+        n = rec.get("keys", {}).get(key[:-4] + ".n")
+        return isinstance(n, int) and 0 < n <= WIDE_T90_MAX_N
+    return False
+
+
+def per_offset(rec, key):
+    """{offset: value} of a key in a result record (a key that does not vary equals its median)."""
+    offs = rec.get("offsets", [])
+    vals = rec.get("varying", {}).get(key)
+    if vals is None or len(vals) != len(offs):
+        vals = [rec.get("keys", {}).get(key, 0)] * len(offs)
+    return dict(zip(offs, vals))
+
+
+def median_of(key, vals):
+    """The runner's median: sorted, never (-1 on a time key) last, element (n-1)/2."""
+    s = sorted(vals, key=lambda x: INF if is_time(key) and x < 0 else x)
+    return s[(len(s) - 1) // 2]
+
+
+def regate(rec):
+    """Re-read a record on the gate's offsets: small-count keys over the eleven, the others over
+    the core five. A record without the eleven is left as it is (`wide` stays False, and a gated
+    small-count key fails on it); one without the core five too is read as given."""
+    offs = rec.get("offsets", [])
+    wide = list(offs)
+    rec["wide"] = len(offs) >= WIDE_MIN and all(o in offs for o in CORE_OFFSETS)
+    if not rec["wide"]:
+        return rec
+    keys, varying = {}, {}
+    for k in rec.get("keys", {}):
+        by = per_offset(rec, k)
+        vals = [by[o] for o in (wide if is_wide(k, rec) else CORE_OFFSETS)]
+        keys[k] = median_of(k, vals)
+        if any(v != vals[0] for v in vals):
+            varying[k] = vals
+    rec["all_keys"], rec["all_varying"] = rec["keys"], rec.get("varying", {})
+    rec["keys"], rec["varying"] = keys, varying
+    return rec
+
+
+def arrived_median(rec):
+    """Median over the core offsets of the units arrived at the end (sum of g.*.arrived)."""
+    src = dict(rec, keys=rec.get("all_keys", rec.get("keys", {})), varying=rec.get("all_varying",
+                                                                                  rec.get("varying", {})))
+    tot = {}
+    for k in src["keys"]:
+        if k.startswith("g.") and k.endswith(".arrived"):
+            for o, v in per_offset(src, k).items():
+                tot[o] = tot.get(o, 0) + v
+    core = [tot[o] for o in CORE_OFFSETS if o in tot] or list(tot.values()) or [0]
+    return median_of("arrived", core)
 
 
 def norm(key, x):
@@ -131,7 +214,7 @@ def load_results(paths):
             if "skipped" in r:
                 skipped.append(r["scenario"])
                 continue
-            recs[(r["scenario"], r["mode"])] = r
+            recs[(r["scenario"], r["mode"])] = regate(r)
     return recs, skipped
 
 
@@ -340,6 +423,8 @@ def spread_check(doc, rpt, scn, mode, key, e, rec, exc):
     vals = rec.get("varying", {}).get(key)
     if not vals or key.startswith("work.") or e.get("rule") != "band":
         return
+    if rec.get("wide") and is_wide(key, rec):
+        return      # a small-count key is gated on the median of the gate offsets already (ruling (a))
     band = e.get("band", BAND)
     lo, hi, ratio = spread_of(key, vals)
     if ratio <= band:
@@ -367,6 +452,29 @@ def exception_for(doc, scn, mode, key):
                  if x["scenario"] == scn and x["key"] == key and x.get("mode", mode) == mode), None)
 
 
+def floor_exception_for(doc, scn, key):
+    """The Retail-floor exception of a key. An offset-spread exception is not one (ruling (c),
+    2026-10-09: counting it hid the wall-4x50 and motion-cross floor failures)."""
+    return next((x for x in doc.get("exceptions", [])
+                 if x["scenario"] == scn and x["key"] == key and x.get("mode", "legion") == "legion"
+                 and not is_spread_exception(x)), None)
+
+
+def floor_applies(key, lrec, rrec):
+    """Ruling (b): contact_settled's floor only where both modes deliver >= 10 units."""
+    if key == "contact_settled_permille":
+        return min(arrived_median(lrec), arrived_median(rrec)) >= CONTACT_FLOOR_MIN_ARRIVED
+    return True
+
+
+def need_wide(rpt, path, key, rec):
+    if not rec.get("wide") and is_wide(key, rec) and path not in rpt.m5:
+        rpt.m5.add(path)
+        rpt.fail(path, "small-count key is gated on the median of the gate offsets (%s, or the file's "
+                       "gateoffsets, at least %d); run has %s" % (",".join(map(str, WIDE_OFFSETS)), WIDE_MIN,
+                                                                rec.get("offsets", [])))
+
+
 def floor_check(doc, rpt, recs):
     for (scn, mode), lrec in sorted(recs.items()):
         if mode != "legion" or (scn, "retail") not in recs:
@@ -374,13 +482,15 @@ def floor_check(doc, rpt, recs):
         rrec = recs[(scn, "retail")]
         for key, lv in sorted(lrec.get("keys", {}).items()):
             fd = floor_dir(key)
-            if fd is None or key not in rrec.get("keys", {}):
+            if fd is None or key not in rrec.get("keys", {}) or not floor_applies(key, lrec, rrec):
                 continue
             lower = fd == "lower"
             lo, re_ = norm(key, lv), norm(key, rrec["keys"][key])
             passes = floor_passes(lower, lo, re_)
-            exc = exception_for(doc, scn, "legion", key)
+            exc = floor_exception_for(doc, scn, key)
             path = "%s/legion/%s" % (scn, key)
+            need_wide(rpt, path, key, lrec)
+            need_wide(rpt, "%s/retail/%s" % (scn, key), key, rrec)
             if exc:
                 rpt.exception_count += 1
                 if passes:
@@ -411,6 +521,8 @@ def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False)
                 exc = exception_for(doc, scn, mode, key)
                 if exc:
                     need_median5(rpt, "%s/%s/%s" % (scn, mode, key), exc, rec)
+                if key in rec.get("keys", {}):
+                    need_wide(rpt, "%s/%s/%s" % (scn, mode, key), key, rec)
                 judge(doc, rpt, scn, mode, key, e, rec, step)
                 spread_check(doc, rpt, scn, mode, key, e, rec, exc)
                 if cumulative and key in COMBAT_KEYS and any(fnmatch.fnmatch(scn, g) for g in COMBAT_SCENARIOS):
@@ -522,9 +634,11 @@ def write_base(doc, recs, reason, since, patterns, hashes, clusters):
                 rv = recs[(scn, "retail")].get("keys", {}).get(k)
                 if fd is None or rv is None:
                     continue
+                if not floor_applies(k, rec, recs[(scn, "retail")]):
+                    continue
                 lo, rr = norm(k, v), norm(k, rv)
                 ok = floor_passes(fd == "lower", lo, rr)
-                if ok or exception_for(doc, scn, "legion", k):
+                if ok or floor_exception_for(doc, scn, k):
                     continue
                 cluster = next((c for g, c in clusters if fnmatch.fnmatch("%s/%s" % (scn, k), g)), "UNASSIGNED")
                 doc["exceptions"].append({"scenario": scn, "key": k, "cluster": cluster,

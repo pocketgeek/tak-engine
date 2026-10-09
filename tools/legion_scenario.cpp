@@ -66,7 +66,13 @@
 // and a history line, --baseline retakes the base (needs --reason),
 // --exit-table lists every key moved over 5% against an older base,
 // --anchor prints the drift against the frozen anchor. Mode defaults to both
-// (the Retail floor needs Retail beside Legion).
+// (the Retail floor needs Retail beside Legion). --check and --baseline default
+// to the gate's eleven offsets 0,+-1..+-5 (lead ruling W3 round 3 (a)): the
+// small-count keys -- crossings, wall touch, a t90 of fewer than 10 bodies --
+// are gated on all eleven and every other key on the core five 0,+-1,+-2
+// (tools/legion_check.py re-reads the run). A file whose spawns the eleven put
+// off the map names its own (`gateoffsets`, at least nine). `--offsets gate`
+// asks for these gate offsets in any mode (the nightly's JSON run).
 //
 // Exit: 0 ok, 1 a mismatch (serial != workers, or --neutral), 2 usage or a
 // bad file, 77 the file needs --data (ctest SKIP).
@@ -124,6 +130,8 @@ struct Options {
     std::vector<std::string> files;   // several only with --neutral
     std::vector<PathfindingMode> modes{PathfindingMode::Legion, PathfindingMode::Retail};
     std::vector<int> offsets{0, 1, -1};
+    bool offsetsGiven = false;
+    bool gateOffsets = false;         // --offsets gate (the default of --check / --baseline)
     enum Exec { Serial, Workers, Both } exec = Both;
     int window = -2;        // -2: the file's uplink
     const char* data = nullptr;
@@ -145,7 +153,7 @@ void emit(const std::string& line) {
 
 [[noreturn]] void usage(const char* why) {
     std::fprintf(stderr, "legion_scenario: %s\n"
-        "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1]\n"
+        "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1|gate]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
         "       [--no-observer] [--neutral] [--wanderers on|off]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
@@ -619,7 +627,12 @@ int main(int argc, char** argv) {
             else if (v == "retail") opt.modes = {PathfindingMode::Retail};
             else if (v == "both") opt.modes = {PathfindingMode::Legion, PathfindingMode::Retail};
             else usage("--mode legion|retail|both");
-        } else if (a == "--offsets") opt.offsets = parseOffsets(value());
+        } else if (a == "--offsets") {
+            const auto v = value();
+            opt.offsetsGiven = true;
+            opt.gateOffsets = v == "gate";
+            if (!opt.gateOffsets) opt.offsets = parseOffsets(v);
+        }
         else if (a == "--workers") opt.exec = Options::Workers;
         else if (a == "--serial") opt.exec = Options::Serial;
         else if (a == "--both-exec") opt.exec = Options::Both;
@@ -661,6 +674,8 @@ int main(int argc, char** argv) {
         if (opt.gateArgs[i] == "--ratchet" && opt.gate != "check") usage("--ratchet goes with --check");
     std::string capture;
     if (gate) { opt.json = true; g_capture = &capture; }
+    if ((opt.gate == "check" || opt.gate == "baseline") && !opt.offsetsGiven) opt.gateOffsets = true;
+    if (opt.gateOffsets) opt.offsets = {0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5};   // legion_check.py WIDE_OFFSETS
     int status = 0, skipped = 0;
     for (const auto& file : opt.files) {
         const int one = runFile(file, opt);
@@ -692,6 +707,7 @@ int runFile(const std::string& file, Options opt) {
         return 2;
     }
     if (opt.ticks) s.ticks = opt.ticks;
+    if (opt.gateOffsets && !s.gateOffsets.empty()) opt.offsets = s.gateOffsets;   // the eleven leave its map
     if (opt.wanderers >= 0) s.wanderers = opt.wanderers == 1;
     const std::string name = !s.name.empty() ? s.name : std::filesystem::path(file).stem().string();
     if (const auto why = s.needsData(); !why.empty() && !opt.data) {
