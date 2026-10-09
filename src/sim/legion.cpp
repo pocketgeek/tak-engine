@@ -33,7 +33,7 @@ constexpr uint64_t kFieldQuota=384'000;
 // in a battle a whole-map refresh otherwise ran the full quota for a dozen
 // ticks, a spike over the 8x budget each time.
 constexpr uint64_t kRefreshQuota=kFieldQuota/4;
-// A body held this many updates in a row (past every early reaction:
+// A body held this many ticks (past every early reaction:
 // yields, first detours) is fully re-evaluated only every kRestStride ticks,
 // staggered by unit id, unless something around it changed (heldRest).
 constexpr uint32_t kRestAfter=60;
@@ -58,6 +58,7 @@ uint32_t gProbe=0;
 constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
+constexpr uint32_t kNoTick=~0u;                // an unset tick stamp
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
 // Ticks an approach member's order (an unreachable goal) is kept once the body
 // reaches its approach point, the nearest reachable spot: none, the order drops
@@ -399,7 +400,20 @@ struct LegionNavigator::Impl {
         bool line=false;
         State state=None;
         uint16_t best=kUnreached;         // best potential reached
-        uint32_t held=0,stalled=0,progress=0xffffffffu;
+        // Game-clock timers (AR-05, PLAN 3.1 T): the tick this body stopped
+        // taking steps (kNoTick while it steps; Waiting does not end a hold)
+        // and the tick its progress last improved. Thresholds read
+        // now - stamp, so a rested body (heldRest) ages as fast as an
+        // awake one. holdUpdates counts hold updates since the last step:
+        // only the detour, yield, part and side-step back-offs read it.
+        uint32_t heldSince=kNoTick,stallTick=0,progress=0xffffffffu;
+        uint32_t holdUpdates=0;
+        // The tick of this body's last move() call (rested or not). Within a
+        // tick it tells a peer already updated from one still to come (see
+        // peerStalledFor). Not hashed: it is only ever compared with the
+        // current tick, which no earlier stamp equals, so a rejoining client
+        // reads it the same.
+        uint32_t movedTick=kNoTick;
         uint32_t trappedSince=0;uint64_t trappedEpoch=0;
         // The order's goal is statically unreachable from this body's region:
         // `goal` is the nearest reachable point to it, walked to and held
@@ -427,8 +441,10 @@ struct LegionNavigator::Impl {
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
-        // pixel distance to the requested point then (see crowdSettle).
-        uint32_t windowTick=0;int64_t windowDist=-1;uint8_t stillWindows=0;
+        // pixel distance to the requested point then (see crowdSettle), and
+        // the start of the run of still windows that ends there (kNoTick:
+        // the last window was not still).
+        uint32_t windowTick=0;int64_t windowDist=-1;uint32_t stillSince=kNoTick;
         // Long-held throttle (see heldRest): what the last full update of a
         // held body saw -- its position, hit points, the static epoch and
         // the occupants of every origin around it. Hashed.
@@ -1790,7 +1806,7 @@ struct LegionNavigator::Impl {
                 if(best>=0) {gx=best%width();gz=best/width();}
             }
         }
-        Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;
+        Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
         // The command a member belongs to: the order's issue tick; every
         // patrol lap on its own; moving goals on the shared re-seed grid.
@@ -2364,7 +2380,7 @@ struct LegionNavigator::Impl {
                             const Unit* b=m?w.unit(o):nullptr;
                             // Its own squad settling round it is not traffic passing through.
                             if(b&&b->squad&&b->squad==flyer->squad)continue;
-                            if(b&&(m->state==Moving||((m->state==Holding||m->state==Waiting)&&m->held<kRestAfter))&&w.allied(flyer->player,b->player)) {busy=true;break;}
+                            if(b&&(m->state==Moving||((m->state==Holding||m->state==Waiting)&&heldFor(*m)<kRestAfter))&&w.allied(flyer->player,b->player)) {busy=true;break;}
                         }
                     }
                 if(busy&&w.legionLiftable(*flyer,flyer->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
@@ -3199,7 +3215,36 @@ struct LegionNavigator::Impl {
         // against occupancy each update), not on a timer.
         u.speed=Fixed();u.turnReqBam=0;
         if(m.state!=Holding)++stats.holds;
-        m.state=Holding;++m.held;
+        if(m.heldSince==kNoTick)m.heldSince=w.tickCounter_;
+        m.state=Holding;++m.holdUpdates;
+    }
+    // Ticks since the body stopped stepping (0 while it steps), and since
+    // its progress last improved: the hold and stall clocks.
+    // Both read as the body's own update sees them: heldFor at its start
+    // (holds before this tick), stalledFor after its progress test.
+    uint32_t heldFor(const Member& m) const {return m.heldSince==kNoTick||m.heldSince>=w.tickCounter_?0:w.tickCounter_-m.heldSince;}
+    uint32_t stalledFor(const Member& m) const {return w.tickCounter_-m.stallTick;}
+    // Another member's stall clock as its last update left it: one tick
+    // less while its update of this tick is still to come. (The counters
+    // read a peer that way, and so does every rest stride: a rested peer's
+    // move() still runs, so the reading never depends on the stride.)
+    uint32_t peerStalledFor(const Member& peer) const {
+        const uint32_t stall=stalledFor(peer);
+        return peer.movedTick==w.tickCounter_||stall==0?stall:stall-1;
+    }
+    // The stall clock stands still while the body walks a committed route
+    // or side-step (it measures no progress on the way the body is NOT
+    // being steered round): the stamp moves with the tick. Without this a
+    // body finishing a long way round arrived "stalled" and settled where
+    // the route left it (gap6: one body short of the area, order never
+    // complete in 3 of 5 offsets). Resting bodies walk neither.
+    void holdStall(Member& m) const {m.stallTick=std::min(m.stallTick+1,w.tickCounter_);}
+    // A walled-off slot is re-chosen every 20 held ticks (held 20, 40, ...).
+    // A resting body (heldRest) is woken on those ticks (restDue).
+    bool rechoiceDue(const Member& m) const {
+        if(m.state!=Holding)return false;
+        const uint32_t held=heldFor(m);
+        return held>=20&&held%20==0;
     }
     void complete(Unit& u,Member& m,bool contact) {
         // The nearest reachable point to an unreachable goal is not a
@@ -3603,7 +3648,7 @@ struct LegionNavigator::Impl {
     // Shared points: formation slots (assigned once for the whole point; a
     // later joiner maps its own offset the same way). A member walled off
     // from its slot re-chooses the free cell nearest itself every 20 held
-    // updates, inside the same area.
+    // held ticks (rechoiceDue), inside the same area.
     bool formationSlot(const Unit& u,Member& m,const Group& g,const Plane& p) {
         Point* cached=m.pt;
         if(!cached) {auto found=points.find(m.point);cached=found==points.end()?nullptr:&found->second;}
@@ -3616,7 +3661,7 @@ struct LegionNavigator::Impl {
         const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
         if(m.slot>=0) {
-            if(m.state!=Holding||m.held<20||m.held%20)return true;
+            if(!rechoiceDue(m))return true;
             slotCells(m,u.type->footX,u.type->footZ,false);
             const int cell=reachableFormationCell(u,p,pt,px,pz);
             if(cell>=0) {m.goal=cell;markPass(u,m);}
@@ -3626,7 +3671,7 @@ struct LegionNavigator::Impl {
         // No free cell was left for this member: it walks to the point and
         // looks again (by reachability) only while it is held.
         if(m.slot==-2) {
-            if(m.state!=Holding||m.held<20||m.held%20)return true;
+            if(!rechoiceDue(m))return true;
             const int cell=reachableFormationCell(u,p,pt,px,pz);
             if(cell>=0)takeFormation(m,u,cell);
             return true;
@@ -3649,9 +3694,9 @@ struct LegionNavigator::Impl {
         bool nearest=false;
         if(m.slot>=0) {
             // A claimed slot walled off by bodies that settled first is
-            // re-chosen every 20 held updates: take the nearest free slot,
+            // re-chosen every 20 held ticks: take the nearest free slot,
             // which fills the area from the side this member stands on.
-            if(m.state!=Holding||m.held<20||m.held%20)return;
+            if(!rechoiceDue(m))return;
             auto found=g.slots.find(m.requested);
             if(found==g.slots.end())return;
             if(size_t(m.slot)<found->second.taken.size())found->second.taken[size_t(m.slot)]=0;
@@ -3723,21 +3768,40 @@ struct LegionNavigator::Impl {
         }
         return h;
     }
-    // A long-held body (kRestAfter updates without a step, no committed
+    // A long-held body (kRestAfter ticks without a step, no committed
     // detour or route) skips its full update on all but one tick in
     // kRestStride (staggered by id), as long as nothing it reacts to has
     // changed since its last full update: it was not pushed or hurt, the
     // static epoch is the same and no body arrived at or left any cell
-    // around it. Any change wakes it at once. A skipped update is a hold
-    // that does not count toward the held timers (they count updates).
+    // around it. Any change wakes it at once. A CPU throttle only: the hold
+    // and stall clocks are tick stamps, so resting never slows them.
+    //
+    // A skipped update stands for the hold the full update would have
+    // reached with nothing changed (it counts toward holdUpdates as that
+    // hold would), and the body is woken on every tick where a clock it
+    // reads crosses a threshold: its crowd window, a slot re-choice, the
+    // stall thresholds of contactArrival, the hold-update back-offs, an
+    // approach look and the end of a lane pass. So the rest stride changes
+    // only when a body sees changes outside its ring, never when its own
+    // timers fire (AR-05: the stride used to shift every timed decision of
+    // a rested body by up to stride-1 ticks, and the shifts compounded).
     bool heldRest(const Unit& u,Member& m) {
-        if(m.state!=Holding||m.held<kRestAfter||m.detour>=0||!m.route.empty()||w.occW_<=0) {m.rest=false;return false;}
+        if(m.state!=Holding||heldFor(m)<kRestAfter||m.detour>=0||!m.route.empty()||w.occW_<=0) {m.rest=false;return false;}
         const uint64_t ring=ringSignature(u);
         ++stats.heldRechecks;
         const bool same=m.rest&&m.restX==u.x.v&&m.restZ==u.z.v&&m.restHp==u.hp.v&&m.restEpoch==epoch&&m.restRing==ring;
-        if(same&&(uint32_t(u.id)+w.tickCounter_)%gRestStride!=0)return true;
+        if(same&&(uint32_t(u.id)+w.tickCounter_)%gRestStride!=0&&!restDue(u,m)) {++m.holdUpdates;return true;}
         m.rest=true;m.restX=u.x.v;m.restZ=u.z.v;m.restHp=u.hp.v;m.restEpoch=epoch;m.restRing=ring;
         return false;
+    }
+    // Does a timed reader of this held body decide on this tick? (See heldRest.)
+    bool restDue(const Unit& u,const Member& m) const {
+        const uint32_t now=w.tickCounter_,held=heldFor(m),stall=stalledFor(m),n=m.holdUpdates;
+        if(now-m.windowTick>=kCrowdWindow||held%20==0)return true;
+        if(stall==20||stall==kAreaSettle||stall==2*kAreaSettle)return true;
+        if(n==6||n==12||n==60||n==m.nextDetour)return true;
+        if(m.approach&&(uint32_t(u.id)+now)%kApproachLook==0)return true;
+        return m.passUntil==now;
     }
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
@@ -3776,7 +3840,7 @@ struct LegionNavigator::Impl {
             registerMove(u);found=member(u.id);
             if(!found) {w.brakeGround(u);return;}
         }
-        auto& m=*found;
+        auto& m=*found;m.movedTick=w.tickCounter_;
         ++stats.moveCallsByState[size_t(m.state)&7];
         if(heldRest(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
         ++stats.moves;
@@ -3789,12 +3853,14 @@ struct LegionNavigator::Impl {
         // with a rally behind the exit hands over to it after a second
         // window: it walks off the lane with the rally instead of holding
         // there against the crowd.
-        if(rule.exitClear&&m.stillWindows>=kExitWindows&&leg.productionExit) {
+        // (Still ticks are those the last window proved: windowTick - stillSince.)
+        const uint32_t stillTicks=m.stillSince==kNoTick?0:m.windowTick-m.stillSince;
+        if(rule.exitClear&&stillTicks>=kExitWindows*kCrowdWindow&&leg.productionExit) {
             const int64_t dx=int64_t(u.x.floorInt())-leg.productionExit->first.floorInt();
             const int64_t dz=int64_t(u.z.floorInt())-leg.productionExit->second.floorInt();
             const bool clear=std::abs(dx)>=u.type->footX*16||std::abs(dz)>=u.type->footZ*16;
             const bool rally=World::currentLeg(u.orders)+1<u.orders.size();
-            if(clear||(rally&&m.stillWindows>=2*kExitWindows)) {complete(u,m,true);return;}
+            if(clear||(rally&&stillTicks>=2*kExitWindows*kCrowdWindow)) {complete(u,m,true);return;}
         }
         if(m.goal<0) {trapped(u,m);return;}
         // Stopped at its approach point (retired by trapped), or still
@@ -3857,9 +3923,10 @@ struct LegionNavigator::Impl {
             const int64_t dist=isqrtFloor(uint64_t(dx*dx+dz*dz));
             const int64_t body=int64_t(std::max(fx,fz))*16;
             const bool still=m.windowDist>=0&&m.windowDist-dist<body/2;
+            if(!still)m.stillSince=kNoTick;
+            else if(m.stillSince==kNoTick)m.stillSince=m.windowTick;
             m.windowTick=w.tickCounter_;m.windowDist=dist;
-            m.stillWindows=still?uint8_t(std::min(m.stillWindows+1,255)):uint8_t(0);
-            if(m.stillWindows>0) {
+            if(still) {
                 // A crowd of an earlier order (or idle bodies) already stands
                 // there: one window. A crowd of this same order is still
                 // forming, and the area logic (contactArrival) brings its
@@ -3870,13 +3937,13 @@ struct LegionNavigator::Impl {
                 // where a late member otherwise never settles. (Settling
                 // there too cost sharedgoal 200 eight arrivals, seeds 0/7/42.)
                 const bool outside=!(m.pt&&m.pt->assigned&&m.pt->limit>0)||dist>m.pt->limit+2*body;
-                const uint32_t still=uint32_t(m.stillWindows)*kCrowdWindow;
+                const uint32_t still=m.windowTick-m.stillSince;
                 if(crowd==2||(crowd==1&&outside&&still>=2*kAreaSettle)||(crowd==3&&outside&&still>=kFarSettle)) {complete(u,m,true);return;}
             }
         }
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
-            if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&m.held>=30)) {m.route.clear();m.lineCell=-1;}
+            if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&heldFor(m)>=30)) {m.route.clear();m.lineCell=-1;}
             else {
                 // Route cells are adjacent and were proven clear of still
                 // bodies cell by cell: follow them one at a time (a pulled
@@ -3887,6 +3954,7 @@ struct LegionNavigator::Impl {
                 // (Facing it while walking measured as spin in shared-goal
                 // crowds: 0 -> 10-22k unit-ticks in sharedgoal 2000.)
                 const auto [ax,az]=stepAim(u,aim);
+                holdStall(m);
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
                 return;
             }
@@ -3904,6 +3972,7 @@ struct LegionNavigator::Impl {
                 // that made non-turning keep-right steps crawl (and
                 // gridlocked opposing columns) does not apply to it.
                 const auto [ax,az]=stepAim(u,m.detour);
+                holdStall(m);
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass);
                 return;
             }
@@ -3917,8 +3986,8 @@ struct LegionNavigator::Impl {
                 f&&f->at(size_t(here))!=kUnreached&&f->at(size_t(here))>0
                     ? int64_t(f->at(size_t(here)))*64
                     : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
-            if(left<m.progress) {m.progress=left;m.stalled=0;m.detourCount=0;} else ++m.stalled;
-            if(m.stalled>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
+            if(left<m.progress) {m.progress=left;m.stallTick=w.tickCounter_;m.detourCount=0;}
+            if(stalledFor(m)>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
             // Nothing contactArrival reads changes before drive asks again
             // in this update (no step was taken, no goal or slot changes).
             contactRefused=&m;
@@ -4426,18 +4495,18 @@ struct LegionNavigator::Impl {
                 // every ~250-400 ticks, never holding long enough to ask (a
                 // livelock).
                 const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,nx,nz);
-                if(settled&&int64_t(m.progress)==m.detourBest&&m.held>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);m.held=0;return;}
-                if(f&&m.detour<0&&m.route.empty()&&m.held>=m.nextDetour&&
-                   (settled||(m.held>=60&&formationMember(m)))) {
+                if(settled&&int64_t(m.progress)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
+                   (settled||(m.holdUpdates>=60&&formationMember(m)))) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling.
                     const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
                     ++m.detourCount;
                     if(localDetour(u,m,p,f,towardGoal)) {m.nextDetour=wait;u.speed=Fixed();return;}
-                    m.nextDetour=m.held+wait;
+                    m.nextDetour=m.holdUpdates+wait;
                 }
-                if(f&&m.detour<0&&m.route.empty()&&m.held>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);m.held=0;return;}
-                if(f&&m.detour<0&&m.route.empty()&&m.held>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);m.held=0;return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);restartHold(m);return;}
                 hold(u,m);return;
             }
         }
@@ -4452,8 +4521,12 @@ struct LegionNavigator::Impl {
         // regardless, and a real course change (> ~5.6 deg) still turns.
         if(face&&std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
         u.turnReqBam=diff;
-        m.state=Moving;m.held=0;
+        m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
     }
+    // A hold that starts over (a detour planned, a lane asked for): the
+    // clocks run from the next tick, as a hold begun by the next update
+    // would (heldFor reads 0 until then).
+    void restartHold(Member& m) const {m.heldSince=w.tickCounter_+1;m.holdUpdates=0;}
     // Is the cell this body wants held by a body that will not move on its
     // own (idle, arrived, or not a Legion mover)? A queue of members waiting
     // for each other is not: it drains by itself and must not be re-planned.
@@ -4534,14 +4607,14 @@ struct LegionNavigator::Impl {
         for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-R)*W+ox+c%S-R);
         std::reverse(path.begin(),path.end());
         m.route=std::move(path);m.routeTicks=0;++stats.detours;m.detourBest=int64_t(m.progress);
-        m.state=Holding;m.held=0;  // stopped this update; the route starts next
+        m.state=Holding;restartHold(m);  // stopped this update; the route starts next
         return true;
     }
     // Opposing traffic: after a short hold, both bodies commit to a lateral
     // step to their own right (keep-right), so head-on pairs pass instead
     // of pushing. Same-direction queues only side-step after a long hold.
     void sidestep(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz,int nx,int nz) {
-        if(m.held<6)return;
+        if(m.holdUpdates<6)return;
         const int W=width();
         int blocker=0;
         const int fx=u.type->footX,fz=u.type->footZ;
@@ -4720,7 +4793,7 @@ struct LegionNavigator::Impl {
     // are taken. Distinct-goal members use one body width; members sharing a
     // point use the packed disc that many bodies of this size occupy.
     bool contactArrival(const Unit& u,const Member& m) const {
-        if(m.stalled<20)return false;
+        if(stalledFor(m)<20)return false;
         auto group=groups.find(m.group);
         if(group==groups.end())return false;
         // Shared points are counted by the requested point; a member's own
@@ -4755,10 +4828,10 @@ struct LegionNavigator::Impl {
             // in-area wait (300) it settled bodies a re-choice would still
             // have brought in: sharedgoal 200 lost 4 arrivals (seeds 0/7/42).
             if(dx*dx+dz*dz>limit*limit)
-                return m.stalled>=2*kAreaSettle&&dx*dx+dz*dz<=(limit+2*body)*(limit+2*body);
-            if(m.stalled>=kAreaSettle)return true;
+                return stalledFor(m)>=2*kAreaSettle&&dx*dx+dz*dz<=(limit+2*body)*(limit+2*body);
+            if(stalledFor(m)>=kAreaSettle)return true;
         } else {
-            if(count>1&&m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
+            if(count>1&&stalledFor(m)>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
             if(dx*dx+dz*dz>radius*radius)return false;
         }
         if(count==1&&!formation) {
@@ -4790,7 +4863,7 @@ struct LegionNavigator::Impl {
             // inside the area count as its filled part.
             else if(count>1||formation) {
                 const Member* peer=member(o);
-                settled=peer&&peer->group==m.group&&peer->stalled>=20;
+                settled=peer&&peer->group==m.group&&peerStalledFor(*peer)>=20;
             }
         }
         return settled;
@@ -4846,10 +4919,10 @@ struct LegionNavigator::Impl {
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
-            h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
+            h=mix(h,m.heldSince);h=mix(h,m.stallTick);h=mix(h,m.holdUpdates);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
-            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillWindows);
+            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);}
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));

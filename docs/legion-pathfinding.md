@@ -308,7 +308,7 @@ cells to the own goal while on a straight line.
 * **Heading**: the body turns only on a committed step toward its route,
   with a 5.6° dead band. A refused step, a hold, a shuffle, a pass, a
   side-step, a detour route, a yield and a trapped stop never turn it.
-* **Arrival on contact**: once a unit has made no progress for 20 updates, it
+* **Arrival on contact**: once a unit has made no progress for 20 ticks, it
   may arrive inside its goal's area while touching a settled same-player
   body. With a distinct goal the area is one body width and the goal cell
   must itself be occupied by another body, so settling short never plugs a
@@ -340,7 +340,7 @@ footprint class (mixed footprints form one group per class but share one
 * **Straight lanes**: a member with a formation slot probes the direct line
   out to 640 cells instead of 160, so the crowd does not funnel into a file
   by descending the shared field.
-* **Slot re-choice**: a member held for 20 updates (and every 20 after)
+* **Slot re-choice**: a member held for 20 ticks (and every 20 after)
   re-chooses. A BFS (radius 24) over origins that no other body covers finds
   the reachable free cell nearest the point. This stays active for the last
   member of an assigned point too. A member's own re-registration pins its
@@ -525,7 +525,7 @@ belongs to an allied player. Enemy flyers and busy flyers stay obstacles.
   still an obstacle to everyone else's.
 - **Hysteresis:** every further request extends the hover by 90 ticks. So
   does any allied member within 6 cells of the flyer that is moving, or has
-  been held for under 60 updates, or is bound for a goal there. The flyer
+  been held for under 60 ticks, or is bound for a goal there. The flyer
   lands only into a settled area, not in front of the stragglers of a group
   that is still coming in. When the 90 ticks run out, the retail landing
   mission takes over and searches from the spot it holds over: the flyer
