@@ -17515,6 +17515,22 @@
      "since": "W0",
      "value": 52779
     },
+    "work.blocked_rerequests.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
+    "work.blocked_rerequests.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
     "work.convoy_tests.max": {
      "dir": "lower",
      "per": "unit",
@@ -48436,6 +48452,22 @@
      "since": "W3",
      "value": 310
     },
+    "work.blocked_rerequests.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
+    "work.blocked_rerequests.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
     "work.completion_dist_0.max": {
      "band": 1.1,
      "dir": "lower",
@@ -51722,6 +51754,22 @@
      "since": "W3",
      "value": 306
     },
+    "work.blocked_rerequests.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
+    "work.blocked_rerequests.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
     "work.completion_dist_0.max": {
      "band": 1.1,
      "dir": "lower",
@@ -54911,6 +54959,22 @@
      "rule": "band",
      "since": "W3",
      "value": 77
+    },
+    "work.blocked_rerequests.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
+    "work.blocked_rerequests.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
     },
     "work.completion_dist_0.max": {
      "band": 1.1,
@@ -61203,6 +61267,22 @@
      "rule": "band",
      "since": "W3",
      "value": 329
+    },
+    "work.blocked_rerequests.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
+    "work.blocked_rerequests.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
     },
     "work.completion_dist_0.max": {
      "band": 1.1,
@@ -75253,6 +75333,22 @@
      "rule": "band",
      "since": "W3",
      "value": 49
+    },
+    "work.blocked_rerequests.max": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
+    },
+    "work.blocked_rerequests.total": {
+     "dir": "lower",
+     "per": "unit",
+     "reason": "W4 step 1 (B1 demand-driven refresh) declared bound: blocked_rerequests is a new event class -- a group turns active when a member has made no progress for kBlockedRetry = 120 ticks outside its destination area on a way only a static change or soft bodies close (Retail's blocked re-request); each edge starts at most one refresh, whose relaxations stay in field_work. Bound 0.05 per unit (one per 20 bodies), total and per tick; measured at most 1 per 40 units (deadend-w4-n40) and 4 per 1100 (battle-assault)",
+     "rule": "bound",
+     "since": "W4 step 1",
+     "value": 0.05
     },
     "work.completion_dist_0.max": {
      "band": 1.1,
