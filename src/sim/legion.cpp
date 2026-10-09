@@ -969,11 +969,12 @@ struct LegionNavigator::Impl {
         std::vector<std::pair<int,int32_t>> stamps;
         std::vector<uint8_t> liftable;
         uint64_t processed=0;
+        std::array<uint32_t,30> residue{};
         for(const auto& u:w.units_) {
             if(!u.alive()||u.embarked()||!u.type||(u.type->canFly&&u.flightGroundMode!=1)||u.type->isStructure())continue;
             const Member* m=member(u.id);
             if(m&&m->state!=Arrived)continue;
-            Still s;s.x=u.x.v;s.z=u.z.v;++processed;
+            Still s;s.x=u.x.v;s.z=u.z.v;++processed;++residue[size_t(u.id)%30];
             const auto old=std::lower_bound(stills.begin(),stills.end(),u.id,[](const auto& e,int id) {return e.first<id;});
             if(old!=stills.end()&&old->first==u.id&&old->second.x==s.x&&old->second.z==s.z)
                 s.scans=uint16_t(std::min<int>(old->second.scans+1,kStillScans));
@@ -998,6 +999,7 @@ struct LegionNavigator::Impl {
             }
         }
         stats.stillUnitsProcessed+=processed;
+        stats.stillPerResidueMax=std::max<uint64_t>(stats.stillPerResidueMax,*std::max_element(residue.begin(),residue.end()));
         std::sort(next.begin(),next.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
         stills.swap(next);
         std::sort(stamps.begin(),stamps.end());
@@ -1098,6 +1100,7 @@ struct LegionNavigator::Impl {
     // Plane rebuild work (cells) not yet charged to the per-tick quota.
     uint64_t planeDebt=0;
     int pruneCursor=0;
+    uint64_t quotaPegRun=0;   // consecutive ticks the field quota ran out (Stats::quotaPegRunMax)
     // Goal resolution per (plane, requested origin, body region) on the
     // current static epoch: a whole selection clicking one far point (or a
     // re-resolution after a change) searches once, not once per body. Pure
@@ -2659,6 +2662,9 @@ struct LegionNavigator::Impl {
             }
         }
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
+        // The longest run of ticks whose whole field quota went to work.
+        quotaPegRun=budget==0?quotaPegRun+1:0;
+        stats.quotaPegRunMax=std::max(stats.quotaPegRunMax,quotaPegRun);
         buildPassMask();
 #ifndef NDEBUG
         if(gVerify)verifyIndexes();
@@ -2668,16 +2674,17 @@ struct LegionNavigator::Impl {
     // TAK_LPROBE: the scheduler counters (cumulative) on one stderr line.
     void probeLine() const {
         const Stats& s=stats;
-        std::fprintf(stderr,"LPROBE tick=%u groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
+        std::fprintf(stderr,"LPROBE tick=%u units=%zu groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
             " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu fields_paused=%llu"
-            " still_units_processed=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
-            w.tickCounter_,groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
+            " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
+            w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
             (unsigned long long)s.refreshDeferred,(unsigned long long)s.blockedRerequests,(unsigned long long)s.lifts,
             (unsigned long long)s.liftMembersWalked,(unsigned long long)s.liftMembersSkipped,(unsigned long long)s.waitingMemberTicks,
             (unsigned long long)s.demandResumes,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
+            (unsigned long long)s.stillPerResidueMax,(unsigned long long)s.quotaPegRunMax,(unsigned long long)s.anchorWalkIters,
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
             probeSyncMs,probeStampMs,probeLiftMs);
     }
@@ -2713,7 +2720,7 @@ struct LegionNavigator::Impl {
         if(calls<s.moves)fail("move calls by state below moves");
         if(s.formationRingCells+s.rechoiceBfsCells>s.slotSearchCells)
             fail("slot search cells below the formation ring and re-choice cells");
-        if(s.blockedRerequests||s.demandResumes||s.fieldsPaused)fail("counters of mechanisms that do not exist yet are non-zero");
+        if(s.blockedRerequests||s.demandResumes||s.fieldsPaused||s.refreshSuppressed||s.softHashVerifyTicks)fail("counters of mechanisms that do not exist yet are non-zero");
         {
             std::vector<uint64_t> cmds(softOwner);
             std::sort(cmds.begin(),cmds.end());
@@ -2942,6 +2949,7 @@ struct LegionNavigator::Impl {
             ids.push_back(it->first);++it;
         }
         pruneCursor=it==members.end()?0:it->first;
+        stats.anchorWalkIters+=ids.size();
         for(int id:ids) {
             const Unit* u=w.unit(id);
             if(u&&u->alive()&&!u->embarked()&&!u->orders.empty()&&supports(*u))continue;
@@ -2952,6 +2960,7 @@ struct LegionNavigator::Impl {
     // anchor. Yield steps advance one update per tick in id order: straight
     // toward the target cell, no turning, then a full stop.
     void serviceYields() {
+        stats.anchorWalkIters+=anchors.size()+approachDone.size()+parts.size()+yielding.size();
         for(auto it=anchors.begin();it!=anchors.end();) {
             // (The completed leg itself lingers until World retires it.)
             const Unit* u=w.unit(it->first);

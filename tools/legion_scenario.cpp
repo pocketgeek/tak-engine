@@ -589,6 +589,12 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             r.keys.emplace_back(pre + "moved_within2_permille", tr.movedWithin2Permille());
         }
         if (nav) {
+            // W4 step 0 instruments: the two running-maximum gauges and total Legion work per
+            // 1500-tick bin (churn flatness, B1's gate).
+            r.keys.emplace_back("gauge.still_per_residue_max", int64_t(navWork.stillPerResidueMax()));
+            r.keys.emplace_back("gauge.quota_peg_run_max", int64_t(navWork.quotaPegRunMax()));
+            for (size_t i = 0; i < navWork.churnBins().size(); ++i)
+                r.keys.emplace_back("churn.bin" + std::to_string(i), int64_t(navWork.churnBins()[i]));
             r.keys.emplace_back("legion_groups", groupsAfter);
             r.keys.emplace_back("legion_groups_peak", groupsPeak);
         }

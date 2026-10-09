@@ -75,6 +75,18 @@ public:
         uint64_t waitingMemberTicks=0;   // member updates spent waiting for a field
         uint64_t demandResumes=0,fieldsPaused=0;   // paused builds (0 until paused builds exist)
         uint64_t stillUnitsProcessed=0;  // bodies scanStill sampled
+        // ---- W4 step 0 instruments (observation only, never hashed) ----------
+        // Gauges (running maxima, not per-tick work): the most bodies one
+        // residue class (id % 30) of a scanStill pass holds (B2 stripes the scan
+        // by this residue; target <= 1.1x the mean), and the longest run of
+        // consecutive ticks whose field quota was spent to zero.
+        uint64_t stillPerResidueMax=0,quotaPegRunMax=0;
+        // Map entries serviceYields walks (anchors, approachDone, parts,
+        // yielding) plus the ids prune validates (B3 drives this to the
+        // backstop cursor alone); soft-hash recomputations checked by
+        // TAK_LEGION_VERIFY (0 until B2); refreshes left unstarted for want of
+        // demand (0 until B1).
+        uint64_t anchorWalkIters=0,softHashVerifyTicks=0,refreshSuppressed=0;
         // ---- army throughput (T1 I4) ---------------------------------------
         uint64_t crowdWindowRingCells=0;   // the settle rule's queue ring (settle-chain cells) and the holder rule's ring
         uint64_t crowdSettleVisits=0;      // units walked to rebuild the factory exit lanes
@@ -123,6 +135,8 @@ public:
         f("lift_members_walked",s.liftMembersWalked);f("lift_members_skipped",s.liftMembersSkipped);
         f("waiting_member_ticks",s.waitingMemberTicks);f("demand_resumes",s.demandResumes);f("fields_paused",s.fieldsPaused);
         f("still_units_processed",s.stillUnitsProcessed);
+        f("still_per_residue_max",s.stillPerResidueMax);f("quota_peg_run_max",s.quotaPegRunMax);
+        f("anchor_walk_iters",s.anchorWalkIters);f("soft_hash_verify_ticks",s.softHashVerifyTicks);f("refresh_suppressed",s.refreshSuppressed);
         f("crowd_window_ring_cells",s.crowdWindowRingCells);f("crowd_settle_visits",s.crowdSettleVisits);
         f("rechoice_bfs_cells",s.rechoiceBfsCells);f("formation_ring_cells",s.formationRingCells);f("pivot_part_ids",s.pivotPartIds);
         array("move_calls_by_state",s.moveCallsByState,8);f("join_iterations",s.joinIterations);

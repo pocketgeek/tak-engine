@@ -1051,6 +1051,7 @@ public:
             if(i>=last_.size())last_.push_back(0);
             const uint64_t d=v>=last_[i]?v-last_[i]:0;last_[i++]=v;
             if(n=="bytes"||n.substr(0,5)=="live_"||n=="completion_dist_max")return;
+            if(n=="still_per_residue_max"||n=="quota_peg_run_max") {gauge(n,v);return;}   // running maxima, not work
             if(d||n=="midroute_completions")obs.work(n,d);   // a safety key: always present, 0 when clean
             if(totalClass(n))total+=d;
         });
@@ -1060,8 +1061,22 @@ public:
         if(d)obs.work("convoy_tests",d);
         total+=d;
         obs.work("legion_total",total);
+        // Churn bins (W4 step 0): total Legion work per kChurnBin ticks of the run.
+        const size_t bin=ticks_++/kChurnBin;
+        if(bin>=bins_.size())bins_.resize(bin+1,0);
+        bins_[bin]+=total;
     }
+    static constexpr uint32_t kChurnBin=1500;
+    // Total Legion work per kChurnBin-tick bin (the last bin may be partial).
+    const std::vector<uint64_t>& churnBins() const {return bins_;}
+    // The running-maximum gauges the Stats carry (their last value): residue
+    // load of scanStill and the longest field-quota peg run.
+    uint64_t stillPerResidueMax() const {return stillPerResidueMax_;}
+    uint64_t quotaPegRunMax() const {return quotaPegRunMax_;}
 private:
+    void gauge(std::string_view n,uint64_t v) {(n=="quota_peg_run_max"?quotaPegRunMax_:stillPerResidueMax_)=v;}
+    std::vector<uint64_t> bins_;
+    uint64_t ticks_=0,stillPerResidueMax_=0,quotaPegRunMax_=0;
     std::vector<uint64_t> last_;
     uint64_t lastConvoy_=0;
 };
