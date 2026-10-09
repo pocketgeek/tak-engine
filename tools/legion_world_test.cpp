@@ -615,7 +615,13 @@ void liftflyers() {
     check(own.arrived==40&&own.overlap==0&&own.flyerOverlap==0&&own.spins==0,"group failed under lifting flyers");
     check(own.lifted==12&&own.maxTakeoffs==1,"own idle flyers did not lift exactly once");
     check(own.landed==12&&own.home==12,"lifted flyers did not land again on their spots");
-    check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10&&own.detour<=open.detour+1,"group detoured round flyers that lift");
+    // The detour allows open + 3 cells, not + 1, by user decision W3-4 (2026-10-09): under W3 the last body
+    // re-chooses its slot along the formation's west face AT the destination (own run 5 vs open 2), a
+    // steering gap round a settled crowd accepted for W3 and fixed in W5/W9. W5/W9 HARD EXIT GATE: back to
+    // open + 1 (docs/legion-exit-tables.md, "W3 exit"; w5-w9-gates).
+    constexpr uint64_t kLiftDetourSlack=3;   // W3-4; W5/W9 restore 1
+    check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10,"group slowed by flyers that lift");
+    check(own.detour<=open.detour+kLiftDetourSlack,"group detoured round flyers that lift");
     // An enemy's flyers never lift: obstacles, planned and steered round.
     check(enemy.lifted==0&&enemy.landed==12,"enemy flyers lifted");
     check(enemy.arrived==40&&enemy.overlap==0&&enemy.spins==0,"group failed round enemy flyers");
