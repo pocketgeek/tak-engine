@@ -66675,23 +66675,23 @@
     "contact_other_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 20
+     "value": 0
     },
     "contact_own_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 276
+     "value": 594
     },
     "contact_settled_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66699,7 +66699,7 @@
     "g.A.arrived": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66707,7 +66707,7 @@
     "g.A.complete_n": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66715,7 +66715,7 @@
     "g.A.complete_outside_radius": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66723,7 +66723,7 @@
     "g.A.dead": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66731,7 +66731,7 @@
     "g.A.done": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": -1
@@ -66739,7 +66739,7 @@
     "g.A.left_behind": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 20
@@ -66747,7 +66747,7 @@
     "g.A.n": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 20
@@ -66755,7 +66755,7 @@
     "g.A.orders_done": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66763,7 +66763,7 @@
     "g.A.radius_px": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 151
@@ -66771,7 +66771,7 @@
     "g.A.t50": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": -1
@@ -66779,7 +66779,7 @@
     "g.A.t90": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": -1
@@ -66787,7 +66787,7 @@
     "parked_no_progress": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66795,7 +66795,7 @@
     "region.goal.inside": {
      "band": 1.1,
      "dir": "higher",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66803,21 +66803,21 @@
     "reversals": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
     },
     "serial_eq_workers": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
      "value": true
     },
     "spins": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
      "value": 0
@@ -66825,15 +66825,15 @@
     "stopped_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 845
     },
     "walk_in_place": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66841,7 +66841,7 @@
     "wall_touch_near_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66849,119 +66849,47 @@
     "wall_touch_permille": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
-    },
-    "work.arrivals.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.arrivals.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.arrivals.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.aware_pairs.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.aware_pairs.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.aware_pairs.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 49
-    },
-    "work.completion_dist_0.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.completion_dist_0.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.completion_dist_0.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
     },
     "work.crowd_window_ring_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 144
+     "value": 504
     },
     "work.crowd_window_ring_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 216
     },
     "work.crowd_window_ring_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 468
+     "value": 22104
     },
     "work.detour_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 544
     },
     "work.detour_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66969,23 +66897,23 @@
     "work.detour_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 7857
     },
     "work.detours.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 1
     },
     "work.detours.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -66993,23 +66921,23 @@
     "work.detours.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 15
     },
     "work.field_work.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 148944
+     "value": 110120
     },
     "work.field_work.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67017,23 +66945,23 @@
     "work.field_work.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 148944
+     "value": 110120
     },
     "work.field_work_first_slot.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 110320
+     "value": 110120
     },
     "work.field_work_first_slot.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67041,47 +66969,23 @@
     "work.field_work_first_slot.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 110320
-    },
-    "work.field_work_first_solo.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 38624
-    },
-    "work.field_work_first_solo.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.field_work_first_solo.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 38624
+     "value": 110120
     },
     "work.fields_built.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.fields_built.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67089,23 +66993,23 @@
     "work.fields_built.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.fields_started_by_kind_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.fields_started_by_kind_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67113,15 +67017,15 @@
     "work.fields_started_by_kind_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.formation_ring_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 719
@@ -67129,7 +67033,7 @@
     "work.formation_ring_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67137,7 +67041,7 @@
     "work.formation_ring_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 719
@@ -67145,39 +67049,39 @@
     "work.group_loop_iters.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 81
+     "value": 40
     },
     "work.group_loop_iters.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.group_loop_iters.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 147
+     "value": 90
     },
     "work.groups.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.groups.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67185,71 +67089,71 @@
     "work.groups.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 3
-    },
-    "work.held_rechecks.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.held_rechecks.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.held_rechecks.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.holds.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 1
     },
+    "work.held_rechecks.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 18
+    },
+    "work.held_rechecks.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 18
+    },
+    "work.held_rechecks.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 22271
+    },
+    "work.holds.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "rule": "band",
+     "since": "W2s0",
+     "value": 12
+    },
     "work.holds.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 1
     },
     "work.holds.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 6
+     "value": 55
     },
     "work.join_iterations.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 79
+     "value": 39
     },
     "work.join_iterations.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67257,39 +67161,39 @@
     "work.join_iterations.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 79
+     "value": 39
     },
     "work.legion_total.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 152434
+     "value": 113545
     },
     "work.legion_total.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 1417
+     "value": 9556
     },
     "work.legion_total.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 451459
+     "value": 1650717
     },
     "work.line_sweeps.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 20
@@ -67297,47 +67201,23 @@
     "work.line_sweeps.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 14
+     "value": 5
     },
     "work.line_sweeps.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 3198
-    },
-    "work.mission_arrivals_1.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.mission_arrivals_1.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 0
-    },
-    "work.mission_arrivals_1.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
+     "value": 799
     },
     "work.mission_legs_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 40
@@ -67345,7 +67225,7 @@
     "work.mission_legs_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67353,63 +67233,63 @@
     "work.mission_legs_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 42
+     "value": 40
     },
     "work.move_calls_by_state_1.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 21
+     "value": 8
     },
     "work.move_calls_by_state_1.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 21
+     "value": 8
     },
     "work.move_calls_by_state_1.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 30420
+     "value": 4681
     },
     "work.move_calls_by_state_2.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 19
     },
     "work.move_calls_by_state_2.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 19
     },
     "work.move_calls_by_state_2.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 11
+     "value": 25279
     },
     "work.move_calls_by_state_3.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 20
@@ -67417,7 +67297,7 @@
     "work.move_calls_by_state_3.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67425,87 +67305,39 @@
     "work.move_calls_by_state_3.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 21
+     "value": 20
     },
     "work.moves.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 21
+     "value": 20
     },
     "work.moves.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 21
+     "value": 20
     },
     "work.moves.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 30452
-    },
-    "work.pass_scan_cells.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 384
-    },
-    "work.pass_scan_cells.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 384
-    },
-    "work.pass_scan_cells.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 50745
-    },
-    "work.pass_scans.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 14
-    },
-    "work.pass_scans.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 13
-    },
-    "work.pass_scans.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1934
+     "value": 18942
     },
     "work.pass_scans_skipped.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 20
@@ -67513,7 +67345,7 @@
     "work.pass_scans_skipped.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 20
@@ -67521,15 +67353,15 @@
     "work.pass_scans_skipped.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 28010
+     "value": 14520
     },
     "work.plane_builds.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 1
@@ -67537,7 +67369,7 @@
     "work.plane_builds.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67545,39 +67377,39 @@
     "work.plane_builds.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.rechoice_bfs_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 24972
     },
     "work.rechoice_bfs_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 8748
     },
     "work.rechoice_bfs_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 1381284
     },
     "work.registrations.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 40
@@ -67585,7 +67417,7 @@
     "work.registrations.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67593,23 +67425,23 @@
     "work.registrations.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 42
+     "value": 40
     },
     "work.sched_group_visits.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.sched_group_visits.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 0
@@ -67617,15 +67449,15 @@
     "work.sched_group_visits.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 2
+     "value": 1
     },
     "work.slides.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 3
@@ -67633,7 +67465,7 @@
     "work.slides.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 1
@@ -67641,63 +67473,39 @@
     "work.slides.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 27
+     "value": 51
     },
     "work.slot_search_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 719
+     "value": 24972
     },
     "work.slot_search_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 0
+     "value": 8748
     },
     "work.slot_search_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 719
-    },
-    "work.still_units_processed.max": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.still_units_processed.p99": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 1
-    },
-    "work.still_units_processed.total": {
-     "band": 1.1,
-     "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
-     "rule": "band",
-     "since": "W2s0",
-     "value": 35
+     "value": 1382003
     },
     "work.trace_cells.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
      "value": 2666
@@ -67705,59 +67513,59 @@
     "work.trace_cells.p99": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 1304
+     "value": 658
     },
     "work.trace_cells.total": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "band",
      "since": "W2s0",
-     "value": 246414
+     "value": 105398
     }
    },
    "retail": {
     "hash@-1": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
-     "value": "ee71cf6fd4326482"
+     "value": "15348f4bf0713825"
     },
     "hash@-2": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
-     "value": "fd7cc8820a0a9731"
+     "value": "a80d4929b38c58ed"
     },
     "hash@0": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
-     "value": "b30cb359e198d0c8"
+     "value": "dd8f58362e902ee7"
     },
     "hash@1": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
-     "value": "0a6908df37712275"
+     "value": "dd44a4328cd4b38d"
     },
     "hash@2": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
-     "value": "b19af6155d3c49c4"
+     "value": "b9d1c8875059441d"
     },
     "serial_eq_workers": {
      "dir": "lower",
-     "reason": "W2 step 0 first base (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
+     "reason": "W2 step 0 base retaken with the scn structure fixed to maxVel 0 (legion-w2 90457fd + W2 step-0 instruments), median of 5 offsets, band 1.10",
      "rule": "eq",
      "since": "W2s0",
      "value": true
@@ -77378,42 +77186,6 @@
    "key": "stopped_permille",
    "median5": true,
    "mode": "legion",
-   "reason": "3-offset spread 0..8 exceeds the band at W2s0; gated on median-of-5 offsets",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "contact_own_permille",
-   "median5": true,
-   "mode": "legion",
-   "reason": "3-offset spread 200..313 exceeds the band at W2s0; gated on median-of-5 offsets",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "contact_other_permille",
-   "median5": true,
-   "mode": "legion",
-   "reason": "3-offset spread 18..28 exceeds the band at W2s0; gated on median-of-5 offsets",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "g.H.arrived",
-   "reason": "fails legion <= retail x1.1 at W2s0: legion 0 vs retail 1",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "g.H.t90",
-   "reason": "fails legion <= retail x1.1 at W2s0: legion never vs retail 0",
-   "scenario": "structsquad"
-  },
-  {
-   "cluster": "AR-03",
-   "key": "stopped_permille",
-   "median5": true,
-   "mode": "legion",
    "reason": "3-offset spread 714..854 exceeds the band at W2s0; gated on median-of-5 offsets",
    "scenario": "structsquad-keep"
   },
@@ -77475,6 +77247,26 @@
    "median5": true,
    "reason": "fails legion <= retail x1.1 at W2s0: legion 9004 vs retail 2419",
    "scenario": "unreach-200"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "stopped_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "3-offset spread 714..854 exceeds the band at W2s0; gated on median-of-5 offsets",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "g.A.arrived",
+   "reason": "fails legion <= retail x1.1 at W2s0: legion 0 vs retail 20",
+   "scenario": "structsquad"
+  },
+  {
+   "cluster": "AR-03",
+   "key": "g.A.t90",
+   "reason": "fails legion <= retail x1.1 at W2s0: legion never vs retail 1262",
+   "scenario": "structsquad"
   }
  ],
  "history": [

@@ -1,9 +1,9 @@
 scn 1
 # AR-03 structsquad: 20 movers and one 4x4 structure in formation Alt+1; the movers are ordered 130 cells east.
 # FormAgg takes the slowest member's baseSpeed over the squad and a structure's is 0, so the formation paces
-# every mover to a creep: on b8a4110 and on the W2 head 0/20 arrive (mean x 21 cells after 3000 ticks).
-# Target (PLAN 3.4 AR-03): 20/20 by 1350 (the same 20 without the structure arrive by tick 1299; Retail with the
-# structure in its group is paced too: done 2990 against 1358 without).
+# every mover to a standstill: on the W2 head 0/20 arrive. Target (PLAN 3.4 AR-03): 20/20 by 1350 (the same 20
+# without the structure arrive by tick 1299; Retail 20/20 by 1274). The `structure` type has maxVel 0 (isStructure);
+# before the W2 step-0 fixup it kept UnitType's default maxVel 1, a slow 4x4 mover that paced both modes.
 # Source: the audit's probe_structsquad (legion_world_test), as a scenario.
 name structsquad
 ticks 1500
