@@ -403,6 +403,14 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_baseline_reasons_test.py
                    ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
   set_tests_properties(legion_baseline_reasons PROPERTIES LABELS legion TIMEOUT 120)
+  # docs/legion-pathfinding.md stays tied to the instruments: every Known weakness cites a fixture and key (or a
+  # test) that exists, and the quoted field quota is kFieldQuota. The selftest renames one cited scenario, key and
+  # test in a copy and fails unless each is caught (tools/legion_doc_links.py).
+  add_test(NAME legion_doc_links
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_doc_links.py --root ${CMAKE_SOURCE_DIR})
+  add_test(NAME legion_doc_links_selftest
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_doc_links.py --root ${CMAKE_SOURCE_DIR} --selftest)
+  set_tests_properties(legion_doc_links legion_doc_links_selftest PROPERTIES LABELS legion TIMEOUT 120)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison

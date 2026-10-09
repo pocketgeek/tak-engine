@@ -3768,8 +3768,10 @@ struct LegionNavigator::Impl {
         // outside the window, or the way out leaves it): widen the group's
         // field to the whole component and wait for it, never trapped. It
         // restarts as a first field (members already passed by its frontier
-        // steer by it half built), not as a refresh: refreshes restart on
-        // every static change and never finish under constant churn.
+        // steer by it half built), not as a refresh: a refresh would keep
+        // steering this body by the old field, which cannot reach it. (A
+        // refresh does finish under constant static churn, about every 85
+        // ticks since the quarter-quota allowance, kRefreshQuota.)
         if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
             if(g.next&&!g.next->done)++stats.refreshDiscards;
             g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);listGroup(g);
