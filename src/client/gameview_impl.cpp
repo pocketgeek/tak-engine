@@ -1,4 +1,3 @@
-#include <cassert>
 #include "util/virtualpath.h"
 #include "client/retailaim.h"
 #include "gaf/nimbus.h"
@@ -2224,15 +2223,36 @@
                 if(!transient)smokeOwners_.insert(event.unitId);
             }
         }
+        // Which units hand a packet to the weapon or flight queue this tick (WE S5d). The
+        // per-unit read is a pass over every Unit, so it runs on capturePool_. Both queues
+        // drop a packet that carries nothing new (push: no callback and no shot; capture:
+        // the flyer's last recorded state), so only the changed ones are flagged. The
+        // flight test reads the queue's last states, which only the capture below writes;
+        // the render's drain() touches the pending list alone, so it may run meanwhile.
+        transportFlags_.resize(world_.units().size());
+        forEachUnitSlot([&](size_t i) {
+            const auto& unit=world_.units()[i];
+            const bool flyer=unit.alive() && unit.type && unit.type->canFly &&
+                flightAnimationQueue_.changed(unit.id,unit.flightGroundMode==2,
+                    unit.flightBeginCallbackSerial,unit.flightLandingCallbackSerial);
+            transportFlags_[i]=uint8_t((unit.weaponAnimations.count || unit.firedWeapons ? 1 : 0) |
+                (flyer ? 2 : 0));
+        });
         {
             std::lock_guard<std::mutex> lock(hitQueueMutex_);
             smokeTickQueue_.push_back(std::move(smoke));
             // Capture every simulation step, including steps whose render
             // snapshot will be superseded before the next display frame.
-            for (const auto& unit:world_.units()) {
-                weaponAnimationQueue_.push(world_.tickCount(),unit.id,unit.weaponAnimations,
-                    unit.firedWeapons,unit.x.toFloat(),unit.z.toFloat());
-                if(unit.alive() && unit.type && unit.type->canFly)
+            // Only units with something to hand over are visited, in slot order (the
+            // queues' order is unchanged); the scan that finds them is the parallel part.
+            const auto& units=world_.units();
+            for (size_t i=0;i<units.size();++i) {
+                if (!transportFlags_[i]) continue;
+                const auto& unit=units[i];
+                if (transportFlags_[i]&1)
+                    weaponAnimationQueue_.push(world_.tickCount(),unit.id,unit.weaponAnimations,
+                        unit.firedWeapons,unit.x.toFloat(),unit.z.toFloat());
+                if (transportFlags_[i]&2)
                     flightAnimationQueue_.capture(world_.tickCount(),unit.id,unit.flightGroundMode==2,
                         unit.flightBeginCallbackSerial,unit.flightLandingCallbackSerial);
             }
@@ -2254,8 +2274,10 @@
         const auto& u=world_.units()[slot];
         UnitR& s=fb.units[slot];
         if(s.id!=u.id)s=UnitR{};
-        captureSlots_[slot]={u.id,u.buildSiteId ? u.buildSiteId : u.productionSiteId,u.type!=nullptr};
+        const int conjureSiteId=u.buildSiteId ? u.buildSiteId : u.productionSiteId;
+        captureSlots_[slot]={u.id,conjureSiteId,u.type!=nullptr};
         if (!u.type) { s.seeded = false; s.type = nullptr; return; }
+        s.conjuring=false;   // the serial tail sets it for the few units that have a site
         // Render-read fields, captured for ALL units (alive + dead-recent: the death
         // animation and the deadFor>=4 cull both need a live value).
         s.gen = fb.gen;
@@ -2385,24 +2407,8 @@
         fb.units.resize(count);
         captureSlots_.resize(count);
         // The per-unit copy is memory-latency bound (first touch of each Unit), so it
-        // splits across capturePool_ near-linearly. Below kCaptureMinParallel the pool's
-        // wake/join costs more than it saves and the pass stays on this thread.
-        if (count >= kCaptureMinParallel) {
-            // Sole-mutator check: only the thread that ticks world_ may capture it, and it
-            // stays blocked in parallelFor for the whole pass, so the pool reads a world
-            // nobody is writing. A capture from any other thread would race the tick.
-            assert(std::this_thread::get_id() == (useSimThread_ ? simThread_.get_id() : mainThreadId_));
-            [[maybe_unused]] const auto* const unitsBefore=world_.units().data();
-            [[maybe_unused]] const uint32_t tickBefore=world_.tickCount();
-            if (!capturePool_) capturePool_=std::make_unique<ThreadPool>(kCaptureThreads);
-            capturePool_->parallelFor(count, [&](size_t b, size_t e) {
-                for (size_t i=b; i<e; ++i) captureUnit(fb, pf, i);
-            }, kCaptureMinParallel);
-            assert(world_.units().data()==unitsBefore && world_.units().size()==count &&
-                   world_.tickCount()==tickBefore);
-        } else {
-            for (size_t i=0; i<count; ++i) captureUnit(fb, pf, i);
-        }
+        // splits across capturePool_ near-linearly (forEachUnitSlot).
+        forEachUnitSlot([&](size_t i) {captureUnit(fb, pf, i);});
         // Serial tail, in slot order (the same order as before): the ID table, the compact
         // live list, and the conjure flag for the few units that have a site.
         for (size_t i=0; i<count; ++i) {
@@ -2412,9 +2418,11 @@
             if (!c.typed) continue;
             UnitR& s=fb.units[i];
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
-            // Zero means no site. Looking it up would fall back to a full unit
-            // scan for every non-conjuring unit in this per-tick snapshot.
-            const auto* conjureSite=c.site ? world_.unit(c.site) : nullptr;
+            // Zero means no site (captureUnit already cleared the flag). Only the few
+            // units with one are touched here: a pool thread just wrote every record,
+            // so a store to each would pull all of them back across cores.
+            if (!c.site) continue;
+            const auto* conjureSite=world_.unit(c.site);
             s.conjuring=conjureSite && conjureSite->underConstruction && conjureSite->buildBegun;
         }
         // Player table snapshot for the HUD/scoreboard.

@@ -72,10 +72,16 @@ private:
     std::unordered_map<int,Snapshot> latest_;
     std::deque<Snapshot> pending_;
 public:
-    void capture(uint32_t tick,int unit,bool airborne,uint32_t begin,uint32_t landing) {
+    // Whether capture() would record this state. It reads only latest_, which capture()
+    // alone writes, so it may run concurrently with drain() (pending_ only) and with
+    // other changed() calls, as long as no capture() runs at the same time.
+    bool changed(int unit,bool airborne,uint32_t begin,uint32_t landing) const {
         const auto previous=latest_.find(unit);
-        if(previous!=latest_.end() && previous->second.airborne==airborne &&
-           previous->second.beginFlightSerial==begin && previous->second.landingSerial==landing)return;
+        return previous==latest_.end() || previous->second.airborne!=airborne ||
+               previous->second.beginFlightSerial!=begin || previous->second.landingSerial!=landing;
+    }
+    void capture(uint32_t tick,int unit,bool airborne,uint32_t begin,uint32_t landing) {
+        if(!changed(unit,airborne,begin,landing))return;
         Snapshot snapshot{tick,unit,airborne,begin,landing};
         latest_.insert_or_assign(unit,snapshot);
         if(pending_.size()>=65536)pending_.pop_front();
