@@ -6,9 +6,74 @@ moved by more than 5% against its base, old -> new, marked *intended* or
 instead of stopping on it. The base is the W0 committed base
 (`tools/scenarios/baseline.json` at 90457fd), or, for a fixture a later step 0
 added, that step 0's base. Scenario keys are medians over the start offsets
-0, +1, -1, +2, -2 (optimized Debug, both modes, serial == workers); the
+0, +1, -1, +2, -2 (optimized Debug, both modes, serial == workers; from W3 round 4 the
+small-count keys -- crossings, wall touch, the t90 of a group under 10 bodies -- on the
+median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
+
+## W3 round 4 (2026-10-09): the lead's measurement rulings applied; one fix -- the exit is still not passed
+
+Head: `task-w3-b2` = round 3 + origin/main 41fa2d7a (merged) + round 4. Measured on `e8b41820`, optimized
+Debug, all 91 scenarios, both modes, on the gate offsets (below), serial == workers on all 182 lines, every
+Retail state hash equal to round 3's. Base: the W3 step-0 sim `7a01f7bb` with the round-3 observer (branch
+`w3b3-base`), retaken on oden-win on the gate offsets. Scenario results are platform-independent: the
+Windows run of the final head equals the Linux arm run hash for hash.
+
+Commits: `aa57431a` legion_check / legion_scenario (rulings (a)-(c), unit tests), `aaf911fb` baseline retake,
+`e8b41820` fix (1).
+
+### Rulings applied (lead, W3 round 3 (a)-(c))
+
+| Ruling | Applied |
+|---|---|
+| (a) small-count keys on 11 offsets | `gate.*.crossings`, `wall_touch(_near)_permille` and the t90 of a group under 10 bodies (its t90 is the last body's time) are gated on the median of the gate offsets 0,+-1..+-5, both modes and the Retail floor; every other key stays on the core five. `legion_scenario --offsets gate` (the default of `--check` / `--baseline`, and the nightly's) runs them; a file whose spawns leave the map names its own (`gateoffsets`: cost-open / cost-corner -4..6, corner-8x56 / corner-1x448 -4..4, nine: their blocks fill the map to 4 cells of two edges). The spread check skips these keys (gated on the median already). 286 entries retaken (102 band / 15 bound values moved), their 109 spread exceptions and 13 five-offset W3-exit licenses dropped; densehead / strait-2x150 (W3-2) keep theirs |
+| (b) contact_settled floor only where >= 10 arrive in both modes | `floor_applies`; motion-wall's MV-12 exception dropped (fewer than 10 arrive). The band still applies |
+| (c) a spread exception is not a floor exception | `floor_exception_for` (check and retake); unit test fails on the old lookup. It unmasked 8 floor failures that the BASE has too (listed as exceptions: deadend-w4-n120 closed/room plain, pocket-304 open/wall and tail-wave `g.A.arrived`, tail-wave `g.W.t90`, doorplug-124 `g.A.t90`, deadend-w4-n40-closed-squad `contact_own`) and 33 base floor failures of small-count keys (deadend wall touch, aware-cross `g.b04.t90`, motion-cross `g.u05.t90`, mazeapproach, doorplug-124 wall touch) |
+
+### Fix
+
+| Fix | Numbers |
+|---|---|
+| (1) a body standing on its own slot never re-chooses one (`e8b41820`) | legion_liftflyers' open run: the 9-cell detour was a body AT its slot (166,51) re-choosing (159,43); now detour 2, ticks 1706 -> 1471. Suite (legion, gate offsets, vs round 3, W3 licenses stripped): 9 band failures fixed, 6 new (noise-level counts), no floor change; navigation goldens unchanged; `--mpai` unchanged |
+
+### The real failures (ruling (d) and the list), measured
+
+| Item | Finding |
+|---|---|
+| doorplug-124 `g.A.done` never | All 60 A orders complete at all 11 offsets; at 3 of 11 one or two tail bodies settle 16.6-19 cells from the click (disc 16.4) in the door-exit jam, queued behind their own settled crowd and pressed by their own tail (trace: id 1 re-chose a free slot (125,57) at 1577, held, settled at 1622 behind). Retail itself never completes A at 5 of 11. Not fixed: 14 env-gated variants (settle deferral while a free slot is reachable, by area / disc / relaxed BFS through the own moving tail, bounded / unbounded; extended re-choice; "pressed" ignoring own moving bodies) each move the never to other offsets or cost elsewhere (best: relaxed BFS, 90% disc, unbounded -- doorplug A and strait-2x48 B complete at the core five, but doorplug B t90 never at 6 of 11 and cost-corner `complete_n` 88 -> 72). The jam needs steering round the settled crowd (W5 / W9), not a settle tweak |
+| aware-cross `g.a09` never | Observer geometry: each of the 24 bodies is its own observer group (n = 1, disc 33 px) at ONE shared point, so `g.aNN.t90` reads "this body ended within 2 cells of the click". a09's order completes at all 11 offsets (complete_dist 1-9 cells); 11-offset median 1651 vs base 1687, Retail never (a09 arrives at 4 of 11 in Retail). Passes under ruling (a) |
+| liftflyers | Fixed: the open-run detour (1). Still fails "own flyers that lift": own run 1799 ticks vs 1.1 x open 1471. Bisected on oden-win: 358fc350 (B) own 1531 / open 1891, 13c9265d (A2 on B) 1711 / 1706, head 1799; the own run has no re-choice at all |
+| landedflyers | Bisected: the stand-against-flyers rise arrives with A2 (13c9265d), not the lane re-aim. foot 2 stuck median 1651 (bound 1411; base per shift 1039..1548, head 792..2160); foot 3 230 vs 224 is one sample (shifts 143, 66, 290, 230, 1100; base 143, 81, 290, 582, 159). Lane re-aim only for engaging orders (round 3's variant) brings foot 2 to 1292; foot 3 unchanged; suite: 7 fixed, 7 new, wall-1x48 strip crossings newly fail the floor (7 vs 4). Not landed |
+| battle-assault windows | Cause isolated: identical triggers (Attack legs re-seed every 16 ticks: 38 base / 42 head registrations in the march), but the base starved. Its 57 Fight fields (3.03M cells) left the 48-whole-map cell budget no room (3.069M of 3.07M cells live from tick 260; 4-8 groups waiting; 234 evictions, 376 deferred refreshes in the run), so its chase fields were deferred or never built; A2's 40 Fight fields leave room (2.37M cells, none waiting, 0 evictions) and every chase gets its field on time. march fields 33 vs 18, contactA 1803 vs 1598 bound; whole run 0.69x base (261M vs 378M), per-tick max 480635 vs 500694, p99 403369 vs 417513. No sim change made: the windows' W0/base counts are budget-starved numbers |
+| mixed2 spins | Escort-flyer turning is noisy: base per offset 1..205 (11-offset median 62, core-five 30 = the bound), head 34..224 (75, core 64); head is shifted up on 8 of 11 offsets: real, ~1.2x on 11 offsets. Flyer pacing, W6 |
+| corner-4x50 reversals | 11-offset median 119 -> 142 (x1.19, inside the 1.20 band); the core-five base 93 was a low draw. Not a W3 regression on the wider read |
+| wall-4x50 / motion-cross contact | wall-4x50: the 4 clicks at ticks 1-4 to one point join ONE convoy (A1: within kGapTicks 9 of each other, the server cannot tell them from one click), so later groups' slots lie past A's settled bodies; per arrived unit the raw contacts are below Retail (head ~3200, base ~1550, Retail ~3900 samples) but arrivals are fewer (per-group discs: head ~60, Retail ~96). motion-cross: 1-3 arrive (ruling (b): no floor); raw contacts ~320 vs base ~230, Retail ~270 -- the band fails on the denominator |
+| strait-2x48 `g.B.done` never | Recorded (Retail never too) |
+| crowdheld_legion | `units_ever_terrain_stuck` 1 (as at the step-0 head); `physical_in_goal` 62 passes. Not fixed |
+
+### Gates on the round-4 head (`e8b41820`)
+
+| Gate | Result |
+|---|---|
+| `legion_check check` (gate offsets) | 16573 keys; failures (serial_eq_workers aside) 39 at the round-3 sim, 138 after fix (1): the fix moves keys that the round-3 exit licenses pinned at round 3's exact values (72 work counters, 10 offset spreads); W3 licenses stripped, 199 -> 204 |
+| Retail floor | 8 fail: corner-1x448 top crossings 4 vs 0 and corner-8x56 5 vs 2 (gate offsets; A2 reorders the lanes, as W3-2's densehead / strait); deadend-w6-n120-closed-plain `g.A.arrived` 19 vs 26 (base 32: the queue settles where it stands, outside the disc -- the AR-08 dead-end decision's other face); doorplug-112 wall touch 10 vs 8 / 55 vs 42 (base 5 / 26); tail-corner380 wall touch near 2 vs 1 (base 0); wall-4x50 `g.A.arrived` 13 vs 36 and contact_settled 55333 vs 40052 (the merged convoy, above) |
+| Legion ctests (oden-win) | 172 of 176: legion_landedflyers, legion_liftflyers, legion_scenario_battle-assault, legion_acceptance_crowdheld_legion fail (as round 3) |
+| Linux `legion_check_*` ctests (gate offsets) | 22 of 38 pass; 16 fail (deadend room/w6, doorplug-112/124, pocket-304-wall / 615-wall, tail-*, unreach-200) |
+| `legion_cost` | scaling passes; 2x60 / 2x250 / 2x500 pass; battle-assault fails its march / contactA window counters (above) |
+| crowdbench screen (oden-win) | every Retail row equal to round 3's; 4 Legion rows moved by fix (1) (mixedfootprints, sharedgoal); jagged 200x1 185, opposingcolumns 194, doors 2000 247 as round 3 (within 3%) |
+| `--mpai` Inner Circle 300 s seed 1 (oden-win) | Legion 136218d83cbf7af8, Retail b240750e5765c02b: unchanged |
+| Retail | every scenario's Retail state hash equal to round 3's on all offsets |
+
+### Experiments (env-flagged, branch `w3r4-x`, never landed)
+
+| Variant (TAK_W3X) | Effect (legion, gate offsets, vs the head; W3 licenses stripped) |
+|---|---|
+| 64 walk-nearest lower re-choice (round 3's) | liftflyers open detour 3 but own run 1591 > 1.1 x 1396; corner-8x56 crossings floor passes; 19 fixed / 42 new (reversals, complete_n, strait-3x48 B t90 never) |
+| 128 potential + walk re-choice | as 64; 22 fixed / 42 new |
+| 1 lane re-aim only for engaging orders | landedflyers foot 2 1292; 7 fixed / 7 new; wall-1x48 strip crossings floor |
+| 256 (+bound) no out-of-area settle while a free slot is reachable | doorplug all 11 with a 10-window bound, but gap6 / gapsweep t90 3602 (Retail floor 3391) and sbend 3962 (3908) |
+| 256 + relaxed BFS + slack / disc gate | doorplug A completes at the core five (1 never in 11), strait-2x48 B completes, tail-corner380 floor passes; cost-corner arrived / complete_n and gen1 complete_n drop; doorplug B t90 never moves |
 
 ## W3 round 3 (2026-10-09): instrument decisions, two fixes, licensing -- the exit is still not passed
 
