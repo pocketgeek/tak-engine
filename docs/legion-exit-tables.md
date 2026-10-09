@@ -10,6 +10,39 @@ added, that step 0's base. Scenario keys are medians over the start offsets
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W3 step 0b: the base after the tick stamps
+
+Head: `task-w3-stamps` dfeb51ca (W3 step 0a, the T1-T tick stamps, on W2's 7c490b2f)
+plus the step 0b instruments. No simulation change in 0b; the rebase is the stamps' own
+movement: 974 of about 9,000 baselined keys moved by more than 5% (all inside
+their bands; Legion work x0.985, t90 x0.92, done x0.69, arrived x1.05, stopped x0.87), and
+the values were retaken (`since: W3`, same key set as W0, medians over five offsets).
+
+New fixtures (all Legion medians at this head; Retail is the floor, `legion <= retail x1.1`):
+
+| Fixture | W3 target it records | Base (Legion, tick 8000 unless noted) |
+|---|---|---|
+| pocket-615-wall / -open | MV-01, acceptance A (open >= 600 of 615) | 155 / 479 orders complete (Retail 114 / 297) |
+| pocket-304-wall / -open | MV-01 | 150 / 242 complete (Retail 269 / 304) |
+| deadend-w{2,4,6}-n{40,120}-{closed,room}-{plain,squad} | AR-02, acceptance B (settled == n by 5500) | w4 n120 closed plain: 49 of 120 settle, 71 bodies stand still 900+ ticks with open orders |
+| tail-open304 / open570 / corner380 / wave | AR-01, acceptance B (`open_still900` == 0) | 303 / 570 / 380 / 304 complete; `still900_ever` 0 / 2 / 0 / 0 |
+| doorplug-112 / -124 | AR-02 and the 3.1 gate "a later order still passes" | B crosses 0 of 60 / 59 of 60 (`side.past.high` 25 / 120) |
+
+New instrument keys: `open_still900` and `still900_ever` (observer; open orders on bodies
+that stood still 900+ ticks), `work.midroute_completions.*` (always present; `eq` 0 on
+mazeform and mazeapproach, the base value elsewhere), and the AR-08 completion keys on the
+`jagged` probe. The AR-08 keys on sharedgoal 200/500/2000 are the crowdbench screen's
+`complete_*` fields; squadformation, deadend, jagged, pocket, tail and doorplug carry them
+in `legion_world_test` output or the scn keys `g.*.complete_*`.
+
+Not fixture-expressible and left to the probes (`legion_world_test <probe>`): the cap-0
+pocket case, settlelatency (the rest-stride test hook), squadformation's `last_ordered`.
+
+Known state of the head, for W3's own steps: `legion_squadformation`,
+`legion_acceptance_crowdheld_legion` and `legion_cost` fail on it (AR-01's tail and the
+stamps' wake-up cost), and `legion_check --cumulative` reports the four battle
+combat-cost keys above their W0 base (`w0` is kept on those entries).
+
 ## W2: stop the freezes (protocol 240)
 
 Head: legion-w2 at the W2 exit (steps 0-3 and 5; protocol 240). Landed:
