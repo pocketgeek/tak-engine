@@ -53,6 +53,19 @@ uint32_t gRestStride=kRestStride;
 bool gAwareOff=false;
 #ifndef NDEBUG
 bool gVerify=std::getenv("TAK_LEGION_VERIFY")!=nullptr;
+// W9 step 0: the members whose decisions are traced to stderr (LegionNavigator::setTrace, or TAK_LEGION_TRACE=ID[,ID...]
+// in the environment); debug builds only, observation only, never hashed.
+std::vector<int> traceFromEnvironment() {
+    std::vector<int> ids;
+    if(const char* v=std::getenv("TAK_LEGION_TRACE"))
+        for(const char* c=v;*c;) {
+            ids.push_back(*c=='a'?-1:std::atoi(c));   // "all" traces every member
+            while(*c&&*c!=',')++c;
+            if(*c==',')++c;
+        }
+    return ids;
+}
+std::vector<int> gTrace=traceFromEnvironment();
 #else
 bool gVerify=false;
 #endif
@@ -650,6 +663,16 @@ struct LegionNavigator::Impl {
         // W8 step 1: the origin of the last vertex probe (instrument only:
         // it gates a Stats-only probe, never a decision; not hashed).
         int vertexCell=-1;
+        // W9 step 0: which steering source moved the member on its last update (LegionNavigator::Site;
+        // 0 none). Observation only: never read by a decision, never hashed.
+        uint8_t site=0;
+#ifndef NDEBUG
+        // W9 step 0 census shadow (debug builds only, never hashed, never read by a decision): the
+        // member's yield refusals since its last settle window (dbgRefused) and in the two windows before
+        // (dbgRefusedWin bit 0 the last window, bit 1 the one before).
+        bool dbgRefused=false;uint8_t dbgRefusedWin=0;
+        const char* dbgGateWhy=nullptr;   // the last reason gateCommit declined (trace only: printed when it changes)
+#endif
         // The passage gate (see gateCommit): the gate point (origin cell, -1
         // none) the member aims at until it crosses the gate line, its lane
         // in the gate, and the travel axis and sign across the line. Hashed
@@ -3788,6 +3811,9 @@ struct LegionNavigator::Impl {
                             cor.x0+=lx;cor.x1+=lx;cor.z0+=lz;cor.z1+=lz;
                         }
                         want.push_back(mv.command);seg.push_back(cor);kind.push_back(cls);side.push_back(0);placed.push_back(0);moved.push_back(false);
+#ifndef NDEBUG
+                        if(cls==kAwareHeadOn&&g.members>=kPivotMembers&&!isKnown)++census.c1HeadonEntries;
+#endif
                     }
                 }
             }
@@ -3910,7 +3936,20 @@ struct LegionNavigator::Impl {
     // lattice the way through runs BETWEEN goals, where two rows can part).
     // A side cell becomes a committed shuffle while its blockers yield.
     bool yieldLane(const Unit& u,Member& m,const Plane& p,int nx,int nz) {
+#ifndef NDEBUG
+        if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d yield-attempt want=(%d,%d)\n",w.tickCounter_,u.id,nx,nz);
+        dbgRefusal=false;
+#endif
         if(requestYield(u,nx,nz))return true;
+#ifndef NDEBUG
+        // A2's refusal: a request refused because a blocker's yield budget is spent or it has no free cell.
+        struct Refusal {Member& m;const Unit& u;Impl& I;bool ok=false;~Refusal() {
+            if(ok||!I.dbgRefusal)return;
+            m.dbgRefused=true;++I.census.a2Refusals;
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d yield-refused: %s\n",I.w.tickCounter_,u.id,I.dbgWhy);
+        }} refusal{m,u,*this};
+        if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d yield-first-refused: %s\n",w.tickCounter_,u.id,dbgWhy);
+#endif
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         const int gx=m.goal%W,gz=m.goal/W;
@@ -3928,6 +3967,9 @@ struct LegionNavigator::Impl {
             const auto& d=kDirections[size_t(options[size_t(i)].second)];
             if(!requestYield(u,ox+d[0],oz+d[1]))continue;
             m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
+#ifndef NDEBUG
+            refusal.ok=true;
+#endif
             return true;
         }
         return false;
@@ -4096,6 +4138,11 @@ struct LegionNavigator::Impl {
         const int foot=std::clamp(std::max(b.type->footX,b.type->footZ),1,15);
         return w.cellFree(centre(x,b.type->footX),centre(z,b.type->footZ),b.id,foot);
     }
+#ifndef NDEBUG
+#define WHY(s) (dbgWhy=(s))
+#else
+#define WHY(s) ((void)0)
+#endif
     bool requestYield(const Unit& u,int nx,int nz) {
         const int fx=u.type->footX,fz=u.type->footZ,W=width();
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
@@ -4107,13 +4154,13 @@ struct LegionNavigator::Impl {
             if(!o||o==u.id)continue;
             bool seen=false;for(int k=0;k<count;++k)seen|=ids[size_t(k)]==o;
             if(seen)continue;
-            if(count==16)return false;
+            if(count==16) {WHY("more than 16 blockers");return false;}
             ids[size_t(count++)]=o;
         }
-        if(!count)return false;
+        if(!count) {WHY("no blocker");return false;}
         // Every blocker must be a settled arrival (checked below with the
         // rest); most bodies in a crowd are not, so reject them first.
-        for(int k=0;k<count;++k)if(!isAnchor(ids[size_t(k)]))return false;
+        for(int k=0;k<count;++k)if(!isAnchor(ids[size_t(k)])) {WHY("blocker is not a settled arrival");return false;}
         std::sort(ids.begin(),ids.begin()+count);
         std::array<int,16> cells{};
         std::array<int,16> feetX{},feetZ{};
@@ -4122,7 +4169,15 @@ struct LegionNavigator::Impl {
             const Unit* b=w.unit(id);
             auto anchor=anchors.find(id);
             if(!b||!b->alive()||b->player!=u.player||!b->orders.empty()||b->speed!=Fixed()||
-               anchor==anchors.end()||yielding.count(id)||anchor->second.yields>=kMaxYields)return false;
+               anchor==anchors.end()||yielding.count(id)||anchor->second.yields>=kMaxYields) {
+#ifndef NDEBUG
+                dbgWhy=anchor!=anchors.end()&&anchor->second.yields>=kMaxYields?"yields spent":"blocker moving, foreign or already yielding";
+                if(anchor!=anchors.end()&&anchor->second.yields>=kMaxYields)dbgRefusal=true;
+                if(traced(u.id)||traced(id))std::fprintf(stderr,"TRACE t=%u u=%d yield-blocker id=%d yields=%d/%d\n",
+                                                         w.tickCounter_,u.id,id,anchor==anchors.end()?-1:int(anchor->second.yields),int(kMaxYields));
+#endif
+                return false;
+            }
             const int bfx=b->type->footX,bfz=b->type->footZ;
             const int bx=footprintOrigin(b->x,bfx),bz=footprintOrigin(b->z,bfz);
             const int gx=anchor->second.goal%W,gz=anchor->second.goal/W;
@@ -4161,15 +4216,24 @@ struct LegionNavigator::Impl {
                 const int64_t dd=int64_t(cx-gx)*(cx-gx)+int64_t(cz-gz)*(cz-gz);
                 if(best<0||dd<bestD) {best=cz*W+cx;bestD=dd;}
             }
-            if(best<0)return false;
+            if(best<0) {WHY("blocker has no free cell");
+#ifndef NDEBUG
+                dbgRefusal=true;
+#endif
+                return false;}
             cells[size_t(k)]=best;feetX[size_t(k)]=bfx;feetZ[size_t(k)]=bfz;
         }
         for(int k=0;k<count;++k) {
+#ifndef NDEBUG
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d yield-granted blocker=%d yields=%d/%d\n",
+                                         w.tickCounter_,u.id,ids[size_t(k)],int(anchors[ids[size_t(k)]].yields),int(kMaxYields));
+#endif
             ++anchors[ids[size_t(k)]].yields;
             yielding[ids[size_t(k)]]=Yield{cells[size_t(k)],0};markWatch(ids[size_t(k)]);
         }
         return true;
     }
+#undef WHY
 
     // ---- movement -------------------------------------------------------
     static Fixed centre(int origin,int foot) {return Fixed::fromInt(origin*16+foot*8);}
@@ -5276,7 +5340,7 @@ struct LegionNavigator::Impl {
             registerMove(u);found=member(u.id);
             if(!found) {w.brakeGround(u);return;}
         }
-        auto& m=*found;m.movedTick=w.tickCounter_;
+        auto& m=*found;m.movedTick=w.tickCounter_;m.site=LegionNavigator::SiteNone;
         ++stats.moveCallsByState[size_t(m.state)&7];
         // Out of the owner's brake again (the target left reach or died): no
         // soft obstacle any more, at once (as a body setting off).
@@ -5414,6 +5478,7 @@ struct LegionNavigator::Impl {
                 // crowds: 0 -> 10-22k unit-ticks in sharedgoal 2000.)
                 const auto [ax,az]=stepAim(u,aim);
                 holdStall(m);
+                m.site=LegionNavigator::SiteBlocked;
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
                 return;
             }
@@ -5432,6 +5497,7 @@ struct LegionNavigator::Impl {
                 // gridlocked opposing columns) does not apply to it.
                 const auto [ax,az]=stepAim(u,m.detour);
                 holdStall(m);
+                m.site=m.detourPass?LegionNavigator::SitePass:LegionNavigator::SiteBlocked;
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass);
                 return;
             }
@@ -5513,6 +5579,7 @@ struct LegionNavigator::Impl {
                 const int dx=goalX-ox,dz=goalZ-oz,span=std::max(std::abs(dx),std::abs(dz));
                 const int hx=ox+dx*kHeadingCells/span,hz=oz+dz*kHeadingCells/span;
                 if(span>kHeadingCells&&sweep(p,u,u.x,u.z,centre(hx,fx),centre(hz,fz))) {
+                    m.site=LegionNavigator::SiteDirect;
                     drive(u,m,p,nullptr,maximum,centre(hx,fx),centre(hz,fz),false,false);
                     return;
                 }
@@ -5522,19 +5589,20 @@ struct LegionNavigator::Impl {
             if(potential==kUnreached) {trapped(u,m);return;}
             int cell=aimCell(u,m,p,*f,ox,oz);
             if(cell<0) {hold(u,m);return;}
+            m.site=LegionNavigator::SiteField;
             if(f->done&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 m.vertexCell=here;vertexInstrument(u,m,g,p,*f,ox,oz);
             }
             const bool lanes=f->done&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
             if(!lanes)m.gateCell=-1;
-            else if(gateAim(u,m,g,p,*f,ox,oz,cell)) {pivoting=&m;pivotTarget=cell;}
+            else if(gateAim(u,m,g,p,*f,ox,oz,cell)) {pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SiteGate;}
             else if(m.pivotR>=0) {
                 if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
-                if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;}
+                if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;m.site=LegionNavigator::SitePivot;}
             }
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
-        }
-        if(here!=m.goal&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct))return;
+        } else m.site=LegionNavigator::SiteDirect;
+        if(here!=m.goal&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct)) {m.site=LegionNavigator::SitePass;return;}
         drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
     }
     // The cell a field follower at origin (ox,oz) aims at; -1 when no
@@ -5568,13 +5636,33 @@ struct LegionNavigator::Impl {
             cell=best;
         } else {
             int chain=cell;
+#ifndef NDEBUG
+            std::array<int,4> picks{cell,-1,-1,-1};int pickCount=1;
+#endif
             for(int k=0;k<3;++k) {
                 const int next=descend(p,f,chain%W,chain/W,m.goal,fx,fz);
                 if(next<0)break;
                 if(!sweep(p,u,u.x,u.z,centre(next%W,fx),centre(next/W,fz)))break;
                 chain=next;
+#ifndef NDEBUG
+                picks[size_t(pickCount++)]=next;
+#endif
             }
             cell=chain;
+#ifndef NDEBUG
+            {   // W9 census (B4): does the string-pull's target hug a wall, and does a nearer chain cell
+                // whose swept origins all keep a cell off the wall exist?
+                StatsFence fence(stats);
+                ++census.b4AimCalls;
+                auto clearTo=[&](int target) {
+                    return trace(u,u.x,u.z,centre(target%W,fx),centre(target/W,fz),[&](int x,int z) {return legal(p,x,z)&&clearOrigin(p,x,z);});
+                };
+                if(!clearTo(cell)) {
+                    ++census.b4PlainHugs;
+                    for(int i=pickCount-2;i>=0;--i)if(clearTo(picks[size_t(i)])) {++census.b4ClearAlt;break;}
+                }
+            }
+#endif
         }
         if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,f.work,cell};
         return cell;
@@ -5592,6 +5680,94 @@ struct LegionNavigator::Impl {
     // and the soft scan, so a cache would hand one command's answer to
     // another (and a late joiner would differ).
     struct Clearance {int d=0,nx=0,nz=0;};
+#ifndef NDEBUG
+    // W9 step 0: the predicate census (debug builds only). Each counter says how often a W9 mechanism's
+    // trigger WOULD fire where that mechanism will sit; nothing here changes a decision, hashed state or a
+    // Stats counter (a census block that calls a counting helper runs inside a StatsFence).
+    //   a1_formation_calls   rechoose calls of a formation member
+    //   a1_inside            ... whose potential is at or below areaBound + slack (A1: the local re-choice)
+    //   a2_refusals          yieldLane calls that ended refused because a blocker's yield budget was spent or
+    //                        it had no free cell (A2's refusal; a blocker that is not a settled arrival is not one)
+    //   a2_seal              settle windows where A2 would settle the body: distinct goal, pressed, a refusal
+    //                        in this window and the previous one, still for two windows
+    //   a3_creep             settle windows where A3 would count creep as pressed: queued, not pressed, still
+    //                        for two windows, potential within the initial settleP
+    //   a3_stall_reset       ... of which the stalledFor() proxy was reset (below one window): creep resets it
+    //   a4_releases          gate releases (any cause)
+    //   a4_release_slotted   ... of a slotted member (A4: deepest-slot re-choice)
+    //   a4_release_crossed   ... that crossed the gate line (B2: gateHold)
+    //   b1_gate_scans        gateCommit calls that reached the soft-width stage
+    //   b1_center_blocked    ... where the gate point itself was read as soft only through such a body (the
+    //                        gate is dropped today)
+    //   b1_engaged_wall      ... where ignoring Engaged bodies of the member's own command widens the free
+    //                        width (they are read as walls today)
+    //   b1_width_changed     ... where that changes the lane count
+    //   b2_commits           gate commits (a lane picked)
+    //   b2_lane_differs      ... where the proportional lane (lateral position against the part's lateral
+    //                        extent) differs from the shortest-queue pick
+    //   b2_margin            ... where lanes >= 4 and free - lanes * across < 2 (B2's wall margin)
+    //   b3_ranks             pinwheel ranks assigned (a turn found)
+    //   b3_guard_rejects     ... turns B3's guard would drop (12-cell chord test fails, or no wall face);
+    //                        b3_reject_chord / b3_reject_face say which (a turn can fail both)
+    //   b3_fold_binds        pinwheel aims taken where the free width F < cap and the rank R < cap (B3 fold
+    //                        changes the arc point; identity when F >= cap)
+    //   b4_aim_calls         aimCell string-pulls computed (not memo hits)
+    //   b4_plain_hugs        ... whose target's swept cells touch a wall (clearance 0)
+    //   b4_clear_alt         ... of which a nearer chain cell with clearance >= 1 exists (B4 would take it)
+    //   b6_blocked           blocked-branch entries of a member of a Point of 16+ (B6 upper bound)
+    //   c1_headon_entries    awareScan head-on entries planned for a group of 16+ members (C1 seen)
+    //   c1_unseen            passAhead scans that find an oncoming body of another command, for a member of a
+    //                        Point of 16+ (C1 unseen)
+    struct Census {
+        uint64_t a1FormationCalls=0,a1Inside=0,a2Refusals=0,a2Seal=0,a3Creep=0,a3StallReset=0;
+        uint64_t a4Releases=0,a4ReleaseSlotted=0,a4ReleaseCrossed=0;
+        uint64_t b1GateScans=0,b1CenterBlocked=0,b1EngagedWall=0,b1WidthChanged=0,b2Commits=0,b2LaneDiffers=0,b2Margin=0;
+        uint64_t b3Ranks=0,b3GuardRejects=0,b3RejectChord=0,b3RejectFace=0,b3FoldBinds=0,b4AimCalls=0,b4PlainHugs=0,b4ClearAlt=0;
+        uint64_t b6Blocked=0,c1HeadonEntries=0,c1Unseen=0;
+    } census;
+    // Counting helpers may run inside a census block: the fence puts the Stats back.
+    struct StatsFence {
+        LegionNavigator::Stats& live;LegionNavigator::Stats saved;
+        explicit StatsFence(LegionNavigator::Stats& s):live(s),saved(s) {}
+        ~StatsFence() {live=saved;}
+    };
+    const char* dbgWhy="";   // why the last requestYield refused (trace only)
+    bool dbgRefusal=false;   // a requestYield refused for a spent yield budget or no free cell (A2's refusal)
+    static bool traced(int id) {
+        return !gTrace.empty()&&(std::find(gTrace.begin(),gTrace.end(),id)!=gTrace.end()||std::find(gTrace.begin(),gTrace.end(),-1)!=gTrace.end());
+    }
+    // The cached destination-area bound of a member's goal if there is a valid one (a census peek: it never
+    // computes or caches, so the real call's work is where it was).
+    bool peekAreaBound(const Group& g,const Member& m,int64_t body,uint32_t& out) const {
+        const auto peak=g.peak.find(m.requested);
+        const int n=peak==g.peak.end()?1:peak->second;
+        if(n<=1||m.requested<0) {out=uint32_t((body+4)*kOrthogonal/16);return true;}
+        const auto it=g.areaBounds.find(m.requested);
+        if(it==g.areaBounds.end()||!g.field||!g.field->done)return false;
+        if(it->second.first!=g.field->serial||it->second.second.first!=n)return false;
+        out=it->second.second.second;return true;
+    }
+    // Is every soft body covering the footprint at origin (x,z) an Engaged (ring) body of `command`?
+    // (False when none covers it.)
+    bool engagedOwnOnly(int x,int z,int fx,int fz,uint64_t command) const {
+        bool any=false;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int cx=x+i,cz=z+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const size_t c=size_t(cz)*w.occW_+cx;
+            if(!softCell(c,command))continue;
+            const Member* mm=softKind[c]==1?member(soft[c]):nullptr;
+            if(!mm||mm->state!=Engaged||commandKey(std::get<0>(mm->point),std::get<1>(mm->point))!=command)return false;
+            any=true;
+        }
+        return any;
+    }
+    // A footprint origin with every origin of the ring round it legal (clearance >= 1 cell from a wall).
+    bool clearOrigin(const Plane& p,int x,int z) const {
+        for(const auto& d:kDirections)if(!legal(p,x+d[0],z+d[1]))return false;
+        return true;
+    }
+#endif
     // Sum of the offsets of ring r's origins for which `hit` holds, in a
     // fixed order; `any` tells whether one did.
     template<class Hit> static void ringSum(int x,int z,int r,const Hit& hit,bool& any,int& sx,int& sz,uint64_t& work) {
@@ -5797,14 +5973,25 @@ struct LegionNavigator::Impl {
         struct Flush {uint64_t& to;uint64_t& n;~Flush() {to+=n;}} flush{stats.laneWork,work};
         extend(kGateCommit+3);
         ++work;
-        if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return false;   // inside a strip
+        // W9 step 0 (trace only): why a member that may commit does not -- printed when the reason changes.
+#ifndef NDEBUG
+        auto declined=[&](const char* why) {
+            if(!traced(u.id)||m.dbgGateWhy==why)return false;
+            m.dbgGateWhy=why;
+            std::fprintf(stderr,"TRACE t=%u u=%d gate-declined: %s at=(%d,%d) potential=%u\n",w.tickCounter_,u.id,why,ox,oz,unsigned(f.at(size_t(oz*W+ox))));
+            return false;
+        };
+#else
+        auto declined=[&](const char*) {return false;};
+#endif
+        if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return declined("inside a strip");
         int best=-1;Span bs;
         for(int j=1;j<n&&j<=kGateCommit;++j) {
             ++work;
             const Span sp=gateSpan(p,chain.data(),n,j,fx,fz);
             if(gateStrip(sp,band)) {best=j;bs=sp;break;}
         }
-        if(best<0)return false;
+        if(best<0)return declined("no strip within kGateCommit cells");
         // G: the narrowest cell of the strip's first kGateRun cells (the
         // first of equals).
         // A gate is a short passage: at least two chain cells (one narrow
@@ -5822,20 +6009,47 @@ struct LegionNavigator::Impl {
             if(sp.free<bs.free) {best=j;bs=sp;}
         }
         const int G=chain[size_t(best)],gx=G%W,gz=G/W;
-        if(!exits||length<2||!bs.sign||f.at(size_t(G))<kLaneNear*kOrthogonal)return false;
+        if(!exits)return declined("strip does not end within kGateRun (a corridor)");
+        if(length<2||!bs.sign)return declined("strip shorter than two cells");
+        if(f.at(size_t(G))<kLaneNear*kOrthogonal)return declined("gate within kLaneNear of the destination");
         // Not when the member is already at or past the gate line.
-        if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return false;
+        if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return declined("already at or past the gate line");
         const uint64_t command=g.soft?g.command:kNoSoft;
         const int counts=!softCellCount?-1:softCountsFor(fx,fz);
         auto soft=[&](int k) {++work;return bs.axis==0?softAt(gx+k,gz,fx,fz,command,counts):softAt(gx,gz+k,fx,fz,command,counts);};
-        if(soft(0))return false;
+#ifndef NDEBUG
+        {   // W9 census (B1): the same width read with the member's own Engaged ring bodies ignored.
+            auto at=[&](int k) {return bs.axis==0?std::pair{gx+k,gz}:std::pair{gx,gz+k};};
+            auto softRaw=[&](int k) {const auto c=at(k);return softAt(c.first,c.second,fx,fz,command,counts);};
+            auto soft2=[&](int k) {const auto c=at(k);return softAt(c.first,c.second,fx,fz,command,counts)&&!engagedOwnOnly(c.first,c.second,fx,fz,command);};
+            ++census.b1GateScans;
+            if(softRaw(0)&&!soft2(0))++census.b1CenterBlocked;
+            if(!softRaw(0)) {
+                int l1=0,h1=0,l2=0,h2=0;
+                while(l1<bs.lo&&!softRaw(-(l1+1)))++l1;
+                while(h1<bs.hi&&!softRaw(h1+1))++h1;
+                if(!soft2(0)) {
+                    while(l2<bs.lo&&!soft2(-(l2+1)))++l2;
+                    while(h2<bs.hi&&!soft2(h2+1))++h2;
+                    const int a=bs.axis==0?fx:fz;
+                    if(l2>l1||h2>h1) {
+                        ++census.b1EngagedWall;
+                        if(std::min(laneCap(m),1+(l2+h2)/a)!=std::min(laneCap(m),1+(l1+h1)/a))++census.b1WidthChanged;
+                    }
+                    if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d gate-width lo=%d hi=%d (ignoring own Engaged: %d %d) gate=(%d,%d)\n",
+                                                 w.tickCounter_,u.id,l1,h1,l2,h2,gx,gz);
+                }
+            }
+        }
+#endif
+        if(soft(0))return declined("gate point covered by a soft body");
         int lo=0,hi=0;
         while(lo<bs.lo&&!soft(-(lo+1)))++lo;
         while(hi<bs.hi&&!soft(hi+1))++hi;
         const int across=bs.axis==0?fx:fz;
         const int free=lo+hi+across;
         const int lanes=std::min(laneCap(m),1+(free-across)/across);
-        if(lanes<2)return false;
+        if(lanes<2)return declined("fewer than two lanes");
         // Lanes one free cell apart where the width allows, else at
         // footprint pitch; the points centred in the free width.
         const int pitch=across;
@@ -5866,6 +6080,23 @@ struct LegionNavigator::Impl {
         m.gateCell=bs.axis==0?gz*W+at:at*W+gx;
         m.gateLane=int8_t(pick);m.gateAxis=int8_t(bs.axis);m.gateSign=int8_t(bs.sign);
         ++stats.gateCommits;
+#ifndef NDEBUG
+        {   // W9 census (B2): the lane the member's lateral position gives against its part's lateral extent.
+            ++census.b2Commits;
+            int mn=own,mx=own;
+            if(m.pt)for(const int id:m.pt->ids) {
+                const Member* mm=member(id);const Unit* v=w.unit(id);
+                if(!mm||!v||!v->type||mm->part!=m.part)continue;
+                const int c=bs.axis==0?footprintOrigin(v->x,v->type->footX):footprintOrigin(v->z,v->type->footZ);
+                mn=std::min(mn,c);mx=std::max(mx,c);
+            }
+            const int prop=std::clamp((own-mn)*lanes/(mx-mn+1),0,lanes-1);
+            if(prop!=pick)++census.b2LaneDiffers;
+            if(lanes>=4&&free-lanes*across<2)++census.b2Margin;
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d gate-commit lanes=%d pick=%d proportional=%d free=%d across=%d queue=%d at=(%d,%d)\n",
+                                         w.tickCounter_,u.id,lanes,pick,prop,free,across,pickQueue,ox,oz);
+        }
+#endif
         return true;
     }
     // A committed member aims at its gate point while it is in a straight
@@ -5877,6 +6108,13 @@ struct LegionNavigator::Impl {
             const int gx=m.gateCell%W,gz=m.gateCell/W;
             const int along=m.gateAxis==0?oz-gz:ox-gx;
             if(!legal(p,gx,gz)||along*m.gateSign>=0) {
+#ifndef NDEBUG
+                ++census.a4Releases;
+                if(m.slot>=0)++census.a4ReleaseSlotted;
+                if(legal(p,gx,gz))++census.a4ReleaseCrossed;
+                if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d gate-release lane=%d crossed=%d slot=%d at=(%d,%d)\n",
+                                             w.tickCounter_,u.id,int(m.gateLane),int(legal(p,gx,gz)),m.slot,ox,oz);
+#endif
                 m.gateCell=-1;++stats.gateReleases;return false;
             }
         } else if(!gateCommit(u,m,g,p,f,ox,oz))return false;
@@ -5959,6 +6197,28 @@ struct LegionNavigator::Impl {
             }
             const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(partRefs(m),0))))*foot*3/2);
             if(turn<0)return -1;
+#ifndef NDEBUG
+            {   // W9 census (B3): the turn the guard would drop -- the 12-cell chord test fails, or the wall
+                // contact before the turn is no face (three illegal neighbours on one side).
+                ++census.b3Ranks;
+                // The 12-cell chords about the turn (cells outside the chain clamp to its ends).
+                auto cell=[&](int i) {return chain[size_t(std::clamp(i,0,n-1))];};
+                const int64_t ax=cell(turn)%W-cell(turn-12)%W,az=cell(turn)/W-cell(turn-12)/W;
+                const int64_t bx=cell(turn+12)%W-cell(turn)%W,bz=cell(turn+12)/W-cell(turn)/W;
+                const int64_t cross=ax*bz-az*bx;
+                const bool chord12=cross*cross*4>=(ax*ax+az*az)*(bx*bx+bz*bz);
+                bool face=false;
+                for(int i=touch;i<=turn&&!face;++i) {
+                    int vx,vz;wall(chain[size_t(i)],vx,vz);
+                    face=std::abs(vx)>=3||std::abs(vz)>=3;
+                }
+                if(!chord12||!face)++census.b3GuardRejects;
+                if(!chord12)++census.b3RejectChord;
+                if(!face)++census.b3RejectFace;
+                if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d pivot-turn at=(%d,%d) turn=%d touch=%d chord12=%d face=%d cap=%d\n",
+                                             w.tickCounter_,u.id,ox,oz,turn,touch,int(chord12),int(face),cap);
+            }
+#endif
             // Rank: the member's side offset from its part's live centroid
             // across the way to the turn, measured from the inner (turn)
             // side; the centre file keeps half the part's packed width.
@@ -6035,7 +6295,18 @@ struct LegionNavigator::Impl {
             if((qx-mx)*tx+(qz-mz)*tz<=0)continue;
             if(++sweeps>kPivotSweeps)return -1;
             ++stats.pivotSweeps;++stats.pivotWork;   // W8 step 0
-            if(sweep(p,u,u.x,u.z,centre(qx,fx),centre(qz,fz)))return qz*W+qx;
+            if(sweep(p,u,u.x,u.z,centre(qx,fx),centre(qz,fz))) {
+#ifndef NDEBUG
+                {   // W9 census (B3): the fold changes the arc point where the free width F is under the cap
+                    // and the rank R is under it too (identity otherwise).
+                    const int capCells=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(partRefs(m),0))))*foot*3/2);
+                    int64_t F=r;
+                    while(F<capCells&&open(F+1))++F;
+                    if(F<capCells&&R<capCells)++census.b3FoldBinds;
+                }
+#endif
+                return qz*W+qx;
+            }
         }
         return -1;
     }
@@ -6104,6 +6375,9 @@ struct LegionNavigator::Impl {
         std::array<int32_t,8> seen{};size_t seenCount=0;
         uint64_t scanned=0;
 #ifndef NDEBUG
+        const Member* dbgOncoming=nullptr;
+#endif
+#ifndef NDEBUG
         // TAK_LEGION_VERIFY: a skipped scan is run anyway and must find no
         // oncoming body.
         const bool scan=opposed||gVerify;
@@ -6132,8 +6406,14 @@ struct LegionNavigator::Impl {
             if(std::max(std::abs(odx),std::abs(odz))<=2*kPassCells)continue;
             const int64_t dot=odx*dx+odz*dz;
             oncoming=dot<0&&100*dot*dot>kOncomingCos2*(odx*odx+odz*odz)*(dx*dx+dz*dz);
+#ifndef NDEBUG
+            if(oncoming)dbgOncoming=peer;
+#endif
         }
 #ifndef NDEBUG
+        if(dbgOncoming&&partRefs(m)>=kPivotMembers&&formationMember(m)&&
+           commandKey(std::get<0>(dbgOncoming->point),std::get<1>(dbgOncoming->point))!=commandKey(std::get<0>(m.point),std::get<1>(m.point)))
+            ++census.c1Unseen;
         if(!opposed&&oncoming)verifyFail("passAhead's oncoming mask skipped a scan that finds an oncoming body");
         if(!opposed)scanned=0;
 #endif
@@ -6264,7 +6544,12 @@ struct LegionNavigator::Impl {
             if(!stepFree(u,ox,oz,kx,kz))return false;
             sx=cx;sz=cz;nx=kx;nz=kz;return true;
         };
+        if(pass)m.site=LegionNavigator::SitePass;
         if(corner||!stepFree(u,ox,oz,nx,nz)) {
+            m.site=LegionNavigator::SiteBlocked;
+#ifndef NDEBUG
+            if(formationMember(m)&&partRefs(m)>=kPivotMembers)++census.b6Blocked;
+#endif
             // Blocked by a body. Flow around it through any other free cell
             // that is strictly closer to the goal (field descent), committing
             // to that neighbour for this update; otherwise hold still.
@@ -6552,6 +6837,10 @@ struct LegionNavigator::Impl {
     // factory's exit lane.
     bool settleWindow(const Unit& u,Member& m,Group& g,const Plane& p,int ox,int oz,int64_t dist) {
         m.queued=false;
+#ifndef NDEBUG
+        // W9 census shadow: bit 0 = a yield refusal in the window that just ended, bit 1 = in the one before.
+        m.dbgRefusedWin=uint8_t(((m.dbgRefusedWin<<1)|(m.dbgRefused?1:0))&3);m.dbgRefused=false;
+#endif
         // A reach kind (attack, guard) never settles: its owner ends the
         // approach, in reach (AR-06).
         if(m.approach||m.goal<0||!policy(m.kind).completes)return false;
@@ -6628,6 +6917,20 @@ struct LegionNavigator::Impl {
         // of per-unit points otherwise wedges bodies one step off their
         // goals for good; the 600-tick wait used to end that).
         if(area&&!shared(g,m)&&dist<=body+4&&!inExitLane(u,body))return true;
+#ifndef NDEBUG
+        if(area&&(m.dbgRefusedWin&3)==3&&!shared(g,m)&&m.stillSince!=kNoTick&&w.tickCounter_-m.stillSince>=2*kCrowdWindow) {
+            StatsFence fence(stats);
+            if(pressed(u,p,*f,ox,oz,potential))++census.a2Seal;
+        }
+        if(traced(u.id)) {
+            uint32_t ab=0;const bool have=peekAreaBound(g,m,body,ab);
+            std::fprintf(stderr,"TRACE t=%u u=%d settle potential=%u areaBound=%s%u slack=%d queued=%d foreign=%d shared=%d dist=%lld "
+                         "stalled=%u stillSince=%u refusedWin=%d rechoices=%d settleP=%u\n",
+                         w.tickCounter_,u.id,potential,have?"":"?",ab,kSettleSlack*foot*kOrthogonal,int(queued),int(foreign),int(shared(g,m)),
+                         (long long)dist,stalledFor(m),m.stillSince==kNoTick?0u:w.tickCounter_-m.stillSince,int(m.dbgRefusedWin&3),
+                         int(m.rechoices),m.settleP);
+        }
+#endif
         if(!queued&&!foreign)return false;
         // Soft obstacles (an idle crowd standing there) charge kSoftFactor
         // per step in a softened field.
@@ -6643,6 +6946,17 @@ struct LegionNavigator::Impl {
         // re-chooses its slot, and once its re-choices are spent it counts
         // as pressed.
         const bool press=pressed(u,p,*f,ox,oz,potential);
+#ifndef NDEBUG
+        if(!press&&m.stillSince!=kNoTick&&w.tickCounter_-m.stillSince>=2*kCrowdWindow) {
+            uint32_t ab=0;
+            if(peekAreaBound(g,m,body,ab)&&potential<=ab+uint32_t(kSettleSlack*foot*kOrthogonal)) {
+                ++census.a3Creep;
+                if(stalledFor(m)<kCrowdWindow)++census.a3StallReset;
+            }
+        }
+        if(traced(u.id))
+            std::fprintf(stderr,"TRACE t=%u u=%d settle-pressed press=%d stalled=%u rechoices=%d\n",w.tickCounter_,u.id,int(press),stalledFor(m),int(m.rechoices));
+#endif
         if(!press&&stalledFor(m)<kCrowdWindow)return false;
         // A body standing on its own slot keeps it: the re-choice is for a
         // slot walled off by bodies that settled first. Re-choosing from the
@@ -6783,6 +7097,17 @@ struct LegionNavigator::Impl {
         constexpr int R=24,S=2*R+1;
         const int W=width();
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+#ifndef NDEBUG
+        if(formation) {
+            ++census.a1FormationCalls;
+            uint32_t ab=0;
+            const bool have=peekAreaBound(g,m,int64_t(std::max(fx,fz))*16,ab);
+            if(have&&potential<=ab+uint32_t(kSettleSlack*std::max(fx,fz)*kOrthogonal))++census.a1Inside;
+            if(traced(u.id))
+                std::fprintf(stderr,"TRACE t=%u u=%d rechoose formation=%d potential=%u areaBound=%s%u slack=%d goal=%d at=(%d,%d) rechoices=%d\n",
+                             w.tickCounter_,u.id,int(formation),potential,have?"":"?",ab,kSettleSlack*std::max(fx,fz)*kOrthogonal,m.goal,ox,oz,int(m.rechoices));
+        }
+#endif
         auto open=[&](int x,int z) {
             if(!legal(p,x,z))return false;
             for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
@@ -6834,6 +7159,9 @@ struct LegionNavigator::Impl {
                 if(clear) {best=cell;bestV=v;}
             }
             if(best<0||best==m.goal) {if(m.slot>=0)slotCells(m,fx,fz,true);return false;}
+#ifndef NDEBUG
+            if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d rechoose-took goal=%d -> %d bfs=%zu\n",w.tickCounter_,u.id,m.goal,best,queue.size());
+#endif
             m.goal=best;m.slot=0;m.lineCell=-1;markPass(u,m);
             slotCells(m,fx,fz,true);
             return true;
@@ -7053,7 +7381,13 @@ struct LegionNavigator::Impl {
 };
 
 LegionNavigator::LegionNavigator(World& w):impl_(std::make_unique<Impl>(w)) {}
-LegionNavigator::~LegionNavigator()=default;
+LegionNavigator::~LegionNavigator() {
+#ifndef NDEBUG
+    // W9 step 0: TAK_LEGION_CENSUS=1 prints the predicate census when the navigator goes (debug builds only).
+    if(impl_&&std::getenv("TAK_LEGION_CENSUS"))
+        for(const auto& [name,v]:census())if(v)std::fprintf(stderr,"CENSUS %s=%llu\n",name.c_str(),(unsigned long long)v);
+#endif
+}
 bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
 LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindOf(u);}
 void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
@@ -7177,6 +7511,31 @@ int LegionNavigator::unitState(int id) const {
 }
 int LegionNavigator::recordsForTest(int id) const {
     return (impl_->anchors.count(id)?1:0)|(impl_->approachDone.count(id)?2:0)|(impl_->parts.count(id)?4:0)|(impl_->yielding.count(id)?8:0);
+}
+int LegionNavigator::steerSite(int id) const {
+    const auto found=impl_->members.find(id);
+    return found==impl_->members.end()?-1:int(found->second.site);
+}
+std::vector<std::pair<std::string,uint64_t>> LegionNavigator::census() const {
+    std::vector<std::pair<std::string,uint64_t>> out;
+#ifndef NDEBUG
+    const auto& c=impl_->census;
+    out={{"a1_formation_calls",c.a1FormationCalls},{"a1_inside",c.a1Inside},{"a2_refusals",c.a2Refusals},{"a2_seal",c.a2Seal},
+         {"a3_creep",c.a3Creep},{"a3_stall_reset",c.a3StallReset},{"a4_releases",c.a4Releases},{"a4_release_slotted",c.a4ReleaseSlotted},
+         {"a4_release_crossed",c.a4ReleaseCrossed},{"b1_gate_scans",c.b1GateScans},{"b1_center_blocked",c.b1CenterBlocked},
+         {"b1_engaged_wall",c.b1EngagedWall},{"b1_width_changed",c.b1WidthChanged},{"b2_commits",c.b2Commits},
+         {"b2_lane_differs",c.b2LaneDiffers},{"b2_margin",c.b2Margin},{"b3_ranks",c.b3Ranks},{"b3_guard_rejects",c.b3GuardRejects},{"b3_reject_chord",c.b3RejectChord},{"b3_reject_face",c.b3RejectFace},
+         {"b3_fold_binds",c.b3FoldBinds},{"b4_aim_calls",c.b4AimCalls},{"b4_plain_hugs",c.b4PlainHugs},{"b4_clear_alt",c.b4ClearAlt},
+         {"b6_blocked",c.b6Blocked},{"c1_headon_entries",c.c1HeadonEntries},{"c1_unseen",c.c1Unseen}};
+#endif
+    return out;
+}
+void LegionNavigator::setTrace(const std::vector<int>& ids) {
+#ifndef NDEBUG
+    gTrace=ids;
+#else
+    (void)ids;
+#endif
 }
 int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);

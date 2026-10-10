@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace tak::sim {
 class World;
@@ -171,6 +173,19 @@ public:
         // W8 step 5 (S4 pass release, dropped; the counter stays): hold updates in which the pass filter
         // kept a body from stepping back across the lane it left and nothing else moved it.
         uint64_t passFilterHolds=0;
+        // ---- W9 step 0 instruments (observation only, never hashed) ----------
+        // One counter per W9 mechanism, declared here and 0 until the step that builds it:
+        // sealSettles (A2, a pressed lattice member settled by two yield refusals), creepPresses (A3, a
+        // creeping body counted as pressed inside the bound), deepRechoices (A4, a slotted member re-chose the
+        // deepest free slot on a gate release), anchorAdvances (A4 round 2, an anchor stepped one row),
+        // gateLaneMoves (B2, a member moved to a neighbouring gate lane), gateHolds (B2, a released member
+        // kept its gate offset), foldBinds (B3, the monotone fold changed a pinwheel rank), turnGuardRejects
+        // (B3, a turn the two-chord / face test dropped), clearAims (B4, a clearance-1 target was taken),
+        // meetLatches (C1, a Point latched a head-on meet), orderInversionsAvoided / Taken (B6, an option that
+        // inverts same-convoy order skipped / taken as the only free one). The debug-only predicate census
+        // (LegionNavigator::census) counts where each would fire; these count where each does.
+        uint64_t sealSettles=0,creepPresses=0,deepRechoices=0,anchorAdvances=0,gateLaneMoves=0,gateHolds=0;
+        uint64_t foldBinds=0,turnGuardRejects=0,clearAims=0,meetLatches=0,orderInversionsAvoided=0,orderInversionsTaken=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -221,6 +236,11 @@ public:
         f("vertex_near",s.vertexNear);f("vertex_blocked",s.vertexBlocked);f("vertex_work",s.vertexWork);
         f("gate_commits",s.gateCommits);f("gate_releases",s.gateReleases);
         f("pass_filter_holds",s.passFilterHolds);
+        f("seal_settles",s.sealSettles);f("creep_presses",s.creepPresses);f("deep_rechoices",s.deepRechoices);
+        f("anchor_advances",s.anchorAdvances);f("gate_lane_moves",s.gateLaneMoves);f("gate_holds",s.gateHolds);
+        f("fold_binds",s.foldBinds);f("turn_guard_rejects",s.turnGuardRejects);f("clear_aims",s.clearAims);
+        f("meet_latches",s.meetLatches);f("order_inversions_avoided",s.orderInversionsAvoided);
+        f("order_inversions_taken",s.orderInversionsTaken);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));
@@ -306,6 +326,25 @@ public:
     // W6 behaviour counters World's flyer rules raise (Stats, observation only).
     enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround,TargetPoll};
     void noteFlyerEvent(FlyerEvent);
+    // W9 step 0 (observation only, read-only, never hashed): which steering source moved the unit on
+    // its last move() update: 0 none (held, waiting, detour, no update yet), 1 the field descent
+    // (aimCell), 2 the passage gate (gateAim), 3 the pinwheel (pivotAim), 4 a lane-discipline pass
+    // (passAhead stepped), 5 drive's blocked branch (a side-step or yield round a body), 6 a straight
+    // walk to the goal (the member's own line, or the heading it takes while its field is built).
+    // -1 if the unit is not a Legion member. The observer attributes a lane crossing to the site that
+    // moved the pair laterally.
+    enum Site : uint8_t {SiteNone=0,SiteField=1,SiteGate=2,SitePivot=3,SitePass=4,SiteBlocked=5,SiteDirect=6};
+    static constexpr int kSites=7;
+    int steerSite(int id) const;
+    // W9 step 0 (debug builds only; empty when NDEBUG is defined): the predicate census, (name, count)
+    // pairs in a fixed order -- how often each W9 mechanism's trigger WOULD fire on this run, counted
+    // where the mechanism will sit, without changing a decision. Each name's definition is on the
+    // counter in legion.cpp (struct Census); counts are cumulative like Stats.
+    std::vector<std::pair<std::string,uint64_t>> census() const;
+    // W9 step 0 (debug builds only; a no-op when NDEBUG is defined): print one line on stderr for every
+    // decision the listed members take at the traced sites (settle window, re-choice, yield request,
+    // gate commit / release). Process-wide; the scenario runner (--trace) and the world tests set it.
+    static void setTrace(const std::vector<int>& ids);
     // Test hook: the unit's group field potential at an origin (-1 if none).
     int fieldPotential(int id,int originX,int originZ) const;
     // Test hook: the slot shape of the unit's formation (valid=false if it
