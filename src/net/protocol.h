@@ -30,7 +30,9 @@ constexpr uint32_t kNetVersion = 245;      // 245: Legion W5 -- attack and guard
                                            //      when set; a guard plans to its ward without a ring). A moving goal's group re-seeds
                                            //      in place and reseats its members with their clocks; an illegal goal re-claims in its
                                            //      group; a soft block of 20+ cells formed on a group's way after its field re-plans it
-                                           //      once (300-tick cooldown)
+                                           //      once (300-tick cooldown); an attack or guard group's first field
+                                           //      is never paused (C1's pause is for groups that plan from a partial
+                                           //      field; the ring reads a done one)
                                            // 244: Legion W4 C1 -- a first field of a group that claims no packed per-goal slots
                                            //      and does not pinwheel builds in 4096-relaxation slices and pauses once it
                                            //      covers its members (Field::covered and the members' demand cells are hashed);

@@ -2621,6 +2621,9 @@ struct LegionNavigator::Impl {
     // still run to done; awareScan and the aware replan keep `done` (a
     // paused group plans round no crossing traffic until its field is done).
     bool pausable(const Group& g) const {
+        // A reach group (attack, guard) plans its ring of spots from a done
+        // field (ringClaim): its build runs to done.
+        if(g.kind==Kind::Attack||g.kind==Kind::Guard)return false;
         if(!policy(g.kind).area||g.approach)return true;
         if(g.members>int(g.sharing.size()))return false;
         for(const int id:g.ids) {
