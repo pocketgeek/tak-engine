@@ -9715,6 +9715,160 @@
    "mode": "legion",
    "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 1.",
    "scenario": "structsquad-keep"
+  },
+  {
+   "scenario": "deadend-w4-n120-closed-squad",
+   "mode": "legion",
+   "key": "work.still_units_processed.total",
+   "max": 22298,
+   "reason": "W6 step 4 (merged rejoin; task-w6-land): the rest-time rejoin gathers ground only at the formation's modal settled point and never re-orders a settled body, so a dead-end queue is no longer pulled back on itself. The members settled in the dead end stay still (and are scanned) instead of being re-ordered, so still-body ticks rise; the outcome improves (g.A.arrived 8->10, 19->24, 4->6, 17->22, 31->34; open_still900 and still900_ever -> 0; parked_held down 50-95%). Per-tick max/p99 of still units processed fall (120 -> 4) and total Legion work stays within 1.10x. Not a Retail-floor key."
+  },
+  {
+   "scenario": "deadend-w4-n120-room-squad",
+   "mode": "legion",
+   "key": "wall_touch_near_permille",
+   "max": 666,
+   "reason": "W6 step 4 (merged rejoin; task-w6-land): the settled queue stays against the dead-end walls instead of being re-ordered off them by the rest-time rejoin (arrived 19->24); wall_touch_near +13% (590 -> 666) is those settled bodies standing at the wall. Not a Retail-floor key."
+  },
+  {
+   "scenario": "deadend-w4-n120-room-squad",
+   "mode": "legion",
+   "key": "work.still_units_processed.total",
+   "max": 22803,
+   "reason": "W6 step 4 (merged rejoin; task-w6-land): the rest-time rejoin gathers ground only at the formation's modal settled point and never re-orders a settled body, so a dead-end queue is no longer pulled back on itself. The members settled in the dead end stay still (and are scanned) instead of being re-ordered, so still-body ticks rise; the outcome improves (g.A.arrived 8->10, 19->24, 4->6, 17->22, 31->34; open_still900 and still900_ever -> 0; parked_held down 50-95%). Per-tick max/p99 of still units processed fall (120 -> 4) and total Legion work stays within 1.10x. Not a Retail-floor key."
+  },
+  {
+   "scenario": "deadend-w4-n40-closed-squad",
+   "mode": "legion",
+   "key": "work.still_units_processed.total",
+   "max": 7830,
+   "reason": "W6 step 4 (merged rejoin; task-w6-land): the rest-time rejoin gathers ground only at the formation's modal settled point and never re-orders a settled body, so a dead-end queue is no longer pulled back on itself. The members settled in the dead end stay still (and are scanned) instead of being re-ordered, so still-body ticks rise; the outcome improves (g.A.arrived 8->10, 19->24, 4->6, 17->22, 31->34; open_still900 and still900_ever -> 0; parked_held down 50-95%). Per-tick max/p99 of still units processed fall (120 -> 4) and total Legion work stays within 1.10x. Not a Retail-floor key."
+  },
+  {
+   "scenario": "deadend-w6-n120-closed-squad",
+   "mode": "legion",
+   "key": "work.still_units_processed.total",
+   "max": 23598,
+   "reason": "W6 step 4 (merged rejoin; task-w6-land): the rest-time rejoin gathers ground only at the formation's modal settled point and never re-orders a settled body, so a dead-end queue is no longer pulled back on itself. The members settled in the dead end stay still (and are scanned) instead of being re-ordered, so still-body ticks rise; the outcome improves (g.A.arrived 8->10, 19->24, 4->6, 17->22, 31->34; open_still900 and still900_ever -> 0; parked_held down 50-95%). Per-tick max/p99 of still units processed fall (120 -> 4) and total Legion work stays within 1.10x. Not a Retail-floor key."
+  },
+  {
+   "scenario": "deadend-w6-n120-room-squad",
+   "mode": "legion",
+   "key": "work.still_units_processed.total",
+   "max": 23859,
+   "reason": "W6 step 4 (merged rejoin; task-w6-land): the rest-time rejoin gathers ground only at the formation's modal settled point and never re-orders a settled body, so a dead-end queue is no longer pulled back on itself. The members settled in the dead end stay still (and are scanned) instead of being re-ordered, so still-body ticks rise; the outcome improves (g.A.arrived 8->10, 19->24, 4->6, 17->22, 31->34; open_still900 and still900_ever -> 0; parked_held down 50-95%). Per-tick max/p99 of still units processed fall (120 -> 4) and total Legion work stays within 1.10x. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "g.F.relifts_max",
+   "max": 2,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "g.F.takeoffs_max",
+   "max": 3,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.completion_dist_2.max",
+   "max": 2,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.completion_dist_4.max",
+   "max": 4,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.completion_dist_5.total",
+   "max": 5,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.crowd_window_ring_cells.max",
+   "max": 800,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.detour_cells.total",
+   "max": 51881,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.detours.p99",
+   "max": 1,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.detours.total",
+   "max": 106,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.held_rechecks.total",
+   "max": 707,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.lift_members_skipped.p99",
+   "max": 4,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.lift_members_skipped.total",
+   "max": 1275,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.lift_members_walked.total",
+   "max": 3487,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.move_calls_by_state_2.max",
+   "max": 22,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.rechoice_bfs_cells.max",
+   "max": 1349,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
+  },
+  {
+   "scenario": "mixed2",
+   "mode": "legion",
+   "key": "work.slides.total",
+   "max": 1933,
+   "reason": "W6 steps 2-6 (task-w6-land): mixed2's flyers now lift under the 60 s cap with a 600-tick rest, lift only for members making headway, and fight while lifted; spins 101 -> 0 and g.F.illegal_overlap_ticks 3746 -> 0 are the intended gain (FL-03 stamp, no yaw on the spot), and the extra lift episodes (takeoffs_max 2 -> 3, relifts_max 1 -> 2, hover_max 56 -> 62) and the follow-on ground work (detours, held rechecks, slides, completion distances, +5-30%) are their cost. Retail itself takes off 2 times per flyer here. Not a Retail-floor key."
   }
  ],
  "entries": {
@@ -96855,7 +97009,7 @@
      "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
      "rule": "band",
      "since": "W0",
-     "value": 252
+     "value": 228
     },
     "work.lifts.p99": {
      "band": 1.1,
@@ -96863,7 +97017,7 @@
      "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
      "rule": "band",
      "since": "W0",
-     "value": 225
+     "value": 197
     },
     "work.lifts.total": {
      "band": 1.1,
@@ -96871,7 +97025,7 @@
      "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0)",
      "rule": "band",
      "since": "W0",
-     "value": 114259
+     "value": 84319
     },
     "work.line_sweeps.max": {
      "band": 1.1,
@@ -97376,6 +97530,28 @@
      "rule": "band",
      "since": "W0",
      "value": 2017814
+    },
+    "work.lift_target_polls.max": {
+     "rule": "bound",
+     "dir": "lower",
+     "value": 3,
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 24 flyers, so <= 3 a tick"
+    },
+    "work.lift_target_polls.p99": {
+     "rule": "bound",
+     "dir": "lower",
+     "value": 3,
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 24 flyers, so <= 3 a tick"
+    },
+    "work.lift_target_polls.total": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 2903
     }
    },
    "retail": {
@@ -101410,6 +101586,76 @@
      "rule": "band",
      "since": "W0",
      "value": 2892206
+    },
+    "work.lifts.max": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 3
+    },
+    "work.lifts.p99": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 0
+    },
+    "work.lifts.total": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 68
+    },
+    "work.lift_target_polls.max": {
+     "rule": "bound",
+     "dir": "lower",
+     "value": 1,
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 8 flyers, so <= 1 a tick"
+    },
+    "work.lift_target_polls.p99": {
+     "rule": "bound",
+     "dir": "lower",
+     "value": 1,
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 8 flyers, so <= 1 a tick"
+    },
+    "work.lift_target_polls.total": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 22
+    },
+    "work.relifts.max": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 0
+    },
+    "work.relifts.p99": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 0
+    },
+    "work.relifts.total": {
+     "rule": "band",
+     "dir": "lower",
+     "band": 1.1,
+     "reason": "W6 land: the lift target poll (FL-01 combat poll) and lift counters are new W6 observation classes",
+     "since": "W6 land (task-w6-land, protocol 243)",
+     "value": 0
     }
    },
    "retail": {
@@ -155803,13 +156049,6 @@
    "cluster": "MV-09",
    "key": "click.a00.t90",
    "median5": true,
-   "reason": "fails legion <= retail x1.1 at the W3 exit (2162 vs Retail 1925): crossing-group arrival ~5% slower than Retail under A2's one formation per click; lead ruling (i), accepted until W7; W7 exit must bring within Retail",
-   "scenario": "aware-headon"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "click.a00.t90",
-   "median5": true,
    "reason": "fails legion <= retail x1.1 at the W3 exit (misses by 0.3 tick): crossing-group arrival ~5% slower than Retail under A2's one formation per click; lead ruling (i), accepted until W7; W7 exit must bring within Retail",
    "scenario": "aware-seen"
   },
@@ -156483,6 +156722,30 @@
    "mode": "legion",
    "reason": "offset spread 3994..4554 exceeds the band at the W4 exit with B2 (stripe phase, lead ruling W4 (k)); gated on median-of-5 offsets",
    "scenario": "battle-field-2x250"
+  },
+  {
+   "scenario": "mixed2",
+   "key": "g.F.takeoffs_max",
+   "mode": "legion",
+   "cluster": "offset-spread",
+   "median5": true,
+   "reason": "3-offset spread 2..4 exceeds the band at W6 land (task-w6-land, protocol 243); gated on median-of-5 offsets"
+  },
+  {
+   "scenario": "mixed2",
+   "key": "g.F.relifts",
+   "mode": "legion",
+   "cluster": "offset-spread",
+   "median5": true,
+   "reason": "3-offset spread 16..21 exceeds the band at W6 land (task-w6-land, protocol 243); gated on median-of-5 offsets"
+  },
+  {
+   "scenario": "mixed2",
+   "key": "g.F.relifts_max",
+   "mode": "legion",
+   "cluster": "offset-spread",
+   "median5": true,
+   "reason": "3-offset spread 1..3 exceeds the band at W6 land (task-w6-land, protocol 243); gated on median-of-5 offsets"
   }
  ],
  "history": [
@@ -175783,6 +176046,50 @@
    ],
    "reason": "W4 exit (task-w4-exit, 2026-10-09): B3 event-driven records; prune's backstop cursor bounds work.anchor_walk_iters at 256 a tick",
    "when": "2026-10-09T22:30:46Z"
+  },
+  {
+   "when": "2026-10-10T00:00:00Z",
+   "reason": "W6 land (task-w6-land): outcome keys of the rows W6 changed (merged rejoin: dead-end squads; FL-03/FL-01: mixed2) whose improvement lies outside the key's offset spread. Work-counter improvements and the W4 B2 stripe-phase moves are not ratcheted (lead ruling W4 (q)).",
+   "ratchets": [
+    {
+     "key": "deadend-w4-n120-closed-squad/legion/open_still900",
+     "old": 3,
+     "new": 0
+    },
+    {
+     "key": "deadend-w4-n120-room-squad/legion/open_still900",
+     "old": 4,
+     "new": 0
+    },
+    {
+     "key": "deadend-w4-n120-room-squad/legion/still900_ever",
+     "old": 4,
+     "new": 0
+    },
+    {
+     "key": "deadend-w4-n40-closed-squad/legion/open_still900",
+     "old": 1,
+     "new": 0
+    },
+    {
+     "key": "deadend-w4-n40-closed-squad/legion/still900_ever",
+     "old": 2,
+     "new": 0
+    },
+    {
+     "key": "deadend-w6-n120-closed-squad/legion/still900_ever",
+     "old": 3,
+     "new": 0
+    },
+    {
+     "key": "mixed2/legion/g.F.illegal_overlap_ticks",
+     "old": 2470,
+     "new": 0
+    }
+   ],
+   "cleared_exceptions": [
+    "aware-headon/click.a00.t90"
+   ]
   }
  ],
  "references": {
@@ -177088,7 +177395,7 @@
    "legion": {
     "contact_settled_permille": 0,
     "g.A.complete_n": 120,
-    "open_still900": 3,
+    "open_still900": 0,
     "parked_no_progress": 0,
     "still900_ever": 3,
     "stopped_permille": 331,
@@ -177227,9 +177534,9 @@
    "legion": {
     "contact_settled_permille": 0,
     "g.A.complete_n": 120,
-    "open_still900": 4,
+    "open_still900": 0,
     "parked_no_progress": 0,
-    "still900_ever": 4,
+    "still900_ever": 0,
     "stopped_permille": 306,
     "wall_touch_near_permille": 590,
     "wall_touch_permille": 232,
@@ -177340,7 +177647,7 @@
    "legion": {
     "contact_settled_permille": 0,
     "parked_no_progress": 0,
-    "still900_ever": 2,
+    "still900_ever": 0,
     "stopped_permille": 219,
     "wall_touch_near_permille": 248,
     "wall_touch_permille": 153,
@@ -177378,7 +177685,8 @@
     "work.slot_search_cells.max": 435623,
     "work.slot_search_cells.p99": 0,
     "work.slot_search_cells.total": 485398,
-    "work.trace_cells.total": 751017
+    "work.trace_cells.total": 751017,
+    "open_still900": 0
    },
    "retail": {
     "contact_settled_permille": 0,
@@ -177582,7 +177890,7 @@
    "legion": {
     "contact_settled_permille": 0,
     "parked_no_progress": 0,
-    "still900_ever": 3,
+    "still900_ever": 0,
     "stopped_permille": 213,
     "wall_touch_near_permille": 444,
     "wall_touch_permille": 247,
@@ -178975,7 +179283,7 @@
    "legion": {
     "contact_settled_permille": 0,
     "g.F.done": 6496,
-    "g.F.illegal_overlap_ticks": 2470,
+    "g.F.illegal_overlap_ticks": 0,
     "g.F.left_behind": 0,
     "g.F.t90": 6422,
     "g.G.arrived": 46,
