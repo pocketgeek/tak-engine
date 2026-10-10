@@ -678,6 +678,14 @@ struct Order {
     // anchors, rallies, waypoints spliced in by a route). Retail never sets
     // it; hashed with a tag when set.
     uint32_t convoyTick = ConvoyTable::kNone;
+    // Legion flight stations (W6 FL-04, a flyer's last order): the release
+    // from its station once the ground stops advancing (1, release A) or its
+    // centroid has stood within 16 px of stationRef since stationRefTick for
+    // 900 ticks (2, release B); sticky for the order. stationRefTick 0: no
+    // reference yet. Hashed with a tag when set.
+    uint8_t stationFree = 0;
+    int32_t stationRefX = 0, stationRefZ = 0;
+    uint32_t stationRefTick = 0;
 };
 
 struct Unit {

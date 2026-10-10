@@ -923,9 +923,18 @@ Out fl04Run(const std::string& scen,bool serial=true) {
     int maxHover=0,groundStart=-1,groundDone=-1,flyersDone=-1,allStillTicks=0,holdTicks=0;
     int lastProgress=0;float refX=cx0,refZ=cz0;int refTick=0;
     int fireA=-1,fireB=-1;bool outsideA=false,outsideB=false;int maxNoProgress=0,maxStatic=0;
+    // The real releases (W6 step 5): the first tick each rule fired, how many flyers it freed, and whether the
+    // ground's centroid was still outside the release radius then.
+    int relA=-1,relB=-1,nA=0,nB=0;bool outA=false,outB=false;
     for(int t=0;t<ticks;++t) {
         f.world.tick(1.f/30);
         float cx,cz;centroid(cx,cz);
+        {
+            const auto st=f.world.legionStats();
+            const bool outside=std::hypot(cx-px,cz-pz)>radius;
+            if(int(st.stationReleasesA)>nA) {if(relA<0) {relA=t;outA=outside;}nA=int(st.stationReleasesA);}
+            if(int(st.stationReleasesB)>nB) {if(relB<0) {relB=t;outB=outside;}nB=int(st.stationReleasesB);}
+        }
         int busy=0;
         for(int id:ground) {
             const auto& u=*f.world.unit(id);
@@ -966,11 +975,14 @@ Out fl04Run(const std::string& scen,bool serial=true) {
     for(int id:ground)holding+=!f.world.unit(id)->orders.empty();
     for(int id:flyers) {const auto& u=*f.world.unit(id);landed+=u.flightGroundMode==1;farMax=std::max(farMax,dist(u,px,pz));}
     const bool earlyA=fireA>=0&&outsideA&&groundDone>fireA,earlyB=fireB>=0&&outsideB&&groundDone>fireB;
-    char buf[700];
+    const bool realEarlyA=relA>=0&&outA&&groundDone>relA,realEarlyB=relB>=0&&outB&&groundDone>relB;
+    char buf[900];
     std::snprintf(buf,sizeof buf,"fl04 scen=%s ground=%d flyers=%d ground_start=%d ground_done=%d flyers_done=%d holding=%d max_hover=%d all_still_ticks=%d "
-        "landed=%d/%d flyers_far_px=%.0f hold_ticks=%d release_radius=%.0f max_no_progress=%d max_static=%d would_release_A=%d(outside=%d,early=%d) would_release_B=%d(outside=%d,early=%d)",
+        "landed=%d/%d flyers_far_px=%.0f hold_ticks=%d release_radius=%.0f max_no_progress=%d max_static=%d would_release_A=%d(outside=%d,early=%d) would_release_B=%d(outside=%d,early=%d) "
+        "released_A=%d(n=%d,outside=%d,early=%d) released_B=%d(n=%d,outside=%d,early=%d)",
         scen.c_str(),nGround,nFlyers,groundStart,groundDone,flyersDone,holding,maxHover,allStillTicks,landed,nFlyers,farMax,holdTicks,radius,
-        maxNoProgress,maxStatic,fireA,int(outsideA),int(earlyA),fireB,int(outsideB),int(earlyB));
+        maxNoProgress,maxStatic,fireA,int(outsideA),int(earlyA),fireB,int(outsideB),int(earlyB),
+        relA,nA,int(outA),int(realEarlyA),relB,nB,int(outB),int(realEarlyB));
     return {buf,f.world.stateHash()};
 }
 void fl04() {
