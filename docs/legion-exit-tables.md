@@ -12,7 +12,7 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
-## W4 C1 land (2026-10-09): paused solo first builds on W4 with B1 + B2 (protocol 243)
+## W4 C1 land (2026-10-10): paused solo first builds on W4 with B1 + B2, merged over W6 (protocol 244)
 
 Head: `task-c1-land` = origin/main `6333e38d` (W4 with B1 + B2, protocol 242) + C1's code (`588f80ea` from
 `task-w4-c1`, which was built on the B3-only exit `55a83ee2`), then protocol 243, the Legion navigation golden and
@@ -31,6 +31,21 @@ soft cost, so a resumed slice cannot lower a settled potential; the debug invari
 relaxation lowers a settled potential, member ids, `verifySoft`) hold in every Legion world test, the scenario
 ctests, an `--mpai` Legion run, crowdbench jagged / rapidreplacement / open / doors 500x4 and churn 200x1, and
 battle-field-2x60 with verify on.
+
+**Merge over W6 (origin/main `17e42209`, protocol 243; this land is protocol 244).** The tables below were taken on the
+W4 head before the merge; W6 landed first, so C1 now follows it. The combination was measured on the merged head `830d3cbc`
+(code identical to the final head, which adds only baselines and docs):
+
+| Gate | Result |
+|---|---|
+| Legion navigation golden | **regenerates to the same file** (24 of 24 checkpoints, serial == workers, Retail identical): W6's 24-body cohort has no flyers or squads and C1's golden already holds |
+| Scenario set (`legion_check check --cumulative --require-all`, all 91 files, both modes, gate offsets; Windows sweep) | **PASS**: 16999 keys, 0 failed, 290 ratchets (not applied, ruling (q)), 1283 licensed, 112 floor exceptions, 768 report-only. No new licence and no re-take: the union of C1's and W6's licences covers the combination |
+| What the combination moved | Per-row state hashes of the merged head against the C1 land head `00f51041` and against W6 `17e42209` (same sweep, 91 files): Legion hashes differ from C1 on exactly W6's rows (the squad dead-end rows deadend-w2-n40-closed-squad, deadend-w4-n120-closed-squad / room-squad, deadend-w4-n40-closed-squad, deadend-w6-n120-closed-squad / room-squad, and mixed2); they differ from W6 on exactly C1's four battle files; no row differs from both, Retail rows are identical to both |
+| `legion_cost` scaling and `legion_cost battle --cumulative` | ok / ok (2x60, 2x250, 2x500, battle-assault; per-tick max 396709 / 405292 / 434165 on 2x250 / 2x500 / assault) |
+| crowdbench screen (86 rows, seed 0) | 0 differences against C1's retaken baseline; the 7 W6 counters (`legion_relifts`, `legion_cap_hits`, `legion_station_releases_a/b`, `legion_go_arounds`, `legion_station_overflow`, `legion_lift_target_polls`) are the only new keys; baseline retaken with them |
+| `--mpai` Inner Circle 300 s seed 1 | Legion **b2261dc31dc84cdf** (twice on Linux, build-o2; Mac), Retail **b240750e5765c02b** (Linux, Mac): C1 and W6 each left both, and so does the combination |
+
+C1 alone, on the W4 head:
 
 | Gate | Result |
 |---|---|

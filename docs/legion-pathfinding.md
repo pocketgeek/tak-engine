@@ -1300,7 +1300,7 @@ a scan period. The aware scan (residue 15) now reads a soft view that changes
 every tick (accepted; W7 re-checks). The stripe phase moves a few outcome keys
 within their seed spread (aware headon contacts, landedflyers, tail wave p90).
 
-### Paused first builds (W4 C1, protocol 243)
+### Paused first builds (W4 C1, protocol 244)
 
 A first field used to build to done, its whole window, although its members
 steer by it as soon as the A* frontier (aimed at the group's bodies) has passed
