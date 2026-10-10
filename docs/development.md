@@ -181,6 +181,84 @@ the platform checks, Windows signing and complete asset verification pass.
   replays are platform independent, so running them on the Windows or macOS test hosts
   is possible but not automated (follow-up): the harness relies on `taskset`/`setsid`.
 
+## WE timing rounds (`tools/we_timing.sh`)
+
+Engine-wide perf (WE) steps are judged by swapped, concurrent A/B pairs on the reserved timing cores 0-3
+(`/home/pocket_geek/tak-tmp/tools/timing.sh`, which flocks them; everything else runs on 4-23). Replaying R-2h / L-2h /
+R-bench / L-bench in full, twice, swapped, took about 70 minutes a round. `tools/we_timing.sh` does the same job in
+about 10 minutes for two swapped rounds:
+
+```sh
+tools/we_timing.sh --base <base build-o2> --cand <cand build-o2> [--rounds 2] [--sits R-2h-1800,...] [--counters]
+tools/we_timing.sh --base ... --cand ... --replays <dir of .takrep>   # exact mode, see below
+```
+
+- **Situations** (`tools/scenarios/we-timing/*.scn.gz`) are worlds cut out of the four WE recordings by
+  `tools/we_timing_harvest.sh <takclient> <replay> <tick> <out.scn.gz>` (TAK_SITUATION, `src/client/situation.h`):
+  every live body with its exact position, heading, hit points, speed, id and player goals, the recording's commands for
+  the next 3000 ticks (`TAK_SITUATION_CMDS`), clock and RNG, the explored masks and the teams. The map is named
+  (`map named Ulasem Arena`), so the files need `--data`. `R-2h-1800` and `L-2h-1800` are cut at tick 1800 (11.9k units,
+  falling through the 9.5-10.5k window), the bench ones at 1900 (just after the 60 s benchmark ramp: the ramp's spawns are
+  World::tick work a situation cannot replay). Re-cut with the o2 `takclient` of the tree whose recordings play back
+  (`legion_identity.py patch-replay` re-stamps the protocol) when Legion behaviour changes: an L situation holds the
+  trajectory of the build that cut it.
+- **Run shape.** Per situation, two swapped concurrent pairs (base on 0-1 + candidate on 2-3, then swapped) per round:
+  `legion_scenario --workers --catchup 60 --ticks warm+measure` with `TAK_PHASE=1`. Defaults: warm-up 1000 ticks (dropped),
+  measure 1000. `--catchup N` gives the path service an unlimited budget for the first N ticks: a situation re-issues
+  7k in-flight orders at tick 0, and the retail request queue would otherwise drain that backlog over ~2000 ticks
+  (the long waypoint queues of ~900 units, which findTarget walks, take that long to reappear). The report prints, per
+  situation and SIMPHASE phase, the median of each build's per-run mean ms, their ratio, and the median and range of the
+  per-pair ratios (the headline: pair partners run concurrently, which cancels most host noise), plus the final state hash
+  of base and candidate (a hash-identical step must print `identical`). `--counters` adds the TAK_SIMSTATS work counters
+  (do not compare ms from a `--counters` run).
+- **Both trees need the tool files** (`tools/legion_scn.h`, `tools/legion_scenario.cpp` `--catchup`, `src/client/situation.h`,
+  `src/client/ordershape.h`): rebase or cherry-pick the commit that added them onto a base/candidate that predates it.
+- **`--replays DIR`** runs the exact thing instead: each recording played from tick 0 and cut off at harvest + warm +
+  measure ticks (a debug `takclient` per build dir; the SIMPHASE lines before the harvest tick are dropped). Same report,
+  no situation fidelity limit, roughly twice the wall of the situation mode and still about a third of a full-length
+  replay round. Use it whenever a result will be quoted for a phase where the validation below shows a gap.
+- **Identity is still the full replays** (`tools/legion_identity.sh`): a situation is not byte-identical to the recording
+  and proves nothing about hashes.
+
+### Validation (2026-10-10)
+
+The situation ratios were checked against controlled truncated replays of the same pairs, same window, same quiet cores
+(two rounds, four swapped pairs each); `Δ` is situation minus replay, in percentage points of the pair-median ratio.
+
+Pair-median ratio of the combat phase, cand/base - 1, warm-up 1000 and 1000 measured ticks (replay window: the same ticks
+of the recording). E1.3 (13bc9697 vs 20a5195a, findTarget gate order) and E2.1 (d361329a vs f0e49384, forEachNear block skip):
+
+| pair | workload | replay | situation | delta (pp) |
+|---|---|---|---|---|
+| E2.1 | R-2h (10k) | -21.1 | -21.7 | -0.6 |
+| E2.1 | L-2h (10k) | -19.0 | -19.7 | -0.6 |
+| E2.1 | R-bench | -26.4 | -29.3 | -2.9 |
+| E2.1 | L-bench | -26.2 | -29.4 | -3.3 |
+| E1.3 | R-2h (10k) | -22.5 | -17.3 | +5.2 |
+| E1.3 | R-bench | -35.7 | -33.7 | +2.0 |
+| E1.3 | L-bench | -2.6 | -0.8 | +1.9 |
+| E1.3 | **L-2h (10k)** | **-12.5** | **+1.9** | **+14.4** |
+
+The other phases agree to within about 3 pp in most rows and 7 pp in all of them (`other` of E2.1 L-2h, `sep` and
+`movement` of the E2.1 benches), where the replay pairs themselves spread by 5-15 pp. E2.1's `grid` phase on the benches
+(0.015 ms) reads +36..+46% in the replays and +36..+38% in the situations.
+Two cases do not meet the 3 pp bar, and why:
+
+- **E1.3 on L-2h: the situation shows nothing where the replay shows -12..-14%.** The work counters match the recording
+  closely (acq_scans, los_calls and the queue walks within 5%, order-queue shapes equal), so the missing gain is a
+  cost-per-walk difference. Tested and ruled out: heap age (fragmenting the allocator before the build changed nothing), the
+  Retail waypoint backlog (Legion has none), the warm-up (the ratio is flat from tick 0 to 2500). It is not understood; treat
+  any Legion combat-phase claim from order-queue or acquisition changes as unconfirmed until `--replays` agrees.
+- **E1.3 on R-2h: -17% against -22%.** Without `--catchup` it was -11% and still rising: the recording holds ~900 units
+  with 8+ waypoint orders that a rebuilt world takes ~2000 ticks to regrow (the retail path-budget scheduler drains the
+  tick-0 backlog slowly). `--catchup 60` brings most of them back at once; the rest of the gap (the waypoint queues
+  plateau at ~85% of the recording's) is left.
+
+Absolute ms are not comparable between modes (a situation tick ran from 18% cheaper to 4% dearer than the recording's, base
+build), and the host differs between days, so compare only within one pair.
+Round wall: 9-11 minutes for two swapped rounds of all four situations (sum of run times 8-10 min, plus the wait for the
+timing cores), against ~70 minutes.
+
 ## Developer launch modes
 
 Release clients accept `--data` and `--version` and launch games through the
