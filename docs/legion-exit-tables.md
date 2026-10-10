@@ -184,6 +184,39 @@ No Retail key and no outcome key moved.
 | tail-wave/legion/work.anchor_walk_iters.p99 | 454 | 256 | -43.6% | intended |
 | tail-wave/legion/work.anchor_walk_iters.total | 4176028 | 2670014 | -36.1% | intended |
 
+## W5 steps 1-4, 6 (2026-10-09, task-w5-steps): measured, NOT an exit -- the gates below still fail
+
+Head: `task-w5-steps` = `task-w5-s0` + step 1 (AR-06 A+B), step 2 (AR-07), step 1 follow-up (no late ring),
+step 3 (MV-05), step 6 (AR-10 claims check), docs + protocol note placeholder. Step 4 (MV-06) was built three
+ways (S1; full brisk tier; restricted brisk) and reverted under its stop rule (numbers in docs/legion-pathfinding.md
+"Reach rings and engaged bodies (W5)"); MV-18 out of scope. 3-offset medians, legion, base -> head (Retail):
+
+| fixture | key | base | head | Retail | plan |
+|---|---|---|---|---|---|
+| attackring-f1-64 | reach ever | 3 | 39 | 44 | >= 35 met |
+| attackring-mob-40 / mob-100 | reach ever | 2 / 3 | 34 / 33 | 40 / 46 | >= 30 met / >= 40 NOT met |
+| attackring-struct-60 | reach ever / damage@80s | 6 / 3093 | 42 / 15584 | 60 / 22037 | >= 40 / >= 15k met |
+| attackring-fight-60 | reach ever | 10 | 34 | 44 | >= 40 NOT met |
+| attackring-guard-64 | within 6 cells ever | 15 | 63 | 64 | >= 50 met |
+| fight-retarget | g.F.done | never | 3582 | 2768 | settled by Retail time NOT met (40/40 settle) |
+| ringcross | g.M.t90 / done | 3639 / 3796 | 4021 / 4722 | 3864 / 4057 | +10% NOT met |
+| chase-1 | registrations / fields built | 53 / 53 | 3 / 21 | | 1 / <= 15: fields NOT met; field_work.max unchanged (first build) |
+| chase-50 | registrations | 2552 | 52 | | |
+| lateblock-late-16 | arrived / done | 30 / never | 40 / 3422 | 39 / never | >= 39 by 4500 met |
+| sweep late-24x20 | arrived / done | 21 / never | 40 / 3827 | 40 | >= 38 by 4800 met |
+
+crowdbench screen (seed 0, all 43 Legion rows): identical to `crowdbench_screen_baseline.jsonl`, hashes included
+(every new hashed field is folded only when set, C27; no row sets one). Scenario set (`legion_check check`, all 120
+files with data, gate offsets, oden-win, head `5f4d3966`): 957 failures, all in the attack/battle/chase/goalblock
+fixtures W5 targets plus `work.group_loop_iters` (MV-05's per-cycle group walk while a block is listed: staticblock
+161 -> 221, liftstream 383 -> 443, lateblock-before-16 196 -> 255, deadend-w6-n120-room-squad 348 -> 391) -- none in
+any other scenario. Battles: battle-field-2x500 spins 8061 -> 9897, reversals 352 -> 593, A complete_n 52 -> 36;
+2x250 reversals 183 -> 241, B arrived 2 -> 0; 2x60 reversals 35 -> 61, work.legion_total.p99 108982 vs W0 107751
+(cumulative combat gate FAILS by 1.1%). ctest -L quick: staticidle (engaged guards shuffle round the ring at
+cap/8, refresh work), crowdheld (W5 hard gate, unchanged), battle-field-2x60 (work), navigation_determinism
+(Legion golden: regenerated at the land) fail. W5/W9 hard gates: none cleared on this head (doorplug-124 only
+completed at every offset under the reverted brisk tier).
+
 ## W5 step 0 (2026-10-09): instruments, fixtures and the base for AR-06 / AR-07 / MV-05 / MV-06 / MV-07 / MV-18 (no sim change)
 
 Head: `task-w5-s0` = `6333e38d` (W4 land, protocol 242) + four instrument-only commits. Every Legion and Retail state hash is
