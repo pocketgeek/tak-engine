@@ -5028,6 +5028,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             if (!u.type->canFly && !u.type->isStructure()) {
                 brakeGround(u);
                 groundMovementHandled=true;
+                if (legion_ && isLegionPathfinding(pathfindingMode_)) legion_->noteEngaged(u);   // W5 step 0 counter
             } else u.speed=fxMax(Fixed(),u.speed-u.type->brake);
         }
         return;   // movement walks toward o when out of reach
@@ -5157,6 +5158,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         : retailDirection(target->x-u.x,target->z-u.z);
     const int32_t diff = bamDiff(want, u.heading);
     if (!u.type->canFly && !u.type->isStructure()) {
+        if (legion_ && isLegionPathfinding(pathfindingMode_)) legion_->noteEngaged(u);   // W5 step 0 counter
         if (u.type->domain==UnitType::Domain::Water && !u.type->turnInPlaceRate) {
             // Ships commonly specify only turnrate. Once in firing range they
             // still need to face the target instead of waiting on a zero pivot rate.

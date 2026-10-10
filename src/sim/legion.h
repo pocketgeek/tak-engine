@@ -106,6 +106,15 @@ public:
         uint64_t midrouteCompletions=0,outsideAreaCompletions=0;
         uint64_t completionDist[10]={};
         uint64_t completionDistSum=0,completionDistMax=0;
+        // ---- W5 step 0 instruments (observation only, never hashed) ----------
+        // engagedNow is cumulative like every counter (the verify hook demands it): the
+        // member-ticks tickCombat braked an in-reach ground attacker or a guard within 70 px
+        // (the bodies W5's Engaged flag will mark), so its per-tick delta IS the number
+        // engaged now and its total the engaged member-ticks. The other four count
+        // mechanisms W5 builds and read 0 until their step exists: reach-ring slots handed
+        // out (step 1), stale-block re-plans MV-05 triggered (step 3), chase re-seeds that
+        // kept the group (step 2), brisk-tier steps taken unturned at cap/2 (step 4).
+        uint64_t engagedNow=0,reachSlotsBuilt=0,softReplans=0,reseedsInPlace=0,briskSteps=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -143,6 +152,8 @@ public:
         array("move_calls_by_state",s.moveCallsByState,8);f("join_iterations",s.joinIterations);
         f("midroute_completions",s.midrouteCompletions);f("outside_area_completions",s.outsideAreaCompletions);
         array("completion_dist",s.completionDist,10);f("completion_dist_sum",s.completionDistSum);f("completion_dist_max",s.completionDistMax);
+        f("engaged_now",s.engagedNow);f("reach_slots_built",s.reachSlotsBuilt);f("soft_replans",s.softReplans);
+        f("reseeds_in_place",s.reseedsInPlace);f("brisk_steps",s.briskSteps);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));
@@ -195,6 +206,17 @@ public:
     // Observation hook (read-only, never hashed): cells left in the unit's committed local detour route
     // (0: none, or not a Legion member). MV-06's route-follower crawl samples read it.
     int routeLength(int id) const;
+    // W5 step 0: tickCombat braked this unit in reach (an attacker) or within 70 px of
+    // its guard target; counted into Stats::engagedNow when Legion routes it.
+    void noteEngaged(const Unit&);
+    // W5 step 0 (the claims invariant, read-only, never hashed): audit every member's
+    // claimed arrival slot against its point's claimed cells. `overlaps` counts cells two
+    // members of a point both claim, `missing` claimed footprint cells the point does not
+    // hold (a lost claim), `dangling` members that hold a slot on a point that is gone,
+    // `orphans` point cells no member's slot covers (report only: a settled body that left
+    // the navigator keeps its cells by design). overlaps + missing + dangling must be 0.
+    struct ClaimsAudit {int members=0,overlaps=0,missing=0,dangling=0,orphans=0;};
+    ClaimsAudit claimsAudit() const;
     // Test hook: the unit's group field potential at an origin (-1 if none).
     int fieldPotential(int id,int originX,int originZ) const;
     // Test hook: the slot shape of the unit's formation (valid=false if it

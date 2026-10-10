@@ -1290,6 +1290,34 @@ struct LegionNavigator::Impl {
 
     int width() const {return w.hW_;}
     int height() const {return w.hH_;}
+    // W5 step 0: the claims invariant over every point (LegionNavigator::ClaimsAudit).
+    ClaimsAudit claimsAudit() const {
+        ClaimsAudit a;
+        const int W=width();
+        std::map<const Point*,std::map<int,int>> claimed;   // point -> cell -> members claiming it
+        for(const auto& [id,m]:members) {
+            if(m.slot<0)continue;
+            const Unit* u=w.unit(id);
+            if(!u||!u->type)continue;
+            const Point* pt=m.pt;
+            if(!pt) {const auto found=points.find(m.point);if(found!=points.end())pt=&found->second;}
+            ++a.members;
+            if(!pt) {++a.dangling;continue;}
+            auto& cells=claimed[pt];
+            const int x=m.goal%W,z=m.goal/W;
+            for(int j=0;j<u->type->footZ;++j)for(int i=0;i<u->type->footX;++i) {
+                const int c=(z+j)*W+x+i;
+                if(++cells[c]>1)++a.overlaps;
+                if(!pt->cells.count(c))++a.missing;
+            }
+        }
+        for(const auto& [key,pt]:points) {
+            const auto found=claimed.find(&pt);
+            for(const int c:pt.cells)
+                if(found==claimed.end()||!found->second.count(c))++a.orphans;
+        }
+        return a;
+    }
     bool placementPlane() const {
         return !w.mapPlacementCells_.empty()&&w.mapPlacementCells_.size()==size_t(w.hW_)*w.hH_;
     }
@@ -5564,6 +5592,8 @@ int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
 }
+void LegionNavigator::noteEngaged(const Unit& u) {if(impl_->supports(u))++impl_->stats.engagedNow;}
+LegionNavigator::ClaimsAudit LegionNavigator::claimsAudit() const {return impl_->claimsAudit();}
 int LegionNavigator::routeLength(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:int(found->second.route.size());
