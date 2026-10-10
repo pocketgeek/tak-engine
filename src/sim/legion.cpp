@@ -6268,7 +6268,7 @@ struct LegionNavigator::Impl {
             // Blocked by a body. Flow around it through any other free cell
             // that is strictly closer to the goal (field descent), committing
             // to that neighbour for this update; otherwise hold still.
-            bool moved=false;
+            bool moved=false,passFiltered=false;
             if(f) {
                 // Direct-line members measure progress toward their own goal
                 // cell; field followers by the group potential.
@@ -6287,8 +6287,12 @@ struct LegionNavigator::Impl {
                     if(!step(p,ox,oz,d[0],d[1]))continue;
                     if(f->at(size_t((oz+d[1])*W+ox+d[0]))==kUnreached)continue;
                     // A body that just moved over for oncoming traffic does
-                    // not edge back across the lane it left.
-                    if(m.passUntil>w.tickCounter_&&d[0]*m.passRX+d[1]*m.passRZ<0)continue;
+                    // not edge back across the lane it left. (W8 step 5, S4,
+                    // released this after 6 held updates when the lane's
+                    // look-ahead held no oncoming body: one attempt, dropped --
+                    // opposingcolumns spin +35-117% for 3-10% fewer of these
+                    // holds. MV-16 stays an intended trade.)
+                    if(m.passUntil>w.tickCounter_&&d[0]*m.passRX+d[1]*m.passRZ<0) {passFiltered=true;continue;}
                     const int64_t v=metric(ox+d[0],oz+d[1]);
                     if(v<here)options[size_t(count++)]={v,k};
                 }
@@ -6338,6 +6342,7 @@ struct LegionNavigator::Impl {
                 }
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(passFiltered)++stats.passFilterHolds;
                 hold(u,m);return;
             }
         }

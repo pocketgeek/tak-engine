@@ -168,6 +168,9 @@ public:
         // (crossed the gate line, came within 2 cells of the point, or the point turned illegal).
         // The gate's search and aim work is counted in laneWork.
         uint64_t gateCommits=0,gateReleases=0;
+        // W8 step 5 (S4 pass release, dropped; the counter stays): hold updates in which the pass filter
+        // kept a body from stepping back across the lane it left and nothing else moved it.
+        uint64_t passFilterHolds=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -217,6 +220,7 @@ public:
         f("vertex_calls",s.vertexCalls);f("vertex_found",s.vertexFound);f("vertex_visible",s.vertexVisible);
         f("vertex_near",s.vertexNear);f("vertex_blocked",s.vertexBlocked);f("vertex_work",s.vertexWork);
         f("gate_commits",s.gateCommits);f("gate_releases",s.gateReleases);
+        f("pass_filter_holds",s.passFilterHolds);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));
