@@ -11,15 +11,16 @@
 #   --base DIR --cand DIR   the two build dirs (required)
 #   --sits LIST             comma list of situations (default: every tools/scenarios/we-timing/*.scn.gz)
 #   --rounds N              swapped-pair rounds (default 2)
-#   --warm N                warm-up ticks, dropped (default 200)
-#   --ticks N               ticks measured after the warm-up (default 1500; 1000 for *-bench)
+#   --warm N                warm-up ticks, dropped (default 1500: the rebuilt world needs ~1000 ticks to settle its
+#                           Retail waypoint queues; see docs/development.md)
+#   --ticks N               ticks measured after the warm-up (default 1000)
 #   --counters              also collect TAK_SIMSTATS work counters (adds instrument cost: not for ms comparisons)
 #   --data DIR              game install (default $TAK_DATA or ~/TAK/assets/game)
 #   --out DIR               logs + report (default $TMPDIR/we-timing-<date>)
 # Every timed run goes through /home/pocket_geek/tak-tmp/tools/timing.sh (flock; cores 0-3): one pair on 0-1 + 2-3.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-BASE= CAND= SITS= ROUNDS=2 WARM=200 TICKS= COUNTERS= INNER=
+BASE= CAND= SITS= ROUNDS=2 WARM=1500 TICKS=1000 COUNTERS= INNER=
 DATA=${TAK_DATA:-$HOME/TAK/assets/game}; OUT=
 TIMING=${TAK_TIMING_SH:-/home/pocket_geek/tak-tmp/tools/timing.sh}
 while [ $# -gt 0 ]; do case $1 in
@@ -50,11 +51,11 @@ fi
 # ---- inner: already on the timing cores, holding the lock ----
 one() {   # one <build> <cores> <sit> <log>
   local mode=R; [[ $3 == L-* ]] && mode=L
-  local ticks=$TICKS; [ -z "$ticks" ] && { [[ $3 == *-bench-* ]] && ticks=1000 || ticks=1500; }
+  local ticks=$TICKS
   local t0=$(date +%s.%N)
   env TAK_PHASE=1 TAK_PHASE_MS=0 ${COUNTERS:+TAK_SIMSTATS=1} taskset -c "$2" "$1/legion_scenario" "$OUT/scn/$3.scn" \
       --mode $([ $mode = R ] && echo retail || echo legion) --data "$DATA" --ticks $((WARM + ticks)) --offsets 0 \
-      --no-observer --workers 2> "$4.err" > "$4.out" || echo "run failed: $4" >&2
+      --no-observer --workers 2> "$4.err" > "$4.out" || { echo "run failed: $4 ($(tail -1 "$4.err"))" >&2; return 0; }
   grep -E "^SIMPHASE|^SIMSTATS" "$4.err" > "$4" || true
   echo "wall $(echo "$(date +%s.%N) - $t0" | bc)" >> "$4.out"; rm -f "$4.err"
 }

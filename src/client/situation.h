@@ -22,6 +22,7 @@
 //   Not held: economy, scripts, AI, fog (the file explores the map), production and
 //   anything built or killed outside the window's commands.
 #include "net/lockstep.h"
+#include "client/ordershape.h"
 #include "net/protocol.h"
 #include "sim/sim.h"
 
@@ -70,6 +71,7 @@ inline Request parseRequest(const char* text) {
     return r;
 }
 
+
 struct Meta {
     std::string mapId;      // a ~gen1~ recipe; any other map cannot be written (see write)
     std::string source;     // free text for the file's header comment
@@ -80,17 +82,28 @@ struct Meta {
 
 class Harvester {
 public:
-    void arm(const Request& r, const Meta& m) { req_ = r; meta_ = m; armed_ = r.valid; }
-    bool armed() const { return armed_; }
+    // TAK_SITUATION_SHAPES=N: after the cut, keep logging the order shape every 100 ticks up to +N (judging how fast a rebuilt
+    // situation converges on the recording's queues).
+    void arm(const Request& r, const Meta& m) {
+        req_ = r; meta_ = m; armed_ = r.valid;
+        if (const char* e = std::getenv("TAK_SITUATION_SHAPES")) shapeEnd_ = r.valid ? uint32_t(std::strtoul(e, nullptr, 10)) : 0;
+    }
+    bool armed() const { return armed_ || shapeEnd_ != 0; }
 
     // Call with the world as it stands after `tick` ticks, before applying bundle `tick`.
     // Returns true when the file was written (once).
     bool observe(uint32_t tick, const tak::sim::World& w, const std::vector<tak::net::Bundle>& bundles) {
+        if (shapeEnd_ && captured_ && tick > req_.tick) {
+            const uint32_t k = tick - req_.tick;
+            if (k % 100 == 0) std::fprintf(stderr, "situation: order shape at +%u: %s\n", k, orderShape(w).c_str());
+            if (k >= shapeEnd_) shapeEnd_ = 0;
+        }
         if (!armed_) return false;
         if (tick == req_.tick && !captured_) capture(w, bundles);
         if (captured_) {
             for (uint32_t k : kTruthTicks)
                 if (tick == req_.tick + k) {   // the recording's own positions k ticks in, in file (id) order
+                    if (!shapeEnd_) std::fprintf(stderr, "situation: order shape at +%u: %s\n", k, orderShape(w).c_str());
                     std::vector<std::pair<int32_t, int32_t>> pos;
                     std::vector<int> ids;
                     for (const Body& b : bodies_) ids.push_back(b.id);
@@ -130,6 +143,7 @@ private:
     Request req_;
     Meta meta_;
     bool armed_ = false, captured_ = false;
+    uint32_t shapeEnd_ = 0;
     std::vector<Body> bodies_;
     std::vector<Click> clicks_;
     std::vector<std::pair<uint32_t, std::vector<std::pair<int32_t, int32_t>>>> truths_;
@@ -146,6 +160,7 @@ private:
 
     void capture(const tak::sim::World& w, const std::vector<tak::net::Bundle>& bundles) {
         captured_ = true;
+        std::fprintf(stderr, "situation: order shape at tick %u: %s\n", req_.tick, orderShape(w).c_str());
         explored_ = w.navigationExploration();
         clockTick_ = w.tickCount();
         clockRng_ = w.gameRngState();
@@ -331,6 +346,7 @@ private:
             for (int id : c.units) {
                 auto it = index.find(id);
                 if (it == index.end() || !seen.insert(it->second).second) continue;
+                if (bodies[it->second].owner != c.owner) continue;   // a click is one player's selection (allied control in a recording)
                 list += (list.empty() ? "%" : ",%") + std::to_string(it->second);
             }
             if (list.empty()) continue;

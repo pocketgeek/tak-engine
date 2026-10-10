@@ -78,6 +78,7 @@
 // bad file, 77 the file needs --data (ctest SKIP).
 #include "legion_observe.h"
 #include "legion_scn.h"
+#include "client/ordershape.h"
 #include "sim/convoy.h"
 
 #include <algorithm>
@@ -767,6 +768,8 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     // A harvested situation (`truth`): the recording's body positions TICK ticks in, against ours.
     const auto startPos = s.truths.empty() ? std::vector<std::pair<int32_t, int32_t>>{} : scn::startPositions(s, *b);
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
+    // TAK_ORDER_STATS=N: log the movers' order-queue shape every N ticks (src/client/ordershape.h; compare a harvested situation with its recording).
+    const uint32_t orderStatsEvery = std::getenv("TAK_ORDER_STATS") ? uint32_t(std::strtoul(std::getenv("TAK_ORDER_STATS"), nullptr, 10)) : 0;
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
         // contact_settled's command identity (W3-1, ruling W3 round 4 (1)): one convoy is one command,
@@ -797,6 +800,8 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             if (t + 1 == tr.tick && tr.pos.size() == all.size())
                 truthNow.push_back({tr.tick, scn::truthReport(s, *b, tr, startPos, offset,
                                                               std::getenv("LEGION_TRUTH_DETAIL") ? "" : nullptr)});
+        if (orderStatsEvery && (t + 1) % orderStatsEvery == 0)
+            std::fprintf(stderr, "order shape at +%u: %s\n", t + 1, tak::situation::orderShape(w).c_str());
         if ((t + 1) % 100 == 0) r.digest = mix(r.digest, w.stateHash());
     }
     r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

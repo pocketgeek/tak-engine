@@ -28,7 +28,7 @@ def mean(rows, k):
 
 def main():
     out = sys.argv[1]
-    warm = int(sys.argv[sys.argv.index('--warm') + 1]) if '--warm' in sys.argv else 200
+    warm = int(sys.argv[sys.argv.index('--warm') + 1]) if '--warm' in sys.argv else 1500
     runs = {}   # (sit, round, pair) -> {role: summary}
     wall = {}
     for f in sorted(glob.glob(os.path.join(out, 'runs', 'r*-*-*-??'))):
