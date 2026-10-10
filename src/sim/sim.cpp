@@ -6086,6 +6086,10 @@ void World::rebuildGrid() {
     } else for (size_t cell:gTouched_) {gHead_[cell]=-1;gPlayers_[cell]=0;}
     gTouched_.clear();
     gPlayersValid_=true;
+    // 8x8-cell block masks for forEachNear's block skip (WE A2b): the OR of the cell masks
+    // in each block, so a zero block bit means no cell in the block has that player.
+    gBlockW_ = (gW_ + 7) / 8;
+    gBlockPlayers_.assign(size_t(gBlockW_) * size_t((gH_ + 7) / 8), 0);
     gNext_.assign(units_.size(), -1);
     TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
@@ -6097,19 +6101,12 @@ void World::rebuildGrid() {
         if (gHead_[size_t(c)]<0) gTouched_.push_back(size_t(c));
         gNext_[i] = gHead_[size_t(c)];
         gHead_[size_t(c)] = int(i);
-        if (unsigned(u.player)<64) gPlayers_[size_t(c)]|=uint64_t(1)<<u.player;
+        if (unsigned(u.player)<64) {
+            gPlayers_[size_t(c)]|=uint64_t(1)<<u.player;
+            gBlockPlayers_[size_t(cz>>3)*size_t(gBlockW_)+size_t(cx>>3)]|=uint64_t(1)<<u.player;
+        }
         else gPlayersValid_=false; // unrepresentable owners require the full traversal
     }
-#ifndef NDEBUG
-    if (probe::kStats) {
-        gBlockWProbe_ = (gW_ + 7) / 8;
-        gBlockPlayersProbe_.assign(size_t(gBlockWProbe_) * size_t((gH_ + 7) / 8), 0);
-        if (gPlayersValid_)
-            for (size_t cell : gTouched_)
-                gBlockPlayersProbe_[size_t((int(cell) / gW_) >> 3) * size_t(gBlockWProbe_) + size_t((int(cell) % gW_) >> 3)] |=
-                    gPlayers_[cell];
-    }
-#endif
 }
 
 #ifndef NDEBUG
@@ -6119,7 +6116,7 @@ void World::probeNear(float x, float z, float radius, uint64_t players, bool dis
     const int r = int(radius / gCell_) + 1;
     const int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
     const float reach = (radius + 2.0f) * (radius + 2.0f);
-    const bool blocks = gPlayersValid_ && gBlockWProbe_ > 0 && !gBlockPlayersProbe_.empty();
+    const bool blocks = gPlayersValid_ && gBlockW_ > 0 && !gBlockPlayers_.empty();
     for (int dz = -r; dz <= r; ++dz) {
         const int gz = cz + dz;
         if (gz < 0 || gz >= gH_) continue;
@@ -6127,25 +6124,38 @@ void World::probeNear(float x, float z, float radius, uint64_t players, bool dis
         for (int dx = -r; dx <= r; ++dx) {
             const int gx = cx + dx;
             if (gx < 0 || gx >= gW_) continue;
+            const int b = (gz >> 3) * gBlockW_ + (gx >> 3);
             if (disk) {
                 const float x0 = gOx_ + float(gx) * gCell_, z0 = gOz_ + float(gz) * gCell_;
                 const float ex = std::max({x0 - x, 0.0f, x - (x0 + gCell_)});
                 const float ez = std::max({z0 - z, 0.0f, z - (z0 + gCell_)});
-                if (ex * ex + ez * ez > reach) ++c.nearCellsOutsideDisk;
+                if (ex * ex + ez * ez > reach) {
+                    ++c.nearCellsOutsideDisk;
+                    if (!blocks || (gBlockPlayers_[size_t(b)] & players)) ++c.nearCellsTestedOutsideDisk;
+                }
                 continue;
             }
             ++c.nearCells;
             const size_t cell = size_t(gz) * gW_ + gx;
             if (gPlayersValid_ && !(gPlayers_[cell] & players)) ++c.nearCellsMasked;
             if (!blocks) continue;
-            const int b = (gz >> 3) * gBlockWProbe_ + (gx >> 3);
-            if (!(gBlockPlayersProbe_[size_t(b)] & players)) {
+            if (!(gBlockPlayers_[size_t(b)] & players)) {
                 ++c.nearCellsBlockSkippable;
                 if (b != lastBlock) ++c.nearBlocksSkipped;   // one jump per block run in a row
                 lastBlock = b;
             }
         }
     }
+}
+
+void World::verifyNear(float x, float z, float radius, uint64_t players) const {
+    // Both walks exactly as forEachNear runs them, recording unit indices instead of calling fn.
+    std::vector<int> plain, skipped;
+    scanNear<false, false>(x, z, radius, players, [&](int i) { plain.push_back(i); });
+    scanNear<true, false>(x, z, radius, players, [&](int i) { skipped.push_back(i); });
+    if (plain != skipped)
+        throw std::runtime_error("forEachNear: the block-skipping scan visits a different unit sequence "
+                                 "than the plain scan (TAK_VERIFY_NEAR, tick " + std::to_string(tickCounter_) + ")");
 }
 
 void World::probeScriptBefore(int id, bool eligible) {
@@ -11517,7 +11527,8 @@ void World::tick(float dt) {
         int alive = 0; for (auto& u : units_) if (u.alive()) ++alive;
         std::fprintf(stderr, "SIMSTATS tick=%u units=%d vm_ticks=%llu vm_skippable=%llu vm_empty=%llu vm_debt_flushes=%llu"
                      " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
-                     " near_cells_block_skippable=%llu near_cells_outside_disk=%llu acq_scans=%llu los_calls=%llu"
+                     " near_cells_block_skippable=%llu near_cells_outside_disk=%llu near_cells_tested=%llu"
+                     " near_cells_tested_outside_disk=%llu acq_scans=%llu los_calls=%llu"
                      " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu compact_moved=%llu passes=%llu"
                      " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu"
                      "%s\n",
@@ -11525,7 +11536,8 @@ void World::tick(float dt) {
                      (unsigned long long)c.vmEmpty, (unsigned long long)c.vmDebtFlushes, (unsigned long long)c.nearScans,
                      (unsigned long long)c.nearCells, (unsigned long long)c.nearCellsMasked,
                      (unsigned long long)c.nearBlocksSkipped, (unsigned long long)c.nearCellsBlockSkippable,
-                     (unsigned long long)c.nearCellsOutsideDisk, (unsigned long long)c.acqScans,
+                     (unsigned long long)c.nearCellsOutsideDisk, (unsigned long long)c.nearCellsTested,
+                     (unsigned long long)c.nearCellsTestedOutsideDisk, (unsigned long long)c.acqScans,
                      (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
                      (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
                      (unsigned long long)c.compactMoved, (unsigned long long)c.passes,
