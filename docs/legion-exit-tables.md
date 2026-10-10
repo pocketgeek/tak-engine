@@ -12,6 +12,81 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W8 exit (2026-10-10): the passage gate -- instruments, nearObstacle memo, MV-10 (protocol 247)
+
+Head: `task-w8-land` = `task-w8-b` `5c9b87b5` (W8 step 0 instruments `a9edd831`..`787fe029`, step 1 `61b1c8cb`, step 2 the passage gate `880135d1`,
+the pass-filter-holds instrument `b856ab29`, the measured-state note `5c9b87b5`) on `origin/main` `4fa6d497` (W7, protocol 246; main had not moved), plus the exit commits:
+protocol 247 note, user decision W8-1 in `legion_check`, docs, baselines, this table. Base = `task-w8-s0` (`787fe029`), the sim of the W7 exit
+(instruments and fixtures only). **What ships:** the passage gate (a formation member of a point part of 16+ commits to a gate point at a short passage and
+takes a two-to-three body gap abreast), the memoised `nearObstacle` clearance and the vertex probe (hash-identical, steering does not read the probe), and the
+work counters (`pivot_*`, `lane_*`, `vertex_*`, `gate_*`, `pass_filter_holds`, never hashed). **Dropped by their rules (numbers below and in the "W8 steps 4-6" section):**
+step 3 S1 corner lanes (failed the two-round stop rule), step 4 S3 wake-follow, step 5 S4 pass release, step 6 T1-D2 door tie-break. User decisions applied:
+**W8-1** (gate throughput kept; GAP fixtures judged lane swaps per file) and **W8-2** (W3-2 / W3-3 lane crossings, the W5-1 keys and C1's jagged arrivals move to W9).
+
+### Gates on the exit head
+
+| Gate | Result |
+|---|---|
+| Scenario set (`legion_check check --cumulative --require-all`, all 131 files, both modes, gate offsets, serial == workers on all 262 runs; Windows, optimized Debug, `--data` for the data-gated files) | **PASS** after licensing: 29829 keys, 0 failed, 1814 licensed, 506 ratchets left unapplied outside the moved fixtures (W4 ruling (q)), 196 floor exceptions in the run. Before licensing 128 failed keys (104 once the nine step-0 fixtures had entries) |
+| What moved | 13 of the 131 files change state, **Legion only**: `gap6`, `gap8`, `gapsweep`, `doorform`, `doorplug-124`, `mixed2`, `strait`, `strait-2x150`, `strait-3x48`, `strait-3x80`, `strait-4x24`, `gen1-route-45941`, `gen1-route-54772`. Every other Legion row and every Retail line is hash-identical to the base (`strait-2x150` and `gen1-route-45941` change hashes at some offsets only; their medians are unchanged). 574 keys moved by more than 5%: [legion-exit-w8-moves.md](legion-exit-w8-moves.md) |
+| User decision W8-1 | `tools/legion_check.py` `per_file_floor`: for `gap*` fixtures the Retail floor of `gate.X.crossings` compares legion crossings / files abreast with Retail's crossings / files (`gate.X.files_x100`, a mean under 1 read as 1); corner and head-on fixtures stay raw. Unit test `legion_baseline_reasons` `test_w8_1_gap_fixtures_judge_lane_crossings_per_file` (fails when the rule is off). Both modes read the same function (the check and the baseline retake). Result: `gap6` `gate.top.crossings` 3 vs Retail 2 now passes (1.15 vs 1.22 per file); **the other GAP keys still fail the floor** because Retail has 0 swaps (a per-file Retail value of 0 allows no swaps): `gap8` 2.13, `gap10` 1.49 vs 0.53, `gap14` 2.47, `gap20` 2.38, `gapsweep` g6 1.15, g8 2.97 per file, and `gapsweep` g10 / g14 / g20 (existing exceptions) -- all carried as exceptions citing W8-1 (below) |
+| Baseline update | nine step-0 fixtures baselined for the first time (`corner-8x30`, `doubleturn`, `gap8`, `gap10`, `gap14`, `gap20`, `mixed-spacing-04x` / `05x` / `07x`; 3002 entries, hashes included); 90 losses licensed by cause (`accepted_regressions`, pinned at the exit values: gap6 + gapsweep, doorform + doorplug-124, strait family, mixed2, gen1-route-54772; reasons by cause below), 4 declared bounds raised (`gap6` `gate.top.crossings` 0 -> 3, `gapsweep` g6 0 -> 3 and g8 0 -> 10, `doorform` `contact_own_permille` 744 -> 758), 10 offset-spread exceptions (the gate commits each member at a different tick), 62 ratchets on the 13 moved fixtures beyond the offset spread (`gap6` files 149 -> 262 and stopped 169 -> 95 permille, `gapsweep` G8 done 3785 -> 2884, `strait-3x48` reversals 90 -> 47, `doorplug-124` wall touch 41 -> 33, and the Stats counters that fell: held rechecks, detours, still units processed), 1 floor exception cleared (`doorplug-124` `side.past.t90`) |
+| Retail-floor exceptions | **173 -> 196 (+24, -1 cleared)**: W8-1-cited **6** (`gap8` / `gap10` / `gap14` / `gap20` `gate.top.crossings`, `gapsweep` `gate.g6.crossings` / `gate.g8.crossings`) + **18 first-baselined step-0 fixtures' floor failures that the W7 exit sim already had** (not caused by the gate): `gap8` / `gap10` / `gap14` / `gap20` wall touch (7), `doubleturn` wall touch / near (2), `corner-8x30` contact_other / wall touch (2), `mixed-spacing-04x` (4: g.F arrived, g.F t90, contact own / other) and `05x` (3: g.F t90, contact own / other). Existing exceptions are neither cleared nor grown, except the seven W8-2 moves (below). **This count grows beyond the W8-1 / W8-2 entries by the 18 new-fixture rows -- see "What the lead has to decide"** |
+| W8-2 | seven exceptions retagged cluster **W9**, reason cites W8-2 (W9 hard exit gates, with `w5-w9-gates.md`): `densehead` `gate.mid.crossings` (447 vs 208), `strait-2x150` `gate.strait.crossings` (22 vs 8), `corner-1x448` / `corner-8x56` `gate.top.crossings` (4 vs 0, 3 vs 2), `attackring-wall-64` `wall_touch_permille` / `wall_touch_near_permille` (58 vs 25, 112 vs 81), `ringcross` `g.M.t90` (4291 vs 3854). C1's jagged `arrived_settled` (2000x1 660/670/661 vs 694 before C1, 500x4 1312/1321/1320) is a crowdbench row, not a baseline entry: it is a W9 gate by W8-2, recorded here |
+| Cumulative combat gate | identical to the base and at or below the W0 base on all twelve keys: battle-field-2x60 max 393549 / p99 107911 / total 19.7M, 2x250 396040 / 173200 / 86.5M, 2x500 405958 / 226189 / 213.9M, battle-assault 444460 / 399516 / 211.1M (the passage gate does not act on battles) |
+| crowdbench screen (Release, seed 0, 86 rows, both modes, turn rate 2500) | **0 differences** against main's baseline: every hash and outcome key equal (the gate does not act on any screen row; the memo is hash-identical). 14 new never-hashed counters (`legion_pivot_*`, `legion_lane_*`, `legion_vertex_*`, `legion_gate_commits` / `_releases`, `legion_pass_filter_holds`) read 0 or their instrument values; baseline retaken |
+| `legion_cost` | scaling ok (ctest `legion_cost*`); no baseline retake |
+| Exact | Retail navigation golden and Legion navigation golden both **unchanged** (`navigation_determinism` passes, 24 of 24 each, serial == workers); `check-determinism.sh` OK (dcef618cd2e4d558; the aarch64 cross builds skip: no target libc); `check-detmath` OK; serial == workers on all 262 scenario runs; Retail byte-identical on all Retail scenario lines |
+| `--mpai` Inner Circle 300 s seed 1 (takserver --local, clean XDG_DATA_HOME, build-o2, three games in parallel) | Legion **b2261dc31dc84cdf** twice, Retail **b240750e5765c02b** -- **unchanged from protocols 242 - 246**: the 16-unit AI game forms no formation of 16 at a short passage, so no gate path runs; no re-record needed |
+| ctest | optimized Debug non-nightly 365 tests: 362 pass; fail: `legion_acceptance_crowdheld_legion` (W9 gate), `cobanim` (no extracted assets in the worktree), `crusades_hardening_network` (campaign-server quota timing; fails identically on `origin/main`). Release `-L quick` 309: 307 pass (the first two fail). |
+| Windows / Mac (head `f3942159`, code identical to the final head) | Windows (oden-win, build-o2, 264 tests of the touched areas: Legion, navigation, fp_contract, fixed, detmath, replay, issue selection, observer, crowdbench, protocol, net): 263 pass, the same `legion_acceptance_crowdheld_legion` (W9 gate); `--mpai` Legion **b2261dc31dc84cdf**, Retail **b240750e5765c02b**. Mac (arm64, Apple Clang): `fp_contract`, `fixed`, `detmath`, `navigation_determinism` pass; `--mpai` Legion **b2261dc31dc84cdf**, Retail **b240750e5765c02b**. The full 131-file sweep above is the Windows run |
+
+### Theme targets (Legion, gate-offset medians; Retail on the same binary)
+
+| fixture | key | step-0 base | exit | Retail |
+|---|---|---|---|---|
+| gap6 | `gate.top.files_x100` (MV-10 target >= 2.5) | 149 | **262** | 164 |
+| gap6 | `side.east.t90` (rounded the corner) / `g.A.t90` / `g.A.done` | 2266 / 3062 / 3554 | 1525 / 2395 / 3422 (done target <= 2800: **missed**) | 2195 / 3083 / 3222 |
+| gap6 | stopped permille / reversals | 172 / 13 | 95 / 8 | - |
+| gap6 | `gate.top.crossings` | 0 | 3 (per file 1.15 vs Retail 1.22: passes under W8-1) | 2 |
+| gap8 | files / `g.A.t90` / `g.A.done` / `side.east.t90` | 149 / 3062 / 3554 / 2266 (= gap6 at the base) | 328 / 2316 / 3242 / 1343 | 175 / 3085 / 3330 / 2251 |
+| gapsweep | G8 `t90` / `done`; files g6 / g8 | 3019 / 3604; 149 / 171 | 2317 / 2884; 262 / 337 | - |
+| doorplug-124 | `g.B.done` / `g.B.t90`; stopped | never / 6557; 149 | 8042 / 6038; 115 | - |
+| doorform | `g.A.done` / `g.A.t90` | 4011 / 3557 | 3827 / 3467 | - |
+| gap10 / gap14 / gap20 / uturn / doubleturn / sbend / opentangent / island / corner-* | all keys | -- | **hash-identical to the base** (the gate acts only on passages under the lane grid that end within 24 chain cells) | - |
+| mixed-spacing 0.7x / 0.5x / 0.4x | all keys | MV-12 table in "W8 step 0" | hash-identical | - |
+
+### The dropped steps, with their numbers
+
+| Step | Attempt | Measured | Verdict |
+|---|---|---|---|
+| 3 S1 corner lanes (branch `task-w8-a-s1-attempt` `39375d0e`, behind `TAK_LEGION_S1`) | reactive lanes latched at the visible vertex, lane number from same-way bodies, arc round V, K-1-k re-map, outward bumps | round 0 (spec): `uturn` done 2837 -> 3062, reversals 7 -> 13, files 4.62 -> 3.56; `doubleturn` done 3017 -> 3872, files 4.51 -> 2.51; `corner-4x50` stop-go +48%; lane work 7-10x pivot work. Round 1 (latch on a blocked step): `uturn` done never, reversals 7 -> 22; `doubleturn` stopped 55 -> 104 permille. Round 2: `uturn` done 3242 (cap 2979), reversals 13 (cap 9), files 3.19 (>= 4.42); `doubleturn` done never; `corner-4x50` stopped 249 (<= 221); `sbend` done 4232 -> 3647; lane work 4.2-6.4x pivot work (cap 1.5x) | abandoned by the two-round stop rule (decision 6); the pinwheel stays. Graft attempt (`task-w8-b-graft-attempt`): `sbend` turn-2 swaps 207 -> 11 permille but corner-1x448 / 8x56 top crossings unchanged at 4 / 3 and 252 sweep FAIL lines |
+| 4 S3 wake-follow (`task-w8-b-s3-attempt`) | follow scan also after a hold; a moving same-way leader caps the waking body's speed | mixed 0.5x / 0.4x / 0.7x hash-identical; screen: 24 band failures (jagged 500x4 arrived 1320 -> 1297, ...) | dropped; the wake-follow failure is slow-body pacing (MV-08), W9 note |
+| 5 S4 pass release | back-step across the pass lane after 6 held updates when `passAhead` finds no oncoming body | opposingcolumns pass-filter holds 500x4 -4..-18% (target -60%); spin 500x4 median 1390 -> 1878 (+35%), 2000x1 1000 -> 2175 (+117%) | dropped (spin > x1.10); MV-16 closed as an intended trade; the counter stays |
+| 6 T1-D2 door tie-break | strip step beats an equally steep cross step; on-lane fallback keeps the lateral offset | decisions changed: 0 of 29814 strip descents and 0 of 303 fallbacks; doors 1000x1 crossed 458/450/468 (target >= 500) | dropped (no effect) |
+
+### Licences by cause
+
+(1) **Passage gate on the GAP fixtures (`gap6`, `gapsweep`; 90 licences in all, 3 bounds)**: gaps are taken two or three abreast (gap6 files 1.49 -> 2.62, rounded90 2266 -> 1525,
+t90 3062 -> 2395, stopped 172 -> 95 permille; gap8 t90 3062 -> 2316), user decision W8-1. Cost: lane swaps after the gap (gap6 `gate.top.crossings` 0 -> 3, gapsweep g8 0 -> 10),
+slides 970 -> 1187, line sweeps +10%, trace cells +12%, one or two cells more completion distance.
+(2) **Doors (`doorform`, `doorplug-124`)**: abreast through the door (doorplug-124 g.B never -> 8042, files 2.50 -> 3.17); `gate.door.crossings` 0 -> 8, `doorform` reversals 3 -> 8,
+contact_own 742 -> 758 (bound raised), pass scan cells 9792 -> 15663 and 130344 -> 158616.
+(3) **Strait family**: members commit to short passages that end within 24 cells; outcome keys in band or better (strait-3x48 reversals 90 -> 47, strait-3x80 files 2.16 -> 2.96), counters of the extra
+corrections +1 to +2 (strait-4x24 detours 27 -> 29, held rechecks 42 -> 141, strait-3x80 pass scan cells +2%).
+(4) **mixed2**: flyers escorting the ground group wait for the wider front (`g.F.hover_max` 65 -> 99), slot search cells 20244 -> 22288.
+(5) **gen1-route-54772**: one more body ends outside its destination disc (`complete_outside_radius` 0 -> 1, `left_behind` 1 -> 2) while the group arrives 54 of 55 (g_zongob done 9947 -> 9272, g_zonter done 9318 -> 9633); flagged for W9.
+
+### What the lead has to decide
+
+1. **W8-1 reads Retail's 0 as "no swaps allowed".** The per-file rule clears only `gap6` (and brings `gap10` to 1.49 against Retail 0.53 per file). Retail single-files most GAP fixtures with 0 swaps (gap6 has 2, gap10 1-3), so a nonzero per-file legion value
+   (1.1 - 3.0 swaps per file abreast; 3.3 - 5.9 at the stacked `gapsweep` g20 / g14 / g10) fails the x1.1 floor and is carried as W8-1 exceptions (6 new, 3 existing reworded). If the intent was "per-file value within a tolerance of one swap per file" the floor needs a declared
+   allowance (not invented here); otherwise these 6 exceptions stay until W9.
+2. **18 new exceptions from the step-0 fixtures** (wall touch and contact rows of `gap8/10/14/20`, `doubleturn`, `corner-8x30`, `mixed-spacing-04x/05x`): the W7 exit sim already failed them; they could not be baselined without
+   exceptions. They exceed the rule "no growth except W8-1 / W8-2 entries"; MV-02 / MV-12 / MV-13 own them.
+3. **Missed MV-10 targets**: `gap6` done 3422 against <= 2800 (t90 2395, files 2.62 pass). `gen1-route-54772` ends one more body outside its disc.
+4. **Work counters over x1.10 where the gate acts** (doorform pass scan cells x1.6, doorplug-124 x1.5, strait-3x80 pass scan cells +28% over the reference): licensed, not fixed.
+
 ## W8 steps 4-6 (2026-10-10, task w8-b): S3, S4 and T1-D2 dropped by their rules; the exit obligations not met (no sim change)
 
 Base: task-w8-a 880135d1 (W8 step 2, the passage gate; S1 / step 3 was abandoned by its stop rule on `task-w8-a-s1-attempt`). Kept: one
