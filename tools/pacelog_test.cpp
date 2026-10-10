@@ -3,6 +3,7 @@
 // same histogram, the burst and its tick, and count the zero-tick and double-nominal frames.
 #include "client/pacelog.h"
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -41,6 +42,32 @@ int main() {
     check(text.find("max_burst=93@") != std::string::npos && text.find("zero_tick=1") != std::string::npos &&
           text.find("hist={0:1, 11:10, 12:100, 13:5, 93:1}") != std::string::npos, "the summary line carries them");
     check(on.summarize(10).frames == 107, "frames before the skip point are ignored");
+    // PRESENT (WE E3.2): the displayed-time CV, freeze share and over-1.3x frames; gate and paused frames are
+    // left out, a snap is counted but not judged as an over-step.
+    tak::PaceLog pr;
+    pr.open("1");
+    auto present = [&](double dtd, double nominal, bool freeze = false, bool gate = false, bool snap = false) {
+        tak::PaceLog::Frame fr;
+        fr.wallMs = 4.17; fr.dtd = dtd; fr.nominal = nominal; fr.freeze = freeze; fr.gate = gate; fr.snap = snap;
+        fr.lagTarget = 2;
+        pr.frame(fr);
+    };
+    for (int i = 0; i < 5; ++i) present(0, 1, false, true);   // start gate: ignored
+    for (int i = 0; i < 96; ++i) present(1.0, 1.0);
+    present(2.0, 1.0);                       // one frame that jumped 2x
+    present(0.0, 1.0, true);                 // one freeze
+    present(6.0, 1.0, false, false, true);   // one snap
+    present(0.0, 0.0);                       // paused: ignored
+    const auto p = pr.present();
+    check(p.frames == 99, "gate and paused frames are left out (99 judged)");
+    check(p.freeze == 1 && p.over13 == 1 && p.snaps == 1, "one freeze, one over 1.3x, one snap");
+    check(p.maxRatio == 2.0, "the snap is not the max ratio");
+    check(p.cv > 0.4 && p.cv < 0.6, "the CV reflects the jump, freeze and snap");
+    check(tak::PaceLog::format(p).find("freeze=1 (1.01%)") != std::string::npos, "the PRESENT line carries the freeze share");
+    tak::PaceLog smooth;
+    smooth.open("1");
+    for (int i = 0; i < 100; ++i) { tak::PaceLog::Frame fr; fr.dtd = i % 2 ? 1.02 : 0.98; fr.nominal = 1; smooth.frame(fr); }
+    check(std::abs(smooth.present().cv - 0.02) < 1e-6, "a +-2% alternation is a 2% CV");
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::printf("pacelog_test: all passed\n");
     return 0;

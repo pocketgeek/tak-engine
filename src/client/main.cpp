@@ -1345,6 +1345,11 @@ int main(int argc, char** argv) {
         // interactive IN-04 run drew about 20 frames/s). tools/pace_check.sh sets it with TAK_PACELOG.
         const int frameMs = tak::devEnv("TAK_FRAME_MS") ? std::clamp(std::atoi(tak::devEnv("TAK_FRAME_MS")), 1, 200)
                                                          : (bench ? 16 : 2);
+        // TAK_VSYNC_HZ=N: a fake vsync instead -- each iteration ends on an N Hz deadline (the same
+        // deadline pacer the interactive client falls back to), so 240/144/60 Hz frame cadences can be
+        // measured headless (the TAK_PACELOG PRESENT line). It overrides TAK_FRAME_MS.
+        const int vsyncHz = tak::devEnv("TAK_VSYNC_HZ") ? std::clamp(std::atoi(tak::devEnv("TAK_VSYNC_HZ")), 1, 1000) : 0;
+        tak::PresentationPacer vsyncPacer;
         while (true) {
             // Pin the snapshot for the iteration (mirrors the interactive render loop), so
             // cosmeticStep's front() reads can't tear against the worker under TAK_SIM_THREAD.
@@ -1367,7 +1372,8 @@ int main(int argc, char** argv) {
             }
             if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
             if (int(gameView->netTick()) >= limitTicks) break;
-            SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
+            if (vsyncHz) vsyncPacer.paceAtRefresh(vsyncHz);
+            else SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
         }
         // Flush + join the worker so the final world hash reflects every pushed tick (no read
         // race against a still-running worker). No-op when inline.

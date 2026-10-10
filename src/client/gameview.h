@@ -2195,6 +2195,8 @@ public:
     bool paceInit_ = false;
     uint32_t paceLastTick_ = 0;
     uint64_t paceLastMs_ = 0;
+    uint64_t paceLastCounter_ = 0;   // performance counter at the previous record (presentation columns)
+    double paceLastTd_ = -1;         // display time at the previous record
     // TAK_PACELOG worker columns: ns accumulated by whichever thread runs the sim (the worker,
     // or the main thread inline), read as per-frame deltas by the main thread. Lock waits are
     // the render thread's own (canPlaceLocked / clearableAt, the per-frame placement checks).
