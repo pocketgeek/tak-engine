@@ -12,6 +12,116 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W8 step 0 (2026-10-10): instruments, fixtures and the base for lanes (no sim change, protocol 246)
+
+Base head 4fa6d497 (W7 landed, protocol 246). Every number is measured on it with the step-0 instruments (optimized Debug, `legion_scenario`,
+serial, medians over the offsets 0, +1, -1, +2, -2 unless noted; `[...]` in the source files lists the per-offset values). **Hash-identical:**
+`tools/legion_identity.sh --quick` base 4fa6d497 vs candidate 053d1dd1 -- 188 rows SAME (replays L-bench / R-bench final and 61 / 62 checkpoints, both navigation goldens,
+`--mpai` Legion 4d8c06c9747f5a66 and Retail 56cfcbf8ef57181e at 60 s, check-determinism golden dcef618cd2e4d558, the 12 quick crowdbench rows, every existing ctest); the 9
+FAIL rows are the 8 new scenario tests ("missing in one build") and `legion_acceptance_crowdheld_legion`, which fails in both builds (W5/W9 hard gate). Windows
+(oden-win, build-o2, 14 tests: the new scenario tests, sbend, uturn, issue_selection_test, observer_neutral): 14 of 14 passed.
+
+What was added (plan W8 step 0 list):
+
+| Plan item | Where |
+|---|---|
+| doubleturn / utop | `tools/scenarios/doubleturn.scn` (one fixture: 48 bodies round a 45-cell block top, two same-way 90 degree turns) |
+| opentangent, island | existing `opentangent.scn`, `island-1x48.scn`, `island-1x150.scn`, now with `probe lanes`; their base is re-recorded below |
+| 8x30 multi-group corner | `corner-8x30.scn` (corner-8x56 with eight selections of 30; nightly) |
+| auditgaps 6/8/10/14/20 | `gap6.scn` (existing), `gap8/10/14/20.scn` one gap per world (`gapsweep.scn` stacks them and the stack does not reproduce the lone runs) |
+| mixed spacing probe | `mixed-spacing-07x/05x/04x.scn` (half the bodies slowed; observer keys `transit_*`, `g.F.stops` / `g.S.stops`) |
+| sbend swap and hug metrics (observer, 3.8) | `sbend.scn`: `lane swaps1` / `lane swaps2` (the audit's probe lines) and the new `hug sb` shape (`hug.sb.first/second/carry`) |
+| pivotWork / laneWork / laneClipped | `Stats::pivotCalls/pivotWork/pivotSweeps/laneWork/laneClipped`, never hashed; `lanes.*` under `probe lanes`; crowdbench `legion_pivot_*` / `legion_lane_*` |
+| 8x56-vs-1x448 control | `tools/legion_control.py` (both arms, ratio per count, per offset) |
+
+Counter semantics: `pivot_work` is the pinwheel's steering work (descent chain cells + wall scan + narrow tests + free-width probes + sweeps started), the base the
+S1 gate "lane work <= 1.5x base pivot work" is measured against; `lane_work` and `lane_clipped` read 0 until W8 step 3. Rows with `pivot_work` 0 must stay
+hash-identical through W8 step 3: all three mixed-spacing fixtures are such rows (pivot_work 0).
+
+### Base values (Legion; Retail on the same binary where it has a number)
+
+| Fixture | Legion | Retail |
+|---|---|---|
+| doubleturn | done 2837 (never at 2 of 5 offsets: 46 and 47 of 48 arrive), t90 2477, stopped 55 permille, stop-go 554, reversals 10, files over the top 4.51, crossings 0, pivot_work 526074 | done 3109, t90 2948, stop-go 1312, spins 1395, files 1.68 |
+| uturn (gap 0) | done 2837, rounded90 (side.east.t90) 1253, t90 2072, stop-go 398, files 4.62, crossings 13 [37,13,69,12,1], pivot_work 439081 | rounded90 2199, files 1.90, crossings 1 |
+| gap6 = gap8 (identical for 2x2 bodies) | rounded90 2266, done 3554, files 1.49, crossings 2, stopped 172 permille, pivot_work 314576 | rounded90 2195 (gap 6) / 2251 (gap 8), files 1.64 / 1.75 |
+| gap10 | rounded90 1334, done 3062, files 4.04, crossings 5, pivot_work 435126 | 2222, files 1.88, crossings 3 |
+| gap14 | rounded90 1276, done 2612, files 4.45, crossings 22, pivot_work 438363 | 2199, files 1.90, crossings 1 |
+| gap20 (= gap 0) | identical to uturn: gap 20 is as open as no second wall | |
+| sbend | done 4232, t90 3737, files1 1.36 / files2 3.04, `swaps1` (control) 19/336 = 5.4%, `swaps2` 49/237 = 20.7% [207,220,220,165,187 permille], hug first 42 / second 10 / carry 9, gate t2 crossings 9, stop-go 589, reversals 10, pivot_work 791510 | files1 4.05 / files2 2.01; Retail has no pairs at turn 2 (47/48 arrive) |
+| opentangent | done 4592, files over the tangent 2.06, stop-go 564, far held 14.6%, crossings 0, pivot_work 949347 | files 0 (Retail never gets 47/48 there in 4 of 5 offsets) |
+| island-1x48 (boats) | t90 2027, done 2432, lane swaps 33/985 = 34 permille, gate lane crossings 29, abreast files 2.55 (crossings 0), pivot_work 282617 | t90 4453, lane swaps 135 permille, lane crossings 110 |
+| island-1x150 | t90 2793, done 3827, gate lane crossings 219, stopped 182 permille | arrives 141/150; lane crossings 802 |
+| corner-8x30 (nine offsets) | A-C done 5.0-5.6k, D-H 7.2-8.4k (some "never" at one or two offsets), reversals 154, stop-go 9301, stopped 369 permille, gate top files 2.86, crossings 0, pivot_work 4474782 | A done 6480, B-H mostly never (arrived 16-29 of 30), spins 12413 |
+
+### Mixed-speed spacing probe (MV-12; the audit's table reproduced on the observer)
+
+| Fixture | Legion | Retail | Audit (b8a4110, legion) |
+|---|---|---|---|
+| mixed 0.7x | all 64 arrive; far held 0%; stops fast/slow 2 / 1; done 4277 | arrive 64; done 4668 | 64/64 at 5789, 96 holds |
+| mixed 0.5x | 63/64 at 6000; far held 11.6% (stopped 12.4% of all samples); stops fast / slow 2955 / 376; stop-go 6155 | fast 32/32 at 4103; slow 23/32 | 49/64 at 6000, far held 12.0%, stops 4948 / 1838 |
+| mixed 0.4x | 8/64 at 6000 (5 fast, 3 slow); far held 30.3%; stops 7075 / 539 | fast 32/32 at 3865; slow 1/32 | 0/64, far held 29.9% |
+
+W8 targets (plan 3.2): far held at 0.5x <= 6%, at 0.4x <= 15%, fast stops halved. The audit's harness issued orders one body at a time; the per-body counts differ
+(the observer counts decision samples, not unit-ticks), the held fractions agree to 0.5 point.
+
+### The 8x56-vs-1x448 control (`tools/legion_control.py`, offsets 0,+-1,+-2, medians)
+
+| Key | 8x56 (eight selections) | 1x448 (one selection) | 8x56 / 1x448 |
+|---|---|---|---|
+| arrived at 9000 (of 448) | 286 | 287 | 1.00 |
+| gate top crossings | 3 [0,5,7,0,3] | 4 [5,11,4,0,4] | 0.75 |
+| gate top files | 3.24 | 3.45 | 0.94 |
+| reversals | 307 | 307 | 1.00 |
+| stop-go | 24358 | 24883 | 0.98 |
+| stopped permille | 535 | 535 | 1.00 |
+| total Legion work | 33.1 M | 30.2 M | 1.10 |
+| pivot_work | 8.72 M | 8.88 M | 0.98 |
+
+Retail on the same pair: arrived 95 / 90, crossings 1 / 4, files 6.77 / 8.27. Under W3's one-army-per-click the two arms behave alike in Legion (the control is
+flat), so S1 must keep it flat: the stop rule's first knob (K per 64-unit part) is triggered by 8x56 turning out worse than 1x448 on arrived or reversals.
+
+### W8 "must fix" table: every lane-crossing floor exception and the W5-1 keys at the step-0 head
+
+Source: `legion_scenario <scn> --mode both --check baseline.json` on the 65 non-battle scenarios (the 11 gate offsets, small-count keys on all eleven). The W8 exit
+must bring every row of the first table within Retail x1.1 and remove its exception (W3-2, W3-3: "ALL lane crossings"); the second table has deadline W8/W9.
+
+| Scenario | Key | Legion | Retail | Cluster | Source |
+|---|---|---|---|---|---|
+| densehead | gate.mid.crossings | 447 | 208 | MV-02 | W3-2 (was 643 vs 204 at W3; W7 took it down) |
+| strait-2x150 | gate.strait.crossings | 22 | 8 | MV-02 | W3-2 (was 20 vs 11) |
+| corner-1x448 | gate.top.crossings | 4 | 0 | MV-02 | W3-3 |
+| corner-8x56 | gate.top.crossings | 3 | 2 | MV-02 | W3-3 |
+| uturn | gate.top.crossings | 11 | 0 | MV-02 | W0 floor exception |
+| wall-1x48 | gate.top.crossings | 12 | 3 | MV-02 | W0 floor exception |
+| wall-4x50 | gate.top.crossings | 33 | 2 | MV-02 | W0 floor exception |
+| wall-4x50 | gate.strip.crossings (report-only pw.py count) | 8 | 3 | MV-02 | W0 floor exception |
+| slowturn | gate.topW1000.crossings | 24 | 0 | MV-02 | W0 floor exception |
+| slowturn | gate.topW400.crossings | 15 | 1 | MV-02 | W0 floor exception |
+| gapsweep (stacked) | gate.g10.crossings | 23 | 0 | MV-02 | W0 floor exception |
+| gapsweep (stacked) | gate.g14.crossings | 23 | 0 | MV-02 | W0 floor exception |
+| gapsweep (stacked) | gate.g20.crossings | 14 | 0 | MV-02 | W0 floor exception |
+| mixed2 | gate.mid.crossings | 35 | 0 | FL-04 | W0 floor exception (flyers in the stream, W6's cluster) |
+
+| Scenario | Key | Legion | Retail | Cluster | Source |
+|---|---|---|---|---|---|
+| attackring-wall-64 | wall_touch_permille | 58 | 25 | AR-06 | W5-1 (deadline W8/W9) |
+| attackring-wall-64 | wall_touch_near_permille | 112 | 81 | AR-06 | W5-1 |
+| ringcross | g.M.t90 | 4291 | 3854 | MV-06 | W5-1 |
+
+The whole sweep found 123 floor exceptions at this head (AR-06 55, MV-02 38, MV-12 10, MV-04 5, W9 3, MV-09 2, AR-01 2, AR-08 2, MV-14 2, AR-02 / FL-04 / MV-01 / MV-06 1 each);
+W8's own are the 38 MV-02 rows (the lane crossings above plus wall touch on corners/doors/uturn) and the MV-12 rows. The new fixtures add rows for the exit: the lone gaps
+(gap10 crossings 5 vs 3, gap14 22 vs 1, uturn 13 vs 1 at the five offsets) fail the floor on crossings as well; they have no baseline entry yet and take one at the W8 exit.
+
+### Findings while building the instruments
+
+- doubleturn is not a "never touches the pinwheel" row: `pivot_calls` 4859 at offset 0, so S1 changes it; the 10% gate (held, stop-go, done) is the guard. It also
+  strands 1-2 bodies at 2 of 5 offsets (done never at 6000): a base weakness S1 must not worsen (ruling (d): a "never" is a bug).
+- sbend turn 2 swaps 20.7% (audit 18.4%): the audit figure is not exactly reproduced because W3-W7 moved the run (done 4232 vs 3670) and the source's
+  harness read hugs from the navigator's pinwheel rank; the observer's geometric hug carry-over is 9 (audit 10).
+- The single-turn control (`swaps1`) reads 5.4% (audit 5.6%).
+- gap8 equals gap6 and gap20 equals gap0 in Legion (and the gap14 Retail row equals uturn's): the second wall only matters when it narrows the passage below the formation.
+
 ## W7 exit (2026-10-10): crossing groups take the longer route -- awareness detection and pass-behind (protocol 246)
 
 Head: `task-w7-land` = W7 steps 1-3 and 5-7 (`task-w7-b` `fb6f8612` on `task-w7-a` `aa73c084` on step 0 `7dbc218e`) with `origin/main`
