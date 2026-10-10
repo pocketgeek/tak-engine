@@ -12,6 +12,50 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W4 exit with B1 + B2 (2026-10-09): gates re-run on the combined head -- B2 fails the scenario set
+
+Head: `task-w4-exit` = the B3-only exit (`55a83ee2`) + `task-w4-b1` (merge `cfeef687`) + `task-w4-b2` (merge
+`4cb18d69`; the conflict was the NDEBUG invariant block: B1 wired `blocked_rerequests` / `demand_resumes` /
+`refresh_suppressed`, B2 wired `soft_hash_verify_ticks` and replaced the softOwnerCmds check with `verifySoft`;
+only `fields_paused` is still unbuilt) + `f445a44c` (B1's `freeDescent` read B2's removed `softCells`; now
+`softCellCount`) + `7be70dab` (protocol 242 note covers B1/B2, Legion navigation golden, docs). Lead rulings
+applied: (j) `legion_staticidle` without WILL_FAIL (passes); (k) B2's balance bound read as "per-tick max <= 10%
+of the base's 30th-tick spike", its three world-test moves licensed as "B2 stripe phase" (the world-test ctests
+pass under `TAK_LEGION_VERIFY`); (l) battle-assault `quota_peg_run_max` 47 is the base (unchanged: 47).
+**Not passed: the scenario set fails on B2** (below). The licensing that would pass it is on branch
+`task-w4-exit-b2lic` for a lead decision; this branch carries no B2 license.
+
+### Gates on the combined head
+
+| Gate | Result |
+|---|---|
+| Scenario set (`legion_check check --cumulative --require-all`, all 91 files, both modes, gate offsets; Windows, two lines re-run on Linux after a pipe interleave, equal hashes) | **FAIL: 113 keys** (16961 checked, 222 ratchets, 1183 licensed). All from B2: B1 + B3 alone (`cfeef687`) passes with 0 failed and 0 ratchets; `task-w4-b2` alone fails the same 113 (plus B3's anchor keys). 6 scenarios carry every outcome failure -- battle-field-2x60 (`g.A.arrived` 7 vs bound >= 10), 2x250, 2x500 (`g.B.arrived` 9 -> 4), battle-assault, mixed2 (`spins` 138 vs bound <= 117, `g.F.illegal_overlap_ticks` 2470 -> 5260), aware-headon (`pair.contacts` 384 -> 431, ruling (k)'s move) -- and the cumulative combat gate fails on battle-assault `work.legion_total.max` 511216 vs W0 484465. The rest are W3's tight work licenses (`still_units_processed` totals +0.1-2% over W3's pinned factors; its p99 0 -> 1-11 because the scan now runs every tick) |
+| Phase sweep (why: is it B2 or the draw?) | Base (B1 + B3, whole scan moved to tick % 30 == k) and B2 (stripe shifted by k), k = 0..9, the six scenarios, gate offsets: every outcome key's B2 phase median lies inside the base's phase range (2x60 arrived 8 vs base 8.5 [7..10]; mixed2 spins 138 vs 135 [117..172], overlap 3360 vs 3173 [1346..5265]; 2x500 B arrived 7 vs 9 [2..21]); the old bounds were the base's phase-0 draw. Total Legion work per run, phase median, B2 / base: 0.985-1.012; per-tick p99 0.98-1.015; per-tick max 1.000-1.035; battle-assault max 476843 (B2) vs 460893 (base), both below W0 484465 -- the head's 511216 is B2's worst of ten phases. Systematic B2 work moves (phase medians): battle-field-2x60 `field_work_first_slot` x1.29 and `fields_started_by_kind_2` 8 -> 15, battle-assault `field_work_refresh_moving` x1.22, aware-headon contacts x1.13 (ruling (k)). An owner-set snapshot at tick % 30 == 0 (experiment `797faee3`, never landed) changes nothing |
+| `legion_cost battle --cumulative` | run-level per-tick max / p99 / total at or below the W0 base on all four files (2x60 393639 / 90329; 2x250 419719 / 182698; 2x500 452070 / 243657; battle-assault 471347 / 402638, offset 0); one window fails x1.00: battle-field-2x60 `start` total 1767130 vs 1767129 (B2 samples one still body in the first 200 ticks) -- retaken on `task-w4-exit-b2lic`. Scaling ok (0.56 / 0.67) |
+| Field-quota peg run | unchanged from the B3 exit: battle-assault 47 (= base, ruling (l)), 2x500 9, 2x250 8, 2x60 2, refreshchurn* 21 |
+| B2 balance bound (ruling (k)) | per-tick `still_units_processed` max <= 10% of the base's 30th-tick spike on 81 of 89 Legion scenarios with still bodies (pocket-615-wall 530 -> 20, tail-wave 454 -> 16, corner-8x56 286 -> 13; Ulasem per B2: ~330 -> 25); not on 8 with one or two still bodies per residue (battle-assault 23 -> 35, battle-field-2x500 65 -> 31, 2x250 21 -> 14, 2x60 11 -> 2, split-450-pocket 31 -> 12, mazeapproach 4 -> 1, deadend-w2-n120 closed/room plain 4 -> 1 / 2 -> 1). Totals 0.90-1.02x except the battles (phase) |
+| crowdbench screen, seeds 0-2, both modes (258 rows; base on the Mac, head on Windows) | Retail rows identical. Every Legion hash moves (softHash); 127 of 129 Legion rows outcome-identical (doors, bridges, dynamicobstacle all identical); churn 2000x1 differs: s0 spin -3.3%, s1 spin +4.2% and final_at_goal 1 -> 0, s2 spin +8.8%, crossed 69 -> 65, final_at_goal 3 -> 1 (mixed sign, over 2% on s1/s2). `still_units_processed` median 0.993x, field work identical |
+| Exact | Retail navigation golden and hashes unchanged; Legion golden regenerated (24 of 24 moved, serial == workers); `check-determinism.sh` OK (dcef618cd2e4d558); `check-detmath` OK; serial == workers on all 182 scenario lines; observer_neutral and convoy verify pass |
+| softHash verify (C31) | `TAK_LEGION_VERIFY` on: Legion world tests in ctest (all pass), `--mpai` x2 and the reconnect run: no verify failure |
+| `--mpai` Inner Circle 300 s seed 1 | Legion **b2261dc31dc84cdf** (was 136218d83cbf7af8) twice on Linux (verify on), and on Windows and the Mac; Retail b240750e5765c02b everywhere |
+| Reconnect | Ulasem host + joiner + 6 AIs, verify on, joiner killed at 150 s and rejoined with `--mprejoin`: host and joiner both 99b6fee23f78ab7e at tick 9000, no DESYNCED / suspect |
+| ctest, full | optimized Debug 391 / 409, Release 378 / 396. Failing: the 15 `legion_check_*` nightly scenario checks (the scenario-set failures above), `legion_acceptance_crowdheld_legion` (W5), `cobanim` (no assets), `crusades_hardening_network` (flake). `legion_staticidle` passes |
+| Retail-floor exceptions | no floor failure in the run; 124, unchanged |
+
+Every key that moved by more than 5% against the B3-only exit (411: 191 intended, 220 incidental; no Retail key):
+[legion-exit-w4-moves.md](legion-exit-w4-moves.md).
+
+### What the lead has to decide
+
+1. Land B2 with `task-w4-exit-b2lic` (its two baseline commits: scenario licenses, bounds 10 -> 7 and 117 -> 138, three
+   spread exceptions; and the legion_cost window), reading every scenario-set move as ruling (k)'s stripe
+   phase; or hold B2 and ship B1 + B3 (that head passes every gate).
+2. The cumulative combat gate has no license path in `legion_check`: battle-assault `work.legion_total.max`
+   511216 (core-five median at the one phase the head has) vs W0 484465. B2's phase median (476843) passes;
+   the base's own range reaches 488795. A ruling is needed (read it on a phase median, raise W0 with a
+   combat-lag reason, or treat as a fail).
+3. Whether the 222 ratchets (improvements at the phase-0 draw) should be applied at all, given the phase spread.
+
 ## W4 exit (2026-10-09): demand-driven upkeep -- B3 only (protocol 242)
 
 Head: `task-w4-exit` = `task-w4-s0` (`3891dac7`) + `task-w4-b3` (`a24717a4`, merged `--no-ff`) + step 4 + this exit.
