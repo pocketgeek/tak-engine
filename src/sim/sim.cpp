@@ -11074,23 +11074,29 @@ void World::tick(float dt) {
         // Cache hints for the units ahead, in three stages so that every address
         // is computed from data an earlier stage already fetched (WE D2). Hints
         // only: the same code paths run in the same order on the same values.
-        //  - i+4: every line of the Unit. This loop reads fields spread over most
-        //    of a Unit's ~20 cache lines (type, the emitters, retailSite/
-        //    retailBuild, reloads, ...), and at 10k+ units units_ does not stay
-        //    in cache between ticks (WE E2.1b: once findTarget's candidate walks
-        //    got cheaper, their incidental warming of the neighbours' lines was
-        //    gone and the misses moved here).
+        //  - i+4: the Unit's lines 0-8 (WE D1: the hot, per-tick and warm
+        //    lines; the cold tail is read by flyers, the dead and rare events).
+        //    At 10k+ units units_ does not stay in cache between ticks (WE
+        //    E2.1b: once findTarget's candidate walks got cheaper, their
+        //    incidental warming of the neighbours' lines was gone and the
+        //    misses moved here).
         //  - i+2 (its lines arrived two iterations ago): its orders' predicate
-        //    lines (Order line 0, plus the front order's line 1) and the line
-        //    of its script VM that holds the active-thread mask.
+        //    lines (Order line 0, plus the front order's line 1), the line
+        //    of its script VM that holds the active-thread mask, and for a
+        //    flyer or a dead body the cold lines 9-11 that its update reads
+        //    (corpse state, air occupancy, flight vectors, Legion lift).
         //  - i+1: the first line of each ACTIVE script thread only (the mask
         //    fetched one iteration ago), not all sixteen.
         if (unitIndex+4<units_.size()) {
             const char* ahead=reinterpret_cast<const char*>(&units_[unitIndex+4]);
-            for (size_t at=0;at<sizeof(Unit);at+=64) __builtin_prefetch(ahead+at,0,3);
+            for (size_t at=0;at<kUnitPrefetchHot;at+=64) __builtin_prefetch(ahead+at,0,3);
         }
         if (unitIndex+2<units_.size()) {
             const Unit& next=units_[unitIndex+2];
+            if (!next.alive() || (next.type && next.type->canFly)) {
+                const char* cold=reinterpret_cast<const char*>(&next);
+                for (size_t at=kUnitPrefetchHot;at<kUnitPrefetchHot+3*64;at+=64) __builtin_prefetch(cold+at,0,3);
+            }
             if (const size_t n=next.orders.size()) {
                 const Order* o=next.orders.data();
                 __builtin_prefetch(o,0,3);

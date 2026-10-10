@@ -18,11 +18,13 @@ struct RetailWeaponAnimation {
     uint16_t damage=0; // HitByWeapon packet damage; slot carries its damage type
 };
 struct RetailWeaponAnimations {
-    std::array<RetailWeaponAnimation,9> events{};
+    // count and overflow first: World::tick clears every unit's packet each tick,
+    // and clear() then touches the first 32 bytes only (WE D1).
+    size_t count=0;
     // Commands may switch repeatedly before a simulation update. Keep the
     // ordinary combat packet inline without dropping or overflowing that burst.
     std::vector<RetailWeaponAnimation> overflow;
-    size_t count=0;
+    std::array<RetailWeaponAnimation,9> events{};
     const RetailWeaponAnimation& at(size_t i) const {
         return i<events.size() ? events.at(i) : overflow.at(i-events.size());
     }

@@ -739,7 +739,20 @@ static_assert(sizeof(Order) == 320, "Order is five cache lines (the cold tail ha
 #pragma GCC diagnostic pop
 #endif
 
-struct Unit {
+// Laid out by cache line (WE D1), alignas(64), with offset static_asserts after
+// the struct (TAK_UNIT_LINE): a new field has to name its line.
+// - line 0: what a neighbour probe reads (forEachNear callbacks, rebuildGrid/
+//   rebuildOccupancy, the economy and live-count passes, unit(id) probes):
+//   identity, position, liveness, hp, speed, heading and the hot flag bytes.
+// - lines 1-3: per-tick mutable state of the unit itself (incapacitation timers,
+//   the presence of the rarely engaged construction/landing payloads -- each a
+//   HeapOptional, one pointer -- the order and build queues, the builder ids,
+//   reloads, fire bookkeeping, route stamps); line 4 the per-tick weapon
+//   animation clear (line 5 holds the rest of the animation packet).
+// - line 6: the mover's own state and what exploration reads.
+// - after that: warm per-unit state, then the cold tail (display-only and
+//   rarely set blobs).
+struct alignas(64) Unit {
     int id = 0;
     int player = 0;
     // Keep broad-phase eligibility and position together for nearby-unit scans.
@@ -747,73 +760,6 @@ struct Unit {
     Fixed x, z;   // FIXED-POINT: 16.16, 65536/px. See fixed.h.
     int32_t deadFor = -1;  // >= 0 once dead; counts up for death animation
     int inTransport = 0;   // id of carrying transport, 0 = none
-    uint8_t flightGroundMode=1; // retail unit +130 low bits: 1 landed, 2 airborne
-    RetailAirOccupant airOccupant; // secondary occupancy list/origin (+0x117..+0x128)
-    bool underConstruction = false;
-    uint32_t missionEvents = 0;
-    RetailMissionState standbyState;
-    bool standbyActive = false;
-    bool standbyAllowed = true; // partial replay can disable unsupported idle handlers
-    bool guardNoMoveAllowed = true, guardNoMoveActive = false;
-    RetailMissionState guardNoMoveState;
-    // BINARY ANGLE, 65536 == 360 degrees, 0 = +z. Retail's navigator +0x7e
-    // differs by a half turn; retailmotion.h converts at observation boundaries.
-    // Wrapping is a mask, two angles added
-    // cannot drift, and there is no rounding for two libms to disagree about.
-    Bam heading;
-    uint16_t variationPhase=0; // original per-unit random phase at +82
-    // The tick's REQUESTED turn (want - heading, unclamped BAM), display only --
-    // never hashed. Retail's TurnDirection callin (icd 0x4d9550) converts the
-    // requested arg, NOT the clamped rotation applied to heading, so the client
-    // animation needs this rather than a heading-delta (which would truncate to
-    // zero for slow turners). Reset each tick; set where the mover turns.
-    int32_t turnReqBam = 0;
-    // GET 33 reads the mover's signed applied turn from its previous update.
-    // COB runs before this tick's mover, so publish the completed turn at tick end.
-    int16_t animationTurnBam = 0;
-    // Scratch captured at tick start; intentionally excluded from lockstep state.
-    uint16_t tickStartHeadingBam = 0;
-    // FIXED-POINT px/s. Retail's is too: its occupancy test compares two units' speeds
-    // with an integer cmp/jl (0x4db79e), and the scaling either side runs through a
-    // 64-bit shift-by-16 helper (0x5d3dc0) -- a 16.16 multiply, the same operation as
-    // Fixed::operator*. Speed feeds the step length, so leaving it float would have kept
-    // a float multiply in the middle of an otherwise integer displacement.
-    Fixed speed;
-    Fixed baseSpeed;   // entity +0x12b: individual speed before terrain modifiers
-    Fixed flightY;     // absolute simulation height, not a render animation
-    Fixed groundY;
-    RetailSightFootprint sightFootprint;
-    uint16_t groundPitch=0,groundRoll=0;
-    uint8_t groundSpeedMode=0; // mover +36 bits 8..10
-    uint32_t groundMoveTick=0; // mover +2c: last proposed position/mode change
-    RetailFlightVector flightVelocity;
-    std::array<int32_t,3> flightAcceleration{}; // retained native banking input
-    RetailFlightNavigation flightNavigation;
-    // A native flight-point controller belongs to the mover and can outlive
-    // the mission that installed it (VTOL_UNLOAD's post-transfer step-out).
-    std::optional<RetailFlightGoal> retainedFlightGoal;
-    bool retainedFlightControllerActive=false;
-    int flightSectorX=0,flightSectorZ=0; // center sector at the last footprint relocation
-    uint32_t scriptOccupancy=0; // last setSFXoccupy notification (unit +100)
-    uint32_t flightBeginCallbackSerial=0; // display-only BeginFlight call-in edge
-    uint32_t flightLandingCallbackSerial=0; // display-only edge; excluded from lockstep hash
-    std::optional<RetailLandingState> landing;
-    // Legion (deliberate, not retail): an idle landed flyer lifted to let an
-    // allied ground group pass under it (World::requestLegionLift). It hovers
-    // over the spot it left until no group has asked for `legionLiftQuiet`
-    // ticks, then lands again through the retail landing mission. Hashed.
-    bool legionLift=false;
-    uint32_t legionLiftUntil=0;
-    uint32_t legionLiftRest=0;   // after landing again, no new lift before this tick
-    Fixed legionLiftX,legionLiftZ;
-    // W6 FL-01: the tick this lift episode began (hashed with legionLift).
-    // An episode is capped at kLegionLiftCap ticks: after that only a member
-    // whose next planned cells the flyer covers keeps it up, and once it has
-    // landed it rests kLegionLiftCapRest ticks.
-    uint32_t legionLiftSince=0;
-    // Observation only (never hashed, never read by a decision): the tick the
-    // flyer handed its last episode over to landing (the relift counter).
-    uint32_t legionLiftEnded=0;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //
     // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
@@ -827,19 +773,140 @@ struct Unit {
     // which wrap to 3392 and -13824). Converting it broke production outright. Doing
     // mana in fixed point needs a 64-bit Fixed, which is a separate job.
     Fixed hp = Fixed::fromInt(100);
-    // TICKS, not seconds -- retail stores a reload as an integer count and only
-    // multiplies by 1/30 to PRINT it. Confirmed by emulating the display path
-    // (0x4fbfb2: mov 0x9c(%esi),%cx; fildl; fmull 0x5f25d8 where 0x5f25d8 == 1/30):
-    // a planted 90 renders as "3.000000" seconds. See docs/retail-engine.md.
-    std::array<tak::RetailAimState,3> weaponAim{{{0,0,0},{0,0,1},{0,0,2}}};
-    std::array<std::array<int32_t,3>,3> weaponMuzzlePoints{}; // display-only captured QueryWeapon geometry
-    std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
-    int32_t reloads[3] = {0, 0, 0};  // per weapon slot, in ticks
+    // FIXED-POINT px/s. Retail's is too: its occupancy test compares two units' speeds
+    // with an integer cmp/jl (0x4db79e), and the scaling either side runs through a
+    // 64-bit shift-by-16 helper (0x5d3dc0) -- a 16.16 multiply, the same operation as
+    // Fixed::operator*. Speed feeds the step length, so leaving it float would have kept
+    // a float multiply in the middle of an otherwise integer displacement.
+    Fixed speed;
+    // BINARY ANGLE, 65536 == 360 degrees, 0 = +z. Retail's navigator +0x7e
+    // differs by a half turn; retailmotion.h converts at observation boundaries.
+    // Wrapping is a mask, two angles added
+    // cannot drift, and there is no rounding for two libms to disagree about.
+    Bam heading;
     int   weaponSlot = 0;          // active weapon (0=primary); player-selectable
+    bool underConstruction = false;
+    bool  cloaked = false; // currently invisible to enemies
+    bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
+    int8_t squad = 0;      // control squad: 0=none, +N=group N, -N=formation N (N=1..10,
+                           // the digit 0 key = 10). A unit is in exactly one squad. A
+                           // formation (squad<0) moves at its slowest member's speed and
+                           // its stragglers rejoin. Set via Cmd::SetSquad; folded in the hash.
+    uint8_t flightGroundMode=1; // retail unit +130 low bits: 1 landed, 2 airborne
+    bool legionLift=false; // see the lift block below
+    bool legionStill = false; // see legionStillTicks below
+    // Retail keeps TWO independent standing orders, and the single "stance" the
+    // HUD shows is only a front-end that writes both (icd setter 0x5198a0):
+    //   Offensive -> move 1, fire 2      Defensive -> move 0, fire 2
+    //   Passive   -> move 0, fire 0
+    // moveState: 0 = never leave position to engage, 1 = engage within
+    // maneuverleashlength of where the unit was posted, 2 = engage with no limit.
+    //   NOTE 2 is unreachable from the stance buttons, exactly as in retail -- it
+    //   is the spawn default for a type that sets no standingunitorder, and
+    //   touching the buttons trades it away for good.
+    // fireState: 0 = hold fire (no auto-acquire, no retaliation -- an explicit
+    //   attack order still works), 1 = return fire (never self-acquires, but
+    //   shoots what it is handed and does hit back), 2 = fire at will.
+    uint8_t standingOrder = 3; // 0 passive, 1 defensive, 2 offensive, 3 individual defaults
+    uint8_t moveState = 2;
+    uint8_t fireState = 2;
+    bool  active = true;   // onoffable units: false = powered down
+    bool standbyActive = false; // see standbyState below
+    bool guardNoMoveActive = false; // see guardNoMoveState below
+    bool constructionHolding = false; // recomputed each tick before movement; not persistent state
+    bool  justFired = false;   // set for one tick when the weapon fires
     // True until the player picks a weapon with Ctrl+W. While set, the sim chooses
     // the best usable weapon per target the way retail's fire-at-will scan does;
     // once the player has chosen, their pick is obeyed.
     bool  weaponAuto = true;
+    HeapOptional<RetailConstructionSite> retailSite;
+    HeapOptional<RetailConstructionJob> retailBuild;
+    HeapOptional<RetailConstructionEmitter> constructionEmitter;
+    // Ordinary visual effects run on sim ticks but never affect gameplay/hash.
+    HeapOptional<RetailConstructionEmitter> cosmeticConstructionEmitter;
+    // The landing mission (see the lift and flight blocks below).
+    HeapOptional<RetailLandingState> landing;
+    // TICKS, all four -- see the note on `reloads`. Retail counts a timer in
+    // 30Hz ticks and scales by 1/30 only to display it (tools/re/emufields.py).
+    int32_t frozenFor = 0;   // >0 = frozen solid (can't act); counts down
+    int32_t stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
+    int32_t paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
+    int32_t selfDestructT = -1;// >=0 = self-destruct countdown (ticks) armed; -1 = not
+    // The tick's REQUESTED turn (want - heading, unclamped BAM), display only --
+    // never hashed. Retail's TurnDirection callin (icd 0x4d9550) converts the
+    // requested arg, NOT the clamped rotation applied to heading, so the client
+    // animation needs this rather than a heading-delta (which would truncate to
+    // zero for slow turners). Reset each tick; set where the mover turns.
+    int32_t turnReqBam = 0;
+    // GET 33 reads the mover's signed applied turn from its previous update.
+    // COB runs before this tick's mover, so publish the completed turn at tick end.
+    int16_t animationTurnBam = 0;
+    // Scratch captured at tick start; intentionally excluded from lockstep state.
+    uint16_t tickStartHeadingBam = 0;
+    // These queues hold at most a handful of entries and are edited only on order
+    // completion (not in a hot inner loop), so std::vector -- which allocates NOTHING
+    // when empty, unlike std::deque's eager ~576-byte control block -- is both the
+    // memory-lean and the faster choice; front-pops become erase(begin()). Element
+    // order (all that stateHash folds in) is preserved, so lockstep is byte-identical.
+    std::vector<Order> orders;
+    // Production (buildings with a build tree).
+    std::vector<const UnitType*> buildQueue;
+    const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle
+    int buildSiteId = 0;   // builder: id of the building it is constructing
+    int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
+    int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
+    int productionSiteId = 0; // attached unfinished factory output
+    // PLAIN TICKS, and deliberately not 16.16.
+    //
+    // Retail's build routine computes buildtime / (workertime/30) * 65536 and stores
+    // an integer (0x406d11..0x406d2a, emulated), which reads as a fixed-point tick
+    // count -- and this field was that. It overflows. The shipped VERMAGE has
+    // buildtime 100000 against a workertime of 10, i.e. 300,000 ticks, and 300000 <<
+    // 16 does not fit an int32: `total` came out NEGATIVE, `buildProgress < total`
+    // was false on the first tick, and the most expensive unit in the game finished
+    // instantly and free because the mana branch never ran. ZONHURT/ZONHUNT/TARNECRO
+    // at buildtime 22500 wrapped to about a 34th of their real cost.
+    //
+    // Nothing is lost by dropping the fraction: progress advances by exactly one tick
+    // per tick, so there is no partial tick to keep. It does mean my reading of that
+    // retail routine is incomplete -- whatever it stores at +0x52, it cannot be a
+    // 16.16 count of a 300,000-tick build either.
+    int32_t buildProgress = 0;
+    int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
+    int conjureHoverTarget = 0;
+    // TICKS, not seconds -- retail stores a reload as an integer count and only
+    // multiplies by 1/30 to PRINT it. Confirmed by emulating the display path
+    // (0x4fbfb2: mov 0x9c(%esi),%cx; fildl; fmull 0x5f25d8 where 0x5f25d8 == 1/30):
+    // a planted 90 renders as "3.000000" seconds. See docs/retail-engine.md.
+    int32_t reloads[3] = {0, 0, 0};  // per weapon slot, in ticks
+    uint32_t firedWeapons = 0; // display event mask; each bit identifies an actual shot
+    uint32_t fireAnimations = 0; // callback delivery, before script-triggered projectile creation
+    Fixed homeX = Fixed(), homeZ = Fixed();   // leash anchor (idle position) for auto-chase
+    // The tick the navigator admitted its last search (-1 = none) plus the search's
+    // outcome flags -- retail's navigator stamp (+0x110) and outcome bits (+0x134
+    // bits 0/1; bits 2|3 = failed). The cadence ladder in the mover reads these
+    // EVERY FRAME, rolls fresh dice, and re-requests when the elapsed time beats
+    // them; nothing stores a deadline. Stamps and outcomes are hashed.
+    int32_t routeStamp = -1;
+    bool routeCrowded = false;   // bit 0: same-way traffic within goal tolerance
+    bool routeTraffic = false;   // bit 1: same-way traffic elsewhere on the route
+    bool routeFailed = false;    // original outcome bit 2: partial route
+    bool routeDetour = false;    // bit 3: reconstruction exceeded Manhattan distance
+    uint16_t groundTerrainFlags = 0; // mover +36 bits 11/12, refreshed by the mover
+    uint8_t groundMovementMode = 0; // retail mover +36 bits 5..7; mode transitions remain partial
+    uint8_t groundSpeedMode=0; // mover +36 bits 8..10
+    int scriptAimTarget = 0;
+    std::vector<tak::RetailWeaponAnimation> pendingWeaponAnimations; // command callbacks for next display tick
+    tak::RetailWeaponAnimations weaponAnimations;
+    // Line 6: the mover's own state and what exploration reads (flightY/groundY,
+    // sightFootprint), so updateNavigationExploration touches lines 0 and 6.
+    Fixed flightY;     // absolute simulation height, not a render animation
+    Fixed groundY;
+    RetailSightFootprint sightFootprint;
+    Fixed baseSpeed;   // entity +0x12b: individual speed before terrain modifiers
+    uint32_t groundMoveTick=0; // mover +2c: last proposed position/mode change
+    uint32_t groundScanTick = 0;    // mover +30: next local navigation scan
+    uint32_t groundGradeTick = 0;   // mover +28: last occupancy-grid refresh
     // TICKS and 16.16, like the rest of the sim -- these steer repaths and give-ups,
     // so they decide hashed outcomes even though they are not themselves folded in.
     int32_t repathLeft = 0; // chase steering repath countdown, in ticks
@@ -853,29 +920,54 @@ struct Unit {
     // moves again. Measured -- opposing columns fell from 32/32 arriving to 20/32, with
     // the survivors travelling an almost perfect straight line, which is the shape of a
     // rule that works beautifully for whoever wins it.
-    // The tick the navigator admitted its last search (-1 = none) plus the search's
-    // outcome flags -- retail's navigator stamp (+0x110) and outcome bits (+0x134
-    // bits 0/1; bits 2|3 = failed). The cadence ladder in the mover reads these
-    // EVERY FRAME, rolls fresh dice, and re-requests when the elapsed time beats
-    // them; nothing stores a deadline. Stamps and outcomes are hashed.
-    int32_t routeStamp = -1;
-    bool routeCrowded = false;   // bit 0: same-way traffic within goal tolerance
-    bool routeTraffic = false;   // bit 1: same-way traffic elsewhere on the route
-    bool routeFailed = false;    // original outcome bit 2: partial route
-    bool routeDetour = false;    // bit 3: reconstruction exceeded Manhattan distance
     // Consecutive refused steps, saturated at two: mover +36 sets 0x8 on
     // first refusal, then 0x4 on repetition. Caps are base/2 then base/5.
     int32_t bodyBlockStreak = 0;
+    uint16_t groundPitch=0,groundRoll=0;
     // Legion (deliberate, not retail): a ground body that makes no real
     // headway stands in its scripts (GET 29 and MoveRate report it stopped)
     // instead of walking on the spot. See World::updateLegionStill. Hashed
     // for units with a COB script, the only readers.
     uint8_t legionStillTicks = 0, legionStepTicks = 0;
-    bool legionStill = false;
-    uint16_t groundTerrainFlags = 0; // mover +36 bits 11/12, refreshed by the mover
-    uint8_t groundMovementMode = 0; // retail mover +36 bits 5..7; mode transitions remain partial
-    uint32_t groundScanTick = 0;    // mover +30: next local navigation scan
-    uint32_t groundGradeTick = 0;   // mover +28: last occupancy-grid refresh
+    uint16_t variationPhase=0; // original per-unit random phase at +82
+    // --- extended runtime state --------------------------------------------
+    // DOUBLE, like Player::mana and for the same reason: retail's pools are 64-bit
+    // floating point (the affordability check at 0x46e85f subtracts one with `fsubl`).
+    double mana = 0;       // personal mana pool (casters), capped at type->maxMana
+    uint32_t missionEvents = 0; // read by every unit's mission dispatch each tick
+    int   xp = 0;          // accumulated experience from kills
+    float scenarioArmor = 1.0f, scenarioWeapon = 1.0f; // permanent authored multipliers, separate from auras
+    int   veteran = 0;     // veteran level (0..10); scales attack/armor/reload
+    float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
+    float armBuff = 1;     // live armour multiplier from auras (decays to 1)
+    // OFF until ordered. Retail treats cloaking as a MISSION, not a spawn state:
+    // translate/unitmissions.tdf carries CLOAK and DECLOAK as separate mission
+    // codes, and the drain itself lives in the mission-handler block (icd
+    // 0x4011b0, picking cloakcostmoving over cloakcost by speed) alongside Build
+    // and SelfDestruct.
+    //
+    // Defaulting this ON quietly cost Taros its whole economy. tarnecro is the
+    // Taros MONARCH -- a starting unit -- with cancloak=1 and cloakcost=25, so it
+    // burned 25 mana/sec against an income of ~21 from the first second of every
+    // match: income 21 vs everyone else's 43, one lodestone to their four, and a
+    // treasury pinned at 0 that could never reach the ~121 needed to start
+    // another. The AI looked broken; it was solvent code starving on a drain it
+    // never asked for.
+    bool  cloakOn = false;  // canCloak units: player wants to cloak (CLOAK order)
+    int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
+                           // (leashed, the default/legacy behaviour), 2=passive
+                           // (hold fire: no auto-acquire, only fights when ordered)
+    int lastHitPlayer = -1; // score attribution captured at impact; mission script input
+    int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
+    int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
+    uint8_t reclaimEffectDelay = 0;    // worker particle cadence while actively reclaiming
+    bool workScriptWorking = false; // repair/reclaim requested StartBuilding
+    bool buildBegun = false;   // construction site: true once the builder arrived
+    Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
+    RetailMissionState standbyState;
+    bool standbyAllowed = true; // partial replay can disable unsupported idle handlers
+    bool guardNoMoveAllowed = true;
+    RetailMissionState guardNoMoveState;
     int32_t buildStuckT = 0;        // ticks a builder has approached its site with no progress
     // SQUARED px, which is why this one is NOT Fixed: 20px squared is 400, but a map
     // diagonal squared is ~1.3e8 -- far past 16.16's 32768 ceiling. Exact int instead.
@@ -907,69 +999,36 @@ struct Unit {
     int32_t reviveLeft = 0;  // ticks of channel remaining
     int32_t reviveTotal = 1; // full channel length in ticks (mana drains proportionally)
     bool corpseBlocks = false;   // installed corpse feature blocks its own footprint
-    // --- extended runtime state --------------------------------------------
-    // DOUBLE, like Player::mana and for the same reason: retail's pools are 64-bit
-    // floating point (the affordability check at 0x46e85f subtracts one with `fsubl`).
-    double mana = 0;       // personal mana pool (casters), capped at type->maxMana
-    int   xp = 0;          // accumulated experience from kills
-    float scenarioArmor = 1.0f, scenarioWeapon = 1.0f; // permanent authored multipliers, separate from auras
-    int   veteran = 0;     // veteran level (0..10); scales attack/armor/reload
-    float atkBuff = 1;     // live attack multiplier from auras (decays to 1)
-    float armBuff = 1;     // live armour multiplier from auras (decays to 1)
-    // TICKS, all four -- see the note on `reloads`. Retail counts a timer in
-    // 30Hz ticks and scales by 1/30 only to display it (tools/re/emufields.py).
-    int32_t frozenFor = 0;   // >0 = frozen solid (can't act); counts down
-    int32_t stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
-    int32_t paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
-    int32_t selfDestructT = -1;// >=0 = self-destruct countdown (ticks) armed; -1 = not
-    bool  cloaked = false; // currently invisible to enemies
-    // OFF until ordered. Retail treats cloaking as a MISSION, not a spawn state:
-    // translate/unitmissions.tdf carries CLOAK and DECLOAK as separate mission
-    // codes, and the drain itself lives in the mission-handler block (icd
-    // 0x4011b0, picking cloakcostmoving over cloakcost by speed) alongside Build
-    // and SelfDestruct.
-    //
-    // Defaulting this ON quietly cost Taros its whole economy. tarnecro is the
-    // Taros MONARCH -- a starting unit -- with cancloak=1 and cloakcost=25, so it
-    // burned 25 mana/sec against an income of ~21 from the first second of every
-    // match: income 21 vs everyone else's 43, one lodestone to their four, and a
-    // treasury pinned at 0 that could never reach the ~121 needed to start
-    // another. The AI looked broken; it was solvent code starving on a drain it
-    // never asked for.
-    bool  cloakOn = false;  // canCloak units: player wants to cloak (CLOAK order)
-    bool  active = true;   // onoffable units: false = powered down
-    // Retail keeps TWO independent standing orders, and the single "stance" the
-    // HUD shows is only a front-end that writes both (icd setter 0x5198a0):
-    //   Offensive -> move 1, fire 2      Defensive -> move 0, fire 2
-    //   Passive   -> move 0, fire 0
-    // moveState: 0 = never leave position to engage, 1 = engage within
-    // maneuverleashlength of where the unit was posted, 2 = engage with no limit.
-    //   NOTE 2 is unreachable from the stance buttons, exactly as in retail -- it
-    //   is the spawn default for a type that sets no standingunitorder, and
-    //   touching the buttons trades it away for good.
-    // fireState: 0 = hold fire (no auto-acquire, no retaliation -- an explicit
-    //   attack order still works), 1 = return fire (never self-acquires, but
-    //   shoots what it is handed and does hit back), 2 = fire at will.
-    uint8_t standingOrder = 3; // 0 passive, 1 defensive, 2 offensive, 3 individual defaults
-    uint8_t moveState = 2;
-    uint8_t fireState = 2;
-    int   stance = 1;      // combat stance: 0=offensive (chase freely), 1=defensive
-                           // (leashed, the default/legacy behaviour), 2=passive
-                           // (hold fire: no auto-acquire, only fights when ordered)
-    int8_t squad = 0;      // control squad: 0=none, +N=group N, -N=formation N (N=1..10,
-                           // the digit 0 key = 10). A unit is in exactly one squad. A
-                           // formation (squad<0) moves at its slowest member's speed and
-                           // its stragglers rejoin. Set via Cmd::SetSquad; folded in the hash.
-    int lastHitPlayer = -1; // score attribution captured at impact; mission script input
-    int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
-    int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
-    Fixed homeX = Fixed(), homeZ = Fixed();   // leash anchor (idle position) for auto-chase
-    bool  justFired = false;   // set for one tick when the weapon fires
-    tak::RetailWeaponAnimations weaponAnimations;
-    std::vector<tak::RetailWeaponAnimation> pendingWeaponAnimations; // command callbacks for next display tick
-    uint32_t fireAnimations = 0; // callback delivery, before script-triggered projectile creation
-    int scriptAimTarget = 0;
-    uint32_t firedWeapons = 0; // display event mask; each bit identifies an actual shot
+    RetailAirOccupant airOccupant; // secondary occupancy list/origin (+0x117..+0x128)
+    RetailFlightVector flightVelocity;
+    std::array<int32_t,3> flightAcceleration{}; // retained native banking input
+    RetailFlightNavigation flightNavigation;
+    // A native flight-point controller belongs to the mover and can outlive
+    // the mission that installed it (VTOL_UNLOAD's post-transfer step-out).
+    HeapOptional<RetailFlightGoal> retainedFlightGoal;
+    bool retainedFlightControllerActive=false;
+    int flightSectorX=0,flightSectorZ=0; // center sector at the last footprint relocation
+    uint32_t scriptOccupancy=0; // last setSFXoccupy notification (unit +100)
+    uint32_t flightBeginCallbackSerial=0; // display-only BeginFlight call-in edge
+    uint32_t flightLandingCallbackSerial=0; // display-only edge; excluded from lockstep hash
+    // Legion (deliberate, not retail): an idle landed flyer lifted to let an
+    // allied ground group pass under it (World::requestLegionLift). It hovers
+    // over the spot it left until no group has asked for `legionLiftQuiet`
+    // ticks, then lands again through the retail landing mission. Hashed.
+    uint32_t legionLiftUntil=0;
+    uint32_t legionLiftRest=0;   // after landing again, no new lift before this tick
+    Fixed legionLiftX,legionLiftZ;
+    // W6 FL-01: the tick this lift episode began (hashed with legionLift).
+    // An episode is capped at kLegionLiftCap ticks: after that only a member
+    // whose next planned cells the flyer covers keeps it up, and once it has
+    // landed it rests kLegionLiftCapRest ticks.
+    uint32_t legionLiftSince=0;
+    // Observation only (never hashed, never read by a decision): the tick the
+    // flyer handed its last episode over to landing (the relift counter).
+    uint32_t legionLiftEnded=0;
+    std::array<tak::RetailAimState,3> weaponAim{{{0,0,0},{0,0,1},{0,0,2}}};
+    std::array<std::array<int32_t,3>,3> weaponMuzzlePoints{}; // display-only captured QueryWeapon geometry
+    std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
     // An upgrade consumes its old building when the new site is admitted. Keep
     // its presentation independent of retired/reused unit slots.
     struct LodestoneReplacement {
@@ -978,39 +1037,18 @@ struct Unit {
         Bam heading;
         double completedWork=0; // paid work, independent of healing/damage
     };
-    std::optional<LodestoneReplacement> lodestoneReplacement;
+    HeapOptional<LodestoneReplacement> lodestoneReplacement;
     float constructionFraction() const {
         if (!underConstruction) return 1.0f;
         return std::clamp(retailSite ? 1.0f-retailSite->progress.remaining :
             lodestoneReplacement ? float(lodestoneReplacement->completedWork) : (hp.toFloat()/std::max(1,type->maxHp)-0.05f)/0.95f,0.0f,1.0f);
     }
-    std::optional<RetailConstructionSite> retailSite;
-    std::optional<RetailConstructionJob> retailBuild;
-    std::optional<RetailConstructionEmitter> constructionEmitter;
-    // Ordinary visual effects run on sim ticks but never affect gameplay/hash.
-    std::optional<RetailConstructionEmitter> cosmeticConstructionEmitter;
     uint32_t constructionVisualRandom=1;
     // Cumulative cosmetic work events (falling/rising), excluded from stateHash.
     // Counters preserve completion events when a published snapshot skips ticks.
     std::array<uint32_t,2> constructionEmissions{};
-    bool buildBegun = false;   // construction site: true once the builder arrived
-    Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
-    bool  beingBuilt = false;  // site: transient -- a builder worked it this tick
-    int buildSiteId = 0;   // builder: id of the building it is constructing
-    int conjureHoverTarget = 0;
-    std::optional<RetailFlightGoal> conjureHoverGoal;
-    bool constructionHolding = false; // recomputed each tick before movement; not persistent state
-    // These queues hold at most a handful of entries and are edited only on order
-    // completion (not in a hot inner loop), so std::vector -- which allocates NOTHING
-    // when empty, unlike std::deque's eager ~576-byte control block -- is both the
-    // memory-lean and the faster choice; front-pops become erase(begin()). Element
-    // order (all that stateHash folds in) is preserved, so lockstep is byte-identical.
-    int reclaimId = 0;                 // builder: feature being reclaimed (0 = none)
-    uint8_t reclaimEffectDelay = 0;    // worker particle cadence while actively reclaiming
-    int repairId = 0;                  // builder: damaged friendly being repaired (0 = none)
-    bool workScriptWorking = false; // repair/reclaim requested StartBuilding
+    HeapOptional<RetailFlightGoal> conjureHoverGoal;
     std::vector<int> cargo;
-    std::vector<Order> orders;
     // RALLY orders for a production building: what the units it makes should do once
     // they have walked clear of the exit. Kept OUT of `orders` on purpose -- a
     // structure must never enter the mover (it has no velocity, but the mover still
@@ -1018,27 +1056,6 @@ struct Unit {
     // a keep). Nothing reads this but tickProduction, which copies it onto each new
     // unit. Move, attack, fight-move and patrol all land here, and they queue.
     std::vector<Order> rally;
-    // Production (buildings with a build tree).
-    std::vector<const UnitType*> buildQueue;
-    // PLAIN TICKS, and deliberately not 16.16.
-    //
-    // Retail's build routine computes buildtime / (workertime/30) * 65536 and stores
-    // an integer (0x406d11..0x406d2a, emulated), which reads as a fixed-point tick
-    // count -- and this field was that. It overflows. The shipped VERMAGE has
-    // buildtime 100000 against a workertime of 10, i.e. 300,000 ticks, and 300000 <<
-    // 16 does not fit an int32: `total` came out NEGATIVE, `buildProgress < total`
-    // was false on the first tick, and the most expensive unit in the game finished
-    // instantly and free because the mana branch never ran. ZONHURT/ZONHUNT/TARNECRO
-    // at buildtime 22500 wrapped to about a 34th of their real cost.
-    //
-    // Nothing is lost by dropping the fraction: progress advances by exactly one tick
-    // per tick, so there is no partial tick to keep. It does mean my reading of that
-    // retail routine is incomplete -- whatever it stores at +0x52, it cannot be a
-    // 16.16 count of a 300,000-tick build either.
-    int32_t buildProgress = 0;
-    int productionSiteId = 0; // attached unfinished factory output
-    int justBuilt = 0;         // unit id produced this tick (viewer hook), else 0
-    const UnitType* repeatType = nullptr;   // infinite production: re-queue when idle
 
     // Retail scenario rename: cosmetic label, independent of FBI type identity.
     std::string scenarioName;
@@ -1057,6 +1074,68 @@ struct Unit {
     // attack/queued order.
     bool walking() const { return alive() && speed > Fixed::fromFloat(3.0f / 30.0f); }
 };
+// Which line each hot field sits on (WE D1); see the layout note above Unit.
+// Moving a field across a line, or growing lines 0-4 past their bytes, is a
+// compile error here.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
+#define TAK_UNIT_LINE(field, line) \
+    static_assert(offsetof(Unit, field) / 64 == (line) && \
+                  (offsetof(Unit, field) + sizeof(Unit::field) - 1) / 64 == (line), \
+                  "Unit::" #field " must sit on cache line " #line)
+TAK_UNIT_LINE(id, 0); TAK_UNIT_LINE(player, 0); TAK_UNIT_LINE(type, 0);
+TAK_UNIT_LINE(x, 0); TAK_UNIT_LINE(z, 0); TAK_UNIT_LINE(deadFor, 0); TAK_UNIT_LINE(inTransport, 0);
+TAK_UNIT_LINE(hp, 0); TAK_UNIT_LINE(speed, 0); TAK_UNIT_LINE(heading, 0); TAK_UNIT_LINE(weaponSlot, 0);
+TAK_UNIT_LINE(underConstruction, 0); TAK_UNIT_LINE(cloaked, 0); TAK_UNIT_LINE(beingBuilt, 0);
+TAK_UNIT_LINE(squad, 0); TAK_UNIT_LINE(flightGroundMode, 0); TAK_UNIT_LINE(legionLift, 0);
+TAK_UNIT_LINE(legionStill, 0); TAK_UNIT_LINE(standingOrder, 0); TAK_UNIT_LINE(moveState, 0);
+TAK_UNIT_LINE(fireState, 0); TAK_UNIT_LINE(active, 0); TAK_UNIT_LINE(standbyActive, 0);
+TAK_UNIT_LINE(guardNoMoveActive, 0); TAK_UNIT_LINE(constructionHolding, 0); TAK_UNIT_LINE(justFired, 0);
+TAK_UNIT_LINE(weaponAuto, 0);
+TAK_UNIT_LINE(retailSite, 1); TAK_UNIT_LINE(retailBuild, 1); TAK_UNIT_LINE(constructionEmitter, 1);
+TAK_UNIT_LINE(cosmeticConstructionEmitter, 1); TAK_UNIT_LINE(landing, 1);
+TAK_UNIT_LINE(frozenFor, 1); TAK_UNIT_LINE(stonedFor, 1); TAK_UNIT_LINE(paralyzedFor, 1);
+TAK_UNIT_LINE(selfDestructT, 1); TAK_UNIT_LINE(turnReqBam, 1); TAK_UNIT_LINE(animationTurnBam, 1);
+TAK_UNIT_LINE(tickStartHeadingBam, 1);
+TAK_UNIT_LINE(orders, 2); TAK_UNIT_LINE(buildQueue, 2); TAK_UNIT_LINE(repeatType, 2);
+TAK_UNIT_LINE(buildSiteId, 2); TAK_UNIT_LINE(reclaimId, 2);
+TAK_UNIT_LINE(repairId, 3); TAK_UNIT_LINE(productionSiteId, 3); TAK_UNIT_LINE(buildProgress, 3);
+TAK_UNIT_LINE(justBuilt, 3); TAK_UNIT_LINE(conjureHoverTarget, 3); TAK_UNIT_LINE(reloads, 3);
+TAK_UNIT_LINE(firedWeapons, 3); TAK_UNIT_LINE(fireAnimations, 3); TAK_UNIT_LINE(homeX, 3);
+TAK_UNIT_LINE(homeZ, 3); TAK_UNIT_LINE(routeStamp, 3); TAK_UNIT_LINE(routeCrowded, 3);
+TAK_UNIT_LINE(routeTraffic, 3); TAK_UNIT_LINE(routeFailed, 3); TAK_UNIT_LINE(routeDetour, 3);
+TAK_UNIT_LINE(groundTerrainFlags, 3); TAK_UNIT_LINE(groundMovementMode, 3);
+TAK_UNIT_LINE(groundSpeedMode, 3); TAK_UNIT_LINE(scriptAimTarget, 3);
+TAK_UNIT_LINE(pendingWeaponAnimations, 4);
+TAK_UNIT_LINE(flightY, 6); TAK_UNIT_LINE(groundY, 6); TAK_UNIT_LINE(sightFootprint, 6);
+TAK_UNIT_LINE(baseSpeed, 6); TAK_UNIT_LINE(groundMoveTick, 6); TAK_UNIT_LINE(groundScanTick, 6);
+TAK_UNIT_LINE(groundGradeTick, 6); TAK_UNIT_LINE(repathLeft, 6); TAK_UNIT_LINE(stuckFor, 6);
+TAK_UNIT_LINE(stuckX, 6); TAK_UNIT_LINE(stuckZ, 6); TAK_UNIT_LINE(bodyBlockStreak, 6);
+TAK_UNIT_LINE(groundPitch, 6); TAK_UNIT_LINE(groundRoll, 6); TAK_UNIT_LINE(legionStillTicks, 6);
+TAK_UNIT_LINE(legionStepTicks, 6); TAK_UNIT_LINE(variationPhase, 6);
+static_assert(offsetof(Unit, weaponAnimations) / 64 == 4 &&
+              (offsetof(Unit, weaponAnimations) + offsetof(tak::RetailWeaponAnimations, events) - 1) / 64 == 4,
+              "Unit::weaponAnimations' count and overflow (what the per-tick clear touches) must sit on line 4");
+// World::tick's unit loop prefetches lines 0-8 of every unit ahead and lines
+// 9-11 only for flyers and the dead: those must hold what they read.
+inline constexpr size_t kUnitPrefetchHot=9*64;
+#define TAK_UNIT_LINES(field, first, last) \
+    static_assert(offsetof(Unit, field) / 64 >= (first) && \
+                  (offsetof(Unit, field) + sizeof(Unit::field) - 1) / 64 <= (last), \
+                  "Unit::" #field " must sit on cache lines " #first "-" #last)
+TAK_UNIT_LINE(standbyState, 8); TAK_UNIT_LINE(guardNoMoveState, 8); TAK_UNIT_LINE(standbyAllowed, 8);
+TAK_UNIT_LINES(deathAnimationTicks, 8, 11); TAK_UNIT_LINES(corpseUntil, 8, 11); TAK_UNIT_LINES(corpseStatue, 8, 11);
+TAK_UNIT_LINES(corpseWork, 8, 11); TAK_UNIT_LINES(airOccupant, 9, 11); TAK_UNIT_LINES(flightVelocity, 9, 11);
+TAK_UNIT_LINES(flightAcceleration, 9, 11); TAK_UNIT_LINES(flightNavigation, 9, 11);
+TAK_UNIT_LINES(retainedFlightGoal, 9, 11); TAK_UNIT_LINES(flightSectorZ, 9, 11);
+TAK_UNIT_LINES(legionLiftUntil, 9, 11); TAK_UNIT_LINES(legionLiftEnded, 9, 11);
+#undef TAK_UNIT_LINES
+#undef TAK_UNIT_LINE
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 // A reclaimable map feature (tree, rock, house, wreckage, …). Positions and stats
 // are derived deterministically in setupMatch -- the same row-major walk runs on
