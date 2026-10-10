@@ -130,6 +130,13 @@ constexpr int kApproachRegion=256;             // origins a region needs before 
 // target has left the seeded origin by kReseedCells (Chebyshev).
 constexpr uint32_t kReseedTicks=16;
 constexpr int kReseedCells=2;
+// A reach kind's (attack, guard) held peer of the same target is settled to
+// the bodies behind it once held this many ticks (see blockedBySettled).
+constexpr uint32_t kReachPeerHeld=30;
+// The reach ring (see buildRing): members are grouped by reach in buckets of
+// this many px; the ring holds at most kRingCells spots.
+constexpr int kRingBucket=32;
+constexpr size_t kRingCells=256;
 // A production exit without headway for this many crowd windows, its
 // birthplace clear, is done (twice as many hand it over to a rally).
 constexpr uint8_t kExitWindows=1;
@@ -356,8 +363,34 @@ struct LegionNavigator::Impl {
         bool onBuilding=false,onNeedField=false,onStaleDone=false,onByBuilt=false;
         uint32_t byBuiltKey=0;
         std::array<uint64_t,2> routeKeys{};uint8_t routeCount=0;   // its routeIndex entries
+        // ---- the reach ring (AR-06 part B, PLAN 3.4) ------------------------
+        // A reach kind's group (attack, guard) is keyed by its target, the
+        // target's origin when the group was seeded (centre) and the members'
+        // reach bucket (reachPx / kRingBucket), not by an issue tick. Hashed
+        // when set (C27). reachIds: its members, ascending (derived from
+        // `members`, never hashed).
+        int reachTarget=0,reachBucket=-1,reachCentre=-1;
+        std::vector<int> reachIds;
+        // Two or more members: arrival spots round the target at weapon reach.
+        // cells: band 0 (centre distance R-1.5 .. R-0.5 bodies, in the
+        // members' static component and in line of sight of the target: the
+        // field's seeds) then the outer waiting bands, each in pseudo-angle
+        // order from the approach bearing, footprints never overlapping;
+        // owner: the member holding each (0 free). tried: built (or found
+        // without a band-0 spot: the group keeps its point seed) once.
+        struct Ring {
+            bool tried=false,assigned=false;
+            int R=0,band0=0;int64_t tx=0,tz=0,ax=0,az=0;   // px: target centre, approach axis
+            std::vector<int> cells;std::vector<uint8_t> band;std::vector<int32_t> owner;
+        } ring;
     };
-    enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5};
+    // Engaged (AR-06, PLAN 3.4): tickCombat braked this attacker in reach (or a
+    // guard within 70 px of its ward) this tick, so its move() did not run.
+    // Set by engaged() from the unit's own combat update, in the serial unit
+    // loop; move() replaces it with the state its next update reaches. An
+    // engaged body is settled and still for local steering (bodies behind
+    // walk round it), never yields or parts, and is not a soft obstacle.
+    enum State : uint8_t {None=0,Moving=1,Holding=2,Waiting=3,Arrived=4,Trapped=5,Engaged=6};
     // ---- mission goals ------------------------------------------------
     // Legion is the route provider for the goal of any supported ground
     // mission; the mission's own handler keeps its semantics (when to fire,
@@ -1122,6 +1155,13 @@ struct LegionNavigator::Impl {
         if(size_t(slot)<w.units_.size()&&w.units_[size_t(slot)].id==int(id))return &w.units_[size_t(slot)];
         return w.unit(int(id));
     }
+    // A reach member standing for its owner (AR-06): engaged, or held on its
+    // own ring spot (a waiting band). Soft to other commands only.
+    bool reachStill(const Unit& u,const Member& m) const {
+        if(m.state==Engaged)return true;
+        if(m.state!=Holding||m.slot<0||policy(m.kind).completes||!u.type)return false;
+        return footprintOrigin(u.z,u.type->footZ)*width()+footprintOrigin(u.x,u.type->footX)==m.goal;
+    }
     void scanStill() {
         if(w.occW_<=0)return;
         const size_t n=size_t(w.occW_)*w.occH_;
@@ -1138,7 +1178,7 @@ struct LegionNavigator::Impl {
             const Unit* found=bodyUnit(id);
             const Member* m=found?member(found->id):nullptr;
             if(!found||!found->alive()||found->embarked()||!found->type||(found->type->canFly&&found->flightGroundMode!=1)||
-               found->type->isStructure()||(m&&m->state!=Arrived)) {
+               found->type->isStructure()||(m&&m->state!=Arrived&&!reachStill(*found,*m))) {
                 if(id<softBodies.size()&&softBodies[id].present) {
                     unstamp(int(id));
                     softBodies[id].present=false;softBodies[id].scans=0;
@@ -1159,6 +1199,13 @@ struct LegionNavigator::Impl {
             if(isAnchor(u.id)) {
                 const auto a=anchors.find(u.id);
                 owner=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
+            }
+            // An engaged attacker (or one held on its ring spot) is soft to
+            // other commands only (a passing group plans round a firing
+            // ring, PLAN 3.4 residual risk), never to its own attack.
+            else if(m) {
+                const auto g=groups.find(m->group);
+                owner=g!=groups.end()?g->second.command:commandKey(u.player,std::get<1>(m->point));
             }
             const uint8_t kind=u.type->canFly&&w.legionLiftable(u,u.player)?3:owner!=~0ull?2:1;
             if(b.stamped&&b.ox==ox&&b.oz==oz&&b.fx==fx&&b.fz==fz&&b.kind==kind&&b.owner==owner&&b.player==u.player)continue;
@@ -1310,6 +1357,20 @@ struct LegionNavigator::Impl {
                 if(++cells[c]>1)++a.overlaps;
                 if(!pt->cells.count(c))++a.missing;
             }
+        }
+        // Reach rings (AR-06 B): every spot's owner holds it as its slot, and
+        // every ring member owns its spot.
+        for(const auto& [gid,g]:groups) {
+            if(g.ring.band0==0)continue;
+            for(size_t i=0;i<g.ring.owner.size();++i)if(const int o=g.ring.owner[i]) {
+                const Member* mm=member(o);
+                if(!mm||mm->group!=gid||mm->slot!=int(i)||mm->goal!=g.ring.cells[i])++a.dangling;
+            }
+        }
+        for(const auto& [id,m]:members) {
+            const auto g=groups.find(m.group);
+            if(g!=groups.end()&&g->second.ring.band0>0&&m.slot>=0&&
+               (size_t(m.slot)>=g->second.ring.owner.size()||g->second.ring.owner[size_t(m.slot)]!=id))++a.missing;
         }
         for(const auto& [key,pt]:points) {
             const auto found=claimed.find(&pt);
@@ -2000,6 +2061,9 @@ struct LegionNavigator::Impl {
             }
             if(auto shared=group->second.sharing.find(m.requested);shared!=group->second.sharing.end()&&
                --shared->second<=0)group->second.sharing.erase(shared);
+            ringRelease(group->second,id,m);
+            if(auto& ids=group->second.reachIds;!ids.empty())
+                if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
             if(--group->second.members<=0) {unlistGroup(group->second);groups.erase(group);}
         }
         if(size_t(id)<memberIndex.size())memberIndex[size_t(id)]=nullptr;
@@ -2105,12 +2169,17 @@ struct LegionNavigator::Impl {
         if(m.goal<0) {putMember(u.id,m);return;}   // trapped on first move
         const int x=m.goal%width(),z=m.goal/width();
         const int goalComp=compAt(p,m.goal);
+        // A reach kind joins its target's group (see Group::reachTarget).
+        const bool ringKind=kind==Kind::Attack||kind==Kind::Guard;
+        const int ringTarget=ringKind?leg.targetId:0;
+        const int ringBucket=ringKind?reachPx(u,w.unit(ringTarget),kind==Kind::Guard).first/kRingBucket:-1;
         Group* joined=nullptr;
         uint64_t joins=0;
         for(auto& [id,g]:groups) {
             if(rule.solo)break;
             ++joins;
-            if(g.player!=u.player||g.issuedTick!=issue||g.plane!=planeIndex||g.kind!=kind)continue;
+            if(g.player!=u.player||g.plane!=planeIndex||g.kind!=kind)continue;
+            if(ringKind?g.reachTarget!=ringTarget||g.reachBucket!=ringBucket:g.issuedTick!=issue)continue;
             // Seeds in different static components never share a field: a
             // member whose goal it cannot reach would descend to a
             // teammate's seed and hold there forever instead of retiring.
@@ -2120,7 +2189,9 @@ struct LegionNavigator::Impl {
             // of its own goal behind it.
             if(g.approach!=m.approach)continue;
             if(x<g.minX-kClusterCells||x>g.maxX+kClusterCells||z<g.minZ-kClusterCells||z>g.maxZ+kClusterCells)continue;
-            const bool seeded=std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
+            // (A reach group's seeds are its ring once built: it serves the
+            // target's origin it was seeded at.)
+            const bool seeded=ringKind?g.reachCentre==m.goal:std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal);
             // A field in progress or complete is never re-seeded.
             if(g.field&&!seeded)continue;
             // A field is "distance to the nearest seed of anyone": over a
@@ -2136,13 +2207,15 @@ struct LegionNavigator::Impl {
             Group g;g.id=nextGroup++;g.player=u.player;g.plane=planeIndex;g.issuedTick=issue;g.compCell=m.goal;g.approach=m.approach;g.kind=kind;
             g.command=commandKey(u.player,std::get<1>(m.point));g.soft=!u.type->wanders;
             g.minX=g.maxX=x;g.minZ=g.maxZ=z;
+            if(ringKind) {g.reachTarget=ringTarget;g.reachBucket=ringBucket;g.reachCentre=m.goal;}
             joined=&groups.emplace(g.id,std::move(g)).first->second;
             listGroup(*joined);
             ++stats.groups;
         }
         auto& g=*joined;
-        if(!std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal))
+        if(g.ring.band0==0&&!std::binary_search(g.seeds.begin(),g.seeds.end(),m.goal))
             g.seeds.insert(std::upper_bound(g.seeds.begin(),g.seeds.end(),m.goal),m.goal);
+        if(ringKind)g.reachIds.insert(std::upper_bound(g.reachIds.begin(),g.reachIds.end(),u.id),u.id);
         g.minX=std::min(g.minX,x);g.maxX=std::max(g.maxX,x);g.minZ=std::min(g.minZ,z);g.maxZ=std::max(g.maxZ,z);
         if(g.bodyMaxX<g.bodyMinX) {g.bodyMinX=g.bodyMaxX=sx;g.bodyMinZ=g.bodyMaxZ=sz;}
         else {g.bodyMinX=std::min(g.bodyMinX,sx);g.bodyMaxX=std::max(g.bodyMaxX,sx);g.bodyMinZ=std::min(g.bodyMinZ,sz);g.bodyMaxZ=std::max(g.bodyMaxZ,sz);}
@@ -2230,6 +2303,8 @@ struct LegionNavigator::Impl {
     // a slot. Evicting the least recently used field every tick thrashed:
     // all live groups use theirs every tick.
     bool startField(Group& g,bool shareOnly=false) {
+        // A reach group of two or more members plans to its ring (AR-06).
+        if(!g.field&&!g.ring.tried&&g.reachIds.size()>=2)buildRing(g);
         const auto box=fieldWindow(g);
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         {
@@ -4007,8 +4082,240 @@ struct LegionNavigator::Impl {
         if(cell>=0)takeFormation(m,u,cell);else m.slot=-2;
         return true;
     }
+
+    // ---- the reach ring (AR-06 part B) ------------------------------------
+    // The centre distance (px) at which tickCombat brakes this attacker in
+    // reach of `t` (its selected weapon, or the longest when every weapon
+    // fires; a structure target padded by its half extent, as tickCombat
+    // pads it; melee at footprint contact), or a guard's 70 px; and whether
+    // shooting from there needs a line of sight. 0: no reach (no weapon).
+    // The same float expressions as the hashed combat path, read as int px.
+    std::pair<int,bool> reachPx(const Unit& u,const Unit* t,bool guard) const {
+        if(guard)return {70,false};
+        if(!t||!t->type||!u.type||u.type->weapons.empty())return {0,false};
+        const int slot=std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1);
+        const bool all=!u.type->weaponSwitching&&u.type->weapons.size()>1;
+        const Weapon& sel=u.type->weapons[size_t(slot)];
+        if(sel.melee)return {8*(std::max(u.type->footX,u.type->footZ)+std::max(t->type->footX,t->type->footZ))+8,false};
+        const float best=all?u.type->maxRange():sel.range;
+        const float pad=t->type->maxVel<=Fixed()?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
+        const bool los=best>64.0f&&!t->type->canFly&&!u.type->lobs();
+        return {int(best+pad),los};
+    }
+    // Monotonic integer pseudo-angle of (along, across) in [-2^17, 2^17):
+    // 0 along +along, counterclockwise positive (a diamond angle, no atan2).
+    static int64_t pseudoAngle(int64_t along,int64_t across) {
+        constexpr int64_t Q=65536;
+        if(!along&&!across)return 0;
+        int64_t a;
+        if(across>=0)a=along>=0?Q*across/(along+across):Q+Q*(-along)/(-along+across);
+        else a=along<0?2*Q+Q*(-across)/(-along-across):3*Q+Q*along/(along-across);
+        return a>=2*Q?a-4*Q:a;
+    }
+    bool ringMember(const Group& g,const Member& m) const {return g.ring.band0>0&&m.slot>=0&&size_t(m.slot)<g.ring.cells.size();}
+    void ringRelease(Group& g,int id,const Member& m) {
+        if(!ringMember(g,m))return;
+        if(g.ring.owner[size_t(m.slot)]==id)g.ring.owner[size_t(m.slot)]=0;
+    }
+    // Build the ring of a reach group of two or more members (once): band 0
+    // becomes the group's seeds. Without a band-0 spot (none in reach and
+    // line of sight in the members' component) the group keeps its point
+    // seed. Returns whether the seeds changed.
+    bool buildRing(Group& g) {
+        auto& r=g.ring;
+        r.tried=true;
+        if(g.approach||g.reachIds.size()<2||g.reachCentre<0)return false;
+        const Unit* t=w.unit(g.reachTarget);
+        if(!t||!t->alive()||!t->type)return false;
+        int R=INT_MAX;bool los=false,naval=false;
+        for(const int id:g.reachIds)if(const Unit* u=w.unit(id);u&&u->type) {
+            const auto [px,l]=reachPx(*u,t,g.kind==Kind::Guard);
+            if(px<R) {R=px;los=l;naval=u->type->domain==UnitType::Domain::Water||t->type->domain==UnitType::Domain::Water;}
+        }
+        if(R==INT_MAX||R<=0)return false;
+        const Plane& p=planes[size_t(g.plane)];
+        const int W=width(),H=height(),fx=p.footX,fz=p.footZ,foot=std::max(fx,fz),body=foot*16;
+        const int comp=compAt(p,g.reachCentre);
+        if(comp<0)return false;
+        const int64_t tx=t->x.v>>16,tz=t->z.v>>16;
+        // The approach bearing: from the target to the members' bodies.
+        int64_t ax=int64_t(g.bodyMinX+g.bodyMaxX)*8+fx*8-tx,az=int64_t(g.bodyMinZ+g.bodyMaxZ)*8+fz*8-tz;
+        if(!ax&&!az)ax=-1;
+        const int64_t touch=8*(std::max(t->type->footX,t->type->footZ)+foot);
+        const size_t want=std::min(kRingCells,std::max<size_t>(2*g.reachIds.size(),g.reachIds.size()+8));
+        const NavGrid& sight=naval?w.navalSight_:w.nav_;   // as combatLineOfSight
+        std::vector<int> cells;std::vector<uint8_t> band;
+        std::set<int> used;
+        uint64_t scanned=0;
+        for(int b=0;b<8&&cells.size()<want;++b) {
+            // Band 0 lies half a body to a body and a half inside reach
+            // (combat brakes a body the moment it is in reach, so bodies on
+            // their way to it stop round the reach edge, leaving room
+            // between them for the ones behind); band b > 0 waits b bodies
+            // farther out.
+            const int64_t lo=std::max<int64_t>(touch,int64_t(R)-3*body/2+int64_t(b)*body),hi=int64_t(R)-body/2+int64_t(b)*body;
+            if(hi<=lo)continue;
+            const int span=int(hi/16)+foot+1;
+            const int cx=int(tx/16),cz=int(tz/16);
+            std::vector<std::pair<int64_t,int>> order;
+            for(int z=std::max(0,cz-span);z<=std::min(H-1,cz+span);++z)for(int x=std::max(0,cx-span);x<=std::min(W-1,cx+span);++x) {
+                ++scanned;
+                const int64_t dx=int64_t(x)*16+fx*8-tx,dz=int64_t(z)*16+fz*8-tz,d2=dx*dx+dz*dz;
+                if(d2<lo*lo||d2>=hi*hi||!legal(p,x,z)||compAt(p,z*W+x)!=comp)continue;
+                if(b==0&&los&&!sight.losBetween(float(x*16+fx*8),float(z*16+fz*8),t->x.toFloat(),t->z.toFloat(),foot/2,
+                                                std::max(t->type->footX,t->type->footZ)/2))continue;
+                order.push_back({pseudoAngle(dx*ax+dz*az,dx*az-dz*ax),z*W+x});
+            }
+            std::sort(order.begin(),order.end());
+            for(const auto& [angle,cell]:order) {
+                if(cells.size()>=kRingCells)break;
+                const int x=cell%W,z=cell/W;
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used.count((z+j)*W+x+i);
+                if(!clear)continue;
+                for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used.insert((z+j)*W+x+i);
+                cells.push_back(cell);band.push_back(uint8_t(b));
+            }
+            if(b==0&&cells.empty())break;
+        }
+        stats.slotSearchCells+=scanned;
+        int band0=0;for(const uint8_t b:band)band0+=b==0;
+        if(!band0)return false;
+        r.R=R;r.band0=band0;r.tx=tx;r.tz=tz;r.ax=ax;r.az=az;
+        r.cells=std::move(cells);r.band=std::move(band);r.owner.assign(r.cells.size(),0);
+        stats.reachSlotsBuilt+=r.cells.size();
+        g.seeds.assign(r.cells.begin(),r.cells.begin()+band0);
+        std::sort(g.seeds.begin(),g.seeds.end());
+        for(const int c:g.seeds) {
+            g.minX=std::min(g.minX,c%W);g.maxX=std::max(g.maxX,c%W);g.minZ=std::min(g.minZ,c/W);g.maxZ=std::max(g.maxZ,c/W);
+        }
+        return true;
+    }
+    // A member's angle round the target, in the ring's approach frame.
+    int64_t ringAngle(const Group& g,const Unit& u) const {
+        const int64_t dx=(u.x.v>>16)-g.ring.tx,dz=(u.z.v>>16)-g.ring.tz;
+        return pseudoAngle(dx*g.ring.ax+dz*g.ring.az,dx*g.ring.az-dz*g.ring.ax);
+    }
+    void ringTake(Group& g,const Unit& u,Member& m,int slot) {
+        g.ring.owner[size_t(slot)]=u.id;
+        m.slot=slot;m.goal=g.ring.cells[size_t(slot)];m.lineCell=-1;markPass(u,m);
+        slotCells(m,u.type->footX,u.type->footZ,true);
+    }
+    bool ringCovered(const Group& g,const Plane& p,int slot,int self) const {
+        const int c=g.ring.cells[size_t(slot)],W=width();
+        for(int j=0;j<p.footZ;++j)for(int i=0;i<p.footX;++i) {
+            const int cx=c%W+i,cz=c/W+j;
+            if(cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(o&&o!=self)return true;
+        }
+        return false;
+    }
+    // A spot nobody holds, statically legal and reached by the field, and
+    // (for a re-choice) not covered by a body standing there now (an
+    // engaged one that let its own spot go).
+    bool ringFree(const Group& g,const Plane& p,int slot,int self=0) const {
+        const int c=g.ring.cells[size_t(slot)],W=width();
+        if(g.ring.owner[size_t(slot)]||!legal(p,c%W,c/W)||!g.field||g.field->at(size_t(c))==kUnreached)return false;
+        return !self||!ringCovered(g,p,slot,self);
+    }
+    // The first claim hands every member a spot at once: the members nearest
+    // the target take band 0, the next band 1 and so on; within a band the
+    // spots nearest the approach bearing are used, and members and spots
+    // are matched in angular order, so lanes to the spots do not cross.
+    void assignRing(Group& g,const Plane& p) {
+        auto& r=g.ring;
+        r.assigned=true;
+        std::vector<std::tuple<int64_t,int,const Unit*,Member*>> list;   // distance^2, id
+        for(const int id:g.reachIds) {
+            Member* mm=member(id);const Unit* v=w.unit(id);
+            if(!mm||!v||!v->type||mm->group!=g.id||mm->slot>=0||mm->state==Engaged)continue;
+            const int64_t dx=(v->x.v>>16)-r.tx,dz=(v->z.v>>16)-r.tz;
+            list.push_back({dx*dx+dz*dz,id,v,mm});
+        }
+        std::sort(list.begin(),list.end(),[](const auto& a,const auto& b) {return std::tie(std::get<0>(a),std::get<1>(a))<std::tie(std::get<0>(b),std::get<1>(b));});
+        size_t next=0;
+        for(int b=0;b<8&&next<list.size();++b) {
+            std::vector<std::pair<int64_t,int>> spots;   // |angle|, slot
+            for(size_t i=0;i<r.cells.size();++i)if(r.band[i]==b&&ringFree(g,p,int(i))) {
+                const int64_t dx=int64_t(r.cells[i]%width())*16+p.footX*8-r.tx,dz=int64_t(r.cells[i]/width())*16+p.footZ*8-r.tz;
+                spots.push_back({std::abs(pseudoAngle(dx*r.ax+dz*r.az,dx*r.az-dz*r.ax)),int(i)});
+            }
+            std::sort(spots.begin(),spots.end());
+            const size_t n=std::min(spots.size(),list.size()-next);
+            if(!n)continue;
+            std::vector<int> chosen;for(size_t i=0;i<n;++i)chosen.push_back(spots[i].second);
+            std::sort(chosen.begin(),chosen.end());   // band order is pseudo-angle order
+            std::vector<std::pair<int64_t,size_t>> who;
+            for(size_t i=next;i<next+n;++i)who.push_back({ringAngle(g,*std::get<2>(list[i])),i});
+            std::sort(who.begin(),who.end());
+            for(size_t i=0;i<n;++i) {
+                const auto& [d,id,v,mm]=list[who[i].second];
+                ringTake(g,*v,*mm,chosen[i]);
+            }
+            next+=n;
+        }
+    }
+    // A reach member's spot: the bulk assignment on the group's first claim,
+    // else (a late joiner, or one whose spot was let go) the free spot of
+    // the lowest band nearest to it.
+    void ringClaim(const Unit& u,Member& m,Group& g,const Plane& p) {
+        if(m.approach)return;
+        if(!g.ring.tried&&g.reachIds.size()>=2&&!g.next) {
+            // The group grew past one member after its field was planned:
+            // the ring replaces its point seed through a refresh (the old
+            // field steers meanwhile).
+            if(buildRing(g)) {g.stale=true;g.demand=true;listGroup(g);}
+            return;
+        }
+        if(g.ring.band0==0||m.slot>=0||m.state==Engaged)return;
+        if(!g.field||!g.field->done||g.field->seedKey!=seedsKey(g.seeds))return;
+        if(!g.ring.assigned) {assignRing(g,p);return;}
+        ringNearest(u,m,g,p,255);
+    }
+    // The nearest free spot in a lower band, or in the same band nearer this
+    // body than its own (any, if another body now stands on its own: an
+    // engaged one stopped there); ties: the lower index.
+    bool ringRechoose(const Unit& u,Member& m,Group& g,const Plane& p) {
+        const int W=width();
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
+        auto dist=[&](size_t i) {
+            const int c=g.ring.cells[i];
+            const int64_t dx=int64_t(c%W)*16+u.type->footX*8-ux,dz=int64_t(c/W)*16+u.type->footZ*8-uz;
+            return dx*dx+dz*dz;
+        };
+        const int curBand=g.ring.band[size_t(m.slot)];
+        const int64_t curD=ringCovered(g,p,m.slot,u.id)?INT64_MAX:dist(size_t(m.slot));
+        int best=-1;int bestBand=0;int64_t bestD=0;
+        for(size_t i=0;i<g.ring.cells.size();++i) {
+            if(g.ring.band[i]>curBand||!ringFree(g,p,int(i),u.id))continue;
+            const int64_t d=dist(i);
+            if(g.ring.band[i]==curBand&&d>=curD)continue;
+            if(best<0||g.ring.band[i]<bestBand||(g.ring.band[i]==bestBand&&d<bestD)) {best=int(i);bestBand=g.ring.band[i];bestD=d;}
+        }
+        if(best<0)return false;
+        ringRelease(g,u.id,m);slotCells(m,u.type->footX,u.type->footZ,false);m.slot=-1;
+        ringTake(g,u,m,best);
+        return true;
+    }
+    bool ringNearest(const Unit& u,Member& m,Group& g,const Plane& p,int below) {
+        const int W=width();
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
+        int best=-1;int bestBand=0;int64_t bestD=0;
+        for(size_t i=0;i<g.ring.cells.size();++i) {
+            if(g.ring.band[i]>=below||!ringFree(g,p,int(i),u.id))continue;
+            const int c=g.ring.cells[i];
+            const int64_t dx=int64_t(c%W)*16+u.type->footX*8-ux,dz=int64_t(c/W)*16+u.type->footZ*8-uz,d=dx*dx+dz*dz;
+            if(best<0||g.ring.band[i]<bestBand||(g.ring.band[i]==bestBand&&d<bestD)) {best=int(i);bestBand=g.ring.band[i];bestD=d;}
+        }
+        if(best<0)return false;
+        if(m.slot>=0) {ringRelease(g,u.id,m);slotCells(m,u.type->footX,u.type->footZ,false);m.slot=-1;}
+        ringTake(g,u,m,best);
+        return true;
+    }
     void claimSlot(const Unit& u,Member& m,Group& g,const Plane& p,int here) {
         if(m.requested<0)return;
+        if(!g.reachIds.empty()) {ringClaim(u,m,g,p);return;}
         // An approach point is a stand-in, not a destination area: bodies
         // queue up to it in the order they come (keeping their formation,
         // so the deepest goals lead when the way opens) and hold on contact.
@@ -4060,6 +4367,27 @@ struct LegionNavigator::Impl {
         if(!legal(p,ox,oz))return false;
         const int reach=compAt(p,oz*W+ox);
         return reach>=0&&compAt(p,m.goal)==reach&&compAt(p,m.real)>=0&&compAt(p,m.real)!=reach;
+    }
+    // tickCombat braked this unit in reach (or within 70 px of its guard
+    // target): its move() does not run this tick. Its member is Engaged until
+    // its next update (AR-06 part A). Called from the unit's own combat
+    // update in the serial unit loop, so every peer moved later this tick
+    // reads it, as in any run.
+    void engaged(const Unit& u) {
+        if(!supports(u))return;
+        ++stats.engagedNow;
+        Member* m=member(u.id);
+        if(!m)return;
+        // The claim follows the engaged body: a ring spot it stopped short of
+        // is let go for the members still on their way (AR-06 B).
+        if(m->slot>=0)if(const auto g=groups.find(m->group);g!=groups.end()&&ringMember(g->second,*m)) {
+            const int here=footprintOrigin(u.z,u.type->footZ)*width()+footprintOrigin(u.x,u.type->footX);
+            if(here!=m->goal) {
+                ringRelease(g->second,u.id,*m);slotCells(*m,u.type->footX,u.type->footZ,false);
+                m->slot=-1;m->goal=m->requested;m->lineCell=-1;markPass(u,*m);
+            }
+        }
+        m->state=Engaged;
     }
     // The member whose contact arrival this update already refused.
     const Member* contactRefused=nullptr;
@@ -4164,6 +4492,9 @@ struct LegionNavigator::Impl {
         }
         auto& m=*found;m.movedTick=w.tickCounter_;
         ++stats.moveCallsByState[size_t(m.state)&7];
+        // Out of the owner's brake again (the target left reach or died): no
+        // soft obstacle any more, at once (as a body setting off).
+        if(m.state==Engaged)unstamp(u.id);
         if(heldRest(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
         ++stats.moves;
         // The native goal predicate (the circle the native mover would test)
@@ -4253,6 +4584,9 @@ struct LegionNavigator::Impl {
             m.windowTick=w.tickCounter_;m.windowDist=dist;
             if(!still)m.queued=false;
             else if(settleWindow(u,m,g,p,ox,oz,dist)) {complete(u,m,true);return;}
+            // A reach member held a whole window re-chooses a free ring spot
+            // nearer the front (C2: kRechoices times, reset by a re-seed).
+            if(ringMember(g,m)&&m.state==Holding&&heldFor(m)>=kCrowdWindow&&m.rechoices<kRechoices&&ringRechoose(u,m,g,p))++m.rechoices;
         }
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
@@ -4344,6 +4678,12 @@ struct LegionNavigator::Impl {
                         return true;}));
             }
             direct=m.line;
+        }
+        // A ring member near its own spot walks to it: band 0 is all one
+        // potential, and an outer spot lies up the field from band 0.
+        if(!direct&&f&&f->done&&ringMember(g,m)) {
+            const uint16_t ph=f->at(size_t(here)),pg=f->at(size_t(m.goal));
+            if(ph!=kUnreached&&pg!=kUnreached&&uint32_t(ph)<=uint32_t(pg)+uint32_t(3*std::max(fx,fz)*kOrthogonal))direct=true;
         }
         if(!direct) {
             if(!f||(f->at(size_t(here))==kUnreached&&f->bounded)) {
@@ -4639,7 +4979,7 @@ struct LegionNavigator::Impl {
             if(std::find(seen.begin(),seen.begin()+seenCount,o)!=seen.begin()+seenCount)continue;
             if(seenCount<seen.size())seen[seenCount++]=o;
             const Member* peer=member(o);
-            if(!peer||peer->state==Arrived||peer->state==Trapped)continue;
+            if(!peer||peer->state==Arrived||peer->state==Trapped||peer->state==Engaged)continue;
             const Unit* other=w.unit(o);
             if(!other||other->orders.empty()||peer->goal<0)continue;
             // Oncoming by intent, not heading: the other body's way to its
@@ -4844,7 +5184,7 @@ struct LegionNavigator::Impl {
                 // them is dropped when blocked and the body shuffles back,
                 // every ~250-400 ticks, never holding long enough to ask (a
                 // livelock).
-                const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,nx,nz);
+                const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,m,nx,nz);
                 if(settled&&int64_t(m.progress)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
                    (settled||(m.holdUpdates>=60&&formationMember(m)))) {
@@ -4871,6 +5211,8 @@ struct LegionNavigator::Impl {
         // regardless, and a real course change (> ~5.6 deg) still turns.
         if(face&&std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
         u.turnReqBam=diff;
+        // A reach member leaving its ring spot is no soft obstacle any more.
+        if(m.state==Holding&&!policy(m.kind).completes)unstamp(u.id);
         m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
     }
     // A hold that starts over (a detour planned, a lane asked for): the
@@ -4878,16 +5220,23 @@ struct LegionNavigator::Impl {
     // would (heldFor reads 0 until then).
     void restartHold(Member& m) const {m.heldSince=w.tickCounter_+1;m.holdUpdates=0;}
     // Is the cell this body wants held by a body that will not move on its
-    // own (idle, arrived, or not a Legion mover)? A queue of members waiting
-    // for each other is not: it drains by itself and must not be re-planned.
-    bool blockedBySettled(const Unit& u,int nx,int nz) const {
+    // own (idle, arrived, engaged in combat, or not a Legion mover)? A queue
+    // of members waiting for each other is not: it drains by itself and must
+    // not be re-planned. An attack or guard queue never drains (its owner
+    // ends the approach only in reach), so for a reach kind a peer of the
+    // same command held kReachPeerHeld ticks counts as settled too (AR-06,
+    // C8): the queue walks round it toward the target.
+    bool blockedBySettled(const Unit& u,const Member& m,int nx,int nz) const {
+        const bool reach=!policy(m.kind).completes;
         for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
             const int cx=nx+i,cz=nz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
             const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Member* peer=member(o);
-            if(!peer||peer->state==Arrived||peer->state==Trapped)return true;
+            if(!peer||peer->state==Arrived||peer->state==Trapped||peer->state==Engaged)return true;
+            if(reach&&peer->state==Holding&&peer->controller==m.controller&&heldFor(*peer)>=kReachPeerHeld)
+                if(const Unit* other=w.unit(o);other&&other->player==u.player)return true;
         }
         return false;
     }
@@ -4916,7 +5265,7 @@ struct LegionNavigator::Impl {
             if(!other||other->speed!=Fixed())return false;
             if(other->orders.empty())return true;
             const Member* peer=member(o);
-            return !peer||peer->state==Holding||peer->state==Arrived||peer->state==Trapped;
+            return !peer||peer->state==Holding||peer->state==Arrived||peer->state==Trapped||peer->state==Engaged;
         };
         auto open=[&](int x,int z) {
             if(!legal(p,x,z))return false;
@@ -5057,7 +5406,9 @@ struct LegionNavigator::Impl {
     // factory's exit lane.
     bool settleWindow(const Unit& u,Member& m,Group& g,const Plane& p,int ox,int oz,int64_t dist) {
         m.queued=false;
-        if(m.approach||m.goal<0)return false;
+        // A reach kind (attack, guard) never settles: its owner ends the
+        // approach, in reach (AR-06).
+        if(m.approach||m.goal<0||!policy(m.kind).completes)return false;
         const Field* f=g.field&&g.field->done?g.field.get():nullptr;
         if(!f)return false;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
@@ -5415,7 +5766,7 @@ struct LegionNavigator::Impl {
     // shared point's members (several sent there, or a formation slot)
     // settle by the settle rule alone (settleWindow).
     bool contactArrival(const Unit& u,const Member& m) const {
-        if(stalledFor(m)<20||m.approach||m.slot!=-1)return false;
+        if(stalledFor(m)<20||m.approach||m.slot!=-1||!policy(m.kind).completes)return false;
         auto group=groups.find(m.group);
         if(group==groups.end())return false;
         const auto sharing=group->second.peak.find(m.requested);
@@ -5475,6 +5826,11 @@ struct LegionNavigator::Impl {
             }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             if(g.demand)h=mix(h,0x64656d616e64ull);
+            if(g.reachTarget) {h=mix(h,0x7265616368ull);h=mix(h,uint64_t(uint32_t(g.reachTarget))<<32|uint32_t(g.reachBucket));h=mix(h,uint64_t(uint32_t(g.reachCentre)));}
+            if(g.ring.tried) {
+                h=mix(h,0x72696e67ull);h=mix(h,uint64_t(g.ring.assigned)|uint64_t(uint32_t(g.ring.R))<<8);h=mix(h,uint64_t(g.ring.band0));
+                for(size_t i=0;i<g.ring.cells.size();++i)h=mix(h,uint64_t(uint32_t(g.ring.cells[i]))<<32|uint64_t(uint32_t(g.ring.owner[i]))<<4|g.ring.band[i]);
+            }
             for(const auto& [seed,slot]:g.slots) {
                 h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);h=mix(h,slot.stale);
                 for(size_t i=0;i<slot.cells.size();++i)h=mix(h,uint64_t(slot.cells[i])<<1|slot.taken[i]);
@@ -5592,7 +5948,7 @@ int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
 }
-void LegionNavigator::noteEngaged(const Unit& u) {if(impl_->supports(u))++impl_->stats.engagedNow;}
+void LegionNavigator::noteEngaged(const Unit& u) {impl_->engaged(u);}
 LegionNavigator::ClaimsAudit LegionNavigator::claimsAudit() const {return impl_->claimsAudit();}
 int LegionNavigator::routeLength(int id) const {
     const auto found=impl_->members.find(id);

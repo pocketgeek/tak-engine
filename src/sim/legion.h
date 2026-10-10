@@ -93,7 +93,7 @@ public:
         uint64_t crowdSettleVisits=0;      // units walked to rebuild the factory exit lanes
         uint64_t rechoiceBfsCells=0;       // the settle rule's slot re-choice (rechoose)
         uint64_t formationRingCells=0;     // formationCell
-        uint64_t moveCallsByState[8]={};   // move() per member state (0 none .. 5 trapped)
+        uint64_t moveCallsByState[8]={};   // move() per member state (0 none .. 5 trapped, 6 engaged)
         uint64_t pivotPartIds=0;           // pivotAim's per-part centroid pass (ids of points of 2+ parts)
         uint64_t joinIterations=0;         // registerMove's group-join scan
         // ---- completions (T1) ------------------------------------------------
@@ -197,7 +197,7 @@ public:
     // fresh whole-map build: legality, component partition, sizes, boxes?
     bool planeMatchesRebuild(const Unit&);
     // Test hook: the unit's movement state (0 none, 1 moving, 2 holding,
-    // 3 waiting for its field) and its group's identity.
+    // 3 waiting for its field, 4 arrived, 5 trapped, 6 engaged) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
     // Test hook: the unit's settled-arrival records, as bits: 1 anchor,
@@ -206,8 +206,9 @@ public:
     // Observation hook (read-only, never hashed): cells left in the unit's committed local detour route
     // (0: none, or not a Legion member). MV-06's route-follower crawl samples read it.
     int routeLength(int id) const;
-    // W5 step 0: tickCombat braked this unit in reach (an attacker) or within 70 px of
-    // its guard target; counted into Stats::engagedNow when Legion routes it.
+    // tickCombat braked this unit in reach (an attacker) or within 70 px of its guard
+    // target: counted into Stats::engagedNow when Legion routes it, and its member is
+    // Engaged (settled and still to local steering) until its next move() (AR-06).
     void noteEngaged(const Unit&);
     // W5 step 0 (the claims invariant, read-only, never hashed): audit every member's
     // claimed arrival slot against its point's claimed cells. `overlaps` counts cells two

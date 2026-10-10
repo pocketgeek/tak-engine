@@ -481,13 +481,15 @@ void staticidle() {
     for(int id:ids)f.world.guard(id,friendly,false);
     for(int t=0;t<900;++t)f.world.tick(1.f/30);
     int held=0;
-    for(int id:ids)held+=!f.world.unit(id)->orders.empty()&&f.world.legionNavigator()->unitState(id)==2;   // Holding
+    // Holding, or Engaged (6: braked within 70 px of the ward by its guard order, AR-06)
+    for(int id:ids) {const int s=f.world.legionNavigator()->unitState(id);held+=!f.world.unit(id)->orders.empty()&&(s==2||s==6);}
     check(held>=6,"staticidle: the guards are not holding with their orders");
     const auto base=f.world.legionStats();
     for(int t=0;t<600;++t) {
         if(t%10==0)f.world.addFeature(50*200+60,60*16+8.f,50*16+8.f,0,1,1,1,t%20==0,-1,true);
         f.world.tick(1.f/30);
     }
+    if(std::getenv("STATIC_VERBOSE"))for(int id:ids)std::printf("  guard %d state %d at %.1f,%.1f\n",id,f.world.legionNavigator()->unitState(id),f.world.unit(id)->x.toFloat()/16,f.world.unit(id)->z.toFloat()/16);
     const auto now=f.world.legionStats();
     const uint64_t idle=now.fieldWorkRefreshIdle-base.fieldWorkRefreshIdle,moving=now.fieldWorkRefreshMoving-base.fieldWorkRefreshMoving;
     std::printf("staticidle parked holding=%d refresh_idle=%llu refresh_moving=%llu refresh_completed=%llu refresh_suppressed=%llu groups=%zu\n",
