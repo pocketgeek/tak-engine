@@ -498,6 +498,177 @@ struct ApproachProbe {
     }
 };
 
+// `reach NAME ATTACKERS TARGETS [range=PX] [marks=T,T]` (PLAN W5 step 0, AR-06): how many of an attacking
+// army ever get a shot at its target, when, and what the army does while it cannot. Read-only. A body is IN
+// REACH of a target when its centre is within the reach tickCombat fights at (the weapon's range, plus a
+// structure target's footprint half-extent and 24 px; `range=PX` replaces the whole reach, for a Guard's
+// "within N cells of the guarded ally"). Keys, prefix reach.NAME. (ticks; -1 never):
+//   n                       attackers watched
+//   first / t50             first tick any / half of the attackers had been in reach
+//   ever_end, ever_tM       attackers that had EVER been in reach by the end / by mark tick M
+//   now_end                 attackers in reach at the end
+//   out600_end / out600_peak  attackers out of reach whose centre cell had not changed for 600 ticks, at the
+//                           end / the most on any tick (the audit's "standing out of range")
+//   farthest_held           of those at the end, the farthest from its nearest target (cells; -1 none)
+//   hold_out_max            the longest run of ticks one attacker spent out of reach in Legion's Holding state
+//   hold0_max               the same while its field potential was 0 (parked ON the goal without a shot: the
+//                           wall ring's "Holding at potential 0"); 0 in Retail (no navigator)
+//   damage_end, damage_tM   hit points the targets lost to damage (regeneration is never credited back)
+//   targets_dead_end        targets destroyed
+struct ReachProbe {
+    std::string name;
+    std::vector<int> att, tgt;
+    int range = 0;
+    std::vector<int> marks;
+    std::vector<int> first, lastMove, cx, cz, holdOut, hold0;
+    std::vector<int64_t> tgtMaxHp, prevHp;
+    int64_t dealt = 0;
+    int out600 = 0, out600Peak = 0, holdOutMax = 0, hold0Max = 0;
+    std::vector<std::pair<int, std::pair<int, int64_t>>> atMark;   // (mark, (ever, damage))
+    int ever = 0;
+    int64_t farthestHeld = -1, nowInReach = 0;
+    ReachProbe(std::string n, std::vector<int> a, std::vector<int> t, int r, std::vector<int> m)
+        : name(std::move(n)), att(std::move(a)), tgt(std::move(t)), range(r), marks(std::move(m)),
+          first(att.size(), -1), lastMove(att.size(), 0), cx(att.size(), INT_MIN), cz(att.size(), INT_MIN),
+          holdOut(att.size(), 0), hold0(att.size(), 0), tgtMaxHp(tgt.size(), 0), prevHp(tgt.size(), 0) {}
+    // Hit points the targets have lost to damage, summed tick by tick (a target's regeneration is never
+    // credited back, a death takes what it had left).
+    int64_t damage() const { return dealt >> 16; }
+    void sample(const tak::sim::World& w, const tak::sim::LegionNavigator* nav, int t) {
+        for (size_t i = 0; i < tgt.size(); ++i) {
+            const auto* u = w.unit(tgt[i]);
+            if (!tgtMaxHp[i] && u && u->type) { tgtMaxHp[i] = u->type->maxHp; prevHp[i] = int64_t(u->hp.v); }
+            const int64_t now = u && u->alive() ? int64_t(u->hp.v) : 0;
+            if (now < prevHp[i]) dealt += prevHp[i] - now;
+            prevHp[i] = now;
+        }
+        out600 = 0;
+        int64_t held = -1;
+        nowInReach = 0;
+        for (size_t i = 0; i < att.size(); ++i) {
+            const auto* u = w.unit(att[i]);
+            if (!u || !u->alive() || !u->type) continue;
+            const int ux = int(u->x.v >> 20), uz = int(u->z.v >> 20);
+            if (ux != cx[i] || uz != cz[i]) { cx[i] = ux; cz[i] = uz; lastMove[i] = t; }
+            bool in = false;
+            int64_t nearest = INT64_MAX;
+            for (int id : tgt) {
+                const auto* v = w.unit(id);
+                if (!v || !v->alive() || !v->type) continue;
+                const int64_t dx = (int64_t(v->x.v) - u->x.v) >> 12, dz = (int64_t(v->z.v) - u->z.v) >> 12;   // 1/16 px
+                const int64_t d2 = dx * dx + dz * dz;
+                nearest = std::min(nearest, d2);
+                const float pad = v->type->maxVel <= tak::sim::Fixed()
+                                      ? 8.0f * float(std::max(v->type->footX, v->type->footZ)) + 24.0f : 0.0f;
+                const int64_t reach = int64_t((range ? float(range) : u->type->maxRange() + pad) * 16.0f);
+                in |= d2 <= reach * reach;
+            }
+            if (in) { ++nowInReach; if (first[i] < 0) { first[i] = t; ++ever; } }
+            const int st = nav ? nav->unitState(att[i]) : 0;
+            holdOut[i] = !in && st == 2 ? holdOut[i] + 1 : 0;
+            hold0[i] = holdOut[i] && nav->fieldPotential(att[i], tak::sim::footprintOrigin(u->x, u->type->footX),
+                                                         tak::sim::footprintOrigin(u->z, u->type->footZ)) == 0 ? hold0[i] + 1 : 0;
+            holdOutMax = std::max(holdOutMax, holdOut[i]);
+            hold0Max = std::max(hold0Max, hold0[i]);
+            if (!in && t - lastMove[i] >= 600) {
+                ++out600;
+                if (nearest != INT64_MAX) held = std::max<int64_t>(held, int64_t(tak::sim::isqrt64(uint64_t(nearest)) / 16 / 16));   // 1/16 px -> cells
+            }
+        }
+        out600Peak = std::max(out600Peak, out600);
+        farthestHeld = held;
+        for (int m : marks)
+            if (t + 1 == m) atMark.push_back({m, {ever, damage()}});
+    }
+    void report(obs::Keys& k, const tak::sim::World& w) const {
+        const std::string p = "reach." + name + ".";
+        std::vector<int> f;
+        for (int v : first) if (v >= 0) f.push_back(v);
+        std::sort(f.begin(), f.end());
+        k.emplace_back(p + "n", int64_t(att.size()));
+        k.emplace_back(p + "first", f.empty() ? -1 : f.front());
+        k.emplace_back(p + "t50", f.size() >= (att.size() + 1) / 2 ? f[(att.size() + 1) / 2 - 1] : -1);
+        k.emplace_back(p + "ever_end", int64_t(ever));
+        for (const auto& [m, v] : atMark) k.emplace_back(p + "ever_t" + std::to_string(m), v.first);
+        k.emplace_back(p + "now_end", nowInReach);
+        k.emplace_back(p + "out600_end", out600);
+        k.emplace_back(p + "out600_peak", out600Peak);
+        k.emplace_back(p + "farthest_held", farthestHeld);
+        k.emplace_back(p + "hold_out_max", holdOutMax);
+        k.emplace_back(p + "hold0_max", hold0Max);
+        k.emplace_back(p + "damage_end", damage());
+        for (const auto& [m, v] : atMark) k.emplace_back(p + "damage_t" + std::to_string(m), v.second);
+        int64_t dead = 0;
+        for (int id : tgt) if (const auto* u = w.unit(id); !u || !u->alive()) ++dead;
+        k.emplace_back(p + "targets_dead_end", dead);
+    }
+};
+
+// `probe claims` (PLAN W5 step 0, the claims invariant; Legion only): every 10 ticks the navigator audits
+// each member's claimed arrival slot against its point's claimed cells (LegionNavigator::claimsAudit).
+//   claims.audits                        audits taken
+//   claims.bad_max                       the most overlaps + missing + dangling at any audit: the SAFETY key, 0
+//                                        where the invariant holds
+//   claims.overlaps_max / .missing_max / .dangling_max / .orphans_max   each class's worst audit
+//   claims.orphans_end                   point cells no member's slot covers at the last audit (report only:
+//                                        a settled body that left the navigator keeps its cells)
+struct ClaimsProbe {
+    int audits = 0, bad = 0, overlaps = 0, missing = 0, dangling = 0, orphans = 0, orphansEnd = 0;
+    void sample(const tak::sim::LegionNavigator* nav, int t) {
+        if (!nav || t % 10) return;
+        const auto a = nav->claimsAudit();
+        ++audits;
+        bad = std::max(bad, a.overlaps + a.missing + a.dangling);
+        overlaps = std::max(overlaps, a.overlaps); missing = std::max(missing, a.missing);
+        dangling = std::max(dangling, a.dangling); orphans = std::max(orphans, a.orphans);
+        orphansEnd = a.orphans;
+    }
+    void report(obs::Keys& k) const {
+        k.emplace_back("claims.audits", audits);
+        k.emplace_back("claims.bad_max", bad);
+        k.emplace_back("claims.overlaps_max", overlaps);
+        k.emplace_back("claims.missing_max", missing);
+        k.emplace_back("claims.dangling_max", dangling);
+        k.emplace_back("claims.orphans_max", orphans);
+        k.emplace_back("claims.orphans_end", orphansEnd);
+    }
+};
+
+// `creep NAME GROUPS` (PLAN W5 step 0, MV-07): the goal-area creep counter. The ticks the listed groups' ordered
+// members spend INSIDE their click's arrival disc (the observer's packed-disc limit, 16*(foot+1)*sqrt(N/pi)*1.25 px
+// round the click) stepping at no more than a eighth of their own speed (cap/8 + 1/64 px) without having arrived:
+// the slow shuffle that ends the audit's staticblock (members creeping at speed ~21 of 163-197 px/s). Read-only.
+//   creep.NAME.ticks         member-ticks inside the disc with orders and a step in (0, cap/8]
+//   creep.NAME.inside_ticks  member-ticks inside the disc with orders, stepping or not
+struct CreepProbe {
+    std::string name;
+    struct Body { int id; int64_t cx, cz, r2; int32_t px = INT32_MIN, pz = INT32_MIN; };
+    std::vector<Body> bodies;
+    int64_t creep = 0, inside = 0;
+    void sample(const tak::sim::World& w) {
+        for (auto& b : bodies) {
+            const auto* u = w.unit(b.id);
+            if (!u || !u->alive() || !u->type) continue;
+            const int64_t dx = (int64_t(u->x.v) >> 16) - b.cx, dz = (int64_t(u->z.v) >> 16) - b.cz;
+            const bool in = dx * dx + dz * dz <= b.r2;
+            if (in && !u->orders.empty()) {
+                ++inside;
+                if (b.px != INT32_MIN) {
+                    const int64_t sx = int64_t(u->x.v) - b.px, sz = int64_t(u->z.v) - b.pz;
+                    const int64_t cap = int64_t(u->baseSpeed.v) / 8 + 65536 / 64;
+                    const int64_t step2 = sx * sx + sz * sz;
+                    if (step2 > 0 && step2 <= cap * cap) ++creep;
+                }
+            }
+            b.px = u->x.v; b.pz = u->z.v;
+        }
+    }
+    void report(obs::Keys& k) const {
+        k.emplace_back("creep." + name + ".ticks", creep);
+        k.emplace_back("creep." + name + ".inside_ticks", inside);
+    }
+};
+
 struct Run {
     std::string skipped;
     uint64_t hash = 0, digest = 0;
@@ -532,6 +703,57 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     const tak::sim::LegionNavigator* nav = nullptr;
     std::optional<ApproachProbe> approach;
     if (observe && s.probeApproach) approach.emplace(all);
+    std::vector<CreepProbe> creeps;
+    if (observe)
+        for (const auto& sh : s.shapes) {
+            if (sh.kind != "creep") continue;
+            CreepProbe cp;
+            cp.name = sh.name;
+            const auto cfg = configFor(s, *b);
+            for (const auto& g : cfg.groups) {
+                size_t at = 0;
+                bool listed = false;
+                const std::string names = expandGroups(s, sh.a);
+                while (at <= names.size()) {
+                    size_t e = names.find(',', at);
+                    if (e == std::string::npos) e = names.size();
+                    listed |= names.substr(at, e - at) == g.name;
+                    at = e + 1;
+                }
+                if (!listed) continue;
+                int foot = 1;
+                for (int id : g.ids) if (const auto* u = w.unit(id); u && u->type) foot = std::max({foot, u->type->footX, u->type->footZ});
+                const int n = g.discN ? g.discN : int(g.ids.size());
+                const int64_t r2 = obs::detail::discRadius2(foot, n);
+                for (int id : g.ids) cp.bodies.push_back({id, g.clickX, g.clickZ, r2});
+            }
+            if (cp.bodies.empty()) throw std::runtime_error(s.origin + ": creep '" + sh.name + "' names no group in '" + sh.a + "'");
+            creeps.push_back(std::move(cp));
+        }
+    std::vector<ReachProbe> reach;
+    std::optional<ClaimsProbe> claims;
+    if (observe && s.probeClaims) claims.emplace();
+    if (observe)
+        for (const auto& sh : s.shapes) {
+            if (sh.kind != "reach") continue;
+            auto idsOf = [&](const std::string& list) {
+                std::vector<int> out;
+                const std::string names = expandGroups(s, list);
+                size_t at = 0;
+                while (at <= names.size()) {
+                    size_t e = names.find(',', at);
+                    if (e == std::string::npos) e = names.size();
+                    const std::string item = names.substr(at, e - at);
+                    at = e + 1;
+                    if (item.empty() || !s.group(item))
+                        throw std::runtime_error(s.origin + ": reach '" + sh.name + "' names no group in '" + list + "'");
+                    const auto& g = b->groups.at(item);
+                    out.insert(out.end(), g.begin(), g.end());
+                }
+                return out;
+            };
+            reach.emplace_back(sh.name, idsOf(sh.a), idsOf(sh.b), sh.range, sh.marks);
+        }
     int64_t commands = 0, lastCommand = -1, groupsAfter = -1, groupsPeak = 0;
     std::vector<int> ids;
     auto legionGroups = [&]() -> int64_t {
@@ -562,6 +784,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             navWork.sample(*o, w);
             o->sample(w, t);
             if (approach) approach->sample(w, nav, int(t));
+            for (auto& rp : reach) rp.sample(w, nav, int(t));
+            for (auto& cp : creeps) cp.sample(w);
+            if (claims) claims->sample(nav, int(t));
             if (nav) {
                 const int64_t n = legionGroups();
                 groupsPeak = std::max(groupsPeak, n);
@@ -580,6 +805,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     if (o) {
         r.keys = o->report();
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
+        for (const auto& rp : reach) rp.report(r.keys, w);
+        for (const auto& cp : creeps) cp.report(r.keys);
+        if (claims && mode == PathfindingMode::Legion) claims->report(r.keys);
         r.keys.emplace_back("commands", commands);
         r.keys.emplace_back("last_command_tick", lastCommand);
         // The convoy lookups' declared per-order bounds (PLAN 3.0: p99 <= 16,
@@ -606,6 +834,9 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             // 1500-tick bin (churn flatness, B1's gate).
             r.keys.emplace_back("gauge.still_per_residue_max", int64_t(navWork.stillPerResidueMax()));
             r.keys.emplace_back("gauge.quota_peg_run_max", int64_t(navWork.quotaPegRunMax()));
+            // W5 step 0: the bodies tickCombat braked in reach (the ones W5's Engaged flag will mark).
+            r.keys.emplace_back("gauge.engaged_max", int64_t(navWork.engagedMax()));
+            r.keys.emplace_back("engaged.member_ticks", int64_t(navWork.engagedMemberTicks()));
             for (size_t i = 0; i < navWork.churnBins().size(); ++i)
                 r.keys.emplace_back("churn.bin" + std::to_string(i), int64_t(navWork.churnBins()[i]));
             r.keys.emplace_back("legion_groups", groupsAfter);

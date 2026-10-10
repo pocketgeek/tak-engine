@@ -73,7 +73,10 @@ MAX_BAND = 1.20
 TIME_SUFFIXES = (".t50", ".t90", ".done", ".orders_done")
 COMBAT_SCENARIOS = ("battle-field*", "battle-assault*")
 COMBAT_KEYS = ("work.legion_total.total", "work.legion_total.max", "work.legion_total.p99")
-SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples")
+SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples",
+             # W5 step 0: the claims audit's report-only classes (claims.bad_max, their sum, is the safety key)
+             "claims.audits", "claims.overlaps_max", "claims.missing_max", "claims.dangling_max",
+             "claims.orphans_max", "claims.orphans_end")
 BAD_CLUSTERS = ("", "UNASSIGNED", "TODO", "?")
 # Offsets (lead ruling W3 round 3 (a), 2026-10-09). Every key is gated on the median of the five
 # core offsets, except the small-count keys: a handful of events decides them (corner crossings
@@ -98,19 +101,31 @@ CLICK_REPORT_ONLY = (".arrived", ".t50", ".t90", ".done")
 
 # ---------------------------------------------------------------- key classes
 def is_time(key):
-    return key.endswith(TIME_SUFFIXES)
+    # reach.NAME.first (W5 step 0): the first tick any attacker was in reach, -1 = never
+    return key.endswith(TIME_SUFFIXES) or (key.startswith("reach.") and key.endswith(".first"))
 
 
 def default_dir(key):
     if key.endswith((".arrived", ".flyers_landed", ".inside", ".complete_n", "approach.arrived_n")):
         return "higher"
+    if is_reach_gain(key):
+        return "higher"
     return "lower"
+
+
+def is_reach_gain(key):
+    """The `reach` shape's higher-is-better keys (W5 step 0): attackers that ever got a shot, the ones in
+    reach at the end, the damage dealt and the targets destroyed."""
+    return key.startswith("reach.") and (".ever_" in key or key.endswith((".now_end", ".targets_dead_end")) or
+                                         ".damage_" in key)
 
 
 def floor_dir(key):
     """Direction if `key` is a Retail-floor key (PLAN 3.0), else None."""
     if key.endswith(".arrived"):
         return "higher"
+    if key.startswith("reach.") and (".ever_" in key or ".damage_" in key):
+        return "higher"          # W5 step 0: the AR-06 rows (the army that gets a shot, the damage dealt)
     if (key.endswith(".t90") or key in ("spins", "parked_no_progress") or key.endswith(".crossings")
             or key.startswith("wall_touch") or (key.startswith("contact_") and key.endswith("_permille"))):
         return "lower"
@@ -671,7 +686,7 @@ def write_base(doc, recs, reason, since, patterns, hashes, clusters):
                     e = {"rule": "eq", "dir": "lower"}
                 elif k.startswith("work."):
                     e = {"rule": "band", "dir": "lower", "band": BAND}
-                elif k == "spins" and v == 0 or k.endswith("illegal_overlap_ticks") and v == 0:
+                elif k == "spins" and v == 0 or k.endswith("illegal_overlap_ticks") and v == 0 or k == "claims.bad_max":
                     e = {"rule": "eq", "dir": "lower"}
                 else:
                     e = {"rule": "band", "dir": default_dir(k), "band": BAND}

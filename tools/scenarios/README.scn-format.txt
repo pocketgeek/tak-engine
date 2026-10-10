@@ -36,6 +36,11 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 approach point (an unreachable goal's nearest
                                 reachable spot) and the tick its orders empty.
                                 Meant for scenarios whose goal is unreachable.
+  probe claims                  Legion only: every 10 ticks the navigator audits
+                                its arrival-slot claims (the claims invariant);
+                                keys claims.bad_max (overlapping + lost +
+                                dangling claims, 0 where it holds) and the
+                                report-only claims.*_max / orphans_end.
 
 Map (exactly one):
   map ascii                     rows follow, closed by a line 'end':
@@ -130,6 +135,19 @@ Shapes (for the runner's metrics; never affect the world):
         within `window` ticks (300) swap when their order flips by at least
         `mincells` (2) at both lines. Pairs of one group, or of all groups with
         across=all. Keys lane.NAME.pairs / .swaps / .swaps_permille.
+  reach NAME ATTACKERS TARGETS [range=PX] [marks=T,T]
+        the AR-06 probe (comma lists of groups, a trailing * is a prefix): how
+        many attackers ever get a shot at the targets, when, the damage dealt
+        and what the rest do. In reach = within tickCombat's reach (weapon
+        range, + 8*footprint + 24 px for a structure target); range=PX replaces
+        it (a Guard's "within 6 cells"); marks add ever_tM / damage_tM at those
+        ticks. Keys reach.NAME.first / t50 / ever_end / ever_tM / now_end /
+        out600_end / out600_peak / farthest_held / hold_out_max / hold0_max /
+        damage_end / damage_tM / targets_dead_end (tools/legion_scenario.cpp).
+  creep NAME GROUPS
+        the goal-area creep counter (MV-07): member-ticks the groups' ordered
+        members spend inside their click's arrival disc stepping at <= cap/8.
+        Keys creep.NAME.ticks / .inside_ticks.
   pair NAME LISTA LISTB [cells=N]
         proximity of live ordered members of LISTA x LISTB (comma lists of
         groups, a trailing * is a name prefix) sampled every 10 ticks: pairs
