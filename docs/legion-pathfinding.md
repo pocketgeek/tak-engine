@@ -1284,7 +1284,7 @@ path rebuilds Legion from a snapshot (a mid-game `--mprejoin` stays in sync).
 work (764640 relaxations -> 0), and a pair held at a plugged gap re-plans through
 a gap that opens by the blocked rule alone. In the live 8-AI Ulasem benchmark
 refresh is under 2% of field work (first builds are the rest), so B1 hardly moves
-its totals there; paused solo first builds (C1) are the next W4 step.
+its totals there; paused solo first builds (C1, below) are the lever there.
 
 **Striped still-body scan (B2).** `scanStill` samples each tick only the bodies
 whose `id % 30 == tick % 30`, with the same two-sample stillness rule per body, and
@@ -1340,6 +1340,51 @@ within their seed spread (aware headon contacts, landedflyers, tail wave p90).
   306 -> 561) and lost cost-open's t90; the restricted tier lost maze /
   exploration / dynamicobstacle arrivals by 2.5-3.4%. The cap/8 statue stays
   a documented trade (PLAN 3.4 stop rule).
+
+### Paused first builds (W4 C1, protocol 244)
+
+A first field used to build to done, its whole window, although its members
+steer by it as soon as the A* frontier (aimed at the group's bodies) has passed
+their cells. Now a first field of a group that claims no packed per-goal slots
+(no goal shared by two of its members) and does not pinwheel (no member's part
+of 16 or more) builds in slices of 4096 relaxations and **pauses**
+(`Field::covered`, its frontier kept) once every live member's cell is settled
+with a margin: `kCoverAhead` (40, eight orthogonal steps of key) plus two
+diagonal steps per cell of footprint + 2 (the settle rule's ring), plus, for a
+member of a formation, two orthogonal steps per cell of the formation's radius
++ 3 bodies (its lane runs that far off the shortest way); a goal several members
+shared once also needs its packed disc settled. A member whose cell is under
+its margin (it strayed, side-stepped, joined late, or shares the field with
+another group) adds the cell to the field's `demand` and marks the group
+waited, and the waited loop resumes the build until each demand cell has its
+margin (`work.paused_resumes`; `legion_world_test pausedemand`: a body sharing a
+paused field from outside it waits 2 ticks). A paused group leaves
+`buildingIds`. Slot groups' first builds and every refresh still run to done;
+a stale paused field is refreshed as a finished one would be.
+
+A* with a consistent heuristic never changes a settled potential, so what a
+paused build has settled is final (checked under `TAK_LEGION_VERIFY` in
+`advance`; a soft view that changes between slices only raises step costs, so
+it cannot lower one either). The readers that used to wait for `done` and now
+take a paused build (`Field::usable`) read it through `Field::known`, which
+returns a potential only where it is settled: the settle rule (`settleWindow`,
+`pressed`, `areaBound` -- not cached for a paused build -- and `rechoose`), the
+lift walk, the aim memo (keyed on the field's work count, so a resumed build
+invalidates it), eviction, `sharedField`, and a formation's slot hand-out
+(`claimSlot` for a member whose only slot is its formation's: it reads no
+potential). The pinwheel, `awareScan` and the aware replan keep `done`: a
+paused group plans round no crossing traffic until its field finishes. Field
+descent (`aimCell`, the drive and detour code) may read a tentative potential
+beyond the margin; descent stays sound on it, as on a half-built field.
+
+With B1: a paused build is a finished field to the blocked re-request (read
+through `known()`, `freeDescent` too) -- counting every member stalled on a
+paused build as blocked refreshed `legion_staticidle`'s parked guards
+(12728 relaxations instead of 0). And a group whose member waited on its paused
+build in the last 2 ticks is **active** (that member neither moves nor counts as
+blocked, and its stale paused build is what it waits for). B1's
+`work.demand_resumes` keeps counting resumed suppressed refreshes only; C1's
+resumes of a paused build count `work.paused_resumes`.
 
 ## Instruments
 

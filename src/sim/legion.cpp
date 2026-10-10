@@ -86,6 +86,15 @@ constexpr uint32_t kApproachLook=4;            // ticks between a held approach 
 constexpr int kClusterCells=16;
 constexpr int kFieldMargin=32;                 // bounded field window margin (cells), at least
 constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
+// Paused first builds (T7 C1, see pausable): a first field of a group none of
+// whose members claims packed per-goal slots or pinwheels builds in slices of
+// kPauseSlice relaxations and pauses (Field::covered, frontier kept) once
+// every live member's cell is settled with a margin of kCoverAhead plus two
+// diagonal steps per cell of footprint + 2 (the settle rule's ring), plus a
+// formation's lane spread (memberMargin); a member that reaches a cell under
+// its margin adds it to the field's demand, which the waited loop serves first.
+constexpr uint64_t kPauseSlice=4096;
+constexpr uint32_t kCoverAhead=kOrthogonal*kHeadingCells;
 constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
 constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close enough" settling at a crowd
 // The settle rule (see settleWindow, PLAN 3.1 T1-B): a body queued back to
@@ -300,6 +309,31 @@ struct LegionNavigator::Impl {
             if(done)return v!=kUnreached;
             return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))<=current;
         }
+        // Paused (T7 C1): a first build that stopped once its members were
+        // planned; its frontier (buckets, seeds) is kept and it resumes on
+        // demand. Never cleared: a resumed build only settles more cells
+        // (A* with a consistent heuristic never changes a settled
+        // potential), so what was usable stays usable.
+        bool covered=false;
+        // Cells members reached unsettled (or under the cover margin): the
+        // waited loop advances the build until each is settled with its
+        // margin, then clears them. (cell, margin), in arrival order.
+        std::vector<std::pair<int,uint16_t>> demand;
+        bool usable() const {return done||covered;}
+        // Settled with `margin` of key to spare (the frontier is that far
+        // past it); a done field: reached at all.
+        bool ahead(size_t cell,uint32_t margin) const {
+            const uint16_t v=at(cell);
+            if(done)return v!=kUnreached;
+            return v!=kUnreached&&uint32_t(v)+heuristic(int(cell%size_t(W)),int(cell/size_t(W)))+margin<=current;
+        }
+        // A gate's read (the settle rule, the lift walk): the potential where
+        // it is settled, kUnreached elsewhere, so no gate ever reads an
+        // unsettled (tentative) potential of a paused build.
+        uint16_t known(size_t cell) const {
+            const uint16_t v=at(cell);
+            return settled(cell,v)?v:kUnreached;
+        }
     };
     struct Group {
         int id=0,player=0,plane=-1;
@@ -309,6 +343,9 @@ struct LegionNavigator::Impl {
         std::map<int,int> sharing;       // goal origin -> member count
         std::map<int,int> peak;          // goal origin -> most members it ever had (area size)
         int members=0;
+        // The members' unit ids, ascending (the paused build's cover test
+        // reads their cells). Derived from `members`, never hashed.
+        std::vector<int> ids;
         // A seed cell standing for the static component of every seed. Raw
         // component labels are renumbered on every plane rebuild, so the
         // region is compared live through this cell (see groupComp).
@@ -365,6 +402,10 @@ struct LegionNavigator::Impl {
         // The scheduler lists the group is on and its byBuilt key (see
         // listGroup). Derived, never hashed.
         bool onBuilding=false,onNeedField=false,onStaleDone=false,onByBuilt=false;
+        // The serial of the field paused for this group (C1, see serve):
+        // off buildingIds while it is its field (the waited loop resumes it
+        // on demand). Derived, never hashed: a listed paused group is skipped.
+        uint64_t pausedSerial=0;
         uint32_t byBuiltKey=0;
         std::array<uint64_t,2> routeKeys{};uint8_t routeCount=0;   // its routeIndex entries
         // ---- the reach ring (AR-06 part B, PLAN 3.4) ------------------------
@@ -558,7 +599,7 @@ struct LegionNavigator::Impl {
         // never hashed, and a peer without it computes the same cell.
         struct Aim {
             int32_t x=0,z=0;int goal=-1;const UnitType* type=nullptr;
-            uint64_t field=0,epoch=~0ull;int cell=-1;
+            uint64_t field=0,epoch=~0ull,work=0;int cell=-1;   // work: the field's relaxations (a paused build resumes)
         } aim;
     };
 
@@ -624,7 +665,7 @@ struct LegionNavigator::Impl {
         }
         g.routeCount=0;
     }
-    static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done)||g.next;}
+    static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)||g.next;}
     static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
     static bool wantsStaleDone(const Group& g) {return g.field&&g.stale&&!g.next;}
     // B1, demand-driven refresh: does anybody steer by this group's field?
@@ -632,10 +673,15 @@ struct LegionNavigator::Impl {
     // ticks (a resting body updates at least every kRestStride ticks), or a
     // re-plan that is not a static change asked for it (demand). A stale
     // field of an inactive group keeps steering and stays shareable; its
-    // refresh starts the tick the group becomes active.
+    // refresh starts the tick the group becomes active. A member waiting on
+    // a paused first build (C1: its cell unsettled, or a demand under the
+    // cover margin, setWaited) makes it active too: such a member neither
+    // moves nor counts as blocked, and the stale paused build is what it
+    // waits for.
     bool active(const Group& g) const {
         const uint32_t now=w.tickCounter_;
-        return now-g.movingTick<=2||now-g.blockedTick<=2||g.demand;
+        return now-g.movingTick<=2||now-g.blockedTick<=2||g.demand||
+               (g.field&&g.field->covered&&!g.field->done&&now-g.waited<=2);
     }
     void listGroup(Group& g) {
         auto put=[&](std::set<int>& ids,bool& on,bool want) {
@@ -2195,6 +2241,8 @@ struct LegionNavigator::Impl {
             ringRelease(group->second,id,m);
             if(auto& ids=group->second.reachIds;!ids.empty())
                 if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
+            auto& gids=group->second.ids;
+            if(const auto at=std::lower_bound(gids.begin(),gids.end(),id);at!=gids.end()&&*at==id)gids.erase(at);
             if(--group->second.members<=0) {unlistGroup(group->second);groups.erase(group);}
         }
         if(size_t(id)<memberIndex.size())memberIndex[size_t(id)]=nullptr;
@@ -2351,6 +2399,8 @@ struct LegionNavigator::Impl {
         if(g.bodyMaxX<g.bodyMinX) {g.bodyMinX=g.bodyMaxX=sx;g.bodyMinZ=g.bodyMaxZ=sz;}
         else {g.bodyMinX=std::min(g.bodyMinX,sx);g.bodyMaxX=std::max(g.bodyMaxX,sx);g.bodyMinZ=std::min(g.bodyMinZ,sz);g.bodyMaxZ=std::max(g.bodyMaxZ,sz);}
         {const int n=++g.sharing[m.goal];int& top=g.peak[m.goal];top=std::max(top,n);}++g.members;g.lastUse=w.tickCounter_;
+        g.ids.insert(std::upper_bound(g.ids.begin(),g.ids.end(),u.id),u.id);
+        if(g.pausedSerial) {g.pausedSerial=0;listGroup(g);}   // re-judged (see pausable)
         m.group=g.id;
         putMember(u.id,m);
     }
@@ -2420,7 +2470,7 @@ struct LegionNavigator::Impl {
         if(&o==&g||o.plane!=g.plane)return false;
         for(const auto* d:{&o.field,&o.next}) {
             const Field* f=d->get();
-            if(!f||f->done!=(pass==0)||f->epoch!=epoch||w.tickCounter_-f->started>kStillScan)continue;
+            if(!f||f->usable()!=(pass==0)||f->epoch!=epoch||w.tickCounter_-f->started>kStillScan)continue;
             if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
             if((f->command==kNoSoft)!=(command==kNoSoft)||f->ownArrivals!=own||(own&&f->command!=command))continue;
             if(f->seeds!=g.seeds)continue;
@@ -2470,14 +2520,14 @@ struct LegionNavigator::Impl {
                 ++iters;
                 if(w.tickCounter_-built<kFieldTenure)break;
                 Group& o=groups.find(id)->second;
-                if(o.field->done&&o.field.use_count()==1) {victim=&o;break;}
+                if(o.field->usable()&&o.field.use_count()==1) {victim=&o;break;}
             }
             stats.groupLoopIters+=iters;
 #ifndef NDEBUG
             if(gVerify) {
                 Group* scan=nullptr;
                 for(auto& [id,o]:groups)
-                    if(o.field&&o.field->done&&o.field.use_count()==1&&w.tickCounter_-o.built>=kFieldTenure&&(!scan||o.built<scan->built))scan=&o;
+                    if(o.field&&o.field->usable()&&o.field.use_count()==1&&w.tickCounter_-o.built>=kFieldTenure&&(!scan||o.built<scan->built))scan=&o;
                 if(scan!=victim)verifyFail("byBuilt eviction victim differs from the full scan");
             }
 #endif
@@ -2538,6 +2588,13 @@ struct LegionNavigator::Impl {
                 if(!f.inside(x+d[0],z+d[1]))continue;
                 auto& slot=f.potential[f.local(x+d[0],z+d[1])];
                 if(g+base>=slot)continue;   // no charge can improve it
+#ifndef NDEBUG
+                // C1's soundness: a settled potential is final (a paused
+                // build's gates read only settled cells, see Field::known).
+                if(gVerify&&slot!=kUnreached&&uint32_t(slot)+f.heuristic(x+d[0],z+d[1])<=f.current&&
+                   g+base+f.heuristic(x+d[0],z+d[1])<f.current)
+                    verifyFail("a relaxation could lower a settled potential");
+#endif
                 const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
                 f.softened|=level>0;
                 const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base)+
@@ -2551,9 +2608,110 @@ struct LegionNavigator::Impl {
         }
         if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
             f.done=true;++fieldsDone;for(auto& b:f.buckets)std::vector<int>().swap(b);std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
+            std::vector<std::pair<int,uint16_t>>().swap(f.demand);
         }
         f.work+=spent;
         return spent;
+    }
+    // ---- paused first builds (T7 C1) ------------------------------------
+    // A group whose first field may pause once its members are planned: no
+    // member can claim a packed per-goal slot (more members than goals: the
+    // slot class) or pinwheel (pivotAim reads potentials far beyond the
+    // bodies and keeps `done`). Slot groups' first builds and every refresh
+    // still run to done; awareScan and the aware replan keep `done` (a
+    // paused group plans round no crossing traffic until its field is done).
+    bool pausable(const Group& g) const {
+        if(!policy(g.kind).area||g.approach)return true;
+        if(g.members>int(g.sharing.size()))return false;
+        for(const int id:g.ids) {
+            const Member* m=member(id);
+            if(!m)continue;
+            const Point* pt=m->pt;
+            if(!pt) {const auto found=points.find(m->point);pt=found==points.end()?nullptr:&found->second;}
+            // A formation point: its slot hand-out reads no potential
+            // (claimSlot runs on a paused build, see move); its pinwheel
+            // does (pivotAim keeps `done`), so a part strong enough to
+            // pinwheel keeps its build running to done.
+            if(pt&&partRefs(*m)>=kPivotMembers)return false;
+        }
+        return true;
+    }
+    // A member whose slot claim on a paused build is its formation's
+    // hand-out only (no packed per-goal slots, no pinwheel).
+    bool formationOnly(const Group& g,const Member& m) const {
+        if(!policy(m.kind).area||m.approach||!m.pt||partRefs(m)>=kPivotMembers)return false;
+        const auto sharing=g.sharing.find(m.requested);
+        return sharing==g.sharing.end()||sharing->second<2;
+    }
+    static uint16_t coverMargin(int foot) {return uint16_t(kCoverAhead+2u*kDiagonal*uint32_t(foot+2));}
+    // ... and a member of a formation walks its own lane up to the
+    // formation's radius off the group's shortest way: twice that radius
+    // plus three bodies more (the margin's key: potential and heuristic both
+    // rise by a step per cell off the way).
+    uint16_t memberMargin(const Member& m,int foot) const {
+        uint32_t margin=coverMargin(foot);
+        if(const Point* pt=m.pt;pt&&policy(m.kind).area&&(pt->assigned||pt->refs>=2)) {
+            const int64_t radius=pt->assigned&&pt->limit>0?pt->limit/16:isqrtFloor(uint64_t(pt->refs))*foot;
+            margin+=uint32_t(2*kOrthogonal)*uint32_t(std::min<int64_t>(radius+3*foot,2000));
+        }
+        return uint16_t(std::min<uint32_t>(margin,0xfff0));
+    }
+    // Does the field serve the group without building on: every demand cell
+    // settled with its margin (those that are now are dropped) and, before
+    // the field first paused, every live member's cell inside the window.
+    bool coveredFor(const Group& g,Field& f) {
+        const int W=width();
+        std::erase_if(f.demand,[&](const std::pair<int,uint16_t>& d) {
+            return !f.inside(d.first%W,d.first/W)||f.ahead(size_t(d.first),d.second);
+        });
+        if(!f.demand.empty())return false;
+        if(f.covered)return true;
+        // A goal several members shared: the settle rule's destination area
+        // (areaBound) reads the potentials of a packed disc round it.
+        if(policy(g.kind).area&&!g.approach) {
+            const auto& pl=planes[size_t(g.plane)];const int foot=std::max(pl.footX,pl.footZ);
+            for(const auto& [seed,n]:g.peak) {
+                if(n<=1||!f.inside(seed%W,seed/W))continue;
+                const int radius=int(isqrtFloor(uint64_t((5*n+3)/4)))*foot+2*foot+4;
+                if(!f.ahead(size_t(seed),uint32_t(2*kDiagonal)*uint32_t(radius)))return false;
+            }
+        }
+        for(const int id:g.ids) {
+            const Member* m=member(id);const Unit* u=w.unit(id);
+            if(!m||!u||!u->type||m->goal<0||m->state==Arrived||m->state==Trapped)continue;
+            const int ox=footprintOrigin(u->x,u->type->footX),oz=footprintOrigin(u->z,u->type->footZ);
+            if(!f.inside(ox,oz))continue;   // the bounded-field widening (move) handles it
+            if(!f.ahead(size_t(oz)*size_t(W)+size_t(ox),memberMargin(*m,std::max(u->type->footX,u->type->footZ))))return false;
+        }
+        return true;
+    }
+    // Advance a pausable group's first field in kPauseSlice slices until it
+    // covers the group (then it pauses), is done, or the budget is spent.
+    uint64_t serve(Group& g,Field& f,uint64_t budget) {
+        const bool resumed=f.covered&&!f.demand.empty();
+        uint64_t spent=0;
+        while(!f.done) {
+            if(coveredFor(g,f)) {
+                if(!f.covered) {f.covered=true;++stats.fieldsPaused;}
+                if(g.field.get()==&f&&g.pausedSerial!=f.serial) {g.pausedSerial=f.serial;listGroup(g);}
+                break;
+            }
+            if(spent>=budget)break;
+            spent+=advance(f,std::min(kPauseSlice,budget-spent));
+        }
+        if(resumed&&spent)++stats.pausedResumes;
+        return spent;
+    }
+    // A member stands where its group's paused field is not settled with
+    // its margin: the waited loop resumes the build (setWaited) up to it.
+    // Members re-ask every update they stand there, so only the newest
+    // kDemandCells cells are kept.
+    void demand(Group& g,Field& f,int cell,uint16_t margin) {
+        static constexpr size_t kDemandCells=32;
+        setWaited(g);
+        for(auto& d:f.demand)if(d.first==cell) {d.second=std::max(d.second,margin);return;}
+        if(f.demand.size()>=kDemandCells)f.demand.erase(f.demand.begin());
+        f.demand.push_back({cell,margin});
     }
     // Structure footprints as last stamped into the planes (id order).
     struct Stamp {
@@ -2893,7 +3051,7 @@ struct LegionNavigator::Impl {
         // any grounded or lift-home cell, and asks nothing.
         auto walk=[&](Unit* u,const Member& m,const Group& g,bool dry) {
             const auto& p=planes[size_t(g.plane)];
-            const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+            const Field* f=g.field&&g.field->usable()?g.field.get():nullptr;
             const int fx=u->type->footX,fz=u->type->footZ;
             int x=footprintOrigin(u->x,fx),z=footprintOrigin(u->z,fz);
             const int gx=m.goal%W,gz=m.goal/W;
@@ -2937,11 +3095,11 @@ struct LegionNavigator::Impl {
                 int nx=x,nz=z;
                 while(r<m.route.size()&&m.route[r]==z*W+x)++r;
                 if(r<m.route.size()) {nx=m.route[r]%W;nz=m.route[r]/W;++r;}
-                else if(f&&f->inside(x,z)&&f->at(size_t(z*W+x))!=kUnreached) {
-                    uint32_t best=f->at(size_t(z*W+x));
+                else if(f&&f->inside(x,z)&&f->known(size_t(z*W+x))!=kUnreached) {
+                    uint32_t best=f->known(size_t(z*W+x));
                     for(const auto& d:kDirections) {
                         if(!step(p,x,z,d[0],d[1])||!f->inside(x+d[0],z+d[1]))continue;
-                        const uint32_t v=f->at(size_t((z+d[1])*W+x+d[0]));
+                        const uint32_t v=f->known(size_t((z+d[1])*W+x+d[0]));
                         if(v<best) {best=v;nx=x+d[0];nz=z+d[1];}
                     }
                 } else {
@@ -3056,7 +3214,7 @@ struct LegionNavigator::Impl {
             plane(g.plane);settle();
             if(budget==0)break;
             if(!g.field&&!startField(g))continue;
-            if(!g.field->done)finish(g,*g.field,advance(*g.field,budget));   // (done: shared)
+            if(!g.field->done)finish(g,*g.field,pausable(g)?serve(g,*g.field,budget):advance(*g.field,budget));   // (done: shared)
         }
         uint64_t refresh=kRefreshQuota;
         for(int pass=0;pass<2;++pass)for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
@@ -3067,9 +3225,13 @@ struct LegionNavigator::Impl {
             if(!f) {if(!wantsBuilding(g))listGroup(g);continue;}   // a shared build another group finished
             if(f->done) {finish(g,*f,0);continue;}   // a refresh another group finished
             if(pass==1&&refresh==0)continue;
+            // A paused first build with no demand waits (see serve; such a
+            // group is normally off this list).
+            const bool pause=pass==0&&pausable(g);
+            if(pause&&f->covered&&f->demand.empty())continue;
             plane(g.plane);settle();
             if(budget==0)break;
-            const uint64_t spent=advance(*f,pass==1?std::min(budget,refresh):budget);
+            const uint64_t spent=pause?serve(g,*f,budget):advance(*f,pass==1?std::min(budget,refresh):budget);
             if(pass==1)refresh-=std::min(refresh,spent);
             finish(g,*f,spent);
         }
@@ -3083,7 +3245,9 @@ struct LegionNavigator::Impl {
                 if(budget==0)break;
                 ++visits;
                 Group& g=groups.find(id)->second;
-                if((g.field&&(!g.stale||!g.field->done))||g.next)continue;
+                // (A stale paused first build is refreshed as a finished one
+                // would be: it never finishes on its own.)
+                if((g.field&&(!g.stale||!g.field->usable()))||g.next)continue;
                 if((pass==0)!=(g.field==nullptr))continue;
                 // B1: nobody steers by an inactive group's stale field; it
                 // stays listed and refreshes the tick the group is active
@@ -3101,7 +3265,7 @@ struct LegionNavigator::Impl {
                 if(!startField(g,shareOnly)) {if(shareOnly) {++stats.refreshDeferred;continue;}break;}
                 Field& f=g.next?*g.next:*g.field;
                 if(f.done)continue;   // shared
-                const uint64_t spent=advance(f,pass==1?std::min(budget,refresh):budget);
+                const uint64_t spent=pass==0&&pausable(g)?serve(g,f,budget):advance(f,pass==1?std::min(budget,refresh):budget);
                 if(pass==1)refresh-=std::min(refresh,spent);
                 finish(g,f,spent);
             }
@@ -3121,14 +3285,14 @@ struct LegionNavigator::Impl {
         const Stats& s=stats;
         std::fprintf(stderr,"LPROBE tick=%u units=%zu groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
-            " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu"
+            " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu paused_resumes=%llu"
             " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
             w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
             (unsigned long long)s.refreshDeferred,(unsigned long long)s.blockedRerequests,(unsigned long long)s.lifts,
             (unsigned long long)s.liftMembersWalked,(unsigned long long)s.liftMembersSkipped,(unsigned long long)s.waitingMemberTicks,
-            (unsigned long long)s.demandResumes,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
+            (unsigned long long)s.demandResumes,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.fieldsPaused,(unsigned long long)s.pausedResumes,(unsigned long long)s.stillUnitsProcessed,
             (unsigned long long)s.stillPerResidueMax,(unsigned long long)s.quotaPegRunMax,(unsigned long long)s.anchorWalkIters,
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
             probeSyncMs,probeStampMs,probeLiftMs);
@@ -3165,9 +3329,16 @@ struct LegionNavigator::Impl {
         if(calls<s.moves)fail("move calls by state below moves");
         if(s.formationRingCells+s.rechoiceBfsCells>s.slotSearchCells)
             fail("slot search cells below the formation ring and re-choice cells");
-        if(s.fieldsPaused)fail("counters of mechanisms that do not exist yet are non-zero");
         if(s.demandResumes>s.refreshSuppressed)fail("more demand resumes than suppressed refreshes");
+        if(s.pausedResumes&&!s.fieldsPaused)fail("paused builds resumed but none paused");
         verifySoft(fail);
+        {
+            // Each group's member ids (the paused build's cover test).
+            std::map<int,std::vector<int>> ids;
+            for(const auto& [id,m]:members)if(groups.count(m.group))ids[m.group].push_back(id);
+            for(const auto& [id,g]:groups)
+                if(g.ids!=ids[id]||int(g.ids.size())!=g.members)fail("a group's member ids differ from its members");
+        }
         // The scheduler lists against a scan of every group.
         {
             size_t building=0,need=0,staleDone=0,built=0;
@@ -4839,7 +5010,22 @@ struct LegionNavigator::Impl {
         // A first field still building already steers a body its frontier
         // has passed (see Field::settled): no standing still for the rest
         // of the build. Slots wait for the finished field.
-        else if(g.field&&g.field->settled(size_t(here),g.field->at(size_t(here))))f=g.field.get();
+        else {
+            // ... except on a paused first build (C1), where a member's slot
+            // claim is its formation's hand-out only, which reads no potential.
+            if(g.field&&g.field->covered&&formationOnly(g,m))claimSlot(u,m,g,p,here);
+            if(g.field&&g.field->settled(size_t(here),g.field->at(size_t(here))))f=g.field.get();
+        }
+        // A paused first build (see serve) resumes for a member whose cell
+        // it has not settled with the cover margin: one that strayed off
+        // the planned ground, joined late, or walks on toward the frontier.
+        if(g.field&&g.field->covered&&!g.field->done&&g.field->inside(ox,oz)) {
+            // A part that has grown strong enough to pinwheel (pivotAim
+            // keeps `done`): the build runs on to done (see pausable).
+            if(g.pausedSerial&&m.pt&&partRefs(m)>=kPivotMembers) {g.pausedSerial=0;listGroup(g);}
+            const uint16_t margin=memberMargin(m,std::max(fx,fz));
+            if(!g.field->ahead(size_t(here),margin))demand(g,*g.field,here,margin);
+        }
         // A bounded field that cannot reach this body (it walked or joined
         // outside the window, or the way out leaves it): widen the group's
         // field to the whole component and wait for it, never trapped. It
@@ -4947,16 +5133,17 @@ struct LegionNavigator::Impl {
             // B1: a member blocked kBlockedRetry ticks outside its destination
             // area, and not arrived by contact just above, makes its group
             // active (see active): Retail's blocked re-request. Blocked means
-            // a re-plan could help: no finished field, or no step down the
-            // field from here that is legal and clear of soft bodies (a
+            // a re-plan could help: no finished field (a paused first build,
+            // C1, serves as a finished one, read through known()), or no
+            // step down the field from here that is legal and clear of soft bodies (a
             // static change cut the way, or bodies standing still close it,
             // which a refresh plans round). A body held only by its own
             // command's bodies or by movers on a free way down is not: a
             // refresh would give it the same way (guards queued at an idle
             // friend hold like this for good: staticidle).
             if(stalledFor(m)>=kBlockedRetry&&!giveWayHolder(m)&&
-               (!f||!f->done||f->at(size_t(here))==kUnreached||
-                (!freeDescent(u,g,p,*f,ox,oz)&&f->at(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
+               (!f||!f->usable()||f->known(size_t(here))==kUnreached||
+                (!freeDescent(u,g,p,*f,ox,oz)&&f->known(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
                 if(w.tickCounter_-g.blockedTick>2)++stats.blockedRerequests;
                 g.blockedTick=w.tickCounter_;
             }
@@ -5031,8 +5218,10 @@ struct LegionNavigator::Impl {
     // descent and line sweeps were the largest share of a held update.
     int aimCell(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz) {
         auto& a=m.aim;
-        const bool memo=f.done&&f.serial;
-        if(memo&&a.x==u.x.v&&a.z==u.z.v&&a.goal==m.goal&&a.type==u.type&&a.field==f.serial&&a.epoch==epoch)
+        // A paused build is fixed while its work count stands (a resumed
+        // build lowers tentative potentials the descent may read).
+        const bool memo=f.usable()&&f.serial;
+        if(memo&&a.x==u.x.v&&a.z==u.z.v&&a.goal==m.goal&&a.type==u.type&&a.field==f.serial&&a.epoch==epoch&&a.work==f.work)
             return a.cell;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int goalX=m.goal%W,goalZ=m.goal/W;
@@ -5059,7 +5248,7 @@ struct LegionNavigator::Impl {
             }
             cell=chain;
         }
-        if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,cell};
+        if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,f.work,cell};
         return cell;
     }
     // Pinwheel: a formation keeps its width round the end of a wall. The
@@ -5718,11 +5907,14 @@ struct LegionNavigator::Impl {
         // A reach kind (attack, guard) never settles: its owner ends the
         // approach, in reach (AR-06).
         if(m.approach||m.goal<0||!policy(m.kind).completes)return false;
-        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+        // A paused first build serves too: every potential read here and in
+        // pressed, areaBound and rechoose goes through known(), so an
+        // unsettled cell reads as unreached.
+        const Field* f=g.field&&g.field->usable()?g.field.get():nullptr;
         if(!f)return false;
         const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int64_t body=int64_t(foot)*16;
-        const uint16_t potential=f->at(size_t(oz*W+ox));
+        const uint16_t potential=f->known(size_t(oz*W+ox));
         if(potential==kUnreached)return false;
         const int64_t px=int64_t(std::get<2>(m.point)),pz=int64_t(std::get<3>(m.point));
         const bool area=policy(m.kind).area,waypoint=policy(m.kind).passThrough;
@@ -5734,7 +5926,7 @@ struct LegionNavigator::Impl {
         auto nearer=[&](const Unit& other) {
             const int qx=footprintOrigin(other.x,fx),qz=footprintOrigin(other.z,fz);
             if(qx>=0&&qz>=0&&qx<W&&qz<height()) {
-                const uint16_t q=f->at(size_t(qz*W+qx));
+                const uint16_t q=f->known(size_t(qz*W+qx));
                 if(q!=kUnreached)return q<potential;
             }
             const int64_t dx=(int64_t(other.x.v)-px)>>16,dz=(int64_t(other.z.v)-pz)>>16;
@@ -5767,7 +5959,7 @@ struct LegionNavigator::Impl {
                     // behind it may settle one row further back (C29 below).
                     const int qx=footprintOrigin(other->x,fx),qz=footprintOrigin(other->z,fz);
                     if(qx>=0&&qz>=0&&qx<W&&qz<height())
-                        if(const uint16_t q=f->at(size_t(qz*W+qx));q!=kUnreached&&(front==kUnreached||q>front))front=q;
+                        if(const uint16_t q=f->known(size_t(qz*W+qx));q!=kUnreached&&(front==kUnreached||q>front))front=q;
                 }
             } else if(other->orders.empty())foreign=true;
             else if(area&&!queued) {
@@ -5847,12 +6039,12 @@ struct LegionNavigator::Impl {
     // plan round -- its own, or movers -- and a refresh would not help it).
     bool freeDescent(const Unit& u,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
-        const uint16_t potential=f.at(size_t(oz*W+ox));
+        const uint16_t potential=f.known(size_t(oz*W+ox));
         const uint64_t command=g.soft?g.command:kNoSoft;
         const int counts=!softCellCount||command==kNoSoft?-1:softCountsFor(fx,fz);
         for(const auto& d:kDirections) {
             if(!step(p,ox,oz,d[0],d[1]))continue;
-            const uint16_t v=f.at(size_t((oz+d[1])*W+ox+d[0]));
+            const uint16_t v=f.known(size_t((oz+d[1])*W+ox+d[0]));
             if(v!=kUnreached&&v<potential&&!softAt(ox+d[0],oz+d[1],fx,fz,command,counts))return true;
         }
         return false;
@@ -5863,7 +6055,7 @@ struct LegionNavigator::Impl {
         const int W=width();
         for(const auto& d:kDirections) {
             if(!step(p,ox,oz,d[0],d[1]))continue;
-            const uint16_t v=f.at(size_t((oz+d[1])*W+ox+d[0]));
+            const uint16_t v=f.known(size_t((oz+d[1])*W+ox+d[0]));
             if(v==kUnreached||v>=potential)continue;
             if(stepFree(u,ox,oz,ox+d[0],oz+d[1]))return false;
         }
@@ -5890,7 +6082,9 @@ struct LegionNavigator::Impl {
         if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
         const Field& f=*g.field;
         auto& cached=g.areaBounds[m.requested];
-        if(cached.first==f.serial&&cached.second.first==n)return cached.second.second;
+        // A paused build (C1) reads settled cells only and is not cached:
+        // it settles more cells when it resumes.
+        if(f.done&&cached.first==f.serial&&cached.second.first==n)return cached.second.second;
         const int count=(5*n+3)/4;
         const int W=width(),H=height(),sx=m.requested%W,sz=m.requested/W,foot=std::max(fx,fz);
         uint32_t bound=0;
@@ -5901,7 +6095,7 @@ struct LegionNavigator::Impl {
             stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
             const Plane& p=plane(g.plane);
             for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
-                if(legal(p,x,z)&&f.at(size_t(z*W+x))!=kUnreached)order.push_back({f.at(size_t(z*W+x)),z*W+x});
+                if(legal(p,x,z)&&f.known(size_t(z*W+x))!=kUnreached)order.push_back({f.known(size_t(z*W+x)),z*W+x});
             std::sort(order.begin(),order.end());
             const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
             std::vector<uint8_t> used(size_t(bw)*bh,0);
@@ -5917,7 +6111,7 @@ struct LegionNavigator::Impl {
             }
             if(packed>=count)break;
         }
-        cached={f.serial,{n,bound}};
+        if(f.done)cached={f.serial,{n,bound}};
         return bound;
     }
     // Re-choice (C2, C28): the free slot of this member's destination it can
@@ -5965,7 +6159,7 @@ struct LegionNavigator::Impl {
                 const int nlx=lx+dd[0],nlz=lz+dd[1];
                 if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
                 if(!step(p,x,z,dd[0],dd[1]))continue;
-                if(const uint16_t v=f.at(size_t((z+dd[1])*W+x+dd[0]));v==kUnreached||v>climb||!open(x+dd[0],z+dd[1]))continue;
+                if(const uint16_t v=f.known(size_t((z+dd[1])*W+x+dd[0]));v==kUnreached||v>climb||!open(x+dd[0],z+dd[1]))continue;
                 if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
                 seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
             }
@@ -5982,7 +6176,7 @@ struct LegionNavigator::Impl {
             const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
             for(const int local:queue) {
                 const int x=ox+local%S-R,z=oz+local/S-R,cell=z*W+x;
-                const uint16_t v=f.at(size_t(cell));
+                const uint16_t v=f.known(size_t(cell));
                 if(v==kUnreached||v>bestV||(v==bestV&&(best<0||cell>best)))continue;
                 if(v==potential)continue;
                 const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
@@ -5999,7 +6193,7 @@ struct LegionNavigator::Impl {
         for(size_t i=0;i<slots->cells.size();++i) {
             const int cell=slots->cells[i];
             if(slots->taken[i]||int(i)==m.slot)continue;
-            const uint16_t v=f.at(size_t(cell));
+            const uint16_t v=f.known(size_t(cell));
             if(v==kUnreached||v>=potential)continue;
             if(best>=0&&(v>bestV||(v==bestV&&cell>=best)))continue;
             if(!legal(p,cell%W,cell/W)||!reached(cell)||!slotFree(m,cell,fx,fz))continue;
@@ -6129,6 +6323,11 @@ struct LegionNavigator::Impl {
             h=mix(h,g.lastUse);
             h=mix(h,g.built);
             if(g.field) {h=mix(h,g.field->work);h=mix(h,g.field->done);h=mix(h,g.field->epoch);h=mix(h,g.field->current);h=mix(h,g.field->bounded);h=mix(h,g.field->started);}
+            // A paused first build (C1), tagged only when set.
+            if(g.field&&(g.field->covered||!g.field->demand.empty())) {
+                h=mix(h,0x434f5645524544ull);h=mix(h,g.field->covered);
+                for(const auto& [cell,margin]:g.field->demand)h=mix(h,uint64_t(uint32_t(cell))<<16|margin);
+            }
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 h=mix(h,g.avoidCmd[i]);h=mix(h,g.avoidOff[i]);const auto& c=g.avoidSeg[i];
                 h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32);

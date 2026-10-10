@@ -19,7 +19,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 244;      // 244: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
+constexpr uint32_t kNetVersion = 245;      // 245: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
                                            //      member state 6): settled and still to local steering, never yielding or parting,
                                            //      soft to other commands only (as is a member held on its ring spot); a reach kind's
                                            //      held same-target peer (30 ticks) is settled to the bodies behind it, and reach kinds
@@ -31,6 +31,13 @@ constexpr uint32_t kNetVersion = 244;      // 244: Legion W5 -- attack and guard
                                            //      in place and reseats its members with their clocks; an illegal goal re-claims in its
                                            //      group; a soft block of 20+ cells formed on a group's way after its field re-plans it
                                            //      once (300-tick cooldown)
+                                           // 244: Legion W4 C1 -- a first field of a group that claims no packed per-goal slots
+                                           //      and does not pinwheel builds in 4096-relaxation slices and pauses once it
+                                           //      covers its members (Field::covered and the members' demand cells are hashed);
+                                           //      a member under its cover margin resumes it; the settle rule, the lift walk, the
+                                           //      aim memo, eviction, sharing and a formation's slot hand-out read a paused build;
+                                           //      a group with a member waiting on its paused build is active (B1), and a paused
+                                           //      build is a finished field to the blocked re-request
                                            // 243: Legion W6 -- flyers are paired with the ground of their own click on (order class,
                                            //      convoyTick) for Ctrl+N and Alt+N squads (up to 4 stations a squad) and released
                                            //      for their order when the ground stops (no headway for 450 ticks, or a centroid
