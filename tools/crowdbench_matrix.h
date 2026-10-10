@@ -137,7 +137,7 @@ inline Options parse(int argc,char** argv) {
         throw std::runtime_error("mode must be retail or legion");
     constexpr std::array names{"open","doors","bridges","maze","opposingcolumns","sharedgoal",
         "mixedfootprints","exploration","dynamicobstacle","rapidreplacement","unreachable","recovery","recovery-passive",
-        "jagged","trapped","crowdtrap","singleunit","groupdetour","churn"};
+        "jagged","trapped","crowdtrap","singleunit","groupdetour","churn","opposingdoors","opposingbridges","crossingcolumns"};
     if(std::find(names.begin(),names.end(),o.scenario)==names.end())throw std::runtime_error("unknown scenario");
     if(o.units<1||o.units>2000||o.players<1||o.players>8||o.movingPercent<0||o.movingPercent>100||o.ticks<1)
         throw std::runtime_error("units: 1..2000 per player; players: 1..8; moving-percent: 0..100; ticks: positive");
@@ -165,6 +165,7 @@ struct Member {
     float gx=0,gz=0,alternateX=0,alternateZ=0,radius=32;
     double path=0,straight=0;uint64_t stalled=0;
     bool moving=false,reverse=false,near=false,legal=true,pending=false;
+    bool vertical=false;float crossLine=0;   // crossingcolumns' second stream: crosses the first stream's band, north past crossLine (px)
     uint64_t traceControl=~uint64_t(0);
 };
 struct Rect {int x,z,w,h;};
@@ -401,12 +402,25 @@ inline Layout acceptanceLayout(const Options& o) {
 inline int run(const Options& o) {
     const auto setupStart=Clock::now();
     const bool mixed=o.scenario=="mixedfootprints",shared=mixed||o.scenario=="sharedgoal";
-    const bool opposing=o.scenario=="opposingcolumns",exploring=o.scenario=="exploration";
+    // W7 step 0 (PLAN 4 W7): the multi-command opposing scenarios. opposingdoors / opposingbridges are doors /
+    // bridges with half of each lane's members sent the other way, and crossingcolumns sends a second block north
+    // across the first block's band. In all three the second stream is a separate command, kSecondStream ticks
+    // after the first, so the awareness code (which never plans round a member of its own command) sees two
+    // groups. opposingcolumns stays one command.
+    const bool doorsLike=o.scenario=="doors"||o.scenario=="opposingdoors",bridgesLike=o.scenario=="bridges"||o.scenario=="opposingbridges";
+    const bool opposing=o.scenario=="opposingcolumns"||o.scenario=="opposingdoors"||o.scenario=="opposingbridges",exploring=o.scenario=="exploration";
+    const bool crossing=o.scenario=="crossingcolumns",multiCommand=crossing||o.scenario=="opposingdoors"||o.scenario=="opposingbridges";
+    constexpr int kSecondStream=100;
+    if(crossing&&o.players!=1)throw std::runtime_error("crossingcolumns: players must be 1");
     const bool churn=o.scenario=="churn";
     const int stride=mixed?5:3,rows=int(std::ceil(std::sqrt(double(o.units))));
     const int columns=(o.units+rows-1)/rows,laneHeight=rows*stride+16;
+    // crossingcolumns: the second block starts south of the first block's band and ends north of it, so the band
+    // sits below a pad as deep as the block.
+    const int topPad=crossing?columns*stride+16:0;
     const bool accept=acceptanceScenario(o.scenario);const Layout acc=accept?acceptanceLayout(o):Layout{};
-    const int width=accept?acc.width:round64(2*columns*stride+320),height=accept?acc.height:round64(o.players*laneHeight+64);
+    const int width=accept?acc.width:round64(2*columns*stride+320),
+        height=accept?acc.height:round64(crossing?topPad+laneHeight+columns*stride+16+64:o.players*laneHeight+64);
     const int middle=width/2,left=32,right=width-32-columns*stride;
     const int movingPerPlayer=o.units*o.movingPercent/100,totalMoving=movingPerPlayer*o.players;
     LatencyObserver latency;
@@ -420,12 +434,12 @@ inline int run(const Options& o) {
     world.setPlayerCount(o.players+(churn?1:0));for(int p=0;p<o.players+(churn?1:0);++p)world.setTeam(p,0);
     world.setTerrain(std::vector<uint8_t>(size_t(width)*height,100),width,height,64);
     std::vector<Rect> walls;if(accept)walls=acc.walls;
-    const bool lanes=!accept&&(o.scenario=="doors"||o.scenario=="bridges"||o.scenario=="maze"||exploring);
+    const bool lanes=!accept&&(doorsLike||bridgesLike||o.scenario=="maze"||exploring);
     if(lanes)for(int p=0;p<=o.players;++p)walls.push_back({0,24+p*laneHeight,width,2});
     if(!accept)for(int p=0;p<o.players;++p) {
         const int low=26+p*laneHeight,high=24+(p+1)*laneHeight,center=(low+high)/2;
-        if(o.scenario=="doors"||o.scenario=="bridges") {
-            const int thickness=o.scenario=="doors"?4:64;
+        if(doorsLike||bridgesLike) {
+            const int thickness=doorsLike?4:64;
             walls.push_back({middle-thickness/2,low,thickness,center-3-low});
             walls.push_back({middle-thickness/2,center+3,thickness,high-center-3});
         }
@@ -449,15 +463,25 @@ inline int run(const Options& o) {
     }
     if(!accept)for(int p=0;p<o.players;++p)for(int k=0;k<o.units;++k) {
         const int slot=opposing?k/2:k;
-        const int col=slot/rows,row=slot%rows,baseZ=36+p*laneHeight;
+        const int col=slot/rows,row=slot%rows,baseZ=36+p*laneHeight+topPad;
         // Movers occupy the front columns; inactive bodies do not form an
         // artificial wall between the commanded crowd and its destination.
         const int slotX=(columns-1-col)*stride,slotZ=row*stride;
         Member member;member.player=p;member.moving=k<movingPerPlayer;
         member.reverse=opposing&&(k%2==1);
-        const int x=(member.reverse?right:left)+slotX,z=baseZ+slotZ;
+        int x=(member.reverse?right:left)+slotX,z=baseZ+slotZ;
         member.gx=float(((member.reverse?left:right)+slotX)*16);member.gz=float(z*16);
         member.alternateX=float((left+slotX)*16);member.alternateZ=float(z*16);
+        if(crossing&&k%2==1) {
+            // The second block: `rows` bodies across, centred on the band's middle; its front column
+            // (col 0) starts nearest the band and walks north to the same offset above it.
+            member.vertical=true;
+            x=middle-rows*stride/2+row*stride;
+            z=baseZ+rows*stride+16+col*stride;
+            member.gx=float(x*16);member.gz=float((baseZ-16-(columns-col)*stride)*16);
+            member.alternateX=float(x*16);member.alternateZ=float(z*16);
+            member.crossLine=float(baseZ*16-32);
+        }
         if(shared) {
             member.gx=float((right+columns*stride/2)*16);
             member.gz=float((baseZ+rows*stride/2)*16);
@@ -493,11 +517,15 @@ inline int run(const Options& o) {
             issue(m,tick);
         }
     };
+    // The streams of a multi-command scenario: the first (even members) now, the second (odd) at kSecondStream.
+    auto commandStream=[&](int tick,bool second) {
+        for(size_t i=0;i<members.size();++i)if(members[i].moving&&((i%size_t(o.units))%2==1)==second)issue(members[i],tick);
+    };
     if(o.latency)RetailReplayProbe::telemetry(world,&latency);
     // The observer's own map/vector growth is harness work, not simulation
     // allocation. Pausing the global switch is only exact without workers.
     if(o.allocations&&!o.workers)latency.quiet=&crowdbench_allocation::enabled;
-    command(0,false);
+    if(multiCommand)commandStream(0,false);else command(0,false);
     // Acceptance observation (all modes, all scenarios): see crowdbench_acceptance.h.
     namespace ca=crowdbench_acceptance;
     ca::Observer observer;ca::Totals totals;std::vector<ca::Track> tracks(members.size());
@@ -754,6 +782,7 @@ inline int run(const Options& o) {
         latency.tick=uint64_t(tick);
         const auto eventStart=Clock::now();
         if(o.scenario=="rapidreplacement"&&tick%120==0&&tick<=o.ticks/2)command(tick,true);
+        if(multiCommand&&tick==kSecondStream)commandStream(tick,true);
         if(churn&&tick%kChurnEvery==0) {
             const size_t slice=size_t(tick/kChurnEvery%kChurnSlices);
             for(size_t i=slice;i<members.size();i+=kChurnSlices)if(members[i].moving) {
@@ -815,7 +844,7 @@ inline int run(const Options& o) {
                     if(m.legal)++m.rest;else m.rest=0;
                 } else m.rest=0;
                 if(m.rest>=restTicks) {if(m.arrivedTick<0)m.arrivedTick=tick; ++arrived;}else m.arrivedTick=-1;
-                if(m.crossedTick<0&&(m.reverse?u.x.toFloat()<middle*16-32:u.x.toFloat()>middle*16+32)) {
+                if(m.crossedTick<0&&(m.vertical?u.z.toFloat()<m.crossLine:m.reverse?u.x.toFloat()<middle*16-32:u.x.toFloat()>middle*16+32)) {
                     m.crossedTick=tick;if(firstCross<0)firstCross=tick;lastCross=tick;
                 }
                 // Retail age classes (retailgrade.h: a body unmoved for 10
@@ -1020,7 +1049,7 @@ inline int run(const Options& o) {
 inline int main(int argc,char** argv) {
     if(argc==2&&std::string_view(argv[1])=="--help") {
         std::puts("crowdbench [legacy-scenario...]\ncrowdbench --mode retail|legion --units N --players N --moving-percent N --ticks N --scenario NAME [--seed N] [--turn-rate N] [--workers] [--allocations] [--profile] [--latency] [--trace PATH]\n"
-            "Scenarios: open doors bridges maze opposingcolumns sharedgoal mixedfootprints exploration dynamicobstacle rapidreplacement unreachable recovery recovery-passive churn\n"
+            "Scenarios: open doors bridges maze opposingcolumns opposingdoors opposingbridges crossingcolumns sharedgoal mixedfootprints exploration dynamicobstacle rapidreplacement unreachable recovery recovery-passive churn\n"
             "churn: staggered re-orders (a 1/30 slice of the movers every 4 ticks, to seeded random goals in their lane) and a 4x4 structure placed or removed every 20 ticks.\n"
             "--turn-rate N sets the movers' turnRate and turnInPlaceRate (BAM/tick; default 2500).\n"
             "Acceptance scenarios: jagged trapped crowdtrap singleunit groupdetour (see tools/crowdbench_acceptance.h for metric definitions)\n"

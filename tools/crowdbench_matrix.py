@@ -30,7 +30,10 @@ ACCEPTANCE_SCENARIOS = ("jagged", "trapped", "crowdtrap", "singleunit", "groupde
 # Workload scenarios: churn (T7 I3) keeps hundreds of Legion groups live with
 # staggered re-orders and a structure placed/removed every 20 ticks.
 STRESS_SCENARIOS = ("churn",)
-ALL_SCENARIOS = SCENARIOS + ACCEPTANCE_SCENARIOS + STRESS_SCENARIOS
+# W7 step 0 multi-command opposing scenarios (second stream a separate command 100 ticks after the first); also outside
+# SCENARIOS so default matrices are unchanged. crossingcolumns needs one player.
+W7_SCENARIOS = ("opposingdoors", "opposingbridges", "crossingcolumns")
+ALL_SCENARIOS = SCENARIOS + ACCEPTANCE_SCENARIOS + STRESS_SCENARIOS + W7_SCENARIOS
 # The frozen baseline has no Legion mode. (Retail+, Flowfield and Cooperative
 # were removed on 2026-10-06.)
 LEGACY_MODES = ("retail",)
