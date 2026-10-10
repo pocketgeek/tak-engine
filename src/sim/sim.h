@@ -2364,6 +2364,11 @@ private:
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
     bool flyerLandingOccupied(const Unit& self, int x0, int z0, int fx, int fz) const;
+    // A flyer standing on the ground for Legion's purposes (W6, PLAN 3.6):
+    // landed (mode 1), or descending in the landing mission's stage 3.
+    static bool flyerGrounded(const Unit& f) {
+        return f.flightGroundMode==1 || (f.landing && f.landing->mission.stage==3);
+    }
     std::pair<int,int> cellHeightRange(size_t cell) const;
     bool acquireTarget(Unit& u, bool missionPoll);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;

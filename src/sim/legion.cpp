@@ -439,6 +439,19 @@ struct LegionNavigator::Impl {
         // only the detour, yield, part and side-step back-offs read it.
         uint32_t heldSince=kNoTick,stallTick=0,progress=0xffffffffu;
         uint32_t holdUpdates=0;
+        // W6 headway clock (PLAN 3.6 advancing()): the tick this body last
+        // reached a new best potential on its group's current field (headBest
+        // on field headSerial; a new field re-baselines the best without
+        // counting as progress), standing still like stallTick while it walks
+        // a committed route or side-step. stallTick cannot serve: `progress`
+        // mixes two scales (squared cells before the field is done, potential
+        // x64 after), so a body that registers before its field is built
+        // makes no "progress" for most of its walk. Read only by the flyer
+        // rules (LegionNavigator::advancing). Not hashed, like the group's
+        // movingTick/blockedTick: a function of the member updates, whose
+        // inputs are hashed, and recomputed by a rejoining client replaying
+        // from tick 0.
+        uint32_t headTick=0;uint16_t headBest=kUnreached;uint64_t headSerial=0;
         // The tick of this body's last move() call (rested or not). Within a
         // tick it tells a peer already updated from one still to come (see
         // peerStalledFor). Not hashed: it is only ever compared with the
@@ -2038,7 +2051,7 @@ struct LegionNavigator::Impl {
                 if(best>=0) {gx=best%width();gz=best/width();}
             }
         }
-        Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;
+        Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;m.headTick=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
         // The command a member belongs to: the order's convoy (one click,
         // however many ticks the uplink split it over; its issue tick when
@@ -3512,7 +3525,13 @@ struct LegionNavigator::Impl {
     // body finishing a long way round arrived "stalled" and settled where
     // the route left it (gap6: one body short of the area, order never
     // complete in 3 of 5 offsets). Resting bodies walk neither.
-    void holdStall(Member& m) const {m.stallTick=std::min(m.stallTick+1,w.tickCounter_);}
+    void holdStall(Member& m) const {m.stallTick=std::min(m.stallTick+1,w.tickCounter_);m.headTick=std::min(m.headTick+1,w.tickCounter_);}
+    // The headway clock (Member::headTick) as a peer reads it: one tick less
+    // while the peer's update of this tick is still to come (peerStalledFor).
+    uint32_t peerHeadFor(const Member& peer) const {
+        const uint32_t age=w.tickCounter_-peer.headTick;
+        return peer.movedTick==w.tickCounter_||age==0?age:age-1;
+    }
     void complete(Unit& u,Member& m,bool contact) {
         // The nearest reachable point to an unreachable goal is not a
         // completion: the body stops there and its order is retired after
@@ -4278,6 +4297,11 @@ struct LegionNavigator::Impl {
                     ? int64_t(f->at(size_t(here)))*64
                     : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
             if(left<m.progress) {m.progress=left;m.stallTick=w.tickCounter_;m.detourCount=0;}
+            if(f) {
+                const uint16_t at=f->at(size_t(here));
+                if(f->serial!=m.headSerial) {m.headSerial=f->serial;m.headBest=at;}
+                else if(at<m.headBest) {m.headBest=at;m.headTick=w.tickCounter_;}
+            }
             if(stalledFor(m)>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
             // B1: a member blocked kBlockedRetry ticks outside its destination
             // area, and not arrived by contact just above, makes its group
@@ -5569,6 +5593,12 @@ int LegionNavigator::recordsForTest(int id) const {
 int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
+}
+bool LegionNavigator::advancing(int id,uint32_t limit) const {
+    const auto found=impl_->members.find(id);
+    if(found==impl_->members.end())return false;
+    const auto& m=found->second;
+    return (m.state==Impl::Moving||m.state==Impl::Holding||m.state==Impl::Waiting)&&impl_->peerHeadFor(m)<limit;
 }
 int LegionNavigator::routeLength(int id) const {
     const auto found=impl_->members.find(id);

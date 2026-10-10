@@ -42,6 +42,7 @@ struct RetailReplayProbe {
         const auto* s=w.legionFlightStation(u);
         return !s?0:s->hold?2:1;
     }
+    static bool grounded(const Unit& u) {return World::flyerGrounded(u);}
 };
 }
 
@@ -1173,12 +1174,64 @@ void liftcombat() {
 }
 }
 
+// ---------------------------------------------------------------------------
+// predicates (W6 step 1): LegionNavigator::advancing and World::flyerGrounded. One body walks into a
+// sealed pocket: it advances while it gains and stops advancing kLiftStall (kStationStall) ticks after
+// its last gain. A flyer is grounded once landed, and while it descends in the landing stage 3.
+// ---------------------------------------------------------------------------
+void predicates() {
+    Fixture f(120,60);
+    // A wall with one 2-cell gap, plugged by an idle enemy body: the body is ordered beyond it and
+    // holds at the plug with its order kept.
+    f.rect(60,0,4,29);f.rect(60,31,4,29);f.publish();
+    const auto type=mover(2);
+    const auto flyer=flyerType(3);
+    f.spawn(type,61,30,1);
+    const int id=f.spawn(type,20,30);
+    const int fid=f.spawn(flyer,20,10);
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    check(legion!=nullptr,"predicates: no Legion navigator");
+    check(!legion->advancing(id,LegionNavigator::kLiftStall),"predicates: an idle body is not advancing");
+    f.command(tak::net::Cmd::Move,id,0,100*16,30*16);
+    int firstAdv=-1,lastAdv=-1,lastAdvStation=-1;
+    for(int t=0;t<1200;++t) {
+        f.tick();
+        if(legion->advancing(id,LegionNavigator::kLiftStall)) {if(firstAdv<0)firstAdv=t;lastAdv=t;}
+        if(legion->advancing(id,LegionNavigator::kStationStall))lastAdvStation=t;
+        if(verbose()&&t%50==0)std::printf("  t=%d x=%.0f z=%.0f state=%d adv=%d\n",t,f.world.unit(id)->x.toFloat(),f.world.unit(id)->z.toFloat(),
+            legion->unitState(id),int(legion->advancing(id,LegionNavigator::kLiftStall)));
+    }
+    std::printf("predicates advancing first=%d last_lift=%d last_station=%d state=%d\n",firstAdv,lastAdv,lastAdvStation,legion->unitState(id));
+    check(legion->unitState(id)==2||legion->unitState(id)==1,"predicates: the body should still hold its order at the plug");
+    check(firstAdv>=0&&firstAdv<30,"predicates: a moving body is advancing");
+    // It walks ~40 cells (to t~330) gaining on its field every few ticks: advancing all the way (the
+    // stall clock's two-scale progress measure would read it stalled from t~120), then stalled 120 ticks
+    // after its last gain at the plug.
+    check(lastAdv>=300&&lastAdv<700,"predicates: a walking body advances, a stalled body stops advancing (kLiftStall)");
+    check(lastAdvStation-lastAdv>=LegionNavigator::kStationStall-LegionNavigator::kLiftStall-1,"predicates: kStationStall outlasts kLiftStall");
+    // flyerGrounded: airborne under an order, grounded through the descent and once landed.
+    check(!RetailReplayProbe::grounded(*f.world.unit(fid))||f.world.unit(fid)->flightGroundMode==1,"predicates: flyerGrounded off the ground");
+    f.command(tak::net::Cmd::Move,fid,0,30*16,10*16);
+    int airborne=-1,stage3=-1,landed=-1;
+    for(int t=0;t<1500&&landed<0;++t) {
+        f.tick();
+        const auto& u=*f.world.unit(fid);
+        if(u.flightGroundMode==2&&airborne<0)airborne=t;
+        if(airborne>=0&&u.flightGroundMode==2&&!(u.landing&&u.landing->mission.stage==3))check(!RetailReplayProbe::grounded(u),"predicates: an airborne flyer is grounded");
+        if(u.landing&&u.landing->mission.stage==3&&stage3<0) {stage3=t;check(RetailReplayProbe::grounded(u),"predicates: a stage-3 descender is not grounded");}
+        if(u.flightGroundMode==1&&airborne>=0) {landed=t;check(RetailReplayProbe::grounded(u),"predicates: a landed flyer is not grounded");}
+    }
+    std::printf("predicates flyer airborne=%d stage3=%d landed=%d\n",airborne,stage3,landed);
+    check(airborne>=0&&stage3>=0&&landed>=stage3,"predicates: the flyer did not take off, descend and land");
+}
+
 int main(int argc,char** argv) {
     const std::map<std::string_view,std::function<void()>> cases{
         {"mixedsquad",mixedsquad},{"mixedseal",mixedseal},{"mv08group",mv08group},{"mv08deadend",mv08deadend},{"deadendrejoin",deadendrejoin},
         {"ctrlmixed",ctrlmixed},{"ctrlmixedbig",ctrlmixedbig},{"factoryjoin",factoryjoin},{"landunder",landunder},{"descentwalkin",descentwalkin},
         {"auditlift",auditlift},{"auditlift40",auditlift40},{"fl04",fl04},{"fl05match",fl05match},{"fl05unreach",fl05unreach},
-        {"splitpatrol",splitpatrol},{"liftcombat",liftcombat}};
+        {"splitpatrol",splitpatrol},{"liftcombat",liftcombat},{"predicates",predicates}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

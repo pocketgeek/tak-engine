@@ -2278,7 +2278,7 @@ bool World::flyerLandingOccupied(const Unit& self,int x0,int z0,int fx,int fz) c
         if (&o==&self || !o.alive() || o.embarked() || !o.type) return false;
         if (ox>=x0+fx || oz>=z0+fz || ox+o.type->footX<=x0 || oz+o.type->footZ<=z0) return false;
         if (!o.type->canFly) return !o.type->isStructure();
-        return o.flightGroundMode==1 || (o.landing && o.landing->mission.stage==3);
+        return flyerGrounded(o);
     };
     if (bodyIndexEnabled_ && hW_>0 && hH_>0 && x0>=0 && z0>=0 && x0+fx<=hW_ && z0+fz<=hH_) {
         if (!bodyIndexValid_) rebuildBodyIndex();

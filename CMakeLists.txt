@@ -342,7 +342,7 @@ endforeach()
 add_executable(legion_flyers_test tools/legion_flyers_test.cpp)
 target_link_libraries(legion_flyers_test PRIVATE tak-formats)
 foreach(legion_probe mixedsquad mixedseal mv08group mv08deadend deadendrejoin ctrlmixed ctrlmixedbig factoryjoin auditlift
-    fl04 fl05match fl05unreach)
+    fl04 fl05match fl05unreach predicates)
   add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
   set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6")
 endforeach()

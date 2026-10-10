@@ -208,6 +208,14 @@ public:
     // Observation hook (read-only, never hashed): cells left in the unit's committed local detour route
     // (0: none, or not a Legion member). MV-06's route-follower crawl samples read it.
     int routeLength(int id) const;
+    // W6 (PLAN 3.6): is the unit a Legion member still making headway, its
+    // headway clock (the last tick it reached a new best potential on its
+    // group's field) under `limit` ticks?
+    // Moving, Holding and Waiting members count; Arrived, Trapped and
+    // non-members do not. The flyer rules read it with kLiftStall (lift area)
+    // and kStationStall (formation stations). Reads hashed member state only.
+    static constexpr uint32_t kLiftStall=120,kStationStall=450;
+    bool advancing(int id,uint32_t limit) const;
     // Test hook: the unit's group field potential at an origin (-1 if none).
     int fieldPotential(int id,int originX,int originZ) const;
     // Test hook: the slot shape of the unit's formation (valid=false if it
