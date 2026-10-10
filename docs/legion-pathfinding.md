@@ -1194,6 +1194,36 @@ covers the click shapes (flyers first with saturated offsets, opposite
 corners, all-air, the 974-unit window at round trips 0/8/16/24, patrol, two
 clicks 48 px apart) and the index against the scan.
 
+### Flyers and group records (W6, protocol 243)
+
+W6 (T5 and T6) makes the flyers of a squad follow the click they belong to and
+keeps a landing or lifting flyer from trapping ground units. All of it is in
+the sections it changes (the rest-time rejoin under Formations, flight
+stations, the lift area and landing); this is the list.
+
+- **Flight stations pair on the click.** A Ctrl+N group's flyers keep station
+  over the ground of their own click, like an Alt+N formation's; up to 4
+  buckets a squad, keyed by (order class, `convoyTick`).
+- **Release.** A station flyer is released for its order when the ground
+  stops (no headway for 450 ticks, or a centroid still for 900), so a sealed
+  wall or a dead end no longer keeps the wing hovering.
+- **Landing is safe.** A descending flyer is stamped on its touchdown
+  footprint from stage 3 (leave-only); no walker steps in under it.
+- **Lift episodes are bounded.** At most 1800 ticks (60 s) and a 600-tick
+  rest; kept up only by members making headway; a lifted flyer polls for a
+  target every 8 ticks and fights (`work.lift_target_polls`, bound lifted
+  flyers / 8 a tick). An own-squad landed flyer lifts only for a stalled
+  squad member whose goal or next 2 cells it covers.
+- **The rejoin gathers ground only,** at the formation's modal settled point;
+  a settled body is never re-ordered, so a dead-end queue is not pulled back.
+- **Not built:** the touchdown backstop (C5) and home-excluded landing (step 7,
+  C20); the post-release cap floor (it moved Alt+1 start offsets).
+
+Exit numbers: `docs/legion-exit-tables.md` "W6 exit"; the cases are in
+`tools/legion_flyers_test.cpp` (`docs/legion-w6-step0.md`). Hashes: the
+crowdbench Legion rows without flyers or squads, the Legion navigation golden
+and the Inner Circle `--mpai` hash are unchanged from protocol 242.
+
 ### Upkeep on demand (W4, protocol 242)
 
 W4 (T7 Stage B) makes Legion's per-tick upkeep follow demand instead of the
