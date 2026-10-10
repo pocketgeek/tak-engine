@@ -146,6 +146,10 @@ constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bou
 constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
 constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
+// C1 (W9 lane C, see meetScan): a head-on meet of a formation Point of kPivotMembers or more is
+// released once the other group's tail is behind its rearmost body, or after kMeetQuiet ticks with no
+// contact (no oncoming body found ahead, no head-on awareness entry) before the two have met.
+constexpr uint32_t kMeetQuiet=90;
 // W8 (PLAN 3.2 T2): obstacle clearance and the visible vertex of a descent
 // chain (see nearObstacle, vertexProbe).
 constexpr int kObstacleReach=32;               // rings nearObstacle scans (Chebyshev cells)
@@ -678,6 +682,13 @@ struct LegionNavigator::Impl {
         // in the gate, and the travel axis and sign across the line. Hashed
         // only when set (PLAN 3.0, C27).
         int gateCell=-1;int8_t gateLane=0,gateAxis=0,gateSign=0;
+        // C1 (see meetScan): the last tick this member's lane scan (passAhead) found an oncoming body of
+        // another command ahead (kNoTick: never). Hashed only when set (PLAN 3.0, C27).
+        uint32_t meetSeen=kNoTick;
+        // C1 memo (see meetAim): whether the straight line between the centres of origin `from` and origin
+        // `to` is statically legal for this body, on plane epoch `epoch`. A pure function of the static
+        // plane: derived, never hashed.
+        struct MeetLine {int from=-1,to=-1;uint64_t epoch=~0ull;const UnitType* type=nullptr;bool ok=false;} meetLine;
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
@@ -1605,8 +1616,35 @@ struct LegionNavigator::Impl {
         // empty); handTick is the tick of the last hand-out (a per-tick
         // guard, never hashed).
         std::vector<int> queue;uint32_t handTick=~0u;
+        // C1 (W9 lane C, see meetScan): a head-on meet latched for this Point. tick: the latch (kNoTick:
+        // none); contact: the last tick a member found the other command oncoming or awareness kept its
+        // head-on entry; ax,az,L: the travel axis (px, the live centroid to the requested point when it
+        // latched); lateral positions are px along (-az,ax)/L, the right (the side passAhead keeps to).
+        // left0, width0: the members' lateral extent when it latched; lo, hi: the band they move into,
+        // the right half of that extent moved over by a body (see meetCue); mean0, meanF: their mean then
+        // and the mean the band gives it; q: how far (permille) the live mean has come toward meanF, never
+        // falling; span: the along distance (px) the rest of the move is spread over; active: the move has
+        // started (see meetRefresh); seen: latched by awareness; other: the oncoming command's point.
+        // Hashed while latched (C27).
+        struct Meet {
+            uint32_t tick=kNoTick,contact=0;int64_t ax=0,az=0,L=1;bool seen=false;
+            int64_t left0=0,width0=1,lo=0,hi=0,mean0=0,meanF=0,span=0;int32_t q=0;bool active=false;
+            std::tuple<int,uint32_t,int32_t,int32_t> other{};
+        } meet;
+        // The unseen cue (see stampMeet): the tick some member stamped meetSeen and the least oncoming
+        // point found in that tick (a min reduction: independent of the update order). Hashed while set.
+        uint32_t cueTick=kNoTick;std::tuple<int,uint32_t,int32_t,int32_t> cueOther{};
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
+    // C1: the points with an unseen cue (cueTick set) and the points with a latched meet, ascending.
+    // Functions of the points (TAK_LEGION_VERIFY checks both against a scan); never hashed. awareHeadOn:
+    // this tick's awareScan head-on entries of groups of kPivotMembers or more, (command, mover's point),
+    // consumed by meetScan in the same tick.
+    std::set<std::tuple<int,uint32_t,int32_t,int32_t>> pendingMeets,meetIds;
+    std::vector<std::pair<uint64_t,std::tuple<int,uint32_t,int32_t,int32_t>>> awareHeadOn;
+    void erasePoint(std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point>::iterator it) {
+        pendingMeets.erase(it->first);meetIds.erase(it->first);points.erase(it);
+    }
     void slotCells(const Member& m,int fx,int fz,bool claim) {
         auto& cells=(m.pt?*m.pt:points[m.point]).cells;
         const int W=width(),x=m.goal%W,z=m.goal/W;
@@ -2392,7 +2430,7 @@ struct LegionNavigator::Impl {
                 auto& parts=point->second.partRefs;
                 if(auto part=parts.find(found->second.part);part!=parts.end()&&--part->second<=0)parts.erase(part);
             }
-            if(--point->second.refs<=0)points.erase(point);
+            if(--point->second.refs<=0)erasePoint(point);
         }
         auto group=groups.find(found->second.group);
         if(group!=groups.end()) {
@@ -2437,7 +2475,7 @@ struct LegionNavigator::Impl {
         auto unpin=[&] {
             if(!pin)return;
             pin=false;
-            if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
+            if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)erasePoint(pt);
         };
         leave(u.id);
         dropAnchor(u.id);yielding.erase(u.id);approachDone.erase(u.id);parts.erase(u.id);
@@ -3346,6 +3384,7 @@ struct LegionNavigator::Impl {
         // The stripe cycle's last tick: the soft cells it added, as blocks.
         if(w.tickCounter_%kStillScan==kStillScan-1)softBlocks();
         awareScan();
+        meetScan();
         prebuildStep();
         prune();
         // Yields run even while no Legion member remains (a committed yield
@@ -3528,6 +3567,16 @@ struct LegionNavigator::Impl {
         if(s.pausedResumes&&!s.fieldsPaused)fail("paused builds resumed but none paused");
         verifySoft(fail);
         {
+            // C1: pendingMeets / meetIds against a scan of the points.
+            std::set<std::tuple<int,uint32_t,int32_t,int32_t>> cued,latched;
+            for(const auto& [key,pt]:points) {
+                if(pt.cueTick!=kNoTick)cued.insert(key);
+                if(pt.meet.tick!=kNoTick)latched.insert(key);
+            }
+            if(cued!=pendingMeets)fail("pendingMeets differs from the points with a cue");
+            if(latched!=meetIds)fail("meetIds differs from the points with a latched meet");
+        }
+        {
             // Each group's member ids (the paused build's cover test).
             std::map<int,std::vector<int>> ids;
             for(const auto& [id,m]:members)if(groups.count(m.group))ids[m.group].push_back(id);
@@ -3636,12 +3685,13 @@ struct LegionNavigator::Impl {
     enum : uint8_t {kAwareHeadOn=0,kAwareCross=1};
     void awareScan() {
         if(w.tickCounter_%kAwareScan!=kAwareScan/2||gAwareOff)return;
+        awareHeadOn.clear();
         // A mover: its command, centroid (px), the corridor it sweeps over the
         // next kAwareAhead scans, its spread radius, its displacement over the
         // last scan (px per kAwareScan ticks) and its length L, and its
         // members' extent behind and ahead of the centroid along that heading
         // and across it (px).
-        struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;};
+        struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;std::tuple<int,uint32_t,int32_t,int32_t> key;};
         std::vector<Mover> movers;
         uint64_t work=0;
         for(auto& [key,pt]:points) {
@@ -3669,7 +3719,7 @@ struct LegionNavigator::Impl {
             work+=uint64_t(n);
             const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
             movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
-                cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half});
+                cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half,key});
         }
         // Each group's centroid, spread, slowest base speed (raw Fixed, px
         // per tick) and the sight of its members.
@@ -3811,6 +3861,8 @@ struct LegionNavigator::Impl {
                             cor.x0+=lx;cor.x1+=lx;cor.z0+=lz;cor.z1+=lz;
                         }
                         want.push_back(mv.command);seg.push_back(cor);kind.push_back(cls);side.push_back(0);placed.push_back(0);moved.push_back(false);
+                        // C1 seen: a head-on entry of a group of kPivotMembers or more (meetScan latches its point).
+                        if(cls==kAwareHeadOn&&g.members>=kPivotMembers&&!engages)awareHeadOn.push_back({g.command,mv.key});
 #ifndef NDEBUG
                         if(cls==kAwareHeadOn&&g.members>=kPivotMembers&&!isKnown)++census.c1HeadonEntries;
 #endif
@@ -3857,6 +3909,194 @@ struct LegionNavigator::Impl {
             }
         }
         stats.awarePairs+=pairs;stats.awareWork+=work;
+    }
+    // C1 (W9 lane C, decision 7 / W9-U2): columns narrowing before they meet head on. A formation
+    // Point of kPivotMembers or more latches a meet (Point::meet) when awareness plans a head-on entry
+    // for its group (seen: before contact) or a member's lane scan finds a body of another command
+    // oncoming (unseen: stampMeet). Its members then narrow into the right half of their own lateral
+    // extent, a body further right, aim-only and forward-only (meetAim); both groups keep right, the side
+    // passAhead already passes on. A mission that engages enemies (fight, attack, guard, patrol) never
+    // latches: its members stop and turn to fire as targets come into reach, so a band latched on its
+    // formation goes stale at once (awareness exempts it from enemy movers for the same reason). The meet is released when the other group's tail is behind this group's rear, or
+    // kMeetQuiet ticks without contact before the two have met. Serial, once a tick after awareScan, over the cued and latched points only; a point's
+    // cue is a min reduction over its members' stamps, so nothing here depends on the update order.
+    // The point's live members (Moving / Holding) along and across a meet's axis (px): rear / front
+    // along it, left / right edge across it, the summed lateral position, the count and the widest body.
+    struct MeetSpan {int64_t rear=INT64_MAX,front=INT64_MIN,left=INT64_MAX,right=INT64_MIN,sum=0,n=0,body=0;
+        int64_t mean() const {return n?sum/n:0;}};
+    MeetSpan meetSpan(const Point& pt,int64_t ax,int64_t az,int64_t L,uint64_t& work) const {
+        MeetSpan s;
+        for(const int id:pt.ids) {
+            const Member* mm=member(id);const Unit* v=w.unit(id);
+            if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+            const int64_t x=v->x.v>>16,z=v->z.v>>16;
+            const int64_t along=(x*ax+z*az)/L,lat=(z*ax-x*az)/L;
+            s.rear=std::min(s.rear,along);s.front=std::max(s.front,along);
+            s.left=std::min(s.left,lat);s.right=std::max(s.right,lat);s.sum+=lat;++s.n;
+            s.body=std::max<int64_t>(s.body,int64_t(std::max(v->type->footX,v->type->footZ))*16);
+        }
+        work+=pt.ids.size();
+        return s;
+    }
+    // A cue (seen or unseen) for a point: latch its meet, or refresh the contact of the latched one.
+    void meetCue(const std::tuple<int,uint32_t,int32_t,int32_t>& key,Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& other,bool seen,uint64_t& work) {
+        const uint32_t now=w.tickCounter_;
+        if(pt.meet.tick!=kNoTick) {pt.meet.contact=now;return;}
+        if(pt.ids.size()<size_t(kPivotMembers))return;
+        const auto o=points.find(other);
+        if(o==points.end())return;
+        // The axis: the live centroid to the requested point.
+        int64_t sx=0,sz=0,n=0;const Unit* probe=nullptr;int probePlane=-1;
+        for(const int id:pt.ids) {
+            const Member* mm=member(id);const Unit* v=w.unit(id);
+            if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
+            sx+=v->x.v>>16;sz+=v->z.v>>16;++n;
+            const auto g=groups.find(mm->group);
+            if(g!=groups.end()&&g->second.plane>=0&&(!probe||v->type->footX*v->type->footZ>probe->type->footX*probe->type->footZ)) {probe=v;probePlane=g->second.plane;}
+        }
+        work+=pt.ids.size();
+        if(n<kAwareMembers||!probe)return;
+        const int64_t cx=sx/n,cz=sz/n;
+        const int64_t ax=(int64_t(std::get<2>(key))>>16)-cx,az=(int64_t(std::get<3>(key))>>16)-cz;
+        const int64_t L=isqrtFloor(uint64_t(ax*ax+az*az));
+        if(L<=2*kPassCells*16)return;   // at its destination: the area packs it
+        const MeetSpan own=meetSpan(pt,ax,az,L,work),them=meetSpan(o->second,ax,az,L,work);
+        // Never for a group already past (awareness keeps an entry two scans after the pass).
+        if(!them.n||them.front<own.rear)return;
+        // The band: the right half of the members' extent, moved one body further right, [mid + body,
+        // right + body]. Two groups meeting on one centre line then pass with their inner files two bodies
+        // apart, centre to centre (a body of free ground between them); both keep right, as passAhead and
+        // awareness's head-on corridors do. The band's right edge is cut at the free room before a wall:
+        // the first statically illegal origin across the axis (the widest body's footprint), probed from
+        // the centroid and from the front, less two bodies of clearance.
+        const int64_t body=own.body,mid=(own.left+own.right)/2,lo=mid+body;
+        int64_t hi=own.right+body;
+        const auto& p=planes[size_t(probePlane)];
+        const int fx=probe->type->footX,fz=probe->type->footZ;
+        for(const int64_t along:{int64_t(0),own.front-(cx*ax+cz*az)/L}) {
+            const int64_t bx=cx+ax*along/L,bz=cz+az*along/L;
+            const int64_t base=(bz*ax-bx*az)/L;
+            for(int64_t d=16;base+d<=hi+32;d+=16) {
+                ++work;
+                const int64_t px=bx-az*d/L,pz=bz+ax*d/L;
+                const int ox=footprintOrigin(Fixed::fromInt(int32_t(px)),fx),oz=footprintOrigin(Fixed::fromInt(int32_t(pz)),fz);
+                if(ox<0||oz<0||ox>=width()||oz>=height()||!legal(p,ox,oz)) {hi=std::min(hi,base+d-16-2*body);break;}
+            }
+        }
+        if(hi<lo)hi=lo;
+        const int64_t w0=std::max<int64_t>(1,own.right-own.left);
+        auto& mt=pt.meet;
+        mt.tick=now;mt.contact=now;mt.ax=ax;mt.az=az;mt.L=L;mt.seen=seen;mt.other=other;
+        mt.left0=own.left;mt.width0=w0;mt.lo=lo;mt.hi=hi;mt.mean0=own.mean();mt.meanF=lo+(own.mean()-own.left)*(hi-lo)/w0;mt.q=0;
+        meetIds.insert(key);++stats.meetLatches;
+        meetRefresh(mt,own,them);
+    }
+    // The live state of a latched meet: its progress, the along distance the rest of the move is spread
+    // over (twice the largest lateral move left, which the band's map gives one of its two ends; at least
+    // kPivotLead cells) and whether the move has started.
+    void meetRefresh(Point::Meet& mt,const MeetSpan& own,const MeetSpan& them) {
+        // Progress q (permille, never falls): how far the members' mean has come toward its target.
+        const int64_t to=mt.meanF-mt.mean0;
+        const int64_t q=std::abs(to)<8?1000:std::clamp<int64_t>((own.mean()-mt.mean0)*1000/to,0,1000);
+        mt.q=std::max<int32_t>(mt.q,int32_t(q));
+        const int64_t most=std::max(std::abs(mt.lo-mt.left0),std::abs(mt.hi-mt.left0-mt.width0))*(1000-mt.q)/1000;
+        mt.span=std::max<int64_t>(int64_t(kPivotLead)*16,2*most);
+        // The move starts once the gap to the other group is within twice the span plus two leads (and
+        // then stays on): narrowing from the first awareness sighting, 450 ticks out, only kept the group
+        // packed tighter for longer.
+        if(!mt.active)mt.active=them.rear-own.front<=2*mt.span+2*int64_t(kPivotLead)*16;
+    }
+    void meetScan() {
+        if(pendingMeets.empty()&&meetIds.empty()&&awareHeadOn.empty())return;
+        const uint32_t now=w.tickCounter_;
+        uint64_t work=0;
+        // Seen: this tick's head-on entries, by command (a command's points are contiguous in `points`).
+        if(!awareHeadOn.empty()) {
+            std::sort(awareHeadOn.begin(),awareHeadOn.end());
+            for(size_t i=0;i<awareHeadOn.size();++i) {
+                if(i&&awareHeadOn[i].first==awareHeadOn[i-1].first)continue;   // the least mover point per command
+                const int player=int(uint32_t(awareHeadOn[i].first>>32));const uint32_t issue=uint32_t(awareHeadOn[i].first);
+                for(auto it=points.lower_bound({player,issue,INT32_MIN,INT32_MIN});
+                    it!=points.end()&&std::get<0>(it->first)==player&&std::get<1>(it->first)==issue;++it)
+                    meetCue(it->first,it->second,awareHeadOn[i].second,true,work);
+            }
+            awareHeadOn.clear();
+        }
+        // Unseen: the cues members stamped since the last pass.
+        for(const auto& key:pendingMeets) {
+            auto& pt=points.find(key)->second;
+            meetCue(key,pt,pt.cueOther,false,work);
+            pt.cueTick=kNoTick;
+        }
+        pendingMeets.clear();
+        // Latched: the live state, and the release.
+        for(auto it=meetIds.begin();it!=meetIds.end();) {
+            Point& pt=points.find(*it)->second;
+            auto& mt=pt.meet;
+            const auto o=points.find(mt.other);
+            const MeetSpan own=meetSpan(pt,mt.ax,mt.az,mt.L,work);
+            const MeetSpan them=o!=points.end()?meetSpan(o->second,mt.ax,mt.az,mt.L,work):MeetSpan{};
+            // Released: no live body on either side, the other's tail behind this group's rearmost body,
+            // or no contact for kMeetQuiet ticks before the two have met.
+            if(!own.n||!them.n||them.front<own.rear||(now-mt.contact>kMeetQuiet&&them.rear>own.front)) {
+                mt=Point::Meet{};it=meetIds.erase(it);continue;
+            }
+            meetRefresh(mt,own,them);
+            ++it;
+        }
+        stats.awareWork+=work;
+    }
+    // C1 unseen: a member of a formation Point of kPivotMembers or more found a body of another command's
+    // point oncoming in its lane (passAhead). The point's cue keeps the least such point of the tick.
+    static bool engagesEnemies(Kind k) {return k==Kind::Fight||k==Kind::Attack||k==Kind::Guard||k==Kind::Patrol;}
+    void stampMeet(Member& m,const std::tuple<int,uint32_t,int32_t,int32_t>& other) {
+        m.meetSeen=w.tickCounter_;
+        Point& pt=*m.pt;
+        if(pt.cueTick!=w.tickCounter_) {pt.cueTick=w.tickCounter_;pt.cueOther=other;pendingMeets.insert(m.point);}
+        else if(other<pt.cueOther)pt.cueOther=other;
+    }
+    // C1 aim: a member of a latched point moves into its group's band (see Point::Meet). The band is an
+    // increasing affine map of the latched lateral positions (right - (right - lat)/2 from a right edge a
+    // body further out: no two members swap sides); the group's progress q makes the target an
+    // increasing map of the member's CURRENT position, the same for every member, and keeps each
+    // member's direction of move fixed as q grows (no back and forth as the group jostles). The rest of
+    // the move is spread over the group's span along the axis, so the member that moves the most goes
+    // at most one cell across per two along. The aim is kPivotLead cells ahead, on a statically legal
+    // line and (with a field) lower on it: forward only, no field charge, no re-plan. Not inside
+    // kPivotNear of the member's goal (the area packs it, as for the pinwheel). False: no aim (the
+    // member keeps its own).
+    bool meetAim(const Unit& u,Member& m,const Plane& p,const Field* f,int ox,int oz,Fixed& aimX,Fixed& aimZ) {
+        const auto& mt=m.pt->meet;
+        const int W=width();
+        if(!mt.active)return false;
+        if(std::max(std::abs(m.goal%W-ox),std::abs(m.goal/W-oz))<=kPivotNear)return false;
+        const int64_t x=u.x.v>>16,z=u.z.v>>16,lead=int64_t(kPivotLead)*16;
+        const int64_t lat=(z*mt.ax-x*mt.az)/mt.L;
+        // The band map F(x) = lo + (x - left0) x (hi - lo) / width0 = (A + x (hi - lo)) / width0 on the
+        // latched positions; a member at lat has come q of the way from its latched position x0, so
+        // lat = x0 + q (F(x0) - x0), solved for x0; its move is what is left, F(x0) - lat.
+        const int64_t k=mt.hi-mt.lo,A=mt.lo*mt.width0-mt.left0*k;
+        const int64_t x0=(lat*1000*mt.width0-int64_t(mt.q)*A)/std::max<int64_t>(1,1000*mt.width0-int64_t(mt.q)*mt.width0+int64_t(mt.q)*k);
+        const int64_t move=(A+x0*k)/mt.width0-lat;
+        const int64_t side=std::clamp<int64_t>(move*lead/std::max(mt.span,lead),-lead/2,lead/2);
+        const Fixed tx=Fixed::raw(int32_t(int64_t(u.x.v)+(mt.ax*lead-mt.az*side)*65536/mt.L));
+        const Fixed tz=Fixed::raw(int32_t(int64_t(u.z.v)+(mt.az*lead+mt.ax*side)*65536/mt.L));
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const int cx=footprintOrigin(tx,fx),cz=footprintOrigin(tz,fz);
+        if(cx<0||cz<0||cx>=W||cz>=height()||!legal(p,cx,cz))return false;
+        if(f) {
+            const uint16_t here=f->at(size_t(oz*W+ox)),there=f->at(size_t(cz*W+cx));
+            if(there==kUnreached||(here!=kUnreached&&there>=here))return false;
+        }
+        // The line from this origin's centre to the aim origin's centre (memoised per origin pair: the
+        // drive proves every step it takes anyway).
+        auto& ml=m.meetLine;
+        const int from=oz*W+ox,to=cz*W+cx;
+        if(ml.from!=from||ml.to!=to||ml.epoch!=p.epoch||ml.type!=u.type)
+            ml={from,to,p.epoch,u.type,sweep(p,u,centre(ox,fx),centre(oz,fz),centre(cx,fx),centre(cz,fz))};
+        if(!ml.ok)return false;
+        aimX=tx;aimZ=tz;
+        return true;
     }
     // Members whose unit died, embarked, lost its orders or left Legion's
     // plain-move domain (no more move() calls) are dropped here, a bounded
@@ -5602,6 +5842,9 @@ struct LegionNavigator::Impl {
             }
             aimX=centre(cell%W,fx);aimZ=centre(cell/W,fz);
         } else m.site=LegionNavigator::SiteDirect;
+        // C1: a member of a Point latched in a head-on meet narrows before it (see meetAim).
+        if(m.pt&&m.pt->meet.tick!=kNoTick&&here!=m.goal&&pivoting!=&m&&partRefs(m)>=kPivotMembers&&formationMember(m)&&
+           meetAim(u,m,p,f,ox,oz,aimX,aimZ)&&f)direct=false;
         if(here!=m.goal&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct)) {m.site=LegionNavigator::SitePass;return;}
         drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
     }
@@ -6369,6 +6612,7 @@ struct LegionNavigator::Impl {
                 if(passMask[size_t(bz)*passMaskW+bx]&want) {opposed=true;break;}
         }
         bool oncoming=false;
+        const Member* oncomingPeer=nullptr;
         // A body spans several scanned cells; the verdict on it depends only
         // on the body, so each one is judged once (the scan's hot cost was
         // the repeated member lookups).
@@ -6406,6 +6650,7 @@ struct LegionNavigator::Impl {
             if(std::max(std::abs(odx),std::abs(odz))<=2*kPassCells)continue;
             const int64_t dot=odx*dx+odz*dz;
             oncoming=dot<0&&100*dot*dot>kOncomingCos2*(odx*odx+odz*odz)*(dx*dx+dz*dz);
+            if(oncoming)oncomingPeer=peer;
 #ifndef NDEBUG
             if(oncoming)dbgOncoming=peer;
 #endif
@@ -6418,6 +6663,11 @@ struct LegionNavigator::Impl {
         if(!opposed)scanned=0;
 #endif
         stats.passScanCells+=scanned;
+        // C1 unseen: an oncoming body of another command's point, found by a member of a Point of 16+.
+        if(oncomingPeer&&oncomingPeer->pt&&m.pt&&std::get<0>(oncomingPeer->point)>=0&&
+           commandKey(std::get<0>(oncomingPeer->point),std::get<1>(oncomingPeer->point))!=commandKey(std::get<0>(m.point),std::get<1>(m.point))&&
+           partRefs(m)>=kPivotMembers&&formationMember(m)&&!engagesEnemies(m.kind))
+            stampMeet(m,oncomingPeer->point);
         if(!oncoming) {
             // Committed pass: for a while after moving over, keep to the new
             // lane (straight ahead) instead of edging back toward the goal
@@ -7339,6 +7589,16 @@ struct LegionNavigator::Impl {
             for(int c:point.cells)h=mix(h,uint64_t(c));
             if(point.awareSeen) {h=mix(h,uint64_t(point.awareX));h=mix(h,uint64_t(point.awareZ));}
             if(!point.queue.empty()) {h=mix(h,0x71756575ull);for(const int id:point.queue)h=mix(h,uint64_t(id));}
+            if(const auto& mt=point.meet;mt.tick!=kNoTick) {
+                h=mix(h,0x6d656574ull);h=mix(h,uint64_t(mt.tick)<<32|mt.contact);h=mix(h,uint64_t(mt.ax));h=mix(h,uint64_t(mt.az));h=mix(h,uint64_t(mt.L));
+                h=mix(h,uint64_t(mt.seen));h=mix(h,uint64_t(mt.left0));h=mix(h,uint64_t(mt.width0));h=mix(h,uint64_t(mt.lo));h=mix(h,uint64_t(mt.hi));
+                h=mix(h,uint64_t(mt.mean0));h=mix(h,uint64_t(mt.meanF));h=mix(h,uint64_t(mt.span)|uint64_t(mt.active)<<63);h=mix(h,uint64_t(uint32_t(mt.q)));
+                h=mix(h,uint64_t(uint32_t(std::get<0>(mt.other)))<<32|std::get<1>(mt.other));h=mix(h,uint64_t(uint32_t(std::get<2>(mt.other)))<<32|uint32_t(std::get<3>(mt.other)));
+            }
+            if(point.cueTick!=kNoTick) {
+                h=mix(h,0x637565ull);h=mix(h,point.cueTick);
+                h=mix(h,uint64_t(uint32_t(std::get<0>(point.cueOther)))<<32|std::get<1>(point.cueOther));h=mix(h,uint64_t(uint32_t(std::get<2>(point.cueOther)))<<32|uint32_t(std::get<3>(point.cueOther)));
+            }
         }
         for(const auto& [id,a]:anchors) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);
@@ -7372,6 +7632,7 @@ struct LegionNavigator::Impl {
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
+            if(m.meetSeen!=kNoTick) {h=mix(h,0x6d73656eull);h=mix(h,m.meetSeen);}
             if(m.gateCell>=0) {
                 h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));
                 h=mix(h,uint64_t(uint8_t(m.gateLane))|uint64_t(uint8_t(m.gateAxis))<<8|uint64_t(uint8_t(m.gateSign))<<16);
