@@ -447,6 +447,18 @@ foreach(legion_scn aware-cross-behind crosslong)
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w7")
 endforeach()
+# W8 step 0 fixtures (PLAN 4 W8 step 0, docs/legion-exit-tables.md "W8 step 0"): the flowing-route guard doubleturn, the
+# audit's gap sweep one gap per world (gap 6 is gap6), the MV-12 mixed-speed spacing probe at 0.7x / 0.5x / 0.4x, and the
+# 8x30 multi-group corner. Same run as part A (both modes, serial and workers); the lane probes (`probe lanes`,
+# lane / hug shapes in sbend) report with them. No bounds yet: S1's gates come with W8's steps.
+foreach(legion_scn doubleturn gap8 gap10 gap14 gap20 mixed-spacing-07x mixed-spacing-05x mixed-spacing-04x)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w8")
+endforeach()
+add_test(NAME legion_scenario_corner-8x30
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/corner-8x30.scn --mode both)
+set_tests_properties(legion_scenario_corner-8x30 PROPERTIES LABELS "legion;w8;nightly" TIMEOUT 1200)
 foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
