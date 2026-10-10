@@ -137,6 +137,9 @@ constexpr uint32_t kReachPeerHeld=30;
 // this many px; the ring holds at most kRingCells spots.
 constexpr int kRingBucket=32;
 constexpr size_t kRingCells=256;
+// Members a reach group needs when its first field starts to plan to a ring
+// (PLAN 3.4; its exit raises it to 8 if the battles' field quota pegs).
+constexpr size_t kRingMembers=2;
 // A production exit without headway for this many crowd windows, its
 // birthplace clear, is done (twice as many hand it over to a rally).
 constexpr uint8_t kExitWindows=1;
@@ -2304,7 +2307,7 @@ struct LegionNavigator::Impl {
     // all live groups use theirs every tick.
     bool startField(Group& g,bool shareOnly=false) {
         // A reach group of two or more members plans to its ring (AR-06).
-        if(!g.field&&!g.ring.tried&&g.reachIds.size()>=2)buildRing(g);
+        if(!g.field&&!g.ring.tried&&g.reachIds.size()>=kRingMembers)buildRing(g);
         const auto box=fieldWindow(g);
         const size_t cells=size_t(box[2]-box[0]+1)*size_t(box[3]-box[1]+1);
         {
@@ -4124,7 +4127,7 @@ struct LegionNavigator::Impl {
     bool buildRing(Group& g) {
         auto& r=g.ring;
         r.tried=true;
-        if(g.approach||g.reachIds.size()<2||g.reachCentre<0)return false;
+        if(g.approach||g.reachIds.size()<kRingMembers||g.reachCentre<0)return false;
         const Unit* t=w.unit(g.reachTarget);
         if(!t||!t->alive()||!t->type)return false;
         int R=INT_MAX;bool los=false,naval=false;
@@ -4261,13 +4264,9 @@ struct LegionNavigator::Impl {
     // the lowest band nearest to it.
     void ringClaim(const Unit& u,Member& m,Group& g,const Plane& p) {
         if(m.approach)return;
-        if(!g.ring.tried&&g.reachIds.size()>=2&&!g.next) {
-            // The group grew past one member after its field was planned:
-            // the ring replaces its point seed through a refresh (the old
-            // field steers meanwhile).
-            if(buildRing(g)) {g.stale=true;g.demand=true;listGroup(g);}
-            return;
-        }
+        // (A group that grows past one member after its first field keeps its
+        // point seed: re-planning it to a ring then cost the battles a
+        // refresh per target, measured +13-28% total Legion work.)
         if(g.ring.band0==0||m.slot>=0||m.state==Engaged)return;
         if(!g.field||!g.field->done||g.field->seedKey!=seedsKey(g.seeds))return;
         if(!g.ring.assigned) {assignRing(g,p);return;}
