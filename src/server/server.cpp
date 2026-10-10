@@ -377,7 +377,7 @@ public:
     // is what makes "Random Start Locations" actually random -- but it also makes a
     // harness run unrepeatable, and the headless --mpai check exists precisely to
     // produce the same state hash twice. Not for a real server.
-    void setFixedSeed(uint32_t v) { fixedSeed_ = v; }
+    void setFixedSeed(uint32_t v) { fixedSeed_ = v; fixedSeedSet_ = true; }
     void setNoAuth() { requireAuth_ = false; }
 #ifndef NDEBUG
     void allowBenchmarks() {testWork_=true;}
@@ -580,7 +580,8 @@ private:
         ds.built = true;
     }
     std::string replayDir_;
-    uint32_t fixedSeed_ = 0;           // --seed: 0 = roll one per game
+    uint32_t fixedSeed_ = 0;           // --seed N (N may be 0)
+    bool fixedSeedSet_ = false;        // false = roll one per game
     int listenFd_ = -1;
     uint32_t nextClientId_ = 1, nextRoomId_ = 1;
     std::unordered_map<uint32_t, std::unique_ptr<Client>> clients_;
@@ -1607,7 +1608,7 @@ bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t
         Room room;room.id=nextRoomId_++;roomId=room.id;room.hostId=c.id;room.name="Crusades battle";
         room.mapId=*map;room.mapPackage=std::move(package);room.mapVfs=std::make_unique<tak::hpi::Vfs>(&retail_.vfs);
         room.mapVfs->setMapFiles(room.mapPackage->files);room.cap=2;room.createdMs=nowMs();
-        room.seed=fixedSeed_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.overridePolicy=0;
+        room.seed=fixedSeedSet_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.overridePolicy=0;
         room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;
         room.campaignId=campaign;room.campaignTerritory=territory;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
         room.campaignRoomToken=campaignSession_+":"+std::to_string(room.id);
@@ -1794,7 +1795,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // Roll this game's seed here, once. It is broadcast in GameStarting, so
             // every peer and the referee derive the same arrangement from it -- it
             // just must not be a function of the room id (see Room::seed).
-            room.seed = fixedSeed_ ? fixedSeed_ : uint32_t(randToken());
+            room.seed = fixedSeedSet_ ? fixedSeed_ : uint32_t(randToken());
             // Open slots up to the map capacity, close the rest (the map has no
             // start position for them).
             for (int i = 0; i < kMaxSlots; ++i) {
@@ -3406,6 +3407,7 @@ static int serverMain(int argc, char** argv) {
     std::string accountsPath = "takserver-accounts.conf";
     std::string crusadesDb, crusadesDefinition;
     uint32_t fixedSeed = 0;
+    bool fixedSeedGiven = false;   // --seed 0 is a pinned seed, not "unset"
     tak::srv::Limits limits;
     bool noAuth = false, loopbackOnly = false, closedRegistration=false;
     for (int i = 1; i < argc; ++i) {
@@ -3432,7 +3434,7 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--crusades-db") && i + 1 < argc) crusadesDb = argv[++i];
         else if (!std::strcmp(argv[i], "--crusades-definition") && i + 1 < argc) crusadesDefinition = argv[++i];
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
-            fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0));
+            { fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0)); fixedSeedGiven = true; }
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;
         else if (!std::strcmp(argv[i], "--closed-registration")) closedRegistration=true;
         else if (!std::strcmp(argv[i], "--tls-cert") && i+1<argc) tlsCert=argv[++i];
@@ -3468,7 +3470,7 @@ static int serverMain(int argc, char** argv) {
                         "  --data is REQUIRED when hosting: it is what the referee sim and the\n"
                         "  server-hosted AI players read. There is no relay-only mode.\n"
                         "  --replaydir writes a .takrep replay file per finished game.\n"
-                        "  --seed N pins every game's RNG seed, so a headless run is\n"
+                        "  --seed N (0 included) pins every game's RNG seed, so a headless run is\n"
                         "  repeatable. Games are otherwise seeded randomly (which is what\n"
                         "  makes Random Start Locations differ game to game).\n"
                         "  --accounts is the account file (default takserver-accounts.conf).\n"
@@ -3587,7 +3589,7 @@ static int serverMain(int argc, char** argv) {
     (void)allowTestWork;
 #endif
     if (!replayDir.empty()) s.setReplayDir(replayDir);
-    if (fixedSeed) s.setFixedSeed(fixedSeed);
+    if (fixedSeedGiven) s.setFixedSeed(fixedSeed);
     s.setLimits(limits);
     if(acmeOption)s.setAcme(std::make_shared<tak::srv::AcmeCertificates>(acme));
     if(!tlsCert.empty())s.setTls(tak::net::TlsContext::server(tlsCert,tlsKey));
