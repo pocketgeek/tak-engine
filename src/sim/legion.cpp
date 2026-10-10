@@ -4368,6 +4368,120 @@ struct LegionNavigator::Impl {
         const int reach=compAt(p,oz*W+ox);
         return reach>=0&&compAt(p,m.goal)==reach&&compAt(p,m.real)>=0&&compAt(p,m.real)!=reach;
     }
+
+    // ---- re-seeding in place (AR-07) ------------------------------------
+    // A moving goal's group follows its target: once the target's origin
+    // has left the group's seed by max(kReseedCells, min(D/8, 8)) cells (D:
+    // this member's Chebyshev distance to it), the group re-seeds in place:
+    // its seeds (or its ring, translated) move, a refresh builds the new
+    // field (the old one steers meanwhile; demand makes the group active),
+    // and every member is reseated as it next moves -- its group, slot,
+    // hold and stall clocks, detour back-off, pass state and approach clock
+    // carried (C8), its route and progress reset. Returns false when the
+    // member must register afresh (its group is not a reach group, or the
+    // target is gone).
+    bool reseed(Unit& u,Member& m,const Order& leg) {
+        const auto [tx,tz]=target(leg);
+        const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
+        auto group=groups.find(m.group);
+        // Not a reach group (an approach member's, or one still waiting to
+        // join): a fresh registration, as before, once the target has left
+        // the seeded origin by kReseedCells.
+        if(group==groups.end()||!group->second.reachTarget||m.approach) {
+            if(std::max(std::abs(gx-m.seedX),std::abs(gz-m.seedZ))>=kReseedCells)return false;
+            m.seededAt=w.tickCounter_;return true;
+        }
+        Group& g=group->second;
+        const int W=width();
+        const auto& p=plane(g.plane);
+        // Measured on the target's own origin, as the seed was taken (a
+        // structure's lies inside its yard).
+        const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+        const int D=std::max(std::abs(gx-ox),std::abs(gz-oz));
+        const int moved=std::max(std::abs(gx-m.seedX),std::abs(gz-m.seedZ));
+        if(moved<std::max(kReseedCells,std::min(D/8,8))) {m.seededAt=w.tickCounter_;return true;}
+        const int region=legal(p,ox,oz)?compAt(p,oz*W+ox):-1;
+        const int centre=nearestLegal(p,gx,gz,region);
+        if(centre<0||compAt(p,centre)!=compAt(p,g.reachCentre)||(region>=0&&compAt(p,centre)!=region))return false;
+        if(g.reachCentre!=centre) {
+            const int cx=g.reachCentre%W,cz=g.reachCentre/W;
+            if(std::max(std::abs(centre%W-cx),std::abs(centre/W-cz))>=std::max(kReseedCells,std::min(D/8,8)))
+                reseedGroup(g,p,centre,centre%W-cx,centre/W-cz);
+        }
+        if(m.requested!=g.reachCentre)reseat(u,m,g,p);
+        m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
+        return true;
+    }
+    void reseedGroup(Group& g,const Plane& p,int centre,int dx,int dz) {
+        const int W=width(),H=height();
+        ++stats.reseedsInPlace;
+        g.reachCentre=centre;
+        auto& r=g.ring;
+        if(r.band0>0) {
+            const int comp=compAt(p,centre);
+            int band0=0;
+            for(size_t i=0;i<r.cells.size();++i) {
+                const int x=r.cells[i]%W+dx,z=r.cells[i]/W+dz;
+                // A spot that leaves the map keeps its index, unclaimable.
+                r.cells[i]=x>=0&&z>=0&&x<W&&z<H?z*W+x:r.cells[i];
+                if(r.band[i]==0&&legal(p,x,z)&&compAt(p,z*W+x)==comp)++band0;
+            }
+            r.tx+=int64_t(dx)*16;r.tz+=int64_t(dz)*16;
+            g.seeds.clear();
+            for(size_t i=0;i<r.cells.size();++i)
+                if(r.band[i]==0&&legal(p,r.cells[i]%W,r.cells[i]/W)&&compAt(p,r.cells[i])==comp)g.seeds.push_back(r.cells[i]);
+            if(g.seeds.empty())g.seeds.push_back(centre);
+            std::sort(g.seeds.begin(),g.seeds.end());
+            g.seeds.erase(std::unique(g.seeds.begin(),g.seeds.end()),g.seeds.end());
+        } else g.seeds.assign(1,centre);
+        g.minX=g.maxX=centre%W;g.minZ=g.maxZ=centre/W;
+        for(const int c:g.seeds) {g.minX=std::min(g.minX,c%W);g.maxX=std::max(g.maxX,c%W);g.minZ=std::min(g.minZ,c/W);g.maxZ=std::max(g.maxZ,c/W);}
+        int n=0;for(const auto& [seed,count]:g.sharing)n+=count;
+        int top=0;for(const auto& [seed,count]:g.peak)top=std::max(top,count);
+        g.sharing.clear();g.peak.clear();
+        if(n)g.sharing[centre]=n;
+        g.peak[centre]=std::max(top,n);
+        g.compCell=centre;
+        if(g.next) {if(!g.next->done)++stats.refreshDiscards;g.next.reset();}
+        g.stale=true;g.demand=true;g.areaBounds.clear();
+        listGroup(g);
+    }
+    // The member follows its group's re-seed: new goal (its ring spot,
+    // translated with the ring, or the new seed), its timers kept.
+    void reseat(const Unit& u,Member& m,Group& g,const Plane& p) {
+        const int W=width();
+        if(m.slot>=0)slotCells(m,u.type->footX,u.type->footZ,false);
+        m.requested=g.reachCentre;
+        if(ringMember(g,m)&&g.ring.owner[size_t(m.slot)]==u.id) {
+            const int c=g.ring.cells[size_t(m.slot)];
+            if(legal(p,c%W,c/W)&&compAt(p,c)==compAt(p,g.reachCentre)) {m.goal=c;slotCells(m,u.type->footX,u.type->footZ,true);}
+            else {ringRelease(g,u.id,m);m.slot=-1;m.goal=m.requested;}
+        } else {m.slot=-1;m.goal=m.requested;}
+        m.lineCell=-1;m.line=false;m.route.clear();m.routeTicks=0;
+        m.progress=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;
+        markPass(u,m);
+    }
+    // An illegal goal (AR-07): a slot member gives its slot back and claims
+    // another (claimSlot); any other member takes the nearest legal origin
+    // of its own region round the goal, in its group. False: none left.
+    bool regoal(const Unit& u,Member& m,Group& g,const Plane& p,int ox,int oz) {
+        const int W=width();
+        const int region=compAt(p,oz*W+ox);
+        if(region<0)return false;
+        if(m.slot>=0) {
+            slotCells(m,u.type->footX,u.type->footZ,false);
+            if(ringMember(g,m))ringRelease(g,u.id,m);
+            else if(const auto slots=g.slots.find(m.requested);slots!=g.slots.end()&&size_t(m.slot)<slots->second.taken.size())
+                slots->second.taken[size_t(m.slot)]=0;
+            m.slot=-1;m.goal=m.requested;m.lineCell=-1;
+            if(legal(p,m.goal%W,m.goal/W)) {markPass(u,m);return true;}
+        }
+        const int near=nearestLegal(p,m.goal%W,m.goal/W,region);
+        if(near<0||compAt(p,near)!=region)return false;
+        m.goal=near;m.lineCell=-1;m.line=false;m.route.clear();m.progress=0xffffffffu;
+        markPass(u,m);
+        return true;
+    }
     // tickCombat braked this unit in reach (or within 70 px of its guard
     // target): its move() does not run this tick. Its member is Engaged until
     // its next update (AR-06 part A). Called from the unit's own combat
@@ -4463,15 +4577,13 @@ struct LegionNavigator::Impl {
         if(!rule.moving&&!rule.keyed&&((rule.transport?leg.transportMission:leg.mission).pending&0x500||!leg.controller))
             {w.brakeGround(u);return;}
         // A moving goal re-seeds on the shared tick grid once its unit has
-        // left the seeded origin (bounded, deterministic cadence).
-        if(found&&rule.moving&&found->controller==key&&
-           w.tickCounter_/kReseedTicks!=found->seededAt/kReseedTicks) {
-            const auto [tx,tz]=target(leg);
-            const int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
-            if(std::max(std::abs(gx-found->seedX),std::abs(gz-found->seedZ))>=kReseedCells) {
-                registerMove(u);found=member(u.id);
-                if(!found) {w.brakeGround(u);return;}
-            }
+        // left the seeded origin (bounded, deterministic cadence): the whole
+        // group in place (AR-07, see reseed), its members keeping their
+        // timers; a member of a group already re-seeded is reseated.
+        if(found&&rule.moving&&found->controller==key&&found->kind==kind&&
+           w.tickCounter_/kReseedTicks!=found->seededAt/kReseedTicks&&!reseed(u,*found,leg)) {
+            registerMove(u);found=member(u.id);
+            if(!found) {w.brakeGround(u);return;}
         }
         // A new controller, or terrain that changed since this body was
         // found trapped, means a fresh registration (new goal resolution).
@@ -4527,8 +4639,12 @@ struct LegionNavigator::Impl {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         if(!legal(p,ox,oz)) {escape(u,maximum,leg);return;}
-        // A goal origin can stop being legal (a building went up on it).
-        if(!legal(p,m.goal%W,m.goal/W)) {registerMove(u);w.brakeGround(u);return;}
+        // A goal origin can stop being legal (a building went up on it): a
+        // slot member gives its slot back and claims another; any other
+        // member takes the nearest legal origin of its region, in its group
+        // (AR-07: no new group or field); a fresh registration only when
+        // none is left in the region.
+        if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerMove(u);w.brakeGround(u);return;}
         const int here=oz*W+ox;
         const Field* f=g.field&&g.field->done?g.field.get():nullptr;
         if(f)claimSlot(u,m,g,p,here);
