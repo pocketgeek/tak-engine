@@ -10690,6 +10690,9 @@ void World::tick(float dt) {
         Fixed slowest = Fixed::raw(std::numeric_limits<int32_t>::max());
         int area = 0;   // footprint cells of its mobile members
         int busy = 0;   // mobile members still carrying out an order
+        // Its ground members only (Legion's rejoin, W6: flyers neither set the
+        // centre nor count).
+        int64_t gx = 0, gz = 0; int gn = 0, garea = 0;
         float cx() const { return Fixed::raw(int32_t(sx / n)).toFloat(); }
         float cz() const { return Fixed::raw(int32_t(sz / n)).toFloat(); }
     };
@@ -10709,6 +10712,10 @@ void World::tick(float dt) {
                 f->slowest = fxMin(f->slowest, u.baseSpeed);
                 f->area += u.type->footX * u.type->footZ;
                 f->busy += !u.orders.empty();
+                if (!u.type->canFly) {
+                    f->gx += u.x.v; f->gz += u.z.v; ++f->gn;
+                    f->garea += u.type->footX * u.type->footZ;
+                }
             }
     if (pathfindingMode_==PathfindingMode::Retail) tickRetailGroups();
     planLegionFlightStations();
@@ -10733,10 +10740,64 @@ void World::tick(float dt) {
         }
         return false;
     };
+    // Legion's rejoin (W6, PLAN 3.5 / C4): the centre and count are the
+    // ground's (flyers are never re-ordered), and a formation whose members
+    // settled at a destination gathers there, not at its centroid: P is the
+    // modal settled-arrival point of its ground members (ties to the lowest
+    // point). A body settled at P is never re-ordered; another is re-ordered
+    // to P (a fresh order) only if it is beyond twice the settled crowd's
+    // reach of P (settleReach, 8x the packed disc plus 4 bodies) and farther
+    // from P than the centroid is. With no settled member the centroid rule
+    // stands. Candidates are found by the old test first, so P is computed
+    // only for a resting formation that has one.
+    const bool legionRejoin = isLegionPathfinding(pathfindingMode_) && legion_;
+    struct RejoinPoint { bool done = false, has = false; int32_t x = 0, z = 0; int count = 0; };
+    std::array<std::array<RejoinPoint, 11>, kMaxPlayers> rejoinPoints{};
+    auto rejoinPoint = [&](const Unit& u) -> const RejoinPoint& {
+        auto& r = rejoinPoints[size_t(u.player)][size_t(-u.squad)];
+        if (r.done) return r;
+        r.done = true;
+        std::map<std::pair<int32_t,int32_t>,int> counts;
+        for (const auto& o : units_) {
+            if (!o.alive() || !o.type || o.player != u.player || o.squad != u.squad || o.type->canFly ||
+                o.type->isStructure() || o.underConstruction) continue;
+            int32_t x, z; int n;
+            if (legion_->arrivalPoint(o.id, x, z, n)) ++counts[{x, z}];
+        }
+        int best = 0;
+        for (const auto& [point, n] : counts)
+            if (n > best) { best = n; r.has = true; r.x = point.first; r.z = point.second; }
+        r.count = best;
+        return r;
+    };
     TAK_PASS();
     for (auto& u : units_) {
         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
         if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
+        if (legionRejoin) {
+            if (u.type->canFly) continue;
+            FormAgg* f = formOf(u);
+            if (!f || f->gn <= 1 || f->busy) continue;
+            const float cx = Fixed::raw(int32_t(f->gx / f->gn)).toFloat(), cz = Fixed::raw(int32_t(f->gz / f->gn)).toFloat();
+            const float d = detmath::len(u.x.toFloat() - cx, u.z.toFloat() - cz);
+            if (d <= kFormRejoin || d * d <= 1024.0f * float(f->garea)) continue;
+            const RejoinPoint& p = rejoinPoint(u);
+            if (!p.has) {
+                if (!pressedAgainstCrowd(u, cx, cz)) order(u.id, cx, cz, false);
+                continue;
+            }
+            int32_t ax, az; int n;
+            if (legion_->arrivalPoint(u.id, ax, az, n) && ax == p.x && az == p.z) continue;
+            const int64_t body = int64_t(std::max(u.type->footX, u.type->footZ)) * 16;
+            const int64_t reach = 4 * body * int64_t(isqrt64(uint64_t(p.count + 1) * 100000000 / 31416)) / 100 + 2 * body;
+            const int64_t ux = (int64_t(u.x.v) - p.x) >> 16, uz = (int64_t(u.z.v) - p.z) >> 16;
+            const int64_t mx = (f->gx / f->gn - p.x) >> 16, mz = (f->gz / f->gn - p.z) >> 16;
+            const int64_t mine = ux * ux + uz * uz;
+            if (mine <= reach * reach || mine <= mx * mx + mz * mz) continue;
+            const float px = Fixed::raw(p.x).toFloat(), pz = Fixed::raw(p.z).toFloat();
+            if (!pressedAgainstCrowd(u, px, pz)) order(u.id, px, pz, false);
+            continue;
+        }
         FormAgg* f = formOf(u);
         // Only a formation at rest gathers. While members still walk an
         // order, the ones already done are its front (a column through a gap

@@ -5607,6 +5607,15 @@ int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
 }
+bool LegionNavigator::arrivalPoint(int id,int32_t& x,int32_t& z,int& count) const {
+    const auto found=impl_->anchors.find(id);
+    if(found==impl_->anchors.end())return false;
+    const auto d=Impl::destination(found->second.point);
+    x=std::get<1>(d);z=std::get<2>(d);
+    const auto at=impl_->anchorsAt.find(d);
+    count=at==impl_->anchorsAt.end()?1:at->second;
+    return true;
+}
 void LegionNavigator::noteFlyerEvent(FlyerEvent e) {
     auto& s=impl_->stats;
     switch(e) {

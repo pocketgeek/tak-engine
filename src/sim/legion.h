@@ -216,6 +216,10 @@ public:
     // and kStationStall (formation stations). Reads hashed member state only.
     static constexpr uint32_t kLiftStall=120,kStationStall=450;
     bool advancing(int id,uint32_t limit) const;
+    // W6 (PLAN 3.5 rejoin): the destination point (raw Fixed) of the unit's
+    // settled-arrival record and how many settled bodies share it; false if
+    // it has none.
+    bool arrivalPoint(int id,int32_t& x,int32_t& z,int& count) const;
     // W6 behaviour counters World's flyer rules raise (Stats, observation only).
     enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround};
     void noteFlyerEvent(FlyerEvent);
