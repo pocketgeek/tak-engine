@@ -16,6 +16,8 @@ scn 1
 # Eight selections of 56 on ticks 1-8 (the legion-r9 61923 analog).
 name corner-8x56
 ticks 9000
+# The gate offsets (W3 round 4, ruling (a)): -5 / +5 spawn groups A / G off the map, so nine.
+gateoffsets 0,1,-1,2,-2,3,-3,4,-4
 seed 7
 map flat 220 170
 wall 80 60 40 110

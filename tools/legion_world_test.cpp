@@ -244,8 +244,19 @@ void jaggedRun(int count,int stride,int foot,const char* label) {
         std::printf("  left id=%d at %.1f,%.1f goal %.1f,%.1f state=%d\n",id,u.x.toFloat()/16,u.z.toFloat()/16,
             u.orders.back().x.toFloat()/16,u.orders.back().z.toFloat()/16,f.world.legionNavigator()->unitState(id));
     }
-    std::printf("jagged %s arrived=%d/%zu spins=%llu reversals=%llu pressing=%llu\n",label,arrived,ids.size(),
-        (unsigned long long)motion.spins(),(unsigned long long)motion.reversals(),(unsigned long long)pressing);
+    // AR-08 (W3 no-worse keys): each unit has its own goal, so the completion distance is measured from
+    // that goal (cells); a unit counts as outside its radius when it finished more than 3 cells from it.
+    std::vector<double> own;int outside=0;
+    for(size_t i=0;i<ids.size();++i) {
+        const auto& u=*f.world.unit(ids[i]);
+        if(!u.orders.empty())continue;
+        const double d=std::hypot(u.x.toFloat()/16-double(44+int(i%4)*stride),u.z.toFloat()/16-double(62+int(i/4)*stride));
+        own.push_back(d);outside+=d>3;
+    }
+    std::printf("jagged %s arrived=%d/%zu spins=%llu reversals=%llu pressing=%llu complete_n=%zu complete_outside_radius=%d"
+        " complete_dist_median=%.1f complete_dist_max=%.1f\n",label,arrived,ids.size(),
+        (unsigned long long)motion.spins(),(unsigned long long)motion.reversals(),(unsigned long long)pressing,own.size(),outside,
+        own.empty()?-1.0:(std::sort(own.begin(),own.end()),own[(own.size()-1)/2]),own.empty()?-1.0:own.back());
     check(arrived==int(ids.size()),std::string("units stuck against jagged terrain: ")+label);
     check(motion.spins()==0,"units turned in place while stuck");
     check(pressing==0,"units pressed into terrain");
@@ -370,6 +381,119 @@ int staticblockRun(int owner) {
 void staticblock() {
     if(std::getenv("STATIC_OPEN"))staticblockRun(-1);   // reference: no block
     staticblockRun(0);staticblockRun(1);
+}
+
+// W4 (T7 Stage B1): idle upkeep. A group that holds in place (here: guards
+// of an idle friend) keeps its finished field and goes stale whenever static
+// obstacles change anywhere on the map; before B1 Legion refreshed it all the
+// same, work nobody steers by. Part 1 parks a group of guards, then runs 600
+// ticks beside continuous "construction" (a far cell toggled every 10 ticks:
+// the static epoch advances and every cached field goes stale) and requires
+// ZERO refresh field work for it (failed by construction on the W4 step-0
+// head: 60 refreshes, 764640 relaxations). Part 2: a parked group whose route
+// a new wall cuts, ordered on again, re-plans and arrives. Part 3: a group
+// held at a plugged gap re-plans through a gap that opens, by the blocked
+// re-request alone (no member moves), as soon as the base does.
+void staticidle() {
+    // Part 2: the order-on re-plan. A wall with one far gap appears after the group parked.
+    {
+        Fixture f(200,100);
+        f.publish();
+        const auto type=mover(2);
+        std::vector<int> ids;
+        for(int i=0;i<12;++i)ids.push_back(f.spawn(type,10+(i%4)*3,40+(i/4)*3));
+        f.start();
+        for(int id:ids)f.world.order(id,60*16,50*16,false);
+        int ticks=0;
+        auto parked=[&] {for(int id:ids)if(!f.world.unit(id)->orders.empty())return false;return true;};
+        for(;ticks<3000&&!parked();++ticks)f.world.tick(1.f/30);
+        check(parked(),"staticidle: the group never parked");
+        for(int t=0;t<90;++t)f.world.tick(1.f/30);
+        // The wall cuts the straight way to the new goal; its only gap is at the bottom.
+        for(int z=0;z<85;++z)f.world.blockCells(100,z,1,1,true);
+        const uint64_t before=f.world.legionStats().fieldWork;
+        for(int id:ids)f.world.order(id,150*16,50*16,false);
+        int cut=0;
+        for(;cut<4000;++cut) {
+            f.world.tick(1.f/30);
+            if(parked())break;
+        }
+        const uint64_t built=f.world.legionStats().fieldWork-before;
+        std::printf("staticidle replan arrived_after=%d field_work=%llu\n",cut,(unsigned long long)built);
+        check(parked(),"staticidle: the group did not reach the goal past the new wall");
+        // 120 ticks + the build time: the walk to the gap and back is well under 2000 ticks; the
+        // re-plan itself must not stall the order (no body idle > 120 ticks before the field exists).
+        check(built>0,"staticidle: the cut route was not re-planned");
+    }
+    // Part 3: the blocked re-request. A pair sent through the one gap in a
+    // wall finds it plugged by another player's idle body: both end up
+    // holding (the group is inactive). A second gap, closed by a feature,
+    // then opens (a static change): no member moves, so only the blocked
+    // re-request (a member held kBlockedRetry ticks outside its area on a way
+    // only soft bodies close) starts the refresh that finds the new gap. Base
+    // (refresh on every change) and B1 both arrive at once; without the
+    // blocked rule the refresh waits for a body to move again.
+    {
+        Fixture f(200,100);
+        f.rect(100,0,2,48);f.rect(100,50,2,2);f.rect(100,54,2,46);   // the second gap (z 52-53): a feature closes it
+        f.publish();
+        const auto type=mover(2);
+        const int plug=f.spawn(type,101,49,1);   // another player's idle body in the gap
+        std::vector<int> ids;
+        for(int i=0;i<2;++i)ids.push_back(f.spawn(type,80,46+i*4));
+        f.start();
+        auto gate=[&](bool closed) {f.world.addFeature(52*200+100,101*16.f,53*16.f,0,1,2,2,closed,-1,true);};
+        gate(true);
+        for(int t=0;t<90;++t)f.world.tick(1.f/30);   // the plug has stood still a while
+        for(int id:ids)f.world.order(id,150*16,50*16,false);
+        auto parked=[&] {for(int id:ids)if(!f.world.unit(id)->orders.empty())return false;return true;};
+        for(int t=0;t<900;++t)f.world.tick(1.f/30);
+        int holding=0;
+        for(int id:ids)holding+=f.world.legionNavigator()->unitState(id)==2;
+        if(std::getenv("STATIC_VERBOSE"))std::printf("  plug at %.1f,%.1f\n",f.world.unit(plug)->x.toFloat()/16,f.world.unit(plug)->z.toFloat()/16);
+        if(std::getenv("STATIC_VERBOSE"))for(int id:ids)std::printf("  unit %d state %d at %.0f,%.0f\n",id,f.world.legionNavigator()->unitState(id),f.world.unit(id)->x.toFloat()/16,f.world.unit(id)->z.toFloat()/16);
+        check(!parked(),"staticidle: the plugged group arrived before the second gap opened");
+        gate(false);
+        int open=0;
+        for(;open<3000&&!parked();++open)f.world.tick(1.f/30);
+        const auto s=f.world.legionStats();
+        std::printf("staticidle blocked holding=%d arrived_after=%d blocked_rerequests=%llu refresh_suppressed=%llu demand_resumes=%llu\n",holding,open,
+            (unsigned long long)s.blockedRerequests,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.demandResumes);
+        check(parked(),"staticidle: a blocked group did not re-plan through the gap that opened");
+        // Measured: 549 ticks at the step-0 base (refresh on every change) and with B1 (the plugged
+        // body had been blocked > 120 ticks, so the refresh starts at once); 892 with the blocked
+        // rule removed (the refresh waits until a body happens to move). Bound: base + 120.
+        check(open<=549+120,"staticidle: the blocked re-request did not start the refresh in time");
+    }
+    // Part 1: parked groups beside continuous construction. Twelve bodies guard
+    // an idle friend in a corridor: they walk up to it and hold with their
+    // orders, their group and its finished field alive, nothing steering by the
+    // field. A cell toggled every 10 ticks inside the field's reach is the
+    // construction.
+    Fixture f(200,100);
+    f.rect(0,0,200,44);f.rect(0,56,200,44);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<12;++i)ids.push_back(f.spawn(type,10+(i%4)*3,45+(i/4)*3));
+    const int friendly=f.spawn(type,100,50);
+    f.start();
+    for(int id:ids)f.world.guard(id,friendly,false);
+    for(int t=0;t<900;++t)f.world.tick(1.f/30);
+    int held=0;
+    for(int id:ids)held+=!f.world.unit(id)->orders.empty()&&f.world.legionNavigator()->unitState(id)==2;   // Holding
+    check(held>=6,"staticidle: the guards are not holding with their orders");
+    const auto base=f.world.legionStats();
+    for(int t=0;t<600;++t) {
+        if(t%10==0)f.world.addFeature(50*200+60,60*16+8.f,50*16+8.f,0,1,1,1,t%20==0,-1,true);
+        f.world.tick(1.f/30);
+    }
+    const auto now=f.world.legionStats();
+    const uint64_t idle=now.fieldWorkRefreshIdle-base.fieldWorkRefreshIdle,moving=now.fieldWorkRefreshMoving-base.fieldWorkRefreshMoving;
+    std::printf("staticidle parked holding=%d refresh_idle=%llu refresh_moving=%llu refresh_completed=%llu refresh_suppressed=%llu groups=%zu\n",
+        held,(unsigned long long)idle,(unsigned long long)moving,(unsigned long long)(now.refreshCompleted-base.refreshCompleted),
+        (unsigned long long)now.refreshSuppressed,f.world.legionNavigator()->stats().liveGroups);
+    check(idle+moving==0,"staticidle: parked groups were refreshed beside continuous construction (B1 removes this work)");
 }
 
 // Landed flyers stand on the ground grid (retail stamps a mode-1 flyer into
@@ -604,7 +728,13 @@ void liftflyers() {
     check(own.arrived==40&&own.overlap==0&&own.flyerOverlap==0&&own.spins==0,"group failed under lifting flyers");
     check(own.lifted==12&&own.maxTakeoffs==1,"own idle flyers did not lift exactly once");
     check(own.landed==12&&own.home==12,"lifted flyers did not land again on their spots");
-    check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10&&own.detour<=open.detour+1,"group detoured round flyers that lift");
+    // The detour allows open + 3 cells, not + 1, by user decision W3-4 (2026-10-09): under W3 the last body
+    // re-chooses its slot along the formation's west face AT the destination (own run 5 vs open 2), a
+    // steering gap round a settled crowd accepted for W3 and fixed in W5/W9. W5/W9 HARD EXIT GATE: back to
+    // open + 1 (docs/legion-exit-tables.md, "W3 exit"; w5-w9-gates).
+    constexpr uint64_t kLiftDetourSlack=3;   // W3-4; W5/W9 restore 1
+    check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10,"group slowed by flyers that lift");
+    check(own.detour<=open.detour+kLiftDetourSlack,"group detoured round flyers that lift");
     // An enemy's flyers never lift: obstacles, planned and steered round.
     check(enemy.lifted==0&&enemy.landed==12,"enemy flyers lifted");
     check(enemy.arrived==40&&enemy.overlap==0&&enemy.spins==0,"group failed round enemy flyers");
@@ -1079,6 +1209,48 @@ void legacyyield() {
     std::printf("legacyyield walker x=%.1f orders=%zu slides=%llu\n",u.x.toFloat()/16,u.orders.size(),
         (unsigned long long)f.world.legionStats().slides);
     check(u.x.toFloat()/16>20,"walker did not reach the settled body");
+}
+
+// B3 (T7): settled-arrival records are erased by events, not by a walk of
+// every record each tick. A settled body that gets a non-Legion order (wait,
+// guard, attack) or a new move loses its anchor in the order call itself
+// (World::noteOrders), one that dies loses it on the death edge, and one
+// whose orders change behind every helper (a direct write) loses it to
+// prune's backstop cursor. A stop keeps it (the body is idle and settled).
+void b3events() {
+    Fixture f(96,64);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int i=0;i<12;++i)ids.push_back(f.spawn(type,8+(i%4)*3,10+(i/4)*3));
+    f.start();
+    for(size_t i=0;i<ids.size();++i)f.world.order(ids[i],float((50+(int(i)%4)*4)*16),float((20+int(i)/4*4)*16),false);
+    for(int t=0;t<1500;++t) {
+        f.world.tick(1.f/30);
+        bool all=true;for(int id:ids)all&=f.world.unit(id)->orders.empty();
+        if(all)break;
+    }
+    const auto* legion=f.world.legionNavigator();
+    for(int id:ids)check(f.world.unit(id)->orders.empty(),"a body did not arrive");
+    for(int id:ids)check(legion->recordsForTest(id)&1,"an arrival has no anchor");
+    f.world.orderWait(ids[0],5.f,false);
+    f.world.guard(ids[1],ids[5],false);
+    f.world.attackMove(ids[2],80*16,50*16,false);
+    f.world.order(ids[3],80*16,40*16,false);
+    f.world.stop(ids[4]);
+    f.world.orderWait(ids[6],5.f,true);
+    // Same tick, no Legion service in between: the order calls erased them.
+    for(int k:{0,1,2,3,6})check(!(legion->recordsForTest(ids[size_t(k)])&1),"an ordered body kept its anchor");
+    for(int k:{4,5,7,8,9,10,11})check(legion->recordsForTest(ids[size_t(k)])&1,"an idle body lost its anchor");
+    f.world.unit(ids[7])->hp=Fixed();
+    Order wait;wait.x=f.world.unit(ids[8])->x;wait.z=f.world.unit(ids[8])->z;wait.wait=150;
+    f.world.unit(ids[8])->orders.push_back(wait);   // behind every helper: the backstop's
+    f.world.tick(1.f/30);
+    check(!f.world.unit(ids[7])->alive(),"hp=0 did not kill the body");
+    check(!(legion->recordsForTest(ids[7])&1),"a dead body kept its anchor");
+    check(!(legion->recordsForTest(ids[8])&1),"the backstop missed a direct order write");
+    for(int k:{4,5,9,10,11})check(legion->recordsForTest(ids[size_t(k)])&1,"an idle body lost its anchor");
+    std::printf("b3events ok anchor_walk_iters=%llu\n",(unsigned long long)f.world.legionStats().anchorWalkIters);
 }
 
 // Legacy nav-grid world (no placement plane): bodies sent past the end of a
@@ -2693,7 +2865,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
+        {"staticidle",staticidle},{"b3events",b3events},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

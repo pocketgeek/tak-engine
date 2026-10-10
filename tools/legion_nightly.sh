@@ -34,8 +34,9 @@
 #                         screen baseline JSONL, frozen screen anchor JSONL, frozen anchor-b8a4110.json
 #   TAK_NIGHTLY_SCN_GLOB  shell glob of scenario names to run (default '*'; for trial runs)
 #   TAK_NIGHTLY_SCREEN_ARGS  extra crowdbench_screen.py arguments, e.g. "--scenarios open --seeds 0"
-#   TAK_NIGHTLY_OFFSETS   --offsets list for legion_scenario (default 0,1,-1,2,-2: the
-#                         median-of-5 the committed baseline.json was taken with)
+#   TAK_NIGHTLY_OFFSETS   --offsets list for legion_scenario (default `gate`: the gate's
+#                         eleven 0,+-1..+-5, or a file's own `gateoffsets`; legion_check
+#                         reads the small-count keys over them and the rest over 0,+-1,+-2)
 #   TAK_NIGHTLY_STAGE_TIMEOUT  seconds per stage, default 3600 (builds get twice)
 set -u
 umask 022
@@ -51,7 +52,7 @@ KEEP=${TAK_NIGHTLY_KEEP:-30}
 STAGE_TIMEOUT=${TAK_NIGHTLY_STAGE_TIMEOUT:-3600}
 SCN_GLOB=${TAK_NIGHTLY_SCN_GLOB:-*}
 SCREEN_EXTRA=${TAK_NIGHTLY_SCREEN_ARGS:-}
-OFFSETS=${TAK_NIGHTLY_OFFSETS-0,1,-1,2,-2}
+OFFSETS=${TAK_NIGHTLY_OFFSETS-gate}
 
 UNIT_DIR=$HOME/.config/systemd/user
 BIN_DIR=$OUT_ROOT/bin

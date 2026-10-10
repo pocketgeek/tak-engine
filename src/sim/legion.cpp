@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -33,7 +34,11 @@ constexpr uint64_t kFieldQuota=384'000;
 // in a battle a whole-map refresh otherwise ran the full quota for a dozen
 // ticks, a spike over the 8x budget each time.
 constexpr uint64_t kRefreshQuota=kFieldQuota/4;
-// A body held this many updates in a row (past every early reaction:
+// A stale field is refreshed only for an active group (see active): a member
+// moving, or one blocked -- no progress for this many ticks outside its
+// destination area (Retail's blocked re-request) -- or an explicit demand.
+constexpr uint32_t kBlockedRetry=120;
+// A body held this many ticks (past every early reaction:
 // yields, first detours) is fully re-evaluated only every kRestStride ticks,
 // staggered by unit id, unless something around it changed (heldRest).
 constexpr uint32_t kRestAfter=60;
@@ -58,6 +63,7 @@ uint32_t gProbe=0;
 constexpr size_t kMaxFields=48,kMaxPlanes=24;     // field budget: kMaxFields whole maps of cells
 constexpr size_t kMaxFieldCount=1024;             // live fields (and in-progress rebuilds), any size
 constexpr uint32_t kFieldTenure=300;          // ticks a field is safe from eviction
+constexpr uint32_t kNoTick=~0u;                // an unset tick stamp
 constexpr uint32_t kTrappedRetire=9000;        // ticks (5 min) a trapped order waits for terrain to open
 // Ticks an approach member's order (an unreachable goal) is kept once the body
 // reaches its approach point, the nearest reachable spot: none, the order drops
@@ -80,9 +86,17 @@ constexpr int kClusterCells=16;
 constexpr int kFieldMargin=32;                 // bounded field window margin (cells), at least
 constexpr int kHeadingCells=8;                 // pending-field heading probe (cells)
 constexpr size_t kGroupSeeds=256;              // distinct goal origins per group field
-constexpr uint32_t kAreaSettle=300;            // ticks a shared-point member may stand still in the area before it settles there
-constexpr uint32_t kFarSettle=1800;            // still ticks before a body pressed against its crowd beyond the crowd's reach settles there
 constexpr uint32_t kCrowdWindow=45;            // no-progress window for "close enough" settling at a crowd
+// The settle rule (see settleWindow, PLAN 3.1 T1-B): a body queued back to
+// its destination's settled crowd and pressed against it settles where it
+// stands once its field potential is within its bound `settleP`, which
+// starts at the destination area's bound plus kSettleSlack bodies and grows
+// by Retail's foot*32 px (kSettleGrow bodies) per window. At most
+// kRechoices re-choices of a free slot per member come first (none while it
+// stands on its own slot).
+constexpr int kSettleSlack=2,kSettleGrow=2;
+constexpr uint8_t kRechoices=3;
+constexpr int kSettleRing=64;                  // cells the queue test may visit per window
 constexpr int kDetourCells=12;                 // local detour search radius                // group goals linked within this
 constexpr uint32_t kPassHold=300;              // ticks a passing body keeps its new lane
 constexpr int kLaneSpan=8;                    // passage lane grid: strips narrower than this (origins)
@@ -98,6 +112,9 @@ constexpr int kFormationLineCells=640;         // ... for a member with a format
 // per sqrt(members) and kPivotMaxCells; below kPivotMinBodies bodies it
 // hugs (the inner file, as before).
 constexpr int kPivotMembers=16;
+constexpr int kUplinkPart=64;                  // orders the server applies per client per tick (net kCmdCapPerTick)
+constexpr size_t kSlotsPerTick=32;             // formation slots a point hands out per tick (A2)
+constexpr uint64_t kHandOutCells=131072;       // ... and the ring cells their searches may walk in that tick
 constexpr int kPivotChain=48;
 constexpr int kPivotMaxCells=32;
 constexpr int kPivotMinBodies=2;
@@ -312,13 +329,28 @@ struct LegionNavigator::Impl {
         // the point outward and nobody has to cross a settled body.
         struct Slots {std::vector<int> cells;std::vector<uint8_t> taken;bool built=false,stale=false;uint16_t reach=0;};
         std::map<int,Slots> slots;
+        // The destination area's bound per goal (see areaBound): (field
+        // serial, (members, bound)). A function of the field, never hashed.
+        std::map<int,std::pair<uint64_t,std::pair<int,uint32_t>>> areaBounds;
         // Group awareness (see awareScan): the movers (by command) its
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
         std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
-        // Last tick a member started its update Moving (Stats only: the
-        // field work split; never hashed, never read by a decision).
-        uint32_t movingTick=~0u-8;
+        // Demand-driven refresh (see active): the last tick a member started
+        // its update Moving, the last tick a member was blocked (no progress
+        // for kBlockedRetry ticks outside its destination area), and the
+        // explicit demand of a re-plan that is not a static change (aware
+        // re-plan; cleared when a replacement swaps in). Decision state.
+        // demand is folded into checksum with a tag when set (C27). The two
+        // stamps are not: each is a function of the last two ticks' member
+        // updates, whose inputs are hashed, and no path rebuilds Legion from
+        // a snapshot (a rejoining client replays the bundle log from tick 0
+        // and recomputes them; checked by a mid-game rejoin at W4).
+        uint32_t movingTick=~0u-8,blockedTick=~0u-8;
+        bool demand=false;
+        // Stats only (never hashed): a stale refresh was suppressed while
+        // the group was inactive (demandResumes counts its resumption).
+        bool suppressed=false;
         // The scheduler lists the group is on and its byBuilt key (see
         // listGroup). Derived, never hashed.
         bool onBuilding=false,onNeedField=false,onStaleDone=false,onByBuilt=false;
@@ -399,7 +431,35 @@ struct LegionNavigator::Impl {
         bool line=false;
         State state=None;
         uint16_t best=kUnreached;         // best potential reached
-        uint32_t held=0,stalled=0,progress=0xffffffffu;
+        // Game-clock timers (AR-05, PLAN 3.1 T): the tick this body stopped
+        // taking steps (kNoTick while it steps; Waiting does not end a hold)
+        // and the tick its progress last improved. Thresholds read
+        // now - stamp, so a rested body (heldRest) ages as fast as an
+        // awake one. holdUpdates counts hold updates since the last step:
+        // only the detour, yield, part and side-step back-offs read it.
+        uint32_t heldSince=kNoTick,stallTick=0,progress=0xffffffffu;
+        uint32_t holdUpdates=0;
+        // W6 headway clock (PLAN 3.6 advancing()): the tick this body last
+        // reached a new best potential on its group's current field (headBest
+        // on field headSerial; a new field re-baselines the best without
+        // counting as progress). Unlike stallTick it runs on through a
+        // committed route or side-step: a body wiggling between side-steps
+        // for good (mixed2's straggler) is not advancing. stallTick cannot
+        // serve anyway: `progress`
+        // mixes two scales (squared cells before the field is done, potential
+        // x64 after), so a body that registers before its field is built
+        // makes no "progress" for most of its walk. Read only by the flyer
+        // rules (LegionNavigator::advancing). Not hashed, like the group's
+        // movingTick/blockedTick: a function of the member updates, whose
+        // inputs are hashed, and recomputed by a rejoining client replaying
+        // from tick 0.
+        uint32_t headTick=0;uint16_t headBest=kUnreached;uint64_t headSerial=0;
+        // The tick of this body's last move() call (rested or not). Within a
+        // tick it tells a peer already updated from one still to come (see
+        // peerStalledFor). Not hashed: it is only ever compared with the
+        // current tick, which no earlier stamp equals, so a rejoining client
+        // reads it the same.
+        uint32_t movedTick=kNoTick;
         uint32_t trappedSince=0;uint64_t trappedEpoch=0;
         // The order's goal is statically unreachable from this body's region:
         // `goal` is the nearest reachable point to it, walked to and held
@@ -417,7 +477,12 @@ struct LegionNavigator::Impl {
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
         uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
         int8_t passRX=0,passRZ=0;         // the side it moved over to
-        std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, issue tick, requested point
+        std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, command (convoy) tick, requested point
+        // The 64-unit part of the click this member's order came in (the
+        // order's own issuedTick; the point's tick is the convoy's, A2). The
+        // pinwheel ranks a member within its part (C33). Hashed when it
+        // differs from the point's tick.
+        uint32_t part=0;
         Point* pt=nullptr;         // points[point]: alive while this member holds its ref
         std::vector<int> route;           // committed local detour around still bodies
         // Pinwheel (see pivotAim): the member's distance off a wall end it
@@ -427,8 +492,15 @@ struct LegionNavigator::Impl {
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
-        // pixel distance to the requested point then (see crowdSettle).
-        uint32_t windowTick=0;int64_t windowDist=-1;uint8_t stillWindows=0;
+        // pixel distance to the requested point then (see settleWindow), and
+        // the start of the run of still windows that ends there (kNoTick:
+        // the last window was not still; read by production exits).
+        uint32_t windowTick=0;int64_t windowDist=-1;uint32_t stillSince=kNoTick;
+        // The settle rule (settleWindow): the potential bound (0 not yet
+        // set), whether the last window found this body queued back to its
+        // destination's settled crowd, and the slot re-choices it has made.
+        // Hashed only when set (PLAN 3.0, C27).
+        uint32_t settleP=0;bool queued=false;uint8_t rechoices=0;
         // Long-held throttle (see heldRest): what the last full update of a
         // held body saw -- its position, hit points, the static epoch and
         // the occupants of every origin around it. Hashed.
@@ -512,6 +584,16 @@ struct LegionNavigator::Impl {
     static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done)||g.next;}
     static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
     static bool wantsStaleDone(const Group& g) {return g.field&&g.stale&&!g.next;}
+    // B1, demand-driven refresh: does anybody steer by this group's field?
+    // A member started its update Moving or was blocked in the last two
+    // ticks (a resting body updates at least every kRestStride ticks), or a
+    // re-plan that is not a static change asked for it (demand). A stale
+    // field of an inactive group keeps steering and stays shareable; its
+    // refresh starts the tick the group becomes active.
+    bool active(const Group& g) const {
+        const uint32_t now=w.tickCounter_;
+        return now-g.movingTick<=2||now-g.blockedTick<=2||g.demand;
+    }
     void listGroup(Group& g) {
         auto put=[&](std::set<int>& ids,bool& on,bool want) {
             if(want==on)return;
@@ -562,7 +644,7 @@ struct LegionNavigator::Impl {
         if(slot.pt) {
             auto& ids=slot.pt->ids;
             const auto at=std::lower_bound(ids.begin(),ids.end(),id);
-            if(at==ids.end()||*at!=id)ids.insert(at,id);
+            if(at==ids.end()||*at!=id) {ids.insert(at,id);++slot.pt->partRefs[slot.part];}
         }
     }
     // Settled Legion arrivals: the goal origin each one completed on, and how
@@ -572,6 +654,59 @@ struct LegionNavigator::Impl {
     // whose own goal it walls in. Capped per body: no endless shuffling.
     struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
     std::map<int,Anchor> anchors;
+    // Settled arrivals per destination (player, requested point): the crowd
+    // a settling body's reach is sized by (see settleReach). A function of
+    // `anchors`, kept with it by setAnchor/dropAnchor; never hashed.
+    std::map<std::tuple<int,int32_t,int32_t>,int> anchorsAt;
+    static std::tuple<int,int32_t,int32_t> destination(const std::tuple<int,uint32_t,int32_t,int32_t>& p) {
+        return {std::get<0>(p),std::get<2>(p),std::get<3>(p)};
+    }
+    void setAnchor(int id,const Anchor& a) {
+        dropAnchor(id);
+        anchors[id]=a;markAnchor(id,true);++anchorsAt[destination(a.point)];
+    }
+    // ---- event-driven erasure (T7 B3) -----------------------------------
+    // A settled body stays an anchor while it is alive and idle, or stands
+    // on the leg it completed (that leg lingers until World retires it).
+    // Parted bodies, approach-done bodies and yield steps need an idle body.
+    // These used to be walked whole every tick; now an entry is checked when
+    // its unit's orders change (World::noteOrders: the order helpers, leg
+    // retirement, the mission dispatchers, the death edge), on registerMove,
+    // and by prune's bounded cursor as the backstop.
+    static bool settledBody(const Unit* u) {
+        return u&&u->alive()&&(u->orders.empty()||(u->orders[World::currentLeg(u->orders)].mission.pending&0x500));
+    }
+    static bool idleBody(const Unit* u) {return u&&u->alive()&&u->orders.empty();}
+    // Unit id -> it may have an entry in approachDone, parts or yielding (a
+    // hint: set on insert, cleared when a check finds none). Lets the orders
+    // event skip the tree lookups for the units in none of the maps.
+    std::vector<uint8_t> watchMark;
+    void markWatch(int id) {
+        if(id<0)return;
+        if(size_t(id)>=watchMark.size())watchMark.resize(size_t(id)+1,0);
+        watchMark[size_t(id)]=1;
+    }
+    // Erase this unit's stale entries (anchors through dropAnchor, so
+    // anchorsAt stays a count of live settled bodies).
+    void validate(int id) {
+        const bool watched=id>=0&&size_t(id)<watchMark.size()&&watchMark[size_t(id)];
+        if(!watched&&!isAnchor(id))return;
+        const Unit* u=w.unit(id);
+        if(isAnchor(id)&&!settledBody(u)) {yielding.erase(id);dropAnchor(id);}
+        if(!watched||idleBody(u))return;
+        approachDone.erase(id);parts.erase(id);yielding.erase(id);
+        watchMark[size_t(id)]=0;
+    }
+    std::map<int,Anchor>::iterator dropAnchor(std::map<int,Anchor>::iterator it) {
+        const auto d=anchorsAt.find(destination(it->second.point));
+        if(d!=anchorsAt.end()&&--d->second<=0)anchorsAt.erase(d);
+        markAnchor(it->first,false);
+        return anchors.erase(it);
+    }
+    void dropAnchor(int id) {
+        if(const auto it=anchors.find(id);it!=anchors.end())dropAnchor(it);
+        else markAnchor(id,false);
+    }
     // Unit id -> whether it has an entry in `anchors` (a dense mirror): the
     // yield and crowd checks reject a non-anchor body without a tree walk.
     std::vector<uint8_t> anchorMark;
@@ -589,36 +724,55 @@ struct LegionNavigator::Impl {
     // The route field is static terrain only, so a standing block of bodies
     // sits right on every member's shortest way and each one walks into it
     // and then has to wait or detour locally (the local detour cannot see
-    // round a block wider than its window). Every kStillScan ticks the
-    // ground bodies are sampled; one at the same exact position on
-    // kStillScans consecutive scans is still. A still body that is not a
+    // round a block wider than its window). Each ground body is sampled
+    // every kStillScan ticks, on its own residue (id % kStillScan == tick %
+    // kStillScan: the scan is striped, one slice of the bodies a tick, never
+    // the whole population at once); one at the same exact position on
+    // kStillScans consecutive samples is still. A still body that is not a
     // Legion member, or is a settled Legion arrival, stamps its cells into
     // `soft` (any player: idle, building, guarding, an enemy's). Moving
     // crowds never qualify: every Legion member on its way (moving, held,
     // waiting, trapped behind a gate) is excluded, and anything else must
-    // not have moved at all for a whole scan. A body that sets off as a
-    // Legion member stops counting at once (registerMove clears its cells);
-    // one ordered off otherwise stops at the next scan. A field already
+    // not have moved at all between two samples. A body that sets off as a
+    // Legion member stops counting at once (registerMove lifts its stamp);
+    // one ordered off otherwise stops at its next sample. A field already
     // built keeps its route: no re-planning when the block starts to move.
-    struct Still {int32_t x=0,z=0;uint16_t scans=0;};
-    std::vector<std::pair<int,Still>> stills;   // unit id -> last sampled position, ascending ids
-    std::vector<int32_t> soft;           // per cell: a soft body covering it (0 none)
-    std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival (see softCell)
-    std::vector<int> softCells;          // cells set in `soft`, ascending
-    std::vector<uint8_t> softPrior;      // scanStill scratch: a cell's kind before the rescan (all 0 between scans)
+    // Per unit id: its last sample (hashed in id order, as the whole-scan
+    // `stills` list was) and the stamp it holds. The stamp is derived from
+    // the sample, the body's type and the kind/owner folded into softHash.
+    struct SoftBody {
+        int32_t x=0,z=0;uint16_t scans=0;bool present=false;   // the sample
+        bool stamped=false;uint8_t kind=0;int player=0;          // the stamp
+        int ox=0,oz=0,fx=0,fz=0;uint64_t owner=~0ull;
+    };
+    std::vector<SoftBody> softBodies;    // by unit id
+    std::vector<int32_t> soft;           // per cell: the lowest id of the stamps covering it (0 none)
+    std::vector<uint8_t> softKind;       // per cell: 0 none, 1 soft to all, 2 a settled arrival, 3 a liftable flyer (see softCell)
+    size_t softCellCount=0;              // cells set in `soft`
+    // Cells two or more stamps cover: every covering id, ascending (`soft`
+    // holds the first). Rare (bodies do not overlap), so a map.
+    std::map<int,std::vector<int>> softStack;
     // Per unit id: the command (player, issue tick) a settled Legion arrival
     // belongs to, else ~0: a field never treats its own arrivals as soft.
     std::vector<uint64_t> softOwner;
-    // The distinct values of softOwner (~0 included when some id has no
-    // owner), ascending: "does any settled arrival belong to this command"
-    // is a binary search (Stats::softownerLookups counts the linear scans
-    // it replaced: none). Written with softOwner by scanStill alone; a
-    // function of it, never hashed.
-    std::vector<uint64_t> softOwnerCmds;
+    // The commands softOwner holds, each with its number of owned ids:
+    // "does any settled arrival belong to this command" is one lookup
+    // (Stats::softownerLookups counts the linear scans it replaced: none).
+    // Kept with softOwner by stamp/unstamp; a function of it, never hashed.
+    std::map<uint64_t,uint32_t> softOwnerCount;
     bool ownsArrivals(uint64_t command) const {
-        return std::binary_search(softOwnerCmds.begin(),softOwnerCmds.end(),command);
+        // ~0 marks an id without an owner: present whenever any id is owned.
+        return command==~0ull?!softOwnerCount.empty():softOwnerCount.count(command)>0;
     }
-    uint64_t softSerial=0,softHash=0;    // bumped whenever `soft` changes; its content hash
+    // softHash: an order-independent wrapping sum of one term per stamped
+    // cell (cell, id, kind) and one per owned id (id, command), kept by
+    // stamp/unstamp; softHashFull() recomputes it from the stamps
+    // (TAK_LEGION_VERIFY checks the two every tick). softSerial counts the
+    // stamp changes.
+    uint64_t softSerial=0,softHash=0;
+    static uint64_t softTerm(size_t c,int id,uint8_t kind) {return mix(mix(0x736f6674ull,uint64_t(c)<<32|uint32_t(id)),kind);}
+    static uint64_t ownerTerm(int id,uint64_t owner) {return mix(mix(0x6f776e6572ull,uint64_t(uint32_t(id))),owner);}
+    std::map<int,uint32_t> liftCells;    // player -> kind 3 cells it owns
     std::vector<int> liftSoftPlayers;    // owners of the kind 3 cells (liftable flyers), sorted unique
     // Landed flyers (mode 1) stand on the ground: retail stamps them into
     // its ground grid (5066f0, re-stamped by 51b370/4dafd2 on every mode or
@@ -785,7 +939,12 @@ struct LegionNavigator::Impl {
                     if(!o) {o=u.id;liftHomeCells.push_back(cz*w.occW_+cx);}
                 }
             }
-            if(!u.alive()||u.embarked()||!u.type||!u.type->canFly||u.flightGroundMode!=1)continue;
+            // W6 FL-03: a stage-3 descender stands on its touchdown footprint
+            // (its own position: retail descends vertically from the site
+            // stage 2 found free) as a landed flyer does, so no member steps
+            // in under it while it comes down (bodiesFree's leave-only rule
+            // lets a body already there step out).
+            if(!u.alive()||u.embarked()||!u.type||!u.type->canFly||!World::flyerGrounded(u))continue;
             ids.push_back(u.id);
             const int fx=u.type->footX,fz=u.type->footZ;
             const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
@@ -801,8 +960,7 @@ struct LegionNavigator::Impl {
         // A flyer that took off is no soft obstacle any more (as a body
         // setting off as a member, see registerMove): clear it at once,
         // not at the next scan.
-        if(!softCells.empty())for(int id:groundedIds)if(!std::binary_search(ids.begin(),ids.end(),id))
-            for(int c:softCells)if(soft[size_t(c)]==id&&softKind[size_t(c)]) {countAll(c,softKind[size_t(c)],-1);softKind[size_t(c)]=0;}
+        for(int id:groundedIds)if(!std::binary_search(ids.begin(),ids.end(),id))unstamp(id);
         groundedIds.swap(ids);
     }
     static uint64_t commandKey(int player,uint32_t issue) {return uint64_t(uint32_t(player))<<32|issue;}
@@ -826,7 +984,7 @@ struct LegionNavigator::Impl {
     // SoftCounts; -1 none) answers without a walk unless a settled arrival
     // is near: none covered, or only bodies soft to every command.
     bool softAt(int x,int z,int fx,int fz,uint64_t command,int counts=-1) const {
-        if(softCells.empty()||command==kNoSoft)return false;
+        if(!softCellCount||command==kNoSoft)return false;
         if(counts>=0&&x>=0&&z>=0&&x<w.occW_&&z<w.occH_) {
             const uint32_t k=softCounts[size_t(counts)].at[size_t(z)*w.occW_+x];
             if(!(k&kCoverCount))return false;
@@ -843,7 +1001,7 @@ struct LegionNavigator::Impl {
     // 1 passes within a cell of one (a stream keeps a lane off the block's
     // face instead of filing along it), 0 clear.
     int softLevel(int x,int z,int fx,int fz,uint64_t command,int counts,bool own=true,bool lift=true) const {
-        if(softCells.empty()||command==kNoSoft)return 0;
+        if(!softCellCount||command==kNoSoft)return 0;
         // The field asks this for every improving relaxation: answered from
         // the footprint's window counts, walking the window only near a
         // settled arrival (whose command matters).
@@ -892,95 +1050,189 @@ struct LegionNavigator::Impl {
         SoftCounts k;k.fx=fx;k.fz=fz;
         const size_t n=size_t(w.occW_)*w.occH_;
         k.at.assign(n,0);
-        for(int c:softCells)if(softKind[size_t(c)])countCell(k,c,softKind[size_t(c)],1);
+        if(softCellCount)for(size_t c=0;c<soft.size();++c)if(softKind[c])countCell(k,int(c),softKind[c],1);
         softCounts.push_back(std::move(k));
         return int(softCounts.size()-1);
     }
+    template<class F> void forStampCells(const SoftBody& b,F&& fn) const {
+        for(int j=0;j<b.fz;++j)for(int i=0;i<b.fx;++i) {
+            const int cx=b.ox+i,cz=b.oz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            fn(size_t(cz)*w.occW_+cx);
+        }
+    }
+    void liftCount(int player,int delta) {
+        auto& n=liftCells[player];
+        n=uint32_t(int64_t(n)+delta);
+        if(n&&(delta<0||n>1))return;
+        if(!n)liftCells.erase(player);
+        liftSoftPlayers.clear();
+        for(const auto& [p,cells]:liftCells)liftSoftPlayers.push_back(p);
+    }
+    // Cell c's covering stamp becomes `id` of `kind` (0, 0: none). The
+    // window counts follow the kind (only a kind change moves them).
+    void cellSet(size_t c,int32_t id,uint8_t kind) {
+        const uint8_t k0=softKind[c];const int32_t o=soft[c];
+        if(k0!=kind) {
+            if(k0)countAll(int(c),k0,-1);
+            if(kind)countAll(int(c),kind,1);
+        }
+        if(k0==3)liftCount(softBodies[size_t(o)].player,-1);
+        if(kind==3)liftCount(softBodies[size_t(id)].player,1);
+        if(!o&&id)++softCellCount;
+        else if(o&&!id)--softCellCount;
+        soft[c]=id;softKind[c]=kind;
+    }
+    void stamp(int id) {
+        SoftBody& b=softBodies[size_t(id)];
+        b.stamped=true;
+        forStampCells(b,[&](size_t c) {
+            softHash+=softTerm(c,id,b.kind);
+            if(!soft[c]) {cellSet(c,id,b.kind);return;}
+            auto& v=softStack[int(c)];
+            if(v.empty())v.push_back(soft[c]);
+            v.insert(std::lower_bound(v.begin(),v.end(),id),id);
+            if(v.front()==id)cellSet(c,id,b.kind);
+        });
+        if(b.owner!=~0ull) {
+            if(size_t(id)>=softOwner.size())softOwner.resize(size_t(id)+1,~0ull);
+            softOwner[size_t(id)]=b.owner;++softOwnerCount[b.owner];
+            softHash+=ownerTerm(id,b.owner);
+        }
+        ++softSerial;
+    }
+    // Lifts id's stamp (none: nothing to do); its sample stays.
+    void unstamp(int id) {
+        if(id<=0||size_t(id)>=softBodies.size()||!softBodies[size_t(id)].stamped)return;
+        SoftBody& b=softBodies[size_t(id)];
+        forStampCells(b,[&](size_t c) {
+            softHash-=softTerm(c,id,b.kind);
+            const auto it=softStack.find(int(c));
+            if(it==softStack.end()) {cellSet(c,0,0);return;}
+            auto& v=it->second;
+            v.erase(std::lower_bound(v.begin(),v.end(),id));
+            const int first=v.front();
+            if(v.size()==1)softStack.erase(it);
+            if(soft[c]==id)cellSet(c,first,softBodies[size_t(first)].kind);
+        });
+        if(b.owner!=~0ull) {
+            softOwner[size_t(id)]=~0ull;
+            if(auto it=softOwnerCount.find(b.owner);--it->second==0)softOwnerCount.erase(it);
+            softHash-=ownerTerm(id,b.owner);
+        }
+        b.stamped=false;
+        ++softSerial;
+    }
+    // softHash from scratch: every stamp's terms (TAK_LEGION_VERIFY, C31).
+    uint64_t softHashFull() const {
+        uint64_t h=0;
+        for(size_t id=0;id<softBodies.size();++id) {
+            const SoftBody& b=softBodies[id];
+            if(!b.stamped)continue;
+            forStampCells(b,[&](size_t c) {h+=softTerm(c,int(id),b.kind);});
+            if(b.owner!=~0ull)h+=ownerTerm(int(id),b.owner);
+        }
+        return h;
+    }
+    // The unit with id `id`, through World's id -> slot table.
+    const Unit* bodyUnit(size_t id) const {
+        if(id>=w.unitSlotById_.size())return nullptr;
+        const int32_t slot=w.unitSlotById_[id];
+        if(slot<0)return nullptr;
+        if(size_t(slot)<w.units_.size()&&w.units_[size_t(slot)].id==int(id))return &w.units_[size_t(slot)];
+        return w.unit(int(id));
+    }
     void scanStill() {
-        if(w.tickCounter_%kStillScan!=0||w.occW_<=0)return;
-        std::vector<std::pair<int,Still>> next;next.reserve(stills.size()+16);
-        std::vector<int> cells;
-        std::vector<uint64_t> owner,ownerCmds;
+        if(w.occW_<=0)return;
         const size_t n=size_t(w.occW_)*w.occH_;
         if(soft.size()!=n) {
-            soft.assign(n,0);softKind.assign(n,0);softCells.clear();softCounts.clear();
+            soft.assign(n,0);softKind.assign(n,0);softCellCount=0;softStack.clear();softCounts.clear();
+            softOwner.clear();softOwnerCount.clear();liftCells.clear();liftSoftPlayers.clear();softHash=0;
+            for(auto& b:softBodies) {b.stamped=false;b.owner=~0ull;}
         }
-        std::vector<std::pair<int,int32_t>> stamps;
-        std::vector<uint8_t> liftable;
+        // This tick's slice: the ids on its residue (ids start at 1).
+        const uint32_t r=w.tickCounter_%kStillScan;
+        const size_t bound=std::max(softBodies.size(),w.unitSlotById_.size());
         uint64_t processed=0;
-        for(const auto& u:w.units_) {
-            if(!u.alive()||u.embarked()||!u.type||(u.type->canFly&&u.flightGroundMode!=1)||u.type->isStructure())continue;
-            const Member* m=member(u.id);
-            if(m&&m->state!=Arrived)continue;
-            Still s;s.x=u.x.v;s.z=u.z.v;++processed;
-            const auto old=std::lower_bound(stills.begin(),stills.end(),u.id,[](const auto& e,int id) {return e.first<id;});
-            if(old!=stills.end()&&old->first==u.id&&old->second.x==s.x&&old->second.z==s.z)
-                s.scans=uint16_t(std::min<int>(old->second.scans+1,kStillScans));
-            next.push_back({u.id,s});
-            if(s.scans<kStillScans)continue;
+        for(size_t id=r?r:kStillScan;id<bound;id+=kStillScan) {
+            const Unit* found=bodyUnit(id);
+            const Member* m=found?member(found->id):nullptr;
+            if(!found||!found->alive()||found->embarked()||!found->type||(found->type->canFly&&found->flightGroundMode!=1)||
+               found->type->isStructure()||(m&&m->state!=Arrived)) {
+                if(id<softBodies.size()&&softBodies[id].present) {
+                    unstamp(int(id));
+                    softBodies[id].present=false;softBodies[id].scans=0;
+                }
+                continue;
+            }
+            const Unit& u=*found;
+            ++processed;
+            if(id>=softBodies.size())softBodies.resize(id+1);
+            SoftBody& b=softBodies[id];
+            const bool same=b.present&&b.x==u.x.v&&b.z==u.z.v;
+            b.scans=same?uint16_t(std::min<int>(b.scans+1,kStillScans)):0;
+            b.present=true;b.x=u.x.v;b.z=u.z.v;
+            if(b.scans<kStillScans) {unstamp(int(id));continue;}
             const int fx=u.type->footX,fz=u.type->footZ;
             const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
-            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
-                const int cx=ox+i,cz=oz+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                stamps.push_back({cz*w.occW_+cx,u.id});
-            }
-            if(u.type->canFly&&w.legionLiftable(u,u.player)) {
-                if(size_t(u.id)>=liftable.size())liftable.resize(size_t(u.id)+1,0);
-                liftable[size_t(u.id)]=1;
-            }
+            uint64_t owner=~0ull;
             if(isAnchor(u.id)) {
                 const auto a=anchors.find(u.id);
-                if(size_t(u.id)>=owner.size())owner.resize(size_t(u.id)+1,~0ull);
-                owner[size_t(u.id)]=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
-                ownerCmds.push_back(owner[size_t(u.id)]);
+                owner=commandKey(std::get<0>(a->second.point),std::get<1>(a->second.point));
             }
+            const uint8_t kind=u.type->canFly&&w.legionLiftable(u,u.player)?3:owner!=~0ull?2:1;
+            if(b.stamped&&b.ox==ox&&b.oz==oz&&b.fx==fx&&b.fz==fz&&b.kind==kind&&b.owner==owner&&b.player==u.player)continue;
+            unstamp(int(id));
+            b.ox=ox;b.oz=oz;b.fx=fx;b.fz=fz;b.kind=kind;b.owner=owner;b.player=u.player;
+            stamp(int(id));
         }
         stats.stillUnitsProcessed+=processed;
-        std::sort(next.begin(),next.end(),[](const auto& a,const auto& b) {return a.first<b.first;});
-        stills.swap(next);
-        std::sort(stamps.begin(),stamps.end());
-        // The window counts depend on each cell's kind alone, and their
-        // updates are additive: a cell soft before and after with the same
-        // kind would be removed and added back unchanged. Only cells whose
-        // kind changed are counted (in a still crowd that is almost none;
-        // re-counting every cell cost ~5-8 ms per scan at ~10k bodies).
-        if(softPrior.size()!=n)softPrior.assign(n,0);
-        for(int c:softCells) {
-            softPrior[size_t(c)]=softKind[size_t(c)];
-            soft[size_t(c)]=0;softKind[size_t(c)]=0;
-        }
-        uint64_t h=0x736f6674;
-        liftSoftPlayers.clear();
-        for(const auto& [c,id]:stamps)if(!soft[size_t(c)]) {
-            soft[size_t(c)]=id;softKind[size_t(c)]=size_t(id)<owner.size()&&owner[size_t(id)]!=~0ull?2:1;
-            if(size_t(id)<liftable.size()&&liftable[size_t(id)]) {
-                softKind[size_t(c)]=3;h=mix(h,0x6c696674u);
-                const int owner=w.unit(id)->player;
-                const auto at=std::lower_bound(liftSoftPlayers.begin(),liftSoftPlayers.end(),owner);
-                if(at==liftSoftPlayers.end()||*at!=owner)liftSoftPlayers.insert(at,owner);
-            }
-            if(const uint8_t prior=softPrior[size_t(c)];prior!=softKind[size_t(c)]) {
-                if(prior)countAll(c,prior,-1);
-                countAll(c,softKind[size_t(c)],1);
-            }
-            softPrior[size_t(c)]=0;
-            cells.push_back(c);h=mix(h,uint64_t(c)<<32|uint32_t(id));
-        }
-        for(int c:softCells)if(const uint8_t prior=softPrior[size_t(c)]) {
-            countAll(c,prior,-1);softPrior[size_t(c)]=0;
-        }
-        for(size_t i=0;i<owner.size();++i)if(owner[i]!=~0ull)h=mix(mix(h,i),owner[i]);
-        const bool changed=h!=softHash;
-        softHash=h;
-        // Each unit is visited once, so ownerCmds has one entry per owned
-        // id: any other id below owner.size() holds ~0.
-        if(ownerCmds.size()<owner.size())ownerCmds.push_back(~0ull);
-        std::sort(ownerCmds.begin(),ownerCmds.end());
-        ownerCmds.erase(std::unique(ownerCmds.begin(),ownerCmds.end()),ownerCmds.end());
-        softCells.swap(cells);softOwner.swap(owner);softOwnerCmds.swap(ownerCmds);
-        if(changed)++softSerial;
+        stats.stillPerResidueMax=std::max<uint64_t>(stats.stillPerResidueMax,processed);
     }
+#ifndef NDEBUG
+    // TAK_LEGION_VERIFY (C31): the incremental soft state against the
+    // stamps. The hash every tick; the grid, owner and window counts once a
+    // scan period.
+    template<class Fail> void verifySoft(Fail&& fail) {
+        ++stats.softHashVerifyTicks;
+        if(softHashFull()!=softHash)fail("softHash differs from its recompute over the stamps");
+        if(w.tickCounter_%kStillScan!=0||soft.empty())return;
+        std::vector<int32_t> first(soft.size(),0);
+        std::map<int,std::vector<int>> stack;
+        std::map<uint64_t,uint32_t> owners;
+        for(size_t id=0;id<softBodies.size();++id) {
+            const SoftBody& b=softBodies[id];
+            if(!b.stamped)continue;
+            if(!b.present||b.scans<kStillScans)fail("a stamp without a still sample");
+            forStampCells(b,[&](size_t c) {
+                if(!first[c])first[c]=int32_t(id);
+                else {auto& v=stack[int(c)];if(v.empty())v.push_back(first[c]);v.push_back(int(id));}
+            });
+            if(b.owner!=~0ull) {
+                ++owners[b.owner];
+                if(size_t(id)>=softOwner.size()||softOwner[id]!=b.owner)fail("softOwner differs from the stamp");
+            }
+        }
+        if(first!=soft)fail("soft differs from the stamps");
+        if(stack!=softStack)fail("softStack differs from the stamps");
+        if(owners!=softOwnerCount)fail("softOwnerCount differs from the stamps");
+        size_t cells=0;
+        std::map<int,uint32_t> lift;
+        for(size_t c=0;c<soft.size();++c) {
+            const uint8_t kind=soft[c]?softBodies[size_t(soft[c])].kind:0;
+            if(softKind[c]!=kind)fail("softKind differs from the covering stamp");
+            cells+=soft[c]!=0;
+            if(kind==3)++lift[softBodies[size_t(soft[c])].player];
+        }
+        if(cells!=softCellCount)fail("softCellCount differs from the grid");
+        if(lift!=liftCells)fail("liftCells differs from the grid");
+        for(const auto& k:softCounts) {
+            SoftCounts fresh;fresh.fx=k.fx;fresh.fz=k.fz;fresh.at.assign(soft.size(),0);
+            for(size_t c=0;c<soft.size();++c)if(softKind[c])countCell(fresh,int(c),softKind[c],1);
+            if(fresh.at!=k.at)fail("soft window counts differ from a recount");
+        }
+    }
+#endif
     // Cells claimed by arrival slots of every group sent to one point in one
     // command (mixed footprints form one group per class but share the area).
     // A shared point's members get their slots all at once, by formation:
@@ -1000,6 +1252,20 @@ struct LegionNavigator::Impl {
         int64_t liveX=0,liveZ=0;uint32_t liveTick=~0u;
         int64_t awareX=0,awareZ=0;bool awareSeen=false;   // centroid (px) at the last awareScan (hashed)
         SlotShape shape;   // I2 probe, set by assignFormation (never hashed)
+        // Members per 64-unit part (Member::part) over `ids`: the pinwheel's
+        // per-part cap and threshold (C33). Derived, never hashed.
+        std::map<uint32_t,int> partRefs;
+        // The formation was taken while the convoy was still open, by a first
+        // part under one uplink tick (see formationSlot); derived, never hashed.
+        bool provisional=false;
+        // Per-part live centroid (px; sum x, sum z, count) on tick partTick,
+        // for a point of several parts (see pivotAim). Derived, never hashed.
+        std::map<uint32_t,std::array<int64_t,3>> partLive;uint32_t partTick=~0u;
+        // Deferred slot assignment (A2): members still waiting for a slot,
+        // front first, handed out kSlotsPerTick a tick (hashed while not
+        // empty); handTick is the tick of the last hand-out (a per-tick
+        // guard, never hashed).
+        std::vector<int> queue;uint32_t handTick=~0u;
     };
     std::map<std::tuple<int,uint32_t,int32_t,int32_t>,Point> points;
     void slotCells(const Member& m,int fx,int fz,bool claim) {
@@ -1023,6 +1289,7 @@ struct LegionNavigator::Impl {
     // Plane rebuild work (cells) not yet charged to the per-tick quota.
     uint64_t planeDebt=0;
     int pruneCursor=0;
+    uint64_t quotaPegRun=0;   // consecutive ticks the field quota ran out (Stats::quotaPegRunMax)
     // Goal resolution per (plane, requested origin, body region) on the
     // current static epoch: a whole selection clicking one far point (or a
     // re-resolution after a change) searches once, not once per body. Pure
@@ -1032,6 +1299,9 @@ struct LegionNavigator::Impl {
     uint64_t resolvedEpoch=~0ull;
     // Observation only (see Stats); mutable so const helpers count work.
     mutable Stats stats;
+    // Ring cells formationCell has walked (the hand-out's per-tick budget
+    // reads it; Stats is observation only). Derived, never hashed.
+    mutable uint64_t ringCells=0;
     SlotShape lastShape;   // the last assignFormation's (I2 probe)
 #ifndef NDEBUG
     Stats verified;        // the Stats at the previous verifyIndexes
@@ -1703,7 +1973,11 @@ struct LegionNavigator::Impl {
             slotCells(found->second,u->type->footX,u->type->footZ,false);
         if(auto point=points.find(found->second.point);point!=points.end()) {
             auto& ids=point->second.ids;
-            if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id)ids.erase(at);
+            if(const auto at=std::lower_bound(ids.begin(),ids.end(),id);at!=ids.end()&&*at==id) {
+                ids.erase(at);
+                auto& parts=point->second.partRefs;
+                if(auto part=parts.find(found->second.part);part!=parts.end()&&--part->second<=0)parts.erase(part);
+            }
             if(--point->second.refs<=0)points.erase(point);
         }
         auto group=groups.find(found->second.group);
@@ -1747,18 +2021,12 @@ struct LegionNavigator::Impl {
             if(auto pt=points.find(pinned);pt!=points.end()&&--pt->second.refs<=0)points.erase(pt);
         };
         leave(u.id);
-        anchors.erase(u.id);markAnchor(u.id,false);yielding.erase(u.id);approachDone.erase(u.id);
+        dropAnchor(u.id);yielding.erase(u.id);approachDone.erase(u.id);parts.erase(u.id);
+        if(size_t(u.id)<watchMark.size())watchMark[size_t(u.id)]=0;
         // A body setting off is no soft obstacle any more (its own group's
         // first field is built right now, before the next scan).
-        if(!softCells.empty()&&u.type) {
-            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
-            for(int j=0;j<u.type->footZ;++j)for(int i=0;i<u.type->footX;++i) {
-                const int cx=ox+i,cz=oz+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const size_t c=size_t(cz)*w.occW_+cx;
-                if(soft[c]==u.id&&softKind[c]) {countAll(int(c),softKind[c],-1);softKind[c]=0;}
-            }
-        }
+        // Its sample stays: still and settled again, it stamps at its next one.
+        unstamp(u.id);
         const Kind kind=kindOf(u);
         if(kind==Kind::None) {unpin();return;}
         const Policy rule=policy(kind);
@@ -1790,12 +2058,15 @@ struct LegionNavigator::Impl {
                 if(best>=0) {gx=best%width();gz=best/width();}
             }
         }
-        Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;
+        Member m;m.controller=legKey(leg,kind);m.state=Waiting;m.windowTick=w.tickCounter_;m.stallTick=w.tickCounter_;m.headTick=w.tickCounter_;
         m.kind=kind;m.seedX=gx;m.seedZ=gz;m.seededAt=w.tickCounter_;
-        // The command a member belongs to: the order's issue tick; every
-        // patrol lap on its own; moving goals on the shared re-seed grid.
+        // The command a member belongs to: the order's convoy (one click,
+        // however many ticks the uplink split it over; its issue tick when
+        // unstamped); every patrol lap on its own; moving goals on the
+        // shared re-seed grid.
+        const uint32_t command=leg.convoyTick!=ConvoyTable::kNone?leg.convoyTick:leg.issuedTick;
         const uint32_t issue=rule.moving?w.tickCounter_-w.tickCounter_%kReseedTicks:
-            rule.perController?uint32_t(leg.controller):leg.issuedTick;
+            rule.perController?uint32_t(leg.controller):command;
         if(resolvedEpoch!=epoch||resolved.size()>=4096) {resolved.clear();resolvedEpoch=epoch;}
         auto [cached,fresh]=resolved.try_emplace({planeIndex,gx,gz,reach},-1,-1);
         if(fresh) {
@@ -1820,7 +2091,7 @@ struct LegionNavigator::Impl {
         m.requested=m.goal;
         // A kind without a shared destination area gets a point of its own
         // (keyed by the unit), so no formation or area logic joins it.
-        m.point={rule.area?u.player:-1-u.id,rule.area?leg.issuedTick:issue,tx.v,tz.v};
+        m.point={rule.area?u.player:-1-u.id,rule.area?command:issue,tx.v,tz.v};m.part=leg.issuedTick;
         {auto& pt=points[m.point];++pt.refs;m.pt=&pt;}
         unpin();
         if(m.goal<0) {putMember(u.id,m);return;}   // trapped on first move
@@ -1962,7 +2233,7 @@ struct LegionNavigator::Impl {
                 else if(g.field) {
                     if(g.next&&!g.next->done)++stats.refreshDiscards;
                     ++stats.refreshCompleted;
-                    g.field=std::move(shared);g.next.reset();g.stale=false;restaleSlots(g);
+                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);
                 }
                 else g.field=std::move(shared);
                 listGroup(g);
@@ -1998,7 +2269,7 @@ struct LegionNavigator::Impl {
 #endif
             if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
             if(victim->next&&!victim->next->done)++stats.refreshDiscards;
-            victim->field.reset();victim->next.reset();victim->stale=false;++stats.fieldEvictions;
+            victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;++stats.fieldEvictions;
             listGroup(*victim);
         }
         g.built=w.tickCounter_;
@@ -2332,6 +2603,20 @@ struct LegionNavigator::Impl {
     static constexpr int kLiftClear=6;   // cells round a lifted flyer: no member on its way there or bound there
     std::vector<int32_t> liftGoal;       // liftFlyers scratch: per goal origin, a member bound there (0 none)
     std::vector<int> liftGoalCells;
+    // One lift request, counted (observation only). A request that starts a new
+    // episode within 600 ticks of the flyer's previous landing is a relift.
+    void requestLift(Unit& flyer,bool blocked) {
+        const bool fresh=!flyer.legionLift;
+        if(!w.requestLegionLift(flyer,blocked))return;
+        if(fresh&&flyer.legionLiftEnded&&w.tickCounter_<=flyer.legionLiftEnded+600)++stats.relifts;
+        ++stats.lifts;
+    }
+    // FL-01 headway (PLAN 3.6): a member keeps a lifted flyer up through the
+    // area rule only while it makes headway (advancing over kLiftStall); a
+    // creeping straggler with no new best for 120 ticks does not.
+    bool liftAdvancing(const Member& m) const {
+        return (m.state==Moving||m.state==Holding||m.state==Waiting)&&peerHeadFor(m)<LegionNavigator::kLiftStall;
+    }
     void liftFlyers() {
         if(groundedIds.empty()&&liftHomeCells.empty())return;
         const int W=width();
@@ -2358,16 +2643,22 @@ struct LegionNavigator::Impl {
                 for(int cz=std::max(0,oz-kLiftClear);cz<std::min(w.occH_,oz+fz+kLiftClear)&&!busy;++cz)
                     for(int cx=std::max(0,ox-kLiftClear);cx<std::min(w.occW_,ox+fx+kLiftClear)&&!busy;++cx) {
                         const size_t c=size_t(cz)*w.occW_+cx;
-                        for(const int32_t o:{w.occ_[c],liftGoal[c]}) {
+                        for(int k=0;k<2;++k) {
+                            const int32_t o=k?liftGoal[c]:w.occ_[c];
                             if(!o)continue;
                             const Member* m=member(o);
                             const Unit* b=m?w.unit(o):nullptr;
                             // Its own squad settling round it is not traffic passing through.
                             if(b&&b->squad&&b->squad==flyer->squad)continue;
-                            if(b&&(m->state==Moving||((m->state==Holding||m->state==Waiting)&&m->held<kRestAfter))&&w.allied(flyer->player,b->player)) {busy=true;break;}
+                            // A body standing near it keeps it up only while it makes
+                            // headway (FL-01); one bound for a goal under it, while it
+                            // is moving or only briefly held (it still has to get in).
+                            if(!b)continue;
+                            const bool keeps=k?(m->state==Moving||((m->state==Holding||m->state==Waiting)&&heldFor(*m)<kRestAfter)):liftAdvancing(*m);
+                            if(keeps&&w.allied(flyer->player,b->player)) {busy=true;break;}
                         }
                     }
-                if(busy&&w.legionLiftable(*flyer,flyer->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
+                if(busy&&w.legionLiftable(*flyer,flyer->player))requestLift(*flyer,false);
             }
         }
         // Bounding box of every cell a request can hit, and the exact gate
@@ -2392,6 +2683,7 @@ struct LegionNavigator::Impl {
             const int fx=u->type->footX,fz=u->type->footZ;
             int x=footprintOrigin(u->x,fx),z=footprintOrigin(u->z,fz);
             const int gx=m.goal%W,gz=m.goal/W;
+            const bool advancing=liftAdvancing(m);
             size_t r=0;
             for(int k=0;k<=kLiftCells;++k) {
                 for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
@@ -2405,9 +2697,26 @@ struct LegionNavigator::Impl {
                     Unit* flyer=w.unit(o);
                     // A flyer of this member's own squad (a mixed formation that
                     // has just landed where the formation is settling) stays down:
-                    // the member settles beside it rather than driving it back up.
-                    if(flyer&&u->squad&&u->squad==flyer->squad)continue;
-                    if(flyer&&w.legionLiftable(*flyer,u->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
+                    // the member settles beside it rather than driving it back up
+                    // -- unless the member has stalled (no headway for kLiftStall)
+                    // and the flyer stands on its own goal or its next 2 planned
+                    // cells (T5's narrowed exemption, PLAN 3.5, limited to the
+                    // deadlock itself: lifting for every member bound under a
+                    // squad flyer re-lifted the wing at each arrival, hover
+                    // 18 -> 448-842 on the Ctrl fixtures).
+                    if(flyer&&u->squad&&u->squad==flyer->squad) {
+                        if(advancing)continue;
+                        const int vx=footprintOrigin(flyer->x,flyer->type->footX),vz=footprintOrigin(flyer->z,flyer->type->footZ);
+                        if(k>2&&!(vx<gx+fx&&gx<vx+flyer->type->footX&&vz<gz+fz&&gz<vz+flyer->type->footZ))continue;
+                    }
+                    // FL-01 headway: past its next 2 planned cells only a member
+                    // making headway asks. A flyer on those cells blocks it, and
+                    // that request alone outlasts the episode cap -- while the
+                    // member is advancing or only briefly held (a body parked in
+                    // a jam beside the flyer's home would keep it up for good).
+                    if(!advancing&&k>2)continue;
+                    if(flyer&&w.legionLiftable(*flyer,u->player))
+                        requestLift(*flyer,k<=2&&(advancing||heldFor(m)<kRestAfter));
                 }
                 if(k==kLiftCells||(x==gx&&z==gz))break;
                 // The next planned cell.
@@ -2509,7 +2818,7 @@ struct LegionNavigator::Impl {
             }
             if(f.done) {
                 ++stats.fieldsBuilt;
-                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;restaleSlots(g);++stats.refreshCompleted;}
+                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;restaleSlots(g);++stats.refreshCompleted;}
                 listGroup(g);
             }
         };
@@ -2560,6 +2869,14 @@ struct LegionNavigator::Impl {
                 Group& g=groups.find(id)->second;
                 if((g.field&&(!g.stale||!g.field->done))||g.next)continue;
                 if((pass==0)!=(g.field==nullptr))continue;
+                // B1: nobody steers by an inactive group's stale field; it
+                // stays listed and refreshes the tick the group is active
+                // (refresh suppressed / demand resumes count the visits). A
+                // refresh already under way keeps building whatever its group
+                // does (pausing it measured worse: crowdtrap 200x1 arrived
+                // settled -4% on every seed).
+                if(pass==1&&!active(g)) {++stats.refreshSuppressed;g.suppressed=true;continue;}
+                if(pass==1&&g.suppressed) {++stats.demandResumes;g.suppressed=false;}
                 plane(g.plane);settle();
                 if(budget==0)break;
                 // With the refresh allowance spent, a stale group only takes a
@@ -2574,6 +2891,9 @@ struct LegionNavigator::Impl {
             }
         }
         stats.schedGroupVisits+=visits;stats.groupLoopIters+=visits;
+        // The longest run of ticks whose whole field quota went to work.
+        quotaPegRun=budget==0?quotaPegRun+1:0;
+        stats.quotaPegRunMax=std::max(stats.quotaPegRunMax,quotaPegRun);
         buildPassMask();
 #ifndef NDEBUG
         if(gVerify)verifyIndexes();
@@ -2583,16 +2903,17 @@ struct LegionNavigator::Impl {
     // TAK_LPROBE: the scheduler counters (cumulative) on one stderr line.
     void probeLine() const {
         const Stats& s=stats;
-        std::fprintf(stderr,"LPROBE tick=%u groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
+        std::fprintf(stderr,"LPROBE tick=%u units=%zu groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
-            " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu fields_paused=%llu"
-            " still_units_processed=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
-            w.tickCounter_,groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
+            " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu"
+            " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
+            w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
             (unsigned long long)s.refreshDeferred,(unsigned long long)s.blockedRerequests,(unsigned long long)s.lifts,
             (unsigned long long)s.liftMembersWalked,(unsigned long long)s.liftMembersSkipped,(unsigned long long)s.waitingMemberTicks,
-            (unsigned long long)s.demandResumes,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
+            (unsigned long long)s.demandResumes,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.fieldsPaused,(unsigned long long)s.stillUnitsProcessed,
+            (unsigned long long)s.stillPerResidueMax,(unsigned long long)s.quotaPegRunMax,(unsigned long long)s.anchorWalkIters,
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
             probeSyncMs,probeStampMs,probeLiftMs);
     }
@@ -2612,6 +2933,15 @@ struct LegionNavigator::Impl {
         if(dist!=s.arrivals)fail("completion distance histogram does not sum to arrivals");
         if(s.midrouteCompletions>s.outsideAreaCompletions||s.outsideAreaCompletions>s.arrivals)
             fail("mid-route completions exceed outside-area completions or arrivals");
+        {
+            // anchorsAt against a count of every anchor (settleReach).
+            std::map<std::tuple<int,int32_t,int32_t>,int> count;
+            for(const auto& [id,a]:anchors) {
+                ++count[destination(a.point)];
+                if(!isAnchor(id))fail("an anchor is not marked");
+            }
+            if(count!=anchorsAt)fail("anchorsAt differs from a count of the anchors");
+        }
         if(s.completionDistMax*s.arrivals<s.completionDistSum)fail("completion distance sum exceeds max x arrivals");
         if(s.schedGroupVisits>s.groupLoopIters)fail("scheduler visits exceed group loop iterations");
         uint64_t calls=0;
@@ -2619,13 +2949,9 @@ struct LegionNavigator::Impl {
         if(calls<s.moves)fail("move calls by state below moves");
         if(s.formationRingCells+s.rechoiceBfsCells>s.slotSearchCells)
             fail("slot search cells below the formation ring and re-choice cells");
-        if(s.blockedRerequests||s.demandResumes||s.fieldsPaused)fail("counters of mechanisms that do not exist yet are non-zero");
-        {
-            std::vector<uint64_t> cmds(softOwner);
-            std::sort(cmds.begin(),cmds.end());
-            cmds.erase(std::unique(cmds.begin(),cmds.end()),cmds.end());
-            if(cmds!=softOwnerCmds)fail("softOwnerCmds is not the sorted distinct softOwner");
-        }
+        if(s.fieldsPaused)fail("counters of mechanisms that do not exist yet are non-zero");
+        if(s.demandResumes>s.refreshSuppressed)fail("more demand resumes than suppressed refreshes");
+        verifySoft(fail);
         // The scheduler lists against a scan of every group.
         {
             size_t building=0,need=0,staleDone=0,built=0;
@@ -2828,7 +3154,7 @@ struct LegionNavigator::Impl {
             g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);
             if(replan&&g.field&&g.field->done) {
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
-                g.next.reset();g.stale=true;
+                g.next.reset();g.stale=true;g.demand=true;   // not a static change: refresh even if idle (C6)
                 listGroup(g);
             }
         }
@@ -2840,40 +3166,56 @@ struct LegionNavigator::Impl {
     // are freed. The death edge also cancels directly.
     void prune() {
         constexpr size_t kPrunePerTick=256;
-        if(members.empty()) {pruneCursor=0;return;}
-        std::vector<int> ids;
-        auto it=members.lower_bound(pruneCursor);
-        for(size_t n=0;n<kPrunePerTick&&n<members.size();++n) {
-            if(it==members.end())it=members.begin();
-            ids.push_back(it->first);++it;
+        if(members.empty()&&anchors.empty()&&approachDone.empty()&&parts.empty()) {pruneCursor=0;return;}
+        // The backstop (B3): one cursor in id order over the members and the
+        // anchors, approachDone and parts maps, kPrunePerTick distinct ids a
+        // tick, wrapping once. Their entries are erased by the orders event
+        // and registerMove; this catches whatever no event reported. With no
+        // records it is exactly the members-only cursor it replaced.
+        auto im=members.lower_bound(pruneCursor);auto ia=anchors.lower_bound(pruneCursor);
+        auto ic=approachDone.lower_bound(pruneCursor);auto ip=parts.lower_bound(pruneCursor);
+        auto head=[&] {
+            int id=INT_MAX;
+            if(im!=members.end())id=std::min(id,im->first);
+            if(ia!=anchors.end())id=std::min(id,ia->first);
+            if(ic!=approachDone.end())id=std::min(id,ic->first);
+            if(ip!=parts.end())id=std::min(id,ip->first);
+            return id;
+        };
+        // (id, 1 member | 2 record) in visit order.
+        std::vector<std::pair<int,int>> ids;
+        const int start=pruneCursor;bool wrapped=false;
+        int at=head();
+        while(ids.size()<kPrunePerTick) {
+            if(at==INT_MAX) {
+                if(wrapped||start==0)break;
+                wrapped=true;
+                im=members.begin();ia=anchors.begin();ic=approachDone.begin();ip=parts.begin();
+                at=head();
+                if(at==INT_MAX)break;
+            }
+            if(wrapped&&at>=start)break;
+            int what=0;
+            if(im!=members.end()&&im->first==at) {what|=1;++im;}
+            if(ia!=anchors.end()&&ia->first==at) {what|=2;++ia;}
+            if(ic!=approachDone.end()&&ic->first==at) {what|=2;++ic;}
+            if(ip!=parts.end()&&ip->first==at) {what|=2;++ip;}
+            ids.push_back({at,what});
+            at=head();
         }
-        pruneCursor=it==members.end()?0:it->first;
-        for(int id:ids) {
-            const Unit* u=w.unit(id);
-            if(u&&u->alive()&&!u->embarked()&&!u->orders.empty()&&supports(*u))continue;
-            leave(id);
+        pruneCursor=at==INT_MAX?0:at;
+        stats.anchorWalkIters+=ids.size();
+        for(const auto& [id,what]:ids) {
+            if(what&1) {
+                const Unit* u=w.unit(id);
+                if(!(u&&u->alive()&&!u->embarked()&&!u->orders.empty()&&supports(*u)))leave(id);
+            }
+            if(what&2) {markWatch(id);validate(id);}
         }
     }
-    // A settled body that is no longer idle (new order, death) forgets its
-    // anchor. Yield steps advance one update per tick in id order: straight
+    // Yield steps advance one update per tick in id order: straight
     // toward the target cell, no turning, then a full stop.
     void serviceYields() {
-        for(auto it=anchors.begin();it!=anchors.end();) {
-            // (The completed leg itself lingers until World retires it.)
-            const Unit* u=w.unit(it->first);
-            if(!u||!u->alive()||(!u->orders.empty()&&!(u->orders[World::currentLeg(u->orders)].mission.pending&0x500)))
-                {yielding.erase(it->first);markAnchor(it->first,false);it=anchors.erase(it);}
-            else ++it;
-        }
-        for(auto it=approachDone.begin();it!=approachDone.end();) {
-            const Unit* u=w.unit(it->first);
-            if(!u||!u->alive()||!u->orders.empty())it=approachDone.erase(it);else ++it;
-        }
-        // A parted body that gets an order (or dies) forgets its partings.
-        for(auto it=parts.begin();it!=parts.end();) {
-            const Unit* u=w.unit(it->first);
-            if(!u||!u->alive()||!u->orders.empty())it=parts.erase(it);else ++it;
-        }
         for(auto it=yielding.begin();it!=yielding.end();) {
             Unit* u=w.unit(it->first);
             if(!u||!u->alive()||!u->orders.empty()) {it=yielding.erase(it);continue;}
@@ -3027,7 +3369,7 @@ struct LegionNavigator::Impl {
             for(int q=0;q<count;++q) {
                 const Unit& b=*w.unit(ids[size_t(q)]);
                 const int bx=footprintOrigin(b.x,b.type->footX),bz=footprintOrigin(b.z,b.type->footZ);
-                auto& part=parts[ids[size_t(q)]];++part.count;
+                auto& part=parts[ids[size_t(q)]];++part.count;markWatch(ids[size_t(q)]);
                 part.sx=int8_t(std::clamp(cells[size_t(q)]%W-bx,-1,1));part.sz=int8_t(std::clamp(cells[size_t(q)]/W-bz,-1,1));
                 yielding[ids[size_t(q)]]=Yield{cells[size_t(q)],0};
             }
@@ -3118,7 +3460,7 @@ struct LegionNavigator::Impl {
         }
         for(int k=0;k<count;++k) {
             ++anchors[ids[size_t(k)]].yields;
-            yielding[ids[size_t(k)]]=Yield{cells[size_t(k)],0};
+            yielding[ids[size_t(k)]]=Yield{cells[size_t(k)],0};markWatch(ids[size_t(k)]);
         }
         return true;
     }
@@ -3175,12 +3517,20 @@ struct LegionNavigator::Impl {
     // Mobile bodies at an origin (static legality is checked separately).
     bool bodiesFree(const Unit& u,int x,int z) const {
         const int fx=u.type->footX,fz=u.type->footZ;
+        const int ox=groundedCells.empty()?0:footprintOrigin(u.x,fx),oz=groundedCells.empty()?0:footprintOrigin(u.z,fz);
         if(w.occW_>0) {
             for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
                 const int cx=x+i,cz=z+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
                 const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-                if(o&&o!=u.id)return false;
+                if(o&&o!=u.id) {
+                    // Leave-only (W6 FL-03): a grounded flyer's cell the body
+                    // already stands on does not block it (a flyer that came
+                    // down over it), so it can step out; a cell it does not
+                    // stand on does, so it never goes deeper.
+                    if(!w.occ_[size_t(cz)*w.occW_+cx]&&ox<=cx&&cx<ox+fx&&oz<=cz&&cz<oz+fz)continue;
+                    return false;
+                }
             }
         }
         if(placementPlane())return w.mobilePlacement(u,x,z,false);
@@ -3199,7 +3549,35 @@ struct LegionNavigator::Impl {
         // against occupancy each update), not on a timer.
         u.speed=Fixed();u.turnReqBam=0;
         if(m.state!=Holding)++stats.holds;
-        m.state=Holding;++m.held;
+        if(m.heldSince==kNoTick)m.heldSince=w.tickCounter_;
+        m.state=Holding;++m.holdUpdates;
+    }
+    // Ticks since the body stopped stepping (0 while it steps), and since
+    // its progress last improved: the hold and stall clocks.
+    // Both read as the body's own update sees them: heldFor at its start
+    // (holds before this tick), stalledFor after its progress test.
+    uint32_t heldFor(const Member& m) const {return m.heldSince==kNoTick||m.heldSince>=w.tickCounter_?0:w.tickCounter_-m.heldSince;}
+    uint32_t stalledFor(const Member& m) const {return w.tickCounter_-m.stallTick;}
+    // Another member's stall clock as its last update left it: one tick
+    // less while its update of this tick is still to come. (The counters
+    // read a peer that way, and so does every rest stride: a rested peer's
+    // move() still runs, so the reading never depends on the stride.)
+    uint32_t peerStalledFor(const Member& peer) const {
+        const uint32_t stall=stalledFor(peer);
+        return peer.movedTick==w.tickCounter_||stall==0?stall:stall-1;
+    }
+    // The stall clock stands still while the body walks a committed route
+    // or side-step (it measures no progress on the way the body is NOT
+    // being steered round): the stamp moves with the tick. Without this a
+    // body finishing a long way round arrived "stalled" and settled where
+    // the route left it (gap6: one body short of the area, order never
+    // complete in 3 of 5 offsets). Resting bodies walk neither.
+    void holdStall(Member& m) const {m.stallTick=std::min(m.stallTick+1,w.tickCounter_);}
+    // The headway clock (Member::headTick) as a peer reads it: one tick less
+    // while the peer's update of this tick is still to come (peerStalledFor).
+    uint32_t peerHeadFor(const Member& peer) const {
+        const uint32_t age=w.tickCounter_-peer.headTick;
+        return peer.movedTick==w.tickCounter_||age==0?age:age-1;
     }
     void complete(Unit& u,Member& m,bool contact) {
         // The nearest reachable point to an unreachable goal is not a
@@ -3223,7 +3601,7 @@ struct LegionNavigator::Impl {
         completionStats(u,m);
         if(policy(m.kind).passThrough) {leave(u.id);return;}
         m.state=Arrived;
-        anchors[u.id]=Anchor{m.goal,0,m.point};markAnchor(u.id,true);
+        setAnchor(u.id,Anchor{m.goal,0,m.point});
         leave(u.id);
     }
     // Where a leg completed, from its click (Stats only): the distance
@@ -3277,7 +3655,7 @@ struct LegionNavigator::Impl {
             return;
         }
         if(w.tickCounter_-m.trappedSince<(m.approach?kApproachRetire:kTrappedRetire))return;
-        if(m.approach)approachDone[u.id]=m.point;
+        if(m.approach) {approachDone[u.id]=m.point;markWatch(u.id);}
         leave(u.id);
         w.dropLeg(u);
         u.routeStamp=-1;
@@ -3431,7 +3809,7 @@ struct LegionNavigator::Impl {
                 for(int dx=-r;dx<=r;dx+=stride)test(dx,dz,best,bestD);
             }
         }
-        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;
+        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;ringCells+=cells;
 #ifndef NDEBUG
         if(gVerify) {
             // The walk of every square cell the ring search replaced (A6).
@@ -3446,60 +3824,43 @@ struct LegionNavigator::Impl {
 #endif
         return best;
     }
-    // A member walled off from its slot: breadth-first over legal origins
-    // whose footprint no other body covers (window of 24 cells), and take the
-    // reached free slot cell nearest the point. Reached means a way in
-    // exists past the bodies standing now.
-    int reachableFormationCell(const Unit& u,const Plane& p,const Point& pt,int64_t px,int64_t pz) const {
-        constexpr int R=24,S=2*R+1;
-        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
-        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
-        auto open=[&](int x,int z) {
-            if(!legal(p,x,z))return false;
-            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
-                const int cx=x+i,cz=z+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-                if(o&&o!=u.id)return false;
-            }
-            return true;
-        };
-        std::vector<uint8_t> seen(size_t(S)*S,0);
-        std::vector<int> queue;queue.reserve(size_t(S)*S);
-        seen[size_t(R*S+R)]=1;queue.push_back(R*S+R);
-        int best=-1;int64_t bestD=0;
-        for(size_t head=0;head<queue.size();++head) {
-            const int local=queue[head],lx=local%S,lz=local/S,x=ox+lx-R,z=oz+lz-R;
-            const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
-            const int64_t d=(cx-px)*(cx-px)+(cz-pz)*(cz-pz);
-            if(d<=pt.limit*pt.limit&&(best<0||d<bestD)) {
-                bool clear=true;
-                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt.cells.count((z+j)*W+x+i);
-                if(clear) {best=z*W+x;bestD=d;}
-            }
-            for(const auto& dd:kDirections) {
-                const int nlx=lx+dd[0],nlz=lz+dd[1];
-                if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
-                if(!step(p,x,z,dd[0],dd[1])||!open(x+dd[0],z+dd[1]))continue;
-                if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
-                seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
-            }
-        }
-        stats.rechoiceBfsCells+=queue.size();stats.slotSearchCells+=queue.size();
-        return best;
-    }
     bool formationMember(const Member& m) const {
         if(m.pt)return m.pt->assigned&&m.pt->limit>0;
         const auto found=points.find(m.point);
         return found!=points.end()&&found->second.assigned&&found->second.limit>0;
     }
+    // Every member of the point gives its formation slot back (its goal is
+    // the click again) and the point is assigned afresh.
+    void releaseFormation(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
+        for(const int id:pt.ids) {
+            Member* mm=member(id);
+            const Unit* v=w.unit(id);
+            if(!mm||mm->point!=key||!v||!v->type)continue;
+            if(mm->slot>=0) {
+                slotCells(*mm,v->type->footX,v->type->footZ,false);
+                mm->goal=mm->requested;mm->lineCell=-1;markPass(*v,*mm);
+            }
+            if(mm->slot>=0||mm->slot==-2||mm->slot==-3)mm->slot=-1;
+        }
+        pt.queue.clear();pt.cells.clear();pt.assigned=false;pt.tried=false;
+    }
     void takeFormation(Member& m,const Unit& u,int cell) {
         m.goal=cell;m.slot=0;m.lineCell=-1;markPass(u,m);
         slotCells(m,u.type->footX,u.type->footZ,true);
     }
-    // Every member sent to one point in one command gets its slot at once,
-    // by formation: its offset from the members' centroid, scaled so the
-    // formation's spread matches the packed disc that many bodies occupy,
+    // The pinwheel's strength for a member: its 64-unit part's members
+    // (C33); the point's refs while the point is a single part, as before
+    // A2 merged a click's parts into one point.
+    int partRefs(const Member& m) const {
+        if(!m.pt)return 0;
+        if(m.pt->partRefs.size()<=1)return m.pt->refs;
+        const auto found=m.pt->partRefs.find(m.part);
+        return found==m.pt->partRefs.end()?0:found->second;
+    }
+    // Every member sent to one point in one command gets its slot by
+    // formation, once its convoy has closed (or at once for a first part
+    // under one uplink tick, see formationSlot), kSlotsPerTick a tick: its
+    // offset from the members' centroid, scaled so the formation's spread matches the packed disc that many bodies occupy,
     // placed around the point. Members are served front first (farthest
     // along the centroid->point direction), so the front of the crowd takes
     // the far side of the area and nobody has to cross a settled body.
@@ -3552,7 +3913,14 @@ struct LegionNavigator::Impl {
         }
         std::sort(order.begin(),order.end(),[](const auto& a,const auto& b) {
             return std::get<0>(a)!=std::get<0>(b)?std::get<0>(a)<std::get<0>(b):std::get<1>(a)<std::get<1>(b);});
+        // At most kSlotsPerTick slots now, front first; the rest queue in
+        // that order (slot -3) and are handed out on the next ticks (see
+        // handOut), steering by the shared field meanwhile.
+        pt.handTick=w.tickCounter_;
+        size_t given=0;
         for(const auto& [key2,id,mm]:order) {
+            if(given>=kSlotsPerTick) {mm->slot=-3;pt.queue.push_back(id);continue;}
+            ++given;
             const Unit* v=w.unit(id);
             const Group& gg=groups.find(mm->group)->second;
             const Plane& pp=plane(gg.plane);
@@ -3561,6 +3929,39 @@ struct LegionNavigator::Impl {
             if(cell>=0)takeFormation(*mm,*v,cell);
         }
         slotShape(pt,list,ax,az,px,pz);
+    }
+    // The next kSlotsPerTick queued members of an assigned point take their
+    // formation slots (their current offset, mapped as a later joiner's),
+    // once per tick. A member that left, re-registered or died is dropped.
+    // A large formation's later joiners search far through claimed cells
+    // (a 120-body dead-end room: 8000 ring cells a member, 268k a tick at
+    // 32 slots), so the hand-out also stops, after its first slot, once
+    // the tick's searches have walked kHandOutCells ring cells; the rest
+    // wait a tick, steering by the shared field as before.
+    void handOut(Point& pt,const std::tuple<int,uint32_t,int32_t,int32_t>& key) {
+        pt.handTick=w.tickCounter_;
+        const int64_t px=int64_t(std::get<2>(key))>>16,pz=int64_t(std::get<3>(key))>>16;
+        size_t at=0,given=0;
+        const uint64_t ring0=ringCells;
+        for(;at<pt.queue.size()&&given<kSlotsPerTick&&(!given||ringCells-ring0<kHandOutCells);++at) {
+            Member* mm=member(pt.queue[at]);const Unit* v=w.unit(pt.queue[at]);
+            if(!mm||mm->point!=key||mm->slot!=-3)continue;
+            const auto group=groups.find(mm->group);
+            if(!v||!v->type||group==groups.end()) {mm->slot=-1;continue;}
+            ++given;
+            const Plane& pp=plane(group->second.plane);
+            const int64_t ox=(v->x.v>>16)-pt.centreX,oz=(v->z.v>>16)-pt.centreZ;
+            const int cell=formationCell(*v,pp,groupComp(group->second,pp),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
+            if(cell>=0)takeFormation(*mm,*v,cell);else mm->slot=-2;
+        }
+        pt.queue.erase(pt.queue.begin(),pt.queue.begin()+std::ptrdiff_t(at));
+    }
+    // Can the point's command still grow? A click's orders arrive over
+    // several ticks (the 64-per-tick uplink); its convoy stays joinable for
+    // up to kGapTicks after its last order (sim/convoy.h). Slots wait for it
+    // to close, so the formation is sized and ranked over the whole click.
+    bool commandOpen(const std::tuple<int,uint32_t,int32_t,int32_t>& key) const {
+        return std::get<0>(key)>=0&&w.convoys().joinable(std::get<0>(key),std::get<1>(key),w.tickCounter_);
     }
     // I2 slot-shape probe (observation only, never hashed): the members'
     // spread and their slots' layout in the approach frame (along: centroid
@@ -3602,8 +4003,7 @@ struct LegionNavigator::Impl {
     }
     // Shared points: formation slots (assigned once for the whole point; a
     // later joiner maps its own offset the same way). A member walled off
-    // from its slot re-chooses the free cell nearest itself every 20 held
-    // updates, inside the same area.
+    // from its slot re-chooses one only through the settle rule (rechoose).
     bool formationSlot(const Unit& u,Member& m,const Group& g,const Plane& p) {
         Point* cached=m.pt;
         if(!cached) {auto found=points.find(m.point);cached=found==points.end()?nullptr:&found->second;}
@@ -3611,26 +4011,41 @@ struct LegionNavigator::Impl {
         // member too (refs 1): it can still re-choose a walled-off slot.
         if(!cached||(cached->refs<2&&!cached->assigned))return false;
         auto& pt=*cached;
-        if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)) {pt.tried=true;assignFormation(pt,m.point);}
+        // A2 waits for the convoy to close, so a click the uplink splits over
+        // several ticks forms one formation. A first part under one uplink
+        // tick (kUplinkPart) is the whole click as far as the server can
+        // tell: it takes its formation at once, provisionally, and if another
+        // part joins the point before the convoy closes the formation is
+        // rebuilt over every part then. (Waiting the convoy's 9-plus ticks
+        // without slots walked small groups -- the flyer fixtures' 40,
+        // doorplug's 60 -- the first stretch by the shared field alone,
+        // bunched on the line to the click.)
+        if(pt.provisional&&!commandOpen(m.point)) {
+            pt.provisional=false;
+            if(pt.partRefs.size()>1)releaseFormation(pt,m.point);
+        }
+        const bool early=!pt.assigned&&pt.partRefs.size()<=1&&pt.refs<kUplinkPart&&commandOpen(m.point);
+        if(!pt.assigned&&(!pt.tried||w.tickCounter_%16==0)&&(early||!commandOpen(m.point))) {
+            pt.tried=true;assignFormation(pt,m.point);
+            pt.provisional=early&&pt.assigned;
+        }
         if(!pt.assigned||pt.limit<=0)return true;
+        if(!pt.queue.empty()&&pt.handTick!=w.tickCounter_)handOut(pt,m.point);
+        if(m.slot==-3)return true;   // queued for its slot: steers by the shared field
         const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
         const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
-        if(m.slot>=0) {
-            if(m.state!=Holding||m.held<20||m.held%20)return true;
-            slotCells(m,u.type->footX,u.type->footZ,false);
-            const int cell=reachableFormationCell(u,p,pt,px,pz);
-            if(cell>=0) {m.goal=cell;markPass(u,m);}
-            slotCells(m,u.type->footX,u.type->footZ,true);m.lineCell=-1;
-            return true;
-        }
-        // No free cell was left for this member: it walks to the point and
-        // looks again (by reachability) only while it is held.
-        if(m.slot==-2) {
-            if(m.state!=Holding||m.held<20||m.held%20)return true;
-            const int cell=reachableFormationCell(u,p,pt,px,pz);
-            if(cell>=0)takeFormation(m,u,cell);
-            return true;
-        }
+        // A slot walled off by bodies that settled first, or none left for
+        // this member (-2: it walks to the point), is re-chosen only by the
+        // settle rule (rechoose), once the body is queued and pressed.
+        // A held member re-aims its own lane every 20 held ticks (the
+        // bodies round it have moved since it last swept it; restDue wakes
+        // a resting body for it). Its slot stays. This is the lane sweep the
+        // every-20-held re-choice did on the way, where no area cell is in
+        // its reach: without it a held army stops spreading round the
+        // bodies in front of it (battle-field 2x500: 454 of A's 500 died
+        // instead of 376, and Legion work rose 15%).
+        if(m.slot>=0&&laneDue(m))m.lineCell=-1;
+        if(m.slot>=0||m.slot==-2)return true;
         const int64_t ox=ux-pt.centreX,oz=uz-pt.centreZ;
         const int cell=formationCell(u,p,groupComp(g,p),pt,px,pz,px+ox*pt.scaleNum/pt.scaleDen,pz+oz*pt.scaleNum/pt.scaleDen);
         if(cell>=0)takeFormation(m,u,cell);else m.slot=-2;
@@ -3646,18 +4061,9 @@ struct LegionNavigator::Impl {
         // slots: a chaser's goal is a unit, ended by its owner, not a spot.
         if(!policy(m.kind).area)return;
         if(formationSlot(u,m,g,p))return;
-        bool nearest=false;
-        if(m.slot>=0) {
-            // A claimed slot walled off by bodies that settled first is
-            // re-chosen every 20 held updates: take the nearest free slot,
-            // which fills the area from the side this member stands on.
-            if(m.state!=Holding||m.held<20||m.held%20)return;
-            auto found=g.slots.find(m.requested);
-            if(found==g.slots.end())return;
-            if(size_t(m.slot)<found->second.taken.size())found->second.taken[size_t(m.slot)]=0;
-            slotCells(m,u.type->footX,u.type->footZ,false);
-            m.slot=-1;nearest=true;
-        }
+        // A claimed slot walled off by bodies that settled first is
+        // re-chosen only by the settle rule (rechoose).
+        if(m.slot>=0)return;
         const auto sharing=g.sharing.find(m.requested);
         if(sharing==g.sharing.end()||sharing->second<2)return;
         auto& s=slotsFor(m,g,p,m.requested,sharing->second,u.type->footX,u.type->footZ);
@@ -3668,8 +4074,7 @@ struct LegionNavigator::Impl {
         // Back-to-front: claim the free slot farthest along this member's
         // own approach direction (ties: nearest the approach axis). Every
         // later arrival then finds the cells between it and its slot still
-        // empty, so nobody has to cross a settled body. A member re-claiming
-        // after being walled off takes the nearest free slot instead.
+        // empty, so nobody has to cross a settled body.
         const int seedX=m.requested%W,seedZ=m.requested/W;
         const int64_t ax=seedX-ux,az=seedZ-uz;
         int best=-1;int64_t bestScore=0,bestSide=0;
@@ -3680,12 +4085,8 @@ struct LegionNavigator::Impl {
             // and claim it again, forever.
             if(!legal(p,s.cells[i]%W,s.cells[i]/W)||g.field->at(size_t(s.cells[i]))==kUnreached)continue;
             const int64_t cx=s.cells[i]%W,cz=s.cells[i]/W;
-            int64_t score,side;
-            if(nearest) {score=-((cx-ux)*(cx-ux)+(cz-uz)*(cz-uz));side=0;}
-            else {
-                score=(cx-seedX)*ax+(cz-seedZ)*az;
-                side=std::abs((cx-seedX)*az-(cz-seedZ)*ax);
-            }
+            const int64_t score=(cx-seedX)*ax+(cz-seedZ)*az;
+            const int64_t side=std::abs((cx-seedX)*az-(cz-seedZ)*ax);
             if(best<0||score>bestScore||(score==bestScore&&side<bestSide)) {best=int(i);bestScore=score;bestSide=side;}
         }
         if(best<0)return;
@@ -3723,22 +4124,51 @@ struct LegionNavigator::Impl {
         }
         return h;
     }
-    // A long-held body (kRestAfter updates without a step, no committed
+    // A long-held body (kRestAfter ticks without a step, no committed
     // detour or route) skips its full update on all but one tick in
     // kRestStride (staggered by id), as long as nothing it reacts to has
     // changed since its last full update: it was not pushed or hurt, the
     // static epoch is the same and no body arrived at or left any cell
-    // around it. Any change wakes it at once. A skipped update is a hold
-    // that does not count toward the held timers (they count updates).
+    // around it. Any change wakes it at once. A CPU throttle only: the hold
+    // and stall clocks are tick stamps, so resting never slows them.
+    //
+    // A skipped update stands for the hold the full update would have
+    // reached with nothing changed (it counts toward holdUpdates as that
+    // hold would), and the body is woken on every tick where a clock it
+    // reads crosses a threshold: its crowd window (the settle rule and its
+    // slot re-choice), contactArrival's stall threshold, the hold-update back-offs, an
+    // approach look and the end of a lane pass. So the rest stride changes
+    // only when a body sees changes outside its ring, never when its own
+    // timers fire (AR-05: the stride used to shift every timed decision of
+    // a rested body by up to stride-1 ticks, and the shifts compounded).
     bool heldRest(const Unit& u,Member& m) {
-        if(m.state!=Holding||m.held<kRestAfter||m.detour>=0||!m.route.empty()||w.occW_<=0) {m.rest=false;return false;}
+        if(m.state!=Holding||heldFor(m)<kRestAfter||m.detour>=0||!m.route.empty()||w.occW_<=0) {m.rest=false;return false;}
         const uint64_t ring=ringSignature(u);
         ++stats.heldRechecks;
         const bool same=m.rest&&m.restX==u.x.v&&m.restZ==u.z.v&&m.restHp==u.hp.v&&m.restEpoch==epoch&&m.restRing==ring;
-        if(same&&(uint32_t(u.id)+w.tickCounter_)%gRestStride!=0)return true;
+        if(same&&(uint32_t(u.id)+w.tickCounter_)%gRestStride!=0&&!restDue(u,m)) {++m.holdUpdates;return true;}
         m.rest=true;m.restX=u.x.v;m.restZ=u.z.v;m.restHp=u.hp.v;m.restEpoch=epoch;m.restRing=ring;
         return false;
     }
+    // A held formation member re-sweeps its lane on these ticks (see
+    // formationSlot).
+    bool laneDue(const Member& m) const {
+        if(m.state!=Holding||m.slot<0)return false;
+        const uint32_t held=heldFor(m);
+        return held>=20&&held%20==0;
+    }
+    // Does a timed reader of this held body decide on this tick? (See heldRest.)
+    bool restDue(const Unit& u,const Member& m) const {
+        const uint32_t now=w.tickCounter_,stall=stalledFor(m),n=m.holdUpdates;
+        if(now-m.windowTick>=kCrowdWindow||stall==20||laneDue(m))return true;
+        if(n==6||n==12||n==60||n==m.nextDetour)return true;
+        if(m.approach&&(uint32_t(u.id)+now)%kApproachLook==0)return true;
+        return m.passUntil==now;
+    }
+    // A member holding to give way to crossing traffic waits on purpose and
+    // is never "blocked" for B1's re-request (C16). Always false until W7
+    // adds the give-way hold; every blocked reader tests it.
+    static bool giveWayHolder(const Member&) {return false;}
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
         Member* found=member(u.id);
@@ -3776,7 +4206,7 @@ struct LegionNavigator::Impl {
             registerMove(u);found=member(u.id);
             if(!found) {w.brakeGround(u);return;}
         }
-        auto& m=*found;
+        auto& m=*found;m.movedTick=w.tickCounter_;
         ++stats.moveCallsByState[size_t(m.state)&7];
         if(heldRest(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
         ++stats.moves;
@@ -3789,12 +4219,14 @@ struct LegionNavigator::Impl {
         // with a rally behind the exit hands over to it after a second
         // window: it walks off the lane with the rally instead of holding
         // there against the crowd.
-        if(rule.exitClear&&m.stillWindows>=kExitWindows&&leg.productionExit) {
+        // (Still ticks are those the last window proved: windowTick - stillSince.)
+        const uint32_t stillTicks=m.stillSince==kNoTick?0:m.windowTick-m.stillSince;
+        if(rule.exitClear&&stillTicks>=kExitWindows*kCrowdWindow&&leg.productionExit) {
             const int64_t dx=int64_t(u.x.floorInt())-leg.productionExit->first.floorInt();
             const int64_t dz=int64_t(u.z.floorInt())-leg.productionExit->second.floorInt();
             const bool clear=std::abs(dx)>=u.type->footX*16||std::abs(dz)>=u.type->footZ*16;
             const bool rally=World::currentLeg(u.orders)+1<u.orders.size();
-            if(clear||(rally&&m.stillWindows>=2*kExitWindows)) {complete(u,m,true);return;}
+            if(clear||(rally&&stillTicks>=2*kExitWindows*kCrowdWindow)) {complete(u,m,true);return;}
         }
         if(m.goal<0) {trapped(u,m);return;}
         // Stopped at its approach point (retired by trapped), or still
@@ -3827,7 +4259,7 @@ struct LegionNavigator::Impl {
         // ticks since the quarter-quota allowance, kRefreshQuota.)
         if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
             if(g.next&&!g.next->done)++stats.refreshDiscards;
-            g.full=true;g.field.reset();g.next.reset();g.stale=false;restaleSlots(g);listGroup(g);
+            g.full=true;g.field.reset();g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
@@ -3839,44 +4271,36 @@ struct LegionNavigator::Impl {
         // maze can gain nothing for a long stretch) never does. The look is
         // staggered by unit id over kApproachLook ticks (the ring walk is
         // the cost; a held crowd would otherwise pay it every tick).
+        // Gain is one measure, the field potential: where the field does not
+        // give one (not built yet, or this cell outside it) the window starts
+        // over, so switching between two scales can neither fake a gain nor
+        // hide one (it mixed potential x64 with squared cells).
         if(m.approach) {
-            const uint32_t left=uint32_t(std::min<int64_t>(0xfffffff,
-                f&&f->at(size_t(here))!=kUnreached&&f->at(size_t(here))>0
-                    ? int64_t(f->at(size_t(here)))*64
-                    : (int64_t(m.goal%W-ox)*(m.goal%W-ox)+int64_t(m.goal/W-oz)*(m.goal/W-oz))));
-            if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
+            const uint16_t left=f?f->at(size_t(here)):kUnreached;
+            if(left==kUnreached) {m.gainBest=0xffffffffu;m.gainTick=w.tickCounter_;}
+            else if(left<m.gainBest) {m.gainBest=left;m.gainTick=w.tickCounter_;}
             else if(w.tickCounter_-m.gainTick>=kApproachSettle&&(m.state==Holding||!m.route.empty()||m.detour>=0)&&
                     (uint32_t(u.id)+w.tickCounter_)%kApproachLook==0&&approachSettled(u,m)) {complete(u,m,true);return;}
         }
         // Close enough: a body that gained less than half a body on its
-        // point over the last window, pressed against the settled crowd
-        // already standing there, settles where it is (see crowdSettle).
-        // Checked before detours and shuffles, which otherwise run forever.
+        // point over the last window, queued back to the settled crowd
+        // already standing there and pressed against it, settles where it
+        // is (see settleWindow). Checked before detours and shuffles, which
+        // otherwise run forever.
         if(w.tickCounter_-m.windowTick>=kCrowdWindow) {
             const int64_t dx=(int64_t(u.x.v)-std::get<2>(m.point))>>16,dz=(int64_t(u.z.v)-std::get<3>(m.point))>>16;
             const int64_t dist=isqrtFloor(uint64_t(dx*dx+dz*dz));
             const int64_t body=int64_t(std::max(fx,fz))*16;
             const bool still=m.windowDist>=0&&m.windowDist-dist<body/2;
+            if(!still)m.stillSince=kNoTick;
+            else if(m.stillSince==kNoTick)m.stillSince=m.windowTick;
             m.windowTick=w.tickCounter_;m.windowDist=dist;
-            m.stillWindows=still?uint8_t(std::min(m.stillWindows+1,255)):uint8_t(0);
-            if(m.stillWindows>0) {
-                // A crowd of an earlier order (or idle bodies) already stands
-                // there: one window. A crowd of this same order is still
-                // forming, and the area logic (contactArrival) brings its
-                // late members in: only after twice the in-area wait.
-                const int crowd=crowdSettle(u,m,g,ox,oz,dist);
-                // Inside a formation's area (and its two-body margin) that
-                // logic decides alone; this only ends the wait outside it,
-                // where a late member otherwise never settles. (Settling
-                // there too cost sharedgoal 200 eight arrivals, seeds 0/7/42.)
-                const bool outside=!(m.pt&&m.pt->assigned&&m.pt->limit>0)||dist>m.pt->limit+2*body;
-                const uint32_t still=uint32_t(m.stillWindows)*kCrowdWindow;
-                if(crowd==2||(crowd==1&&outside&&still>=2*kAreaSettle)||(crowd==3&&outside&&still>=kFarSettle)) {complete(u,m,true);return;}
-            }
+            if(!still)m.queued=false;
+            else if(settleWindow(u,m,g,p,ox,oz,dist)) {complete(u,m,true);return;}
         }
         if(!m.route.empty()) {
             while(!m.route.empty()&&m.route.front()==here)m.route.erase(m.route.begin());
-            if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&m.held>=30)) {m.route.clear();m.lineCell=-1;}
+            if(m.route.empty()||++m.routeTicks>240||(m.state==Holding&&heldFor(m)>=30)) {m.route.clear();m.lineCell=-1;}
             else {
                 // Route cells are adjacent and were proven clear of still
                 // bodies cell by cell: follow them one at a time (a pulled
@@ -3887,6 +4311,7 @@ struct LegionNavigator::Impl {
                 // (Facing it while walking measured as spin in shared-goal
                 // crowds: 0 -> 10-22k unit-ticks in sharedgoal 2000.)
                 const auto [ax,az]=stepAim(u,aim);
+                holdStall(m);
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,false);
                 return;
             }
@@ -3904,6 +4329,7 @@ struct LegionNavigator::Impl {
                 // that made non-turning keep-right steps crawl (and
                 // gridlocked opposing columns) does not apply to it.
                 const auto [ax,az]=stepAim(u,m.detour);
+                holdStall(m);
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass);
                 return;
             }
@@ -3917,8 +4343,29 @@ struct LegionNavigator::Impl {
                 f&&f->at(size_t(here))!=kUnreached&&f->at(size_t(here))>0
                     ? int64_t(f->at(size_t(here)))*64
                     : (int64_t(goalX-ox)*(goalX-ox)+int64_t(goalZ-oz)*(goalZ-oz))));
-            if(left<m.progress) {m.progress=left;m.stalled=0;m.detourCount=0;} else ++m.stalled;
-            if(m.stalled>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
+            if(left<m.progress) {m.progress=left;m.stallTick=w.tickCounter_;m.detourCount=0;}
+            if(f) {
+                const uint16_t at=f->at(size_t(here));
+                if(f->serial!=m.headSerial) {m.headSerial=f->serial;m.headBest=at;}
+                else if(at<m.headBest) {m.headBest=at;m.headTick=w.tickCounter_;}
+            }
+            if(stalledFor(m)>=20&&contactArrival(u,m)) {complete(u,m,true);return;}
+            // B1: a member blocked kBlockedRetry ticks outside its destination
+            // area, and not arrived by contact just above, makes its group
+            // active (see active): Retail's blocked re-request. Blocked means
+            // a re-plan could help: no finished field, or no step down the
+            // field from here that is legal and clear of soft bodies (a
+            // static change cut the way, or bodies standing still close it,
+            // which a refresh plans round). A body held only by its own
+            // command's bodies or by movers on a free way down is not: a
+            // refresh would give it the same way (guards queued at an idle
+            // friend hold like this for good: staticidle).
+            if(stalledFor(m)>=kBlockedRetry&&!giveWayHolder(m)&&
+               (!f||!f->done||f->at(size_t(here))==kUnreached||
+                (!freeDescent(u,g,p,*f,ox,oz)&&f->at(size_t(here))>areaBound(g,m,fx,fz,int64_t(std::max(fx,fz))*16)))) {
+                if(w.tickCounter_-g.blockedTick>2)++stats.blockedRerequests;
+                g.blockedTick=w.tickCounter_;
+            }
             // Nothing contactArrival reads changes before drive asks again
             // in this update (no step was taken, no goal or slot changes).
             contactRefused=&m;
@@ -3936,9 +4383,9 @@ struct LegionNavigator::Impl {
                 // this command's own arrivals) is refused: the field plans
                 // round it.
                 const uint64_t command=g.soft?g.command:kNoSoft;
-                const int counts=softCells.empty()?-1:softCountsFor(fx,fz);
+                const int counts=!softCellCount?-1:softCountsFor(fx,fz);
                 m.line=std::max(std::abs(goalX-ox),std::abs(goalZ-oz))<=reach&&sweep(p,u,u.x,u.z,gx,gz)&&
-                    (softCells.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}))&&
+                    (!softCellCount||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}))&&
                     // ... and so is a line through a mover the group plans round.
                     (g.avoidSeg.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {
                         const int64_t px=int64_t(cx)*16+fx*8,pz=int64_t(cz)*16+fz*8;
@@ -3966,7 +4413,7 @@ struct LegionNavigator::Impl {
             if(potential==kUnreached) {trapped(u,m);return;}
             int cell=aimCell(u,m,p,*f,ox,oz);
             if(cell<0) {hold(u,m);return;}
-            if(f->done&&m.pivotR>=0&&m.slot>=0&&m.pt&&m.pt->refs>=kPivotMembers&&formationMember(m)) {
+            if(f->done&&m.pivotR>=0&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;}
             }
@@ -4080,20 +4527,41 @@ struct LegionNavigator::Impl {
                 const int64_t cross=ax*bz-az*bx;
                 if(cross*cross*4>=(ax*ax+az*az)*(bx*bx+bz*bz)) {turn=i+6;side=cross>0?1:-1;}
             }
-            const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(m.pt->refs,0))))*foot*3/2);
+            const int cap=std::min<int>(kPivotMaxCells,int(isqrtFloor(uint64_t(std::max(partRefs(m),0))))*foot*3/2);
             if(turn<0)return -1;
-            // Rank: the member's side offset from the group's live centroid
+            // Rank: the member's side offset from its part's live centroid
             // across the way to the turn, measured from the inner (turn)
-            // side; the centre file keeps half the group's packed width.
+            // side; the centre file keeps half the part's packed width.
             auto& pt=*m.pt;
-            if(pt.liveTick!=w.tickCounter_) {
-                int64_t sx=0,sz=0,count=0;
-                for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
-                pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
+            int64_t liveX,liveZ;
+            if(pt.partRefs.size()<=1) {
+                if(pt.liveTick!=w.tickCounter_) {
+                    int64_t sx=0,sz=0,count=0;
+                    for(const int id:pt.ids)if(const Unit* v=w.unit(id)) {sx+=v->x.v>>16;sz+=v->z.v>>16;++count;}
+                    pt.liveTick=w.tickCounter_;pt.liveX=count?sx/count:0;pt.liveZ=count?sz/count:0;
+                }
+                liveX=pt.liveX;liveZ=pt.liveZ;
+            } else {
+                // A point of several parts (one click split by the uplink,
+                // A2): each part ranks against its own centroid (C33), so
+                // the merged selection is never ranked as one. One pass
+                // over the point's ids per tick, counted as pivot work.
+                if(pt.partTick!=w.tickCounter_) {
+                    pt.partTick=w.tickCounter_;pt.partLive.clear();
+                    for(const int id:pt.ids) {
+                        const Member* mm=member(id);const Unit* v=w.unit(id);
+                        if(!mm||!v)continue;
+                        auto& a=pt.partLive[mm->part];a[0]+=v->x.v>>16;a[1]+=v->z.v>>16;++a[2];
+                    }
+                    stats.pivotPartIds+=pt.ids.size();
+                }
+                const auto found=pt.partLive.find(m.part);
+                const int64_t count=found==pt.partLive.end()?0:found->second[2];
+                liveX=count?found->second[0]/count:0;liveZ=count?found->second[1]/count:0;
             }
-            const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-pt.liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-pt.liveZ;
+            const int64_t tx=int64_t(chain[size_t(turn)]%W)*16+fx*8-liveX,tz=int64_t(chain[size_t(turn)]/W)*16+fz*8-liveZ;
             const int64_t tl=isqrtFloor(uint64_t(tx*tx+tz*tz));
-            const int64_t lat=tl?(tx*((u.z.v>>16)-pt.liveZ)-tz*((u.x.v>>16)-pt.liveX))/tl:0;   // px, + right of the way
+            const int64_t lat=tl?(tx*((u.z.v>>16)-liveZ)-tz*((u.x.v>>16)-liveX))/tl:0;   // px, + right of the way
             const int rank=int(std::clamp<int64_t>(cap/2-side*lat/16,0,cap));
             m.pivotR=int16_t(rank>=kPivotMinBodies*foot?rank:-1);
             if(m.pivotR<0)return -1;
@@ -4426,18 +4894,18 @@ struct LegionNavigator::Impl {
                 // every ~250-400 ticks, never holding long enough to ask (a
                 // livelock).
                 const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,nx,nz);
-                if(settled&&int64_t(m.progress)==m.detourBest&&m.held>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);m.held=0;return;}
-                if(f&&m.detour<0&&m.route.empty()&&m.held>=m.nextDetour&&
-                   (settled||(m.held>=60&&formationMember(m)))) {
+                if(settled&&int64_t(m.progress)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
+                   (settled||(m.holdUpdates>=60&&formationMember(m)))) {
                     // Back off geometrically after each attempt: a crowd that
                     // stays jammed stops re-planning instead of shuffling.
                     const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
                     ++m.detourCount;
                     if(localDetour(u,m,p,f,towardGoal)) {m.nextDetour=wait;u.speed=Fixed();return;}
-                    m.nextDetour=m.held+wait;
+                    m.nextDetour=m.holdUpdates+wait;
                 }
-                if(f&&m.detour<0&&m.route.empty()&&m.held>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);m.held=0;return;}
-                if(f&&m.detour<0&&m.route.empty()&&m.held>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);m.held=0;return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);restartHold(m);return;}
                 hold(u,m);return;
             }
         }
@@ -4452,8 +4920,12 @@ struct LegionNavigator::Impl {
         // regardless, and a real course change (> ~5.6 deg) still turns.
         if(face&&std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
         u.turnReqBam=diff;
-        m.state=Moving;m.held=0;
+        m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
     }
+    // A hold that starts over (a detour planned, a lane asked for): the
+    // clocks run from the next tick, as a hold begun by the next update
+    // would (heldFor reads 0 until then).
+    void restartHold(Member& m) const {m.heldSince=w.tickCounter_+1;m.holdUpdates=0;}
     // Is the cell this body wants held by a body that will not move on its
     // own (idle, arrived, or not a Legion mover)? A queue of members waiting
     // for each other is not: it drains by itself and must not be re-planned.
@@ -4534,14 +5006,14 @@ struct LegionNavigator::Impl {
         for(int c=best;c!=start;c=parent[size_t(c)])path.push_back((oz+c/S-R)*W+ox+c%S-R);
         std::reverse(path.begin(),path.end());
         m.route=std::move(path);m.routeTicks=0;++stats.detours;m.detourBest=int64_t(m.progress);
-        m.state=Holding;m.held=0;  // stopped this update; the route starts next
+        m.state=Holding;restartHold(m);  // stopped this update; the route starts next
         return true;
     }
     // Opposing traffic: after a short hold, both bodies commit to a lateral
     // step to their own right (keep-right), so head-on pairs pass instead
     // of pushing. Same-direction queues only side-step after a long hold.
     void sidestep(const Unit& u,Member& m,const Plane& p,const Field& f,int ox,int oz,int nx,int nz) {
-        if(m.held<6)return;
+        if(m.holdUpdates<6)return;
         const int W=width();
         int blocker=0;
         const int fx=u.type->footX,fz=u.type->footZ;
@@ -4608,76 +5080,348 @@ struct LegionNavigator::Impl {
     // Returns 0 (not here), 1 (touching only this same order's arrivals),
     // 2 (touching an earlier order's arrival or an idle body) or 3 (beyond
     // the reach, touching an arrival of this destination).
-    int crowdSettle(const Unit& u,const Member& m,const Group& g,int ox,int oz,int64_t dist) const {
-        if(m.approach||m.goal<0)return 0;
-        const int fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+    // The settle rule (PLAN 3.1 T1-B), run once per crowd window by a body
+    // that gained less than half a body on its point over the window.
+    //  - Queued: a body touching it (the ring kSettleRing bounds) and nearer
+    //    the point is a settled arrival of this destination, an idle body of
+    //    the player, or a held member of this destination that is itself
+    //    queued; or (a shared point) it stands inside the destination area
+    //    itself. A chain that can only start at the destination's own
+    //    crowd, so a jam on the way never queues.
+    //  - A settled crowd of an earlier order, or idle bodies, already
+    //    standing there: one window (within the crowd's reach).
+    //  - Otherwise (destination areas only) a queued body pressed against
+    //    the crowd (no free neighbour nearer the point, or no gain for the
+    //    window) first re-chooses a
+    //    free slot it can still reach (rechoose, kRechoices times), then
+    //    settles where it stands once its potential is within settleP. The
+    //    bound starts at the destination area's (areaBound) plus
+    //    kSettleSlack bodies and grows by kSettleGrow bodies per window, but
+    //    no completion is farther from the click than twice the crowd's
+    //    reach (the bound the old far rule allowed, C29) unless the body is
+    //    one row behind a settled arrival of its own command: the cap is
+    //    measured along a queue contiguous with the settled crowd.
+    // Every settle is connected (the field's way in is not much longer
+    // than the straight line: no settling behind a wall) and outside a
+    // factory's exit lane.
+    bool settleWindow(const Unit& u,Member& m,Group& g,const Plane& p,int ox,int oz,int64_t dist) {
+        m.queued=false;
+        if(m.approach||m.goal<0)return false;
+        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+        if(!f)return false;
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
         const int64_t body=int64_t(foot)*16;
+        const uint16_t potential=f->at(size_t(oz*W+ox));
+        if(potential==kUnreached)return false;
         const int64_t px=int64_t(std::get<2>(m.point)),pz=int64_t(std::get<3>(m.point));
-        auto sameDestination=[&](const Anchor& a) {
-            if(std::get<0>(a.point)!=u.player)return false;
-            const int64_t ax=(int64_t(std::get<2>(a.point))-px)>>16,az=(int64_t(std::get<3>(a.point))-pz)>>16;
+        const bool area=policy(m.kind).area,waypoint=policy(m.kind).passThrough;
+        auto sameDestination=[&](const std::tuple<int,uint32_t,int32_t,int32_t>& q) {
+            if(std::get<0>(q)!=u.player)return false;
+            const int64_t ax=(int64_t(std::get<2>(q))-px)>>16,az=(int64_t(std::get<3>(q))-pz)>>16;
             return ax*ax+az*az<=4*body*body;
         };
-        // Touching: a settled body of this destination within one body,
-        // nearer the point than this one.
-        int touching=0;bool anchored=false;
+        auto nearer=[&](const Unit& other) {
+            const int qx=footprintOrigin(other.x,fx),qz=footprintOrigin(other.z,fz);
+            if(qx>=0&&qz>=0&&qx<W&&qz<height()) {
+                const uint16_t q=f->at(size_t(qz*W+qx));
+                if(q!=kUnreached)return q<potential;
+            }
+            const int64_t dx=(int64_t(other.x.v)-px)>>16,dz=(int64_t(other.z.v)-pz)>>16;
+            return dx*dx+dz*dz<dist*dist;
+        };
+        // Nearer the point: by the field's potential at the other body's
+        // origin where the field reaches it, else by pixel distance.
+        bool queued=false,foreign=false;uint16_t front=kUnreached;
+        const int r=foot<=5?2:1;
         uint64_t ring=0;
-        for(int j=-foot;j<fz+foot&&(touching<2||!anchored);++j)for(int i=-foot;i<fx+foot&&(touching<2||!anchored);++i) {
+        for(int j=-r;j<fz+r&&!foreign&&ring<uint64_t(kSettleRing);++j)for(int i=-r;i<fx+r&&!foreign&&ring<uint64_t(kSettleRing);++i) {
+            if(i>=0&&i<fx&&j>=0&&j<fz)continue;
             ++ring;
             const int cx=ox+i,cz=oz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
             const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
-            if(!other||other->player!=u.player||!other->type||other->type->isStructure())continue;
-            // Settled for this destination: a Legion arrival there, or an
-            // idle body (standing nearer the point, so inside its crowd).
-            const auto a=isAnchor(o)?anchors.find(o):anchors.end();
-            if(a!=anchors.end()?!sameDestination(a->second):!other->orders.empty())continue;
-            const int64_t qx=(int64_t(other->x.v)-px)>>16,qz=(int64_t(other->z.v)-pz)>>16;
-            if(qx*qx+qz*qz>=dist*dist)continue;
-            // Same order: same player and issue tick (a group's members may
-            // each name their own point of one lattice).
-            const bool own=a!=anchors.end()&&std::get<1>(a->second.point)==std::get<1>(m.point);
-            touching=std::max(touching,own?1:2);
-            anchored=anchored||a!=anchors.end();
+            if(!other||other->player!=u.player||!other->type||other->type->isStructure()||!nearer(*other))continue;
+            if(isAnchor(o)) {
+                const auto a=anchors.find(o);
+                if(!sameDestination(a->second.point))continue;
+                // A settled crowd of another order: one window. Its own
+                // order's crowd at this very point is the destination area
+                // it settles into (a lattice of per-unit points is not one).
+                if(std::get<1>(a->second.point)!=std::get<1>(m.point))foreign=true;
+                else if(area&&destination(a->second.point)==destination(m.point)) {
+                    queued=true;
+                    // The settled row in front (its potential): the queue
+                    // behind it may settle one row further back (C29 below).
+                    const int qx=footprintOrigin(other->x,fx),qz=footprintOrigin(other->z,fz);
+                    if(qx>=0&&qz>=0&&qx<W&&qz<height())
+                        if(const uint16_t q=f->at(size_t(qz*W+qx));q!=kUnreached&&(front==kUnreached||q>front))front=q;
+                }
+            } else if(other->orders.empty())foreign=true;
+            else if(area&&!queued) {
+                // A waypoint (patrol) arrival never anchors, so its crowd has
+                // no settled chain start: there a held member of the same
+                // destination nearer the waypoint is the queue itself.
+                const Member* peer=member(o);
+                queued=peer&&(peer->queued||waypoint)&&peer->state==Holding&&destination(peer->point)==destination(m.point);
+            }
         }
         stats.crowdWindowRingCells+=ring;
-        if(!touching)return 0;
-        // Reach: four times the packed disc of everyone settled there (and
-        // this body), plus two bodies.
-        int64_t count=1;
-        for(const auto& [id,a]:anchors)if(sameDestination(a))++count;
-        stats.crowdSettleVisits+=anchors.size();
-        const int64_t reach=4*body*isqrtFloor(uint64_t(count)*100000000/31416)/100+2*body;
-        // Out to twice that, a body touching a settled ARRIVAL of this
-        // destination (a link of the crowd itself, not merely an idle body)
-        // also counts, after a much longer wait (3): a crowd stretched along
-        // the way in (arrivals from one side settle on its near face) left
-        // its late arrivals pressed against it, orders held forever, standing
-        // exactly where a settled body would stand.
-        const bool far=dist>reach;
-        if(far&&(!anchored||dist>2*reach))return 0;
-        // Connected: the field's way to the destination area is not much
-        // longer than the straight line (no settling behind a wall).
-        const Field* f=g.field&&g.field->done?g.field.get():nullptr;
-        if(!f)return 0;
-        const uint16_t potential=f->at(size_t(oz*width()+ox));
+        // The chain's first link: a shared point's member standing inside
+        // the destination area itself is at the crowd.
+        if(area&&!queued&&!foreign&&shared(g,m)&&potential<=areaBound(g,m,fx,fz,body))queued=true;
+        // A distinct goal's destination area is a body plus 4 px round its
+        // point (Retail's goal radius + 4): a member still for a window
+        // inside it has arrived, whoever stands on the goal itself (a lattice
+        // of per-unit points otherwise wedges bodies one step off their
+        // goals for good; the 600-tick wait used to end that).
+        if(area&&!shared(g,m)&&dist<=body+4&&!inExitLane(u,body))return true;
+        if(!queued&&!foreign)return false;
         // Soft obstacles (an idle crowd standing there) charge kSoftFactor
         // per step in a softened field.
         const int64_t factor=f->softened?kSoftFactor:1;
-        if(potential==kUnreached||int64_t(potential)>factor*((dist*kDiagonal)/16+int64_t(3*foot*kOrthogonal)))return 0;
-        // Never in a same-player factory's exit lane: from the factory's
-        // centre to past where its output is put down.
-        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
-        stats.crowdSettleVisits+=w.units_.size();
-        for(const auto& s:w.units_) {
-            if(!s.alive()||s.player!=u.player||!s.type||!s.type->producesUnits())continue;
-            const int64_t sx=s.x.v>>16,sz=s.z.v>>16;
-            const int64_t half=int64_t(s.type->footX)*8+body;
-            if(ux>=sx-half&&ux<=sx+half&&uz>=sz&&uz<=sz+int64_t(s.type->footZ)*8+60+body)return 0;
+        auto connected=[&](int64_t d) {return int64_t(potential)<=factor*((d*kDiagonal)/16+int64_t(3*foot*kOrthogonal));};
+        const int64_t reach=settleReach(m,body);
+        if(foreign&&dist<=reach&&connected(dist)&&!inExitLane(u,body))return true;
+        if(!area)return false;
+        m.queued=true;
+        // Pressed: no free neighbour nearer the point. A body with one free
+        // that gained nothing for a whole window all the same (its own
+        // steering, toward its slot, takes no step, or steps to and fro)
+        // re-chooses its slot, and once its re-choices are spent it counts
+        // as pressed.
+        const bool press=pressed(u,p,*f,ox,oz,potential);
+        if(!press&&stalledFor(m)<kCrowdWindow)return false;
+        // A body standing on its own slot keeps it: the re-choice is for a
+        // slot walled off by bodies that settled first. Re-choosing from the
+        // slot itself took the lowest-potential free cell anywhere in the
+        // window and walked the body across the front of its own formation
+        // (liftflyers' open run: 8 cells sideways); it settles here instead.
+        if(m.rechoices<kRechoices&&m.goal!=oz*W+ox) {
+            ++m.rechoices;
+            if(rechoose(u,m,g,p,*f,potential)||!press)return false;
         }
-        return far?3:touching;
+        const uint32_t grow=uint32_t(kSettleGrow*foot*kOrthogonal),slack=uint32_t(kSettleSlack*foot*kOrthogonal);
+        // C29, measured along the queue: no completion farther from the click
+        // than twice the crowd's reach, unless the body touches a settled
+        // arrival of its own command nearer the point -- then the settled
+        // crowd itself reaches back to it, and it may settle within one row
+        // (kSettleSlack bodies of potential) behind that arrival. A queue
+        // settles back from the crowd row by row and only while it is
+        // contiguous with it (a dead-end corridor's 120-body queue is longer
+        // than any straight-line cap); a jam that is not connected to the
+        // settled crowd by settled bodies never gains that reach.
+        const bool behind=front!=kUnreached&&uint32_t(potential)<=uint32_t(front)+slack;
+        uint32_t cap=uint32_t(std::min<int64_t>(0xfffe,factor*((2*reach*kDiagonal)/16+int64_t(3*foot*kOrthogonal))));
+        if(behind)cap=std::max(cap,std::min<uint32_t>(0xfffe,uint32_t(front)+slack));
+        if(!m.settleP)m.settleP=std::min(cap,areaBound(g,m,fx,fz,body)+slack);
+        if(potential<=m.settleP&&(dist<=2*reach||behind)&&connected(dist)&&!inExitLane(u,body))return true;
+        m.settleP=std::min(cap,m.settleP+grow);
+        return false;
+    }
+    // A destination several members share (or a formation slot's).
+    bool shared(const Group& g,const Member& m) const {
+        if(m.slot!=-1)return true;
+        const auto peak=g.peak.find(m.requested);
+        if(peak!=g.peak.end()&&peak->second>1)return true;
+        const Point* pt=m.pt;
+        if(!pt) {const auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
+        return pt&&pt->assigned&&pt->limit>0;
+    }
+    // A step from (ox,oz) down the field (a neighbour origin with lower
+    // potential) that is legal on the plane and not onto a soft obstacle of
+    // the group's command, whoever moves through it now (see move's B1 test:
+    // a body held only on such a way is held by bodies a re-plan does not
+    // plan round -- its own, or movers -- and a refresh would not help it).
+    bool freeDescent(const Unit& u,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        const uint16_t potential=f.at(size_t(oz*W+ox));
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const int counts=!softCellCount||command==kNoSoft?-1:softCountsFor(fx,fz);
+        for(const auto& d:kDirections) {
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const uint16_t v=f.at(size_t((oz+d[1])*W+ox+d[0]));
+            if(v!=kUnreached&&v<potential&&!softAt(ox+d[0],oz+d[1],fx,fz,command,counts))return true;
+        }
+        return false;
+    }
+    // Pressed: no neighbour origin nearer the point (lower potential) that
+    // the body could step into now.
+    bool pressed(const Unit& u,const Plane& p,const Field& f,int ox,int oz,uint16_t potential) const {
+        const int W=width();
+        for(const auto& d:kDirections) {
+            if(!step(p,ox,oz,d[0],d[1]))continue;
+            const uint16_t v=f.at(size_t((oz+d[1])*W+ox+d[0]));
+            if(v==kUnreached||v>=potential)continue;
+            if(stepFree(u,ox,oz,ox+d[0],oz+d[1]))return false;
+        }
+        return true;
+    }
+    // The reach of the crowd settled at this member's destination: four
+    // times the packed disc of everyone settled there (and this body), plus
+    // two bodies (the crowdSettle reach at b8a4110, its count kept by
+    // anchorsAt instead of a walk of every anchor).
+    int64_t settleReach(const Member& m,int64_t body) const {
+        const auto at=anchorsAt.find(destination(m.point));
+        const int64_t count=1+(at==anchorsAt.end()?0:at->second);
+        return 4*body*isqrtFloor(uint64_t(count)*100000000/31416)/100+2*body;
+    }
+    // The destination area's bound: the potential of the last of the
+    // ceil(1.25n) footprints nearest the point by field potential (n the
+    // members the point was given to), packed as slotsFor packs slots, so
+    // it follows walls (a half-disc at a wall, a strip in a dead end). A
+    // distinct goal's is a body plus 4 px (Retail's radius + 4). Cached per
+    // goal and field: a function of the finished field, never hashed.
+    uint32_t areaBound(Group& g,const Member& m,int fx,int fz,int64_t body) {
+        const auto peak=g.peak.find(m.requested);
+        const int n=peak==g.peak.end()?1:peak->second;
+        if(n<=1||m.requested<0)return uint32_t((body+4)*kOrthogonal/16);
+        const Field& f=*g.field;
+        auto& cached=g.areaBounds[m.requested];
+        if(cached.first==f.serial&&cached.second.first==n)return cached.second.second;
+        const int count=(5*n+3)/4;
+        const int W=width(),H=height(),sx=m.requested%W,sz=m.requested/W,foot=std::max(fx,fz);
+        uint32_t bound=0;
+        for(int radius=int(isqrtFloor(uint64_t(count)))*foot+2*foot+4,attempt=0;attempt<4;++attempt,radius*=2) {
+            const int x0=std::max(0,sx-radius),z0=std::max(0,sz-radius);
+            const int x1=std::min(W-1,sx+radius),z1=std::min(H-1,sz+radius);
+            std::vector<std::pair<uint16_t,int>> order;
+            stats.slotSearchCells+=uint64_t(x1-x0+1)*uint64_t(z1-z0+1);
+            const Plane& p=plane(g.plane);
+            for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x)
+                if(legal(p,x,z)&&f.at(size_t(z*W+x))!=kUnreached)order.push_back({f.at(size_t(z*W+x)),z*W+x});
+            std::sort(order.begin(),order.end());
+            const int bw=x1-x0+1+fx,bh=z1-z0+1+fz;
+            std::vector<uint8_t> used(size_t(bw)*bh,0);
+            int packed=0;
+            for(const auto& [v,cell]:order) {
+                const int x=cell%W-x0,z=cell/W-z0;
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!used[size_t(z+j)*bw+x+i];
+                if(!clear)continue;
+                for(int j=0;j<fz;++j)for(int i=0;i<fx;++i)used[size_t(z+j)*bw+x+i]=1;
+                bound=v;
+                if(++packed>=count)break;
+            }
+            if(packed>=count)break;
+        }
+        cached={f.serial,{n,bound}};
+        return bound;
+    }
+    // Re-choice (C2, C28): the free slot of this member's destination it can
+    // still reach past the bodies standing now (breadth-first over legal
+    // origins no other body covers, window of 24 cells) with the lowest
+    // potential below its own, ties to the lowest cell index, then the
+    // lowest slot index. Formation points take any free cell of the area;
+    // packed points their free packed slots. Returns whether it took one.
+    bool rechoose(const Unit& u,Member& m,Group& g,const Plane& p,const Field& f,uint16_t potential) {
+        if(m.requested<0||m.approach)return false;
+        Point* pt=m.pt;
+        if(!pt) {auto found=points.find(m.point);pt=found==points.end()?nullptr:&found->second;}
+        const bool formation=pt&&pt->assigned&&pt->limit>0;
+        const int fx=u.type->footX,fz=u.type->footZ;
+        Group::Slots* slots=nullptr;
+        if(!formation) {
+            const auto sharing=g.sharing.find(m.requested);
+            if(sharing==g.sharing.end()||sharing->second<2)return false;
+            slots=&slotsFor(m,g,p,m.requested,sharing->second,fx,fz);
+        }
+        constexpr int R=24,S=2*R+1;
+        const int W=width();
+        const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
+        auto open=[&](int x,int z) {
+            if(!legal(p,x,z))return false;
+            for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+                const int cx=x+i,cz=z+j;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(o&&o!=u.id)return false;
+            }
+            return true;
+        };
+        // The search never climbs more than a row (kSettleSlack bodies of
+        // potential) above the body: a free slot reachable only by walking
+        // back round the crowd is no re-choice, and that walk is what made
+        // the search cost a whole 49x49 window per call.
+        const uint32_t climb=uint32_t(potential)+uint32_t(kSettleSlack*std::max(fx,fz)*kOrthogonal);
+        std::vector<uint8_t> seen(size_t(S)*S,0);
+        std::vector<int> queue;queue.reserve(size_t(S)*S);
+        seen[size_t(R*S+R)]=1;queue.push_back(R*S+R);
+        for(size_t head=0;head<queue.size();++head) {
+            const int local=queue[head],lx=local%S,lz=local/S,x=ox+lx-R,z=oz+lz-R;
+            for(const auto& dd:kDirections) {
+                const int nlx=lx+dd[0],nlz=lz+dd[1];
+                if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
+                if(!step(p,x,z,dd[0],dd[1]))continue;
+                if(const uint16_t v=f.at(size_t((z+dd[1])*W+x+dd[0]));v==kUnreached||v>climb||!open(x+dd[0],z+dd[1]))continue;
+                if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
+                seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
+            }
+        }
+        stats.rechoiceBfsCells+=queue.size();stats.slotSearchCells+=queue.size();
+        auto reached=[&](int cell) {
+            const int lx=cell%W-ox+R,lz=cell/W-oz+R;
+            return lx>=0&&lz>=0&&lx<S&&lz<S&&seen[size_t(lz*S+lx)];
+        };
+        int best=-1,bestSlot=-1;uint16_t bestV=potential;
+        if(formation) {
+            // This member's own cells are free to it.
+            if(m.slot>=0)slotCells(m,fx,fz,false);
+            const int64_t px=int64_t(std::get<2>(m.point))>>16,pz=int64_t(std::get<3>(m.point))>>16;
+            for(const int local:queue) {
+                const int x=ox+local%S-R,z=oz+local/S-R,cell=z*W+x;
+                const uint16_t v=f.at(size_t(cell));
+                if(v==kUnreached||v>bestV||(v==bestV&&(best<0||cell>best)))continue;
+                if(v==potential)continue;
+                const int64_t cx=int64_t(x)*16+fx*8,cz=int64_t(z)*16+fz*8;
+                if((cx-px)*(cx-px)+(cz-pz)*(cz-pz)>pt->limit*pt->limit)continue;
+                bool clear=true;
+                for(int j=0;j<fz&&clear;++j)for(int i=0;i<fx&&clear;++i)clear=!pt->cells.count((z+j)*W+x+i);
+                if(clear) {best=cell;bestV=v;}
+            }
+            if(best<0||best==m.goal) {if(m.slot>=0)slotCells(m,fx,fz,true);return false;}
+            m.goal=best;m.slot=0;m.lineCell=-1;markPass(u,m);
+            slotCells(m,fx,fz,true);
+            return true;
+        }
+        for(size_t i=0;i<slots->cells.size();++i) {
+            const int cell=slots->cells[i];
+            if(slots->taken[i]||int(i)==m.slot)continue;
+            const uint16_t v=f.at(size_t(cell));
+            if(v==kUnreached||v>=potential)continue;
+            if(best>=0&&(v>bestV||(v==bestV&&cell>=best)))continue;
+            if(!legal(p,cell%W,cell/W)||!reached(cell)||!slotFree(m,cell,fx,fz))continue;
+            best=cell;bestSlot=int(i);bestV=v;
+        }
+        if(best<0)return false;
+        if(m.slot>=0) {
+            if(size_t(m.slot)<slots->taken.size())slots->taken[size_t(m.slot)]=0;
+            slotCells(m,fx,fz,false);
+        }
+        slots->taken[size_t(bestSlot)]=1;m.slot=bestSlot;m.goal=best;m.lineCell=-1;markPass(u,m);
+        slotCells(m,fx,fz,true);
+        return true;
+    }
+    // Factory exit lanes (from the factory's centre to past where its output
+    // is put down), per static epoch: a settle rule never settles a body in
+    // one of its own player's. Derived from the structures, never hashed.
+    struct ExitLane {int id=0;int64_t x=0,z=0,hx=0,hz=0;};
+    std::vector<ExitLane> exitLanes;uint64_t exitLanesEpoch=~0ull;
+    bool inExitLane(const Unit& u,int64_t body) {
+        if(exitLanesEpoch!=epoch) {
+            exitLanes.clear();exitLanesEpoch=epoch;
+            for(const auto& s:w.units_)if(s.alive()&&s.type&&s.type->producesUnits())
+                exitLanes.push_back({s.id,s.x.v>>16,s.z.v>>16,int64_t(s.type->footX)*8,int64_t(s.type->footZ)*8+60});
+            stats.crowdSettleVisits+=w.units_.size();
+        }
+        const int64_t ux=u.x.v>>16,uz=u.z.v>>16;
+        for(const auto& l:exitLanes) {
+            if(ux<l.x-l.hx-body||ux>l.x+l.hx+body||uz<l.z||uz>l.z+l.hz+body)continue;
+            const Unit* s=w.unit(l.id);
+            if(s&&s->alive()&&s->player==u.player)return true;
+        }
+        return false;
     }
     // The holder rule (AR-11, PLAN section 0 row 11: an unreachable order
     // drops as soon as the unit reaches its nearest reachable spot). An
@@ -4715,85 +5459,47 @@ struct LegionNavigator::Impl {
         stats.crowdWindowRingCells+=ring;
         return found;
     }
-    // A body pressed against settled bodies inside its goal's area has
-    // arrived: the destination is an area, and the cells nearer the point
-    // are taken. Distinct-goal members use one body width; members sharing a
-    // point use the packed disc that many bodies of this size occupy.
+    // A body pressed against settled bodies on its own distinct goal has
+    // arrived: the goal is taken and the cells nearer it are filled. A
+    // shared point's members (several sent there, or a formation slot)
+    // settle by the settle rule alone (settleWindow).
     bool contactArrival(const Unit& u,const Member& m) const {
-        if(m.stalled<20)return false;
+        if(stalledFor(m)<20||m.approach||m.slot!=-1)return false;
         auto group=groups.find(m.group);
         if(group==groups.end())return false;
-        // Shared points are counted by the requested point; a member's own
-        // goal is its claimed slot once it has one.
-        // The area is sized by everyone the point was given to, including
-        // members that already settled there.
         const auto sharing=group->second.peak.find(m.requested);
-        const int count=sharing==group->second.peak.end()?1:sharing->second;
-        const int body=std::max(u.type->footX,u.type->footZ)*16;
-        // Packed disc of `count` bodies: body*sqrt(count/pi), plus a body.
-        const int64_t radius=count>1?int64_t(body)+int64_t(body)*isqrtFloor(uint64_t(count)*100000000/31416)/100:body;
-        const int W=width();
-        const int point=count>1?m.requested:m.goal;
-        const Fixed gx=centre(point%W,u.type->footX),gz=centre(point/W,u.type->footZ);
-        int64_t dx=(int64_t(u.x.v)-gx.v)>>16,dz=(int64_t(u.z.v)-gz.v)>>16;
-        // A member of a shared point held still for ten seconds within one
-        // body of the packed disc is at the destination area: its slot is
-        // gone (covered, or walled off by bodies that settled first) and
-        // waiting longer cannot make one.
-        bool formation=false;
+        if(sharing!=group->second.peak.end()&&sharing->second>1)return false;
         if(const Point* pt=m.pt?m.pt:[&]()->const Point* {const auto f=points.find(m.point);return f==points.end()?nullptr:&f->second;}();
-           !m.approach&&(count>1||m.slot!=-1)&&pt&&pt->assigned&&pt->limit>0) {
-            // Formation slots: the area is the whole point's (every class
-            // sent there), measured from the requested point itself.
-            formation=true;
-            dx=(int64_t(u.x.v)>>16)-(int64_t(std::get<2>(m.point))>>16);
-            dz=(int64_t(u.z.v)>>16)-(int64_t(std::get<3>(m.point))>>16);
-            const int64_t limit=pt->limit;
-            // Walled out at the ring edge by settled bodies: after twice the
-            // in-area stand-still, within two bodies of the area, it settles
-            // (bounded: a formation member never waits forever). At the
-            // in-area wait (300) it settled bodies a re-choice would still
-            // have brought in: sharedgoal 200 lost 4 arrivals (seeds 0/7/42).
-            if(dx*dx+dz*dz>limit*limit)
-                return m.stalled>=2*kAreaSettle&&dx*dx+dz*dz<=(limit+2*body)*(limit+2*body);
-            if(m.stalled>=kAreaSettle)return true;
-        } else {
-            if(count>1&&m.stalled>=kAreaSettle&&dx*dx+dz*dz<=(radius+body)*(radius+body))return true;
-            if(dx*dx+dz*dz>radius*radius)return false;
+           pt&&pt->assigned&&pt->limit>0)return false;
+        const int body=std::max(u.type->footX,u.type->footZ)*16;
+        const int W=width();
+        const Fixed gx=centre(m.goal%W,u.type->footX),gz=centre(m.goal/W,u.type->footZ);
+        const int64_t dx=(int64_t(u.x.v)-gx.v)>>16,dz=(int64_t(u.z.v)-gz.v)>>16;
+        if(dx*dx+dz*dz>int64_t(body)*body)return false;
+        // A distinct goal is only "full" if another body stands on it;
+        // otherwise settling short could plug the lane a neighbour needs.
+        bool taken=false;
+        const int gx0=m.goal%W,gz0=m.goal/W;
+        for(int j=0;j<u.type->footZ&&!taken;++j)for(int i=0;i<u.type->footX&&!taken;++i) {
+            const int cx=gx0+i,cz=gz0+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            taken=o&&o!=u.id;
         }
-        if(count==1&&!formation) {
-            // A distinct goal is only "full" if another body stands on it;
-            // otherwise settling short could plug the lane a neighbour needs.
-            bool taken=false;
-            const int gx0=m.goal%W,gz0=m.goal/W;
-            for(int j=0;j<u.type->footZ&&!taken;++j)for(int i=0;i<u.type->footX&&!taken;++i) {
-                const int cx=gx0+i,cz=gz0+j;
-                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
-                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-                taken=o&&o!=u.id;
-            }
-            if(!taken)return false;
-        }
-        // Only settled neighbours (idle, or already arrived) make an area full.
+        if(!taken)return false;
+        // Only settled neighbours (idle, or already arrived) make it full.
         const int fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
-        bool settled=false;
-        for(int j=-1;j<=fz&&!settled;++j)for(int i=-1;i<=fx&&!settled;++i) {
+        for(int j=-1;j<=fz;++j)for(int i=-1;i<=fx;++i) {
             const int cx=ox+i,cz=oz+j;
             if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
             const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
             if(!other||other->player!=u.player)continue;
-            if(other->orders.empty()||other->orders[World::currentLeg(other->orders)].mission.pending&0x500)settled=true;
-            // Members of a shared point that are themselves pressed still
-            // inside the area count as its filled part.
-            else if(count>1||formation) {
-                const Member* peer=member(o);
-                settled=peer&&peer->group==m.group&&peer->stalled>=20;
-            }
+            if(other->orders.empty()||other->orders[World::currentLeg(other->orders)].mission.pending&0x500)return true;
         }
-        return settled;
+        return false;
     }
     uint64_t checksum() const {
         uint64_t h=mix(0x4c4547494f4eull,epoch);
@@ -4817,6 +5523,7 @@ struct LegionNavigator::Impl {
                 h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32);
             }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
+            if(g.demand)h=mix(h,0x64656d616e64ull);
             for(const auto& [seed,slot]:g.slots) {
                 h=mix(h,uint64_t(seed));h=mix(h,slot.built);h=mix(h,slot.reach);h=mix(h,slot.stale);
                 for(size_t i=0;i<slot.cells.size();++i)h=mix(h,uint64_t(slot.cells[i])<<1|slot.taken[i]);
@@ -4829,6 +5536,7 @@ struct LegionNavigator::Impl {
                 h=mix(h,uint64_t(point.scaleNum));h=mix(h,uint64_t(point.scaleDen));h=mix(h,uint64_t(point.limit));}
             for(int c:point.cells)h=mix(h,uint64_t(c));
             if(point.awareSeen) {h=mix(h,uint64_t(point.awareX));h=mix(h,uint64_t(point.awareZ));}
+            if(!point.queue.empty()) {h=mix(h,0x71756575ull);for(const int id:point.queue)h=mix(h,uint64_t(id));}
         }
         for(const auto& [id,a]:anchors) {
             h=mix(h,uint64_t(id));h=mix(h,uint64_t(a.goal));h=mix(h,a.yields);
@@ -4837,7 +5545,9 @@ struct LegionNavigator::Impl {
         }
         for(const auto& [id,y]:yielding) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(y.cell));h=mix(h,y.ticks);}
         h=mix(h,softSerial);h=mix(h,softHash);
-        for(const auto& [id,st]:stills) {h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(st.x))<<32|uint32_t(st.z));h=mix(h,st.scans);}
+        for(size_t id=0;id<softBodies.size();++id)if(const SoftBody& st=softBodies[id];st.present) {
+            h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(st.x))<<32|uint32_t(st.z));h=mix(h,st.scans);
+        }
         for(const auto& [id,c]:approachDone) {
             h=mix(h,0x61646f6e65ull);h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(std::get<0>(c)))<<32|std::get<1>(c));
             h=mix(h,uint64_t(uint32_t(std::get<2>(c)))<<32|uint32_t(std::get<3>(c)));
@@ -4846,14 +5556,16 @@ struct LegionNavigator::Impl {
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
-            h=mix(h,m.held);h=mix(h,m.stalled);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
+            h=mix(h,m.heldSince);h=mix(h,m.stallTick);h=mix(h,m.holdUpdates);h=mix(h,m.progress);h=mix(h,uint64_t(m.requested));
             h=mix(h,m.rest);if(m.rest) {h=mix(h,uint32_t(m.restX));h=mix(h,uint32_t(m.restZ));h=mix(h,uint32_t(m.restHp));h=mix(h,m.restEpoch);h=mix(h,m.restRing);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
-            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillWindows);
+            h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
+            if(m.settleP||m.queued||m.rechoices) {h=mix(h,0x736574746c65ull);h=mix(h,m.settleP);h=mix(h,uint64_t(m.queued)|uint64_t(m.rechoices)<<8);}
             h=mix(h,m.approach);h=mix(h,m.approachSince);h=mix(h,m.approachEpoch);h=mix(h,uint64_t(m.real));
             if(m.gainTick) {h=mix(h,0x6761696eull);h=mix(h,m.gainTick);h=mix(h,m.gainBest);}
             h=mix(h,uint64_t(std::get<0>(m.point)));h=mix(h,std::get<1>(m.point));
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
+            if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
             if(m.kind!=Kind::Move) {
@@ -4870,6 +5582,7 @@ bool LegionNavigator::supports(const Unit& u) const {return impl_->supports(u);}
 LegionMission LegionNavigator::mission(const Unit& u) const {return impl_->kindOf(u);}
 void LegionNavigator::registerMove(Unit& u) {impl_->registerMove(u);}
 void LegionNavigator::cancel(int id) {impl_->leave(id);}
+void LegionNavigator::ordersChanged(int id) {impl_->validate(id);}
 void LegionNavigator::tick() {impl_->tick();}
 void LegionNavigator::move(Unit& u,Fixed maximum) {impl_->move(u,maximum);impl_->markPass(u.id);}
 uint64_t LegionNavigator::checksum() const {return impl_->checksum();}
@@ -4921,9 +5634,38 @@ int LegionNavigator::unitState(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:int(found->second.state);
 }
+int LegionNavigator::recordsForTest(int id) const {
+    return (impl_->anchors.count(id)?1:0)|(impl_->approachDone.count(id)?2:0)|(impl_->parts.count(id)?4:0)|(impl_->yielding.count(id)?8:0);
+}
 int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
+}
+bool LegionNavigator::arrivalPoint(int id,int32_t& x,int32_t& z,int& count) const {
+    const auto found=impl_->anchors.find(id);
+    if(found==impl_->anchors.end())return false;
+    const auto d=Impl::destination(found->second.point);
+    x=std::get<1>(d);z=std::get<2>(d);
+    const auto at=impl_->anchorsAt.find(d);
+    count=at==impl_->anchorsAt.end()?1:at->second;
+    return true;
+}
+void LegionNavigator::noteFlyerEvent(FlyerEvent e) {
+    auto& s=impl_->stats;
+    switch(e) {
+    case FlyerEvent::StationOverflow:++s.stationOverflow;break;
+    case FlyerEvent::ReleaseA:++s.stationReleasesA;break;
+    case FlyerEvent::ReleaseB:++s.stationReleasesB;break;
+    case FlyerEvent::CapHit:++s.capHits;break;
+    case FlyerEvent::GoAround:++s.goArounds;break;
+    case FlyerEvent::TargetPoll:++s.liftTargetPolls;break;
+    }
+}
+bool LegionNavigator::advancing(int id,uint32_t limit) const {
+    const auto found=impl_->members.find(id);
+    if(found==impl_->members.end())return false;
+    const auto& m=found->second;
+    return (m.state==Impl::Moving||m.state==Impl::Holding||m.state==Impl::Waiting)&&impl_->peerHeadFor(m)<limit;
 }
 int LegionNavigator::routeLength(int id) const {
     const auto found=impl_->members.find(id);
@@ -4946,5 +5688,6 @@ LegionNavigator::SlotShape LegionNavigator::slotShape(int id) const {
 LegionNavigator::SlotShape LegionNavigator::lastSlotShape() const {return impl_->lastShape;}
 void LegionNavigator::setRestStrideForTest(int stride) {gRestStride=uint32_t(std::max(stride,1));}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
+bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}
 }

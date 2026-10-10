@@ -28,6 +28,31 @@
 
 namespace tak::sim {
 
+// Defined float->int conversions. A bare int32_t(double) of an out-of-range value is
+// undefined behaviour (x86 yields INT32_MIN, ARM saturates), and std::lround returns a
+// 32-bit long on Windows. These saturate (NaN -> 0), so every compiler and platform
+// agrees; in range they are exactly the truncation / round-half-away they replace.
+inline int32_t truncSat32(double d) {
+    if (!(d == d)) return 0;
+    if (d >= 2147483648.0) return INT32_MAX;
+    if (d <= -2147483648.0) return INT32_MIN;
+    return int32_t(d);
+}
+inline int32_t roundSat32(double d) {
+    if (!(d == d)) return 0;
+    if (d >= 2147483647.0) return INT32_MAX;
+    if (d <= -2147483648.0) return INT32_MIN;
+    return int32_t(std::llround(d));   // long long is 64-bit everywhere
+}
+// Round-half-away to int64 (not saturated to 32 bits), then the modulo-2^32 wrap that
+// C++20 defines: for angles in radians, where wrapping past a full turn is the intent.
+inline int32_t roundWrap32(double d) {
+    if (!(d == d)) return 0;
+    if (d > 4.0e18) d = 4.0e18;
+    if (d < -4.0e18) d = -4.0e18;
+    return int32_t(std::llround(d));
+}
+
 struct Fixed {
     static constexpr int kBits = 16;
     static constexpr int32_t kOne = 1 << kBits;
@@ -40,10 +65,10 @@ struct Fixed {
     // From float ONLY at a boundary: unit data read from FBI, the renderer, a test.
     // Never inside the tick. std::lround is round-half-away-from-zero and identical
     // everywhere, unlike a bare cast's truncation-toward-zero.
-    static Fixed fromFloat(float f) { return raw(int32_t(std::lround(double(f) * kOne))); }
+    static Fixed fromFloat(float f) { return raw(roundSat32(double(f) * kOne)); }
     // FBI fixed-point reader 0x5431f0 parses a double, scales, then truncates.
     // Keep separate from rounded position/UI boundaries above.
-    static Fixed fromRetailNumber(double value) { return raw(int32_t(value * kOne)); }
+    static Fixed fromRetailNumber(double value) { return raw(truncSat32(value * kOne)); }
 
     constexpr float toFloat() const { return float(v) / float(kOne); }
     // NO IMPLICIT CONVERSION TO FLOAT, and it is worth saying why this note exists
@@ -238,7 +263,7 @@ inline Bam fxAtan2(Fixed y, Fixed x) {
 
 // Boundary helpers: unit data, map files and the renderer all still speak radians.
 inline Bam bamFromRadians(float r) {
-    return bamWrap(int32_t(std::lround(double(r) * (65536.0 / (2.0 * 3.14159265358979323846)))));
+    return bamWrap(roundWrap32(double(r) * (65536.0 / (2.0 * 3.14159265358979323846))));
 }
 constexpr float radiansFromBam(Bam a) {
     return float(double(a.v) * (2.0 * 3.14159265358979323846 / 65536.0));

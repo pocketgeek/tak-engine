@@ -304,11 +304,11 @@ cells to the own goal while on a straight line.
   `tick()` every tick, in id order: a straight step at ground speed without
   turning, ended by arrival, a refused step or 45 ticks. Each body yields at
   most 3 times. An anchor is forgotten when the unit dies or gets any new
-  order.
+  order (by event since W4: see "Upkeep on demand").
 * **Heading**: the body turns only on a committed step toward its route,
   with a 5.6° dead band. A refused step, a hold, a shuffle, a pass, a
   side-step, a detour route, a yield and a trapped stop never turn it.
-* **Arrival on contact**: once a unit has made no progress for 20 updates, it
+* **Arrival on contact**: once a unit has made no progress for 20 ticks, it
   may arrive inside its goal's area while touching a settled same-player
   body. With a distinct goal the area is one body width and the goal cell
   must itself be occupied by another body, so settling short never plugs a
@@ -333,31 +333,46 @@ footprint class (mixed footprints form one group per class but share one
   to its target that is statically legal, in the group's component, clear of
   every cell already claimed at the point, and inside the limit. A member
   that joins later maps its own offset with the stored transform. A member
-  that gets no cell (`slot=-2`) walks to the point and looks again only while
-  held. If fewer than two members can take part at the first attempt, the
+  that gets no cell (`slot=-2`) walks to the point and looks again only by the
+  settle rule's re-choice. If fewer than two members can take part at the first attempt, the
   point retries every 16 ticks. Approach members take no slot and do not size
   the area.
 * **Straight lanes**: a member with a formation slot probes the direct line
   out to 640 cells instead of 160, so the crowd does not funnel into a file
   by descending the shared field.
-* **Slot re-choice**: a member held for 20 updates (and every 20 after)
-  re-chooses. A BFS (radius 24) over origins that no other body covers finds
-  the reachable free cell nearest the point. This stays active for the last
-  member of an assigned point too. A member's own re-registration pins its
-  point, so the formation and the cells arrived bodies claimed survive it.
-* **Settling**: inside the limit, a member that has been still for 300 ticks
-  (`kAreaSettle`) settles, as does one pressed against settled bodies or
-  against still members of the same point. A member walled out at the ring
-  edge settles after 600 still ticks if it is within the limit plus two body
-  widths.
-* **Close enough** (`crowdSettle`): a body that stopped gaining on its point
-  settles where it stands when it touches a same-player body already settled
-  for that destination (or idle) and nearer the point, within four packed-disc
-  radii of that crowd plus two bodies, on a field-connected spot outside any
-  factory exit lane. Out to twice that reach, touching a settled arrival of
-  the destination (not merely an idle body) also settles it, after 1800
-  still ticks (`kFarSettle`): a crowd fed from one side grows toward its
-  arrivals, and its last ones otherwise held forever against its face.
+* **Settling** (`settleWindow`, PLAN 3.1 T1-B, one rule): once per 45-tick
+  window, a body that gained less than half a body on its point over the
+  window looks at the bodies touching it (a ring of at most 64 cells) that
+  stand nearer the point. It is *queued* when one of them is a settled arrival
+  of its own order at that point, an idle body of the player, or a held member
+  of the same point that is itself queued, or when (a shared point) it stands
+  inside the destination area itself: the chain can only start at the
+  destination's own crowd, so a jam on the way never queues. A settled crowd
+  of an earlier order, or idle bodies, settles it in one window within the
+  crowd's reach (four packed-disc radii of everyone settled there plus two
+  bodies). Otherwise a queued body that is *pressed* (no free neighbour nearer
+  the point, or no gain at all for a window) first **re-chooses** a slot: the
+  free slot it can still reach past the bodies standing now (BFS radius 24)
+  with the lowest potential below its own, ties to the lowest cell, then the
+  lowest slot index; at most 3 times per member (`rechoose`), and never while
+  it stands on its own slot (a re-choice from there walked a body across the
+  front of its own formation for a lower cell). Then it settles
+  where it stands once its field potential is within `settleP`, which starts
+  at the destination area's bound (the potential of the last of the
+  ceil(1.25n) footprints nearest the point, so a half-disc at a wall and a
+  strip in a dead end) plus two bodies, a body plus 4 px for a distinct goal,
+  and grows by Retail's foot*32 px per window. No settle is farther from the
+  click than twice the crowd's reach, the bound of the old far rule (C29),
+  unless the body stands within one row (two bodies of potential) behind a
+  settled arrival of its own command: the cap is measured along a queue that
+  is contiguous with the settled crowd, so a dead-end queue settles back from
+  the crowd row by row however long it is, and a jam the settled crowd does
+  not reach never does. Every settle is field-connected and outside any
+  factory exit lane. A member on a distinct goal also arrives when pressed
+  within a body of its goal and the goal is taken (`contactArrival`). There are
+  no other time-outs: the 300/600/1800-tick waits are gone. The every-20-held
+  re-choice is gone too; what remains of it is the lane re-sweep: a held
+  formation member re-aims its own lane every 20 held ticks (`laneDue`).
 * The older per-goal packed slots (built inside-out by field potential,
   claimed back to front along each member's approach) remain as the fallback
   when no formation applies. Claims skip slots that are now illegal or
@@ -373,6 +388,13 @@ it produces still inherit it) but never sets its centre, area, busy count or
 pace, so a building in an Alt+N selection no longer holds the army at a
 standstill (`legion_structsquad`, `legion_factorysquad`, `structsquad*.scn`).
 The centre sums are integers of the Fixed positions, and the pace is a Fixed.
+The rest-time rejoin (W6) uses the formation's ground only (flyers are never
+re-ordered) and gathers at P, the modal settled-arrival point of its members,
+not at the centroid: a body settled at P is never re-ordered, and another is
+sent to P only if it is beyond the settled crowd's reach of P and farther from
+P than the centroid is (with no settled member, the centroid rule stands). A
+dead-end queue is no longer pulled back on itself (`legion_flyers_deadendrejoin`:
+holding 0, no anchored body re-ordered) and a factory's joiner still gathers.
 
 The in-game right-click in Legion mode sends one shared point for ground
 units, boats and hovercraft with footprints up to 8 whose order is not
@@ -392,8 +414,8 @@ prune cursor and every member's state, timers, detours, routes, pass lane and
 approach fields. The only unhashed inputs are values derived again from
 World each tick (structure signature, plane labels) and the goal-resolution
 cache, which is a pure function of the plane. `World::stateHash` mixes that
-checksum, and the orders' issue ticks that define groups, only in Legion
-mode. Movement and yields run serially. The `legion_determinism` test and the
+checksum, the orders' issue ticks that define groups, their convoy ticks and
+the open convoys (see "Convoys"), only in Legion mode. Movement and yields run serially. The `legion_determinism` test and the
 `navigation_determinism` goldens check that runs are repeatable and that
 serial and `--workers` runs produce the same hash. `sweep` uses `__int128`,
 which GCC, Clang and MinGW all provide.
@@ -448,18 +470,34 @@ formation flew at about 4 px/tick against the ground's 0.6. They got up to
 5,500 px ahead, landed at the goal, and waited there for up to 2,000 ticks.
 
 `World::planLegionFlightStations` (Legion only) runs every tick. It covers a
-flyer in a `squad < 0` formation that has ground members still under way,
-when the flyer's head order is a plain move, fight-move or patrol leg with
-no target or job. The ground counts as "the same command" when one of these
-holds:
-- some busy ground member's last order lies within 96 px of the flyer's own
-  destination (the move UI offsets a flyer's point by up to 60 px per axis
-  from the shared ground point);
-- both the flyer and the ground are patrolling.
+flyer in a squad -- an Alt+N formation or (since W6) a Ctrl+N group -- that
+has ground members still under way, when the flyer's head order is a plain
+move, fight-move or patrol leg with no target or job. Since W6 the flyer is
+paired with the ground of its own click: the busy ground members' last orders
+fall into up to 4 buckets per squad keyed by (order class, `convoyTick`), and
+a flyer whose last order carries the same key keeps station over that bucket
+(a 5th click counts `stationOverflow` and flies free). The convoy table puts
+a flyer's click, offset up to 60 px per axis, in its ground's convoy, so the
+96 px point match and the "any patrol joins any patrol" capture are gone. Two
+clicks of one class applied in the same tick share a `convoyTick` and so a
+station: a known limit.
 
 - **Station.** Each flyer has a station on a square spiral, `16 * foot + 16`
-  px apart, over the ground members' integer centroid. Stations are numbered
-  in unit order.
+  px apart, over the ground members' integer centroid (a squad with one
+  bucket: all its ground; with several, each bucket's busy members). Stations
+  are numbered in unit order.
+- **Release (W6, FL-04).** When the ground stops, the flyer is released for
+  its order and flies it uncapped to land, as retail's VTOL_Move ends:
+  release A when no busy member of its bucket has made headway for 450 ticks
+  (`LegionNavigator::advancing`; a member with a weapon reloading counts as
+  engaged, so a fight does not free the wing), release B when the bucket's
+  centroid has stayed within 16 px for 900 ticks with nobody engaged. Both
+  are sticky on the flyer's order (`Order::stationFree` and the B reference,
+  hashed when set). A dead-end queue, a sealed wall or an unreachable goal no
+  longer keeps the wing hovering for minutes (MIXED_SEAL 5149 -> 458 ticks).
+- **No yaw on the spot (W6).** A station flyer with no horizontal velocity
+  (the vertical take-off at the start of a leg, or held still by the ground's
+  pace) does not turn toward its lead point until it moves.
 - **Flight (formation-air2).** The flyer does not steer at the station
   itself. A point destination puts retail's flight model in its arrival
   regime. There the navigator keeps its old heading inside 16 px, and the
@@ -488,7 +526,8 @@ holds:
   refusal. The first version held flyers over the centroid until every
   ground member had finished, so they hovered while stragglers arrived.
 - **Determinism.** Everything is derived each tick from hashed state with
-  integer arithmetic. Nothing persists, so nothing new is hashed.
+  integer arithmetic; the only persistent state is the release on the
+  flyer's order, hashed when set.
 
 Flyers ordered on their own, or to another destination, fly as before. Test:
 `legion_world_test mixedformation` uses 20 ground bodies and 8 flyers at
@@ -524,17 +563,31 @@ belongs to an allied player. Enemy flyers and busy flyers stay obstacles.
   commands, so the group does not detour for flyers that will lift. It is
   still an obstacle to everyone else's.
 - **Hysteresis:** every further request extends the hover by 90 ticks. So
-  does any allied member within 6 cells of the flyer that is moving, or has
-  been held for under 60 updates, or is bound for a goal there. The flyer
-  lands only into a settled area, not in front of the stragglers of a group
-  that is still coming in. When the 90 ticks run out, the retail landing
-  mission takes over and searches from the spot it holds over: the flyer
-  lands on its own spot if that is free, else on the nearest free site.
-  It cannot lift again for 240 ticks, which prevents bobbing up and down.
-- **Determinism:** the lift state (`Unit::legionLift`, its spot and expiry,
-  and the rest tick) is hashed. The overlays are rebuilt each tick from
-  hashed state, and members are visited in id order.
-- A hovering flyer skips its combat update until it lands again.
+  does any allied member within 6 cells of the flyer that is making headway
+  (W6: a new best on its field within 120 ticks), or that is bound for a goal
+  there and moving or held for under 60 ticks. A member that is not making
+  headway asks only for a flyer on its next 2 planned cells. The flyer lands
+  only into a settled area, not in front of the stragglers of a group that is
+  still coming in. When the 90 ticks run out, the retail landing mission
+  takes over and searches from the spot it holds over: the flyer lands on its
+  own spot if that is free, else on the nearest free site. It cannot lift
+  again for 240 ticks, which prevents bobbing up and down.
+- **Cap (W6, 60 s):** an episode lasts at most 1800 ticks, the quiet period
+  included, unless a member is blocked by the flyer itself (it covers the
+  member's next 2 planned cells, and the member is advancing or only briefly
+  held). A capped episode rests 600 ticks once landed.
+- **Combat (W6):** a lifted flyer polls for a target every 8 ticks (staggered
+  by id), the call the landed VTOL standby makes; a target ends the lift and
+  it fights.
+- **Own squad:** a squad's landed flyer does not lift for a member of its own
+  squad that is making headway (it settles beside it); it does for a stalled
+  one whose goal or next 2 planned cells it covers.
+- **Determinism:** the lift state (`Unit::legionLift`, its spot, expiry and
+  start tick, and the rest tick) is hashed. The overlays are rebuilt each
+  tick from hashed state, and members are visited in id order.
+- **Descent (W6, FL-03):** a flyer in the landing mission's stage 3 is
+  stamped on its touchdown footprint as a landed one, so no member steps in
+  under it while it comes down; a body already there may only step out.
 
 Test: `legion_world_test liftflyers`. 40 ground bodies cross a block of 12
 landed flyers: 4 columns by 3 rows, with a one-cell gap between them.
@@ -728,6 +781,7 @@ workers (`legion_movement_orders_trolls_maze`).
   asserts, the others report. singleunit, jagged, trapped and group pass for
   Legion; crowdheld is a ratchet (61 of 64 in goal or better, below).
 * `navigation_determinism` and `legion_determinism`.
+* `convoy_test`: one convoy per click (see "Convoys").
 * `legion_movement_orders` (`movement_orders_test --legion`): attack approach
   around terrain, chase of a moving target, guard follow, group patrol,
   fight-move and patrol laps, combat resume, partial routes, repair and build
@@ -1090,6 +1144,162 @@ the larger command key gives way. Measured by `aware-headon:pair.contacts.permil
 and the `aware-*` fixtures (`aware-unseen` is the awareness-off control: the
 enemy is out of sight).
 
+### Convoys: one order per click (W3 A1)
+
+The client lands a selection over 64 units over several ticks (64 commands
+per tick, and at most 512 outstanding), so each tick's part used to be an
+order of its own. In Legion mode `World::order()` now stamps every order with
+`Order::convoyTick`, the tick its **convoy** opened: one value for every order
+one click gave, ground and air, per player and order class (Move, Fight from
+`attackMove`, Patrol from `patrolTo` and the flyer branch of `patrol()`). A
+patrol's return leg (queued by `patrol()`, or appended by the patrol mission
+when it starts) copies its outbound leg's value and never opens a convoy.
+`issuedTick` stays the identity of the order's own 64-unit part.
+
+The table (`sim/convoy.h`) is anchored on the convoy's first shared point:
+`legionSharedClick` in `legion.h`, which the client's right-click also calls,
+says which units get the click itself (surface movers with footprints 1..8);
+the rest get the click plus their offset from the selection centroid, clamped
+to 60 px per axis. Shared orders join within one cell of the anchor, offset
+orders within 60 px + 1 cell; before an anchor exists, within 60 px + 1 cell
+(shared) or 120 px + 1 cell (offset) of every point taken, tested on the
+convoy's bounding box. All tests are per axis. A convoy stays open while the
+tick is at most `last + 9` (up to 8 command-free ticks: the 512 window with a
+16-tick round trip) and at most `first + 32`; closed convoys leave the hashed
+table at the start of the next tick. Lookups go through two ordered indexes
+(anchored convoys by anchor cell, unanchored ones by the 256 px tile of their
+first point), and each order's probes plus candidates are counted as
+`legion_convoy_tests` (crowdbench) and `work.convoy_tests` (the scenario
+observer, inside `work.legion_total`); the declared bound is per order (p99 at
+most 16, max at most 64), which `legion_scenario` reports as `convoy.tests_max`,
+`convoy.over16_permille` and `convoy.over64` and baseline.json gates. `TAK_LEGION_VERIFY` checks every join
+against a scan of the table and the indexes against a rebuild every tick.
+Legion keys on the convoy (A2): the shared point (formation, area, settling),
+the group issue and the soft-obstacle command key use `convoyTick`, so a
+selection over 64 units is one point, one formation and one settle chain.
+Formation slots wait until the convoy can no longer be joined, then are handed
+out `kSlotsPerTick` (32) a tick, front first; the rest steer by the shared field
+meanwhile. A first part under one uplink tick (64 orders) is the whole click as
+far as the server can tell, so it takes its formation at once, provisionally;
+if another part joins the point before the convoy closes, every slot is given
+back and the formation is rebuilt over all parts then (W3 round 4: waiting
+without slots walked small groups the first stretch bunched on the line to the
+click -- legion_landedflyers' stand against the flyers came from that). The pinwheel ranks a member within its 64-unit part (its order's
+`issuedTick`, `Member::part`) against that part's live centroid. A2 was parked
+once at W3 (the corner gate counted far tails that completed mid-route as
+arrivals); measured again on top of the settle rule with physical arrival, it
+lands. Later workstreams key on the convoy directly (W6 flight stations, W7
+Trapped ownership, W8's lane cap). `convoy_test`
+covers the click shapes (flyers first with saturated offsets, opposite
+corners, all-air, the 974-unit window at round trips 0/8/16/24, patrol, two
+clicks 48 px apart) and the index against the scan.
+
+### Flyers and group records (W6, protocol 243)
+
+W6 (T5 and T6) makes the flyers of a squad follow the click they belong to and
+keeps a landing or lifting flyer from trapping ground units. All of it is in
+the sections it changes (the rest-time rejoin under Formations, flight
+stations, the lift area and landing); this is the list.
+
+- **Flight stations pair on the click.** A Ctrl+N group's flyers keep station
+  over the ground of their own click, like an Alt+N formation's; up to 4
+  buckets a squad, keyed by (order class, `convoyTick`).
+- **Release.** A station flyer is released for its order when the ground
+  stops (no headway for 450 ticks, or a centroid still for 900), so a sealed
+  wall or a dead end no longer keeps the wing hovering.
+- **Landing is safe.** A descending flyer is stamped on its touchdown
+  footprint from stage 3 (leave-only); no walker steps in under it.
+- **Lift episodes are bounded.** At most 1800 ticks (60 s) and a 600-tick
+  rest; kept up only by members making headway; a lifted flyer polls for a
+  target every 8 ticks and fights (`work.lift_target_polls`, bound lifted
+  flyers / 8 a tick). An own-squad landed flyer lifts only for a stalled
+  squad member whose goal or next 2 cells it covers.
+- **The rejoin gathers ground only,** at the formation's modal settled point;
+  a settled body is never re-ordered, so a dead-end queue is not pulled back.
+- **Not built:** the touchdown backstop (C5) and home-excluded landing (step 7,
+  C20); the post-release cap floor (it moved Alt+1 start offsets).
+
+Exit numbers: `docs/legion-exit-tables.md` "W6 exit"; the cases are in
+`tools/legion_flyers_test.cpp` (`docs/legion-w6-step0.md`). Hashes: the
+crowdbench Legion rows without flyers or squads, the Legion navigation golden
+and the Inner Circle `--mpai` hash are unchanged from protocol 242.
+
+### Upkeep on demand (W4, protocol 242)
+
+W4 (T7 Stage B) makes Legion's per-tick upkeep follow demand instead of the
+population: a stale field refreshes only for a group that needs it (B1), still
+bodies are sampled a thirtieth of the population a tick (B2), and the
+settled-arrival records are erased on the event that ends them (B3). All three
+landed under one protocol bump (242).
+
+**Event-driven records (B3).** The anchors (settled arrivals, kept with the
+per-destination `anchorsAt` count), the approach-done records and the parting
+records used to be walked in full by `serviceYields` every tick to drop the ones
+whose unit had died or got a new order. Now `World::noteOrders(id)` reports every
+change of a unit's orders -- the order helpers (`order`, `loadInto` for unit and
+carrier, `unloadAt`, `patrol`, `orderWait`, `orderWaitAttack`, `guard`, `attack`,
+`queueBuild`, `queueManaBuildArea`, `reclaimArea`, `reclaim`, `repair`,
+`startEmote`, through a scoped reporter so every return path reports), `dropLeg`,
+`acquireTarget`, the ground, flight and construction mission dispatchers, the
+unload park leg and the two death edges -- and `LegionNavigator::ordersChanged`
+applies the old per-entry tests to that one unit (an anchor stays while the unit
+is alive and idle or still on its completed leg; the other records while it is
+alive and idle). Anchors drop through `dropAnchor`, so `anchorsAt` stays an exact
+count of live settled bodies for the settle rule. `registerMove` also erases the
+unit's parting record. A dense per-unit hint makes the event two vector reads for
+a unit with no record. `serviceYields` keeps only its yield-step loop over
+`yielding`. No hook sits in `findTarget`, `forEachNear` or the Retail mover.
+
+Writes to `Unit::orders` that bypass the helpers (morph and consume, a test's
+direct write) are caught by the backstop: `prune`'s hashed 256-a-tick cursor now
+walks the members and the three record maps in one id order (with no records it is
+the old members-only cursor), so a stale record lives at most
+ceil((members + records) / 256) ticks. `work.anchor_walk_iters` counts the
+cursor's ids: at most 256 a tick (pocket-615's per-tick max 616 -> 256).
+`legion_world_test b3events` checks that an order to a settled body drops its
+anchor inside the order call, a stop keeps it, and a death or a direct order write
+drops it within one tick.
+
+**Demand-driven refresh (B1).** A static change still marks every field it reaches
+stale, but the scheduler starts a refresh (the stale-done pass) only for an
+**active** group: one whose member started its update Moving in the last 2 ticks,
+one with a **blocked** member, or one carrying the `demand` flag (set by the aware
+re-plan, cleared when the refresh swaps in; folded into the checksum with a tag
+when set). An inactive stale group stays listed and steers by its finished field;
+its refresh starts the tick it becomes active (`work.demand_resumes`), and each
+skipped visit counts `work.refresh_suppressed`. A refresh already under way keeps
+building (pausing it too cost crowdtrap arrivals), `kRefreshQuota` and swap-in at
+done are unchanged. Blocked is Retail's re-request (`kBlockedRetry` = 120 ticks):
+`stalledFor >= 120`, not a give-way holder (always false until W7), and either no
+finished field reaches it, or it stands outside its destination area with no legal
+step down the field clear of soft bodies (a body held only by its own command or
+by movers is not blocked: a refresh would give it the same way); each turn to
+blocked counts `work.blocked_rerequests`. `movingTick` and `blockedTick` are
+not hashed: they are functions of the last 2 ticks' hashed member updates, and no
+path rebuilds Legion from a snapshot (a mid-game `--mprejoin` stays in sync).
+`legion_staticidle`: parked guards beside continuous construction do no refresh
+work (764640 relaxations -> 0), and a pair held at a plugged gap re-plans through
+a gap that opens by the blocked rule alone. In the live 8-AI Ulasem benchmark
+refresh is under 2% of field work (first builds are the rest), so B1 hardly moves
+its totals there; paused solo first builds (C1) are the next W4 step.
+
+**Striped still-body scan (B2).** `scanStill` samples each tick only the bodies
+whose `id % 30 == tick % 30`, with the same two-sample stillness rule per body, and
+adds or removes each stamp cell by cell: `soft`/`softKind` hold the lowest covering
+id (overlaps kept in `softStack`), with `softCounts`, `softOwner` (and per-command
+counts for `ownsArrivals`) and `liftSoftPlayers` kept in step. The whole-population
+rebuild and sort on every 30th tick are gone: the scan's per-tick peak falls from
+about 330 bodies in one tick of 30 to about 25 (Ulasem). `registerMove` and a
+landed flyer's take-off lift the body's whole stamp (its sample stays).
+`softHash` is a wrapping sum of `mix(cell, id, kind)` over stamped cells plus
+`mix(id, command)` over owned ids, so it is order-independent and maintained by
+add and remove; `softSerial` counts stamp changes. `softHashFull()` recomputes it
+from the stamps: under `TAK_LEGION_VERIFY` (on in the Legion world-test ctests) it
+is checked every tick, and the grid, owners, lift players and window counts once
+a scan period. The aware scan (residue 15) now reads a soft view that changes
+every tick (accepted; W7 re-checks). The stripe phase moves a few outcome keys
+within their seed spread (aware headon contacts, landedflyers, tail wave p90).
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
@@ -1102,7 +1312,7 @@ went wrong.
 | `legion_acceptance_test` | single unit, group, jagged, trapped, crowd-held, in all five-era modes | anything outside its seven fixtures |
 | crowdbench (`crowdbench`, `crowdbench_matrix`, the nightly screen) | 18 scenarios x two modes x several populations, deterministic keys only, Retail on the same binary | formation play: its orders are per-unit goals, which form no formation |
 | `.scn` scenarios and `legion_scenario` (`tools/scenarios/`) | the client's real order path (`issueSelection`: 64 commands per tick, the per-axis offsets for non-shared units, SetSquad), serial and `--workers`, three start offsets, the observer's keys | the AI, fog and economy; production; anything not in the file |
-| `tools/legion_observe.h` | progress, held-by-design vs no-progress age classes, lane crossings and files, contact and clearance, flyer metrics, per-tick work counters | wall time (never read); it is const and adds nothing to hashed state (`observer_neutral`) |
+| `tools/legion_observe.h` | progress, held-by-design vs no-progress age classes, lane crossings and files, contact and clearance, flyer metrics, per-tick work counters; a command is one convoy (W3 exit, lead ruling W3 round 4 (1)): `legion_scenario` runs the file's clicks through a `ConvoyTable` of its own, so selections clicked to one point a few ticks apart are one command for `contact_settled` and share one arrival disc sized for all of their bodies, in both modes | wall time (never read); it is const and adds nothing to hashed state (`observer_neutral`) |
 | `tools/scenarios/baseline.json`, `--check` | the committed base: exact keys, one-sided bands, work counters, the Retail floor, exceptions with their clusters | nothing it was not asked to key; a new key needs a new base |
 | `legion_cost` | work per member-tick W(4N)/W(N) and slot-assignment work per slot | wall time |
 | situations (`tools/scenarios/situations/`, `scn_truth`) | a moment cut out of one of the user's recordings: exact bodies, the orders in flight, the next 600 ticks of commands, and the recording's own positions 300 ticks in | what is not in the snapshot: economy, scripts, AI, production, units in transports; the first 100 ticks follow the recording (two of six moments clear 90% of bodies within 2 cells) but by 300 none does (best 85%), because the Legion group and mission state of bodies already in flight is not in the file; so they gate nothing (README in that directory) |
@@ -1205,15 +1415,23 @@ Rules that came out of using them:
     per member for a large shared click), and the 640-cell sweep and the
     49x49 re-choice BFS are bounded per member, not globally
     (`split-450-open:work.formation_ring_cells.max`).
-  * A walled-out formation member settling after 600 ticks can stand just
-    outside the benchmark's authored radius: its order completes, but it does
-    not count as arrived_settled (`corner-8x56:g.A.complete_outside_radius`).
+  * A member queued behind its own crowd settles where it stands, out to twice
+    the crowd's reach, so it can stand outside the benchmark's authored radius:
+    its order completes, but it does not count as arrived_settled
+    (`corner-8x56:g.A.complete_outside_radius`).
   * Point cell claims do not follow a body that yielded
     (`corner-4x50:stopped_permille`).
   * The review-4 fixes were not screened at 500 or 1000 units, with 4 or 8
     players, at 12000 ticks, or on dynamicobstacle, rapidreplacement and
     exploration. Findings 2, 4, 5, 6, 7, 8, 10 and 11 have no dedicated test;
     `battle-field-2x60:spins` and `ctest:crowdbench_matrix` are what watch them.
+* **A 2-cell dead-end corridor still jams at its mouth.** A queue of 120
+  bodies into a 4-cell corridor now settles back from the crowd row by row
+  (all 120 by tick 5500), and a 615-body click into a wall pocket arrives as
+  one point (606 inside the authored radius by tick 8000). In a 2-cell
+  corridor the queue jams at the mouth before it enters, so no settled crowd
+  reaches back to it and those orders stay open
+  (`deadend-w2-n120-closed-plain:g.A.complete_n`).
 * **Group partitioning depends on registration order** and on field start
   timing (a started field takes no new seeds). The 256-goal cap chunks goals
   in registration order, so an order whose unit ids are not spatially

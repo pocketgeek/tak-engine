@@ -2,6 +2,7 @@
 #include "sim/retailreclaimarea.h"
 
 #include "sim/fixed.h"
+#include "sim/convoy.h"
 #include "cob/emissionpose.h"
 #include "sim/footprint.h"
 #include "sim/retailrng.h"
@@ -669,6 +670,22 @@ struct Order {
     Fixed hoverAttackTargetX, hoverAttackTargetZ;
     // Mission destination can change while the navigator retains its old route.
     std::optional<std::pair<Fixed,Fixed>> missionTarget;
+    // Legion only (sim/convoy.h): the tick this order's convoy opened, one
+    // value for every order one click gave a selection, even across the
+    // client's 64-per-tick uplink split. issuedTick stays the identity of the
+    // order's own 64-unit part. A patrol's return leg copies its outbound
+    // leg's value. kNone outside Legion and on orders no click made (formation
+    // anchors, rallies, waypoints spliced in by a route). Retail never sets
+    // it; hashed with a tag when set.
+    uint32_t convoyTick = ConvoyTable::kNone;
+    // Legion flight stations (W6 FL-04, a flyer's last order): the release
+    // from its station once the ground stops advancing (1, release A) or its
+    // centroid has stood within 16 px of stationRef since stationRefTick for
+    // 900 ticks (2, release B); sticky for the order. stationRefTick 0: no
+    // reference yet. Hashed with a tag when set.
+    uint8_t stationFree = 0;
+    int32_t stationRefX = 0, stationRefZ = 0;
+    uint32_t stationRefTick = 0;
 };
 
 struct Unit {
@@ -738,6 +755,14 @@ struct Unit {
     uint32_t legionLiftUntil=0;
     uint32_t legionLiftRest=0;   // after landing again, no new lift before this tick
     Fixed legionLiftX,legionLiftZ;
+    // W6 FL-01: the tick this lift episode began (hashed with legionLift).
+    // An episode is capped at kLegionLiftCap ticks: after that only a member
+    // whose next planned cells the flyer covers keeps it up, and once it has
+    // landed it rests kLegionLiftCapRest ticks.
+    uint32_t legionLiftSince=0;
+    // Observation only (never hashed, never read by a decision): the tick the
+    // flyer handed its last episode over to landing (the relift counter).
+    uint32_t legionLiftEnded=0;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //
     // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
@@ -1379,6 +1404,11 @@ public:
     }
     LegionNavigator::Stats legionStats() const {return legion_?legion_->stats():LegionNavigator::Stats{};}
     LegionNavigator* legionNavigator() {return legion_.get();}
+    // Legion's open convoys (sim/convoy.h) and their lookup counters. The
+    // counters are observation only (never hashed); tools export them beside
+    // the navigator's Stats as legion_convoy_*.
+    const ConvoyTable& convoys() const {return convoys_;}
+    ConvoyTable::Stats convoyStats() const {return convoys_.stats();}
 
 
     // Footprint route score: terrain/parked bodies block, qualifying same-way
@@ -1637,7 +1667,7 @@ public:
         clearScenarioState();
         scoreAutomaticDisabled_=false;
         unitScripts_.clear();unitScriptById_.clear();scriptYardById_.clear();
-        paths_.clear();legion_.reset();
+        paths_.clear();legion_.reset();convoys_.clear();
         searchGrades_.clear(); activeSearchGrade_=-1;
         units_.clear();unitSlotById_.clear();retiredOwners_.clear();retiredHash_=0;
         projectiles_.clear();flames_.clear();
@@ -1891,7 +1921,17 @@ public:
     // search (retail's boundary tracer, sim/pathsearch.h, NOT an A*) routes around
     // terrain by splicing its waypoints in as further order legs (see replaceLeg).
     // This used to describe a shared flow field; that system is gone.
-    void order(int unitId, float x, float z, bool queue);
+    // Under Legion every order joins a convoy of its class (Move here, Fight
+    // from attackMove, Patrol from patrolTo); `convoyCopy`, when set, is stamped
+    // instead of joining (a patrol's return leg).
+    void order(int unitId, float x, float z, bool queue, ConvoyClass cls = ConvoyClass::Move,
+               std::optional<uint32_t> convoyCopy = std::nullopt);
+    // A unit's orders changed (a leg gained or retired, a mission step, its
+    // death): Legion drops the settled-arrival and parting records the unit
+    // no longer qualifies for. The order helpers, dropLeg, acquireTarget, the
+    // ground/flight/construction mission dispatchers and the death edge call
+    // it. Touches Legion state only (a no-op without Legion).
+    void noteOrders(int unitId);
 
     // ---- order-queue helpers ------------------------------------------------
     // One issued order can expand into a whole route, so Unit::orders mixes
@@ -1937,7 +1977,7 @@ public:
     void patrol(int unitId, float x, float z);
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.
-    void patrolTo(int unitId, float x, float z, bool queue);
+    void patrolTo(int unitId, float x, float z, bool queue, std::optional<uint32_t> convoyCopy = std::nullopt);
     // The player's Shift-patrol (Cmd::Patrol, queue=1): appends point (x,z)
     // after every queued order. If it starts with no loop in the queue, the
     // patrol mission adds the return point where the unit then stands (see
@@ -2376,6 +2416,11 @@ private:
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
     bool flyerLandingOccupied(const Unit& self, int x0, int z0, int fx, int fz) const;
+    // A flyer standing on the ground for Legion's purposes (W6, PLAN 3.6):
+    // landed (mode 1), or descending in the landing mission's stage 3.
+    static bool flyerGrounded(const Unit& f) {
+        return f.flightGroundMode==1 || (f.landing && f.landing->mission.stage==3);
+    }
     std::pair<int,int> cellHeightRange(size_t cell) const;
     bool acquireTarget(Unit& u, bool missionPoll);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
@@ -2658,6 +2703,8 @@ private:
     PathService paths_;          // retail's request queue + budget scheduler
     PathfindingMode pathfindingMode_=PathfindingMode::Retail;
     std::unique_ptr<LegionNavigator> legion_; // Legion mode only
+    ConvoyTable convoys_;                     // Legion mode only; hashed while not empty
+    uint32_t joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z);
     // Bumped whenever terrain/feature placement legality may change. Derived
     // planes compare it; never hashed (it is a cache key, not state).
     uint64_t placementEpoch_=0;
@@ -2701,8 +2748,14 @@ private:
     // Legion: idle landed flyers make way for allied ground groups.
     static constexpr uint32_t kLegionLiftQuiet=90;   // ticks after the last request
     static constexpr uint32_t kLegionLiftRest=240;   // ticks from the hand-over to landing until it may lift again
+    static constexpr uint32_t kLegionLiftCap=1800;   // ticks one episode may last (60 s, user decision 4)
+    static constexpr uint32_t kLegionLiftCapRest=600; // the rest after a capped episode
+    static constexpr uint32_t kLegionLiftPoll=8;     // a lifted flyer polls for a target every 8 ticks, staggered by id
     bool legionLiftable(const Unit& flyer,int player) const;
-    void requestLegionLift(Unit& flyer);
+    // blocked: the flyer covers one of the requesting member's next planned
+    // cells (the only request that extends an episode past kLegionLiftCap).
+    // Returns whether the request started or extended the episode.
+    bool requestLegionLift(Unit& flyer, bool blocked);
     bool tickLegionLift(Unit& u);
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;

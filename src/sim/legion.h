@@ -19,6 +19,17 @@ struct Unit;
 enum class LegionMission : uint8_t {None=0,Move,Fight,Patrol,Attack,Guard,
     Build,Repair,Reclaim,Load,Unload,Exit,Park};
 
+// Is this mover "shared" under Legion: does a Move click give it the clicked
+// point itself? Legion plans surface movers with footprints 1..8 (ground units
+// and boats) and packs one shared destination into arrival slots; flyers and
+// oversize bodies keep their offset from the selection centroid (clamped to
+// +-60 px per axis). The client's right-click (gameview_hud.cpp) and
+// World::order()'s convoy test (sim/convoy.h) both call this, so the two
+// cannot drift.
+constexpr bool legionSharedClick(bool canFly,int footX,int footZ) {
+    return !canFly&&footX>=1&&footZ>=1&&footX<=8&&footZ<=8;
+}
+
 class LegionNavigator {
 public:
     // Deterministic work/outcome counters. Observation only: never hashed and
@@ -31,6 +42,20 @@ public:
         uint64_t arrivals=0,contactArrivals=0,trapped=0,escapes=0;
         uint64_t detours=0,detourCells=0;
         uint64_t lifts=0;   // lift requests to idle landed flyers (see World::requestLegionLift)
+        // ---- W6 step 0 instruments (observation only, never hashed) ----------
+        // relifts: a lift episode that begins within 600 ticks of the same flyer
+        // landing from its previous one (bobbing); counted from W6 step 0.
+        // The rest are declared here for the W6 steps that add the behaviour they
+        // count and stay 0 until then: capHits (a lift episode ended by the
+        // 1800-tick cap, step 6), stationReleasesA / stationReleasesB (formation
+        // flyers released from their station by the stall / static-centroid
+        // rule, step 5), goArounds (touchdown backstop go-arounds, step 2),
+        // stationOverflow (a 5th distinct click in one squad that got no station,
+        // step 3).
+        uint64_t relifts=0,capHits=0,stationReleasesA=0,stationReleasesB=0,goArounds=0,stationOverflow=0;
+        // W6 FL-01: acquireTarget polls by lifted flyers (a declared work class,
+        // PLAN 3.0: at most lifted flyers / 8 per tick).
+        uint64_t liftTargetPolls=0;
         // Per LegionMission: legs (unit, order) Legion took on, arrivals it
         // raised (0x500) and failed approaches it handed back (0x200).
         uint64_t missionLegs[16]={},missionArrivals[16]={},missionFailures[16]={};
@@ -64,12 +89,26 @@ public:
         uint64_t waitingMemberTicks=0;   // member updates spent waiting for a field
         uint64_t demandResumes=0,fieldsPaused=0;   // paused builds (0 until paused builds exist)
         uint64_t stillUnitsProcessed=0;  // bodies scanStill sampled
+        // ---- W4 step 0 instruments (observation only, never hashed) ----------
+        // Gauges (running maxima, not per-tick work): the most bodies one
+        // residue class (id % 30) of a scanStill pass holds (B2 stripes the scan
+        // by this residue; bound: per-tick max <= 10% of the old 30th-tick
+        // spike, lead ruling W4 (k)), and the longest run of
+        // consecutive ticks whose field quota was spent to zero.
+        uint64_t stillPerResidueMax=0,quotaPegRunMax=0;
+        // Ids prune's backstop cursor validates (members plus the anchors,
+        // approachDone and parts records; at most 256 a tick since B3, which
+        // erases those records by event instead of a whole walk); soft-hash recomputations checked by
+        // TAK_LEGION_VERIFY (B2: one a tick while it is on); stale refreshes
+        // left unstarted for want of demand (B1: one per inactive group visit).
+        uint64_t anchorWalkIters=0,softHashVerifyTicks=0,refreshSuppressed=0;
         // ---- army throughput (T1 I4) ---------------------------------------
-        uint64_t crowdWindowRingCells=0;   // crowdSettle's touching ring
-        uint64_t crowdSettleVisits=0;      // crowdSettle's anchor and factory scans
-        uint64_t rechoiceBfsCells=0;       // reachableFormationCell
+        uint64_t crowdWindowRingCells=0;   // the settle rule's queue ring (settle-chain cells) and the holder rule's ring
+        uint64_t crowdSettleVisits=0;      // units walked to rebuild the factory exit lanes
+        uint64_t rechoiceBfsCells=0;       // the settle rule's slot re-choice (rechoose)
         uint64_t formationRingCells=0;     // formationCell
         uint64_t moveCallsByState[8]={};   // move() per member state (0 none .. 5 trapped)
+        uint64_t pivotPartIds=0;           // pivotAim's per-part centroid pass (ids of points of 2+ parts)
         uint64_t joinIterations=0;         // registerMove's group-join scan
         // ---- completions (T1) ------------------------------------------------
         // Completed legs farther than the destination area (formation limit,
@@ -98,6 +137,8 @@ public:
         f("pass_scans",s.passScans);f("pass_scans_skipped",s.passScansSkipped);
         f("arrivals",s.arrivals);f("contact_arrivals",s.contactArrivals);f("trapped",s.trapped);f("escapes",s.escapes);
         f("detours",s.detours);f("detour_cells",s.detourCells);f("lifts",s.lifts);
+        f("relifts",s.relifts);f("cap_hits",s.capHits);f("station_releases_a",s.stationReleasesA);f("station_releases_b",s.stationReleasesB);
+        f("go_arounds",s.goArounds);f("station_overflow",s.stationOverflow);f("lift_target_polls",s.liftTargetPolls);
         array("mission_legs",s.missionLegs,16);array("mission_arrivals",s.missionArrivals,16);array("mission_failures",s.missionFailures,16);
         f("line_sweeps",s.lineSweeps);f("held_rechecks",s.heldRechecks);f("slot_search_cells",s.slotSearchCells);
         f("trace_cells",s.traceCells);f("pass_scan_cells",s.passScanCells);
@@ -111,8 +152,10 @@ public:
         f("lift_members_walked",s.liftMembersWalked);f("lift_members_skipped",s.liftMembersSkipped);
         f("waiting_member_ticks",s.waitingMemberTicks);f("demand_resumes",s.demandResumes);f("fields_paused",s.fieldsPaused);
         f("still_units_processed",s.stillUnitsProcessed);
+        f("still_per_residue_max",s.stillPerResidueMax);f("quota_peg_run_max",s.quotaPegRunMax);
+        f("anchor_walk_iters",s.anchorWalkIters);f("soft_hash_verify_ticks",s.softHashVerifyTicks);f("refresh_suppressed",s.refreshSuppressed);
         f("crowd_window_ring_cells",s.crowdWindowRingCells);f("crowd_settle_visits",s.crowdSettleVisits);
-        f("rechoice_bfs_cells",s.rechoiceBfsCells);f("formation_ring_cells",s.formationRingCells);
+        f("rechoice_bfs_cells",s.rechoiceBfsCells);f("formation_ring_cells",s.formationRingCells);f("pivot_part_ids",s.pivotPartIds);
         array("move_calls_by_state",s.moveCallsByState,8);f("join_iterations",s.joinIterations);
         f("midroute_completions",s.midrouteCompletions);f("outside_area_completions",s.outsideAreaCompletions);
         array("completion_dist",s.completionDist,10);f("completion_dist_sum",s.completionDistSum);f("completion_dist_max",s.completionDistMax);
@@ -142,6 +185,10 @@ public:
     // A supported leg became current (order, queued leg, controller reset).
     void registerMove(Unit&);
     void cancel(int id);
+    // The unit's orders changed (a leg gained or retired, a mission step, its
+    // death): drop the settled-arrival, parting and yield records it no
+    // longer qualifies for. World::noteOrders calls it.
+    void ordersChanged(int id);
     // Start-of-tick service: static plane freshness and field work quota.
     void tick();
     // One movement update for a supported unit, replacing Retail steering.
@@ -158,9 +205,27 @@ public:
     // 3 waiting for its field) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
+    // Test hook: the unit's settled-arrival records, as bits: 1 anchor,
+    // 2 approach done, 4 parted, 8 yielding.
+    int recordsForTest(int id) const;
     // Observation hook (read-only, never hashed): cells left in the unit's committed local detour route
     // (0: none, or not a Legion member). MV-06's route-follower crawl samples read it.
     int routeLength(int id) const;
+    // W6 (PLAN 3.6): is the unit a Legion member still making headway, its
+    // headway clock (the last tick it reached a new best potential on its
+    // group's field) under `limit` ticks?
+    // Moving, Holding and Waiting members count; Arrived, Trapped and
+    // non-members do not. The flyer rules read it with kLiftStall (lift area)
+    // and kStationStall (formation stations). Reads hashed member state only.
+    static constexpr uint32_t kLiftStall=120,kStationStall=450;
+    bool advancing(int id,uint32_t limit) const;
+    // W6 (PLAN 3.5 rejoin): the destination point (raw Fixed) of the unit's
+    // settled-arrival record and how many settled bodies share it; false if
+    // it has none.
+    bool arrivalPoint(int id,int32_t& x,int32_t& z,int& count) const;
+    // W6 behaviour counters World's flyer rules raise (Stats, observation only).
+    enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround,TargetPoll};
+    void noteFlyerEvent(FlyerEvent);
     // Test hook: the unit's group field potential at an origin (-1 if none).
     int fieldPotential(int id,int originX,int originZ) const;
     // Test hook: the slot shape of the unit's formation (valid=false if it
@@ -175,6 +240,9 @@ public:
     // build starts with it on when TAK_LEGION_VERIFY is set (the only
     // environment read, debug-only and never hashed). Process-wide.
     static void setVerify(bool on);
+    // Is the verify hook on? (Always false in release.) World's convoy table
+    // (sim/convoy.h) runs its own checks under the same hook.
+    static bool verifying();
     // Print the scheduler counters (an "LPROBE" line on stderr) every
     // `ticks` ticks; 0 off. Process-wide; tools and debug clients set it.
     static void setProbe(uint32_t ticks);

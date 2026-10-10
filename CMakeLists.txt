@@ -14,6 +14,28 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
+# Build speed (developer machines only; neither tool changes the code generated).
+# ccache: many worktrees build the same sources, so a shared compiler cache turns a
+# fresh build into mostly cache hits. Worktrees only share entries when ccache's
+# base_dir covers their paths (base_dir = / and hash_dir = false in ccache.conf).
+# mold: the build links ~300 executables against large static libraries, which GNU
+# ld spends much of an incremental build on. Both are used when found and can be
+# turned off; CI and release builds without them are unaffected.
+option(TAK_CCACHE "Use ccache as the compiler launcher when it is installed" ON)
+option(TAK_MOLD "Link with mold on Linux when it is installed" ON)
+if(TAK_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+  find_program(TAK_CCACHE_PROGRAM ccache)
+  if(TAK_CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${TAK_CCACHE_PROGRAM}")
+  endif()
+endif()
+if(TAK_MOLD AND UNIX AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  find_program(TAK_MOLD_PROGRAM mold)
+  if(TAK_MOLD_PROGRAM)
+    add_link_options(-fuse-ld=mold)
+  endif()
+endif()
+
 # Determinism: no floating-point contraction ANYWHERE. A contracted a*b+c is one
 # fused multiply-add (one rounding) instead of two, so the same source gives a
 # different last bit wherever the compiler fuses. GCC on baseline x86-64 has no FMA
@@ -110,6 +132,7 @@ add_library(tak-formats
   src/sim/sim.cpp
   src/sim/pathsearch.cpp
   src/sim/legion.cpp
+  src/sim/convoy.cpp
   src/sim/detmath.cpp
   src/sim/matchsetup.cpp
   src/sim/mission.cpp
@@ -306,9 +329,27 @@ add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
-    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware)
+    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware b3events)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
-  set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion)
+  # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
+  # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.
+  # Costs these 38 cases ~17 s -> ~44 s in total at -O2 (the longest, squadformation, 6 -> 11 s).
+  set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion ENVIRONMENT TAK_LEGION_VERIFY=1)
+endforeach()
+# W6 step 0 (PLAN 4 W6): the flyer instruments of tools/legion_flyers_test.cpp. Each prints the numbers the W6
+# steps move and asserts determinism (serial == workers); W6_REQUIRE=1 asserts the PLAN targets (the acceptance
+# check of the step that meets them; docs/legion-w6-step0.md).
+add_executable(legion_flyers_test tools/legion_flyers_test.cpp)
+target_link_libraries(legion_flyers_test PRIVATE tak-formats)
+foreach(legion_probe mixedsquad mixedseal mv08group mv08deadend deadendrejoin ctrlmixed ctrlmixedbig factoryjoin auditlift
+    fl04 fl05match fl05unreach predicates)
+  add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
+  set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6")
+endforeach()
+# The lift and touchdown cases also run with TAK_LEGION_VERIFY (debug builds): the lift buckets and homes against a scan each tick.
+foreach(legion_probe landunder descentwalkin auditlift40 splitpatrol liftcombat)
+  add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
+  set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
 # T1 probes for W3 (measurement only; they assert determinism, not bounds).
 foreach(legion_probe settlelatency doorplug)
@@ -321,6 +362,10 @@ foreach(legion_probe structsquad factorysquad patrolrepair)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;w2")
 endforeach()
+# W4: staticidle -- parked groups beside continuous construction do no refresh work (B1, demand-driven
+# refresh); it failed by construction on the step-0 head.
+add_test(NAME legion_staticidle COMMAND legion_world_test staticidle)
+set_tests_properties(legion_staticidle PROPERTIES LABELS "legion;w4")
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
@@ -331,6 +376,11 @@ target_link_libraries(legion_observe_selftest PRIVATE tak-formats)
 add_test(NAME legion_observe_selftest COMMAND legion_observe_selftest)
 set_tests_properties(legion_observe_selftest PROPERTIES LABELS legion)
 # .scn scenarios and issueSelection (the client's 64-per-tick order split).
+add_executable(convoy_test tools/convoy_test.cpp)
+target_link_libraries(convoy_test PRIVATE tak-formats)
+add_test(NAME convoy_test COMMAND convoy_test)
+set_tests_properties(convoy_test PROPERTIES LABELS legion)
+
 add_executable(issue_selection_test tools/issue_selection_test.cpp)
 target_link_libraries(issue_selection_test PRIVATE tak-formats)
 add_test(NAME issue_selection_test COMMAND issue_selection_test)
@@ -386,9 +436,9 @@ foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
 endforeach()
 # W2 step 0 fixtures: AR-03 structure/Keep in an Alt+N squad, AR-11 unreachable orders and the
 # ~8200-tick maze approach walk (`probe approach` keys). Run in both modes; the second form
-# also checks every key against baseline.json over five offsets (tools/legion_check.py), so a
-# later W2 step that makes one worse fails here and one that improves it prints RATCHET (nightly:
-# five offsets cost ~20 s, past the per-commit CI budget).
+# also checks every key against baseline.json over the gate's eleven offsets (tools/legion_check.py:
+# small-count keys on all eleven, the rest on the core five), so a later W2 step that makes one worse
+# fails here and one that improves it prints RATCHET (nightly: past the per-commit CI budget).
 foreach(legion_scn structsquad structsquad-keep unreach-200 mazeapproach)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
@@ -396,8 +446,33 @@ foreach(legion_scn structsquad structsquad-keep unreach-200 mazeapproach)
   if(NOT WIN32)
     add_test(NAME legion_check_${legion_scn}
              COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
-                     --offsets 0,1,-1,2,-2 --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+                     --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
     set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w2;nightly" TIMEOUT 900)
+  endif()
+endforeach()
+# W3 step 0 fixtures (PLAN 4 W3 step 0): the pocket, deadend, tail and doorplug probes of legion_world_test as .scn files,
+# so the baseline gate (tools/legion_check.py) covers them over the eleven gate offsets and both modes. They report the
+# W3 targets rather than meet them (pocket t90, deadend settled == n, tail open_still900, doorplug B crossings), so
+# the baseline holds today's values and a W3 step that makes one worse fails here. Nightly: 2-60 s each per offset.
+foreach(legion_scn
+    deadend-w2-n120-closed-plain deadend-w2-n120-closed-squad deadend-w2-n120-room-plain
+    deadend-w2-n120-room-squad deadend-w2-n40-closed-plain deadend-w2-n40-closed-squad
+    deadend-w2-n40-room-plain deadend-w2-n40-room-squad deadend-w4-n120-closed-plain
+    deadend-w4-n120-closed-squad deadend-w4-n120-room-plain deadend-w4-n120-room-squad
+    deadend-w4-n40-closed-plain deadend-w4-n40-closed-squad deadend-w4-n40-room-plain
+    deadend-w4-n40-room-squad deadend-w6-n120-closed-plain deadend-w6-n120-closed-squad
+    deadend-w6-n120-room-plain deadend-w6-n120-room-squad deadend-w6-n40-closed-plain
+    deadend-w6-n40-closed-squad deadend-w6-n40-room-plain deadend-w6-n40-room-squad doorplug-112 doorplug-124
+    pocket-304-open pocket-304-wall pocket-615-open pocket-615-wall tail-corner380 tail-open304 tail-open570
+    tail-wave)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w3;nightly" TIMEOUT 1800)
+  if(NOT WIN32)
+    add_test(NAME legion_check_${legion_scn}
+             COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                     --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+    set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w3;nightly" TIMEOUT 1800)
   endif()
 endforeach()
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
@@ -806,19 +881,27 @@ if(TAK_TEST_DATA)
                          SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
     # Harvested situations (tools/scenarios/situations/README.txt): not faithful enough to gate on, so these only
     # check that each file loads and runs deterministically, serial == workers, in both modes.
+    # Each of these is one of the longest tests in the suite (50-150 s), so it is split into independent
+    # parts that run in parallel: legion_scenario checks serial == workers per (mode, offset) and gates
+    # nothing across them, so the union of the parts is exactly the unsplit run.
     foreach(legion_situation r9-36060 r9-65850 r9-61930 r10-46292 r10-87332 r10-104540)
-        add_test(NAME legion_situation_${legion_situation}
-                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/situations/situation-${legion_situation}.scn
-                         --data "${TAK_TEST_DATA}" --offsets 0 --json)
-        set_tests_properties(legion_situation_${legion_situation} PROPERTIES
-                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        foreach(legion_part legion retail)
+            add_test(NAME legion_situation_${legion_situation}_${legion_part}
+                     COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/situations/situation-${legion_situation}.scn
+                             --data "${TAK_TEST_DATA}" --offsets 0 --mode ${legion_part} --json)
+            set_tests_properties(legion_situation_${legion_situation}_${legion_part} PROPERTIES
+                                 SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        endforeach()
     endforeach()
     foreach(legion_route 21096 27459 36057 45941 54772 61923 65845)
-        add_test(NAME legion_gen1_route_${legion_route}
-                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gen1-route-${legion_route}.scn
-                         --data "${TAK_TEST_DATA}" --json)
-        set_tests_properties(legion_gen1_route_${legion_route} PROPERTIES
-                             SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        foreach(legion_part 0 1 -1)
+            string(REPLACE "-" "m" legion_part_name "${legion_part}")
+            add_test(NAME legion_gen1_route_${legion_route}_o${legion_part_name}
+                     COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/gen1-route-${legion_route}.scn
+                             --data "${TAK_TEST_DATA}" --offsets ${legion_part} --json)
+            set_tests_properties(legion_gen1_route_${legion_route}_o${legion_part_name} PROPERTIES
+                                 SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 1800)
+        endforeach()
     endforeach()
 endif()
 target_link_libraries(footprobe PRIVATE tak-formats)
@@ -1488,6 +1571,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_command_flood_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_command_flood PROPERTIES TIMEOUT 60)
+    add_test(NAME server_seed COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_seed_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_seed PROPERTIES TIMEOUT 120)
     add_test(NAME server_public COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>" --map-tool "$<TARGET_FILE:map_transfer_test>")
@@ -1633,4 +1720,36 @@ elseif(WIN32)
   include(CPack)
 elseif(APPLE)
   install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
+endif()
+
+# Test scheduling and the `quick` label. tools/ctest_costs.txt lists the tests that take
+# 5 s or more on an optimized Debug build (`<test> <seconds>`, longest first). Each gets a
+# COST so ctest starts the longest first (ctest's own CTestCostData.txt only exists after a
+# first run in a build dir; this is the fresh-checkout default and the lower bound that
+# keeps a long test from being scheduled last). Every other test that is not `nightly` is
+# labelled `quick`: `ctest -L quick -j N` is the targeted run for task agents (about a
+# minute of wall time at -j 8; it still covers every area). Refresh the file after adding a
+# slow test: tools/ctest_costs.py build-o2 (see docs/development.md).
+set(TAK_CTEST_COSTS "${CMAKE_SOURCE_DIR}/tools/ctest_costs.txt")
+if(EXISTS "${TAK_CTEST_COSTS}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${TAK_CTEST_COSTS}")
+  file(STRINGS "${TAK_CTEST_COSTS}" tak_cost_lines)
+  set(tak_slow_tests "")
+  foreach(tak_line IN LISTS tak_cost_lines)
+    if(tak_line MATCHES "^([A-Za-z0-9_.+-]+)[ \t]+([0-9.]+)")
+      if(TEST ${CMAKE_MATCH_1})
+        set_tests_properties(${CMAKE_MATCH_1} PROPERTIES COST ${CMAKE_MATCH_2})
+        list(APPEND tak_slow_tests ${CMAKE_MATCH_1})
+      endif()
+    endif()
+  endforeach()
+  get_property(tak_all_tests DIRECTORY PROPERTY TESTS)
+  foreach(tak_test IN LISTS tak_all_tests)
+    if(NOT tak_test IN_LIST tak_slow_tests)
+      get_test_property(${tak_test} LABELS tak_labels)
+      if(NOT tak_labels MATCHES "nightly")
+        set_property(TEST ${tak_test} APPEND PROPERTY LABELS quick)
+      endif()
+    endif()
+  endforeach()
 endif()

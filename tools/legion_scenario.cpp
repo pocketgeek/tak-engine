@@ -66,12 +66,19 @@
 // and a history line, --baseline retakes the base (needs --reason),
 // --exit-table lists every key moved over 5% against an older base,
 // --anchor prints the drift against the frozen anchor. Mode defaults to both
-// (the Retail floor needs Retail beside Legion).
+// (the Retail floor needs Retail beside Legion). --check and --baseline default
+// to the gate's eleven offsets 0,+-1..+-5 (lead ruling W3 round 3 (a)): the
+// small-count keys -- crossings, wall touch, a t90 of fewer than 10 bodies --
+// are gated on all eleven and every other key on the core five 0,+-1,+-2
+// (tools/legion_check.py re-reads the run). A file whose spawns the eleven put
+// off the map names its own (`gateoffsets`, at least nine). `--offsets gate`
+// asks for these gate offsets in any mode (the nightly's JSON run).
 //
 // Exit: 0 ok, 1 a mismatch (serial != workers, or --neutral), 2 usage or a
 // bad file, 77 the file needs --data (ctest SKIP).
 #include "legion_observe.h"
 #include "legion_scn.h"
+#include "sim/convoy.h"
 
 #include <algorithm>
 #include <chrono>
@@ -124,6 +131,8 @@ struct Options {
     std::vector<std::string> files;   // several only with --neutral
     std::vector<PathfindingMode> modes{PathfindingMode::Legion, PathfindingMode::Retail};
     std::vector<int> offsets{0, 1, -1};
+    bool offsetsGiven = false;
+    bool gateOffsets = false;         // --offsets gate (the default of --check / --baseline)
     enum Exec { Serial, Workers, Both } exec = Both;
     int window = -2;        // -2: the file's uplink
     const char* data = nullptr;
@@ -145,7 +154,7 @@ void emit(const std::string& line) {
 
 [[noreturn]] void usage(const char* why) {
     std::fprintf(stderr, "legion_scenario: %s\n"
-        "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1]\n"
+        "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1|gate]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
         "       [--no-observer] [--neutral] [--wanderers on|off]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
@@ -209,6 +218,45 @@ std::string expandGroups(const scn::Scenario& s, const std::string& list) {
     return out;
 }
 
+// The convoy each directive's click joins (lead ruling W3 round 4 (1)): under A1 (user decision 2) the clicks one
+// convoy merges are one order -- wall-4x50's four selections of 50 sent to one point on ticks 1-4 are one command
+// -- so the observer keys a command, and sizes a group's arrival disc, by convoy, in both modes. The directives run
+// through a ConvoyTable of their own (never the world's: Retail keeps none), in tick order, each as one shared
+// order at its click with its selection's owner and class, joined on its directive tick. A queued or appended
+// directive, or one without a point (a target group's centroid, Attack, Guard, Stop, Squad), joins none: 0.
+std::vector<uint32_t> directiveConvoys(const scn::Scenario& s) {
+    std::vector<uint32_t> out(s.orders.size(), 0);
+    std::vector<size_t> byTick(s.orders.size());
+    for (size_t i = 0; i < byTick.size(); ++i) byTick[i] = i;
+    std::stable_sort(byTick.begin(), byTick.end(),
+                     [&](size_t a, size_t b) { return s.orders[a].tick < s.orders[b].tick; });
+    auto owner = [&](const scn::OrderSpec& o) {
+        const std::string& t = o.selection[0];
+        if (t == "all") return s.groups.empty() ? 0 : s.groups[0].owner;
+        if (scn::Scenario::isBodyToken(t)) {
+            const int g = s.groupOfBody(scn::Scenario::bodyNumber(t));
+            return g >= 0 ? s.groups[size_t(g)].owner : 0;
+        }
+        const auto* g = s.group(t);
+        return g ? g->owner : 0;
+    };
+    tak::sim::ConvoyTable table;
+    for (size_t i : byTick) {
+        const auto& o = s.orders[i];
+        if (o.queue || o.append || !o.point || o.selection.empty()) continue;
+        tak::sim::ConvoyClass cls;
+        switch (o.verb) {
+        case scn::Verb::Move: cls = tak::sim::ConvoyClass::Move; break;
+        case scn::Verb::Fight: cls = tak::sim::ConvoyClass::Fight; break;
+        case scn::Verb::Patrol: cls = tak::sim::ConvoyClass::Patrol; break;
+        default: continue;
+        }
+        const auto raw = [](float cells) { return int32_t(std::lround(double(cells) * 16 * 65536)); };
+        out[i] = table.join(owner(o), cls, raw(o.x), raw(o.z), true, o.tick).id;
+    }
+    return out;
+}
+
 // The observer's configuration for one built world.
 obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
     const auto& w = *b.world;
@@ -223,14 +271,24 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
         return n ? std::pair<int, int>{int(x / n), int(z / n)} : std::pair<int, int>{0, 0};
     };
     obs::Config cfg;
+    const auto convoys = directiveConvoys(s);
+    std::vector<uint32_t> groupConvoy;   // the convoy of the order that decides each group's click (0: none)
     for (const auto& g : s.groups) {
         obs::Group og;
         og.name = g.name;
         og.ids = b.groups.at(g.name);
         std::tie(og.clickX, og.clickZ) = centroid(g.name, false);
+        groupConvoy.push_back(0);
         // The last order that moves this group decides its click.
         for (const auto& o : s.orders) {
             if (!s.selects(o, size_t(&g - s.groups.data()))) continue;
+            switch (o.verb) {
+            case scn::Verb::Move: case scn::Verb::Fight: case scn::Verb::Patrol:
+            case scn::Verb::Attack: case scn::Verb::Guard:
+                groupConvoy.back() = convoys[size_t(&o - s.orders.data())];
+                break;
+            default: break;
+            }
             switch (o.verb) {
             case scn::Verb::Move: case scn::Verb::Fight: case scn::Verb::Patrol:
                 if (o.point) { og.clickX = int(std::lround(o.x * 16)); og.clickZ = int(std::lround(o.z * 16)); }
@@ -243,6 +301,27 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
             }
         }
         cfg.groups.push_back(std::move(og));
+    }
+    // Groups whose clicks one convoy merged share one disc, sized for all of them.
+    for (size_t g = 0; g < cfg.groups.size(); ++g) {
+        if (!groupConvoy[g]) continue;
+        int n = 0;
+        for (size_t h = 0; h < cfg.groups.size(); ++h)
+            if (groupConvoy[h] == groupConvoy[g]) n += int(cfg.groups[h].ids.size());
+        cfg.groups[g].discN = n;
+    }
+    // Lead ruling W3 final exit (f): one-body groups whose clicks one convoy merged (aware-*, motion-*) are judged on
+    // the Retail floor at click level -- the convoy's arrived / t90 / done -- in both modes; the observer reads every
+    // group of such a convoy as one click, named by its first group (the per-body keys stay, report-only).
+    for (size_t g = 0; g < cfg.groups.size(); ++g) {
+        if (!groupConvoy[g] || !cfg.groups[g].click.empty()) continue;
+        int groups = 0;
+        bool oneBody = false;
+        for (size_t h = g; h < cfg.groups.size(); ++h)
+            if (groupConvoy[h] == groupConvoy[g]) { ++groups; oneBody |= cfg.groups[h].ids.size() == 1; }
+        if (groups < 2 || !oneBody) continue;
+        for (size_t h = g; h < cfg.groups.size(); ++h)
+            if (groupConvoy[h] == groupConvoy[g]) cfg.groups[h].click = cfg.groups[g].name;
     }
     for (const auto& sh : s.shapes) {
         const float x0 = std::min(sh.x0, sh.x1), x1 = std::max(sh.x0, sh.x1);
@@ -443,6 +522,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<int> all;
     for (const auto& g : s.groups)
         for (int id : b->groups.at(g.name)) all.push_back(id);
+    const auto convoys = directiveConvoys(s);
     if (observe) {
         o.emplace(configFor(s, *b));
         if (s.map.kind == scn::MapSpec::Ascii || s.map.kind == scn::MapSpec::Flat)
@@ -467,6 +547,13 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
+        // contact_settled's command identity (W3-1, ruling W3 round 4 (1)): one convoy is one command,
+        // whatever the uplink splits it into and however many selections it merged; a shift-queued or
+        // appended order keeps its units' command.
+        if (o)
+            for (const auto& od : s.orders)
+                if (od.tick == t && !od.queue && !od.append)
+                    o->noteSelection(feed.selection(od), convoys[size_t(&od - s.orders.data())]);
         const size_t landed = feed.apply(t);
         if (landed) { commands += int64_t(landed); lastCommand = t; }
         w.tick(1.f / 30);
@@ -495,6 +582,18 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
         r.keys.emplace_back("commands", commands);
         r.keys.emplace_back("last_command_tick", lastCommand);
+        // The convoy lookups' declared per-order bounds (PLAN 3.0: p99 <= 16,
+        // max <= 64 tests per order), which per-tick work.convoy_tests cannot
+        // show: the most for one order, orders over 16 (per mille, rounded
+        // up) and orders over 64. Legion only (Retail keeps no convoys).
+        if (mode == PathfindingMode::Legion) {
+            const auto c = w.convoyStats();
+            r.keys.emplace_back("convoy.orders", int64_t(c.orders));
+            r.keys.emplace_back("convoy.tests_max", int64_t(c.testsMax));
+            r.keys.emplace_back("convoy.over16_permille",
+                                c.orders ? int64_t((c.over16 * 1000 + c.orders - 1) / c.orders) : 0);
+            r.keys.emplace_back("convoy.over64", int64_t(c.over64));
+        }
         for (const auto& [tick, tr] : truthNow) {
             const std::string pre = "truth.t" + std::to_string(tick) + ".";
             r.keys.emplace_back(pre + "n", tr.n);
@@ -503,6 +602,12 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             r.keys.emplace_back(pre + "moved_within2_permille", tr.movedWithin2Permille());
         }
         if (nav) {
+            // W4 step 0 instruments: the two running-maximum gauges and total Legion work per
+            // 1500-tick bin (churn flatness, B1's gate).
+            r.keys.emplace_back("gauge.still_per_residue_max", int64_t(navWork.stillPerResidueMax()));
+            r.keys.emplace_back("gauge.quota_peg_run_max", int64_t(navWork.quotaPegRunMax()));
+            for (size_t i = 0; i < navWork.churnBins().size(); ++i)
+                r.keys.emplace_back("churn.bin" + std::to_string(i), int64_t(navWork.churnBins()[i]));
             r.keys.emplace_back("legion_groups", groupsAfter);
             r.keys.emplace_back("legion_groups_peak", groupsPeak);
         }
@@ -602,7 +707,12 @@ int main(int argc, char** argv) {
             else if (v == "retail") opt.modes = {PathfindingMode::Retail};
             else if (v == "both") opt.modes = {PathfindingMode::Legion, PathfindingMode::Retail};
             else usage("--mode legion|retail|both");
-        } else if (a == "--offsets") opt.offsets = parseOffsets(value());
+        } else if (a == "--offsets") {
+            const auto v = value();
+            opt.offsetsGiven = true;
+            opt.gateOffsets = v == "gate";
+            if (!opt.gateOffsets) opt.offsets = parseOffsets(v);
+        }
         else if (a == "--workers") opt.exec = Options::Workers;
         else if (a == "--serial") opt.exec = Options::Serial;
         else if (a == "--both-exec") opt.exec = Options::Both;
@@ -644,6 +754,8 @@ int main(int argc, char** argv) {
         if (opt.gateArgs[i] == "--ratchet" && opt.gate != "check") usage("--ratchet goes with --check");
     std::string capture;
     if (gate) { opt.json = true; g_capture = &capture; }
+    if ((opt.gate == "check" || opt.gate == "baseline") && !opt.offsetsGiven) opt.gateOffsets = true;
+    if (opt.gateOffsets) opt.offsets = {0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5};   // legion_check.py WIDE_OFFSETS
     int status = 0, skipped = 0;
     for (const auto& file : opt.files) {
         const int one = runFile(file, opt);
@@ -675,6 +787,7 @@ int runFile(const std::string& file, Options opt) {
         return 2;
     }
     if (opt.ticks) s.ticks = opt.ticks;
+    if (opt.gateOffsets && !s.gateOffsets.empty()) opt.offsets = s.gateOffsets;   // the eleven leave its map
     if (opt.wanderers >= 0) s.wanderers = opt.wanderers == 1;
     const std::string name = !s.name.empty() ? s.name : std::filesystem::path(file).stem().string();
     if (const auto why = s.needsData(); !why.empty() && !opt.data) {

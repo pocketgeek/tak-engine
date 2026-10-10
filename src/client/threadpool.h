@@ -17,9 +17,11 @@
 
 class ThreadPool {
 public:
-    ThreadPool() {
-        unsigned n = std::thread::hardware_concurrency();
-        n_ = n ? n : 1;
+    ThreadPool() : ThreadPool(std::thread::hardware_concurrency()) {}
+    // A pool of `threads` workers in all, the calling thread included (so threads-1 are
+    // spawned). A pool is never shared between two callers that may run at once.
+    explicit ThreadPool(unsigned threads) {
+        n_ = threads ? threads : 1;
         for (unsigned i = 1; i < n_; ++i)
             workers_.emplace_back([this] { workerLoop(); });
     }

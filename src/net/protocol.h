@@ -19,7 +19,36 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 240;      // 240: Legion W2 -- structures, units under construction and speed-0 units never pace or
+constexpr uint32_t kNetVersion = 243;      // 243: Legion W6 -- flyers are paired with the ground of their own click on (order class,
+                                           //      convoyTick) for Ctrl+N and Alt+N squads (up to 4 stations a squad) and released
+                                           //      for their order when the ground stops (no headway for 450 ticks, or a centroid
+                                           //      still for 900; hashed on the order when set); a landing flyer is stamped on its
+                                           //      touchdown footprint from the start of its descent (leave-only); the rest-time
+                                           //      rejoin gathers ground only, at the formation's modal settled point, never
+                                           //      re-ordering a settled body; a lift episode is capped at 1800 ticks (hashed start
+                                           //      tick) with a 600-tick rest, kept up only by members making headway, and a lifted
+                                           //      flyer polls for a target every 8 ticks; a stalled squad member lifts its own
+                                           //      squad's flyer off its goal or next cells; a station flyer without horizontal
+                                           //      velocity does not yaw
+                                           // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
+                                           //      unit's orders change (World::noteOrders from the order helpers, mission dispatch,
+                                           //      target acquisition and the death edge) instead of by a per-tick walk; prune's
+                                           //      hashed 256-a-tick backstop cursor also walks those records. A stale field
+                                           //      refreshes only for an active group (a Moving member in the last 2 ticks, a
+                                           //      blocked member, or the hashed demand flag the aware re-plan sets). scanStill
+                                           //      samples bodies by id % 30 each tick and keeps the soft stamps incrementally;
+                                           //      softHash is an order-independent sum over stamped cells and owned ids
+                                           // 241: Legion W3 -- one convoy per click (Order::convoyTick and the open-convoy table are
+                                           //      hashed) and Legion keys on it: one point, formation and settle chain per click,
+                                           //      slots handed out 32 a tick (at most 131072 ring cells of slot search) once the
+                                           //      convoy closes (a first part under 64 takes its formation at once, rebuilt if another
+                                           //      part joins); hold and stall clocks are tick stamps and rest is stride-free; one
+                                           //      settle rule: a queued, pressed unit settles where it stands within its capped settle
+                                           //      reach (or one row behind its command's settled crowd) after up to 3 re-choices (none
+                                           //      while it stands on its own slot; the
+                                           //      reach disc and 600-tick wait are gone; at a patrol waypoint the held crowd is the
+                                           //      queue); a held formation unit re-aims its lane every 20 held ticks
+                                           // 240: Legion W2 -- structures, units under construction and speed-0 units never pace or
                                            //      anchor an Alt+N formation (FormAgg sums Fixed); an unreachable order drops on
                                            //      arrival at its approach point, or when held behind its own stopped army (holder
                                            //      rule); a patrolling builder's repair detour is a Legion Repair leg

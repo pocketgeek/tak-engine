@@ -222,10 +222,149 @@ class Gate(unittest.TestCase):
         retail = rec({"g.A.t90": 500}, mode="retail")
         doc = self.floor_doc(exceptions=exc)
         r = run_check(doc, rec({"g.A.t90": 540}, offsets=[0, 1, -1, 2, -2]), retail)  # passes the floor
-        self.assertEqual(len(r.cleared), 1)
+        self.assertEqual(r.cleared, [])                                         # never was a floor exception
         lc.apply_ratchet(doc, r, "spread stays", "2026-01-01T00:00:00Z")
         self.assertEqual(doc["exceptions"], exc)
         self.assertEqual(doc["history"][0]["cleared_exceptions"], [])
+
+    def test_ratchet_converts_the_spread_a_cleared_floor_exception_masked(self):
+        # Ruling (h), W3 final exit: a floor exception also covers its key's offset spread (exception_for
+        # reads it). When the ratchet clears it, that spread must stay excepted, or the next check fails.
+        exc = [{"scenario": S, "key": "g.A.t90", "cluster": "MV-11", "reason": "known"},
+               {"scenario": S, "key": "g.A.t50", "cluster": "MV-11", "reason": "known"}]
+        doc = baseline({"g.A.t90": entry(1000, band=1.20), "g.A.t50": entry(1000, band=1.20)}, exceptions=exc)
+        retail = rec({"g.A.t90": 500, "g.A.t50": 500}, mode="retail")
+        five = [0, 1, -1, 2, -2]
+        legion = rec({"g.A.t90": 540, "g.A.t50": 540}, offsets=five,
+                     varying={"g.A.t90": [540, 900, 540, 400, 540]})   # spread 400..900; t50 steady
+        r = run_check(doc, legion, retail)
+        self.assertTrue(r.ok, r.fails)
+        self.assertEqual(len(r.cleared), 1)                     # t90 passes the floor now; t50 is no floor key
+        self.assertEqual(sorted(r.masked), [(S, "legion", "g.A.t90")])
+        lc.apply_ratchet(doc, r, "cleared", "2026-01-01T00:00:00Z")
+        self.assertEqual(doc["history"][0]["cleared_exceptions"], [S + "/g.A.t90"])
+        spread = [x for x in doc["exceptions"] if x["key"] == "g.A.t90"]
+        self.assertEqual(len(spread), 1)
+        self.assertTrue(lc.is_spread_exception(spread[0]), spread[0])
+        self.assertEqual((spread[0]["mode"], spread[0]["cluster"]), ("legion", "MV-11"))
+        self.assertEqual(lc.validate_baseline(doc), [])
+        r = run_check(doc, legion, retail)                      # the unmasked spread would fail here
+        self.assertTrue(r.ok, r.fails)
+        self.assertEqual(r.cleared, [])
+        # a cleared floor exception whose key is steady leaves nothing behind
+        doc = baseline({"g.A.t90": entry(1000, band=1.20)}, exceptions=[dict(exc[0])])
+        r = run_check(doc, rec({"g.A.t90": 540}, offsets=five), retail)
+        lc.apply_ratchet(doc, r, "cleared", "2026-01-01T00:00:00Z")
+        self.assertEqual(doc["exceptions"], [])
+
+    def test_one_body_groups_of_a_click_are_judged_at_click_level(self):
+        # Ruling (f), W3 final exit: a one-body group inside a multi-body click (g.X.click_n > 1) is
+        # report-only on arrived / t50 / t90 / done; the click's keys carry the band and the floor.
+        doc = baseline({"g.a.t90": entry(1000), "g.a.arrived": entry(1, dir="higher"),
+                        "click.a.t90": entry(1000), "g.p.t90": entry(1000)})
+        lk = {"g.a.n": 1, "g.a.click_n": 24, "g.a.t90": -1, "g.a.arrived": 0, "click.a.n": 24,
+              "click.a.t90": 1050, "g.p.n": 20, "g.p.t90": 1000}
+        rk = {"g.a.n": 1, "g.a.click_n": 24, "g.a.t90": 900, "g.a.arrived": 1, "click.a.n": 24,
+              "click.a.t90": 1000, "g.p.n": 20, "g.p.t90": 1000}
+        r = run_check(doc, rec(lk), rec(rk, mode="retail"))
+        self.assertTrue(r.ok, r.fails)                          # never / 0 on the body: report-only
+        self.assertEqual(r.report_only, 2)                      # g.a.t90 and g.a.arrived on the floor
+        self.assertTrue(lc.is_report_only("g.a.done", rec(lk)))
+        self.assertFalse(lc.is_report_only("g.a.complete_n", rec(lk)))
+        self.assertFalse(lc.is_report_only("g.p.t90", rec(lk)))      # twenty bodies: its own group
+        # the click is gated: its band and the Retail floor
+        r = run_check(doc, rec(dict(lk, **{"click.a.t90": 1300})), rec(rk, mode="retail"))
+        self.assertFalse(r.ok)
+        self.assertTrue(any("click.a.t90" in f and "Retail floor" in f for f in r.fails), r.fails)
+        # a group alone (no click_n) keeps its floor
+        alone = {k: v for k, v in lk.items() if k != "g.a.click_n"}
+        r = run_check(doc, rec(alone), rec({k: v for k, v in rk.items() if k != "g.a.click_n"}, mode="retail"))
+        self.assertFalse(r.ok)
+        # a retake takes no entry and no floor exception for the per-body keys
+        base = lc.empty_baseline()
+        lc.write_base(base, {(S, "legion"): rec(lk), (S, "retail"): rec(rk, mode="retail")}, "step 0", "W0",
+                      ["*"], False, [("*", "MV-12")])
+        self.assertNotIn("g.a.t90", base["entries"][S]["legion"])
+        self.assertIn("click.a.t90", base["entries"][S]["legion"])
+        self.assertEqual(base["exceptions"], [])
+
+    def test_offset_spread_exception_is_not_a_floor_exception(self):
+        # Ruling (c), 2026-10-09: a spread exception gates the key on median-of-5; it never
+        # licenses the Retail floor (it hid wall-4x50 and motion-cross floor failures).
+        for reason in ("3-offset spread 900..1200 exceeds the band at W2s0; gated on median-of-5 offsets",
+                       "offset spread 0..9 exceeds the 1.20 band at the W3-1 retake"):
+            exc = [{"scenario": S, "key": "g.A.t90", "cluster": "offset-spread", "mode": "legion",
+                    "median5": True, "reason": reason}]
+            retail = rec({"g.A.t90": 500}, mode="retail")
+            r = run_check(self.floor_doc(exceptions=exc), rec({"g.A.t90": 1000}, offsets=[0, 1, -1, 2, -2]),
+                          retail)
+            self.assertFalse(r.ok)
+            self.assertEqual(r.exception_count, 0)
+            self.assertTrue(any("Retail floor" in f for f in r.fails), r.fails)
+        # beside a real floor exception for the same key, the floor exception is the one read
+        both = [{"scenario": S, "key": "g.A.t90", "cluster": "offset-spread", "mode": "legion", "median5": True,
+                 "reason": "offset spread 0..9 exceeds the band"},
+                {"scenario": S, "key": "g.A.t90", "cluster": "MV-11", "reason": "known"}]
+        r = run_check(self.floor_doc(exceptions=both), rec({"g.A.t90": 1000}, offsets=[0, 1, -1, 2, -2]),
+                      rec({"g.A.t90": 500}, mode="retail"))
+        self.assertTrue(r.ok, r.fails)
+        self.assertEqual(r.exception_count, 1)
+        # a retake does not take a spread exception for a floor exception either
+        doc = lc.empty_baseline()
+        doc["exceptions"] = [dict(both[0])]
+        run = {(S, "legion"): rec({"g.A.t90": 1000}), (S, "retail"): rec({"g.A.t90": 500}, mode="retail")}
+        lc.write_base(doc, run, "step 0", "W0", ["*"], False, [("*", "MV-11")])
+        self.assertEqual(sorted(x["cluster"] for x in doc["exceptions"]), ["MV-11", "offset-spread"])
+
+    def wide_rec(self, mode="legion", **keys):
+        """An eleven-offset record: per-offset values in WIDE_OFFSETS order."""
+        offs = list(lc.WIDE_OFFSETS)
+        r = rec({k: v[0] for k, v in keys.items()}, mode=mode, offsets=offs,
+                hash={str(o): "h" for o in offs}, varying={k: v for k, v in keys.items() if len(set(v)) > 1})
+        return lc.regate(r)
+
+    def test_small_count_keys_read_eleven_offsets_others_the_core_five(self):
+        crossings = [0, 0, 1, 0, 1, 9, 8, 7, 9, 8, 9]     # core five median 0, eleven median 7
+        flips = [5, 5, 5, 5, 5, 50, 50, 50, 50, 50, 50]     # core five 5, eleven 50
+        r = self.wide_rec(**{"gate.top.crossings": crossings, "flips": flips, "g.A.n": [1] * 11,
+                             "g.A.t90": [100, 100, 100, 100, 100, -1, -1, -1, -1, -1, -1],
+                             "g.B.n": [40] * 11, "g.B.t90": [100, 100, 100, 100, 100, -1, -1, -1, -1, -1, -1]})
+        self.assertTrue(r["wide"])
+        self.assertEqual(r["keys"]["gate.top.crossings"], 7)
+        self.assertEqual(r["keys"]["flips"], 5)
+        self.assertEqual(r["keys"]["g.A.t90"], -1)        # one body: eleven offsets, six of them never
+        self.assertEqual(r["keys"]["g.B.t90"], 100)       # forty bodies: the core five
+        self.assertNotIn("flips", r["varying"])
+        self.assertEqual(len(r["varying"]["gate.top.crossings"]), 11)
+        doc = baseline({"gate.top.crossings": entry(7, band=1.20), "flips": entry(5)})
+        self.assertTrue(run_check(doc, r).ok, run_check(doc, r).fails)    # its 0..9 spread needs no exception
+        # five offsets are not enough for a gated small-count key
+        five = rec({"gate.top.crossings": 0, "flips": 5}, offsets=[0, 1, -1, 2, -2])
+        f = run_check(doc, lc.regate(five))
+        self.assertFalse(f.ok)
+        self.assertTrue(any("small-count" in x for x in f.fails), f.fails)
+        # the Retail floor reads the eleven too (Retail 0..10 on corner crossings)
+        retail = self.wide_rec(mode="retail", **{"gate.top.crossings": [0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9],
+                                                 "flips": flips})
+        self.assertEqual(retail["keys"]["gate.top.crossings"], 9)
+        self.assertTrue(run_check(baseline({"gate.top.crossings": entry(7, band=1.20)}), r, retail).ok)
+
+    def test_contact_settled_floor_needs_ten_arrivals_in_both_modes(self):
+        doc = baseline({"contact_settled_permille": entry(100, band=1.20)})
+        few = {"contact_settled_permille": 100, "g.A.arrived": 3}
+        retail = rec({"contact_settled_permille": 10, "g.A.arrived": 3}, mode="retail")
+        self.assertTrue(run_check(doc, rec(few), retail).ok)                     # 3 arrive: noise, no floor
+        many = {"contact_settled_permille": 100, "g.A.arrived": 6, "g.B.arrived": 6}
+        retail = rec({"contact_settled_permille": 10, "g.A.arrived": 6, "g.B.arrived": 6}, mode="retail")
+        r = run_check(doc, rec(many), retail)                                   # 12 arrive in both
+        self.assertFalse(r.ok)
+        self.assertIn("Retail floor", r.fails[0])
+        few_retail = rec({"contact_settled_permille": 10, "g.A.arrived": 9, "g.B.arrived": 0}, mode="retail")
+        r = run_check(doc, rec(dict(many, **{"g.A.arrived": 9, "g.B.arrived": 0})), few_retail)
+        self.assertTrue(r.ok, r.fails)                                          # 9 arrive: no floor
+        # the band still applies
+        self.assertFalse(run_check(doc, rec(dict(few, contact_settled_permille=130)),
+                                   rec({"contact_settled_permille": 10, "g.A.arrived": 3}, mode="retail")).ok)
 
     def test_median5_exception_needs_five_offsets(self):
         exc = [{"scenario": S, "key": "g.A.t90", "cluster": "MV-11", "reason": "noisy", "median5": True}]

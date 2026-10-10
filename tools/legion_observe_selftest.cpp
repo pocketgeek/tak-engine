@@ -159,23 +159,45 @@ void laneCase() {
 // it, B1 (10,12) below A1, S a settled ungrouped body at (8,10) left of A1, F
 // a far settled body. Rings: A1 touches A2 (own), B1 (other), S (settled);
 // A2 touches A1 (own) and B1 at (11,12) (other); B1 touches A1 and A2 (other)
-// and S diagonally at (9,11) (settled). 3 samples per decision tick: own 2/3,
-// other 3/3, settled 2/3.
+// and S diagonally at (9,11) (settled). G, a settled member of A at (14,10),
+// touches A2: its own command (the group, nothing noted), so not counted. 3
+// samples per decision tick: own 2/3, other 3/3. contact_settled (W3-1) is
+// per arrived unit, none arrived (read as 1): A1-S and B1-S on 2 decision
+// ticks = 4000. Noting one selection {A1, A2, B1, S} makes S their own
+// command and G (still its group's) foreign: A2-G twice = 2000.
+// Commands key by convoy (ruling W3 round 4 (1)): {A1, A2, B1} and {S} noted
+// as two selections of one convoy are one command, as the single selection
+// (2000); in two convoys S is foreign again: A1-S, B1-S and A2-G = 6000. A
+// group whose click joined a convoy of 12 bodies (discN) reads that disc.
 // Pair proximity A x B (centre cells within 2): A1 (11,11)-B1 (11,13) and
 // A2 (13,11)-B1: 2 contacts of 2 pairs.
 void spacingCase() {
     Scene s;const auto t=mover(2);
     const int a1=s.spawn(t,10*16+16,10*16+16),a2=s.spawn(t,12*16+16,10*16+16),b1=s.spawn(t,10*16+16,12*16+16);
-    const int st=s.spawn(t,8*16+16,10*16+16),far=s.spawn(t,60*16+16,60*16+16);(void)far;(void)st;
+    const int st=s.spawn(t,8*16+16,10*16+16),far=s.spawn(t,60*16+16,60*16+16);(void)far;
+    const int g=s.spawn(t,14*16+16,10*16+16);
     for(int id:{a1,a2,b1})s.order(id,80*16,80*16);
-    obs::Config cfg;cfg.groups={{"A",{a1,a2},0,0},{"B",{b1},0,0}};cfg.pairs={{"A","B",2}};
-    obs::Observer o(cfg);
-    for(int tick=0;tick<20;++tick)o.sample(s.world,tick);   // decision ticks 0 and 10
+    obs::Config cfg;cfg.groups={{"A",{a1,a2,g},0,0},{"B",{b1},0,0}};cfg.pairs={{"A","B",2}};
+    obs::Observer o(cfg),noted(cfg),oneConvoy(cfg),twoConvoys(cfg);
+    noted.noteSelection({a1,a2,b1,st});
+    oneConvoy.noteSelection({a1,a2,b1},7);oneConvoy.noteSelection({st},7);
+    twoConvoys.noteSelection({a1,a2,b1},7);twoConvoys.noteSelection({st},8);
+    auto disc=cfg;disc.groups[0].discN=12;
+    obs::Observer wide(disc);
+    for(int tick=0;tick<20;++tick) {   // decision ticks 0 and 10
+        o.sample(s.world,tick);noted.sample(s.world,tick);oneConvoy.sample(s.world,tick);
+        twoConvoys.sample(s.world,tick);wide.sample(s.world,tick);
+    }
     const auto k=o.report();
+    expect("spacing",oneConvoy.report(),"contact_settled_permille",2000);
+    expect("spacing",twoConvoys.report(),"contact_settled_permille",6000);
+    expect("spacing",k,"g.A.radius_px",58);           // 3 bodies, 2x2: 16*3*1.25*sqrt(3/pi)
+    expect("spacing",wide.report(),"g.A.radius_px",117);   // the convoy's 12
     expect("spacing",k,"spacing_samples",6);
     expect("spacing",k,"contact_own_permille",667);
     expect("spacing",k,"contact_other_permille",1000);
-    expect("spacing",k,"contact_settled_permille",667);
+    expect("spacing",k,"contact_settled_permille",4000);
+    expect("spacing",noted.report(),"contact_settled_permille",2000);
     expect("spacing",k,"pair.A.B.pairs",4);
     expect("spacing",k,"pair.A.B.contacts",4);
     expect("spacing",k,"pair.A.B.permille_x100",100000);
@@ -270,7 +292,10 @@ void motionCase() {
 // px off (12 cells). Packed disc: 400*9*5*113/355 = 5729 px^2 (75 px). Their
 // orders end at ticks 5,10,15,20,25. Arrived: 1,2,3 (t50 at 15: 3*2 >= 5),
 // 4, then the outlier is outside: t90/done never, left_behind 1. Completion
-// distances 1,1,1,1,12 cells: median 1, max 12, one outside.
+// distances 1,1,1,1,12 cells: median 1, max 12, one outside. Read as five
+// one-body groups of one click (ruling W3 final exit (f); each disc sized for
+// the convoy's 5): click.c has the group's numbers, each group's own t90 is
+// its body's (g0 at 5, g4 never) and click_n is 5.
 void progressCase() {
     Scene s;const auto t=mover(2);
     const int cx=480,cz=480;
@@ -279,11 +304,24 @@ void progressCase() {
     for(auto [dx,dz]:off)ids.push_back(s.spawn(t,cx+dx,cz+dz));
     for(int id:ids)s.order(id,cx,cz);
     obs::Config cfg;cfg.groups={{"g",ids,cx,cz}};
-    obs::Observer o(cfg);
+    obs::Config one;
+    for(size_t i=0;i<ids.size();++i) {
+        obs::Group g{"g"+std::to_string(i),{ids[i]},cx,cz};g.discN=5;g.click="c";one.groups.push_back(g);
+    }
+    obs::Observer o(cfg),clicked(one);
     for(int tick=100;tick<140;++tick) {
         for(size_t i=0;i<ids.size();++i)if(tick-100==5*int(i+1))s.done(ids[i]);
-        o.sample(s.world,tick);
+        o.sample(s.world,tick);clicked.sample(s.world,tick);
     }
+    const auto c=clicked.report();
+    expect("progress",c,"click.c.n",5);
+    expect("progress",c,"click.c.arrived",4);
+    expect("progress",c,"click.c.t50",15);
+    expect("progress",c,"click.c.t90",-1);
+    expect("progress",c,"click.c.done",-1);
+    expect("progress",c,"g.g0.t90",5);
+    expect("progress",c,"g.g4.t90",-1);
+    expect("progress",c,"g.g4.click_n",5);
     const auto k=o.report();
     expect("progress",k,"g.g.radius_px",75);
     expect("progress",k,"g.g.t50",15);

@@ -7,6 +7,8 @@ scn 1
 # legion_cost steady 200 1000
 name cost-open
 ticks 2000
+# The gate offsets (W3 round 4, ruling (a)): -5 spawns group A off the map, so +6 in its place.
+gateoffsets 0,1,-1,2,-2,3,-3,4,-4,5,6
 seed 7
 map flat 192 140
 type m mover 2 2500 10 1.8

@@ -21,17 +21,26 @@
 // - Progress. A member has ARRIVED when its orders are empty, its speed is 0
 //   and its centre lies inside the packed-disc limit of its group's click
 //   point: 16*(foot+1)*sqrt(N/pi)*1.25 px (foot: the group's largest
-//   footprint side, N: the group size). t50/t90/done are the first ticks
+//   footprint side, N: the bodies of the command its click belongs to --
+//   the group's own size unless several groups' clicks join one convoy,
+//   Group::discN). t50/t90/done are the first ticks
 //   half/90%/all of the group had arrived; left_behind is the rest at the end.
 //   orders_done is the first tick every live member's orders were empty.
+//   Click level (lead ruling W3 final exit (f)): groups that name one
+//   Group::click (one-body groups whose clicks one convoy merged: aware-*,
+//   motion-*) are also read as one command: click.<name>.n/arrived/t50/t90/
+//   done over all their bodies (each against its own group's disc), and each
+//   such group reports g.<name>.click_n, the click's bodies. A one-body
+//   group's own arrived/t90 is then report-only (tools/legion_check.py).
 // - Completion (AR-08). When a member's orders empty, its distance from the
 //   click (whole cells) is recorded: complete_outside_radius counts those
 //   beyond the packed-disc limit; complete_dist_median/max summarise them.
 // - Retail age classes. A member with orders that has not moved for 10-150
 //   ticks is WAITING, longer is PARKED (retailgrade.h's recent/stale stamps).
 //   Each splits into held_by_design (Legion's member state is Holding,
-//   Waiting for its field, Arrived or Trapped: a deliberate stand) and
-//   no_progress (Legion says Moving, or the unit is not a Legion member).
+//   Waiting for its field, Arrived or Trapped, or its leg completed and not
+//   yet retired: a deliberate stand) and no_progress (Legion says Moving, or
+//   the unit is not a Legion member).
 // - Motion. spins: heading changed without the position changing.
 //   reversals: return to a 16 px cell left less than 90 ticks earlier
 //   (A -> B -> A over the last 6 cells). stop_go: a start after a stop while
@@ -71,8 +80,20 @@
 //   ground body (landed flyers included) is stamped into an epoch-stamped id
 //   grid; the ring of cells round a member's footprint is walked:
 //   contact_own (a same-group member with orders), contact_other (a body
-//   with orders outside the group), contact_settled (a body without orders).
-//   Permille of member samples. No pair loop.
+//   with orders outside the group): permille of member samples. No pair loop.
+//   contact_settled (user decision W3-1, 2026-10-09) is judged PER ARRIVED
+//   UNIT and leaves out the unit's own command: the member samples touching
+//   a body without orders that another command (selection) issued, or no
+//   command at all, x1000 / the members arrived at the end (at least 1). A
+//   command is one convoy (lead ruling W3 round 4 (1), user decision 2: the
+//   clicks one convoy merges under A1 are one order): noteSelection() labels
+//   its units with the convoy the caller found for the click (a click of 450
+//   lands in 64-unit parts and stays one command; four selections clicked to
+//   one point on ticks 1-4 are one command), or as a command of its own when
+//   the click joins none; a unit never labelled counts its group as its
+//   command. The runner applies the same keying in both modes. Bodies settling behind their own army
+//   are what a one-order click does by design, so they are not counted, and
+//   a mode that delivers more units is not charged for the bodies it parks.
 // - Walls (when a static mask or legality provider is set). Per footprint
 //   class, a two-pass chessboard chamfer distance transform over the legal
 //   origins; clearance = cells of free ground between the footprint and the
@@ -123,6 +144,12 @@ struct Group {
     std::string name;
     std::vector<int> ids;
     int clickX=0,clickZ=0;   // px
+    // Bodies of the command (convoy) the group's click joined, its own among
+    // them; 0: the group alone. Sizes the packed disc (lead ruling W3 round 4 (1)).
+    int discN=0;
+    // The click (named by its first group) this group is read at, beside its own keys; empty:
+    // none. Set for one-body groups whose clicks one convoy merged (ruling W3 final exit (f)).
+    std::string click;
 };
 struct Gate {
     std::string name;
@@ -195,6 +222,13 @@ public:
             }
         }
         groupStats_.resize(cfg_.groups.size());
+        for(size_t g=0;g<cfg_.groups.size();++g) {
+            const auto& name=cfg_.groups[g].click;
+            if(name.empty())continue;
+            auto it=std::find_if(clicks_.begin(),clicks_.end(),[&](const ClickStats& c) {return c.name==name;});
+            if(it==clicks_.end()) {clicks_.push_back(ClickStats{});clicks_.back().name=name;it=clicks_.end()-1;}
+            it->groups.push_back(int(g));
+        }
         gateStats_.resize(cfg_.gates.size());
         sideStats_.resize(cfg_.sides.size());
         pairStats_.resize(cfg_.pairs.size());
@@ -220,6 +254,20 @@ public:
         legalFn_=std::move(fn);bw_=w;bh_=h;blocked_.clear();staticChanged();
     }
     void staticChanged() {dt_.clear();}
+
+    // One command issued to `ids`: they are one another's own command for
+    // contact_settled until a later selection relabels them. `convoy` (> 0)
+    // is the convoy the click joined: every selection noted with the same
+    // convoy is one command (ruling W3 round 4 (1)); 0 makes the selection a
+    // command of its own. A shift-queued order keeps its units' current command.
+    void noteSelection(const std::vector<int>& ids,uint32_t convoy=0) {
+        const int64_t cmd=convoy?kConvoyCommand+int64_t(convoy):++selections_;
+        for(int id:ids) {
+            auto it=std::lower_bound(selection_.begin(),selection_.end(),std::pair<int,int64_t>{id,INT64_MIN});
+            if(it!=selection_.end()&&it->first==id)it->second=cmd;
+            else selection_.insert(it,{id,cmd});
+        }
+    }
 
     void work(std::string_view name,uint64_t value) {workSeries(name).pending+=value;}
     void workCumulative(std::string_view name,uint64_t total) {
@@ -272,6 +320,7 @@ public:
             put(p+"n",n);put(p+"radius_px",detail::isqrt(gs.radius2));
             put(p+"arrived",gs.arrived);put(p+"t50",gs.t50);put(p+"t90",gs.t90);put(p+"done",gs.done);
             put(p+"left_behind",n-gs.arrived-gs.dead);put(p+"dead",gs.dead);put(p+"orders_done",gs.ordersDone);
+            for(const auto& c:clicks_)if(c.name==cfg_.groups[g].click)put(p+"click_n",c.n);
             put(p+"complete_n",int64_t(dists.size()));put(p+"complete_outside_radius",outside);
             put(p+"complete_dist_median",dists.empty()?-1:dists[(dists.size()-1)/2]);
             put(p+"complete_dist_max",dists.empty()?-1:dists.back());
@@ -284,9 +333,21 @@ public:
                 put(p+"illegal_overlap_ticks",gs.illegalOverlap);
             }
         }
+        for(const auto& c:clicks_) {
+            const std::string p="click."+c.name+".";
+            put(p+"n",c.n);put(p+"arrived",c.arrived);put(p+"t50",c.t50);put(p+"t90",c.t90);put(p+"done",c.done);
+        }
         put("spins",spins_);put("reversals",reversals_);put("stop_go",stopGo_);
         put("sideways",sideways_);put("backward",backward_);put("back",back_);
         put("walk_in_place",walkInPlace_);put("statue_ticks",statue_);put("crawl_samples",crawl_);
+        {   // AR-01/AR-02 tails (W3 tail fixture): bodies whose order is open while they stood still 900+ ticks.
+            int64_t openStill=0,stillEver=0;
+            for(const auto& m:m_) {
+                if(!m.seen)continue;
+                openStill+=m.stillRun>=900;stillEver+=m.maxStillRun>=900;
+            }
+            put("open_still900",openStill);put("still900_ever",stillEver);
+        }
         put("waiting_held",waitingHeld_);put("waiting_no_progress",waitingNoProgress_);
         put("parked_held",parkedHeld_);put("parked_no_progress",parkedNoProgress_);
         put("decision_samples",ordered_);put("stopped_permille",detail::permille(stopped_,ordered_));
@@ -306,7 +367,10 @@ public:
         put("spacing_samples",spacingSamples_);
         put("contact_own_permille",detail::permille(contactOwn_,spacingSamples_));
         put("contact_other_permille",detail::permille(contactOther_,spacingSamples_));
-        put("contact_settled_permille",detail::permille(contactSettled_,spacingSamples_));
+        {   // W3-1: per arrived unit (see the header).
+            int64_t arrived=0;for(const auto& gs:groupStats_)arrived+=gs.arrived;
+            put("contact_settled_permille",detail::permille(contactSettled_,std::max<int64_t>(arrived,1)));
+        }
         if(bw_>0) {
             put("wall_samples",wallSamples_);put("wall_touch_permille",detail::permille(wallTouch_,wallSamples_));
             put("wall_near_samples",int64_t(near_.size()));
@@ -386,7 +450,7 @@ private:
         // legacy Motion: the last cells visited and when.
         std::vector<std::pair<int64_t,int64_t>> cells;
         bool moved=false,everMoved=false,hadOrders=false;
-        int stillRun=0,noHeadRun=0;
+        int stillRun=0,noHeadRun=0,maxStillRun=0;
         int completeDist=-1;bool completeOutside=false;
         // decision samples: positions at the last 11 samples (10 steps).
         std::vector<std::pair<int32_t,int32_t>> ring;
@@ -400,9 +464,11 @@ private:
     };
     struct GroupStats {
         int64_t radius2=0;int foot=0;
-        int arrived=0,dead=0;int64_t t50=-1,t90=-1,done=-1,ordersDone=-1;
+        int n=0,arrived=0,dead=0;int64_t t50=-1,t90=-1,done=-1,ordersDone=-1;
         int64_t awayMax=0,awaySum=0,awaySamples=0,illegalOverlap=0;
     };
+    // A click read as one command (ruling W3 final exit (f)): its groups' bodies together.
+    struct ClickStats {std::string name;std::vector<int> groups;int n=0,arrived=0;int64_t t50=-1,t90=-1,done=-1;};
     struct GateStats {int64_t samples=0,files=0,spread=0;};
     struct SideStats {int64_t high=0,low=0,t90=-1;};
     struct PairStats {std::vector<char> a,b;int64_t pairs=0,contacts=0;};   // a, b: per group index
@@ -512,9 +578,15 @@ private:
             }
             // age classes
             m.stillRun=moved?0:m.stillRun+1;
+            m.maxStillRun=std::max(m.maxStillRun,m.stillRun);
             if(m.stillRun>=10) {
                 const int state=nav?nav->unitState(m.id):0;
-                const bool held=state>=2;
+                // A leg already completed (its arrival event set, 0x500) and
+                // waiting for World to retire it is a deliberate stand, not
+                // a body without progress: Legion drops the member on the
+                // completing tick, so it read as no_progress for that tick.
+                const auto& leg=u->orders[sim::World::currentLeg(u->orders)];
+                const bool held=state>=2||(leg.mission.pending&0x500)==0x500;
                 if(m.stillRun<=150)(held?waitingHeld_:waitingNoProgress_)++;
                 else (held?parkedHeld_:parkedNoProgress_)++;
             }
@@ -579,7 +651,7 @@ private:
         if(!gs.radius2) {
             int foot=1,n=0;
             for(const auto& m:m_)if(m.group==int(g)) {++n;foot=std::max(foot,m.foot);}
-            gs.foot=foot;gs.radius2=detail::discRadius2(foot,std::max(n,1));
+            gs.foot=foot;gs.radius2=detail::discRadius2(foot,std::max({n,cfg_.groups[g].discN,1}));
         }
         return gs.radius2;
     }
@@ -606,6 +678,15 @@ private:
             if(gs.t90<0&&n&&arrived*10>=n*9)gs.t90=at;
             if(gs.done<0&&n&&arrived==n)gs.done=at;
             if(gs.ordersDone<0&&n&&!ordersLeft)gs.ordersDone=at;
+            gs.n=n;
+        }
+        for(auto& c:clicks_) {
+            c.n=0;c.arrived=0;
+            for(int g:c.groups) {c.n+=groupStats_[size_t(g)].n;c.arrived+=groupStats_[size_t(g)].arrived;}
+            const int64_t at=tick-start_;
+            if(c.t50<0&&c.n&&c.arrived*2>=c.n)c.t50=at;
+            if(c.t90<0&&c.n&&c.arrived*10>=c.n*9)c.t90=at;
+            if(c.done<0&&c.n&&c.arrived==c.n)c.done=at;
         }
     }
 
@@ -830,12 +911,13 @@ private:
             ++spacingSamples_;
             const int ox=sim::footprintOrigin(u->x,m.fx),oz=sim::footprintOrigin(u->z,m.fz);
             bool own=false,other=false,settled=false;
+            const int64_t mine=commandOf(m.id);
             auto look=[&](int x,int z) {
                 const int id=bodyAt(x,z);
                 if(!id||id==m.id)return;
                 const auto* v=w.unit(id);
                 if(!v)return;
-                if(v->orders.empty())settled=true;
+                if(v->orders.empty()) {if(commandOf(id)!=mine)settled=true;}
                 else if(memberGroup(id)==m.group)own=true;
                 else other=true;
             };
@@ -843,6 +925,14 @@ private:
             for(int j=0;j<m.fz;++j) {look(ox-1,oz+j);look(ox+m.fx,oz+j);}
             contactOwn_+=own;contactOther_+=other;contactSettled_+=settled;
         }
+    }
+    // The command a unit's order came from: its last noted selection, else
+    // its group (negative), else none (a unit of no group: its own id).
+    int64_t commandOf(int id) const {
+        const auto it=std::lower_bound(selection_.begin(),selection_.end(),std::pair<int,int64_t>{id,INT64_MIN});
+        if(it!=selection_.end()&&it->first==id)return it->second;
+        const int g=memberGroup(id);
+        return g>=0?-1-int64_t(g):INT64_MIN+id;
     }
     int memberGroup(int id) const {
         // Members are few next to the map; a sorted id index keeps this O(log n).
@@ -933,6 +1023,7 @@ private:
     std::vector<Member> m_;
     mutable std::vector<std::pair<int,int>> memberIndex_;
     std::vector<GroupStats> groupStats_;
+    std::vector<ClickStats> clicks_;
     std::vector<GateStats> gateStats_;
     std::vector<SideStats> sideStats_;
     std::vector<PairStats> pairStats_;
@@ -943,6 +1034,8 @@ private:
     int64_t waitingHeld_=0,waitingNoProgress_=0,parkedHeld_=0,parkedNoProgress_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;
     int64_t spacingSamples_=0,contactOwn_=0,contactOther_=0,contactSettled_=0;
+    static constexpr int64_t kConvoyCommand=int64_t(1)<<40;   // convoy commands, apart from plain selections
+    std::vector<std::pair<int,int64_t>> selection_;int64_t selections_=0;   // (unit id, command), sorted
     int64_t wallSamples_=0,wallTouch_=0;std::vector<int> near_;
     // id grid and the pair count grid
     int gw_=0,gh_=0;uint32_t epoch_=0,cepoch_=0;
@@ -959,7 +1052,8 @@ private:
 // sample() once per tick, after World::tick and before Observer::sample. It
 // reads World::legionStats() (a const copy) only. A counter enters the report
 // the first tick it moves (earlier ticks count 0), so a counter that never
-// moves has no keys: read a missing key as 0. Gauges (bytes, live_*) and the
+// moves has no keys: read a missing key as 0 (except midroute_completions, the safety
+// key W3 gates on, which is always present). Gauges (bytes, live_*) and the
 // running max completion_dist_max are not per-tick work and are skipped.
 // Retail worlds have no navigator: nothing is fed.
 //
@@ -967,14 +1061,17 @@ private:
 // each once: subsets are left out of the sum (field_work_* split field_work;
 // sched_group_visits and join_iterations are inside group_loop_iters;
 // formation_ring_cells and rechoice_bfs_cells inside slot_search_cells;
-// line_sweeps are counted by trace_cells, one plus the cells stepped).
+// line_sweeps are counted by trace_cells, one plus the cells stepped). World's
+// convoy_tests (index probes plus candidates per order, sim/convoy.h) live
+// outside Stats and are fed and summed here too.
 class NavWork {
 public:
     static bool totalClass(std::string_view n) {
         static constexpr std::string_view k[]={
             "field_work","trace_cells","pass_scan_cells","slot_search_cells","group_loop_iters",
             "share_scan_iters","aware_pairs","held_rechecks","lift_members_walked","still_units_processed",
-            "crowd_window_ring_cells","crowd_settle_visits","detour_cells","softowner_lookups"};
+            "crowd_window_ring_cells","crowd_settle_visits","detour_cells","softowner_lookups",
+            "pivot_part_ids"};
         for(auto c:k)if(c==n)return true;
         return false;
     }
@@ -987,13 +1084,34 @@ public:
             if(i>=last_.size())last_.push_back(0);
             const uint64_t d=v>=last_[i]?v-last_[i]:0;last_[i++]=v;
             if(n=="bytes"||n.substr(0,5)=="live_"||n=="completion_dist_max")return;
-            if(d)obs.work(n,d);
+            if(n=="still_per_residue_max"||n=="quota_peg_run_max") {gauge(n,v);return;}   // running maxima, not work
+            if(d||n=="midroute_completions")obs.work(n,d);   // a safety key: always present, 0 when clean
             if(totalClass(n))total+=d;
         });
+        // World's convoy lookups (sim/convoy.h), a work class outside Stats.
+        const uint64_t convoy=w.convoyStats().tests;
+        const uint64_t d=convoy>=lastConvoy_?convoy-lastConvoy_:0;lastConvoy_=convoy;
+        if(d)obs.work("convoy_tests",d);
+        total+=d;
         obs.work("legion_total",total);
+        // Churn bins (W4 step 0): total Legion work per kChurnBin ticks of the run.
+        const size_t bin=ticks_++/kChurnBin;
+        if(bin>=bins_.size())bins_.resize(bin+1,0);
+        bins_[bin]+=total;
     }
+    static constexpr uint32_t kChurnBin=1500;
+    // Total Legion work per kChurnBin-tick bin (the last bin may be partial).
+    const std::vector<uint64_t>& churnBins() const {return bins_;}
+    // The running-maximum gauges the Stats carry (their last value): residue
+    // load of scanStill and the longest field-quota peg run.
+    uint64_t stillPerResidueMax() const {return stillPerResidueMax_;}
+    uint64_t quotaPegRunMax() const {return quotaPegRunMax_;}
 private:
+    void gauge(std::string_view n,uint64_t v) {(n=="quota_peg_run_max"?quotaPegRunMax_:stillPerResidueMax_)=v;}
+    std::vector<uint64_t> bins_;
+    uint64_t ticks_=0,stillPerResidueMax_=0,quotaPegRunMax_=0;
     std::vector<uint64_t> last_;
+    uint64_t lastConvoy_=0;
 };
 
 }

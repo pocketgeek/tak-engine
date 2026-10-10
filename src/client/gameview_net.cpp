@@ -474,7 +474,7 @@
         }
         if (netDelay_ <= 0) {
             // Default: drain to the newest delivered bundle every frame.
-            while (drained < 512 && mp_->takeBundle(netTick_, bd)) simTick();
+            while (drained < 512 && netTick_ < netStopTick_ && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: 0 ticks played this frame while future bundles ARE
             // buffered means the one we need is late (head-of-line block) -- a stall.
             ++netBenchFrames_;
@@ -511,7 +511,7 @@
             paceBuffered = buffered; paceRate = rate; paceFF = buffered > netDelay_ + 60;
 #endif
             budget = std::min(budget, 512);
-            while (drained < budget && mp_->takeBundle(netTick_, bd)) simTick();
+            while (drained < budget && netTick_ < netStopTick_ && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: the wall clock wanted more ticks than we could play
             // because the next bundle isn't buffered yet (jitter exceeded the
             // reserve). One count per starved frame.

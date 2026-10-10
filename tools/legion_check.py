@@ -20,7 +20,8 @@ Exit: 0 pass, 1 a gate failed, 2 usage / tooling error.
 baseline.json
   {"version": 1,
    "entries": {SCENARIO: {MODE: {KEY: {value, dir, rule, band, reason, since,
-                                       [per: "unit"], [w0: number]}}}},
+                                       [per: "unit"], [w0: number],
+                                       [phase_gate: {phases: [>= 10 values], reason}]}}}},
    "references": {SCENARIO: {MODE: {KEY: number}}},     # W0 base raised by ratchets
    "exceptions": [{scenario, key, cluster, reason, [mode], [median5: true]}],
    "accepted_regressions": [{scenario, mode, key, reason, [step], max | factor}],
@@ -31,9 +32,26 @@ baseline.json
                  reference x band (cumulative) fails; better than the reference
                  by more than the band prints RATCHET and passes
           bound  an absolute declared bound (`per: unit` divides by the units)
+  phase_gate  (cumulative combat keys only; lead ruling W4 (p)) the key's value at each of >= 10 stripe
+          phases of a phase-sensitive change: the cumulative combat check passes a value above `w0` when
+          the MEDIAN of the phases is at or below `w0` and the value is within the recorded range
   Time keys (.t50 .t90 .done .orders_done): -1 reads "never" = infinitely bad.
   KEYs: observer / work.* keys of the runner's "keys", `hash@OFFSET`, and
         `serial_eq_workers`.
+
+Offsets (lead rulings W3 round 3, 2026-10-09): a run on the gate offsets (0,+-1..+-5, or a file's
+`gateoffsets`; `legion_scenario --offsets gate`, the default of --check) is re-read here: the
+small-count keys (crossings, wall touch, the t90 of a group under 10 bodies) on the median of all
+its offsets, every other key on the core five 0,+-1,+-2. contact_settled's Retail floor is read
+only where both modes deliver >= 10 units, and an offset-spread exception is never a floor
+exception.
+
+Click level (lead ruling W3 final exit (f)): a one-body observer group whose click one convoy
+merged with others (aware-*, motion-*; the runner reports `g.G.click_n` for it and the convoy's
+`click.C.n/arrived/t50/t90/done`) is judged at click level in both modes: its own arrived / t50 /
+t90 / done are report-only (no entry, no band, no Retail floor); the click's keys carry them.
+`apply_ratchet` keeps the offset spread a cleared Retail-floor exception had masked: it is
+converted to a spread exception (ruling (h)).
 
 Precedence (PLAN 3.0): eq/safety, then the Retail floor, then a declared
 tolerance or accepted regression, then the bands. A tolerance never licenses a
@@ -57,6 +75,25 @@ COMBAT_SCENARIOS = ("battle-field*", "battle-assault*")
 COMBAT_KEYS = ("work.legion_total.total", "work.legion_total.max", "work.legion_total.p99")
 SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples")
 BAD_CLUSTERS = ("", "UNASSIGNED", "TODO", "?")
+# Offsets (lead ruling W3 round 3 (a), 2026-10-09). Every key is gated on the median of the five
+# core offsets, except the small-count keys: a handful of events decides them (corner crossings
+# span 0..10 in Retail itself), so they are gated on the median of all eleven, in both modes and
+# on the Retail floor. A run with the eleven offsets serves both: the other keys are re-read
+# over the core five. A t90 is small-count when its group has fewer than 10 members (90% of
+# them is then every one: the t90 is the last body's time). A scenario whose spawns the eleven
+# put off the map runs its own `gateoffsets` (cost-open: -4..6; corner-8x56 and corner-1x448
+# fill their map to 4 cells of two edges: -4..4): a record is wide with at least WIDE_MIN
+# offsets, the core five among them, and its small-count keys are read over all of them.
+CORE_OFFSETS = (0, 1, -1, 2, -2)
+WIDE_OFFSETS = (0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5)
+WIDE_MIN = 9
+WIDE_KEYS = ("gate.*.crossings", "wall_touch_permille", "wall_touch_near_permille")
+WIDE_T90_MAX_N = 9
+# Ruling (b): contact_settled is per arrived unit (W3-1), so its Retail floor is only read where
+# at least this many units arrive in both modes (the motion-* scenarios deliver 1-3).
+CONTACT_FLOOR_MIN_ARRIVED = 10
+# Ruling (f): a one-body group's progress keys inside a multi-body click are report-only.
+CLICK_REPORT_ONLY = (".arrived", ".t50", ".t90", ".done")
 
 
 # ---------------------------------------------------------------- key classes
@@ -78,6 +115,76 @@ def floor_dir(key):
             or key.startswith("wall_touch") or (key.startswith("contact_") and key.endswith("_permille"))):
         return "lower"
     return None
+
+
+def is_wide(key, rec):
+    """A small-count key, gated on the eleven offsets (ruling (a))."""
+    if any(fnmatch.fnmatch(key, g) for g in WIDE_KEYS):
+        return True
+    if key.startswith(("g.", "click.")) and key.endswith(".t90"):
+        n = rec.get("keys", {}).get(key[:-4] + ".n")
+        return isinstance(n, int) and 0 < n <= WIDE_T90_MAX_N
+    return False
+
+
+def is_report_only(key, rec):
+    """Ruling (f): a one-body group's arrived / t50 / t90 / done when the group belongs to a
+    multi-body click (`g.G.click_n` > 1): judged at click level (`click.*`), report-only here."""
+    if not key.startswith("g.") or not key.endswith(CLICK_REPORT_ONLY):
+        return False
+    g = key[:key.rindex(".")]
+    keys = rec.get("all_keys", rec.get("keys", {}))
+    n, cn = keys.get(g + ".n"), keys.get(g + ".click_n")
+    return n == 1 and isinstance(cn, int) and cn > 1
+
+
+def per_offset(rec, key):
+    """{offset: value} of a key in a result record (a key that does not vary equals its median)."""
+    offs = rec.get("offsets", [])
+    vals = rec.get("varying", {}).get(key)
+    if vals is None or len(vals) != len(offs):
+        vals = [rec.get("keys", {}).get(key, 0)] * len(offs)
+    return dict(zip(offs, vals))
+
+
+def median_of(key, vals):
+    """The runner's median: sorted, never (-1 on a time key) last, element (n-1)/2."""
+    s = sorted(vals, key=lambda x: INF if is_time(key) and x < 0 else x)
+    return s[(len(s) - 1) // 2]
+
+
+def regate(rec):
+    """Re-read a record on the gate's offsets: small-count keys over the eleven, the others over
+    the core five. A record without the eleven is left as it is (`wide` stays False, and a gated
+    small-count key fails on it); one without the core five too is read as given."""
+    offs = rec.get("offsets", [])
+    wide = list(offs)
+    rec["wide"] = len(offs) >= WIDE_MIN and all(o in offs for o in CORE_OFFSETS)
+    if not rec["wide"]:
+        return rec
+    keys, varying = {}, {}
+    for k in rec.get("keys", {}):
+        by = per_offset(rec, k)
+        vals = [by[o] for o in (wide if is_wide(k, rec) else CORE_OFFSETS)]
+        keys[k] = median_of(k, vals)
+        if any(v != vals[0] for v in vals):
+            varying[k] = vals
+    rec["all_keys"], rec["all_varying"] = rec["keys"], rec.get("varying", {})
+    rec["keys"], rec["varying"] = keys, varying
+    return rec
+
+
+def arrived_median(rec):
+    """Median over the core offsets of the units arrived at the end (sum of g.*.arrived)."""
+    src = dict(rec, keys=rec.get("all_keys", rec.get("keys", {})), varying=rec.get("all_varying",
+                                                                                  rec.get("varying", {})))
+    tot = {}
+    for k in src["keys"]:
+        if k.startswith("g.") and k.endswith(".arrived"):
+            for o, v in per_offset(src, k).items():
+                tot[o] = tot.get(o, 0) + v
+    core = [tot[o] for o in CORE_OFFSETS if o in tot] or list(tot.values()) or [0]
+    return median_of("arrived", core)
 
 
 def norm(key, x):
@@ -131,7 +238,7 @@ def load_results(paths):
             if "skipped" in r:
                 skipped.append(r["scenario"])
                 continue
-            recs[(r["scenario"], r["mode"])] = r
+            recs[(r["scenario"], r["mode"])] = regate(r)
     return recs, skipped
 
 
@@ -237,6 +344,8 @@ class Report:
     def __init__(self):
         self.fails, self.ratchets, self.info, self.licensed = [], [], [], []
         self.cleared, self.exception_count = [], 0
+        self.masked = {}        # (scn, mode, key) -> (lo, hi): a spread an exception covers (ruling (h))
+        self.report_only = 0    # floor keys left to their click (ruling (f))
         self.checked = 0
         self.m5 = set()
 
@@ -254,9 +363,9 @@ class Report:
         out += ["CLEARED exception %s (passes the Retail floor again; removed at the next ratchet)" % c
                 for c in self.cleared]
         out += ["INFO %s" % i for i in self.info]
-        out.append("%s: %d keys checked, %d failed, %d ratchets, %d licensed, %d floor exceptions"
+        out.append("%s: %d keys checked, %d failed, %d ratchets, %d licensed, %d floor exceptions, %d report-only"
                    % ("PASS" if self.ok else "FAIL", self.checked, len(self.fails), len(self.ratchets),
-                      len(self.licensed), self.exception_count))
+                      len(self.licensed), self.exception_count, self.report_only))
         return out
 
 
@@ -340,14 +449,18 @@ def spread_check(doc, rpt, scn, mode, key, e, rec, exc):
     vals = rec.get("varying", {}).get(key)
     if not vals or key.startswith("work.") or e.get("rule") != "band":
         return
+    if rec.get("wide") and is_wide(key, rec):
+        return      # a small-count key is gated on the median of the gate offsets already (ruling (a))
     band = e.get("band", BAND)
     lo, hi, ratio = spread_of(key, vals)
     if ratio <= band:
         return
-    if exc is None:
-        rpt.fail("%s/%s/%s" % (scn, mode, key),
-                 "offset spread %s..%s exceeds band %.2f: list it under exceptions (cluster, reason) and gate "
-                 "it on median-of-5" % (fmt(lo), fmt(hi), band))
+    if exc is not None:
+        rpt.masked[(scn, mode, key)] = (lo, hi)
+        return
+    rpt.fail("%s/%s/%s" % (scn, mode, key),
+             "offset spread %s..%s exceeds band %.2f: list it under exceptions (cluster, reason) and gate "
+             "it on median-of-5" % (fmt(lo), fmt(hi), band))
 
 
 def floor_passes(lower, legion, retail):
@@ -367,6 +480,29 @@ def exception_for(doc, scn, mode, key):
                  if x["scenario"] == scn and x["key"] == key and x.get("mode", mode) == mode), None)
 
 
+def floor_exception_for(doc, scn, key):
+    """The Retail-floor exception of a key. An offset-spread exception is not one (ruling (c),
+    2026-10-09: counting it hid the wall-4x50 and motion-cross floor failures)."""
+    return next((x for x in doc.get("exceptions", [])
+                 if x["scenario"] == scn and x["key"] == key and x.get("mode", "legion") == "legion"
+                 and not is_spread_exception(x)), None)
+
+
+def floor_applies(key, lrec, rrec):
+    """Ruling (b): contact_settled's floor only where both modes deliver >= 10 units."""
+    if key == "contact_settled_permille":
+        return min(arrived_median(lrec), arrived_median(rrec)) >= CONTACT_FLOOR_MIN_ARRIVED
+    return True
+
+
+def need_wide(rpt, path, key, rec):
+    if not rec.get("wide") and is_wide(key, rec) and path not in rpt.m5:
+        rpt.m5.add(path)
+        rpt.fail(path, "small-count key is gated on the median of the gate offsets (%s, or the file's "
+                       "gateoffsets, at least %d); run has %s" % (",".join(map(str, WIDE_OFFSETS)), WIDE_MIN,
+                                                                rec.get("offsets", [])))
+
+
 def floor_check(doc, rpt, recs):
     for (scn, mode), lrec in sorted(recs.items()):
         if mode != "legion" or (scn, "retail") not in recs:
@@ -374,13 +510,18 @@ def floor_check(doc, rpt, recs):
         rrec = recs[(scn, "retail")]
         for key, lv in sorted(lrec.get("keys", {}).items()):
             fd = floor_dir(key)
-            if fd is None or key not in rrec.get("keys", {}):
+            if fd is None or key not in rrec.get("keys", {}) or not floor_applies(key, lrec, rrec):
+                continue
+            if is_report_only(key, lrec) or is_report_only(key, rrec):
+                rpt.report_only += 1
                 continue
             lower = fd == "lower"
             lo, re_ = norm(key, lv), norm(key, rrec["keys"][key])
             passes = floor_passes(lower, lo, re_)
-            exc = exception_for(doc, scn, "legion", key)
+            exc = floor_exception_for(doc, scn, key)
             path = "%s/legion/%s" % (scn, key)
+            need_wide(rpt, path, key, lrec)
+            need_wide(rpt, "%s/retail/%s" % (scn, key), key, rrec)
             if exc:
                 rpt.exception_count += 1
                 if passes:
@@ -393,6 +534,21 @@ def floor_check(doc, rpt, recs):
                 rpt.fail(path, "Retail floor: legion %s vs retail %s (needs %s); a passing key may not start "
                                "failing the floor" % (fmt(lo), fmt(re_), "legion <= retail x%.1f" % FLOOR if lower
                                                       else "legion x%.1f >= retail" % FLOOR))
+
+
+def phase_median(pg):
+    v = sorted(pg["phases"])
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+
+
+def phase_gate_ok(pg, w0, cur):
+    """Lead ruling W4 (p): a phase-sensitive change (a striped scan whose residue shifts which tick a spike
+    lands on) is judged on the MEDIAN over >= 10 stripe phases, not on the one phase a run happens to have.
+    The entry's `phase_gate` {phases: [per-phase values], reason} passes when that median is at or below the
+    W0 base and this run's value is one of the recorded phases' range (<= their maximum)."""
+    ph = pg.get("phases") or []
+    return len(ph) >= 10 and bool(pg.get("reason")) and phase_median(pg) <= w0 and cur <= max(ph)
 
 
 def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False):
@@ -408,16 +564,25 @@ def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False)
                     rpt.fail("%s/%s" % (scn, mode), "no result in the run")
                 continue
             for key, e in sorted(keys.items()):
+                if is_report_only(key, rec):
+                    continue        # ruling (f): judged at click level
                 exc = exception_for(doc, scn, mode, key)
                 if exc:
                     need_median5(rpt, "%s/%s/%s" % (scn, mode, key), exc, rec)
+                if key in rec.get("keys", {}):
+                    need_wide(rpt, "%s/%s/%s" % (scn, mode, key), key, rec)
                 judge(doc, rpt, scn, mode, key, e, rec, step)
                 spread_check(doc, rpt, scn, mode, key, e, rec, exc)
                 if cumulative and key in COMBAT_KEYS and any(fnmatch.fnmatch(scn, g) for g in COMBAT_SCENARIOS):
                     w0 = e.get("w0")
                     w0 = e["value"] if isinstance(w0, bool) or w0 is None else w0
                     found, cur = lookup(rec, key)
-                    if found and cur > w0:
+                    pg = e.get("phase_gate")
+                    if found and cur > w0 and pg and phase_gate_ok(pg, w0, cur):
+                        rpt.info.append("%s/%s/%s: %s above the W0 base %s at this run's stripe phase; the "
+                                        "median over %d phases is %s (ruling W4 (p))"
+                                        % (scn, mode, key, cur, w0, len(pg["phases"]), phase_median(pg)))
+                    elif found and cur > w0:
                         rpt.fail("%s/%s/%s" % (scn, mode, key),
                                  "cumulative combat cost: %s above the W0 base %s (x1.00, PLAN 3.0)" % (cur, w0))
             # a work counter that moved with no entry has no base to compare with
@@ -446,7 +611,7 @@ def apply_ratchet(doc, rpt, reason, when):
         refs.setdefault(scn, {}).setdefault(mode, {})[key] = -1 if new == INF else new
         moved.append({"key": path, "old": -1 if old == INF else old, "new": -1 if new == INF else new})
     cleared = []
-    keep = []
+    keep, converted = [], []
     for x in doc.get("exceptions", []):
         tag = "%s/legion/%s " % (x["scenario"], x["key"])
         # An offset-spread exception (median-of-5 gating) is not a floor exception: the key's
@@ -456,8 +621,24 @@ def apply_ratchet(doc, rpt, reason, when):
             continue
         if any(c.startswith(tag) for c in rpt.cleared):
             cleared.append("%s/%s" % (x["scenario"], x["key"]))
+            # Ruling (h): the floor exception may also have covered the key's offset spread in a
+            # mode (check() records the spreads it masked). Clearing it would unmask that spread
+            # and fail the next check, so it is converted to a spread exception for those modes.
+            for (scn, mode, key), (lo, hi) in sorted(rpt.masked.items()):
+                if scn != x["scenario"] or key != x["key"] or x.get("mode", mode) != mode:
+                    continue
+                converted.append({"scenario": scn, "key": key, "mode": mode, "cluster": x["cluster"],
+                                  "median5": True,
+                                  "reason": "offset spread %s..%s exceeds the band; kept as a spread exception "
+                                            "when the ratchet cleared its Retail-floor exception (%s: %s)"
+                                            % (fmt(lo), fmt(hi), when, x.get("reason", ""))})
         else:
             keep.append(x)
+    # a spread another exception still covers needs no conversion
+    for c in converted:
+        if not any(k["scenario"] == c["scenario"] and k["key"] == c["key"] and k.get("mode", c["mode"]) == c["mode"]
+                   for k in keep):
+            keep.append(c)
     doc["exceptions"] = keep
     doc.setdefault("history", []).append({"when": when, "reason": reason, "ratchets": moved,
                                           "cleared_exceptions": cleared})
@@ -476,7 +657,8 @@ def write_base(doc, recs, reason, since, patterns, hashes, clusters):
     for (scn, mode), rec in sorted(recs.items()):
         slot = entries.setdefault(scn, {}).setdefault(mode, {})
         todo = {k: v for k, v in rec.get("keys", {}).items()
-                if k not in SKIP_KEYS and any(fnmatch.fnmatch(k, p) for p in patterns)}
+                if k not in SKIP_KEYS and not is_report_only(k, rec)
+                and any(fnmatch.fnmatch(k, p) for p in patterns)}
         if hashes:
             for off, h in rec.get("hash", {}).items():
                 todo["hash@" + off] = h
@@ -522,9 +704,13 @@ def write_base(doc, recs, reason, since, patterns, hashes, clusters):
                 rv = recs[(scn, "retail")].get("keys", {}).get(k)
                 if fd is None or rv is None:
                     continue
+                if not floor_applies(k, rec, recs[(scn, "retail")]):
+                    continue
+                if is_report_only(k, rec) or is_report_only(k, recs[(scn, "retail")]):
+                    continue
                 lo, rr = norm(k, v), norm(k, rv)
                 ok = floor_passes(fd == "lower", lo, rr)
-                if ok or exception_for(doc, scn, "legion", k):
+                if ok or floor_exception_for(doc, scn, k):
                     continue
                 cluster = next((c for g, c in clusters if fnmatch.fnmatch("%s/%s" % (scn, k), g)), "UNASSIGNED")
                 doc["exceptions"].append({"scenario": scn, "key": k, "cluster": cluster,

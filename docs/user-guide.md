@@ -809,8 +809,17 @@ armies:
 - **Groups plan together.** A group's order is planned once for the whole group,
   and the group heads for the destination as a body, not as a column of
   individuals.
+- **One order per click.** A right-click is one order however big the
+  selection is: the whole army gets one destination area and one formation,
+  even though a selection over 64 units reaches the game in parts over a few
+  ticks. Quick clicks that send parts of an army to the same spot a moment
+  apart join that one order too.
 - **Arrivals settle.** Units take up places around the destination point, and
-  once they are close they stop. Large groups do not keep shuffling forever.
+  once they are close they stop. Large groups do not keep shuffling forever:
+  the last units of a group, pressed against the group's own crowd with no way
+  further in, stop where they stand and are free for their next order, instead
+  of edging round the crowd for minutes. At a wall or in a dead end the
+  destination area follows the wall or the corridor.
 - **Wheeling round walls.** When a large group (16 or more) goes round the end of
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow.
@@ -831,14 +840,19 @@ armies:
   instead of stop-starting.
 - **Flyers land cleanly.** Flyers never land on top of other flyers or ground
   units.
-- **Flyers stay with the army.** Flyers in a formation with ground units hold
-  places over the ground units and keep to their pace, instead of racing
-  ahead and waiting at the destination.
+- **Flyers stay with the army.** Flyers in a formation or a Ctrl+number group
+  with ground units hold places over the ground units of the same order and
+  keep to their pace, instead of racing ahead and waiting at the destination.
+  When the ground stops, for instance at a wall or in a dead end, the flyers
+  go on to land at their destination instead of hovering for minutes.
+- **Flyers do not trap walkers.** A flyer that has lifted to let an army pass
+  comes back down after at most a minute, and it fights while it is up. Ground
+  units no longer walk in under a flyer that is coming down to land.
 
 Legion handles ground units, ships and hovercraft for moves, fight-moves,
 patrols, attacks, guarding, building, repairing, reclaiming and transport
 orders. Flyers in flight use the original game's movement, except that flyers
-in a formation with ground units keep station over them.
+in a formation or Ctrl+number group with ground units keep station over them.
 
 **Known limits of Legion:**
 
@@ -849,7 +863,7 @@ in a formation with ground units keep station over them.
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
 - Idle units of **other players** do not step aside for you.
-- A ground unit can still walk in under a flyer that is coming down to land.
+- Two separate clicks of one kind given in the same moment share one set of flyer stations.
 - With thousands of units, Legion uses more processor time than Retail.
 
 ### Which should I choose?

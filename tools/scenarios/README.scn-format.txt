@@ -27,6 +27,10 @@ never names a pathfinding mode: the runner builds it once per mode.
   uplink R                      command window: at most 512 commands
                                 outstanding, round trip R ticks (default: none,
                                 only the server's 64-per-tick drain)
+  gateoffsets O,O,...           the start offsets legion_scenario --check / --baseline
+                                run by default when the gate's eleven (0,+-1..+-5)
+                                put a spawn off the map; at least nine, the core
+                                five 0,+-1,+-2 among them (tools/legion_check.py)
   probe approach                the runner also reports the approach.* keys: per
                                 unit, the first tick Legion holds it at its
                                 approach point (an unreachable goal's nearest

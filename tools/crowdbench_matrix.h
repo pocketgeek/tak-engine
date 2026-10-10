@@ -249,6 +249,15 @@ template<class W> void printDiagnostics(const W& world,bool enabled) {
             metric(("legion_"+std::string(name)).c_str(),value);
         });
     }
+    // World's convoy lookups (sim/convoy.h; outside Stats, exported beside it):
+    // orders joined, index probes plus candidates tested, the most for one
+    // order, and orders over 16 (the p99 bound) and over 64 (the max bound).
+    if constexpr(requires {world.convoyStats();}) {
+        const auto c=world.convoyStats();
+        metric("legion_convoy_orders",c.orders);metric("legion_convoy_tests",c.tests);
+        metric("legion_convoy_tests_max",c.testsMax);
+        metric("legion_convoy_tests_over16",c.over16);metric("legion_convoy_tests_over64",c.over64);
+    }
 }
 // MV-06's route-follower split needs the member's committed detour, read through
 // LegionNavigator::routeLength(id) (cells left in its local detour route; read-only,
