@@ -11066,6 +11066,16 @@ void World::tick(float dt) {
                 __builtin_prefetch(&next->state.vm.active,0,1);
             }
         }
+        // And the Unit itself, two ahead: this loop reads fields spread over most of a
+        // Unit's ~20 cache lines (type, the emitters, retailSite/retailBuild, reloads, ...),
+        // and at 10k+ units units_ does not stay in cache between ticks. Before WE E1.3/E2.1
+        // findTarget's candidate walks touched the neighbours' lines by the way; once they
+        // got cheaper, those misses moved into this loop (L-2h: "other" +7%, the same
+        // instructions, +2M L1-miss stall cycles per tick). Only a cache hint.
+        if (unitIndex+2<units_.size()) {
+            const char* ahead=reinterpret_cast<const char*>(&units_[unitIndex+2]);
+            for (size_t at=0;at<sizeof(Unit);at+=64) __builtin_prefetch(ahead+at,0,3);
+        }
 #endif
         if (!units_[unitIndex].type) continue;
         if (units_[unitIndex].alive() && units_[unitIndex].constructionEmitter)
