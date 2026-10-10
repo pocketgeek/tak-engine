@@ -1053,7 +1053,8 @@ private:
 // reads World::legionStats() (a const copy) only. A counter enters the report
 // the first tick it moves (earlier ticks count 0), so a counter that never
 // moves has no keys: read a missing key as 0 (except midroute_completions, the safety
-// key W3 gates on, which is always present). Gauges (bytes, live_*) and the
+// key W3 gates on, which is always present). engaged_now is not work either: the
+// runner reports it as gauge.engaged_max and engaged.member_ticks. Gauges (bytes, live_*) and the
 // running max completion_dist_max are not per-tick work and are skipped.
 // Retail worlds have no navigator: nothing is fed.
 //
@@ -1085,6 +1086,9 @@ public:
             const uint64_t d=v>=last_[i]?v-last_[i]:0;last_[i++]=v;
             if(n=="bytes"||n.substr(0,5)=="live_"||n=="completion_dist_max")return;
             if(n=="still_per_residue_max"||n=="quota_peg_run_max") {gauge(n,v);return;}   // running maxima, not work
+            if(n=="engaged_now") {   // W5 step 0: a per-tick population, not work (Stats::engagedNow)
+                engagedMax_=std::max(engagedMax_,d);engagedTicks_+=d;return;
+            }
             if(d||n=="midroute_completions")obs.work(n,d);   // a safety key: always present, 0 when clean
             if(totalClass(n))total+=d;
         });
@@ -1106,10 +1110,14 @@ public:
     // load of scanStill and the longest field-quota peg run.
     uint64_t stillPerResidueMax() const {return stillPerResidueMax_;}
     uint64_t quotaPegRunMax() const {return quotaPegRunMax_;}
+    // W5 step 0: the most bodies tickCombat braked in reach on one tick (Stats::engagedNow's largest
+    // per-tick delta) and the member-ticks summed over the run.
+    uint64_t engagedMax() const {return engagedMax_;}
+    uint64_t engagedMemberTicks() const {return engagedTicks_;}
 private:
     void gauge(std::string_view n,uint64_t v) {(n=="quota_peg_run_max"?quotaPegRunMax_:stillPerResidueMax_)=v;}
     std::vector<uint64_t> bins_;
-    uint64_t ticks_=0,stillPerResidueMax_=0,quotaPegRunMax_=0;
+    uint64_t ticks_=0,stillPerResidueMax_=0,quotaPegRunMax_=0,engagedMax_=0,engagedTicks_=0;
     std::vector<uint64_t> last_;
     uint64_t lastConvoy_=0;
 };

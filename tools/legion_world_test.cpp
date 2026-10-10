@@ -191,8 +191,11 @@ void groupreuse() {
     auto* legion=f.world.legionNavigator();
     const int group=legion->unitGroup(ids[0]);
     for(int id:ids)check(legion->unitGroup(id)==group,"group order split into several groups");
+    // Fields started, not finished: since W4 C1 a lattice group's first field
+    // pauses once it covers the group (it is never "built" to done).
+    auto started=[&](const LegionNavigator::Stats& st) {uint64_t n=0;for(uint64_t k:st.fieldsStartedByKind)n+=k;return n;};
     const auto s=f.world.legionStats();
-    check(s.fieldsBuilt==1,"one group must build exactly one field, built "+std::to_string(s.fieldsBuilt));
+    check(started(s)==1,"one group must build exactly one field, started "+std::to_string(started(s)));
     int routeSeen=0;   // the committed detour's length (observation hook), the longest sampled
     for(int t=0;t<6000;++t) {
         f.world.tick(1.f/30);
@@ -207,7 +210,7 @@ void groupreuse() {
     std::printf("  detours=%llu cells=%llu holds=%llu\n",(unsigned long long)f.world.legionStats().detours,(unsigned long long)f.world.legionStats().detourCells,(unsigned long long)f.world.legionStats().holds);
     std::printf("groupreuse arrived=%d fields=%llu work=%llu\n",arrived,(unsigned long long)e.fieldsBuilt,(unsigned long long)e.fieldWork);
     check(arrived==int(ids.size()),"group did not pass the door");
-    check(e.fieldsBuilt<=2,"field rebuilt per member");
+    check(started(e)<=2,"field rebuilt per member");
 }
 
 // A sawtooth ridge with one gap at the far end: units must slide along the
@@ -340,6 +343,14 @@ void crowdhold() {
     for(int id:ids)check(f.legal(id),"illegal footprint in held crowd");
 }
 
+// AR-10 (PLAN 3.4, W5 step 6): the claims invariant -- no cell claimed by two
+// members, no lost claim, no slot on a point that is gone (ring spots too).
+void checkClaims(World& world,const char* where) {
+    const auto a=world.legionNavigator()->claimsAudit();
+    if(a.overlaps+a.missing+a.dangling)
+        std::printf("%s: claims overlaps=%d missing=%d dangling=%d\n",where,a.overlaps,a.missing,a.dangling);
+    check(a.overlaps+a.missing+a.dangling==0,"the claims invariant failed (overlapping, lost or dangling slot claims)");
+}
 // A group sent across open ground with a large standing block of idle
 // bodies on its straight way (of the same player, then of another): it
 // must plan round the block, not walk into it and wait against its face.
@@ -479,15 +490,21 @@ void staticidle() {
     const int friendly=f.spawn(type,100,50);
     f.start();
     for(int id:ids)f.world.guard(id,friendly,false);
-    for(int t=0;t<900;++t)f.world.tick(1.f/30);
+    // 2400 ticks, not 900 (W5 exit): the guards walk ~90 cells (~700 ticks), then twelve of them settle round
+    // the ward; a reach kind never takes the settle rule (its owner ends the approach), so the last few keep
+    // routing round the engaged ones until the crowd has packed (quiet by tick ~2000 here, measured; at the
+    // W4 head it was quiet by 900 because the settle rule parked them).
+    for(int t=0;t<2400;++t)f.world.tick(1.f/30);
     int held=0;
-    for(int id:ids)held+=!f.world.unit(id)->orders.empty()&&f.world.legionNavigator()->unitState(id)==2;   // Holding
+    // Holding, or Engaged (6: braked within 70 px of the ward by its guard order, AR-06)
+    for(int id:ids) {const int s=f.world.legionNavigator()->unitState(id);held+=!f.world.unit(id)->orders.empty()&&(s==2||s==6);}
     check(held>=6,"staticidle: the guards are not holding with their orders");
     const auto base=f.world.legionStats();
     for(int t=0;t<600;++t) {
         if(t%10==0)f.world.addFeature(50*200+60,60*16+8.f,50*16+8.f,0,1,1,1,t%20==0,-1,true);
         f.world.tick(1.f/30);
     }
+    if(std::getenv("STATIC_VERBOSE"))for(int id:ids)std::printf("  guard %d state %d at %.1f,%.1f\n",id,f.world.legionNavigator()->unitState(id),f.world.unit(id)->x.toFloat()/16,f.world.unit(id)->z.toFloat()/16);
     const auto now=f.world.legionStats();
     const uint64_t idle=now.fieldWorkRefreshIdle-base.fieldWorkRefreshIdle,moving=now.fieldWorkRefreshMoving-base.fieldWorkRefreshMoving;
     std::printf("staticidle parked holding=%d refresh_idle=%llu refresh_moving=%llu refresh_completed=%llu refresh_suppressed=%llu groups=%zu\n",
@@ -730,9 +747,9 @@ void liftflyers() {
     check(own.landed==12&&own.home==12,"lifted flyers did not land again on their spots");
     // The detour allows open + 3 cells, not + 1, by user decision W3-4 (2026-10-09): under W3 the last body
     // re-chooses its slot along the formation's west face AT the destination (own run 5 vs open 2), a
-    // steering gap round a settled crowd accepted for W3 and fixed in W5/W9. W5/W9 HARD EXIT GATE: back to
-    // open + 1 (docs/legion-exit-tables.md, "W3 exit"; w5-w9-gates).
-    constexpr uint64_t kLiftDetourSlack=3;   // W3-4; W5/W9 restore 1
+    // steering gap round a settled crowd accepted for W3. Moved to W9's exit by user decision W5-1
+    // (2026-10-10): HARD EXIT GATE at W9, back to open + 1 (docs/legion-exit-tables.md, "W3 exit" and "W5 exit").
+    constexpr uint64_t kLiftDetourSlack=3;   // W3-4; W9 restores 1 (W5-1)
     check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10,"group slowed by flyers that lift");
     check(own.detour<=open.detour+kLiftDetourSlack,"group detoured round flyers that lift");
     // An enemy's flyers never lift: obstacles, planned and steered round.
@@ -1217,6 +1234,52 @@ void legacyyield() {
 // (World::noteOrders), one that dies loses it on the death edge, and one
 // whose orders change behind every helper (a direct write) loses it to
 // prune's backstop cursor. A stop keeps it (the body is idle and settled).
+// W4 C1 (T7 Stage C): paused first builds. A lone body's first field pauses once
+// it covers the body (the A* ellipse between the body and its goal); a second
+// body of the same player sent to the same point 20 ticks later (its own
+// command: the first click's convoy has closed) shares that
+// paused field, but stands far outside the ellipse, behind a wall that blocks
+// its straight heading: it waits until its demand resumes the build. No member
+// may wait more than 10 ticks in a row, the paused field must resume for the
+// demand, and both bodies arrive.
+void pausedemand() {
+    Fixture f(200,100);
+    f.rect(104,70,2,26);   // in front of the late body, toward the goal
+    f.publish();
+    const auto type=mover(2);
+    const int lead=f.spawn(type,20,50),late=f.spawn(type,100,85);
+    f.start();
+    f.world.order(lead,180*16,50*16,false);
+    auto* legion=f.world.legionNavigator();
+    std::map<int,int> run,longest;
+    auto step=[&] {
+        f.world.tick(1.f/30);
+        for(int id:{lead,late}) {
+            run[id]=legion->unitState(id)==3?run[id]+1:0;   // Waiting
+            longest[id]=std::max(longest[id],run[id]);
+        }
+    };
+    // Past the click's convoy (9 ticks without a joining order: a separate
+    // command), inside the 30 ticks a field may be shared.
+    for(int t=0;t<20;++t)step();
+    const auto paused=f.world.legionStats();
+    check(paused.fieldsPaused>=1,"pausedemand: the lone body's first field did not pause");
+    f.world.order(late,180*16,50*16,false);
+    int t=0;
+    for(;t<3000;++t) {
+        step();
+        if(f.world.unit(lead)->orders.empty()&&f.world.unit(late)->orders.empty())break;
+    }
+    const auto s=f.world.legionStats();
+    std::printf("pausedemand ticks=%d paused=%llu shared=%llu paused_resumes=%llu waiting=%llu longest_wait lead=%d late=%d field_work=%llu built=%llu\n",
+        t,(unsigned long long)s.fieldsPaused,(unsigned long long)s.fieldsShared,(unsigned long long)s.pausedResumes,
+        (unsigned long long)s.waitingMemberTicks,longest[lead],longest[late],(unsigned long long)s.fieldWork,(unsigned long long)s.fieldsBuilt);
+    check(s.fieldsShared>=1,"pausedemand: the late body did not share the paused field");
+    check(s.pausedResumes>=1,"pausedemand: the paused field never resumed for a demand");
+    check(longest[lead]<=10&&longest[late]<=10,"pausedemand: a member waited more than 10 ticks for its field");
+    check(f.world.unit(lead)->orders.empty()&&f.world.unit(late)->orders.empty(),"pausedemand: a body did not arrive");
+}
+
 void b3events() {
     Fixture f(96,64);
     f.publish();
@@ -1340,6 +1403,7 @@ PinwheelResult pinwheelRun(int gap) {
     int t=0;
     for(;t<6000;++t) {
         f.world.tick(1.f/30);motion.observe(f.world,ids);
+        if(t%30==0)checkClaims(f.world,"pinwheel");
         int arrived=0;
         for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
         r.arrived=arrived;
@@ -1960,6 +2024,7 @@ SquadResult squadRun() {
     for(int t=0;t<kTicks;++t) {
         f.world.tick(1.f/30);
         motion.observe(f.world,ids);
+        if(t%30==0)checkClaims(f.world,"squadformation");
         for(int id:ids) {
             const auto& u=*f.world.unit(id);
             check(f.legal(id),"illegal footprint in a commanded formation");
@@ -2865,7 +2930,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"b3events",b3events},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
+        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

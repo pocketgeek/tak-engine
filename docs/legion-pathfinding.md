@@ -702,10 +702,13 @@ and steering for these legs; the native mover never runs for them.
   kept), and combat or guard ends the approach. Legion never declares arrival
   outside the rules of section 4/5 or the native goal predicate.
 * **Moving goals.** Attack and guard goals follow a unit. The member is keyed
-  by (kind, target id) instead of a controller. The field is re-seeded when
-  the tick crosses a 16-tick grid line and the target's origin has moved at
-  least 2 cells (Chebyshev). Every chaser of one target that re-seeds in the
-  same 16-tick window joins one group and shares one field.
+  by (kind, target id) instead of a controller, and the group by (player,
+  plane, kind, target id, reach bucket, the target origin it was seeded at).
+  On a 16-tick grid line, once the target's origin has moved
+  max(2, min(D/8, 8)) cells (D: the member's Chebyshev distance to it), the
+  group re-seeds in place (W5, AR-07): its seed or its ring moves, a refresh
+  builds the new field while the old one steers, and its members keep their
+  group, slot and clocks. See "Reach rings and engaged bodies (W5)".
 * **Groups and areas.** Groups never mix kinds. Fight-move shares a
   destination area (formation slots) per command, as Move does. Each patrol
   lap gets its own group and field, because the outbound and return legs of
@@ -1281,7 +1284,7 @@ path rebuilds Legion from a snapshot (a mid-game `--mprejoin` stays in sync).
 work (764640 relaxations -> 0), and a pair held at a plugged gap re-plans through
 a gap that opens by the blocked rule alone. In the live 8-AI Ulasem benchmark
 refresh is under 2% of field work (first builds are the rest), so B1 hardly moves
-its totals there; paused solo first builds (C1) are the next W4 step.
+its totals there; paused solo first builds (C1, below) are the lever there.
 
 **Striped still-body scan (B2).** `scanStill` samples each tick only the bodies
 whose `id % 30 == tick % 30`, with the same two-sample stillness rule per body, and
@@ -1299,6 +1302,94 @@ is checked every tick, and the grid, owners, lift players and window counts once
 a scan period. The aware scan (residue 15) now reads a soft view that changes
 every tick (accepted; W7 re-checks). The stripe phase moves a few outcome keys
 within their seed spread (aware headon contacts, landedflyers, tail wave p90).
+
+### Reach rings and engaged bodies (W5)
+
+* **Engaged.** An attacker that `tickCombat` brakes in reach (or a guard within
+  70 px of its ward) is Engaged (member state 6) until its next `move()`: to
+  local steering it is settled and still (bodies behind walk round it), it
+  never yields or parts, and it is soft to other commands only (a passing
+  group plans round a firing crowd; its own attack does not). A reach kind's
+  held same-target peer (30 ticks) is settled too, and reach kinds never run
+  the settle rule or contact arrival: the owner ends the approach.
+* **Rings.** An attack group with two or more members when its first field
+  starts plans to a ring: band 0 lies 0.5-1.5 bodies inside `tickCombat`'s own
+  reach (melee at contact), legal, in the members' component and
+  in line of sight of the target, and is the field's seeds; outer bands wait.
+  A guard group plans to its ward's point with no ring: its 70 px is a stance
+  round the ward, and a ring there kept twelve guards re-choosing spots for
+  ~2800 ticks (without it they are quiet by ~2000; the W4 head's settle rule
+  parked them by 900, which reach kinds no longer take: `staticidle` warms up
+  2400 ticks).
+  The first claim hands out every spot (nearest members to band 0, matched in
+  angle so lanes do not cross); late joiners take the nearest free spot; a
+  member held a 45-tick window re-chooses (3 times) a free spot in a lower
+  band or nearer in its own; an engaged body lets go of a spot it stopped short
+  of. A group that grows to two after its first field keeps its point seed
+  (re-planning cost the battles a refresh per target).
+* **Illegal goals.** A member whose goal turns illegal re-claims a slot, or
+  takes the nearest legal origin of its region, inside its group.
+* **Late soft blocks (MV-05).** A block of soft cells 20+ cells across that
+  forms after a group planned, on its 48-cell descent chain from its centroid
+  or tail, re-plans it once (300-tick cooldown, refresh quota). Blocks leaving
+  never re-plan.
+* **Not built (MV-06).** Speed-matched commit budgets (S1) and the brisk tier
+  (unturned detour/yield/part steps at cap/2), full and restricted, were each
+  measured and reverted: S1 raised opposingcolumns 500x4 spin 1268 -> 1639 and
+  cap/8 time everywhere; the full tier doubled corner reversals (corner-8x56
+  306 -> 561) and lost cost-open's t90; the restricted tier lost maze /
+  exploration / dynamicobstacle arrivals by 2.5-3.4%. The cap/8 statue stays
+  a documented trade (PLAN 3.4 stop rule).
+
+### Paused first builds (W4 C1, protocol 244)
+
+A first field used to build to done, its whole window, although its members
+steer by it as soon as the A* frontier (aimed at the group's bodies) has passed
+their cells. Now a first field of a group that claims no packed per-goal slots
+(no goal shared by two of its members) and does not pinwheel (no member's part
+of 16 or more) builds in slices of 4096 relaxations and **pauses**
+(`Field::covered`, its frontier kept) once every live member's cell is settled
+with a margin: `kCoverAhead` (40, eight orthogonal steps of key) plus two
+diagonal steps per cell of footprint + 2 (the settle rule's ring), plus, for a
+member of a formation, two orthogonal steps per cell of the formation's radius
++ 3 bodies (its lane runs that far off the shortest way); a goal several members
+shared once also needs its packed disc settled. A member whose cell is under
+its margin (it strayed, side-stepped, joined late, or shares the field with
+another group) adds the cell to the field's `demand` and marks the group
+waited, and the waited loop resumes the build until each demand cell has its
+margin (`work.paused_resumes`; `legion_world_test pausedemand`: a body sharing a
+paused field from outside it waits 2 ticks). A paused group leaves
+`buildingIds`. Slot groups' first builds and every refresh still run to done;
+a stale paused field is refreshed as a finished one would be.
+
+A* with a consistent heuristic never changes a settled potential, so what a
+paused build has settled is final (checked under `TAK_LEGION_VERIFY` in
+`advance`; a soft view that changes between slices only raises step costs, so
+it cannot lower one either). The readers that used to wait for `done` and now
+take a paused build (`Field::usable`) read it through `Field::known`, which
+returns a potential only where it is settled: the settle rule (`settleWindow`,
+`pressed`, `areaBound` -- not cached for a paused build -- and `rechoose`), the
+lift walk, the aim memo (keyed on the field's work count, so a resumed build
+invalidates it), eviction, `sharedField`, and a formation's slot hand-out
+(`claimSlot` for a member whose only slot is its formation's: it reads no
+potential). The pinwheel, `awareScan` and the aware replan keep `done`: a
+paused group plans round no crossing traffic until its field finishes. Field
+descent (`aimCell`, the drive and detour code) may read a tentative potential
+beyond the margin; descent stays sound on it, as on a half-built field.
+
+With B1: a paused build is a finished field to the blocked re-request (read
+through `known()`, `freeDescent` too) -- counting every member stalled on a
+paused build as blocked refreshed `legion_staticidle`'s parked guards
+(12728 relaxations instead of 0). And a group whose member waited on its paused
+build in the last 2 ticks is **active** (that member neither moves nor counts as
+blocked, and its stale paused build is what it waits for). B1's
+`work.demand_resumes` keeps counting resumed suppressed refreshes only; C1's
+resumes of a paused build count `work.paused_resumes`.
+
+With W5 (protocol 245): an attack or guard group's first field is never paused. The ring of a reach
+group is planned from a done field (`ringClaim`); a paused field never finishes while its members are
+covered, so the ring came late or not at all (attackring-r200-64 `reach.ring.ever_end` 57 -> 37 on the
+first merged head). Reach groups build to done, as on the W5 head.
 
 ## Instruments
 

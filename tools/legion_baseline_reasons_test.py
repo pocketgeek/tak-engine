@@ -78,6 +78,16 @@ class Gate(unittest.TestCase):
         r = run_check(doc, rec({"stop_go": 1101, "g.A.arrived": 90}))
         self.assertEqual(len(r.fails), 2)
 
+    def test_a_none_marker_is_not_a_loss_against_itself(self):
+        # W5 step 0: a key that reads -1 ("none": no near-wall samples, no completions) must not fail or
+        # ratchet against its own -1 base, lower or higher is better, and a real loss still fails.
+        doc = baseline({"clearance_mean_x100": entry(-1), "g.A.arrived": entry(-1, dir="higher")})
+        r = run_check(doc, rec({"clearance_mean_x100": -1, "g.A.arrived": -1}))
+        self.assertTrue(r.ok)
+        self.assertEqual(r.ratchets, [])
+        self.assertFalse(run_check(doc, rec({"clearance_mean_x100": 5, "g.A.arrived": -1})).ok)
+        self.assertFalse(run_check(doc, rec({"clearance_mean_x100": -1, "g.A.arrived": -5})).ok)
+
     def test_time_key_never_is_the_worst_value(self):
         doc = baseline({"g.A.t90": entry(500)})
         self.assertFalse(run_check(doc, rec({"g.A.t90": -1})).ok)

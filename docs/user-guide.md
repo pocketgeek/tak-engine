@@ -831,6 +831,14 @@ armies:
   so it is free for the next one at once. Units queued behind their own army end
   their orders where they stand. (A unit sealed in where nothing at all can be
   reached still waits up to five minutes for a way to open.)
+- **Attackers surround their target.** A group ordered to attack one unit or
+  building spreads round it and fires from a ring of places at weapon reach,
+  instead of queueing behind the first few: a unit that is firing stands still
+  and the ones behind walk round it to the next free place. A group sent
+  across the battlefield plans round a crowd that is standing and firing, and
+  a crowd that parks across a group's way after it has planned (20 cells or
+  more of it) makes the group plan again once. Units chasing a moving target
+  follow it without planning again at every step.
 - **Buildings do not hold a formation.** A building or an unfinished unit in an
   Alt+number formation no longer slows the formation to a standstill.
 - **No spinning.** A unit that is truly trapped stops and waits, instead of
@@ -858,8 +866,15 @@ in a formation or Ctrl+number group with ground units keep station over them.
 
 - A large group sent into a **dead-end corridor** can leave some units
   unsettled at the far end.
-- A crowd that parks **after** a group has already planned its route is not
-  avoided until the group's next order.
+- A crowd that parks **after** a group has already planned its route is
+  avoided only if it fills 20 cells or more of the group's way (the group then
+  plans again, at most once every ten seconds); a smaller one is walked round
+  when the group reaches it.
+- Units guarding a friend in a narrow place keep shuffling for a while, up to
+  about a minute, until the crowd round it has packed.
+- A group walking through a ring of units that stand and fire goes round the
+  ring slowly, and arrives somewhat later than it would past the same units
+  in the original game.
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
 - Idle units of **other players** do not step aside for you.

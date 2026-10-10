@@ -366,6 +366,9 @@ endforeach()
 # refresh); it failed by construction on the step-0 head.
 add_test(NAME legion_staticidle COMMAND legion_world_test staticidle)
 set_tests_properties(legion_staticidle PROPERTIES LABELS "legion;w4")
+# W4 C1: a paused first build resumes for a member's demand within 10 ticks.
+add_test(NAME legion_pausedemand COMMAND legion_world_test pausedemand)
+set_tests_properties(legion_pausedemand PROPERTIES LABELS "legion;w4")
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
@@ -475,6 +478,39 @@ foreach(legion_scn
     set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w3;nightly" TIMEOUT 1800)
   endif()
 endforeach()
+# W5 step 0 fixtures (PLAN 4 W5 step 0; tools/scenarios/gen_w5_fixtures.py writes them): the AR-06 attackring rows
+# (`reach` shape: attackers that ever get a shot, damage, the longest Holding run out of reach), fight-retarget and
+# ringcross (`probe claims`: the arrival-slot claims invariant), the MV-05 lateblock modes, the AR-07 chase / goalblock
+# re-seed fixtures, MV-18 keelturn and MV-07 staticblock (`creep`: the goal-area creep counter). Each reports the open
+# problem it measures, so the baseline holds today's values and a W5 step that makes one worse fails
+# legion_check_*; the gate (the PLAN target) is the exit of the step that fixes it. Sweep members of lateblock (the
+# size sweep) are not baselined.
+foreach(legion_scn
+    attackring-f1-64 attackring-f2-64 attackring-squad-64 attackring-f1-16 attackring-r200-64 attackring-mob-40
+    attackring-mob-100 attackring-struct-60 attackring-fight-60 attackring-guard-64 attackring-wall-64
+    attackring-river-64 fight-retarget ringcross chase-1 chase-50 chase-line goalblock-200 goalblock-fight-200
+    goalblock-near-200 keelturn-180 keelturn-90 keelturn-0 staticblock-own staticblock-other staticblock-open)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w5" TIMEOUT 600)
+  if(NOT WIN32)
+    add_test(NAME legion_check_${legion_scn}
+             COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                     --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+    set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w5;nightly" TIMEOUT 1800)
+  endif()
+endforeach()
+foreach(legion_scn lateblock-none lateblock-before-16 lateblock-late-16)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w5;nightly" TIMEOUT 1800)
+  if(NOT WIN32)
+    add_test(NAME legion_check_${legion_scn}
+             COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                     --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+    set_tests_properties(legion_check_${legion_scn} PROPERTIES LABELS "legion;w5;nightly" TIMEOUT 1800)
+  endif()
+endforeach()
 # Legion work-scaling gate (W(4N0)/W(N0), slot work per slot, upkeep per group,
 # every counter against tools/legion_cost_baseline.json) and the battle
 # scenarios' window tables (tools/legion_cost.py). Counters only: wall time is
@@ -494,6 +530,10 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(legion_scenario_battle-field-2x60 PROPERTIES LABELS legion TIMEOUT 600)
   set_tests_properties(legion_scenario_battle-field-2x250 legion_scenario_battle-field-2x500
                        legion_scenario_battle-assault PROPERTIES LABELS "legion;nightly" TIMEOUT 3600)
+  # The committed W5 fixtures are the output of tools/scenarios/gen_w5_fixtures.py (edit the script, not the files).
+  add_test(NAME legion_w5_fixtures
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/scenarios/gen_w5_fixtures.py --check)
+  set_tests_properties(legion_w5_fixtures PROPERTIES LABELS "legion;w5" TIMEOUT 120)
   # The baseline gate (tools/legion_check.py): every baseline.json entry, exception and accepted
   # regression carries a reason, and the gate's synthetic unit tests.
   add_test(NAME legion_baseline_reasons

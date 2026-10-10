@@ -22,6 +22,7 @@
 //   Not held: economy, scripts, AI, fog (the file explores the map), production and
 //   anything built or killed outside the window's commands.
 #include "net/lockstep.h"
+#include "client/ordershape.h"
 #include "net/protocol.h"
 #include "sim/sim.h"
 
@@ -40,7 +41,12 @@
 
 namespace tak::situation {
 
-inline constexpr uint32_t kCommandWindow = 600;   // ticks of commands kept
+inline constexpr uint32_t kCommandWindow = 600;   // ticks of commands kept (TAK_SITUATION_CMDS=N overrides: timing runs
+                                                  // that simulate more than 600 ticks keep the recording's commands for all of them)
+inline uint32_t commandWindow() {
+    if (const char* e = std::getenv("TAK_SITUATION_CMDS")) if (const unsigned long n = std::strtoul(e, nullptr, 10)) return uint32_t(n);
+    return kCommandWindow;
+}
 inline constexpr uint32_t kTruthTicks[] = {100, 300};   // where the recording's positions are sampled (the last ends the harvest)
 
 struct Request {
@@ -65,6 +71,7 @@ inline Request parseRequest(const char* text) {
     return r;
 }
 
+
 struct Meta {
     std::string mapId;      // a ~gen1~ recipe; any other map cannot be written (see write)
     std::string source;     // free text for the file's header comment
@@ -75,17 +82,28 @@ struct Meta {
 
 class Harvester {
 public:
-    void arm(const Request& r, const Meta& m) { req_ = r; meta_ = m; armed_ = r.valid; }
-    bool armed() const { return armed_; }
+    // TAK_SITUATION_SHAPES=N: after the cut, keep logging the order shape every 100 ticks up to +N (judging how fast a rebuilt
+    // situation converges on the recording's queues).
+    void arm(const Request& r, const Meta& m) {
+        req_ = r; meta_ = m; armed_ = r.valid;
+        if (const char* e = std::getenv("TAK_SITUATION_SHAPES")) shapeEnd_ = r.valid ? uint32_t(std::strtoul(e, nullptr, 10)) : 0;
+    }
+    bool armed() const { return armed_ || shapeEnd_ != 0; }
 
     // Call with the world as it stands after `tick` ticks, before applying bundle `tick`.
     // Returns true when the file was written (once).
     bool observe(uint32_t tick, const tak::sim::World& w, const std::vector<tak::net::Bundle>& bundles) {
+        if (shapeEnd_ && captured_ && tick > req_.tick) {
+            const uint32_t k = tick - req_.tick;
+            if (k % 100 == 0) std::fprintf(stderr, "situation: order shape at +%u: %s\n", k, orderShape(w).c_str());
+            if (k >= shapeEnd_) shapeEnd_ = 0;
+        }
         if (!armed_) return false;
         if (tick == req_.tick && !captured_) capture(w, bundles);
         if (captured_) {
             for (uint32_t k : kTruthTicks)
                 if (tick == req_.tick + k) {   // the recording's own positions k ticks in, in file (id) order
+                    if (!shapeEnd_) std::fprintf(stderr, "situation: order shape at +%u: %s\n", k, orderShape(w).c_str());
                     std::vector<std::pair<int32_t, int32_t>> pos;
                     std::vector<int> ids;
                     for (const Body& b : bodies_) ids.push_back(b.id);
@@ -125,10 +143,12 @@ private:
     Request req_;
     Meta meta_;
     bool armed_ = false, captured_ = false;
+    uint32_t shapeEnd_ = 0;
     std::vector<Body> bodies_;
     std::vector<Click> clicks_;
     std::vector<std::pair<uint32_t, std::vector<std::pair<int32_t, int32_t>>>> truths_;
     uint32_t clockTick_ = 0, clockRng_ = 0;
+    std::vector<int> teams_;   // the recording's team of every player
     std::vector<uint16_t> explored_;   // the recording's navigation exploration masks at the snapshot
 
     static uint64_t pointKey(float x, float z) {
@@ -140,9 +160,12 @@ private:
 
     void capture(const tak::sim::World& w, const std::vector<tak::net::Bundle>& bundles) {
         captured_ = true;
+        std::fprintf(stderr, "situation: order shape at tick %u: %s\n", req_.tick, orderShape(w).c_str());
         explored_ = w.navigationExploration();
         clockTick_ = w.tickCount();
         clockRng_ = w.gameRngState();
+        teams_.clear();
+        for (int p = 0; p < w.numPlayers(); ++p) teams_.push_back(w.player(p).team);
         std::set<int> inSnapshot;
         for (const auto& u : w.units()) {
             if (!u.alive() || !u.type || u.inTransport || u.underConstruction) continue;
@@ -205,7 +228,7 @@ private:
             }
             clicks_.push_back(std::move(o.c));
         };
-        for (uint32_t k = 0; k < kCommandWindow && req_.tick + k < bundles.size(); ++k) {
+        for (uint32_t k = 0, win = commandWindow(); k < win && req_.tick + k < bundles.size(); ++k) {
             // A cluster that has been quiet for two ticks is a finished click.
             for (auto it = open.begin(); it != open.end();) {
                 if (it->second.last + 2 < k) { flush(it->second); it = open.erase(it); }
@@ -246,8 +269,10 @@ private:
     }
 
     bool write() const {
-        if (meta_.mapId.rfind("~gen1~", 0) != 0) {
-            std::fprintf(stderr, "situation: map '%s' is not a ~gen1~ recipe; a .scn cannot name it\n", meta_.mapId.c_str());
+        // A ~gen1~ recipe names itself; any other map is named and resolved through the install (data-gated, like the fbi types).
+        const bool gen1 = meta_.mapId.rfind("~gen1~", 0) == 0;
+        if (!gen1 && (meta_.mapId.empty() || meta_.mapId.find('\n') != std::string::npos)) {
+            std::fprintf(stderr, "situation: map '%s' cannot be named in a .scn\n", meta_.mapId.c_str());
             return false;
         }
         // Bodies go out in the recording's unit-id order, because spawn order is id order in the new world and
@@ -283,11 +308,12 @@ private:
         if (name.size() > 4 && name.compare(name.size() - 4, 4, ".scn") == 0) name.resize(name.size() - 4);
         std::fprintf(f, "scn 1\nname %s\n", name.c_str());
         std::fprintf(f, "# Situation cut by TAK_SITUATION (src/client/situation.h) from %s,\n", meta_.source.c_str());
-        std::fprintf(f, "# the world at tick %u of the recording and the next %u ticks of its human commands.\n",
-                     req_.tick, kCommandWindow);
+        std::fprintf(f, "# the world at tick %u of the recording and the next %u ticks of its commands.\n",
+                     req_.tick, commandWindow());
         std::fprintf(f, "# Bodies are exact (raw 16.16 px, raw BAM, raw hp, raw individual speed); `truth` holds the recording's own\n"
                         "# positions at +%u and +%u ticks, in group order.\n", kTruthTicks[0], kTruthTicks[std::size(kTruthTicks) - 1]);
         std::fprintf(f, "ticks 3000\nseed %u\nplayers %d\nweapons on\n", meta_.seed, meta_.players);
+        for (size_t p = 0; p < teams_.size() && int(p) < meta_.players; ++p) std::fprintf(f, "team %zu %d\n", p, teams_[p]);
         if (explored_.empty()) std::fprintf(f, "explored all\n");
         else {   // what the recording's players had explored: pathing treats unexplored ground differently
             std::fprintf(f, "explored rle");
@@ -300,7 +326,7 @@ private:
             std::fprintf(f, "\n");
         }
         if (meta_.crusades) std::fprintf(f, "crusades on\n");
-        std::fprintf(f, "map gen1 %s\n", meta_.mapId.c_str());
+        std::fprintf(f, gen1 ? "map gen1 %s\n" : "map named %s\n", meta_.mapId.c_str());
         for (const auto& t : types) std::fprintf(f, "type %s fbi %s\n", t.c_str(), t.c_str());
         for (const auto& run : runs) {
             const Body& first = bodies[run.first];
@@ -320,6 +346,7 @@ private:
             for (int id : c.units) {
                 auto it = index.find(id);
                 if (it == index.end() || !seen.insert(it->second).second) continue;
+                if (bodies[it->second].owner != c.owner) continue;   // a click is one player's selection (allied control in a recording)
                 list += (list.empty() ? "%" : ",%") + std::to_string(it->second);
             }
             if (list.empty()) continue;

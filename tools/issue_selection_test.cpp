@@ -565,6 +565,9 @@ region home 0 0 18 24
 gate wide 10 0 20 24 lateral=z band=3 mincount=2 edge=3 pairwindow=200 flip=2
 lane swap 5 8 5 12 30 8 30 12 bsign=-1 window=100 mincells=3 across=all
 pair near A,B E* cells=3
+reach shot A,B E* range=96 marks=300,600
+creep tail A,B
+probe claims
 churn 40 9 2 2 every=5 walk=2,0,8 toggle until=60
 at 30 move F,A,B 50 8
 at 60 fight A,B @E queue
@@ -678,7 +681,7 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
     roundTrip(kAscii, "ascii");
     const auto ascii = tak::scn::parse(kAscii, "ascii");
     check(ascii.map.width == 64 && ascii.map.height == 24, "ascii: size from the rows");
-    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 6, "ascii: counts");
+    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 8, "ascii: counts");
     {
         const auto& g = *ascii.shape("wide");
         check(g.lateral == 1 && g.band == 3 && g.minCount == 2 && g.edge == 3 && g.pairWindow == 200 && g.flip == 2,
@@ -693,6 +696,11 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
               "ascii: churn");
         const auto& p = *ascii.shape("near");
         check(p.kind == "pair" && p.a == "A,B" && p.b == "E*" && p.cells == 3, "ascii: pair shape");
+        const auto& r = *ascii.shape("shot");
+        check(r.kind == "reach" && r.a == "A,B" && r.b == "E*" && r.range == 96 && r.marks == std::vector<int>({300, 600}),
+              "ascii: reach shape");
+        const auto& c = *ascii.shape("tail");
+        check(c.kind == "creep" && c.a == "A,B" && ascii.probeClaims && !ascii.probeApproach, "ascii: creep shape, probe claims");
     }
     check(ascii.group("A")->squad == -1 && ascii.group("E")->weapons == 1, "ascii: group options");
     check(ascii.orders[0].selection == std::vector<std::string>{"F", "A", "B"}, "ascii: selection order kept");
@@ -816,6 +824,16 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
               sc.groups[0].spots[2].id == 40 && sc.truths.size() == 2 && sc.truths[1].pos.size() == 4 && sc.truths[1].tick == 100,
               "situation: spots and truth parsed");
         check(sc.groupOfBody(3) == 1 && sc.groupOfBody(4) == -1, "situation: body numbers span the groups in file order");
+        {   // the body locator is a cumulative index: it agrees with a linear walk, and a named map round-trips
+            const auto at = sc.locateBody(2);
+            check(at.first == 0 && at.second == 2 && sc.locateBody(3).first == 1 && sc.locateBody(3).second == 0,
+                  "situation: a body number locates its group and its index inside it");
+            const std::string named = "scn 1\nname n\nplayers 2\nmap named Ulasem Arena\ntype m fbi aracommander\ngroup a 0 m 1 cells 5,5\n";
+            roundTrip(named, "named map");
+            const auto nm = tak::scn::parse(named, "named map");
+            check(nm.map.kind == tak::scn::MapSpec::Named && nm.map.recipe == "Ulasem Arena" && !nm.needsData().empty(),
+                  "situation: `map named` keeps a multi-word name and needs the install");
+        }
         tak::scn::BuildOptions opt;
         auto b = tak::scn::build(sc, opt);
         const auto& ids = b->groups.at("a");

@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -102,6 +103,11 @@ struct Shape {   // gate/line: a segment; region: a rectangle; lane: two segment
     // pair: comma lists of group names (a trailing '*' matches a name prefix) and the contact radius in cells.
     std::string a, b;
     int cells = 0;
+    // reach (W5 AR-06): `a` attackers, `b` targets (comma lists, trailing '*' a prefix); range = px, 0: the
+    // attacker's weapon reach as tickCombat reads it; marks = the ticks at which the ever-in-reach count and
+    // the damage dealt are also reported.
+    int range = 0;
+    std::vector<int> marks;
 };
 
 // `churn`: a blocking map feature placed (and, with toggle, lifted again) every `every` ticks, as corpses and
@@ -116,7 +122,7 @@ struct ChurnSpec {
 };
 
 struct MapSpec {
-    enum Kind { Ascii, Flat, Gen1, Snapshot };
+    enum Kind { Ascii, Flat, Gen1, Snapshot, Named };
     Kind kind = Flat;
     int width = 0, height = 0;
     std::vector<std::string> rows;    // ascii
@@ -136,6 +142,7 @@ struct Scenario {
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
     bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
+    bool probeClaims = false;         // `probe claims`: the runner audits the arrival-slot claims every 10 ticks (W5 step 0)
     std::vector<int> gateOffsets;     // `gateoffsets O,O,..`: legion_scenario's gate offsets where 0,+-1..+-5 leave the map
     MapSpec map;
     std::vector<TypeSpec> types;
@@ -152,19 +159,32 @@ struct Scenario {
         std::vector<std::pair<int32_t, int32_t>> pos;
     };
     std::vector<Truth> truths;        // ascending ticks; a file may carry several (`truth 100 ...`, `truth 300 ...`)
+    mutable std::vector<size_t> bodyStart_;                       // groups[g]'s first body number (indexGroups)
+    mutable std::unordered_map<std::string, size_t> nameIndex_;   // group name -> index
 
     const TypeSpec* type(const std::string& n) const {
         for (const auto& t : types) if (t.name == n) return &t;
         return nullptr;
     }
-    // The group a body number "#N" falls in (bodies are numbered across the groups in file order); -1 when out of range.
-    int groupOfBody(size_t n) const {
-        for (size_t g = 0; g < groups.size(); ++g) {
-            if (n < size_t(groups[g].count)) return int(g);
-            n -= size_t(groups[g].count);
+    // Group lookups by name and by body number stay O(log n) however many groups a situation holds (a harvested 10k-body
+    // situation has 10k groups and hundreds of clicks naming bodies): the index grows with `groups` and is never rebuilt.
+    void indexGroups() const {
+        while (bodyStart_.size() < groups.size()) {
+            const size_t g = bodyStart_.size();
+            bodyStart_.push_back(g ? bodyStart_[g - 1] + size_t(groups[g - 1].count) : 0);
+            nameIndex_.emplace(groups[g].name, g);
         }
-        return -1;
     }
+    // The group a body number "#N" falls in (bodies are numbered across the groups in file order) and the body's
+    // index inside it; group -1 when out of range.
+    std::pair<int, size_t> locateBody(size_t n) const {
+        indexGroups();
+        if (groups.empty()) return {-1, 0};
+        if (n >= bodyStart_.back() + size_t(groups.back().count)) return {-1, 0};
+        const size_t g = size_t(std::upper_bound(bodyStart_.begin(), bodyStart_.end(), n) - bodyStart_.begin()) - 1;
+        return {int(g), n - bodyStart_[g]};
+    }
+    int groupOfBody(size_t n) const { return locateBody(n).first; }
     static bool isBodyToken(const std::string& t) { return t.size() > 1 && t[0] == '%'; }
     static size_t bodyNumber(const std::string& t) { return size_t(std::strtoul(t.c_str() + 1, nullptr, 10)); }
     // Does the order's selection include (a body of) group index `g`?
@@ -175,8 +195,9 @@ struct Scenario {
         return false;
     }
     const GroupSpec* group(const std::string& n) const {
-        for (const auto& g : groups) if (g.name == n) return &g;
-        return nullptr;
+        indexGroups();
+        const auto it = nameIndex_.find(n);
+        return it == nameIndex_.end() ? nullptr : &groups[it->second];
     }
     const Shape* shape(const std::string& n) const {
         for (const auto& s : shapes) if (s.name == n) return &s;
@@ -189,6 +210,7 @@ struct Scenario {
         for (const auto& t : types)
             if (t.kind == TypeSpec::Fbi) return "fbi type '" + t.fbi + "'";
         if (map.kind == MapSpec::Gen1) return "gen1 map";
+        if (map.kind == MapSpec::Named) return "map '" + map.recipe + "'";
         if (map.kind == MapSpec::Snapshot) return "snapshot " + map.file;
         return {};
     }
@@ -334,8 +356,8 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             }
         } else if (k == "probe") {
             need(2, 2);
-            if (w[1] != "approach") c.fail("probe approach");
-            s.probeApproach = true;
+            if (w[1] != "approach" && w[1] != "claims") c.fail("probe approach|claims");
+            (w[1] == "approach" ? s.probeApproach : s.probeClaims) = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
         else if (k == "gateoffsets") {
             need(2, 2);
@@ -361,6 +383,11 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
                 if (!tak::mapgen::isGeneratedMapId(w[2])) c.fail("not a ~gen1~ recipe: " + w[2]);
                 s.map.kind = MapSpec::Gen1;
                 s.map.recipe = w[2];
+            } else if (w[1] == "named") {   // a map of the install, by name (situations cut from retail-map recordings)
+                if (w.size() < 3) c.fail("map named NAME");
+                s.map.kind = MapSpec::Named;
+                s.map.recipe = w[2];
+                for (size_t i = 3; i < w.size(); ++i) s.map.recipe += " " + w[i];
             } else if (w[1] == "snapshot") {
                 need(3, 3);
                 s.map.kind = MapSpec::Snapshot;
@@ -586,14 +613,17 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (!haveEvery) c.fail("churn needs every=N");
             if (ch.until && ch.until <= ch.from) c.fail("churn until must follow from");
             s.churns.push_back(ch);
-        } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair") {
-            if (k == "pair") need(4, 5); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
+        } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair" || k == "reach" || k == "creep") {
+            if (k == "creep") need(3, 3); else if (k == "pair" || k == "reach") need(4, k == "pair" ? 5 : 6); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
             if (s.shape(w[1])) c.fail("shape '" + w[1] + "' defined twice");
             Shape sh;
             sh.kind = k;
             sh.name = w[1];
             size_t at = 0;
-            if (k == "pair") {
+            if (k == "creep") {
+                sh.a = w[2];
+                at = 3;
+            } else if (k == "pair" || k == "reach") {
                 sh.a = w[2]; sh.b = w[3];
                 at = 4;
             } else {
@@ -627,7 +657,12 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
                     if (val != "all" && val != "group") c.fail("across=all|group");
                     sh.acrossGroups = val == "all";
                 } else if (k == "pair" && key == "cells") sh.cells = int(c.integer(val, 0, 32));
-                else c.fail("unknown option '" + key + "' for " + k);
+                else if (k == "reach" && key == "range") sh.range = int(c.integer(val, 1, 100000));
+                else if (k == "reach" && key == "marks") {
+                    auto list = val;
+                    std::replace(list.begin(), list.end(), ',', ' ');
+                    for (const auto& m : words(list)) sh.marks.push_back(int(c.integer(m, 1, 10'000'000)));
+                } else c.fail("unknown option '" + key + "' for " + k);
             }
             if ((k == "lane" && (sh.beforeSign == 0 || sh.afterSign == 0)))
                 c.fail("bsign and asign are 1 or -1");
@@ -646,12 +681,15 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
         if (p >= s.players || t >= s.players) c.fail("team outside players");
     for (const auto& o : s.orders) {   // one click is one player's selection
         int owner = -1;
-        for (size_t gi = 0; gi < s.groups.size(); ++gi)
-            if (s.selects(o, gi)) {
-                const auto& g = s.groups[gi];
-                if (owner >= 0 && g.owner != owner) c.fail("an order's selection spans two players");
-                owner = g.owner;
-            }
+        auto take = [&](const GroupSpec& g) {
+            if (owner >= 0 && g.owner != owner) c.fail("an order's selection spans two players");
+            owner = g.owner;
+        };
+        if (o.selection[0] == "all") { for (const auto& g : s.groups) take(g); continue; }
+        for (const auto& t : o.selection) {
+            if (Scenario::isBodyToken(t)) { if (const int gi = s.groupOfBody(Scenario::bodyNumber(t)); gi >= 0) take(s.groups[size_t(gi)]); }
+            else if (const GroupSpec* g = s.group(t)) take(*g);
+        }
     }
     std::stable_sort(s.orders.begin(), s.orders.end(),
                      [](const OrderSpec& a, const OrderSpec& b) { return a.tick < b.tick; });
@@ -684,6 +722,7 @@ inline std::string format(const Scenario& s) {
     } else o << "explored " << (s.explored ? "all" : "none") << "\n";
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
     if (s.probeApproach) o << "probe approach\n";
+    if (s.probeClaims) o << "probe claims\n";
     if (!s.gateOffsets.empty()) {
         o << "gateoffsets ";
         for (size_t i = 0; i < s.gateOffsets.size(); ++i) o << (i ? "," : "") << s.gateOffsets[i];
@@ -697,6 +736,7 @@ inline std::string format(const Scenario& s) {
         break;
     case MapSpec::Flat: o << "map flat " << s.map.width << " " << s.map.height << "\n"; break;
     case MapSpec::Gen1: o << "map gen1 " << s.map.recipe << "\n"; break;
+    case MapSpec::Named: o << "map named " << s.map.recipe << "\n"; break;
     case MapSpec::Snapshot: o << "map snapshot " << s.map.file << "\n"; break;
     }
     for (const auto& v : s.map.overlays) {
@@ -748,7 +788,8 @@ inline std::string format(const Scenario& s) {
     }
     for (const auto& sh : s.shapes) {
         o << sh.kind << " " << sh.name;
-        if (sh.kind == "pair") o << " " << sh.a << " " << sh.b;
+        if (sh.kind == "creep") o << " " << sh.a;
+        else if (sh.kind == "pair" || sh.kind == "reach") o << " " << sh.a << " " << sh.b;
         else o << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " " << fmt(sh.z1);
         if (sh.kind == "lane")
             o << " " << fmt(sh.ax0) << " " << fmt(sh.az0) << " " << fmt(sh.ax1) << " " << fmt(sh.az1);
@@ -762,6 +803,13 @@ inline std::string format(const Scenario& s) {
             opt("window", sh.window, 0); opt("mincells", sh.minCells, 0);
             if (sh.acrossGroups) o << " across=all";
         } else if (sh.kind == "pair") opt("cells", sh.cells, 0);
+        else if (sh.kind == "reach") {
+            opt("range", sh.range, 0);
+            if (!sh.marks.empty()) {
+                o << " marks=";
+                for (size_t i = 0; i < sh.marks.size(); ++i) o << (i ? "," : "") << sh.marks[i];
+            }
+        }
         o << "\n";
     }
     for (const auto& ch : s.churns) {
@@ -948,7 +996,10 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
         cfg.startSeed = s.seed;
         cfg.slots.resize(size_t(s.players));   // unused slots: no monarchs
         if (s.map.kind == MapSpec::Gen1) cfg.mapPath = s.map.recipe;
-        else {
+        else if (s.map.kind == MapSpec::Named) {
+            cfg.mapPath = tak::hpi::findMap(*b->vfs, s.map.recipe);
+            if (cfg.mapPath.empty()) throw std::runtime_error(s.origin + ": map '" + s.map.recipe + "' is not in the install");
+        } else {
             const auto path = std::filesystem::path(s.dir) / s.map.file;
             if (s.map.file.size() > 4 && s.map.file.compare(s.map.file.size() - 4, 4, ".kmp") == 0) {
                 auto pkg = tak::net::maps::importSnapshot(*b->vfs, path);
@@ -1105,12 +1156,10 @@ public:
                 if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
         };
         auto addBody = [&](size_t n) {
-            for (const auto& g : s_.groups) {
-                if (n >= size_t(g.count)) { n -= size_t(g.count); continue; }
-                const int id = b_.groups.at(g.name)[n];
-                if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
-                return;
-            }
+            const auto [gi, at] = s_.locateBody(n);
+            if (gi < 0) return;
+            const int id = b_.groups.at(s_.groups[size_t(gi)].name)[at];
+            if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
         };
         if (o.selection[0] == "all") for (const auto& g : s_.groups) add(g.name);
         else for (const auto& n : o.selection) {

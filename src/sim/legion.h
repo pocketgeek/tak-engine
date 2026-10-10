@@ -87,7 +87,10 @@ public:
         uint64_t blockedRerequests=0; // demand re-requests by blocked members (0 until demand refresh exists)
         uint64_t liftMembersWalked=0,liftMembersSkipped=0;   // liftFlyers: steps walked / box-rejected
         uint64_t waitingMemberTicks=0;   // member updates spent waiting for a field
-        uint64_t demandResumes=0,fieldsPaused=0;   // paused builds (0 until paused builds exist)
+        // Stale refreshes resumed once their group is active again (B1, see
+        // refreshSuppressed); first builds paused once they cover their
+        // members and paused builds resumed for a member's demand (C1).
+        uint64_t demandResumes=0,fieldsPaused=0,pausedResumes=0;
         uint64_t stillUnitsProcessed=0;  // bodies scanStill sampled
         // ---- W4 step 0 instruments (observation only, never hashed) ----------
         // Gauges (running maxima, not per-tick work): the most bodies one
@@ -107,7 +110,7 @@ public:
         uint64_t crowdSettleVisits=0;      // units walked to rebuild the factory exit lanes
         uint64_t rechoiceBfsCells=0;       // the settle rule's slot re-choice (rechoose)
         uint64_t formationRingCells=0;     // formationCell
-        uint64_t moveCallsByState[8]={};   // move() per member state (0 none .. 5 trapped)
+        uint64_t moveCallsByState[8]={};   // move() per member state (0 none .. 5 trapped, 6 engaged)
         uint64_t pivotPartIds=0;           // pivotAim's per-part centroid pass (ids of points of 2+ parts)
         uint64_t joinIterations=0;         // registerMove's group-join scan
         // ---- completions (T1) ------------------------------------------------
@@ -120,6 +123,15 @@ public:
         uint64_t midrouteCompletions=0,outsideAreaCompletions=0;
         uint64_t completionDist[10]={};
         uint64_t completionDistSum=0,completionDistMax=0;
+        // ---- W5 step 0 instruments (observation only, never hashed) ----------
+        // engagedNow is cumulative like every counter (the verify hook demands it): the
+        // member-ticks tickCombat braked an in-reach ground attacker or a guard within 70 px
+        // (the bodies W5's Engaged flag will mark), so its per-tick delta IS the number
+        // engaged now and its total the engaged member-ticks. The other four count
+        // mechanisms W5 builds and read 0 until their step exists: reach-ring slots handed
+        // out (step 1), stale-block re-plans MV-05 triggered (step 3), chase re-seeds that
+        // kept the group (step 2), brisk-tier steps taken unturned at cap/2 (step 4).
+        uint64_t engagedNow=0,reachSlotsBuilt=0,softReplans=0,reseedsInPlace=0,briskSteps=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -150,7 +162,7 @@ public:
         array("fields_started_by_kind",s.fieldsStartedByKind,16);
         f("refresh_deferred",s.refreshDeferred);f("blocked_rerequests",s.blockedRerequests);
         f("lift_members_walked",s.liftMembersWalked);f("lift_members_skipped",s.liftMembersSkipped);
-        f("waiting_member_ticks",s.waitingMemberTicks);f("demand_resumes",s.demandResumes);f("fields_paused",s.fieldsPaused);
+        f("waiting_member_ticks",s.waitingMemberTicks);f("demand_resumes",s.demandResumes);f("fields_paused",s.fieldsPaused);f("paused_resumes",s.pausedResumes);
         f("still_units_processed",s.stillUnitsProcessed);
         f("still_per_residue_max",s.stillPerResidueMax);f("quota_peg_run_max",s.quotaPegRunMax);
         f("anchor_walk_iters",s.anchorWalkIters);f("soft_hash_verify_ticks",s.softHashVerifyTicks);f("refresh_suppressed",s.refreshSuppressed);
@@ -159,6 +171,8 @@ public:
         array("move_calls_by_state",s.moveCallsByState,8);f("join_iterations",s.joinIterations);
         f("midroute_completions",s.midrouteCompletions);f("outside_area_completions",s.outsideAreaCompletions);
         array("completion_dist",s.completionDist,10);f("completion_dist_sum",s.completionDistSum);f("completion_dist_max",s.completionDistMax);
+        f("engaged_now",s.engagedNow);f("reach_slots_built",s.reachSlotsBuilt);f("soft_replans",s.softReplans);
+        f("reseeds_in_place",s.reseedsInPlace);f("brisk_steps",s.briskSteps);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));
@@ -202,7 +216,7 @@ public:
     // fresh whole-map build: legality, component partition, sizes, boxes?
     bool planeMatchesRebuild(const Unit&);
     // Test hook: the unit's movement state (0 none, 1 moving, 2 holding,
-    // 3 waiting for its field) and its group's identity.
+    // 3 waiting for its field, 4 arrived, 5 trapped, 6 engaged) and its group's identity.
     int unitState(int id) const;
     int unitGroup(int id) const;
     // Test hook: the unit's settled-arrival records, as bits: 1 anchor,
@@ -211,6 +225,18 @@ public:
     // Observation hook (read-only, never hashed): cells left in the unit's committed local detour route
     // (0: none, or not a Legion member). MV-06's route-follower crawl samples read it.
     int routeLength(int id) const;
+    // tickCombat braked this unit in reach (an attacker) or within 70 px of its guard
+    // target: counted into Stats::engagedNow when Legion routes it, and its member is
+    // Engaged (settled and still to local steering) until its next move() (AR-06).
+    void noteEngaged(const Unit&);
+    // W5 step 0 (the claims invariant, read-only, never hashed): audit every member's
+    // claimed arrival slot against its point's claimed cells. `overlaps` counts cells two
+    // members of a point both claim, `missing` claimed footprint cells the point does not
+    // hold (a lost claim), `dangling` members that hold a slot on a point that is gone,
+    // `orphans` point cells no member's slot covers (report only: a settled body that left
+    // the navigator keeps its cells by design). overlaps + missing + dangling must be 0.
+    struct ClaimsAudit {int members=0,overlaps=0,missing=0,dangling=0,orphans=0;};
+    ClaimsAudit claimsAudit() const;
     // W6 (PLAN 3.6): is the unit a Legion member still making headway, its
     // headway clock (the last tick it reached a new best potential on its
     // group's field) under `limit` ticks?
