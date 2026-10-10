@@ -165,6 +165,8 @@ constexpr uint32_t kStillScan=30;
 constexpr uint16_t kStillScans=2;
 constexpr uint32_t kSoftFactor=4;
 constexpr uint32_t kSoftNear=3;                // ... within a cell of one
+constexpr uint32_t kBehindFactor=12;           // a pass-behind corridor (see Field::Corridor)
+static_assert((kSoftFactor+kBehindFactor-1)*kDiagonal+kDiagonal<128,"Field buckets: one relaxation's key rise");
 // Group awareness (see awareScan): every kAwareScan ticks each moving
 // formation of at least kAwareMembers is a mover: its centroid, spread and
 // the corridor it sweeps over the next kAwareAhead scans. A group whose way
@@ -253,15 +255,50 @@ struct LegionNavigator::Impl {
         // two cells of its edge kSoftNear times. With a soft obstacle on top
         // a key rises by at most (2*kSoftFactor-1)*kDiagonal plus the
         // heuristic's kDiagonal, under the 128 buckets.
-        struct Corridor {int64_t x0=0,z0=0,x1=0,z1=0,r=0;bool operator==(const Corridor&) const=default;};
+        // A pass-behind corridor (behind=true, PLAN 3.3 G2 under user
+        // decision 5) is swept in time: a crossing stream (its tail at x0,z0
+        // on the tick it was placed, heading ux,uz px per kAwareScan ticks, L
+        // their length, `len` px from its tail to kAwareHorizon ticks past
+        // its head, r its half width + 16) charges a position only if it
+        // will cover it when the later group gets there -- the group's
+        // centroid then (x1,z1) and its slowest speed (raw Fixed px per tick)
+        // give the arrival, by octile distance less `lead` (twice the group's
+        // spread radius: its front bodies get there first; measured: a lead
+        // of one radius still met the tail at the stream's edge, three cut
+        // into the group's own start). So the cheapest way is just
+        // behind the stream's tail wherever the group meets it. It charges
+        // kBehindFactor times inside; it is no wall, so where no detour exists
+        // at all the group still crosses as before. With a soft obstacle on
+        // top a key then rises by at most (kSoftFactor+kBehindFactor-1)*
+        // kDiagonal plus the heuristic's kDiagonal = 112, under the 128 buckets.
+        struct Corridor {
+            int64_t x0=0,z0=0,x1=0,z1=0,r=0;bool behind=false;
+            int64_t ux=0,uz=0,L=1,len=0,speed=0,lead=0;
+            bool operator==(const Corridor&) const=default;
+            // 2 inside, 1 within 32 px of it, 0 clear.
+            int level(int64_t px,int64_t pz) const {
+                if(!behind) {
+                    const int64_t d2=segDist2(px,pz,*this);
+                    return d2<=r*r?2:d2<=(r+32)*(r+32)?1:0;
+                }
+                const int64_t ox=px-x0,oz=pz-z0,q=std::abs(ox*uz-oz*ux)/L;
+                if(q>r+32)return 0;
+                const int64_t s=(ox*ux+oz*uz)/L;
+                const int64_t ax=std::abs(px-x1),az=std::abs(pz-z1);
+                const int64_t t=std::max<int64_t>(0,std::max(ax,az)+std::min(ax,az)*2/5-lead)*65536/speed;
+                const int64_t st=L*t/int64_t(kAwareScan);
+                if(s<st-32||s>st+len+32)return 0;
+                return q<=r&&s>=st&&s<=st+len?2:1;
+            }
+        };
         std::vector<Corridor> avoid;
         uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {
             uint32_t extra=0;
             const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
             for(const auto& c:avoid) {
-                const int64_t d2=segDist2(px,pz,c);
-                if(d2<=c.r*c.r)return base*(kSoftFactor-1);
-                if(d2<=(c.r+32)*(c.r+32))extra=base*(kSoftNear-1);
+                const int l=c.level(px,pz);
+                if(l==2)extra=std::max(extra,base*((c.behind?kBehindFactor:kSoftFactor)-1));
+                else if(l==1)extra=std::max(extra,base*(kSoftNear-1));
             }
             return extra;
         }
@@ -388,6 +425,10 @@ struct LegionNavigator::Impl {
         // Each entry's class, fixed when it was first planned (kAwareHeadOn or
         // kAwareCross, see awareScan; C28). Hashed with a tag when not head on (C27).
         std::vector<uint8_t> avoidKind;
+        // A crossing entry's side of the stream's axis when it was first
+        // planned (+1/-1) and the tick its corridor was last placed (G2,
+        // see awareScan). Hashed with the class.
+        std::vector<int8_t> avoidSide;std::vector<uint32_t> avoidAt;
         uint32_t awareAt=0;   // tick of the first awareScan replan not yet served by an install (Stats only, never hashed)
         // Awareness correctness (PLAN 3.3 F, W7 step 5): the pending refresh
         // is an aware re-plan, served first inside the refresh allowance
@@ -3519,8 +3560,10 @@ struct LegionNavigator::Impl {
     // some member of the group, and never by a group whose mission engages
     // enemies (fight, attack, guard, patrol). Two groups meeting head on each
     // keep right: the corridor a group plans round is shifted to its left by
-    // half the corridor's radius. Deterministic: integer, ordered, on a fixed
-    // cadence; the plans are hashed.
+    // half the corridor's radius. Crossing ways: the later group plans round
+    // a pass-behind corridor and so routes behind the other stream, never
+    // waiting at its edge (user decision 5). Deterministic: integer,
+    // ordered, on a fixed cadence; the plans are hashed.
     static constexpr int kAwareStarts=8;   // aware refreshes started first per tick (PLAN 3.3 F)
     // Detection (PLAN 3.3 G, W7 step 6): a group samples its own way (the
     // descent chain, walked at its slowest member's base speed) and each
@@ -3534,6 +3577,7 @@ struct LegionNavigator::Impl {
     // (2*dot^2 >= |a|^2*|b|^2, dot < 0), the same way under 45 (followed,
     // never planned round), crossing between.
     static constexpr int kAwareSample=15,kAwareHorizon=450,kAwareLead=45;
+    static constexpr uint32_t kBehindMove=90;
     enum : uint8_t {kAwareHeadOn=0,kAwareCross=1};
     void awareScan() {
         if(w.tickCounter_%kAwareScan!=kAwareScan/2||gAwareOff)return;
@@ -3590,6 +3634,7 @@ struct LegionNavigator::Impl {
         for(auto& [id,g]:groups) {
             const auto a=acc.find(id);
             std::vector<uint64_t> want;std::vector<Field::Corridor> seg;std::vector<uint8_t> kind;
+            std::vector<int8_t> side;std::vector<uint32_t> placed;std::vector<uint8_t> moved;
             if(a!=acc.end()&&a->second.n>=kAwareMembers&&g.field&&g.field->done&&!movers.empty()) {
                 const auto& p=planes[size_t(g.plane)];
                 const int64_t n=a->second.n,cx=a->second.sx/n,cz=a->second.sz/n;
@@ -3634,6 +3679,38 @@ struct LegionNavigator::Impl {
                         }
                         const auto known=std::find(g.avoidCmd.begin(),g.avoidCmd.end(),mv.command);
                         const bool isKnown=known!=g.avoidCmd.end();
+                        const size_t ki=size_t(known-g.avoidCmd.begin());
+                        // The group's centroid along and across the mover's heading.
+                        const int64_t sg=((cx-mv.cx)*mv.dx+(cz-mv.cz)*mv.dz)/mv.L,qg=((cx-mv.cx)*mv.dz-(cz-mv.cz)*mv.dx)/mv.L;
+                        // Pass behind (G2, user decision 5): the stream's band,
+                        // swept in time from its tail to kAwareHorizon past its
+                        // head, as wide as the stream plus 16 px (see
+                        // Field::Corridor). The later group never waits at the
+                        // stream's edge: it takes the longer way behind it.
+                        auto behind=[&]() {
+                            return Field::Corridor{mv.cx-mv.dx*mv.tail/mv.L,mv.cz-mv.dz*mv.tail/mv.L,cx,cz,mv.half+16,true,
+                                mv.dx,mv.dz,mv.L,mv.tail+mv.head+mv.L*kAwareHorizon/int64_t(kAwareScan),speed,2*rG};
+                        };
+                        // A crossing the group gives way to stays planned until
+                        // the group is past the stream's axis or the stream's
+                        // tail is past the group; its corridor follows the
+                        // stream, moved (a re-plan) only when its tail end has
+                        // drifted more than max(32, half/2) px and at most every
+                        // kBehindMove ticks.
+                        if(isKnown&&g.avoidKind[ki]==kAwareCross) {
+                            if(qg*g.avoidSide[ki]<=0||sg<-(mv.tail+rG+32))continue;
+                            Field::Corridor cor=behind();
+                            const Field::Corridor& was=g.avoidSeg[ki];
+                            // The planned tail, carried to now, against the live one.
+                            const int64_t gone=int64_t(w.tickCounter_-g.avoidAt[ki]);
+                            const int64_t drift=std::max(std::abs(cor.x0-was.x0-was.ux*gone/int64_t(kAwareScan)),std::abs(cor.z0-was.z0-was.uz*gone/int64_t(kAwareScan)));
+                            const int64_t limit=std::max<int64_t>(32,mv.half/2);
+                            const bool move=!was.behind||(drift>limit&&w.tickCounter_-g.avoidAt[ki]>=kBehindMove);
+                            if(!move)cor=was;
+                            want.push_back(mv.command);seg.push_back(cor);kind.push_back(kAwareCross);side.push_back(g.avoidSide[ki]);
+                            placed.push_back(move?w.tickCounter_:g.avoidAt[ki]);moved.push_back(move);
+                            continue;
+                        }
                         // The conflict: the first sample where the group's disc
                         // meets the mover's box, both moved on t ticks.
                         int64_t hit=-1;
@@ -3666,14 +3743,19 @@ struct LegionNavigator::Impl {
                         // one (the larger command key: player, then issue
                         // tick); head on, both keep right.
                         if(cls==kAwareCross&&mv.command>g.command)continue;
+                        if(cls==kAwareCross) {
+                            want.push_back(mv.command);seg.push_back(behind());kind.push_back(kAwareCross);
+                            side.push_back(qg<0?-1:1);placed.push_back(w.tickCounter_);moved.push_back(true);
+                            continue;
+                        }
                         Field::Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
                         // Head on: keep right (plan round a corridor shifted left).
-                        if(cls==kAwareHeadOn) {
+                        {
                             const int64_t tl=std::max<int64_t>(1,isqrtFloor(uint64_t(tx*tx+tz*tz)));
                             const int64_t lx=tz*cor.r/(2*tl),lz=-tx*cor.r/(2*tl);
                             cor.x0+=lx;cor.x1+=lx;cor.z0+=lz;cor.z1+=lz;
                         }
-                        want.push_back(mv.command);seg.push_back(cor);kind.push_back(cls);
+                        want.push_back(mv.command);seg.push_back(cor);kind.push_back(cls);side.push_back(0);placed.push_back(0);moved.push_back(false);
                     }
                 }
             }
@@ -3681,22 +3763,34 @@ struct LegionNavigator::Impl {
             // scans off the way; a new one re-plans at once.
             bool replan=false;
             std::vector<uint64_t> cmd;std::vector<Field::Corridor> keep;std::vector<uint8_t> off,cls;
+            std::vector<int8_t> sides;std::vector<uint32_t> ats;
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 const auto at=std::find(want.begin(),want.end(),g.avoidCmd[i]);
-                if(at!=want.end()) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(0);cls.push_back(g.avoidKind[i]);continue;}
-                if(g.avoidOff[i]+1<kAwareKeep) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(uint8_t(g.avoidOff[i]+1));cls.push_back(g.avoidKind[i]);continue;}
+                if(at!=want.end()) {
+                    const size_t j=size_t(at-want.begin());
+                    cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(0);cls.push_back(g.avoidKind[i]);
+                    sides.push_back(g.avoidSide[i]);ats.push_back(placed[j]?placed[j]:g.avoidAt[i]);
+                    if(moved[j])replan=true;   // a pass-behind corridor moved with its stream
+                    continue;
+                }
+                if(g.avoidOff[i]+1<kAwareKeep) {
+                    cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(uint8_t(g.avoidOff[i]+1));cls.push_back(g.avoidKind[i]);
+                    sides.push_back(g.avoidSide[i]);ats.push_back(g.avoidAt[i]);
+                    continue;
+                }
                 replan=true;
             }
             for(size_t i=0;i<want.size();++i)
                 if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),want[i])==g.avoidCmd.end()) {
-                    cmd.push_back(want[i]);keep.push_back(seg[i]);off.push_back(0);cls.push_back(kind[i]);replan=true;++stats.awareEncounters;
+                    cmd.push_back(want[i]);keep.push_back(seg[i]);off.push_back(0);cls.push_back(kind[i]);sides.push_back(side[i]);ats.push_back(placed[i]);
+                    replan=true;++stats.awareEncounters;
                 }
             if(replan) {
                 // New corridors replace the planned ones (the movers moved on).
                 for(size_t i=0;i<cmd.size();++i)
                     for(size_t j=0;j<want.size();++j)if(want[j]==cmd[i])keep[i]=seg[j];
             }
-            g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);g.avoidKind.swap(cls);
+            g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);g.avoidKind.swap(cls);g.avoidSide.swap(sides);g.avoidAt.swap(ats);
             if(replan&&g.field&&g.field->done) {
                 ++stats.awareReplans;if(!g.awareAt)g.awareAt=w.tickCounter_;
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
@@ -5366,7 +5460,7 @@ struct LegionNavigator::Impl {
                     // ... and so is a line through a mover the group plans round.
                     (g.avoidSeg.empty()||trace(u,u.x,u.z,gx,gz,[&](int cx,int cz) {
                         const int64_t px=int64_t(cx)*16+fx*8,pz=int64_t(cz)*16+fz*8;
-                        for(const auto& c:g.avoidSeg)if(Field::segDist2(px,pz,c)<=c.r*c.r)return false;
+                        for(const auto& c:g.avoidSeg)if(c.level(px,pz)==2)return false;
                         return true;}));
             }
             direct=m.line;
@@ -6527,7 +6621,10 @@ struct LegionNavigator::Impl {
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 h=mix(h,g.avoidCmd[i]);h=mix(h,g.avoidOff[i]);const auto& c=g.avoidSeg[i];
                 h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32);
-                if(g.avoidKind[i])h=mix(h,0x6b696e64ull^uint64_t(g.avoidKind[i])<<40);
+                if(g.avoidKind[i]) {
+                    h=mix(h,0x6b696e64ull^uint64_t(g.avoidKind[i])<<40^uint64_t(uint8_t(g.avoidSide[i]))<<48);h=mix(h,g.avoidAt[i]);
+                    h=mix(h,uint64_t(c.behind));h=mix(h,uint64_t(c.ux)^uint64_t(c.uz)<<20^uint64_t(c.L)<<40);h=mix(h,uint64_t(c.len)^uint64_t(c.speed)<<24^uint64_t(c.lead)<<48);
+                }
             }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             if(g.demand)h=mix(h,0x64656d616e64ull);
