@@ -2942,6 +2942,9 @@ Rb02Result rb02Run(int mode,int blockN,bool serial=true) {
     for(int id:block)f.world.order(id,bx,bz,false);
     for(int t=0;t<(kind==1?2400:3600);++t)f.world.tick(1.f/30);
     if(variant==2) {for(int id:block)f.world.stop(id);for(int t=0;t<120;++t)f.world.tick(1.f/30);}
+    // The clot's member states when the followers set off (0 none .. 5 Trapped).
+    int clot[8]={};
+    for(int id:block)++clot[std::clamp(f.world.legionNavigator()->unitState(id),0,7)];
     for(int id:ids)f.world.order(id,230*16.f,52*16.f,false);
     std::map<int,int> doneAt;
     Rb02Result r;
@@ -2955,9 +2958,9 @@ Rb02Result rb02Run(int mode,int blockN,bool serial=true) {
     for(int id:ids)r.holding+=!f.world.unit(id)->orders.empty();
     r.done=int(doneAt.size());r.p50=pct(0.5);r.p90=pct(0.9);r.max=ticks.empty()?-1:ticks.back();r.hash=f.world.stateHash();
     const auto st=f.world.legionStats();
-    std::printf("rb02 %s mode=%d block=%d done=%d/40 done@3000=%d holding=%d done_tick p50=%d p90=%d max=%d detours=%llu parts=%llu hash=%016llx\n",
+    std::printf("rb02 %s mode=%d block=%d done=%d/40 done@3000=%d holding=%d done_tick p50=%d p90=%d max=%d detours=%llu parts=%llu clot_none=%d clot_holding=%d clot_waiting=%d clot_arrived=%d clot_trapped=%d hash=%016llx\n",
         kind==1?"ring":"corridor",mode,variant?blockN:0,r.done,r.done3000,r.holding,r.p50,r.p90,r.max,
-        (unsigned long long)st.detours,(unsigned long long)st.parts,(unsigned long long)r.hash);
+        (unsigned long long)st.detours,(unsigned long long)st.parts,clot[0],clot[2],clot[3],clot[4],clot[5],(unsigned long long)r.hash);
     return r;
 }
 Rb02Result rb02PlugRun(int mode,bool serial=true) {

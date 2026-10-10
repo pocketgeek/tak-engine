@@ -1240,6 +1240,23 @@ struct LegionNavigator::Impl {
         if(m.state!=Holding||m.slot<0||policy(m.kind).completes||!u.type)return false;
         return footprintOrigin(u.z,u.type->footZ)*width()+footprintOrigin(u.x,u.type->footX)==m.goal;
     }
+    // RB-02 (PLAN 3.3 B): an approach member (an unreachable goal) that
+    // stands at its approach point (Trapped, its order about to drop), or is
+    // held kRestAfter ticks short of it -- which the holder rule cannot
+    // settle while no body of its selection stands nearer the point. Stamped
+    // soft (kind 2) to every other convoy, never to its own: a later order,
+    // of any player, plans round the stuck clot instead of into it. A
+    // draining queue steps, which unsets heldSince, so it is never stamped.
+    // (Since W2's AR-11 an unreachable order drops at its approach point, so
+    // a member Trapped for kTrappedRetire is one in a sealed pocket, or with
+    // no goal: no other order plans through its pocket, and stamping it only
+    // costs the line probes round it -- measured: trapped 200x1 total Legion
+    // work 1.27x, outcomes identical -- so it is not stamped.)
+    // A reach member (attack, guard) is never one: its owner ends the
+    // approach, and reachStill already stamps its ring.
+    bool trappedStill(const Member& m) const {
+        return m.approach&&policy(m.kind).completes&&(m.state==Trapped||(m.state==Holding&&heldFor(m)>=kRestAfter));
+    }
     // ---- MV-05: a block that forms on a planned way ---------------------
     // Cells scanStill made soft over the last kStillScan ticks (one stripe
     // cycle; never hashed: a function of the stamps, which are). Every
@@ -1354,7 +1371,7 @@ struct LegionNavigator::Impl {
             const Unit* found=bodyUnit(id);
             const Member* m=found?member(found->id):nullptr;
             if(!found||!found->alive()||found->embarked()||!found->type||(found->type->canFly&&found->flightGroundMode!=1)||
-               found->type->isStructure()||(m&&m->state!=Arrived&&!reachStill(*found,*m))) {
+               found->type->isStructure()||(m&&m->state!=Arrived&&!reachStill(*found,*m)&&!trappedStill(*m))) {
                 if(id<softBodies.size()&&softBodies[id].present) {
                     unstamp(int(id));
                     softBodies[id].present=false;softBodies[id].scans=0;
@@ -1378,7 +1395,10 @@ struct LegionNavigator::Impl {
             }
             // An engaged attacker (or one held on its ring spot) is soft to
             // other commands only (a passing group plans round a firing
-            // ring, PLAN 3.4 residual risk), never to its own attack.
+            // ring, PLAN 3.4 residual risk), never to its own attack. A
+            // trappedStill member likewise, owned by its group's command:
+            // the convoy key (player, convoyTick) since A2, so the parts of
+            // one split selection never plan round each other's tail.
             else if(m) {
                 const auto g=groups.find(m->group);
                 owner=g!=groups.end()?g->second.command:commandKey(u.player,std::get<1>(m->point));
