@@ -441,6 +441,12 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
 endforeach()
+# W7 step 0 scenario fixtures: the route-behind metric (`behind`) and the aware.* counters (`probe aware`).
+foreach(legion_scn aware-cross-behind crosslong)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w7")
+endforeach()
 foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
