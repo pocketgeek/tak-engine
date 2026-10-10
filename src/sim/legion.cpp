@@ -385,6 +385,9 @@ struct LegionNavigator::Impl {
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
         std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
+        // Each entry's class, fixed when it was first planned (kAwareHeadOn or
+        // kAwareCross, see awareScan; C28). Hashed with a tag when not head on (C27).
+        std::vector<uint8_t> avoidKind;
         uint32_t awareAt=0;   // tick of the first awareScan replan not yet served by an install (Stats only, never hashed)
         // Awareness correctness (PLAN 3.3 F, W7 step 5): the pending refresh
         // is an aware re-plan, served first inside the refresh allowance
@@ -3519,10 +3522,29 @@ struct LegionNavigator::Impl {
     // half the corridor's radius. Deterministic: integer, ordered, on a fixed
     // cadence; the plans are hashed.
     static constexpr int kAwareStarts=8;   // aware refreshes started first per tick (PLAN 3.3 F)
+    // Detection (PLAN 3.3 G, W7 step 6): a group samples its own way (the
+    // descent chain, walked at its slowest member's base speed) and each
+    // mover's (its centroid at its measured velocity) every kAwareSample
+    // ticks up to kAwareHorizon ahead. The conflict is the first sample where
+    // the group's disc (spread radius + 32 px) meets the mover's box (its
+    // members' extent along and across its heading). Too late: a conflict
+    // under kAwareLead ticks away for a mover not yet planned round. The class
+    // is fixed once per entry (avoidKind) from integer dot products of the two
+    // ways at the conflict, with a dead band (C28): head on over 135 degrees
+    // (2*dot^2 >= |a|^2*|b|^2, dot < 0), the same way under 45 (followed,
+    // never planned round), crossing between.
+    static constexpr int kAwareSample=15,kAwareHorizon=450,kAwareLead=45;
+    enum : uint8_t {kAwareHeadOn=0,kAwareCross=1};
     void awareScan() {
         if(w.tickCounter_%kAwareScan!=kAwareScan/2||gAwareOff)return;
-        struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz;};
+        // A mover: its command, centroid (px), the corridor it sweeps over the
+        // next kAwareAhead scans, its spread radius, its displacement over the
+        // last scan (px per kAwareScan ticks) and its length L, and its
+        // members' extent behind and ahead of the centroid along that heading
+        // and across it (px).
+        struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz,L,tail,head,half;};
         std::vector<Mover> movers;
+        uint64_t work=0;
         for(auto& [key,pt]:points) {
             if(std::get<0>(key)<0)continue;
             int64_t sx=0,sz=0,n=0;
@@ -3533,110 +3555,148 @@ struct LegionNavigator::Impl {
             }
             if(n<kAwareMembers) {pt.awareSeen=false;continue;}
             const int64_t cx=sx/n,cz=sz/n;
-            int64_t ss=0;
+            const int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
+            pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;
+            if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
+            const int64_t L=std::max<int64_t>(1,isqrtFloor(uint64_t(dx*dx+dz*dz)));
+            int64_t ss=0,tail=0,head=0,half=0;
             for(const int id:pt.ids) {
                 const Member* mm=member(id);const Unit* v=w.unit(id);
                 if(!mm||!v||(mm->state!=Moving&&mm->state!=Holding))continue;
                 const int64_t ox=(v->x.v>>16)-cx,oz=(v->z.v>>16)-cz;ss+=ox*ox+oz*oz;
+                const int64_t along=(ox*dx+oz*dz)/L,across=(ox*dz-oz*dx)/L;
+                tail=std::max(tail,-along);head=std::max(head,along);half=std::max(half,std::abs(across));
             }
-            const int64_t dx=pt.awareSeen?cx-pt.awareX:0,dz=pt.awareSeen?cz-pt.awareZ:0;
-            pt.awareX=cx;pt.awareZ=cz;pt.awareSeen=true;
-            if(dx*dx+dz*dz<16*16)continue;   // standing: the soft-obstacle scan sees still bodies
+            work+=uint64_t(n);
             const int64_t r=isqrtFloor(uint64_t(ss/n))*3/2+16;
-            movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz});
+            movers.push_back({commandKey(std::get<0>(key),std::get<1>(key)),std::get<0>(key),std::get<1>(key),int64_t(std::get<2>(key))>>16,int64_t(std::get<3>(key))>>16,
+                cx,cz,cx+dx*kAwareAhead,cz+dz*kAwareAhead,r,dx,dz,L,tail,head,half});
         }
-        // Each group's centroid, spread and the sight of its members.
-        struct Acc {int64_t sx=0,sz=0,n=0,sight=0;};
+        // Each group's centroid, spread, slowest base speed (raw Fixed, px
+        // per tick) and the sight of its members.
+        struct Acc {int64_t sx=0,sz=0,sq=0,n=0,sight=0,slow=0;};
         std::map<int,Acc> acc;
         for(const auto& [id,m]:members) {
             if(m.state!=Moving&&m.state!=Holding)continue;
             const Unit* v=w.unit(id);if(!v||!v->type)continue;
-            auto& a=acc[m.group];a.sx+=v->x.v>>16;a.sz+=v->z.v>>16;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
+            auto& a=acc[m.group];
+            const int64_t x=v->x.v>>16,z=v->z.v>>16;
+            a.sx+=x;a.sz+=z;a.sq+=x*x+z*z;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
+            if(v->baseSpeed.v>0&&(a.slow==0||v->baseSpeed.v<a.slow))a.slow=v->baseSpeed.v;
         }
         const int W=width();
-        uint64_t pairs=0,work=0;
+        uint64_t pairs=0;
         stats.groupLoopIters+=groups.size();
         for(auto& [id,g]:groups) {
             const auto a=acc.find(id);
-            std::vector<uint64_t> want;std::vector<Field::Corridor> seg;
+            std::vector<uint64_t> want;std::vector<Field::Corridor> seg;std::vector<uint8_t> kind;
             if(a!=acc.end()&&a->second.n>=kAwareMembers&&g.field&&g.field->done&&!movers.empty()) {
                 const auto& p=planes[size_t(g.plane)];
-                const int64_t cx=a->second.sx/a->second.n,cz=a->second.sz/a->second.n;
+                const int64_t n=a->second.n,cx=a->second.sx/n,cz=a->second.sz/n;
+                const int64_t rG=isqrtFloor(uint64_t(std::max<int64_t>(0,a->second.sq/n-cx*cx-cz*cz)))*3/2+16;
+                const int64_t speed=a->second.slow>0?a->second.slow:65536;
                 int c=nearestLegal(p,int(cx/16),int(cz/16));
                 if(c>=0&&g.field->at(size_t(c))!=kUnreached) {
                     std::vector<int> chain{c};
                     for(int k=0;k<kAwareChain;++k) {const int next=descend(p,*g.field,chain.back()%W,chain.back()/W,chain.back());if(next<0)break;chain.push_back(next);}
                     work+=chain.size();
                     const int64_t tx=(chain.back()%W)*16-cx,tz=(chain.back()/W)*16-cz;
+                    // The way as arc lengths (px): an orthogonal step 16, a diagonal 23.
+                    std::vector<int64_t> arc(chain.size(),0);
+                    for(size_t k=1;k<chain.size();++k)
+                        arc[k]=arc[k-1]+(chain[k]%W!=chain[k-1]%W&&chain[k]/W!=chain[k-1]/W?23:16);
+                    // The group's position t ticks ahead (px): the chain point at
+                    // arc length speed*t, the centroid at t=0, the chain's end after it.
+                    auto at=[&](int64_t t,int64_t& x,int64_t& z) {
+                        const int64_t s=(speed*t)>>16;
+                        size_t k=0;
+                        while(k+1<chain.size()&&arc[k+1]<=s)++k;
+                        const int64_t x0=(chain[k]%W)*16+8,z0=(chain[k]/W)*16+8;
+                        if(k+1>=chain.size()) {x=x0;z=z0;return;}
+                        const int64_t x1=(chain[k+1]%W)*16+8,z1=(chain[k+1]/W)*16+8,span=arc[k+1]-arc[k];
+                        x=x0+(x1-x0)*(s-arc[k])/span;z=z0+(z1-z0)*(s-arc[k])/span;
+                    };
                     const bool engages=g.kind==Kind::Fight||g.kind==Kind::Attack||g.kind==Kind::Guard||g.kind==Kind::Patrol;
                     pairs+=movers.size();
                     for(const auto& mv:movers) {
                         if(mv.command==g.command)continue;
                         // One selection sent as several groups (one player,
                         // within kConvoyTicks, to points within kConvoyCells)
-                        // never plans round itself, and a
-                        // mover going the same way (within 60 degrees) is
-                        // followed, not planned round.
+                        // never plans round itself.
                         const int64_t gcx=int64_t(g.minX+g.maxX)*8,gcz=int64_t(g.minZ+g.maxZ)*8;
                         if(mv.player==g.player&&(mv.issue>g.issuedTick?mv.issue-g.issuedTick:g.issuedTick-mv.issue)<=kConvoyTicks&&
                            std::abs(mv.px-gcx)<=kConvoyCells*16&&std::abs(mv.pz-gcz)<=kConvoyCells*16)continue;
-                        {
-                            const int64_t dot=tx*mv.dx+tz*mv.dz;
-                            if(dot>0&&4*dot*dot>=(tx*tx+tz*tz)*(mv.dx*mv.dx+mv.dz*mv.dz))continue;
-                        }
                         const bool friendly=mv.player==g.player||w.allied(g.player,mv.player);
                         if(!friendly) {
                             if(engages)continue;
                             const int64_t ex=mv.cx-cx,ez=mv.cz-cz,see=a->second.sight+mv.r;
                             if(ex*ex+ez*ez>see*see)continue;
                         }
-                        const bool headOn=tx*mv.dx+tz*mv.dz<0;
-                        // Crossing ways: only one group gives way, the one
-                        // with the larger command key (player, then issue
-                        // tick); head on, both keep right.
-                        if(!headOn&&mv.command>g.command)continue;
+                        const auto known=std::find(g.avoidCmd.begin(),g.avoidCmd.end(),mv.command);
+                        const bool isKnown=known!=g.avoidCmd.end();
+                        // The conflict: the first sample where the group's disc
+                        // meets the mover's box, both moved on t ticks.
+                        int64_t hit=-1;
+                        for(int64_t t=0;t<=kAwareHorizon&&hit<0;t+=kAwareSample) {
+                            int64_t x=0,z=0;at(t,x,z);++work;
+                            const int64_t rx=x-(mv.cx+mv.dx*t/int64_t(kAwareScan)),rz=z-(mv.cz+mv.dz*t/int64_t(kAwareScan));
+                            const int64_t s=(rx*mv.dx+rz*mv.dz)/mv.L,q=(rx*mv.dz-rz*mv.dx)/mv.L;
+                            if(std::abs(q)<=mv.half+rG+32&&s>=-(mv.tail+rG+32)&&s<=mv.head+rG+32)hit=t;
+                        }
+                        if(hit<0)continue;
                         // Already in among each other: too late to plan round
                         // (a late swerve only reverses bodies).
-                        const bool known=std::find(g.avoidCmd.begin(),g.avoidCmd.end(),mv.command)!=g.avoidCmd.end();
-                        {
-                            const int64_t ex=mv.cx-cx,ez=mv.cz-cz;
-                            if(!known&&ex*ex+ez*ez<4*mv.r*mv.r)continue;
+                        if(!isKnown&&hit<kAwareLead)continue;
+                        uint8_t cls=0;
+                        if(isKnown)cls=g.avoidKind[size_t(known-g.avoidCmd.begin())];
+                        else {
+                            // The class from the two ways: each one's line from its
+                            // centroid to its destination (a mover already
+                            // routing behind a stream heads along it for a while,
+                            // which its measured heading would read as head on).
+                            int64_t ux=gcx-cx,uz=gcz-cz,vx=mv.px-mv.cx,vz=mv.pz-mv.cz;
+                            if(ux==0&&uz==0) {ux=tx;uz=tz;}
+                            if(vx==0&&vz==0) {vx=mv.dx;vz=mv.dz;}
+                            const int64_t dot=ux*vx+uz*vz;
+                            const bool narrow=2*dot*dot>=(ux*ux+uz*uz)*(vx*vx+vz*vz);
+                            if(narrow&&dot>=0)continue;   // the same way: followed
+                            cls=narrow?kAwareHeadOn:kAwareCross;
                         }
+                        // Crossing ways: only one group gives way, the later
+                        // one (the larger command key: player, then issue
+                        // tick); head on, both keep right.
+                        if(cls==kAwareCross&&mv.command>g.command)continue;
                         Field::Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
-                        bool meets=false;
-                        for(size_t k=0;k<chain.size()&&!meets;k+=4,++work)
-                            meets=Field::segDist2(int64_t(chain[k]%W)*16+8,int64_t(chain[k]/W)*16+8,cor)<=(cor.r+32)*(cor.r+32);
-                        if(!meets)continue;
                         // Head on: keep right (plan round a corridor shifted left).
-                        if(headOn) {
+                        if(cls==kAwareHeadOn) {
                             const int64_t tl=std::max<int64_t>(1,isqrtFloor(uint64_t(tx*tx+tz*tz)));
                             const int64_t lx=tz*cor.r/(2*tl),lz=-tx*cor.r/(2*tl);
                             cor.x0+=lx;cor.x1+=lx;cor.z0+=lz;cor.z1+=lz;
                         }
-                        want.push_back(mv.command);seg.push_back(cor);
+                        want.push_back(mv.command);seg.push_back(cor);kind.push_back(cls);
                     }
                 }
             }
             // Hysteresis: a mover leaves the plan only after kAwareKeep
             // scans off the way; a new one re-plans at once.
             bool replan=false;
-            std::vector<uint64_t> cmd;std::vector<Field::Corridor> keep;std::vector<uint8_t> off;
+            std::vector<uint64_t> cmd;std::vector<Field::Corridor> keep;std::vector<uint8_t> off,cls;
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 const auto at=std::find(want.begin(),want.end(),g.avoidCmd[i]);
-                if(at!=want.end()) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(0);continue;}
-                if(g.avoidOff[i]+1<kAwareKeep) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(uint8_t(g.avoidOff[i]+1));continue;}
+                if(at!=want.end()) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(0);cls.push_back(g.avoidKind[i]);continue;}
+                if(g.avoidOff[i]+1<kAwareKeep) {cmd.push_back(g.avoidCmd[i]);keep.push_back(g.avoidSeg[i]);off.push_back(uint8_t(g.avoidOff[i]+1));cls.push_back(g.avoidKind[i]);continue;}
                 replan=true;
             }
             for(size_t i=0;i<want.size();++i)
                 if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),want[i])==g.avoidCmd.end()) {
-                    cmd.push_back(want[i]);keep.push_back(seg[i]);off.push_back(0);replan=true;++stats.awareEncounters;
+                    cmd.push_back(want[i]);keep.push_back(seg[i]);off.push_back(0);cls.push_back(kind[i]);replan=true;++stats.awareEncounters;
                 }
             if(replan) {
                 // New corridors replace the planned ones (the movers moved on).
                 for(size_t i=0;i<cmd.size();++i)
                     for(size_t j=0;j<want.size();++j)if(want[j]==cmd[i])keep[i]=seg[j];
             }
-            g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);
+            g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);g.avoidKind.swap(cls);
             if(replan&&g.field&&g.field->done) {
                 ++stats.awareReplans;if(!g.awareAt)g.awareAt=w.tickCounter_;
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
@@ -6467,6 +6527,7 @@ struct LegionNavigator::Impl {
             for(size_t i=0;i<g.avoidCmd.size();++i) {
                 h=mix(h,g.avoidCmd[i]);h=mix(h,g.avoidOff[i]);const auto& c=g.avoidSeg[i];
                 h=mix(h,uint64_t(c.x0)^uint64_t(c.z0)<<20^uint64_t(c.x1)<<40);h=mix(h,uint64_t(c.z1)^uint64_t(c.r)<<32);
+                if(g.avoidKind[i])h=mix(h,0x6b696e64ull^uint64_t(g.avoidKind[i])<<40);
             }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             if(g.demand)h=mix(h,0x64656d616e64ull);
