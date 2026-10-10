@@ -351,6 +351,15 @@ foreach(legion_probe landunder descentwalkin auditlift40 splitpatrol liftcombat)
   add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
   set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# W7 step 0 fixtures (PLAN 4 W7 step 0, docs/legion-exit-tables.md "W7 step 0"): the promoted RB-02 probe (ring clot,
+# Holding-queue corridor, plug) and the awareness stream fixtures awarebig (768x768), awaredense (200 v 200 at 85% fill),
+# crossthree and crosslong. Measurement only: each prints the numbers W7's steps move (done tick, standing share,
+# contacts, hold_max, the aware / parting / give-way counters, the route-behind metric) in both awareness arms and asserts
+# determinism (serial == workers) on the cheap rows; the bounds come with W7's steps.
+foreach(legion_probe rb02 awarebig awaredense crossthree crosslong)
+  add_test(NAME legion_w7_${legion_probe} COMMAND legion_world_test ${legion_probe})
+  set_tests_properties(legion_w7_${legion_probe} PROPERTIES LABELS "legion;w7")
+endforeach()
 # T1 probes for W3 (measurement only; they assert determinism, not bounds).
 foreach(legion_probe settlelatency doorplug)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})

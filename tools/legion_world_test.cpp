@@ -10,6 +10,7 @@
 #include "sim/matchsetup.h"
 #include "sim/footprint.h"
 #include "legion_observe.h"
+#include <array>
 #include <climits>
 #include <cmath>
 #include <algorithm>
@@ -2917,6 +2918,246 @@ void patrolrepair() {
         checkRepeatable(moving?"patrolrepair-moving":"patrolrepair",[&](bool serial) {return patrolrepairRun(serial,moving);},r);
     }
 }
+// ---- W7 step 0 fixtures (PLAN 4 W7 step 0) -----------------------------------
+// rb02: the verifiers' probe, promoted. A 40-body group routes past a clot of Legion members
+// that stands in its way: Trapped (an unreachable goal inside a walled ring; mode 1x), Holding
+// (queued at a dead-end corridor mouth; mode 2x), or the same clot Stopped (the soft control,
+// variant 2). Variant 0 has no clot. plug: six 4x4 bodies parked Trapped at a 3-cell gap that
+// 2x2 bodies fit through. Measurement only: the numbers W7's Trapped-soft and approach-clearance
+// steps move (RB-02: ring N=104 done@3000 7/40, N=208 20/40 by 6000, plug 0/40 in 9000, the
+// Holding queue p50 2353 on the audit's head).
+struct Rb02Result {int done=0,done3000=0,holding=0,p50=-1,p90=-1,max=-1;uint64_t hash=0;};
+Rb02Result rb02Run(int mode,int blockN,bool serial=true) {
+    const int kind=mode/10,variant=mode%10;
+    Fixture f(260,120,serial);
+    if(kind==1) {f.rect(128,44,16,16);f.open(130,46,12,12);}
+    if(kind==2) {f.rect(128,0,4,46);f.rect(136,0,4,46);f.rect(128,0,12,2);}
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids,block;
+    for(int i=0;i<40;++i)ids.push_back(f.spawn(type,14+(i%8)*3,44+(i/8)*4));
+    if(variant)for(int i=0;i<blockN;++i)block.push_back(f.spawn(type,100+(i%26)*2,72+(i/26)*2));
+    f.start();
+    const float bx=(kind==1?135.5f:133.5f)*16,bz=(kind==1?51.5f:6.f)*16;
+    for(int id:block)f.world.order(id,bx,bz,false);
+    for(int t=0;t<(kind==1?2400:3600);++t)f.world.tick(1.f/30);
+    if(variant==2) {for(int id:block)f.world.stop(id);for(int t=0;t<120;++t)f.world.tick(1.f/30);}
+    for(int id:ids)f.world.order(id,230*16.f,52*16.f,false);
+    std::map<int,int> doneAt;
+    Rb02Result r;
+    for(int t=0;t<6000;++t) {
+        f.world.tick(1.f/30);
+        for(int id:ids)if(!doneAt.count(id)&&f.world.unit(id)->orders.empty())doneAt[id]=t;
+        if(t==2999)r.done3000=int(doneAt.size());
+    }
+    std::vector<int> ticks;for(auto& [id,t]:doneAt)ticks.push_back(t);std::sort(ticks.begin(),ticks.end());
+    auto pct=[&](double q) {return ticks.empty()?-1:ticks[size_t(std::min<double>(ticks.size()-1,q*ticks.size()))];};
+    for(int id:ids)r.holding+=!f.world.unit(id)->orders.empty();
+    r.done=int(doneAt.size());r.p50=pct(0.5);r.p90=pct(0.9);r.max=ticks.empty()?-1:ticks.back();r.hash=f.world.stateHash();
+    const auto st=f.world.legionStats();
+    std::printf("rb02 %s mode=%d block=%d done=%d/40 done@3000=%d holding=%d done_tick p50=%d p90=%d max=%d detours=%llu parts=%llu hash=%016llx\n",
+        kind==1?"ring":"corridor",mode,variant?blockN:0,r.done,r.done3000,r.holding,r.p50,r.p90,r.max,
+        (unsigned long long)st.detours,(unsigned long long)st.parts,(unsigned long long)r.hash);
+    return r;
+}
+Rb02Result rb02PlugRun(int mode,bool serial=true) {
+    Fixture f(260,120,serial);
+    f.rect(150,0,2,120);f.open(150,50,2,3);                // a 3-cell gap: 2x2 fits, 4x4 does not
+    f.publish();
+    const auto small=mover(2),big=mover(4);
+    std::vector<int> ids,plug;
+    for(int i=0;i<40;++i)ids.push_back(f.spawn(small,14+(i%8)*3,44+(i/8)*4));
+    if(mode==1)for(int i=0;i<6;++i)plug.push_back(f.spawn(big,120+(i%3)*5,45+(i/3)*5));
+    f.start();
+    for(int id:plug)f.world.order(id,200*16.f,51*16.f,false);
+    for(int t=0;t<1200;++t)f.world.tick(1.f/30);
+    for(int id:ids)f.world.order(id,230*16.f,52*16.f,false);
+    std::map<int,int> doneAt;
+    for(int t=0;t<9000;++t) {
+        f.world.tick(1.f/30);
+        for(int id:ids)if(!doneAt.count(id)&&f.world.unit(id)->orders.empty())doneAt[id]=t;
+    }
+    std::vector<int> ticks;for(auto& [id,t]:doneAt)ticks.push_back(t);std::sort(ticks.begin(),ticks.end());
+    auto pct=[&](double q) {return ticks.empty()?-1:ticks[size_t(std::min<double>(ticks.size()-1,q*ticks.size()))];};
+    Rb02Result r;
+    int through=0;
+    for(int id:ids) {const auto& u=*f.world.unit(id);r.holding+=!u.orders.empty();through+=u.x.toFloat()/16>152;}
+    r.done=int(doneAt.size());r.p50=pct(0.5);r.p90=pct(0.9);r.max=ticks.empty()?-1:ticks.back();r.hash=f.world.stateHash();
+    const auto st=f.world.legionStats();
+    std::printf("rb02 plug mode=%d done=%d/40 holding=%d through_gap=%d done_tick p50=%d p90=%d max=%d detours=%llu parts=%llu trapped=%llu hash=%016llx\n",
+        mode,r.done,r.holding,through,r.p50,r.p90,r.max,(unsigned long long)st.detours,(unsigned long long)st.parts,
+        (unsigned long long)st.trapped,(unsigned long long)r.hash);
+    return r;
+}
+void rb02() {
+    const bool full=std::getenv("TAK_RB02_FULL")!=nullptr;
+    const int only=std::getenv("TAK_RB02_MODE")?std::atoi(std::getenv("TAK_RB02_MODE")):-1;
+    auto want=[&](int mode) {return only<0?true:only==mode;};
+    const int variants[]={1,2,0};
+    for(int v:variants) {
+        if(v!=1&&!full)continue;
+        for(int n:{52,104,208})if(want(10+v)&&(v||n==52))rb02Run(10+v,n);
+        if(want(20+v))rb02Run(20+v,208);
+    }
+    if(want(100))rb02PlugRun(1);
+    if(full&&want(101))rb02PlugRun(0);
+    // Determinism, on the cheapest row: the same run again and with workers.
+    const auto a=rb02Run(11,52),b=rb02Run(11,52,false);
+    check(a.hash==b.hash&&a.done==b.done,"rb02: serial and workers differ");
+}
+
+// The W7 stream fixtures: groups that cross, meet head on or pass an enemy, in the awareness
+// code's two arms (ON: the base; OFF: LegionNavigator::setAwareOffForTest). Each stream is one
+// command (its click at `issue`); the report is the arrival tick of everyone, the standing share,
+// A x B contacts, the longest run a body stood with orders (hold_max), the Stats counters W7
+// step 0 exports (parts, detours, aware encounters / builds / latency, give-way) and the
+// route-behind metric (legion_observe::BehindProbe) of each (later, earlier) pair.
+struct Stream {
+    int count,cols,x,z,pitch,gx,gz,issue,player=0,sight=4096;
+};
+struct StreamSpec {
+    const char* name;int w,h;
+    std::vector<std::array<int,4>> walls;     // x z w h
+    std::vector<Stream> streams;
+    std::vector<std::pair<int,int>> behind;   // (later stream, earlier stream)
+    int ticks;bool awareOff=false;
+};
+struct AwareOffGuard {
+    explicit AwareOffGuard(bool off) {LegionNavigator::setAwareOffForTest(off);}
+    ~AwareOffGuard() {LegionNavigator::setAwareOffForTest(false);}
+};
+ProbeRun streamRun(const StreamSpec& sp,bool serial) {
+    AwareOffGuard guard(sp.awareOff);
+    Fixture f(sp.w,sp.h,serial);
+    for(const auto& r:sp.walls)f.rect(r[0],r[1],r[2],r[3]);
+    f.publish();
+    std::vector<std::vector<int>> ids(sp.streams.size());
+    std::vector<int> all,issueOf;
+    std::vector<UnitType> types(sp.streams.size());   // the world keeps a pointer to each type
+    for(size_t s=0;s<sp.streams.size();++s) {
+        const auto& st=sp.streams[s];
+        auto& type=types[s];type=mover(2);type.id=type.name="legion-foot-2s"+std::to_string(s);type.sight=st.sight;
+        for(int i=0;i<st.count;++i)
+            ids[s].push_back(f.spawn(type,st.x+(i%st.cols)*st.pitch,st.z+(i/st.cols)*st.pitch,st.player));
+        all.insert(all.end(),ids[s].begin(),ids[s].end());
+        issueOf.insert(issueOf.end(),ids[s].size(),st.issue);
+    }
+    f.start();
+    Watch motion;
+    auto streamName=[](size_t s) {return std::string(1,char('A'+s));};
+    for(size_t s=0;s<ids.size();++s) {
+        tak::legion_observe::Group g;g.name=streamName(s);g.ids=ids[s];motion.cfg.groups.push_back(g);
+        for(size_t t=s+1;t<ids.size();++t)motion.cfg.pairs.push_back({streamName(s),streamName(t),2});
+    }
+    motion.cfg.decisionEvery=10;
+    std::vector<tak::legion_observe::BehindProbe> behind;
+    for(const auto& [late,early] : sp.behind) {
+        tak::legion_observe::BehindProbe bp;bp.name=streamName(size_t(late))+"_after_"+streamName(size_t(early));
+        for(int id:ids[size_t(late)])bp.late.push_back({id,int64_t(sp.streams[size_t(late)].gx)*16,int64_t(sp.streams[size_t(late)].gz)*16});
+        bp.early=ids[size_t(early)];
+        behind.push_back(std::move(bp));
+    }
+    std::map<int,std::pair<int32_t,int32_t>> prev;std::map<int,int> run;
+    int holdMax=0,done=-1,arrived=0;
+    for(int t=0;t<sp.ticks;++t) {
+        for(size_t s=0;s<sp.streams.size();++s)
+            if(sp.streams[s].issue==t)
+                for(int id:ids[s])f.world.order(id,float(sp.streams[s].gx*16),float(sp.streams[s].gz*16),false);
+        f.world.tick(1.f/30);motion.observe(f.world,all);
+        for(auto& b:behind)b.sample(f.world);
+        arrived=0;
+        for(size_t q=0;q<all.size();++q) {
+            const int id=all[q];
+            const auto& u=*f.world.unit(id);
+            const bool issued=t>=issueOf[q],over=issued&&(u.orders.empty()||!u.alive());
+            arrived+=over;
+            const auto last=prev.find(id);
+            if(issued&&!over&&last!=prev.end()) {
+                const int64_t dx=int64_t(u.x.v)-last->second.first,dz=int64_t(u.z.v)-last->second.second,cap=int64_t(u.baseSpeed.v)/8;
+                int& r=run[id];
+                if(dx*dx+dz*dz<=cap*cap)holdMax=std::max(holdMax,++r);else r=0;
+            }
+            prev[id]={u.x.v,u.z.v};
+        }
+        if(arrived==int(all.size())) {done=t;break;}
+    }
+    using tak::legion_observe::Observer;
+    const auto k=motion.keys();
+    const auto st=f.world.legionStats();
+    char buf[1800];int n=0;
+    n+=std::snprintf(buf+n,sizeof buf-size_t(n),"%s aware=%s arrived=%d/%zu done=%d stopped=%.1f%% contacts_permille=%.2f hold_max=%d spins=%llu reversals=%llu",
+        sp.name,sp.awareOff?"off":"on",arrived,all.size(),done,double(Observer::get(k,"stopped_permille",0))/10,
+        double(Observer::get(k,"pair.A.B.permille_x100",0))/100,holdMax,(unsigned long long)motion.spins(),(unsigned long long)motion.reversals());
+    n+=std::snprintf(buf+n,sizeof buf-size_t(n)," parts=%llu detours=%llu aware_encounters=%llu replans=%llu builds=%llu latency_max=%llu latency_mean=%llu giveway_ticks=%llu giveway_timeouts=%llu",
+        (unsigned long long)st.parts,(unsigned long long)st.detours,(unsigned long long)st.awareEncounters,(unsigned long long)st.awareReplans,
+        (unsigned long long)st.awareBuilds,(unsigned long long)st.awareLatencyMax,
+        (unsigned long long)(st.awareLatencyN?st.awareLatencySum/st.awareLatencyN:0),(unsigned long long)st.giveWayTicks,(unsigned long long)st.giveWayTimeouts);
+    tak::legion_observe::Keys bk;for(const auto& b:behind)b.report(bk);
+    for(const auto& [key,v]:bk) {
+        const auto dot=key.find('.',7);   // "behind.NAME.metric"
+        const auto metric=key.substr(dot+1);
+        if(metric=="members"||metric=="straight_cells")continue;
+        n+=std::snprintf(buf+n,sizeof buf-size_t(n)," %s=%lld",(key.substr(7,dot-7)+"."+key.substr(dot+1)).c_str(),(long long)v);
+        if(n>=int(sizeof buf)-80)break;
+    }
+    ProbeRun r;r.text=buf;r.hash=f.world.stateHash();r.a=done;r.b=arrived;r.c=int(all.size());
+    return r;
+}
+// Runs one spec in both arms and prints; determinism on the ON arm when asked (W7_DET=1, or always when cheap).
+void streamCase(StreamSpec sp,bool determinism) {
+    for(bool off:{false,true}) {
+        sp.awareOff=off;
+        const auto r=streamRun(sp,true);
+        std::printf("%s hash=%016llx\n",r.text.c_str(),(unsigned long long)r.hash);
+        check(r.a>=0||r.b>0,std::string(sp.name)+": nothing arrived");
+        if(determinism&&!off)checkRepeatable(sp.name,[&](bool serial) {auto s=sp;s.awareOff=false;return streamRun(s,serial);},r);
+    }
+}
+// awarebig: the MV-09 verifier's 768x768 maps -- 24 against 24 crossing, head on in a 56-cell corridor, and an
+// enemy head on in the same corridor. Far larger than aware's 200x140: the awareness corridor tests, the whole-map
+// field builds (the 48/66-tick aware refresh) and the encounter all happen at 700-cell distances.
+void awarebig() {
+    const char* only=std::getenv("AWAREBIG_KIND");
+    const bool det=std::getenv("W7_DET")!=nullptr;
+    auto want=[&](const char* k) {return !only||std::string(only)==k;};
+    const std::vector<std::array<int,4>> corridor{{0,355,768,2},{0,413,768,2}};
+    if(want("cross"))
+        streamCase({"awarebig-cross",768,768,{},{{24,6,40,380,3,720,386,0},{24,6,380,720,3,386,40,100}},{{1,0}},9000},det);
+    if(want("headon"))
+        streamCase({"awarebig-headon",768,768,corridor,{{24,6,40,372,3,730,386,0},{24,6,728,372,3,38,386,100}},{{1,0}},9000},det);
+    if(want("enemy"))
+        streamCase({"awarebig-enemy",768,768,corridor,{{24,6,40,372,3,730,386,0},{24,6,728,372,3,38,386,100,1}},{{1,0}},9000},det);
+}
+// awaredense: two formations of 200 head on in a 40-cell corridor, 17 bodies across (34 of 40 cells, 85% fill), the
+// density MV-03 fights at: is the formation path also sound when no half-band fits?
+void awaredense() {
+    const std::vector<std::array<int,4>> corridor{{0,40,400,2},{0,82,400,2}};
+    streamCase({"awaredense",400,124,corridor,{{200,17,20,45,2,380,62,0},{200,17,350,45,2,20,62,100}},{{1,0}},9000},
+        std::getenv("W7_DET")!=nullptr);
+}
+// crossthree: three 24-body streams whose lines cross at one point 60 degrees apart (angles 0, 120, 240 through the
+// centre), commands 60 ticks apart. A cycle of give-ways among three streams must resolve: report hold_max (no hold
+// beyond 600 ticks) and the give-way counters.
+void crossthree() {
+    const int cx=150,cz=150,r=110;
+    auto at=[&](double deg,double sign,int& x,int& z) {
+        const double a=deg*3.14159265358979/180.0;
+        x=cx+int(std::lround(sign*r*std::cos(a)))-8;z=cz+int(std::lround(sign*r*std::sin(a)))-5;   // block origin, centred about 8x6 cells
+    };
+    std::vector<Stream> streams;
+    for(int i=0;i<3;++i) {
+        int sx,sz,gx,gz;at(120.0*i,1,sx,sz);at(120.0*i,-1,gx,gz);
+        streams.push_back({24,6,sx,sz,3,gx+8,gz+5,60*i});
+    }
+    streamCase({"crossthree",300,300,{},streams,{{1,0},{2,0},{2,1}},7000},true);
+}
+// crosslong: a stream of 200 (20 bodies long = 60 cells, 10 across) crossing a 24-body group at right angles --
+// the long stream the later group cannot wait out (decision 5: it routes behind the tail, no wait at the edge).
+void crosslong() {
+    streamCase({"crosslong",300,200,{},{{200,20,10,95,3,285,100,0},{24,6,142,180,3,150,10,400}},{{1,0}},6000},
+        std::getenv("W7_DET")!=nullptr);
+}
+
 }
 
 int main(int argc,char** argv) {
@@ -2930,7 +3171,8 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
+        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
+        {"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
