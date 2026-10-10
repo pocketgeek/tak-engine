@@ -219,6 +219,10 @@ tools/we_timing.sh --base ... --cand ... --replays <dir of .takrep>   # exact mo
   replay round. Use it whenever a result will be quoted for a phase where the validation below shows a gap.
 - **Identity is still the full replays** (`tools/legion_identity.sh`): a situation is not byte-identical to the recording
   and proves nothing about hashes.
+- **Situation timing is for SCREENING.** Use it to find and rank candidate steps quickly; before calling a WE step done,
+  confirm any claimed gain with `--replays` (exact mode). This applies above all to Legion combat and order-queue claims:
+  the E1.3 pair showed a 14 pp gap on L-2h (replay -12.5%, situation +1.9%, see Validation below), so a situation result
+  there is neither a confirmation nor a refutation. A quoted final number comes from `--replays`, never from a situation.
 
 ### Validation (2026-10-10)
 
