@@ -38,6 +38,7 @@ pass under `TAK_LEGION_VERIFY`); (l) battle-assault `quota_peg_run_max` 47 is th
 | Exact | Retail navigation golden and hashes unchanged; Legion golden regenerated (24 of 24 moved, serial == workers); `check-determinism.sh` OK (dcef618cd2e4d558); `check-detmath` OK; serial == workers on all 182 scenario lines; observer_neutral and convoy verify pass |
 | softHash verify (C31) | `TAK_LEGION_VERIFY` on: Legion world tests in ctest (all pass), `--mpai` x2 and the reconnect run: no verify failure |
 | `--mpai` Inner Circle 300 s seed 1 | Legion **b2261dc31dc84cdf** (was 136218d83cbf7af8) twice on Linux (verify on), and on Windows and the Mac; Retail b240750e5765c02b everywhere |
+| Cross-platform | the 240 scenario lines hash-equal between Linux and Windows; eight combat fixtures (attackring-f1-64, -struct-60, -fight-60, -wall-64, fight-retarget, chase-50, ringcross, goalblock-200) at offsets 0 and 1 hash-equal on the Mac (arm64); the Mac's Legion navigation golden, `fixed`, `detmath`, `fp_contract` pass |
 | Reconnect | Ulasem host + joiner + 6 AIs, verify on, joiner killed at 150 s and rejoined with `--mprejoin`: host and joiner both 99b6fee23f78ab7e at tick 9000, no DESYNCED / suspect |
 | ctest, full | optimized Debug 391 / 409, Release 378 / 396. Failing: the 15 `legion_check_*` nightly scenario checks (the scenario-set failures above), `legion_acceptance_crowdheld_legion` (W5), `cobanim` (no assets), `crusades_hardening_network` (flake). `legion_staticidle` passes |
 | Retail-floor exceptions | no floor failure in the run; 124, unchanged |
@@ -206,7 +207,7 @@ origin/main was still `6333e38d`, nothing to merge). **Not every W5/W9 hard gate
 | Field-quota peg run | unchanged (battle-assault 47 = base, 2x500 9, 2x250 8, 2x60 2): the 8-member ring fallback is not needed |
 | crowdbench screen (Release, seed 0, 86 rows, both modes) | **0 differences** against the committed baseline, hashes included (the new fields fold only when set; no row sets one), so the screen baseline is unchanged |
 | Exact | Retail navigation golden and hashes unchanged; Legion navigation golden regenerated (8 of 24 moved, serial == workers, Retail 24 of 24 equal); `check-determinism.sh` OK (dcef618cd2e4d558); `check-detmath` OK; serial == workers on all 240 scenario lines; observer_neutral passes |
-| `--mpai` Inner Circle 300 s seed 1 (takserver --local, clean XDG_DATA_HOME, `TAK_LEGION_VERIFY` on) | Legion **b2261dc31dc84cdf** twice on Linux and on the Mac; Retail b240750e5765c02b. **Unchanged from protocol 242**: the 16-unit AI game never has two attackers on one target, so no W5 field is ever set |
+| `--mpai` Inner Circle 300 s seed 1 (takserver --local, clean XDG_DATA_HOME, `TAK_LEGION_VERIFY` on) | Legion **b2261dc31dc84cdf** twice on Linux, and on Windows and the Mac; Retail b240750e5765c02b on all three. **Unchanged from protocol 242**: the 16-unit AI game never has two attackers on one target, so no W5 field is ever set |
 | ctest | optimized Debug, non-nightly (244 tests): 243 pass, `legion_acceptance_crowdheld_legion` fails (hard gate, below). Release `-L quick` 226 of 227, the same one. Windows (touched areas, 229): 227, the same crowdheld and `legion_scenario_battle-assault` (the legion_cost contactA window, fixed by the retake) |
 | Reconnect | Ulasem host + joiner + 6 AIs, `TAK_LEGION_VERIFY` on, joiner killed at 150 s and rejoined with `--mprejoin`: host and joiner both 2a209aaaaed61523 at tick 9000 (120 units), no DESYNCED / suspect in the server log |
 
@@ -316,6 +317,14 @@ bodies on the way touch it. Widening band 0 to the reach edge for spots with wal
 a Move group walks through a ring of 48 Engaged bodies (own friends, never yielding): it goes round them at cap/8 in the gaps
 (MV-06, not built): core five t90 3955..4921, +19% over the step-0 sim's 3616; `g.M.done` 4876 (never at 8 of the 11 offsets by tick 5000).
 PLAN gate "ring-crossing within +10%": **not met** (+19%).
+
+### Can fail
+
+* The ratcheted references trip: a record with attackring-f1-64 `reach.ring.ever_end` 10 (exit 39) and chase-1 `registrations.total` 80
+  (exit 3) fails `legion_check check --cumulative` with both keys (2 failed).
+* `legion_world_test staticidle` fails at the old 900-tick warm-up (7 of 12 guards holding, 764640 refresh relaxations) and passes
+  at 2400.
+* The crowdheld and group acceptance checks trip on the experiments above (62 / 60 / 59 in goal, `arrived_settled` 60-63).
 
 ### Other findings
 
