@@ -2,6 +2,9 @@
 
 #include <chrono>
 #include <cstdlib>
+#if defined(__linux__)
+#include <sched.h>
+#endif
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
@@ -26,7 +29,13 @@ unsigned SimPool::defaultWorkers() {
     if (const char* e=std::getenv("TAK_SIM_WORKERS"))
         return unsigned(std::clamp(std::atoi(e),0,15));
 #endif
-    return std::min(3u,std::thread::hardware_concurrency()/8);
+    unsigned cpus=std::thread::hardware_concurrency();
+#if defined(__linux__)
+    // The CPUs this process may run on (taskset, containers), not the machine's.
+    cpu_set_t set;
+    if (sched_getaffinity(0,sizeof(set),&set)==0) cpus=unsigned(CPU_COUNT(&set));
+#endif
+    return std::min(3u,cpus/8);
 }
 
 SimPool::SimPool(unsigned workers) {
@@ -48,26 +57,30 @@ void SimPool::drain(unsigned slot) {
         const size_t k=next_.fetch_add(1,std::memory_order_relaxed);
         if (k>=chunks_) return;
         job_(ctx_,k,slot);
+        done_.fetch_add(1,std::memory_order_release);
     }
 }
 
 void SimPool::run(size_t chunks,Job job,void* ctx) {
+    // gen_ is even here and no worker is inside a job, so the fields are ours.
     job_=job;ctx_=ctx;chunks_=chunks;
     next_.store(0,std::memory_order_relaxed);
-    pending_.store(unsigned(threads_.size()),std::memory_order_relaxed);
-    gen_.fetch_add(1,std::memory_order_release);
+    done_.store(0,std::memory_order_relaxed);
+    gen_.fetch_add(1,std::memory_order_seq_cst);   // open
     {
         std::lock_guard lock(sleepMutex_);
         if (sleeping_) sleepCv_.notify_all();
     }
     drain(0);
-    // Every worker acknowledges every job, so none can still be reading this
-    // job's fields when the next one is written; the release in its decrement
-    // publishes its chunk writes to the caller.
-    for (unsigned spins=0;pending_.load(std::memory_order_acquire);++spins) {
-        if (spins<4096) cpuRelax();
-        else std::this_thread::yield();
-    }
+    auto relax=[](unsigned spins) { if (spins<4096) cpuRelax(); else std::this_thread::yield(); };
+    // Every chunk finished (the release in each increment publishes its writes).
+    for (unsigned spins=0;done_.load(std::memory_order_acquire)<chunks;++spins) relax(spins);
+    // Close, then wait out the workers that joined before the close: a worker
+    // registers in inflight_ BEFORE it re-checks that the job is still open, so
+    // one that saw it open is counted here, and one that comes later sees it
+    // closed and never touches the fields (seq_cst on both sides).
+    gen_.fetch_add(1,std::memory_order_seq_cst);
+    for (unsigned spins=0;inflight_.load(std::memory_order_seq_cst);++spins) relax(spins);
 }
 
 void SimPool::work(unsigned slot) {
@@ -88,13 +101,14 @@ void SimPool::work(unsigned slot) {
                 return stop_.load(std::memory_order_acquire) || gen_.load(std::memory_order_acquire)!=seen;
             });
             --sleeping_;
-            if (gen_.load(std::memory_order_acquire)==seen) return;   // woken by stop_
+            if (stop_.load(std::memory_order_acquire)) return;
         }
-        // The caller waits for this worker's acknowledgement before it starts
-        // another job, so gen_ is exactly one past `seen` here.
-        seen=gen_.load(std::memory_order_acquire);
-        drain(slot);
-        pending_.fetch_sub(1,std::memory_order_acq_rel);
+        const uint64_t g=gen_.load(std::memory_order_acquire);
+        seen=g;
+        if (!(g&1)) continue;   // the job closed before this worker got here
+        inflight_.fetch_add(1,std::memory_order_seq_cst);
+        if (gen_.load(std::memory_order_seq_cst)==g) drain(slot);
+        inflight_.fetch_sub(1,std::memory_order_seq_cst);
     }
 }
 

@@ -15,6 +15,10 @@
 //
 // Workers spin briefly for the next job, then sleep on a condition variable, so
 // an idle pool costs nothing between ticks and a fork-join costs no thread spawn.
+// The caller never waits for a worker that is asleep or descheduled: it waits
+// only for the chunks to finish and for workers already inside the job to
+// leave, so a busy machine (two sims in single player) degrades to the caller
+// doing the work itself rather than to a stall.
 
 #include <algorithm>
 #include <atomic>
@@ -30,7 +34,8 @@ namespace tak::sim {
 class SimPool {
 public:
     static constexpr size_t kUnitChunk=256;
-    // Workers per sim: clamp(hardware threads / 8, 0, 3). A single-player game runs
+    // Workers per sim: clamp(usable CPUs / 8, 0, 3), the CPUs being the process's
+    // affinity mask on Linux (taskset, containers). A single-player game runs
     // two sims (client + local referee), so the cap keeps both within 8 cores.
     // Debug builds honour TAK_SIM_WORKERS (0..15) to test other widths.
     static unsigned defaultWorkers();
@@ -71,14 +76,15 @@ private:
     void drain(unsigned slot);
 
     std::vector<std::thread> threads_;
-    // The current job; written by the caller before gen_ is bumped (release),
-    // read by workers after they observe the bump (acquire).
+    // The current job; written by the caller while gen_ is even (closed), read
+    // by a worker only after it has registered in inflight_ and seen gen_ odd.
     Job job_=nullptr;
     void* ctx_=nullptr;
     size_t chunks_=0;
     std::atomic<size_t> next_{0};       // next unclaimed chunk
-    std::atomic<unsigned> pending_{0};  // workers yet to finish the current job
-    std::atomic<uint64_t> gen_{0};      // bumped once per job
+    std::atomic<size_t> done_{0};       // chunks finished
+    std::atomic<unsigned> inflight_{0}; // workers inside the current job
+    std::atomic<uint64_t> gen_{0};      // odd: a job is open; even: closed
     std::atomic<bool> stop_{false};
     std::mutex sleepMutex_;
     std::condition_variable sleepCv_;

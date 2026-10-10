@@ -8840,8 +8840,11 @@ void World::updateNavigationExploration() {
                 [&](int bx,int bz){summarizeBlock(bx,bz);});
         }
     };
+    // Below about 4k units the whole pass is ~0.1 ms: a fork-join (and the
+    // atomics) would cost more than it saves, most of all in single player,
+    // where the client's and the local referee's sims share the cores.
     SimPool& pool=simPool();
-    constexpr size_t kMinParallel=1500;
+    constexpr size_t kMinParallel=4096;
     if (!pool.workers() || units_.size()<kMinParallel) {
         explore(0,units_.size(),std::false_type{});
         return;
