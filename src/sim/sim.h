@@ -678,6 +678,14 @@ struct Order {
     // anchors, rallies, waypoints spliced in by a route). Retail never sets
     // it; hashed with a tag when set.
     uint32_t convoyTick = ConvoyTable::kNone;
+    // Legion flight stations (W6 FL-04, a flyer's last order): the release
+    // from its station once the ground stops advancing (1, release A) or its
+    // centroid has stood within 16 px of stationRef since stationRefTick for
+    // 900 ticks (2, release B); sticky for the order. stationRefTick 0: no
+    // reference yet. Hashed with a tag when set.
+    uint8_t stationFree = 0;
+    int32_t stationRefX = 0, stationRefZ = 0;
+    uint32_t stationRefTick = 0;
 };
 
 struct Unit {
@@ -747,6 +755,14 @@ struct Unit {
     uint32_t legionLiftUntil=0;
     uint32_t legionLiftRest=0;   // after landing again, no new lift before this tick
     Fixed legionLiftX,legionLiftZ;
+    // W6 FL-01: the tick this lift episode began (hashed with legionLift).
+    // An episode is capped at kLegionLiftCap ticks: after that only a member
+    // whose next planned cells the flyer covers keeps it up, and once it has
+    // landed it rests kLegionLiftCapRest ticks.
+    uint32_t legionLiftSince=0;
+    // Observation only (never hashed, never read by a decision): the tick the
+    // flyer handed its last episode over to landing (the relift counter).
+    uint32_t legionLiftEnded=0;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //
     // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
@@ -2364,6 +2380,11 @@ private:
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
     bool flyerLandingOccupied(const Unit& self, int x0, int z0, int fx, int fz) const;
+    // A flyer standing on the ground for Legion's purposes (W6, PLAN 3.6):
+    // landed (mode 1), or descending in the landing mission's stage 3.
+    static bool flyerGrounded(const Unit& f) {
+        return f.flightGroundMode==1 || (f.landing && f.landing->mission.stage==3);
+    }
     std::pair<int,int> cellHeightRange(size_t cell) const;
     bool acquireTarget(Unit& u, bool missionPoll);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
@@ -2686,8 +2707,14 @@ private:
     // Legion: idle landed flyers make way for allied ground groups.
     static constexpr uint32_t kLegionLiftQuiet=90;   // ticks after the last request
     static constexpr uint32_t kLegionLiftRest=240;   // ticks from the hand-over to landing until it may lift again
+    static constexpr uint32_t kLegionLiftCap=1800;   // ticks one episode may last (60 s, user decision 4)
+    static constexpr uint32_t kLegionLiftCapRest=600; // the rest after a capped episode
+    static constexpr uint32_t kLegionLiftPoll=8;     // a lifted flyer polls for a target every 8 ticks, staggered by id
     bool legionLiftable(const Unit& flyer,int player) const;
-    void requestLegionLift(Unit& flyer);
+    // blocked: the flyer covers one of the requesting member's next planned
+    // cells (the only request that extends an episode past kLegionLiftCap).
+    // Returns whether the request started or extended the episode.
+    bool requestLegionLift(Unit& flyer, bool blocked);
     bool tickLegionLift(Unit& u);
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;

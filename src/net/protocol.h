@@ -19,13 +19,24 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 243;      // 243: Legion W4 C1 -- a first field of a group that claims no packed per-goal slots
+constexpr uint32_t kNetVersion = 244;      // 244: Legion W4 C1 -- a first field of a group that claims no packed per-goal slots
                                            //      and does not pinwheel builds in 4096-relaxation slices and pauses once it
                                            //      covers its members (Field::covered and the members' demand cells are hashed);
                                            //      a member under its cover margin resumes it; the settle rule, the lift walk, the
                                            //      aim memo, eviction, sharing and a formation's slot hand-out read a paused build;
                                            //      a group with a member waiting on its paused build is active (B1), and a paused
                                            //      build is a finished field to the blocked re-request
+                                           // 243: Legion W6 -- flyers are paired with the ground of their own click on (order class,
+                                           //      convoyTick) for Ctrl+N and Alt+N squads (up to 4 stations a squad) and released
+                                           //      for their order when the ground stops (no headway for 450 ticks, or a centroid
+                                           //      still for 900; hashed on the order when set); a landing flyer is stamped on its
+                                           //      touchdown footprint from the start of its descent (leave-only); the rest-time
+                                           //      rejoin gathers ground only, at the formation's modal settled point, never
+                                           //      re-ordering a settled body; a lift episode is capped at 1800 ticks (hashed start
+                                           //      tick) with a 600-tick rest, kept up only by members making headway, and a lifted
+                                           //      flyer polls for a target every 8 ticks; a stalled squad member lifts its own
+                                           //      squad's flyer off its goal or next cells; a station flyer without horizontal
+                                           //      velocity does not yaw
                                            // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
                                            //      unit's orders change (World::noteOrders from the order helpers, mission dispatch,
                                            //      target acquisition and the death edge) instead of by a per-tick walk; prune's

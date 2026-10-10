@@ -54,6 +54,86 @@ is inside the base's own range): `formation_ring_cells`, `still_units_processed`
 `parked_no_progress` (a bound, which licences do not cover: 346 -> 396; **lead to confirm**). The crowdbench screen
 baseline is retaken on this head.
 
+## W6 exit (2026-10-10): flyers and group records (protocol 243)
+
+Head: `task-w6-land` = `task-w6-steps` (`66ac838c`: steps 0-6, step 7 dropped by C20) on the W4 land head `6333e38d`
+(origin/main had not moved: no other lane or C1 had landed, so the step-0-relative baselines are the W4 land ones).
+Protocol 242 -> 243 with its note in `src/net/protocol.h`; `replay_test` asserts 243 and refuses 242. Verified on Linux
+(optimized Debug, Release), Windows (scenario set, quick ctest, `--mpai`) and the Mac (hash check); see the table.
+
+W6 is a behaviour step for flyers and group records only. Its Declared hash-identity claim -- every crowdbench Legion row
+without flyers or squads is unchanged -- holds: the committed screen (86 rows, both modes, seed 0) shows **0 differences**
+against the W4 land baseline (the 7 new W6 counters are the only new keys, and the screen baseline is retaken with them).
+Of the 91 scenario files only **seven Legion rows change their state hash** (the six dead-end squad rows, `mixed2`); the
+other 175 result lines, every Retail row included, are identical in every key.
+
+### Gates on the land head
+
+| Gate | Result |
+|---|---|
+| Scenario set (`legion_check check --cumulative --require-all`, all 91 files, both modes, gate offsets, serial == workers on all 182 lines; Windows) | **PASS** after licensing: 16975 keys, 0 failed, 1279 licensed, 112 floor exceptions in the run, 768 report-only. Before licensing it failed 32 keys, all on the seven changed rows (below) |
+| Retail-floor exceptions (baseline file, non-spread) | **124 -> 123**: `aware-headon/click.a00.t90` (MV-09) passes the floor again (2086 vs Retail 1925) and is removed; none added. Three offset-spread exceptions are added on `mixed2` (`g.F.relifts`, `g.F.relifts_max`, `g.F.takeoffs_max`, gated on the median of 5 offsets) |
+| W5/W9 hard gates (`w5-w9-gates.md`) | not touched by W6: none worsened, none cleared (they belong to W5/W9); `legion_acceptance_crowdheld_legion` still fails as at the W3 step-0 head |
+| Cumulative combat gate (battle-field-2x60/2x250/2x500, battle-assault; `work.legion_total` max / p99 / total) | all four rows are **hash-identical to the W4 land head** (W6 has no flyers or squads there), so the work equals the W4 land numbers: 2x60 393549 / 101065, 2x250 396376 / 173083, 2x500 418206 / 236732, battle-assault 508959 / 403764 -- every per-tick max and p99 is at or below the W0 base (x1.00) except battle-assault max, which carries the ruling (p) phase gate (its 10-phase median 476843 <= W0 484465) exactly as at the W4 land |
+| New work class `lift_target_polls` (FL-01 combat poll, declared bound <= lifted flyers / 8 a tick) | bound entries `<= 3` (liftstream, 24 flyers) and `<= 2` (mixed2, 16 flyers) on max and p99; measured 3 and 1. Fault injection: the same bound set to 2 and 0 fails both (`bound <= 2, got 3`, `bound <= 0, got 1`). Total Legion work on liftstream, mixed2 and the battle rows passes its 1.10x bands (scenario set PASS) |
+| Exact | Retail navigation golden and hashes unchanged; the Legion navigation golden **regenerates to the same file** (24 of 24 checkpoints agree, serial == workers: the 24-body cohort has no flyers and no squads); `check-determinism.sh`, `check-detmath` OK; serial == workers on every scenario line; `TAK_LEGION_VERIFY` clean on the lift and touchdown cases |
+| `--mpai` Inner Circle 300 s seed 1 (`takserver --local`, clean `XDG_DATA_HOME`) | Legion **b2261dc31dc84cdf** twice on Linux, Retail **b240750e5765c02b**: both equal the W4 land values (that match has no squads and no lifted flyers in 300 s), so the recorded hashes stay |
+| crowdbench screen | 86 rows, 0 differences vs the W4 land baseline; baseline retaken (172 lines: the new W6 counters `relifts`, `cap_hits`, `station_releases_a/b`, `go_arounds`, `station_overflow`, `lift_target_polls`) |
+| ctest | see the list below the table |
+
+### What W6 delivers (`legion_flyers_test`, 17 cases; step 0 head -> land)
+
+| case | step-0 head | land | PLAN target | met? |
+|---|---|---|---|---|
+| mixedsquad Ctrl+1 move | done 3241, away 2153, landed_ahead 315 | done 2656, away 288, landed_ahead 0, hover 18 | done <= 2650, away <= 300, 0 | away and ahead yes; done 6 ticks over |
+| mixedsquad Alt+1 offset +1 | illegal footprint 10 ticks | 0 | 0 | yes |
+| mixedseal | hover 5149, landed 0/8 | hover 458, landed 8/8 | <= 1200, 8 | yes |
+| mv08group Ctrl+1 | away 1702, ahead 251 | away 307, ahead 0 | <= 300, 0 | 7 px over |
+| deadendrejoin w4/6/8/12 | holding 4/1/5/0 | 0/0/0/0, no anchored body re-ordered | 0 | yes |
+| ctrlmixed two-click | away 2048 | away 232-266, 0 cross pairs | <= 300 | yes |
+| factoryjoin | settles 611 after reaching | 71, 1 order | <= 600 | yes |
+| landunder / descentwalkin | overlap 394 / 1459, 125 / 130 | 0 / 0, 0 / 0 | 0 | yes (descentwalkin arrival 555 vs <= 286: no) |
+| liftcombat | react 322 | 1 | <= 16 | yes |
+| fl04 corridor | hover 1134, landed 0/8 | hover 719, 8/8 | <= 1200, >= 7/8 | yes |
+| fl05match80 | done 2226-2339 | 856-1016 | 883-1046 +-10% | yes |
+| fl05unreach | hover 8638, 1897 px off | hover 458, 141 px | <= 1200, <= 128 px | 13 px over |
+| splitpatrol | station ticks 12000 | 0 | 0 | yes |
+| mixed2 (scenario) | spins 101, illegal overlap 3746 | spins 0, illegal overlap 0 | down | yes |
+
+Open at the land (carried, none a regression): `ctrlmixedbig` arrival over a 200-body crowd (away 574-597), `fl04 box` far
+168 px (<= 128), `fl04 big440` 9 of 24 flyers still circling a crowd-covered site (the post-release cap floor is not shipped:
+it moved Alt+1 start offsets +21% / +53%), `mv08deadend` nearest-to-point 36 px (<= 32), the Ctrl+1 fight run's ground
+done 4636 vs Alt 2611, `auditlift40` hover 1807 (7 ticks over). The touchdown backstop (C5) and step 7 are not built.
+
+### The seven changed rows and their licences
+
+Full list of the 165 moved keys (old -> new, intended or incidental): [legion-exit-w6-moves.md](legion-exit-w6-moves.md).
+
+- **Dead-end squad rows** (`deadend-w2-n40-closed`, `w4-n40-closed`, `w4-n120-closed`, `w4-n120-room`, `w6-n120-closed`,
+  `w6-n120-room`, all `-squad`): step 4 (merged rejoin) no longer pulls a settled dead-end queue back on itself. Outcome
+  *improves*: `g.A.arrived` 8 -> 10, 19 -> 24, 4 -> 6, 17 -> 22, 31 -> 34; `open_still900` and `still900_ever` 2-4 -> 0 (seven
+  of them ratcheted); `parked_held` -50% to -95%; `stopped_permille` -13% to -41%; `held_rechecks` -30% to -80%; one group
+  and one built field instead of two. The cost: members settled in the dead end stay still, so `work.still_units_processed`
+  *total* rises (8027 -> 22298, 12508 -> 22803, 5905 -> 7830, 18099 -> 23598, 19123 -> 23859; per-tick max and p99 fall from
+  120 to 4); it is licensed per row as a step 4 consequence. `deadend-w4-n120-room-squad` `wall_touch_near_permille`
+  590 -> 666 (settled bodies stand at the wall) is licensed too; it is not a Retail-floor key. Total Legion work is within 1.10x.
+- **mixed2** (Legion): `spins` 101 -> 0 and `g.F.illegal_overlap_ticks` 3746 -> 0 (ratcheted) are the gain of FL-03 and the
+  no-yaw rule. The price: `g.F.takeoffs_max` 2 -> 3, `g.F.relifts_max` 1 -> 2, `g.F.hover_max` 56 -> 62 (+11%), and the
+  follow-on ground work (detours 85 -> 93, held rechecks 466 -> 576, slides +11%, lift members walked +11%, completion
+  distances +1-2) are licensed with their observed maxima; the takeoff and relift counts are small-integer keys, so they are
+  also spread exceptions (2..4, 1..3, 16..21 over the gate offsets). Retail takes off 2 times per flyer on this fixture.
+  `gate.mid.crossings` 24 -> 35 and `gate.mid.files_x100` 291 -> 307 move inside their bands.
+
+### Ratchets and baseline
+
+Seven references move (outcome keys of the changed rows: `open_still900`, `still900_ever`, `g.F.illegal_overlap_ticks`) and the
+`aware-headon/click.a00.t90` floor exception is cleared. The other 253 ratchets `legion_check` prints are the W4 B2
+stripe-phase moves on rows W6 did not touch (hash-identical to the W4 land) and the work-counter improvements of the changed
+rows; they are not applied (lead ruling W4 (q): no blanket ratchet, and only improvements beyond the offset spread count).
+`accepted_regressions` +22 (six dead-end `still_units_processed.total`/wall-touch entries and the `mixed2` flyer entries, each
+with its reason); exceptions +3 (spread), -1 (floor). New entries: `work.lift_target_polls.*` bounds, `work.lifts.*` and
+`work.relifts.*` bases for `liftstream` and `mixed2`.
+
 ## W4 exit with B1 + B2 (2026-10-09): gates re-run on the combined head -- B2 fails the scenario set
 
 Head: `task-w4-exit` = the B3-only exit (`55a83ee2`) + `task-w4-b1` (merge `cfeef687`) + `task-w4-b2` (merge

@@ -2129,13 +2129,20 @@ void World::tickFlightBody(Unit& u) {
     if (u.baseSpeed<=Fixed()) { u.flightVelocity={}; u.speed=Fixed(); return; }
     Fixed maximum=u.baseSpeed;
     // Legion formation flyer: the ground's pace (see planLegionFlightStations).
-    if (const auto* station=legionFlightStation(u); station && station->capped) maximum=fxMin(maximum,station->cap);
+    const auto* station=legionFlightStation(u);
+    if (station && station->capped) maximum=fxMin(maximum,station->cap);
     const uint16_t heading=portHeadingToRetail(u.heading);
     const auto previousVelocity=u.flightVelocity;
     u.flightVelocity=retailFlightVelocity(u.flightVelocity,position,
         u.flightNavigation.destination,u.flightNavigation.velocity,u.speed.v,std::max(1,maximum.v),
         u.type->accel.v,u.type->brake.v,heading);
-    const int diff=int16_t(uint16_t(u.flightNavigation.heading-heading));
+    // W6 (Legion, deliberate): an escort with no way on over the ground --
+    // climbing straight up from the ground at the start of a leg, or held
+    // still by the ground's pace -- does not yaw on the spot toward its lead
+    // point; it turns once it moves (mixed2 leg 2: 16 flyers yawing through
+    // their vertical take-off read as ~110 spins).
+    const bool parked=station && u.flightVelocity.x==0 && u.flightVelocity.z==0;
+    const int diff=parked ? 0 : int16_t(uint16_t(u.flightNavigation.heading-heading));
     u.heading=u.heading+Bam(std::clamp(diff,-u.type->turnRate,u.type->turnRate));
     u.turnReqBam=diff;
     const auto delta=[](int32_t next,int32_t previous) {
@@ -2278,7 +2285,7 @@ bool World::flyerLandingOccupied(const Unit& self,int x0,int z0,int fx,int fz) c
         if (&o==&self || !o.alive() || o.embarked() || !o.type) return false;
         if (ox>=x0+fx || oz>=z0+fz || ox+o.type->footX<=x0 || oz+o.type->footZ<=z0) return false;
         if (!o.type->canFly) return !o.type->isStructure();
-        return o.flightGroundMode==1 || (o.landing && o.landing->mission.stage==3);
+        return flyerGrounded(o);
     };
     if (bodyIndexEnabled_ && hW_>0 && hH_>0 && x0>=0 && z0>=0 && x0+fx<=hW_ && z0+fz<=hH_) {
         if (!bodyIndexValid_) rebuildBodyIndex();
@@ -2318,9 +2325,21 @@ bool World::legionLiftable(const Unit& f,int player) const {
         (f.legionLift || (f.flightGroundMode==1 && tickCounter_>=f.legionLiftRest));
 }
 
-void World::requestLegionLift(Unit& f) {
-    if (!f.legionLift) { f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; }
-    f.legionLiftUntil=tickCounter_+kLegionLiftQuiet;
+// W6 FL-01 (PLAN 3.6): an episode lasts at most kLegionLiftCap ticks unless
+// a member is blocked by the flyer itself (it covers the member's next planned
+// cells); a capped episode then rests kLegionLiftCapRest ticks once landed.
+// While lifted the flyer polls for a target on the VTOL-standby call
+// (acquireTarget, as the landed standby does) every kLegionLiftPoll ticks,
+// staggered by id: lifted flyers fight instead of hovering through a battle.
+bool World::requestLegionLift(Unit& f, bool blocked) {
+    if (!f.legionLift) {
+        f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; f.legionLiftSince=tickCounter_;
+    } else if (!blocked && tickCounter_-f.legionLiftSince>=kLegionLiftCap) return false;
+    // An unblocked request never carries the episode past the cap, quiet
+    // period included.
+    f.legionLiftUntil=blocked ? tickCounter_+kLegionLiftQuiet
+                              : std::min(tickCounter_+kLegionLiftQuiet,f.legionLiftSince+kLegionLiftCap);
+    return true;
 }
 
 bool World::tickLegionLift(Unit& u) {
@@ -2333,10 +2352,24 @@ bool World::tickLegionLift(Unit& u) {
     if (tickCounter_>=u.legionLiftUntil) {
         // Nobody asked for kLegionLiftQuiet ticks: land again, searching from
         // the spot it holds over (the retail landing mission's own search).
+        const bool capped=tickCounter_-u.legionLiftSince>=kLegionLiftCap-1;
         u.legionLift=false;
-        u.legionLiftRest=tickCounter_+kLegionLiftRest;
+        u.legionLiftRest=tickCounter_+(capped ? kLegionLiftCapRest : kLegionLiftRest);
+        u.legionLiftEnded=tickCounter_;
+        if (capped && legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::CapHit);
         if (u.flightGroundMode==2) { u.standbyActive=false; u.landing.emplace(); }
         return false;
+    }
+    if (u.flightGroundMode==2 && (uint32_t(u.id)+tickCounter_)%kLegionLiftPoll==0) {
+        if (legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::TargetPoll);
+        if (acquireTarget(u,true)) {
+            // A target: the attack order ends the lift (the flyer is no longer
+            // liftable) and this tick's combat update takes it on.
+            u.legionLift=false;
+            u.legionLiftRest=tickCounter_+kLegionLiftRest;
+            u.legionLiftEnded=tickCounter_;
+            return false;
+        }
     }
     if (u.flightGroundMode!=2) {
         // 416c50, as VTOL_Move's stage 0.
@@ -2489,34 +2522,43 @@ static void legionStationSlot(int k,int& ox,int& oz) {
 }
 
 // Legion (a deliberate difference from retail, docs/legion-pathfinding.md):
-// a flyer in a formation (squad < 0) that also has ground members travels
-// with them. Retail flies it at its own speed toward the shared point and,
+// a flyer in a squad -- an Alt+N formation (squad < 0) or a Ctrl+N group
+// (squad > 0) -- that also has ground members travels with the ground of its
+// own click. Retail flies it at its own speed toward the shared point and,
 // once it is far out of slot, pulls it back to the group centre (417e02,
 // ported for Retail mode); with neither, a Legion flyer raced ahead, landed
 // at the goal and waited there.
 //
-// While ground members are under way to the flyer's destination (or
-// patrolling with it), the flyer keeps a station on a square spiral over the
-// ground members' centroid. It does not steer AT the station: a point
-// destination puts retail's flight model in its arrival regime, where the
-// navigator keeps its old heading inside 16 px and the body only creeps
-// after a target that moves a fraction of a pixel per tick (the flyer looked
-// parked). It steers at a point 160 px ahead of the station along the
+// Pairing (W6, PLAN 3.5 / C4): one click is one convoy (Order::convoyTick,
+// sim/convoy.h), whatever the client's uplink split and whatever the flyer's
+// +-60 px click offset. Per squad (retailGroupIndex: Ctrl 1..10, Alt 11..20)
+// the busy ground members' last orders fall into up to kBuckets buckets keyed
+// by (order class, convoyTick); a flyer whose last order carries the same key
+// keeps station over that bucket's ground. A further distinct click gets no
+// bucket (stationOverflow) and its flyers fly their own orders, as does a
+// flyer of a click with no ground (a separate air click or air patrol).
+//
+// While the bucket's ground is under way the flyer keeps a station on a
+// square spiral over the ground's centroid. It does not steer AT the station:
+// a point destination puts retail's flight model in its arrival regime,
+// where the navigator keeps its old heading inside 16 px and the body only
+// creeps after a target that moves a fraction of a pixel per tick (the flyer
+// looked parked). It steers at a point 160 px ahead of the station along the
 // ground's direction of travel, so it cruises facing its way and banks
-// through turns as any flyer does, and its maximum follows the ground's
-// mean speed, raised while it is behind its station and lowered while it is
+// through turns as any flyer does, and its maximum follows the ground's mean
+// speed, raised while it is behind its station and lowered while it is
 // ahead. Once the ground's centroid is within the formation radius of the
 // flyer's destination the flyer is released to its own order, as in retail;
-// it arrives, completes the order and lands at once. Everything here is
-// derived from hashed state each tick, in unit order, with integer
-// arithmetic; nothing persists.
+// it arrives, completes the order and lands at once. A squad with one bucket
+// keeps every ground member (idle ones too) in its centroid, radius and
+// spacing, as before W6; with several, each bucket counts its own busy
+// members only. Everything here is derived from hashed state each tick, in
+// unit order, with integer arithmetic; nothing persists.
 void World::planLegionFlightStations() {
     legionFlightStationsLive_=false;
     if (!isLegionPathfinding(pathfindingMode_)) return;
-    constexpr int kGoals=8;
-    // The same command: the move UI offsets a flyer's point by up to 60 px
-    // per axis from the shared ground point (gameview_hud.cpp).
-    constexpr int64_t kMatch=96;
+    constexpr int kSquads=21;         // retailGroupIndex: 1..10 Ctrl, 11..20 Alt
+    constexpr int kBuckets=4;         // clicks per squad with a station (PLAN 3.5)
     constexpr int32_t kLead=160;      // px ahead of the station the flyer steers at
     constexpr int64_t kCatchUp=192;   // px behind the station at which it flies at full speed
     constexpr int64_t kBrake=128;     // px ahead of the station at which it stops
@@ -2524,73 +2566,132 @@ void World::planLegionFlightStations() {
         const int64_t dx=int64_t(ax.v)-bx.v,dz=int64_t(az.v)-bz.v,r=pixels<<16;
         return dx*dx+dz*dz<=r*r;
     };
-    struct Ground {
-        int64_t sx=0,sz=0,dx=0,dz=0,speed=0;
-        int n=0,area=0,busy=0,foot=1,goals=0;
-        bool patrol=false;
-        std::array<std::pair<Fixed,Fixed>,kGoals> goal{};
+    const auto classOf=[](const Order& o) {
+        return o.patrol ? ConvoyClass::Patrol : o.attackMove ? ConvoyClass::Fight : ConvoyClass::Move;
     };
-    std::array<std::array<Ground,11>,kMaxPlayers> groups{};
+    struct Bucket {
+        ConvoyClass cls=ConvoyClass::Move;
+        uint32_t convoy=ConvoyTable::kNone;
+        int64_t sx=0,sz=0,dx=0,dz=0,speed=0;
+        int busy=0,area=0,slots=0;
+        // FL-04: a busy member still making headway (LegionNavigator::
+        // advancing over kStationStall; a ground mover Legion does not route
+        // counts while it moves), and one that fired lately (a reload running).
+        bool advancing=false,engaged=false;
+    };
+    struct Ground {
+        int64_t sx=0,sz=0;
+        int n=0,area=0,foot=1,buckets=0;
+        bool flyers=false,overflow=false;
+        std::array<Bucket,kBuckets> bucket{};
+    };
+    std::array<std::array<Ground,kSquads>,kMaxPlayers> groups{};
     const auto member=[](const Unit& u) {
-        return u.alive() && u.type && u.squad<0 && u.squad>=-10 && u.player>=0 && u.player<kMaxPlayers &&
+        return u.alive() && u.type && u.squad!=0 && u.squad>=-10 && u.squad<=10 && u.player>=0 && u.player<kMaxPlayers &&
                !u.type->isStructure() && !u.underConstruction && !u.embarked();
     };
     bool flyers=false;
     TAK_PASS();
     for (const auto& u:units_) {
-        if (!member(u)) continue;
-        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
-        if (u.type->canFly) {
-            flyers=true;
-            g.foot=std::max({g.foot,int(u.type->footX),int(u.type->footZ)});
-            continue;
-        }
+        if (!member(u) || !u.type->canFly) continue;
+        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        g.flyers=flyers=true;
+        g.foot=std::max({g.foot,int(u.type->footX),int(u.type->footZ)});
+    }
+    if (!flyers) return;
+    TAK_PASS();
+    for (const auto& u:units_) {
+        if (!member(u) || u.type->canFly) continue;
+        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        if (!g.flyers) continue;
         g.sx+=u.x.v;g.sz+=u.z.v;
         ++g.n;g.area+=u.type->footX*u.type->footZ;
         if (u.orders.empty()) continue;
-        ++g.busy;
-        g.patrol|=u.orders.front().patrol;
-        g.speed+=u.speed.v;
+        const Order& last=u.orders.back();
+        if (last.convoyTick==ConvoyTable::kNone) continue;
+        const ConvoyClass cls=classOf(last);
+        Bucket* b=nullptr;
+        for (int k=0;k<g.buckets && !b;++k)
+            if (g.bucket[size_t(k)].cls==cls && g.bucket[size_t(k)].convoy==last.convoyTick) b=&g.bucket[size_t(k)];
+        if (!b) {
+            if (g.buckets==kBuckets) { g.overflow=true; continue; }
+            b=&g.bucket[size_t(g.buckets++)];
+            b->cls=cls;b->convoy=last.convoyTick;
+        }
+        b->sx+=u.x.v;b->sz+=u.z.v;
+        ++b->busy;b->area+=u.type->footX*u.type->footZ;
+        b->speed+=u.speed.v;
+        const bool engaged=u.reloads[0]>0||u.reloads[1]>0||u.reloads[2]>0;
+        b->engaged|=engaged;
+        if (!b->advancing) b->advancing=engaged ||
+            (legion_ && legion_->unitState(u.id) ? legion_->advancing(u.id,LegionNavigator::kStationStall) : u.speed>Fixed());
         // Direction of travel: the sum of the busy members' unit vectors
         // toward their current legs (16.16).
         const Order& leg=u.orders[currentLeg(u.orders)];
         const Fixed lx=leg.x-u.x,lz=leg.z-u.z,len=fxLen(lx,lz);
         if (len>Fixed::fromInt(1)) {
-            g.dx+=(int64_t(lx.v)<<16)/len.v;g.dz+=(int64_t(lz.v)<<16)/len.v;
+            b->dx+=(int64_t(lx.v)<<16)/len.v;b->dz+=(int64_t(lz.v)<<16)/len.v;
         }
-        const Order& last=u.orders.back();
-        bool seen=false;
-        for (int k=0;k<g.goals && !seen;++k)
-            seen=near(g.goal[size_t(k)].first,g.goal[size_t(k)].second,last.x,last.z,kMatch);
-        if (!seen && g.goals<kGoals) g.goal[size_t(g.goals++)]={last.x,last.z};
     }
-    if (!flyers) return;
-    std::array<std::array<int,11>,kMaxPlayers> slots{};
     TAK_PASS();
     for (size_t i=0;i<units_.size();++i) {
-        const Unit& u=units_[i];
+        Unit& u=units_[i];
         if (!member(u) || !u.type->canFly || !legionStationOrder(u)) continue;
-        const auto& g=groups[size_t(u.player)][size_t(-u.squad)];
-        if (g.n==0 || g.busy==0) continue;
-        const Order& head=u.orders.front();
-        const Order& last=u.orders.back();
-        bool same=head.patrol && g.patrol;
-        if (!head.patrol) for (int k=0;k<g.goals && !same;++k)
-            same=near(g.goal[size_t(k)].first,g.goal[size_t(k)].second,last.x,last.z,kMatch);
-        if (!same) continue;
-        const Fixed cx=Fixed::raw(int32_t(g.sx/g.n)),cz=Fixed::raw(int32_t(g.sz/g.n));
+        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        if (g.overflow && legion_) {
+            // Observation only: once per squad and tick.
+            legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::StationOverflow);
+            g.overflow=false;
+        }
+        Order& last=u.orders.back();
+        if (g.n==0 || last.convoyTick==ConvoyTable::kNone || last.stationFree) continue;
+        const ConvoyClass cls=classOf(last);
+        Bucket* b=nullptr;
+        for (int k=0;k<g.buckets && !b;++k)
+            if (g.bucket[size_t(k)].cls==cls && g.bucket[size_t(k)].convoy==last.convoyTick) b=&g.bucket[size_t(k)];
+        if (!b) continue;
+        const bool whole=g.buckets==1;
+        const int64_t n=whole?g.n:b->busy;
+        const Fixed cx=Fixed::raw(int32_t((whole?g.sx:b->sx)/n)),cz=Fixed::raw(int32_t((whole?g.sz:b->sz)/n));
+        const int area=whole?g.area:b->area;
+        const int64_t radius=std::max<int64_t>(256,32*int64_t(isqrt64(uint64_t(area))));
+        const bool arriving=cls!=ConvoyClass::Patrol && near(cx,cz,last.x,last.z,radius);
+        if (!arriving) {
+            // FL-04 (PLAN 3.6): the ground has stopped. Release A: no busy
+            // member has made headway for kStationStall ticks (a dead-end
+            // queue, a sealed wall, an approach hold). Release B: its centroid
+            // has stood within 16 px for kStationStatic ticks with nobody
+            // firing (a crowd one member still creeps through). Either frees
+            // the flyer for this order: it flies its own order and lands, as
+            // retail's VTOL_Move ends.
+            constexpr int64_t kStationStill=16;
+            constexpr uint32_t kStationStatic=900;
+            if (!b->advancing) {
+                last.stationFree=1;
+                if (legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::ReleaseA);
+                continue;
+            }
+            if (!last.stationRefTick || b->engaged ||
+                !near(cx,cz,Fixed::raw(last.stationRefX),Fixed::raw(last.stationRefZ),kStationStill)) {
+                last.stationRefX=cx.v;last.stationRefZ=cz.v;last.stationRefTick=tickCounter_;
+            } else if (tickCounter_-last.stationRefTick>=kStationStatic) {
+                last.stationFree=2;
+                if (legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::ReleaseB);
+                continue;
+            }
+        }
         int ox,oz;
-        legionStationSlot(slots[size_t(u.player)][size_t(-u.squad)]++,ox,oz);
+        legionStationSlot(b->slots++,ox,oz);
         const int spacing=16*g.foot+16;
         const Fixed sx=cx+Fixed::fromInt(ox*spacing),sz=cz+Fixed::fromInt(oz*spacing);
         // Unit direction of travel (16.16), zero when the ground has none.
         int64_t dx=0,dz=0;
-        if (const int64_t l=int64_t(isqrt64(uint64_t(g.dx*g.dx+g.dz*g.dz)));l>0) {
-            dx=(g.dx<<16)/l;dz=(g.dz<<16)/l;
+        if (const int64_t l=int64_t(isqrt64(uint64_t(b->dx*b->dx+b->dz*b->dz)));l>0) {
+            dx=(b->dx<<16)/l;dz=(b->dz<<16)/l;
         }
         // Along-track error: positive while the flyer is behind its station.
         const int64_t behind=((int64_t(sx.v-u.x.v)*dx+int64_t(sz.v-u.z.v)*dz)>>16);
-        const int64_t pace=g.speed/g.busy,base=u.baseSpeed.v;
+        const int64_t pace=b->speed/b->busy,base=u.baseSpeed.v;
         int64_t cap;
         // Far off its station (joining, or left behind on a turn) it flies at
         // its own speed to rejoin.
@@ -2604,8 +2705,7 @@ void World::planLegionFlightStations() {
         auto& station=legionFlightStations_[i];
         station.active=true;
         station.cap=Fixed::raw(int32_t(std::clamp<int64_t>(cap,0,base)));
-        const int64_t radius=std::max<int64_t>(256,32*int64_t(isqrt64(uint64_t(g.area))));
-        if (!head.patrol && near(cx,cz,last.x,last.z,radius)) {
+        if (arriving) {
             // Arriving: the flyer flies its own order and lands on arrival.
             // The pace holds until it is near its point, so it does not dash
             // ahead of the ground; the final approach is retail's.
@@ -10656,6 +10756,9 @@ void World::tick(float dt) {
         Fixed slowest = Fixed::raw(std::numeric_limits<int32_t>::max());
         int area = 0;   // footprint cells of its mobile members
         int busy = 0;   // mobile members still carrying out an order
+        // Its ground members only (Legion's rejoin, W6: flyers neither set the
+        // centre nor count).
+        int64_t gx = 0, gz = 0; int gn = 0, garea = 0;
         float cx() const { return Fixed::raw(int32_t(sx / n)).toFloat(); }
         float cz() const { return Fixed::raw(int32_t(sz / n)).toFloat(); }
     };
@@ -10675,6 +10778,10 @@ void World::tick(float dt) {
                 f->slowest = fxMin(f->slowest, u.baseSpeed);
                 f->area += u.type->footX * u.type->footZ;
                 f->busy += !u.orders.empty();
+                if (!u.type->canFly) {
+                    f->gx += u.x.v; f->gz += u.z.v; ++f->gn;
+                    f->garea += u.type->footX * u.type->footZ;
+                }
             }
     if (pathfindingMode_==PathfindingMode::Retail) tickRetailGroups();
     planLegionFlightStations();
@@ -10699,10 +10806,64 @@ void World::tick(float dt) {
         }
         return false;
     };
+    // Legion's rejoin (W6, PLAN 3.5 / C4): the centre and count are the
+    // ground's (flyers are never re-ordered), and a formation whose members
+    // settled at a destination gathers there, not at its centroid: P is the
+    // modal settled-arrival point of its ground members (ties to the lowest
+    // point). A body settled at P is never re-ordered; another is re-ordered
+    // to P (a fresh order) only if it is beyond twice the settled crowd's
+    // reach of P (settleReach, 8x the packed disc plus 4 bodies) and farther
+    // from P than the centroid is. With no settled member the centroid rule
+    // stands. Candidates are found by the old test first, so P is computed
+    // only for a resting formation that has one.
+    const bool legionRejoin = isLegionPathfinding(pathfindingMode_) && legion_;
+    struct RejoinPoint { bool done = false, has = false; int32_t x = 0, z = 0; int count = 0; };
+    std::array<std::array<RejoinPoint, 11>, kMaxPlayers> rejoinPoints{};
+    auto rejoinPoint = [&](const Unit& u) -> const RejoinPoint& {
+        auto& r = rejoinPoints[size_t(u.player)][size_t(-u.squad)];
+        if (r.done) return r;
+        r.done = true;
+        std::map<std::pair<int32_t,int32_t>,int> counts;
+        for (const auto& o : units_) {
+            if (!o.alive() || !o.type || o.player != u.player || o.squad != u.squad || o.type->canFly ||
+                o.type->isStructure() || o.underConstruction) continue;
+            int32_t x, z; int n;
+            if (legion_->arrivalPoint(o.id, x, z, n)) ++counts[{x, z}];
+        }
+        int best = 0;
+        for (const auto& [point, n] : counts)
+            if (n > best) { best = n; r.has = true; r.x = point.first; r.z = point.second; }
+        r.count = best;
+        return r;
+    };
     TAK_PASS();
     for (auto& u : units_) {
         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
         if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
+        if (legionRejoin) {
+            if (u.type->canFly) continue;
+            FormAgg* f = formOf(u);
+            if (!f || f->gn <= 1 || f->busy) continue;
+            const float cx = Fixed::raw(int32_t(f->gx / f->gn)).toFloat(), cz = Fixed::raw(int32_t(f->gz / f->gn)).toFloat();
+            const float d = detmath::len(u.x.toFloat() - cx, u.z.toFloat() - cz);
+            if (d <= kFormRejoin || d * d <= 1024.0f * float(f->garea)) continue;
+            const RejoinPoint& p = rejoinPoint(u);
+            if (!p.has) {
+                if (!pressedAgainstCrowd(u, cx, cz)) order(u.id, cx, cz, false);
+                continue;
+            }
+            int32_t ax, az; int n;
+            if (legion_->arrivalPoint(u.id, ax, az, n) && ax == p.x && az == p.z) continue;
+            const int64_t body = int64_t(std::max(u.type->footX, u.type->footZ)) * 16;
+            const int64_t reach = 4 * body * int64_t(isqrt64(uint64_t(p.count + 1) * 100000000 / 31416)) / 100 + 2 * body;
+            const int64_t ux = (int64_t(u.x.v) - p.x) >> 16, uz = (int64_t(u.z.v) - p.z) >> 16;
+            const int64_t mx = (f->gx / f->gn - p.x) >> 16, mz = (f->gz / f->gn - p.z) >> 16;
+            const int64_t mine = ux * ux + uz * uz;
+            if (mine <= reach * reach || mine <= mx * mx + mz * mz) continue;
+            const float px = Fixed::raw(p.x).toFloat(), pz = Fixed::raw(p.z).toFloat();
+            if (!pressedAgainstCrowd(u, px, pz)) order(u.id, px, pz, false);
+            continue;
+        }
         FormAgg* f = formOf(u);
         // Only a formation at rest gathers. While members still walk an
         // order, the ones already done are its front (a column through a gap
@@ -11901,7 +12062,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.orders.size()));
         mix(u.missionEvents);
         mix(u.standbyAllowed); mix(u.standbyActive);
-        if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); }
+        if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); mix(u.legionLiftSince); }
         if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
         if (unitScript(u.id) && (u.legionStillTicks || u.legionStepTicks || u.legionStill)) {
             mix(0x5354494cu); mix(u.legionStillTicks); mix(u.legionStepTicks); mix(u.legionStill);
@@ -11980,6 +12141,10 @@ uint64_t World::stateHash() const {
                 } else mix(0);
             }
             if (order.convoyTick != ConvoyTable::kNone) {mix(0x434f4e5654494bull);mix(order.convoyTick);}
+            if (order.stationFree || order.stationRefTick) {
+                mix(0x53544e52454cull);mix(order.stationFree);
+                mix(uint32_t(order.stationRefX));mix(uint32_t(order.stationRefZ));mix(order.stationRefTick);
+            }
             if (!order.groundMission && !(u.type && u.type->canFly && (order.patrol || order.flightMoveMission))) continue;
             mix(order.controller);
             if(isLegionPathfinding(pathfindingMode_))mix(order.issuedTick);
