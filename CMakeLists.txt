@@ -130,6 +130,7 @@ add_library(tak-formats
   src/cob/cob.cpp
   src/cob/vm.cpp
   src/sim/sim.cpp
+  src/sim/simpool.cpp
   src/sim/pathsearch.cpp
   src/sim/legion.cpp
   src/sim/convoy.cpp
@@ -745,6 +746,8 @@ target_link_libraries(retail_motion_test PRIVATE tak-formats)
 add_test(NAME retail_motion COMMAND retail_motion_test)
 add_executable(duration_test tools/duration_test.cpp)
 add_executable(navincr_test tools/navincr_test.cpp)
+add_executable(simpool_test tools/simpool_test.cpp)
+target_link_libraries(simpool_test PRIVATE tak-formats)
 add_executable(fixed_test tools/fixed_test.cpp)
 add_executable(statsfit_test tools/statsfit_test.cpp)
 add_executable(settings_test tools/settings_test.cpp)
@@ -813,6 +816,7 @@ add_test(NAME cadence COMMAND cadence_test)
 add_test(NAME duration COMMAND duration_test)
 add_test(NAME navincr COMMAND navincr_test)
 add_test(NAME fixed COMMAND fixed_test)
+add_test(NAME simpool COMMAND simpool_test)
 add_test(NAME settings COMMAND settings_test)
 add_test(NAME door_animation COMMAND door_animation_test)
 add_test(NAME pathgeom COMMAND pathgeom_test)
