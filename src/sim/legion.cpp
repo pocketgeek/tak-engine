@@ -253,7 +253,7 @@ struct LegionNavigator::Impl {
         // two cells of its edge kSoftNear times. With a soft obstacle on top
         // a key rises by at most (2*kSoftFactor-1)*kDiagonal plus the
         // heuristic's kDiagonal, under the 128 buckets.
-        struct Corridor {int64_t x0=0,z0=0,x1=0,z1=0,r=0;};
+        struct Corridor {int64_t x0=0,z0=0,x1=0,z1=0,r=0;bool operator==(const Corridor&) const=default;};
         std::vector<Corridor> avoid;
         uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {
             uint32_t extra=0;
@@ -386,6 +386,10 @@ struct LegionNavigator::Impl {
         // has been off its way.
         std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
         uint32_t awareAt=0;   // tick of the first awareScan replan not yet served by an install (Stats only, never hashed)
+        // Awareness correctness (PLAN 3.3 F, W7 step 5): the pending refresh
+        // is an aware re-plan, served first inside the refresh allowance
+        // (C7). Folded only when set (C27).
+        bool awareDemand=false;
         // Demand-driven refresh (see active): the last tick a member started
         // its update Moving, the last tick a member was blocked (no progress
         // for kBlockedRetry ticks outside its destination area), and the
@@ -2539,6 +2543,11 @@ struct LegionNavigator::Impl {
             if(f->x0>box[0]||f->z0>box[1]||f->x0+f->fw-1<box[2]||f->z0+f->fh-1<box[3])continue;
             if((f->command==kNoSoft)!=(command==kNoSoft)||f->ownArrivals!=own||(own&&f->command!=command))continue;
             if(f->seeds!=g.seeds)continue;
+            // Equal charge lists (PLAN 3.3 F, C34): a field planned round
+            // movers is no field for a group that plans round others or
+            // none (empty == empty). Tested per candidate, never in the
+            // route-key index's key (C10).
+            if(f->avoid!=g.avoidSeg)continue;
             hit=*d;
             return true;
         }
@@ -2570,7 +2579,7 @@ struct LegionNavigator::Impl {
                 else if(g.field) {
                     if(g.next&&!g.next->done)++stats.refreshDiscards;
                     ++stats.refreshCompleted;
-                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
+                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
                 }
                 else g.field=std::move(shared);
                 listGroup(g);
@@ -2606,7 +2615,7 @@ struct LegionNavigator::Impl {
 #endif
             if(!victim) {noVictimTick=w.tickCounter_;noVictimDone=fieldsDone;return false;}
             if(victim->next&&!victim->next->done)++stats.refreshDiscards;
-            victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;++stats.fieldEvictions;
+            victim->field.reset();victim->next.reset();victim->stale=false;victim->demand=false;victim->awareDemand=false;++stats.fieldEvictions;
             listGroup(*victim);
         }
         g.built=w.tickCounter_;
@@ -3269,7 +3278,7 @@ struct LegionNavigator::Impl {
             }
             if(f.done) {
                 ++stats.fieldsBuilt;noteAwareInstall(g,f);
-                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;restaleSlots(g);++stats.refreshCompleted;}
+                if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;g.awareDemand=false;restaleSlots(g);++stats.refreshCompleted;}
                 listGroup(g);
             }
         };
@@ -3294,56 +3303,66 @@ struct LegionNavigator::Impl {
             if(!g.field->done)finish(g,*g.field,pausable(g)?serve(g,*g.field,budget):advance(*g.field,budget));   // (done: shared)
         }
         uint64_t refresh=kRefreshQuota;
-        for(int pass=0;pass<2;++pass)for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
+        // Refreshes advance in two sub-passes: aware re-plans first (PLAN
+        // 3.3 F, C7), then the rest, all inside the one refresh allowance.
+        for(int pass=0;pass<3;++pass)for(int id=after(buildingIds,0);id;id=after(buildingIds,id)) {
             if(budget==0)break;
-            ++visits;
             Group& g=groups.find(id)->second;
-            Field* f=pass==1?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
+            if(pass>0&&(pass==1)!=g.awareDemand)continue;
+            ++visits;
+            Field* f=pass>0?g.next.get():g.field&&!g.field->done?g.field.get():nullptr;
             if(!f) {if(!wantsBuilding(g))listGroup(g);continue;}   // a shared build another group finished
             if(f->done) {finish(g,*f,0);continue;}   // a refresh another group finished
-            if(pass==1&&refresh==0)continue;
+            if(pass>0&&refresh==0)continue;
             // A paused first build with no demand waits (see serve; such a
             // group is normally off this list).
             const bool pause=pass==0&&pausable(g);
             if(pause&&f->covered&&f->demand.empty())continue;
             plane(g.plane);settle();
             if(budget==0)break;
-            const uint64_t spent=pause?serve(g,*f,budget):advance(*f,pass==1?std::min(budget,refresh):budget);
-            if(pass==1)refresh-=std::min(refresh,spent);
+            const uint64_t spent=pause?serve(g,*f,budget):advance(*f,pass>0?std::min(budget,refresh):budget);
+            if(pass>0)refresh-=std::min(refresh,spent);
             finish(g,*f,spent);
         }
         // Groups that need a field start in id order: first those with none
         // (they cannot steer at all), then stale refreshes. Served first,
         // refreshes of older groups under constant churn starved a new
         // group forever.
-        for(int pass=0;pass<2;++pass) {
+        // Stale refreshes start aware re-plans first (at most
+        // kAwareStarts a tick, in id order; PLAN 3.3 F), then the rest.
+        int awareStarts=0;std::vector<int> awareSeen;
+        for(int pass=0;pass<3;++pass) {
             const std::set<int>& ids=pass==0?needFieldIds:staleDoneIds;
             for(int id=after(ids,0);id;id=after(ids,id)) {
                 if(budget==0)break;
-                ++visits;
                 Group& g=groups.find(id)->second;
+                if(pass==1&&(!g.awareDemand||awareStarts>=kAwareStarts))continue;
+                if(pass==2&&std::find(awareSeen.begin(),awareSeen.end(),id)!=awareSeen.end())continue;   // the aware sub-pass had it
+                ++visits;
+                if(pass==1)awareSeen.push_back(id);
                 // (A stale paused first build is refreshed as a finished one
                 // would be: it never finishes on its own.)
                 if((g.field&&(!g.stale||!g.field->usable()))||g.next)continue;
                 if((pass==0)!=(g.field==nullptr))continue;
+                if(pass==1)++awareStarts;
                 // B1: nobody steers by an inactive group's stale field; it
                 // stays listed and refreshes the tick the group is active
                 // (refresh suppressed / demand resumes count the visits). A
                 // refresh already under way keeps building whatever its group
                 // does (pausing it measured worse: crowdtrap 200x1 arrived
                 // settled -4% on every seed).
-                if(pass==1&&!active(g)) {++stats.refreshSuppressed;g.suppressed=true;continue;}
-                if(pass==1&&g.suppressed) {++stats.demandResumes;g.suppressed=false;}
+                if(pass>0&&!active(g)) {++stats.refreshSuppressed;g.suppressed=true;continue;}
+                if(pass>0&&g.suppressed) {++stats.demandResumes;g.suppressed=false;}
                 plane(g.plane);settle();
                 if(budget==0)break;
                 // With the refresh allowance spent, a stale group only takes a
                 // field another group already has (see sharedField).
-                const bool shareOnly=pass==1&&refresh==0;
+                const bool shareOnly=pass>0&&refresh==0;
                 if(!startField(g,shareOnly)) {if(shareOnly) {++stats.refreshDeferred;continue;}break;}
                 Field& f=g.next?*g.next:*g.field;
                 if(f.done)continue;   // shared
-                const uint64_t spent=pass==0&&pausable(g)?serve(g,f,budget):advance(f,pass==1?std::min(budget,refresh):budget);
-                if(pass==1)refresh-=std::min(refresh,spent);
+                const uint64_t spent=pass==0&&pausable(g)?serve(g,f,budget):advance(f,pass>0?std::min(budget,refresh):budget);
+                if(pass>0)refresh-=std::min(refresh,spent);
                 finish(g,f,spent);
             }
         }
@@ -3499,6 +3518,7 @@ struct LegionNavigator::Impl {
     // keep right: the corridor a group plans round is shifted to its left by
     // half the corridor's radius. Deterministic: integer, ordered, on a fixed
     // cadence; the plans are hashed.
+    static constexpr int kAwareStarts=8;   // aware refreshes started first per tick (PLAN 3.3 F)
     void awareScan() {
         if(w.tickCounter_%kAwareScan!=kAwareScan/2||gAwareOff)return;
         struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz;};
@@ -3620,7 +3640,7 @@ struct LegionNavigator::Impl {
             if(replan&&g.field&&g.field->done) {
                 ++stats.awareReplans;if(!g.awareAt)g.awareAt=w.tickCounter_;
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
-                g.next.reset();g.stale=true;g.demand=true;   // not a static change: refresh even if idle (C6)
+                g.next.reset();g.stale=true;g.demand=true;g.awareDemand=true;   // not a static change: refresh even if idle (C6)
                 listGroup(g);
             }
         }
@@ -5152,7 +5172,7 @@ struct LegionNavigator::Impl {
         // ticks since the quarter-quota allowance, kRefreshQuota.)
         if(g.field&&g.field->bounded&&!g.full&&(!g.field->inside(ox,oz)||(g.field->done&&g.field->at(size_t(here))==kUnreached))) {
             if(g.next&&!g.next->done)++stats.refreshDiscards;
-            g.full=true;g.field.reset();g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);listGroup(g);
+            g.full=true;g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
             m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
@@ -6450,6 +6470,7 @@ struct LegionNavigator::Impl {
             }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             if(g.demand)h=mix(h,0x64656d616e64ull);
+            if(g.awareDemand)h=mix(h,0x6177617265ull);
             if(g.softReplanTick!=kNoTick) {h=mix(h,0x7265706c616eull);h=mix(h,g.softReplanTick);}
             if(g.reachTarget) {h=mix(h,0x7265616368ull);h=mix(h,uint64_t(uint32_t(g.reachTarget))<<32|uint32_t(g.reachBucket));h=mix(h,uint64_t(uint32_t(g.reachCentre)));}
             if(g.ring.tried) {
