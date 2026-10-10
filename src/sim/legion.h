@@ -73,7 +73,10 @@ public:
         uint64_t blockedRerequests=0; // demand re-requests by blocked members (0 until demand refresh exists)
         uint64_t liftMembersWalked=0,liftMembersSkipped=0;   // liftFlyers: steps walked / box-rejected
         uint64_t waitingMemberTicks=0;   // member updates spent waiting for a field
-        uint64_t demandResumes=0,fieldsPaused=0;   // paused builds (0 until paused builds exist)
+        // Stale refreshes resumed once their group is active again (B1, see
+        // refreshSuppressed); first builds paused once they cover their
+        // members and paused builds resumed for a member's demand (C1).
+        uint64_t demandResumes=0,fieldsPaused=0,pausedResumes=0;
         uint64_t stillUnitsProcessed=0;  // bodies scanStill sampled
         // ---- W4 step 0 instruments (observation only, never hashed) ----------
         // Gauges (running maxima, not per-tick work): the most bodies one
@@ -134,7 +137,7 @@ public:
         array("fields_started_by_kind",s.fieldsStartedByKind,16);
         f("refresh_deferred",s.refreshDeferred);f("blocked_rerequests",s.blockedRerequests);
         f("lift_members_walked",s.liftMembersWalked);f("lift_members_skipped",s.liftMembersSkipped);
-        f("waiting_member_ticks",s.waitingMemberTicks);f("demand_resumes",s.demandResumes);f("fields_paused",s.fieldsPaused);
+        f("waiting_member_ticks",s.waitingMemberTicks);f("demand_resumes",s.demandResumes);f("fields_paused",s.fieldsPaused);f("paused_resumes",s.pausedResumes);
         f("still_units_processed",s.stillUnitsProcessed);
         f("still_per_residue_max",s.stillPerResidueMax);f("quota_peg_run_max",s.quotaPegRunMax);
         f("anchor_walk_iters",s.anchorWalkIters);f("soft_hash_verify_ticks",s.softHashVerifyTicks);f("refresh_suppressed",s.refreshSuppressed);

@@ -191,8 +191,11 @@ void groupreuse() {
     auto* legion=f.world.legionNavigator();
     const int group=legion->unitGroup(ids[0]);
     for(int id:ids)check(legion->unitGroup(id)==group,"group order split into several groups");
+    // Fields started, not finished: since W4 C1 a lattice group's first field
+    // pauses once it covers the group (it is never "built" to done).
+    auto started=[&](const LegionNavigator::Stats& st) {uint64_t n=0;for(uint64_t k:st.fieldsStartedByKind)n+=k;return n;};
     const auto s=f.world.legionStats();
-    check(s.fieldsBuilt==1,"one group must build exactly one field, built "+std::to_string(s.fieldsBuilt));
+    check(started(s)==1,"one group must build exactly one field, started "+std::to_string(started(s)));
     int routeSeen=0;   // the committed detour's length (observation hook), the longest sampled
     for(int t=0;t<6000;++t) {
         f.world.tick(1.f/30);
@@ -207,7 +210,7 @@ void groupreuse() {
     std::printf("  detours=%llu cells=%llu holds=%llu\n",(unsigned long long)f.world.legionStats().detours,(unsigned long long)f.world.legionStats().detourCells,(unsigned long long)f.world.legionStats().holds);
     std::printf("groupreuse arrived=%d fields=%llu work=%llu\n",arrived,(unsigned long long)e.fieldsBuilt,(unsigned long long)e.fieldWork);
     check(arrived==int(ids.size()),"group did not pass the door");
-    check(e.fieldsBuilt<=2,"field rebuilt per member");
+    check(started(e)<=2,"field rebuilt per member");
 }
 
 // A sawtooth ridge with one gap at the far end: units must slide along the
@@ -1217,6 +1220,52 @@ void legacyyield() {
 // (World::noteOrders), one that dies loses it on the death edge, and one
 // whose orders change behind every helper (a direct write) loses it to
 // prune's backstop cursor. A stop keeps it (the body is idle and settled).
+// W4 C1 (T7 Stage C): paused first builds. A lone body's first field pauses once
+// it covers the body (the A* ellipse between the body and its goal); a second
+// body of the same player sent to the same point 20 ticks later (its own
+// command: the first click's convoy has closed) shares that
+// paused field, but stands far outside the ellipse, behind a wall that blocks
+// its straight heading: it waits until its demand resumes the build. No member
+// may wait more than 10 ticks in a row, the paused field must resume for the
+// demand, and both bodies arrive.
+void pausedemand() {
+    Fixture f(200,100);
+    f.rect(104,70,2,26);   // in front of the late body, toward the goal
+    f.publish();
+    const auto type=mover(2);
+    const int lead=f.spawn(type,20,50),late=f.spawn(type,100,85);
+    f.start();
+    f.world.order(lead,180*16,50*16,false);
+    auto* legion=f.world.legionNavigator();
+    std::map<int,int> run,longest;
+    auto step=[&] {
+        f.world.tick(1.f/30);
+        for(int id:{lead,late}) {
+            run[id]=legion->unitState(id)==3?run[id]+1:0;   // Waiting
+            longest[id]=std::max(longest[id],run[id]);
+        }
+    };
+    // Past the click's convoy (9 ticks without a joining order: a separate
+    // command), inside the 30 ticks a field may be shared.
+    for(int t=0;t<20;++t)step();
+    const auto paused=f.world.legionStats();
+    check(paused.fieldsPaused>=1,"pausedemand: the lone body's first field did not pause");
+    f.world.order(late,180*16,50*16,false);
+    int t=0;
+    for(;t<3000;++t) {
+        step();
+        if(f.world.unit(lead)->orders.empty()&&f.world.unit(late)->orders.empty())break;
+    }
+    const auto s=f.world.legionStats();
+    std::printf("pausedemand ticks=%d paused=%llu shared=%llu paused_resumes=%llu waiting=%llu longest_wait lead=%d late=%d field_work=%llu built=%llu\n",
+        t,(unsigned long long)s.fieldsPaused,(unsigned long long)s.fieldsShared,(unsigned long long)s.pausedResumes,
+        (unsigned long long)s.waitingMemberTicks,longest[lead],longest[late],(unsigned long long)s.fieldWork,(unsigned long long)s.fieldsBuilt);
+    check(s.fieldsShared>=1,"pausedemand: the late body did not share the paused field");
+    check(s.pausedResumes>=1,"pausedemand: the paused field never resumed for a demand");
+    check(longest[lead]<=10&&longest[late]<=10,"pausedemand: a member waited more than 10 ticks for its field");
+    check(f.world.unit(lead)->orders.empty()&&f.world.unit(late)->orders.empty(),"pausedemand: a body did not arrive");
+}
+
 void b3events() {
     Fixture f(96,64);
     f.publish();
@@ -2865,7 +2914,7 @@ int main(int argc,char** argv) {
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
         {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
-        {"staticidle",staticidle},{"b3events",b3events},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
+        {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
