@@ -664,10 +664,13 @@ and steering for these legs; the native mover never runs for them.
   kept), and combat or guard ends the approach. Legion never declares arrival
   outside the rules of section 4/5 or the native goal predicate.
 * **Moving goals.** Attack and guard goals follow a unit. The member is keyed
-  by (kind, target id) instead of a controller. The field is re-seeded when
-  the tick crosses a 16-tick grid line and the target's origin has moved at
-  least 2 cells (Chebyshev). Every chaser of one target that re-seeds in the
-  same 16-tick window joins one group and shares one field.
+  by (kind, target id) instead of a controller, and the group by (player,
+  plane, kind, target id, reach bucket, the target origin it was seeded at).
+  On a 16-tick grid line, once the target's origin has moved
+  max(2, min(D/8, 8)) cells (D: the member's Chebyshev distance to it), the
+  group re-seeds in place (W5, AR-07): its seed or its ring moves, a refresh
+  builds the new field while the old one steers, and its members keep their
+  group, slot and clocks. See "Reach rings and engaged bodies (W5)".
 * **Groups and areas.** Groups never mix kinds. Fight-move shares a
   destination area (formation slots) per command, as Move does. Each patrol
   lap gets its own group and field, because the outbound and return legs of
@@ -1231,6 +1234,39 @@ is checked every tick, and the grid, owners, lift players and window counts once
 a scan period. The aware scan (residue 15) now reads a soft view that changes
 every tick (accepted; W7 re-checks). The stripe phase moves a few outcome keys
 within their seed spread (aware headon contacts, landedflyers, tail wave p90).
+
+### Reach rings and engaged bodies (W5)
+
+* **Engaged.** An attacker that `tickCombat` brakes in reach (or a guard within
+  70 px of its ward) is Engaged (member state 6) until its next `move()`: to
+  local steering it is settled and still (bodies behind walk round it), it
+  never yields or parts, and it is soft to other commands only (a passing
+  group plans round a firing crowd; its own attack does not). A reach kind's
+  held same-target peer (30 ticks) is settled too, and reach kinds never run
+  the settle rule or contact arrival: the owner ends the approach.
+* **Rings.** A reach group with two or more members when its first field
+  starts plans to a ring: band 0 lies 0.5-1.5 bodies inside `tickCombat`'s own
+  reach (guard 70 px, melee at contact), legal, in the members' component and
+  in line of sight of the target, and is the field's seeds; outer bands wait.
+  The first claim hands out every spot (nearest members to band 0, matched in
+  angle so lanes do not cross); late joiners take the nearest free spot; a
+  member held a 45-tick window re-chooses (3 times) a free spot in a lower
+  band or nearer in its own; an engaged body lets go of a spot it stopped short
+  of. A group that grows to two after its first field keeps its point seed
+  (re-planning cost the battles a refresh per target).
+* **Illegal goals.** A member whose goal turns illegal re-claims a slot, or
+  takes the nearest legal origin of its region, inside its group.
+* **Late soft blocks (MV-05).** A block of soft cells 20+ cells across that
+  forms after a group planned, on its 48-cell descent chain from its centroid
+  or tail, re-plans it once (300-tick cooldown, refresh quota). Blocks leaving
+  never re-plan.
+* **Not built (MV-06).** Speed-matched commit budgets (S1) and the brisk tier
+  (unturned detour/yield/part steps at cap/2), full and restricted, were each
+  measured and reverted: S1 raised opposingcolumns 500x4 spin 1268 -> 1639 and
+  cap/8 time everywhere; the full tier doubled corner reversals (corner-8x56
+  306 -> 561) and lost cost-open's t90; the restricted tier lost maze /
+  exploration / dynamicobstacle arrivals by 2.5-3.4%. The cap/8 statue stays
+  a documented trade (PLAN 3.4 stop rule).
 
 ## Instruments
 
