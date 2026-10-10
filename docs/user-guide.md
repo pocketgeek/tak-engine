@@ -831,6 +831,12 @@ armies:
   so it is free for the next one at once. Units queued behind their own army end
   their orders where they stand. (A unit sealed in where nothing at all can be
   reached still waits up to five minutes for a way to open.)
+- **Crossing groups take the longer route.** When two groups' ways cross, the
+  later one does not stand and wait for the other to pass: it plans round,
+  behind the other stream's tail, even if that is a long way. Only when no way
+  round exists at all does it go straight across, as before. Groups that meet
+  head on still keep to the right, and units stuck in a clot no longer block
+  the routes of other groups planned past them.
 - **Attackers surround their target.** A group ordered to attack one unit or
   building spreads round it and fires from a ring of places at weapon reach,
   instead of queueing behind the first few: a unit that is firing stands still

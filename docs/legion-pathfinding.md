@@ -1132,20 +1132,46 @@ counts the installs.
 Opposing groups are aware of each other (when they can see each other) and path
 round each other as whole groups, unless they are attacking the other group.
 Every 30 ticks each moving formation of 8 or more (members of one command sent
-to one point) is a mover: its centroid, spread, and the corridor it sweeps over
-the next three scans. A Legion group whose way ahead (48 descent cells from its
-centroid) meets a mover plans round it as a whole: its next field charges the
-corridor like a soft obstacle, and its members' direct lines refuse to cross it.
-A mover stays in the plan until it has been off the way for two scans.
-Same-player and allied movers always count; an enemy mover only within
+to one point) is a mover: its centroid, spread, and measured velocity. A Legion
+group whose way ahead meets a mover plans round it as a whole: its next field
+charges the corridor like a soft obstacle, and its members' direct lines refuse
+to cross it. A mover stays in the plan until it has been off the way for two
+scans. Same-player and allied movers always count; an enemy mover only within
 `World::sightDistance` of some member, never for a group whose mission engages
 enemies (fight, attack, guard, patrol). One selection sent as several groups
 (one player, within 90 ticks, to points within 32 cells) never plans round
-itself, and a mover going the same way (within 60 degrees) is followed, not
-avoided. Head on, both groups keep right; on crossing ways only the group with
-the larger command key gives way. Measured by `aware-headon:pair.contacts.permille_x100`
-and the `aware-*` fixtures (`aware-unseen` is the awareness-off control: the
-enemy is out of sight).
+itself, and a mover going the same way is followed, not avoided.
+
+**Detection (W7, protocol 246).** A conflict is found by sampling, not by a
+distance test. Every 15 ticks, up to 450 ticks ahead, the group's own descent
+chain (walked at its slowest member's speed) is compared with each mover at its
+measured velocity; a conflict is the group's disc meeting the mover's box, and
+one under 45 ticks away is too late to plan round. The class of the meeting is an
+integer dot-product test on each group's line to its destination (never its
+measured heading, which reads a group already routing behind a stream as head
+on): head on over 135 degrees, same way under 45, crossing in between. It is
+stored as hashed `avoidKind`, folded into the checksum only when set. A shared
+awareness field is shared only between groups with equal charge lists, and
+aware refreshes are served first inside `kRefreshQuota`, at most 8 starts a tick.
+
+**Crossing groups take the longer route (W7, user decision 5).** On a crossing
+way the later group never waits for the other stream to pass. It plans round a
+time-swept corridor that covers the stream's band from its tail to 450 ticks past
+its head, but only where the stream will be when the group gets there (a lead of
+twice the group's radius), so the cheapest way is just behind the tail. The
+corridor charges 12x inside and is not a wall: if no detour exists at all the
+group crosses as it did before, and no detour length leads to a wait. The entry
+is sticky until the group has crossed or the stream's tail has passed, and the
+corridor is re-placed when the stream drifts, at most every 90 ticks. The old
+10-second wait at the stream's edge (give-way hold) does not exist, so no
+`giveWay` / `waitSince` state exists and the `giveway_*` counters stay 0. Head on,
+the groups still keep right. Measured by `aware-cross-behind` and `crosslong`
+(`behind.*.extra_cells`, `detour_permille`, `wait_member_ticks`; the wait keys
+`wait_ticks`, `wait_run_max`, `waits` read 0), `aware-cross`, `awarebig-cross` and
+`crossthree`.
+
+Measured by `aware-headon:pair.contacts.permille_x100` and the `aware-*` fixtures
+(`aware-unseen` is the awareness-off control: the enemy is out of sight).
 
 ### Convoys: one order per click (W3 A1)
 
@@ -1273,7 +1299,7 @@ its refresh starts the tick it becomes active (`work.demand_resumes`), and each
 skipped visit counts `work.refresh_suppressed`. A refresh already under way keeps
 building (pausing it too cost crowdtrap arrivals), `kRefreshQuota` and swap-in at
 done are unchanged. Blocked is Retail's re-request (`kBlockedRetry` = 120 ticks):
-`stalledFor >= 120`, not a give-way holder (always false until W7), and either no
+`stalledFor >= 120` (there is no give-way hold, W7 decision 5), and either no
 finished field reaches it, or it stands outside its destination area with no legal
 step down the field clear of soft bodies (a body held only by its own command or
 by movers is not blocked: a refresh would give it the same way); each turn to
