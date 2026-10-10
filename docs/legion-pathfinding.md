@@ -1244,10 +1244,15 @@ within their seed spread (aware headon contacts, landedflyers, tail wave p90).
   group plans round a firing crowd; its own attack does not). A reach kind's
   held same-target peer (30 ticks) is settled too, and reach kinds never run
   the settle rule or contact arrival: the owner ends the approach.
-* **Rings.** A reach group with two or more members when its first field
+* **Rings.** An attack group with two or more members when its first field
   starts plans to a ring: band 0 lies 0.5-1.5 bodies inside `tickCombat`'s own
-  reach (guard 70 px, melee at contact), legal, in the members' component and
+  reach (melee at contact), legal, in the members' component and
   in line of sight of the target, and is the field's seeds; outer bands wait.
+  A guard group plans to its ward's point with no ring: its 70 px is a stance
+  round the ward, and a ring there kept twelve guards re-choosing spots for
+  ~2800 ticks (without it they are quiet by ~2000; the W4 head's settle rule
+  parked them by 900, which reach kinds no longer take: `staticidle` warms up
+  2400 ticks).
   The first claim hands out every spot (nearest members to band 0, matched in
   angle so lanes do not cross); late joiners take the nearest free spot; a
   member held a 45-tick window re-chooses (3 times) a free spot in a lower
