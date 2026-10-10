@@ -191,6 +191,10 @@ unchanged: the Windows scenario sweep (all 129 files, both modes, the 11 gate of
 `legion_check check` on the 91 baselined scenarios with 0 failures (all 455 `hash@` entries equal, so the counters change
 no state, here and across platforms), and the crowdbench screen (Windows, 86 rows, both modes) reproduces the W4-land baseline with 0
 differences; the five new `legion_*` counters read 0 on every row and join `crowdbench_screen_baseline.jsonl`.
+`tools/legion_identity.sh --quick` (base `6333e38d`, candidate this head, Debug -O2, Linux): 130 rows SAME -- L-bench and R-bench replays (final hash and
+every checkpoint), both navigation goldens (24 checkpoints), `--mpai` Inner Circle 60 s seed 1 Legion `4d8c06c9747f5a66` / Retail
+`56cfcbf8ef57181e` (each reproducible run-to-run), the 12 crowdbench matrix rows, `check-determinism.sh` (`dcef618cd2e4d558`) and the
+ctest selection. Its 28 FAIL rows are the 27 tests only the candidate has and `legion_acceptance_crowdheld_legion`, failing in both builds.
 
 **Added (observation only, never hashed).**
 - `Stats`: `engagedNow` (cumulative like every counter: member-ticks `tickCombat` braked an in-reach ground attacker or a guard
