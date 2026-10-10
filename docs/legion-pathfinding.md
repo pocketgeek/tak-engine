@@ -1122,6 +1122,40 @@ tried at W8 and dropped by their stop rules; the lane-crossing exceptions on the
 corner and head-on fixtures, `attackring-wall-64`, `ringcross` and the jagged
 arrivals moved to W9 (user decision W8-2; `docs/legion-exit-tables.md`, "W8 exit").
 
+### Head-on meets (W9 C1, protocol 248)
+
+Two large columns walking at each other used to meet face to face and shoulder
+through one another (`densehead`: 447 lane swaps in the middle gate against
+Retail's 208, the groups never completing). A formation Point of 16 or more
+members whose mission does not engage enemies (fight, attack, guard and patrol
+never latch) now latches a meet (`Point::meet`) in two cases: group awareness
+plans a head-on entry for its group (seen), or a member's lane scan
+(`passAhead`) finds an oncoming body of another command's point and stamps it
+(`Member::meetSeen`, unseen; the stamps are combined per point by a minimum, so
+update order does not matter). `meetScan` runs serially once a tick after
+`awareScan`, over the cued and latched points only. A latched point's members
+narrow into the right half of their own lateral extent, shifted one body
+further right, and aim six cells ahead at it (`meetAim`), aim-only: no field
+charge, no re-plan, no stored lanes (W9-U2). The target is an increasing map of
+each member's current lateral position driven by the group's progress, which
+never falls, so members cannot cross each other; they move at most one cell
+across per two along, only on a statically legal line that descends the field,
+never within the pivot distance of the goal, and the target is cut before a
+wall. Narrowing waits until the gap between the groups is within twice the
+span plus two leads. Both groups keep right. The latch is released when the
+other group's tail is behind this group's rear, or after 90 ticks without
+contact before the groups meet. Hashed only when set (`Point::meet`,
+`Member::meetSeen`); the derived `pendingMeets` / `meetIds` indexes are checked
+by `TAK_LEGION_VERIFY`; `meet_latches` is a never-hashed counter. Measured:
+`densehead` lane swaps 447 to 39, arrivals 69 / 70 to 197 / 198 of 200,
+`aware-unseen` click t90 2162 / 2207 to 1757 / 1792 ticks (Retail 1877 / 1929).
+The 96-member awareness horizon (cliff edge) was pre-approved as round 2 and
+was not needed. What W9 did not deliver: the step-0 traces refuted or weakened
+the premises of the other lanes (A1-A5 slot re-choice and settling, B1-B4 and
+B6 gate, ring and corner shaping); each was run for its two rounds, missed its
+acceptance and was reverted (`docs/legion-exit-tables.md`, "W9 lane A" and
+"W9 exit").
+
 ### Clustered static repair (4a99092a)
 
 `refreshPlane` repairs component labels in a window round the bounding box of

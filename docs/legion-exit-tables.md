@@ -12,6 +12,66 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W9 exit (2026-10-10): head-on meets narrow before contact (C1) -- the other lanes kept nothing (protocol 248)
+
+Head: `task-w9-exit` = `task-w9-s0` (`e4bf114d`, W8 sim + W9 instruments) + lane A (`6f5e22fe`, doc only: every step stopped by its rule, no sim change) + lane C (`6ab134ad`, C1)
++ lane B (nothing kept: B1, B2, B4, B3, B6 each missed their acceptance and were reverted; `task-w9-b` is still `e4bf114d`), then the protocol 248 note (`2c7e4685`), the
+baseline (`36d826f5`) and docs. `origin/main` had not moved (`8fcc03d6`). The merged sim is exactly lane C's, so the merge rule (bisect when a lane loses a gate another met)
+never applied: no two sim-changing lanes exist. **What ships:** C1 (`Point::meet` latch, `meetScan`, `meetAim`; hashed only when set) plus the S0 instruments (never hashed).
+
+### Gates on the exit head
+
+| Gate | Result |
+|---|---|
+| Scenario set (`legion_check check --cumulative --require-all`, all 131 files, both modes, 11 gate offsets, serial == workers on all 262 runs; Windows build-o2) | before the baseline commit 75 FAIL lines, **all five fixtures C1 moves** (densehead 48, aware-seen 7, aware-attack 7, aware-unseen 8, aware-headon 5); after it **PASS**: 29829 keys, 0 failed, 516 ratchets (not applied, ruling (q)), 1828 licensed, **191 Retail-floor exceptions (196 -> 191)** |
+| What moved | exactly 5 of the 262 records, **Legion only**: `densehead`, `aware-attack`, `aware-headon`, `aware-seen`, `aware-unseen`. Every other record, all 131 Retail lines included, is identical in every hash and every key but the debug-only `census.*` / `w9.*` instruments. 961 keys moved by more than 5%: [legion-exit-w9-moves.md](legion-exit-w9-moves.md) |
+| Exceptions cleared (removed from `baseline.json`) | **5**: `aware-unseen` `click.a00.t90` (1757 vs Retail 1877) and `click.b00.t90` (1792 vs 1929), `densehead` `gate.mid.crossings` (39 vs 208), and under W9-U1 `gap10` `gate.top.crossings` per file (1.56 <= max(0.65 x1.1, 0.65 + 1) = 1.65) and `tail-corner380` `wall_touch_near_permille` (2 <= 2) |
+| Baseline update | 2 declared bounds raised (`aware-seen` / `aware-unseen` `contact_other_permille` 566 -> 622, 483 -> 585); 68 losses licensed by cause (`accepted_regressions`, pinned at the exit values: densehead 48-key family, aware-* work counters and completion distances; reasons below); 5 offset-spread exceptions (`densehead` `g.A.left_behind`, `g.B.left_behind`, `g.B.t90`, `g.B.done`; `aware-attack` `contact_other_permille`: keys that were "never" at every offset in the base and now complete); ratchet on the five moved fixtures only (121 references raised) |
+| crowdbench screen (Release-equivalent build-o2, seed 0, 86 rows, both modes) | **0 differences** against the committed baseline, key sets identical (C1 moves no screen row: no crowdbench group meets head on at 16+ members under a non-engaging mission); Legion seeds 7 and 42 (172 rows) are **hash-identical to the S0 base**; baseline unchanged (nothing to retake) |
+| Cumulative combat gate | `legion_cost battle --cumulative` ok on all four battle files; battle-assault run max 436908 / p99 394463 / total 205.6M, 2x60 p99 120818 / total 20.0M, 2x250 396709 / 168523 / 84.9M, 2x500 405292 / 225758 / 212.9M, all at or below the W0 base (the battle records are hash-identical to the base: C1 never latches on a fight / attack / guard / patrol mission). No phase gate needed |
+| Exact | Retail and Legion navigation goldens both **unchanged** (24 of 24 each, serial == workers; no Legion golden regeneration needed: its 24-body cohort has no head-on meet of 16+); `check-determinism.sh` OK (dcef618cd2e4d558; aarch64 cross builds skip: no target libc); `check-detmath` OK |
+| `--mpai` Inner Circle 300 s seed 1 (`takserver --local --seed 1 --no-auth`, clean XDG_DATA_HOME, build-o2, three games in parallel) | Legion **b2261dc31dc84cdf** twice, Retail **b240750e5765c02b**: unchanged from protocols 242 - 247 (the 16-unit AI game forms no head-on 16+ meet). With `TAK_LEGION_VERIFY=1`: the same three hashes, no abort |
+| `TAK_LEGION_VERIFY` | `legion_world_test` aware, awarebig, awaredense, crossthree, crosslong, rb02, liftflyers on Windows: RC 0 each; C1's derived indexes (`pendingMeets`, `meetIds`) abort the recompute when the meet cues are dropped (fault injection, lane C) |
+| ctest | optimized Debug, full (non-filtered, nightly labels included) 529 tests: 527 pass; fail: `legion_acceptance_crowdheld_legion` (W9 hard gate 14, identical to the base: `physical_in_goal == moving` 62, `units_ever_terrain_stuck` 1) and `crusades_hardening_network` (campaign-server quota timing; fails identically on `origin/main`). Release `ctest -L quick`: 317 of 318 (crowdheld only). The `legion_check_*` ctests for the moved fixtures were re-run after the baseline commit: pass |
+| Windows / Mac | Windows (oden-win, build-o2, 275 tests of the touched areas): 274 pass, crowdheld fails identically; `--mpai` Legion b2261dc31dc84cdf / Retail b240750e5765c02b (equal to Linux). Mac (arm64, head `36d826f5`): fp_contract, fixed, detmath, navigation_determinism 4 of 4, `--mpai` Legion b2261dc31dc84cdf / Retail b240750e5765c02b (the same two hashes) |
+
+Licensing causes (also in `baseline.json`): **densehead** -- the army flows instead of standing jammed (131 bodies left behind in the base): arrivals 69 / 70 -> 197 / 198 of 200, g.A / g.B t90 never -> 3424 / 3292,
+`gate.mid.crossings` 447 -> 39, `contact_other` 199 -> 1 permille; the counters that scale with bodies that now arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs) rise;
+`gate.mid.files_x100` 1929 -> 1235 by design (the groups narrow); `g.B.complete_dist_max` 18 -> 26 is more bodies completing; `work.legion_total.p99` 1.16x of the base. **aware-\*** -- the observer groups are one body,
+so `contact_other` counts a body's own click-mates and the narrowed column packs the click closer while real cross-group contact (`pair.contacts`) falls 4-50x; every aware-* click t90 and done is faster (headon a00 2066 -> 1767, seen b00 1951 -> 1622;
+never cells across the four fixtures 15 -> 2).
+
+### W9 hard exit gates (`w5-w9-gates.md`, W8-2, U1): the state on the exit head
+
+Legion vs Retail on one binary, the gate offsets as `legion_check` reads them. **Met: gates 1, 8 and 11 in full, gate 5 in part (gap6, gap10). Not met: 2, 3, 4, 6, 7, 9, 10, 12, 13, 14, 15 and the rest of gate 5.**
+
+| # | Gate | Needs | Exit head | Retail | Status |
+|---|---|---|---|---|---|
+| 1 | densehead `gate.mid.crossings` | <= 228 | **39** (was 447) | 208 | **MET** (C1) |
+| 2 | strait-2x150 `gate.strait.crossings` | <= 8.8 | 22 | 8 | not met (B3 made it worse, 22 -> 28-33; B6 left it at 22) |
+| 3 | corner-1x448 `gate.top.crossings` | <= max(0, 1) = 1 (U1) | 4 | 0 | not met (best probe: hug removal without the guard, 2) |
+| 4 | corner-8x56 `gate.top.crossings` | <= 2.2 | 3 | 2 | not met (B6 reached 2 but broke corner-1x448 and strait; hug removal reached 1) |
+| 5 | gap per file (W8-1 / U1) | <= max(retail x1.1, retail + 1) | gap6 1.06 (Retail 1.29, passes), **gap10 1.56 (<= 1.65, MET)**, gap8 2.05, gap14 2.74, gap20 2.60, gapsweep g6 1.06 (Retail 0), g8 2.91, g10 5.50, g14 5.37, g20 3.28 | 0 on gap8/14/20 | gap10 met; gap8 (needs <= 1), gap14, gap20 and the gapsweep keys not met (B2 cannot reach them) |
+| 6 | attackring-wall-64 wall touch / near | <= 27.5 / 89.1 | 58 / 112 | 25 / 81 | not met (B4 round 2 reached 51) |
+| 7 | ringcross `g.M.t90` | <= 4239 | 4291 (core five; eleven-offset median 4689) | 3854 | not met (B1 has no code path; the halo made it 4561) |
+| 8 | aware-unseen click t90 a00 / b00 | <= 2065 / 2122 | **1757 / 1792** (was 2162 / 2207) | 1877 / 1929 | **MET** (C1) |
+| 9 | doorplug-124 `g.A.done` at every gate offset | no "never" | never at +1 and -4 (2 of 11; hash-identical to the S0 base); core-five values `[1982, never, 1892, 1892, 2432]` | never at 2 of the core five | not met (A4 cannot reach group A: S0 finding 2) |
+| 10 | doorplug-112 wall touch / near | <= 8.8 / 46.2 | 11 / 64 | 8 / 42 | not met (B2 cannot reach it) |
+| 11 | tail-corner380 near wall | <= max(1.1, 2) (U1) | **2** | 1 | **MET** (U1) |
+| 12 | motion-cross `g.u11` arrives at every offset; `click.u01.done` completes | no "never" | g.u11.done never at 7 of 11 offsets (+1, -2, +3, -3, +4, -4, +5; core five `[2972, never, 2612, 2882, never]`); click.u01.done never at 10 of 11 (2837 at -1); hash-identical to the S0 base | click.u01.done never | not met (A3 round 1 met g.u11 11/11 but broke the crowdbench) |
+| 13 | liftflyers own detour | <= open + 1 (kLiftDetourSlack back to 1) | own 5 vs open 2 | -- | not met (A1 met it but moved 87-102 of 131 files and broke the crowdbench) |
+| 14 | `legion_acceptance_crowdheld_legion` passes | passes | fails: 62 in goal (`physical_in_goal == moving`), `units_ever_terrain_stuck` 1 | -- | not met (A2: sealing cannot satisfy the rule under decision 3) |
+| 15 | jagged `arrived_settled` 2000x1 / 500x4 | 2000x1 back to >= 690 (694 before C1); 500x4 held | 660 / 1312 (screen seed 0; seeds 7 / 42: 670 / 661, 1321 / 1320 at S0) | 263 / 818 | not met on 2000x1 (A5 kCoverAhead 40 / 60 / 80 gives 660 / 660 / 660); report-only under W9-U3, ruling (s) |
+
+The open Retail-floor exceptions of the W9 cluster stay in `baseline.json` with their reasons: `doorplug-124` `g.A.done` (spread), `strait-2x150`, `corner-1x448`, `corner-8x56`, `doorplug-112` (wall touch, near), `attackring-wall-64` (wall touch, near), `ringcross` `g.M.t90`.
+The `motion-cross` `click.u01.done` licence (W5-1) and `kLiftDetourSlack` (W9 restores 1) stay.
+
+### What the lead has to decide
+
+1. **The unmet gates (11 of 15, and the gap keys other than gap6 / gap10 of gate 5).** Lanes A and B ran their steps to the stop rule and reverted all of them (branches `task-w9-a-A1..A4`, `task-w9-b-b1/b2/b3/b4/b6-reverted`, numbers in their commit messages and in "W9 lane A" above). The step-0 traces refuted or weakened the premises of A2, A4, B1, B2, B3 (S0 findings 1-4). Nothing to relax without a decision: each needs a new mechanism or a ruling (for example crowdheld: a unit that settles where it stands is outside its goal radius by design).
+2. **C1's band items** (all licensed here, none is a Retail-floor failure): `contact_other_permille` on `aware-seen` (622 vs 566) and `aware-unseen` (585 vs 483), `aware-attack` offset spread 489..590 -- the one-body-observer artefact; `aware-seen` `region.goalA.inside` 21 vs 22 on the core five (the eleven-offset median is 22, same as the base); `densehead` `work.legion_total.p99` 1.16x of the base (a control build with C1's own line sweeps disabled reads 1.14x with identical behaviour: the rise comes from the army flowing); the report-only world test `aware` case "enemy seen" done 2215 -> 2836 (one straggler in one layout).
+3. **Whether to land** C1 alone: it meets gates 1, 8 and 11 (via U1), clears 5 exceptions and moves nothing else (5 records of 262).
+
 ## W9 lane A (2026-10-10, task w9-a): tails -- every step stopped by its rule (no sim change)
 
 Base: `task-w9-s0` (`e4bf114d`, the W8 head with the W9 step-0 instruments, protocol 247). A1 was measured first and

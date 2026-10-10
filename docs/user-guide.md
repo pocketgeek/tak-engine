@@ -829,6 +829,11 @@ armies:
   taking the place with the fewest friends queued before it, instead of
   queueing into one file. Units may swap sides a little after the gap as the
   group re-forms. A gap that fits only one unit is still taken in single file.
+- **Columns meeting head on keep right.** Two large groups (16 or more) walking
+  towards each other along the same route now narrow a little before they meet
+  and each passes on its own right, instead of ploughing into one another.
+  Groups that are on a fight, attack, guard or patrol order do not do this. The
+  narrowing is slight and only starts when the two groups are about to meet.
 - **Going round obstacles.** Groups route round parked crowds of units and round
   landed flyers instead of pushing into them. Your own idle units step aside to
   let a group through.
