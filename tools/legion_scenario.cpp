@@ -78,6 +78,7 @@
 // bad file, 77 the file needs --data (ctest SKIP).
 #include "legion_observe.h"
 #include "legion_scn.h"
+#include "client/ordershape.h"
 #include "sim/convoy.h"
 
 #include <algorithm>
@@ -138,6 +139,8 @@ struct Options {
     const char* data = nullptr;
     bool json = false, observer = true, neutral = false;
     uint32_t ticks = 0;     // 0: the file's
+    uint32_t catchup = 0;   // --catchup N: the path budget is unlimited for the first N ticks (a harvested situation re-issues every
+                            // in-flight order at tick 0; the retail request queue would drain that backlog over ~2000 ticks)
     int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
     // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
     std::string gate;                  // check | baseline | exit-table | anchor | "" (none)
@@ -794,6 +797,8 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     // A harvested situation (`truth`): the recording's body positions TICK ticks in, against ours.
     const auto startPos = s.truths.empty() ? std::vector<std::pair<int32_t, int32_t>>{} : scn::startPositions(s, *b);
     std::vector<std::pair<uint32_t, scn::TruthReport>> truthNow;   // (tick, report) per `truth` line the run reaches
+    // TAK_ORDER_STATS=N: log the movers' order-queue shape every N ticks (src/client/ordershape.h; compare a harvested situation with its recording).
+    const uint32_t orderStatsEvery = std::getenv("TAK_ORDER_STATS") ? uint32_t(std::strtoul(std::getenv("TAK_ORDER_STATS"), nullptr, 10)) : 0;
     const auto start = std::chrono::steady_clock::now();
     for (uint32_t t = 0; t < s.ticks; ++t) {
         // contact_settled's command identity (W3-1, ruling W3 round 4 (1)): one convoy is one command,
@@ -805,6 +810,10 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                     o->noteSelection(feed.selection(od), convoys[size_t(&od - s.orders.data())]);
         const size_t landed = feed.apply(t);
         if (landed) { commands += int64_t(landed); lastCommand = t; }
+        if (opt.catchup) {
+            if (t == 0) w.setPathBudget(1 << 28);
+            else if (t == opt.catchup) w.setPathBudget(tak::sim::kPathBudgetDefault);
+        }
         w.tick(1.f / 30);
         nav = w.legionNavigator();
         if (o) {
@@ -825,6 +834,8 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             if (t + 1 == tr.tick && tr.pos.size() == all.size())
                 truthNow.push_back({tr.tick, scn::truthReport(s, *b, tr, startPos, offset,
                                                               std::getenv("LEGION_TRUTH_DETAIL") ? "" : nullptr)});
+        if (orderStatsEvery && (t + 1) % orderStatsEvery == 0)
+            std::fprintf(stderr, "order shape at +%u: %s\n", t + 1, tak::situation::orderShape(w).c_str());
         if ((t + 1) % 100 == 0) r.digest = mix(r.digest, w.stateHash());
     }
     r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -1005,6 +1016,10 @@ int main(int argc, char** argv) {
             opt.gateArgs.push_back(value());
         } else if (a == "--cumulative" || a == "--require-all" || a == "--hashes") {
             opt.gateArgs.push_back(a);
+        } else if (a == "--catchup") {
+            const long v = std::atol(value().c_str());
+            if (v < 0 || v > 100000) usage("--catchup N takes 0..100000 ticks");
+            opt.catchup = uint32_t(v);
         } else if (a == "--no-observer") opt.observer = false;
         else if (a == "--neutral") opt.neutral = true;
         else if (a == "-h" || a == "--help") usage("help");

@@ -9,10 +9,25 @@
 //                   near_scans / near_cells / near_cells_masked / near_blocks_skipped /
 //                   near_cells_block_skippable / near_cells_outside_disk / acq_scans /
 //                   los_calls (forEachNear and findTarget, for A2),
-//                   refresh_rects / refresh_grade_evals / refresh_raw_grades (A3),
-//                   compact_moved, and passes (the census of full sweeps over units_ in
+//                   near_cells_tested (cells forEachNear actually tests once A2b's block
+//                   skip has run; near_cells stays the plain square scan's count),
+//                   near_cells_tested_outside_disk (findTarget cells A2b leaves to test
+//                   whose box is wholly outside the search radius + 2 px: what A2c could
+//                   still remove),
+//                   acq_gate_walks / acq_gate_walks_before (findTarget's order-queue walk,
+//                   hasQueuedWork: how many it makes, and how many the original gate
+//                   order -- that walk first -- would have made; A2a),
+//                   body_rects / body_rects_heap (searchBodyRect queries, and those too
+//                   large for BodyCells' inline buffer; A5),
+//                   refresh_rects / refresh_grade_evals / refresh_raw_grades (A3: search-plane
+//                   refreshes, the plane cells they rewrite, and rawSearchGrade calls -- since E2.2
+//                   only the per-cell reference makes those, so 0 in a normal run),
+//                   refresh_cells_rated (cells the E2.2 box-minimum refresh grades once each),
+//                   compact_moved, passes (the census of full sweeps over units_ in
 //                   World::tick and the sim.cpp helpers it calls; Legion's own sweeps in
-//                   legion.cpp are not counted).
+//                   legion.cpp are not counted), and minflt / minflt_sim / heap_grow (D6: minor page faults
+//                   of the process and of the sim thread alone, and the change in malloc'd
+//                   bytes, inside the tick; Linux/glibc only, 0 elsewhere).
 //   TAK_PMU=1       one SIMPMU line per tick (stderr, needs TAK_PHASE): user-mode cycles,
 //                   instructions, cycles stalled on L1-miss loads and LLC misses, read with
 //                   rdpmc at the same phase boundaries TAK_PHASE times (Linux only). Pin the
@@ -32,6 +47,8 @@ enum Phase : int { kTotal, kCombat, kSep, kExplore, kVis, kBurn, kGrid, kScripts
 
 #ifndef NDEBUG
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <cstdlib>
 #include <cstring>
 #if defined(__linux__) && (defined(__x86_64__) || defined(__i386__))
@@ -44,6 +61,12 @@ enum Phase : int { kTotal, kCombat, kSep, kExplore, kVis, kBurn, kGrid, kScripts
 #include <fstream>
 #include <string>
 #define TAK_PROBE_HAVE_PMU 1
+#endif
+#if defined(__linux__)
+#include <sys/resource.h>
+#endif
+#if defined(__GLIBC__)
+#include <malloc.h>
 #endif
 
 namespace tak::sim::probe {
@@ -59,7 +82,9 @@ struct Counters {
     uint64_t vmTicks = 0, vmSkippable = 0, vmEmpty = 0, vmDebtFlushes = 0;
     uint64_t nearScans = 0, nearCells = 0, nearCellsMasked = 0, nearBlocksSkipped = 0;
     uint64_t nearCellsBlockSkippable = 0, nearCellsOutsideDisk = 0, acqScans = 0, losCalls = 0;
-    uint64_t refreshRects = 0, refreshGradeEvals = 0, refreshRawGrades = 0;
+    uint64_t nearCellsTested = 0, nearCellsTestedOutsideDisk = 0;
+    uint64_t refreshRects = 0, refreshGradeEvals = 0, refreshRawGrades = 0, refreshCellsRated = 0;
+    uint64_t acqGateWalks = 0, acqGateWalksBefore = 0, bodyRects = 0, bodyRectsHeap = 0;
     uint64_t compactMoved = 0, passes = 0;
 };
 // Per thread, like the TAK_PHASE accumulators: the server may tick rooms on several threads.
@@ -172,6 +197,39 @@ inline PmuSample pmuRead() { return Pmu::self().read(); }
 #else
 inline PmuSample pmuRead() { return {}; }
 #endif
+
+// D6 spawn-tick allocation: process-wide minor page faults and the change in malloc'd bytes
+// inside World::tick (allocMark() at its start, the deltas at the SIMSTATS line), so the
+// client's own work between ticks (rendering, capture) is not counted.
+struct AllocSample { uint64_t minflt = 0, minfltSelf = 0; int64_t heap = 0; };
+// Out of line and cold: World::tick is one very large function, and inlining these into it
+// measurably changed its code generation (build-o2 "other" +6% with the switch off).
+[[gnu::noinline, gnu::cold]] inline AllocSample allocRead() {
+    AllocSample a;
+#if defined(__linux__)
+    rusage r{};
+    getrusage(RUSAGE_SELF, &r);
+    a.minflt = uint64_t(r.ru_minflt);
+    getrusage(RUSAGE_THREAD, &r);
+    a.minfltSelf = uint64_t(r.ru_minflt);
+#endif
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
+    const struct mallinfo2 m = mallinfo2();
+    a.heap = int64_t(m.uordblks + m.hblkhd);
+#endif
+    return a;
+}
+inline AllocSample& allocMarkSlot() { static thread_local AllocSample mark; return mark; }
+[[gnu::noinline, gnu::cold]] inline void allocMark() { allocMarkSlot() = allocRead(); }
+// " minflt=.. minflt_sim=.. heap_grow=.." for the SIMSTATS line: the deltas since allocMark().
+[[gnu::noinline, gnu::cold]] inline std::string allocFields() {
+    const AllocSample now = allocRead(), &mark = allocMarkSlot();
+    char b[96];
+    std::snprintf(b, sizeof b, " minflt=%llu minflt_sim=%llu heap_grow=%lld",
+                  (unsigned long long)(now.minflt - mark.minflt),
+                  (unsigned long long)(now.minfltSelf - mark.minfltSelf), (long long)(now.heap - mark.heap));
+    return b;
+}
 
 // Per-tick PMU accumulators, one row per phase.
 inline thread_local PmuSample tlPmu[kPhases];

@@ -1858,6 +1858,9 @@ public:
     // Test hook: build every existing plane's shape afresh both ways (the
     // box-minimum build and the per-cell reference) and compare. Derived only.
     bool searchGradeBuildMatchesReference();
+    // Test hook: refresh one window of every plane both ways (box minima and
+    // the per-cell reference) on copies and compare. Derived only.
+    bool searchGradeRefreshMatchesReference(int x,int z,int w,int h);
 #ifndef NDEBUG
     // Debug-only divergence locator, and the first thing to reach for when the referee
     // reports a desync. TAK_HASHTRACE="lo:hi" dumps a PER-COMPONENT checksum every tick
@@ -2236,12 +2239,35 @@ private:
     // (rebuildOccupancy declared with occ_ below)
     // Call fn(int unitIndex) for every mobile unit whose cell lies within
     // `radius` of (x,z). Iterates cells in a fixed order, so it is deterministic.
+    //
+    // Cells are visited row-major (dz outer, dx inner) and a cell whose owner mask has
+    // none of `players` is passed over. When the masks are valid, a whole 8x8-cell block
+    // whose mask (the OR of its cells' masks) has none of `players` is jumped in one step
+    // (WE A2b): every cell in it would fail the per-cell test anyway, so the cells
+    // visited -- and the units, in the same order -- are exactly those of the plain scan.
+    // gPlayersValid_ is re-read at every cell, as before: a capture inside fn turns the
+    // masks off for the rest of the scan. TAK_VERIFY_NEAR (debug) checks the sequence
+    // against the plain scan on every call.
+    // There is deliberately no geometric cull (A2c: drop cells whose box lies outside a
+    // search disk): units stay in the cell rebuildGrid bucketed them in while they move
+    // during the tick's unit loop, so a cell's box does not bound its units' positions.
+    // R-2h and L-2h each have a findTarget candidate in range whose cell was more than
+    // 2 px outside the disk.
     template <class F>
     void forEachNear(float x, float z, float radius, F&& fn, uint64_t players=~uint64_t(0)) const {
         if (gW_ <= 0) return;
 #ifndef NDEBUG
         if (probe::kStats) probeNear(x, z, radius, players, false);
+        static const bool verify = probe::envOn("TAK_VERIFY_NEAR");
+        if (verify) verifyNear(x, z, radius, players);
+        if (probe::kStats) { scanNear<true, true>(x, z, radius, players, fn); return; }
 #endif
+        scanNear<true, false>(x, z, radius, players, fn);
+    }
+    // forEachNear's cell walk; kBlockSkip=false is the plain square scan (TAK_VERIFY_NEAR's
+    // reference), kCount counts the cells tested (TAK_SIMSTATS near_cells_tested).
+    template <bool kBlockSkip, bool kCount, class F>
+    void scanNear(float x, float z, float radius, uint64_t players, F&& fn) const {
         int r = int(radius / gCell_) + 1;
         int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
         for (int dz = -r; dz <= r; ++dz) {
@@ -2250,7 +2276,15 @@ private:
             for (int dx = -r; dx <= r; ++dx) {
                 int gx = cx + dx;
                 if (gx < 0 || gx >= gW_) continue;
+                if (kBlockSkip && gPlayersValid_ &&
+                    !(gBlockPlayers_[size_t(gz >> 3) * size_t(gBlockW_) + size_t(gx >> 3)] & players)) {
+                    dx += 7 - (gx & 7);   // the loop's ++dx lands on the next block's first column
+                    continue;
+                }
                 const size_t cell=size_t(gz)*gW_+gx;
+#ifndef NDEBUG
+                if (kCount) ++probe::tl.nearCellsTested;
+#endif
                 if (gPlayersValid_ && !(gPlayers_[cell]&players)) continue;
                 for (int i = gHead_[cell]; i >= 0; i = gNext_[size_t(i)])
                     fn(i);
@@ -2349,6 +2383,8 @@ private:
     int rawSearchGrade(const SearchGradePlane&,int,int,int,int,const SearchBodyRect* = nullptr) const;
     static void setSearchCell(SearchGradePlane&,size_t,uint8_t);
     void refreshSearchRect(SearchGradePlane&,int,int,int,int);
+    void refreshSearchRectPerCell(SearchGradePlane&,int,int,int,int);
+    int searchCellGrade(const NavGrid&,int,int,bool) const;
     void buildSearchPlane(SearchGradePlane&);
     void ageSearchBody(SearchGradePlane&,const RetailGradeBody&,bool);
     void prepareSearchGrade(int,bool);
@@ -2413,17 +2449,22 @@ private:
     // Conservative owner mask for rejecting all-allied target cells. Capture
     // invalidates it until the next rebuild; linked-list order stays unchanged.
     std::vector<uint64_t> gPlayers_;
+    // The same masks ORed over 8x8-cell blocks (cell (gx,gz) is in block (gx>>3,gz>>3)),
+    // gBlockW_ blocks per row; rebuilt with gPlayers_ and valid exactly when it is.
+    std::vector<uint64_t> gBlockPlayers_;
+    int gBlockW_ = 0;
     bool gPlayersValid_=false;
     int gW_ = 0, gH_ = 0;
     float gCell_ = 32.0f, gOx_ = 0, gOz_ = 0;
 #ifndef NDEBUG
     // TAK_SIMSTATS (simprobe.h) only. probeNear walks forEachNear's cells a second time and
-    // counts what the A2 culls would skip: an 8x8-cell block whose owner mask (built here,
-    // in rebuildGrid, only under the probe) has none of the wanted players, and, for
-    // findTarget (disk), a cell whose box lies wholly outside the search radius + 2 px.
-    std::vector<uint64_t> gBlockPlayersProbe_;
-    int gBlockWProbe_ = 0;
+    // counts the plain scan's cells and what the A2 culls skip or would skip: an 8x8-cell
+    // block whose owner mask has none of the wanted players, and, for findTarget (disk), a
+    // cell whose box lies wholly outside the search radius + 2 px.
     void probeNear(float x, float z, float radius, uint64_t players, bool disk) const;
+    // TAK_VERIFY_NEAR: the unit sequence of the block-skipping scan must equal the plain
+    // square scan's (every in-bounds cell, per-cell mask only); throws if not.
+    void verifyNear(float x, float z, float radius, uint64_t players) const;
     // The A1 COB sleep-skip predicate, evaluated after every real tick and never acted on.
     // wake: the first tick at which the VM must run (0 = every tick, UINT32_MAX = only after
     // an outside start); debt: ticks it could have skipped since it last ran or was flushed.
