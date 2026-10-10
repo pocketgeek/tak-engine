@@ -7082,6 +7082,7 @@ struct LegionNavigator::Impl {
     // potential below its own, ties to the lowest cell index, then the
     // lowest slot index. Formation points take any free cell of the area;
     // packed points their free packed slots. Returns whether it took one.
+    std::vector<uint32_t> rcSeen;uint32_t rcGen=0;std::vector<int> rcQueue;   // rechoose's scratch (see there)
     bool rechoose(const Unit& u,Member& m,Group& g,const Plane& p,const Field& f,uint16_t potential) {
         if(m.requested<0||m.approach)return false;
         Point* pt=m.pt;
@@ -7123,24 +7124,28 @@ struct LegionNavigator::Impl {
         // back round the crowd is no re-choice, and that walk is what made
         // the search cost a whole 49x49 window per call.
         const uint32_t climb=uint32_t(potential)+uint32_t(kSettleSlack*std::max(fx,fz)*kOrthogonal);
-        std::vector<uint8_t> seen(size_t(S)*S,0);
-        std::vector<int> queue;queue.reserve(size_t(S)*S);
-        seen[size_t(R*S+R)]=1;queue.push_back(R*S+R);
+        // The search window's seen marks and queue are scratch kept between calls (W9 step 0: they were
+        // two allocations a call): a mark counts when it equals this call's generation, so the 2401 marks
+        // are never cleared. Pure scratch: nothing hashed reads them after the call.
+        if(rcSeen.size()!=size_t(S)*S) {rcSeen.assign(size_t(S)*S,0);rcGen=0;}
+        if(++rcGen==0) {std::fill(rcSeen.begin(),rcSeen.end(),0u);rcGen=1;}
+        std::vector<int>& queue=rcQueue;queue.clear();
+        rcSeen[size_t(R*S+R)]=rcGen;queue.push_back(R*S+R);
         for(size_t head=0;head<queue.size();++head) {
             const int local=queue[head],lx=local%S,lz=local/S,x=ox+lx-R,z=oz+lz-R;
             for(const auto& dd:kDirections) {
                 const int nlx=lx+dd[0],nlz=lz+dd[1];
-                if(nlx<0||nlz<0||nlx>=S||nlz>=S||seen[size_t(nlz*S+nlx)])continue;
+                if(nlx<0||nlz<0||nlx>=S||nlz>=S||rcSeen[size_t(nlz*S+nlx)]==rcGen)continue;
                 if(!step(p,x,z,dd[0],dd[1]))continue;
                 if(const uint16_t v=f.known(size_t((z+dd[1])*W+x+dd[0]));v==kUnreached||v>climb||!open(x+dd[0],z+dd[1]))continue;
                 if(dd[0]&&dd[1]&&(!open(x+dd[0],z)||!open(x,z+dd[1])))continue;
-                seen[size_t(nlz*S+nlx)]=1;queue.push_back(nlz*S+nlx);
+                rcSeen[size_t(nlz*S+nlx)]=rcGen;queue.push_back(nlz*S+nlx);
             }
         }
         stats.rechoiceBfsCells+=queue.size();stats.slotSearchCells+=queue.size();
         auto reached=[&](int cell) {
             const int lx=cell%W-ox+R,lz=cell/W-oz+R;
-            return lx>=0&&lz>=0&&lx<S&&lz<S&&seen[size_t(lz*S+lx)];
+            return lx>=0&&lz>=0&&lx<S&&lz<S&&rcSeen[size_t(lz*S+lx)]==rcGen;
         };
         int best=-1,bestSlot=-1;uint16_t bestV=potential;
         if(formation) {
