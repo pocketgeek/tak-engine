@@ -359,6 +359,52 @@ class Gate(unittest.TestCase):
         self.assertEqual(retail["keys"]["gate.top.crossings"], 9)
         self.assertTrue(run_check(baseline({"gate.top.crossings": entry(7, band=1.20)}), r, retail).ok)
 
+    def test_w8_1_gap_fixtures_judge_lane_crossings_per_file(self):
+        # User decision W8-1 (2026-10-10): the passage gate takes a gap several abreast, so a GAP
+        # fixture's gate.X.crossings is judged as crossings / files against Retail's crossings / files.
+        def pair(scn, lcross, lfiles, rcross, rfiles, key="gate.top"):
+            l = self.wide_rec(**{key + ".crossings": [lcross] * 11, key + ".files_x100": [lfiles] * 11})
+            r = self.wide_rec(mode="retail", **{key + ".crossings": [rcross] * 11, key + ".files_x100": [rfiles] * 11})
+            l["scenario"] = r["scenario"] = scn
+            return l, r
+        doc = lambda scn: dict(lc.empty_baseline(), entries={scn: {"legion": {}}})
+        # 10 crossings over 2.5 abreast files (4 per file) against Retail 8 over 1.6 (5 per file): passes
+        # per file though 10 > 8 x 1.1 raw
+        l, r = pair("gap6", 10, 250, 8, 160)
+        res = run_check(doc("gap6"), l, r)
+        self.assertTrue(res.ok, res.fails)
+        # the same counts on a fixture that is not a GAP fixture keep the raw floor
+        l, r = pair("corner-8x56", 10, 250, 8, 160)
+        res = run_check(doc("corner-8x56"), l, r)
+        self.assertFalse(res.ok)
+        self.assertTrue(any("Retail floor: legion 10" in f for f in res.fails), res.fails)
+        # over the per-file bound it still fails, and says so
+        l, r = pair("gapsweep", 30, 250, 8, 160, key="gate.g14")
+        res = run_check(doc("gapsweep"), l, r)
+        self.assertFalse(res.ok)
+        self.assertTrue(any("per file (W8-1)" in f for f in res.fails), res.fails)
+        # a mean under one file reads as one: 5 crossings, 0.4 files each side is 5 vs 5
+        l, r = pair("gap8", 5, 40, 5, 40)
+        self.assertTrue(run_check(doc("gap8"), l, r).ok)
+        # per-file passes clear a floor exception, naming the per-file values
+        l, r = pair("gap6", 10, 250, 8, 160)
+        d = doc("gap6")
+        d["exceptions"] = [{"scenario": "gap6", "key": "gate.top.crossings", "cluster": "MV-10",
+                            "reason": "raw count over Retail", "median5": True}]
+        res = run_check(d, l, r)
+        self.assertTrue(res.ok, res.fails)
+        self.assertEqual(len(res.cleared), 1)
+        self.assertIn("per file (W8-1)", res.cleared[0])
+        # without a files key on either side the raw floor stays
+        l, r = pair("gap6", 10, 250, 8, 160)
+        del l["keys"]["gate.top.files_x100"]
+        self.assertFalse(run_check(doc("gap6"), l, r).ok)
+        # a retake agrees with the check: a per-file pass takes no exception
+        l, r = pair("gap6", 10, 250, 8, 160)
+        d = lc.empty_baseline()
+        lc.write_base(d, {("gap6", "legion"): l, ("gap6", "retail"): r}, "step 0", "W8", ["*"], False, [("*", "MV-02")])
+        self.assertFalse(any(x["key"] == "gate.top.crossings" for x in d["exceptions"]), d["exceptions"])
+
     def test_contact_settled_floor_needs_ten_arrivals_in_both_modes(self):
         doc = baseline({"contact_settled_permille": entry(100, band=1.20)})
         few = {"contact_settled_permille": 100, "g.A.arrived": 3}
