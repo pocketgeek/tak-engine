@@ -690,6 +690,9 @@ public:
 
     // One lockstep step: returns false while stalled waiting for the peer.
     uint32_t netTick() const { return netTick_; }
+    // Headless harness only: never play past this tick, so a --time run's final hash is
+    // taken at exactly that tick instead of wherever a burst of buffered bundles overshot to.
+    void setNetStopTick(uint32_t t) { netStopTick_ = t; }
 #ifndef NDEBUG
     // TAK_AUTOPLAY=N -- a headless human issues roughly N orders per 10 seconds of
     // game time, so a multi-client run exercises the COMMAND path instead of eight
@@ -2549,6 +2552,7 @@ private:
     // occludes the unit. kHeightScale_/heightRef_ are lazily set by terrainLift.
     float wallOcclusionY(float wx, float wz);
     uint32_t netTick_ = 0;
+    uint32_t netStopTick_ = UINT32_MAX;   // see setNetStopTick
 #ifndef NDEBUG
     uint32_t autoplayNext_ = 0;    // next sim tick an autoplay order is due
     uint32_t autoplayRng_ = 0;     // per-player stream; seeded from slot + game seed

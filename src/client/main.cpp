@@ -1335,6 +1335,7 @@ int main(int argc, char** argv) {
         gameView->setSimThreadMode(tak::devEnv("TAK_SIM_THREAD") != nullptr);
         if (mpHeadless == 8) gameView->setMissionStem(missionStem);
         int limitTicks = int((startTime > 0 ? startTime : 60) * 30);
+        gameView->setNetStopTick(uint32_t(limitTicks));
         // Jitter benchmark: run the client loop at a FIXED 60 fps (so the stall
         // metric is frame-rate-consistent) and enable the RTT probe. Otherwise the
         // usual tight poll loop.
