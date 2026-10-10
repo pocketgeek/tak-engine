@@ -42,6 +42,17 @@ public:
         uint64_t arrivals=0,contactArrivals=0,trapped=0,escapes=0;
         uint64_t detours=0,detourCells=0;
         uint64_t lifts=0;   // lift requests to idle landed flyers (see World::requestLegionLift)
+        // ---- W6 step 0 instruments (observation only, never hashed) ----------
+        // relifts: a lift episode that begins within 600 ticks of the same flyer
+        // landing from its previous one (bobbing); counted from W6 step 0.
+        // The rest are declared here for the W6 steps that add the behaviour they
+        // count and stay 0 until then: capHits (a lift episode ended by the
+        // 1800-tick cap, step 6), stationReleasesA / stationReleasesB (formation
+        // flyers released from their station by the stall / static-centroid
+        // rule, step 5), goArounds (touchdown backstop go-arounds, step 2),
+        // stationOverflow (a 5th distinct click in one squad that got no station,
+        // step 3).
+        uint64_t relifts=0,capHits=0,stationReleasesA=0,stationReleasesB=0,goArounds=0,stationOverflow=0;
         // Per LegionMission: legs (unit, order) Legion took on, arrivals it
         // raised (0x500) and failed approaches it handed back (0x200).
         uint64_t missionLegs[16]={},missionArrivals[16]={},missionFailures[16]={};
@@ -123,6 +134,8 @@ public:
         f("pass_scans",s.passScans);f("pass_scans_skipped",s.passScansSkipped);
         f("arrivals",s.arrivals);f("contact_arrivals",s.contactArrivals);f("trapped",s.trapped);f("escapes",s.escapes);
         f("detours",s.detours);f("detour_cells",s.detourCells);f("lifts",s.lifts);
+        f("relifts",s.relifts);f("cap_hits",s.capHits);f("station_releases_a",s.stationReleasesA);f("station_releases_b",s.stationReleasesB);
+        f("go_arounds",s.goArounds);f("station_overflow",s.stationOverflow);
         array("mission_legs",s.missionLegs,16);array("mission_arrivals",s.missionArrivals,16);array("mission_failures",s.missionFailures,16);
         f("line_sweeps",s.lineSweeps);f("held_rechecks",s.heldRechecks);f("slot_search_cells",s.slotSearchCells);
         f("trace_cells",s.traceCells);f("pass_scan_cells",s.passScanCells);

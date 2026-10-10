@@ -2583,6 +2583,12 @@ struct LegionNavigator::Impl {
     static constexpr int kLiftClear=6;   // cells round a lifted flyer: no member on its way there or bound there
     std::vector<int32_t> liftGoal;       // liftFlyers scratch: per goal origin, a member bound there (0 none)
     std::vector<int> liftGoalCells;
+    // One lift request, counted (observation only). A request that starts a new
+    // episode within 600 ticks of the flyer's previous landing is a relift.
+    void requestLift(Unit& flyer) {
+        if(!flyer.legionLift&&flyer.legionLiftRest&&w.tickCounter_<=flyer.legionLiftRest-World::kLegionLiftRest+600)++stats.relifts;
+        w.requestLegionLift(flyer);++stats.lifts;
+    }
     void liftFlyers() {
         if(groundedIds.empty()&&liftHomeCells.empty())return;
         const int W=width();
@@ -2618,7 +2624,7 @@ struct LegionNavigator::Impl {
                             if(b&&(m->state==Moving||((m->state==Holding||m->state==Waiting)&&heldFor(*m)<kRestAfter))&&w.allied(flyer->player,b->player)) {busy=true;break;}
                         }
                     }
-                if(busy&&w.legionLiftable(*flyer,flyer->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
+                if(busy&&w.legionLiftable(*flyer,flyer->player))requestLift(*flyer);
             }
         }
         // Bounding box of every cell a request can hit, and the exact gate
@@ -2658,7 +2664,7 @@ struct LegionNavigator::Impl {
                     // has just landed where the formation is settling) stays down:
                     // the member settles beside it rather than driving it back up.
                     if(flyer&&u->squad&&u->squad==flyer->squad)continue;
-                    if(flyer&&w.legionLiftable(*flyer,u->player)) {w.requestLegionLift(*flyer);++stats.lifts;}
+                    if(flyer&&w.legionLiftable(*flyer,u->player))requestLift(*flyer);
                 }
                 if(k==kLiftCells||(x==gx&&z==gz))break;
                 // The next planned cell.
