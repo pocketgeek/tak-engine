@@ -20,7 +20,8 @@ Exit: 0 pass, 1 a gate failed, 2 usage / tooling error.
 baseline.json
   {"version": 1,
    "entries": {SCENARIO: {MODE: {KEY: {value, dir, rule, band, reason, since,
-                                       [per: "unit"], [w0: number]}}}},
+                                       [per: "unit"], [w0: number],
+                                       [phase_gate: {phases: [>= 10 values], reason}]}}}},
    "references": {SCENARIO: {MODE: {KEY: number}}},     # W0 base raised by ratchets
    "exceptions": [{scenario, key, cluster, reason, [mode], [median5: true]}],
    "accepted_regressions": [{scenario, mode, key, reason, [step], max | factor}],
@@ -31,6 +32,9 @@ baseline.json
                  reference x band (cumulative) fails; better than the reference
                  by more than the band prints RATCHET and passes
           bound  an absolute declared bound (`per: unit` divides by the units)
+  phase_gate  (cumulative combat keys only; lead ruling W4 (p)) the key's value at each of >= 10 stripe
+          phases of a phase-sensitive change: the cumulative combat check passes a value above `w0` when
+          the MEDIAN of the phases is at or below `w0` and the value is within the recorded range
   Time keys (.t50 .t90 .done .orders_done): -1 reads "never" = infinitely bad.
   KEYs: observer / work.* keys of the runner's "keys", `hash@OFFSET`, and
         `serial_eq_workers`.
@@ -532,6 +536,21 @@ def floor_check(doc, rpt, recs):
                                                       else "legion x%.1f >= retail" % FLOOR))
 
 
+def phase_median(pg):
+    v = sorted(pg["phases"])
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+
+
+def phase_gate_ok(pg, w0, cur):
+    """Lead ruling W4 (p): a phase-sensitive change (a striped scan whose residue shifts which tick a spike
+    lands on) is judged on the MEDIAN over >= 10 stripe phases, not on the one phase a run happens to have.
+    The entry's `phase_gate` {phases: [per-phase values], reason} passes when that median is at or below the
+    W0 base and this run's value is one of the recorded phases' range (<= their maximum)."""
+    ph = pg.get("phases") or []
+    return len(ph) >= 10 and bool(pg.get("reason")) and phase_median(pg) <= w0 and cur <= max(ph)
+
+
 def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False):
     rpt = Report()
     entries = doc.get("entries", {})
@@ -558,7 +577,12 @@ def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False)
                     w0 = e.get("w0")
                     w0 = e["value"] if isinstance(w0, bool) or w0 is None else w0
                     found, cur = lookup(rec, key)
-                    if found and cur > w0:
+                    pg = e.get("phase_gate")
+                    if found and cur > w0 and pg and phase_gate_ok(pg, w0, cur):
+                        rpt.info.append("%s/%s/%s: %s above the W0 base %s at this run's stripe phase; the "
+                                        "median over %d phases is %s (ruling W4 (p))"
+                                        % (scn, mode, key, cur, w0, len(pg["phases"]), phase_median(pg)))
+                    elif found and cur > w0:
                         rpt.fail("%s/%s/%s" % (scn, mode, key),
                                  "cumulative combat cost: %s above the W0 base %s (x1.00, PLAN 3.0)" % (cur, w0))
             # a work counter that moved with no entry has no base to compare with

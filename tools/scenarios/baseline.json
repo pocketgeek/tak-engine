@@ -18825,7 +18825,22 @@
      "rule": "band",
      "since": "W0",
      "value": 496290,
-     "w0": 484465
+     "w0": 484465,
+     "phase_gate": {
+      "phases": [
+       511216,
+       489858,
+       461683,
+       467983,
+       488210,
+       450785,
+       493734,
+       468726,
+       462327,
+       484960
+      ],
+      "reason": "Lead ruling W4 (p), 2026-10-09: B2's striped still scan moves where the per-tick spike lands; the cumulative combat gate for battle-assault is judged on the median over the 10 stripe phases (core-five median of the 11 gate offsets per phase, Windows): 476843 <= W0 484465. Phase 0 (this head's draw) is 511216. Base (B1+B3) over the same 10 phases: median 460893, range 452160..488795. Table in docs/legion-exit-tables.md 'W4 exit with B1 + B2'."
+     }
     },
     "work.legion_total.p99": {
      "band": 1.1,

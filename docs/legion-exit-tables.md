@@ -56,6 +56,27 @@ Every key that moved by more than 5% against the B3-only exit (411: 191 intended
    combat-lag reason, or treat as a fail).
 3. Whether the 222 ratchets (improvements at the phase-0 draw) should be applied at all, given the phase spread.
 
+### Rulings applied at the land (2026-10-09 18:30)
+
+(o) B2 lands with the licence branch `task-w4-exit-b2lic` (105 accepted regressions "B2 stripe phase (ruling k)", 3 spread
+exceptions, bounds 10 -> 7 and 117 -> 138, the legion_cost 2x60 start window +1). (p) The cumulative combat gate for a
+phase-sensitive change is judged on the MEDIAN over 10 stripe phases: `legion_check` reads a `phase_gate` on a combat key's
+baseline entry (>= 10 per-phase values and a reason; it passes a value above the W0 base when the median of the phases is
+at or below W0 and the value is within the recorded range); battle-assault `work.legion_total.max` carries it. (q) No blanket
+ratchet: the 222 phase-0 ratchets are not applied. Tooling to judge "improvement beyond the 10-phase spread" per key does not
+exist (the stripe-phase switch `TAK_X_STILL_PHASE` is an experiment that never landed, so a phase sweep is not reproducible
+from this tree), so NO key is ratcheted at this land.
+
+battle-assault `work.legion_total.max`, core-five median of the gate offsets (Windows, optimized Debug, legion mode), per phase
+k of the whole-scan / stripe residue:
+
+| k | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | median | range |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Base (B1 + B3, whole scan at tick % 30 == k) | 480635 | 452202 | 452160 | 456740 | 457041 | 456501 | 467693 | 488795 | 471289 | 464745 | 460893 | 452160..488795 |
+| B2 (stripe shifted by k) | 511216 | 489858 | 461683 | 467983 | 488210 | 450785 | 493734 | 468726 | 462327 | 484960 | 476843 | 450785..511216 |
+
+W0 base 484465: B2's phase median 476843 passes (x0.984); the head's own draw (phase 0) is 511216, the worst of the ten.
+
 ## W4 exit (2026-10-09): demand-driven upkeep -- B3 only (protocol 242)
 
 Head: `task-w4-exit` = `task-w4-s0` (`3891dac7`) + `task-w4-b3` (`a24717a4`, merged `--no-ff`) + step 4 + this exit.
