@@ -117,3 +117,14 @@ Measured with `legion_flyers_test` / `legion_world_test` (offset 0 unless stated
 Gates: legion_world_test formation, squadformation, pinwheel, aware, landedflyers and liftflyers are
 hash-identical to the step-0 head; stock mixedformation move and fight hash-identical (patrol: same numbers, the B
 reference is hashed), max hover 18 / 18 / 0. Retail lines of every fixture are hash-identical.
+
+Step-level checks on the branch head (Linux build-o2): crowdbench screen 86/86 rows with 0 differences against
+`crowdbench_screen_baseline.jsonl` (W6 hash identity holds; new keys only); `navigation_determinism`,
+`legion_transport`, `transport`, `builder_automation` pass; the 14 retail air checks pass; `ctest -L quick` 220/221
+(the known `crowdheld_legion` W5 gate). `legion_scenario --check baseline.json` on the 16 squad/flyer scenarios
+(both modes, gate offsets): 9 pass; the deadend squad rows fail only on keys whose W3/W4 licenses pin an exact
+value (`work.still_units_processed.total` +1-6% over the license, `deadend-w4-n120-room-squad`
+`wall_touch_near_permille` 654 -> 666); liftstream and mixed2 fail on the new `lift_target_polls` class (no declared
+bound in baseline.json yet; measured max 3 a tick); mixed2 also moves `g.F.takeoffs_max` 2 -> 3, `g.F.relifts_max`
+1 -> 2 and several Legion work counters (detours, slides, held rechecks, +10-30%). These need the exit's licences
+(or a fix) before W6 lands.
