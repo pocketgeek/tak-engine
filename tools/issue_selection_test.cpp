@@ -567,7 +567,9 @@ lane swap 5 8 5 12 30 8 30 12 bsign=-1 window=100 mincells=3 across=all
 pair near A,B E* cells=3
 reach shot A,B E* range=96 marks=300,600
 creep tail A,B
+behind later E* A,B cells=6
 probe claims
+probe aware
 churn 40 9 2 2 every=5 walk=2,0,8 toggle until=60
 at 30 move F,A,B 50 8
 at 60 fight A,B @E queue
@@ -681,7 +683,7 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
     roundTrip(kAscii, "ascii");
     const auto ascii = tak::scn::parse(kAscii, "ascii");
     check(ascii.map.width == 64 && ascii.map.height == 24, "ascii: size from the rows");
-    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 8, "ascii: counts");
+    check(ascii.groups.size() == 4 && ascii.orders.size() == 7 && ascii.shapes.size() == 9, "ascii: counts");
     {
         const auto& g = *ascii.shape("wide");
         check(g.lateral == 1 && g.band == 3 && g.minCount == 2 && g.edge == 3 && g.pairWindow == 200 && g.flip == 2,
@@ -701,6 +703,8 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
               "ascii: reach shape");
         const auto& c = *ascii.shape("tail");
         check(c.kind == "creep" && c.a == "A,B" && ascii.probeClaims && !ascii.probeApproach, "ascii: creep shape, probe claims");
+        const auto& bh = *ascii.shape("later");
+        check(bh.kind == "behind" && bh.a == "E*" && bh.b == "A,B" && bh.cells == 6 && ascii.probeAware, "ascii: behind shape, probe aware");
     }
     check(ascii.group("A")->squad == -1 && ascii.group("E")->weapons == 1, "ascii: group options");
     check(ascii.orders[0].selection == std::vector<std::string>{"F", "A", "B"}, "ascii: selection order kept");

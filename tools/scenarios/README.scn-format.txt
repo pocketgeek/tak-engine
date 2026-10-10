@@ -36,6 +36,10 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 approach point (an unreachable goal's nearest
                                 reachable spot) and the tick its orders empty.
                                 Meant for scenarios whose goal is unreachable.
+  probe aware                   Legion only: the runner reports the awareness / parting / give-way counters of
+                                LegionNavigator::Stats as aware.* keys (parts, encounters, replans, builds,
+                                latency_max / _sum / _n, work, work_max, giveway_starts / _ticks / _timeouts;
+                                W7 step 0) and the route-behind metric of every `behind` shape.
   probe claims                  Legion only: every 10 ticks the navigator audits
                                 its arrival-slot claims (the claims invariant);
                                 keys claims.bad_max (overlapping + lost +
@@ -153,6 +157,16 @@ Shapes (for the runner's metrics; never affect the world):
         groups, a trailing * is a name prefix) sampled every 10 ticks: pairs
         whose centre cells are within `cells` (2) on both axes. Keys
         pair.NAME.pairs / .contacts / .permille_x100.
+
+  behind NAME LATER EARLIER [cells=N]
+        the route-behind metric (W7, user decision 5: the later of two crossing groups routes behind the
+        other's stream and never waits at its edge). LATER and EARLIER are comma lists of groups (a trailing * is
+        a prefix). Per LATER member: the path walked while ordered against the straight line from its first
+        ordered position to its click. A WAIT: a LATER member with orders stood (a step of at most an eighth of
+        its speed) with a moving EARLIER member within `cells` (8) cells; a group wait is a tick on which at
+        least 2 and a quarter of the LATER members with orders do so; a wait is a run of 30 such ticks. Keys
+        behind.NAME.members / .path_cells / .straight_cells / .extra_cells / .detour_permille /
+        .wait_member_ticks / .wait_ticks / .wait_run_max / .waits (tools/legion_observe.h BehindProbe).
 
 Start offset: the builder shifts every spawn by 0, +1 or -1 cells on both
 axes (BuildOptions::offset); orders, walls and shapes stay put.

@@ -141,6 +141,7 @@ struct Scenario {
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
     bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
+    bool probeAware = false;          // `probe aware`: the runner reports the aware.* counters (W7 step 0)
     bool probeClaims = false;         // `probe claims`: the runner audits the arrival-slot claims every 10 ticks (W5 step 0)
     std::vector<int> gateOffsets;     // `gateoffsets O,O,..`: legion_scenario's gate offsets where 0,+-1..+-5 leave the map
     MapSpec map;
@@ -340,8 +341,8 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             }
         } else if (k == "probe") {
             need(2, 2);
-            if (w[1] != "approach" && w[1] != "claims") c.fail("probe approach|claims");
-            (w[1] == "approach" ? s.probeApproach : s.probeClaims) = true;
+            if (w[1] != "approach" && w[1] != "claims" && w[1] != "aware") c.fail("probe approach|claims|aware");
+            (w[1] == "approach" ? s.probeApproach : w[1] == "aware" ? s.probeAware : s.probeClaims) = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
         else if (k == "gateoffsets") {
             need(2, 2);
@@ -592,8 +593,8 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (!haveEvery) c.fail("churn needs every=N");
             if (ch.until && ch.until <= ch.from) c.fail("churn until must follow from");
             s.churns.push_back(ch);
-        } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair" || k == "reach" || k == "creep") {
-            if (k == "creep") need(3, 3); else if (k == "pair" || k == "reach") need(4, k == "pair" ? 5 : 6); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
+        } else if (k == "gate" || k == "line" || k == "region" || k == "lane" || k == "pair" || k == "reach" || k == "creep" || k == "behind") {
+            if (k == "creep") need(3, 3); else if (k == "pair" || k == "reach" || k == "behind") need(4, k == "reach" ? 6 : 5); else if (k == "lane") need(10, 16); else need(6, k == "gate" ? 14 : 6);
             if (s.shape(w[1])) c.fail("shape '" + w[1] + "' defined twice");
             Shape sh;
             sh.kind = k;
@@ -602,7 +603,7 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             if (k == "creep") {
                 sh.a = w[2];
                 at = 3;
-            } else if (k == "pair" || k == "reach") {
+            } else if (k == "pair" || k == "reach" || k == "behind") {
                 sh.a = w[2]; sh.b = w[3];
                 at = 4;
             } else {
@@ -635,7 +636,7 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
                 else if (k == "lane" && key == "across") {
                     if (val != "all" && val != "group") c.fail("across=all|group");
                     sh.acrossGroups = val == "all";
-                } else if (k == "pair" && key == "cells") sh.cells = int(c.integer(val, 0, 32));
+                } else if ((k == "pair" || k == "behind") && key == "cells") sh.cells = int(c.integer(val, 0, 32));
                 else if (k == "reach" && key == "range") sh.range = int(c.integer(val, 1, 100000));
                 else if (k == "reach" && key == "marks") {
                     auto list = val;
@@ -699,6 +700,7 @@ inline std::string format(const Scenario& s) {
     if (s.roundTrip >= 0) o << "uplink " << s.roundTrip << "\n";
     if (s.probeApproach) o << "probe approach\n";
     if (s.probeClaims) o << "probe claims\n";
+    if (s.probeAware) o << "probe aware\n";
     if (!s.gateOffsets.empty()) {
         o << "gateoffsets ";
         for (size_t i = 0; i < s.gateOffsets.size(); ++i) o << (i ? "," : "") << s.gateOffsets[i];
@@ -764,7 +766,7 @@ inline std::string format(const Scenario& s) {
     for (const auto& sh : s.shapes) {
         o << sh.kind << " " << sh.name;
         if (sh.kind == "creep") o << " " << sh.a;
-        else if (sh.kind == "pair" || sh.kind == "reach") o << " " << sh.a << " " << sh.b;
+        else if (sh.kind == "pair" || sh.kind == "reach" || sh.kind == "behind") o << " " << sh.a << " " << sh.b;
         else o << " " << fmt(sh.x0) << " " << fmt(sh.z0) << " " << fmt(sh.x1) << " " << fmt(sh.z1);
         if (sh.kind == "lane")
             o << " " << fmt(sh.ax0) << " " << fmt(sh.az0) << " " << fmt(sh.ax1) << " " << fmt(sh.az1);
@@ -777,7 +779,7 @@ inline std::string format(const Scenario& s) {
             opt("bsign", sh.beforeSign, 1); opt("asign", sh.afterSign, 1);
             opt("window", sh.window, 0); opt("mincells", sh.minCells, 0);
             if (sh.acrossGroups) o << " across=all";
-        } else if (sh.kind == "pair") opt("cells", sh.cells, 0);
+        } else if (sh.kind == "pair" || sh.kind == "behind") opt("cells", sh.cells, 0);
         else if (sh.kind == "reach") {
             opt("range", sh.range, 0);
             if (!sh.marks.empty()) {

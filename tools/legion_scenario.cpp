@@ -730,6 +730,33 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             if (cp.bodies.empty()) throw std::runtime_error(s.origin + ": creep '" + sh.name + "' names no group in '" + sh.a + "'");
             creeps.push_back(std::move(cp));
         }
+    std::vector<obs::BehindProbe> behinds;
+    if (observe)
+        for (const auto& sh : s.shapes) {
+            if (sh.kind != "behind") continue;
+            obs::BehindProbe bp;
+            bp.name = sh.name;
+            if (sh.cells) bp.edge = int64_t(sh.cells) * 16;
+            const auto cfg = configFor(s, *b);
+            auto listed = [&](const std::string& list, const std::string& group) {
+                size_t at = 0;
+                const std::string names = expandGroups(s, list);
+                while (at <= names.size()) {
+                    size_t e = names.find(',', at);
+                    if (e == std::string::npos) e = names.size();
+                    if (names.substr(at, e - at) == group) return true;
+                    at = e + 1;
+                }
+                return false;
+            };
+            for (const auto& g : cfg.groups) {
+                if (listed(sh.a, g.name)) for (int id : g.ids) bp.late.push_back({id, g.clickX, g.clickZ});
+                if (listed(sh.b, g.name)) bp.early.insert(bp.early.end(), g.ids.begin(), g.ids.end());
+            }
+            if (bp.late.empty() || bp.early.empty())
+                throw std::runtime_error(s.origin + ": behind '" + sh.name + "' names no group in '" + sh.a + "' or '" + sh.b + "'");
+            behinds.push_back(std::move(bp));
+        }
     std::vector<ReachProbe> reach;
     std::optional<ClaimsProbe> claims;
     if (observe && s.probeClaims) claims.emplace();
@@ -786,6 +813,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             if (approach) approach->sample(w, nav, int(t));
             for (auto& rp : reach) rp.sample(w, nav, int(t));
             for (auto& cp : creeps) cp.sample(w);
+            for (auto& bp : behinds) bp.sample(w);
             if (claims) claims->sample(nav, int(t));
             if (nav) {
                 const int64_t n = legionGroups();
@@ -807,6 +835,7 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
         for (const auto& rp : reach) rp.report(r.keys, w);
         for (const auto& cp : creeps) cp.report(r.keys);
+        for (const auto& bp : behinds) bp.report(r.keys);
         if (claims && mode == PathfindingMode::Legion) claims->report(r.keys);
         r.keys.emplace_back("commands", commands);
         r.keys.emplace_back("last_command_tick", lastCommand);
@@ -839,6 +868,11 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
             r.keys.emplace_back("engaged.member_ticks", int64_t(navWork.engagedMemberTicks()));
             for (size_t i = 0; i < navWork.churnBins().size(); ++i)
                 r.keys.emplace_back("churn.bin" + std::to_string(i), int64_t(navWork.churnBins()[i]));
+            if (s.probeAware) {   // W7 step 0: the awareness / parting / give-way counters (Stats, never hashed)
+                for (const auto& [name, v] : navWork.w7())   // aware_builds -> aware.builds, parts -> aware.parts
+                    r.keys.emplace_back("aware." + (name.rfind("aware_", 0) == 0 ? name.substr(6) : name), int64_t(v));
+                r.keys.emplace_back("aware.work_max", int64_t(navWork.awareWorkMax()));
+            }
             r.keys.emplace_back("legion_groups", groupsAfter);
             r.keys.emplace_back("legion_groups_peak", groupsPeak);
         }

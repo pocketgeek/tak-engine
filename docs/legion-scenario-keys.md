@@ -112,6 +112,25 @@ Gating the counters off did not make a tick cheaper (open is within noise, share
 slower), so the always-on counters stay: the "> 1% and CI excludes 1%" rule for moving them behind
 NDEBUG is not met.
 
+## W7 step 0 keys (`behind`, `probe aware`; tools/legion_observe.h, tools/legion_scenario.cpp)
+
+All are observation only (never hashed, never summed into `work.legion_total`); the aware / parting / give-way counters are
+`LegionNavigator::Stats` fields that crowdbench exports as `legion_<name>` and the scenario runner as `aware.<name>` under `probe aware`.
+
+| Key | Definition |
+|---|---|
+| `aware.parts` | bodies a parting shifted aside (one per body per part) |
+| `aware.encounters`, `.replans` | (group, mover) corridors awareScan newly planned round; awareScan decisions that asked a group for a new field |
+| `aware.builds` | fresh (unshared) field builds that carry a mover corridor; builds per encounter = builds / encounters (the plan's "2 -> 1") |
+| `aware.latency_max`, `.latency_sum`, `.latency_n` | ticks from an awareScan replan to the install of a field started after it (max is a running maximum; mean = sum / n) |
+| `aware.work`, `aware.work_max` | cells of the descent chains awareScan walked plus its corridor tests (cumulative); the most `aware_pairs + aware_work` any one tick spent. Neither is in `work.legion_total` yet (W7 step 6 declares the bound) |
+| `aware.giveway_starts`, `.giveway_ticks`, `.giveway_timeouts` | member-ticks in a give-way hold, holds begun, holds ended by their timeout. 0 until W7 builds a hold; user decision 5 removes the wait, so after W7 they must stay 0 |
+| `behind.NAME.members`, `.path_cells`, `.straight_cells`, `.extra_cells`, `.detour_permille` | the later group's route-behind deviation: members ever ordered, mean path walked, mean straight line to the click, their difference (cells) and path / straight - 1 (per mille) |
+| `behind.NAME.wait_member_ticks`, `.wait_ticks`, `.wait_run_max`, `.waits` | the wait at the stream's edge: member-ticks standing with a moving EARLIER member within `cells` (8) cells; group-level wait ticks (>= 2 and a quarter of the ordered LATER members); the longest run; runs of >= 30 ticks. All four must be 0 after W7 |
+
+Fixtures: `tools/scenarios/{aware-cross-behind,crosslong}.scn`; `legion_world_test` cases `rb02 awarebig awaredense crossthree crosslong`;
+crowdbench scenarios `opposingdoors opposingbridges crossingcolumns`. Base values: `docs/legion-exit-tables.md` (W7 step 0).
+
 ## W5 step 0 keys (`reach`, `creep`, `probe claims`; tools/legion_scenario.cpp)
 
 | Key | Definition |
