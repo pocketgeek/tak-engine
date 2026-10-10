@@ -12,6 +12,43 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W7 steps 6-9 (2026-10-10, task w7-b): measured state under user decision 5 (not an exit)
+
+Head chain on `aa73c084` (W7 steps 1-5): step 6 detection (`f66dd096`), step 7 pass-behind (`17cccf5c`). **Step 8 (half-bands)
+and step 9 (the MV-03 experiment) are not in the chain**: each failed its exit / stop rule (below). User decision 5 replaces
+G1: no give-way hold exists, so no `giveWay` / `waitSince` state, no C8 reader changes, `giveway_*` 0 on every fixture.
+Numbers: optimized Debug; scenarios = legion, 11 gate offsets (median; the floor reads the core five); sweep = every
+`tools/scenarios/*.scn`, both modes, `legion_check check` on Windows (sims equal Linux). Base = the w7-a head.
+
+| Step | Target (PLAN 3.3 / W7, decision 5) | Result |
+|---|---|---|
+| 6 | integer class test (C28), time-sampled detection | kept. Class from each group's line to its destination (measured heading read a group routing behind a stream as head on). aware-headon a00/b00 t90 2027/2037 -> 1909/1947, aware-seen 2046/1937 -> 2027/1871; contacts headon 326 -> 254, seen 372 -> 248 |
+| 7 | route behind, 0 edge waits; no wait for any detour length | kept. Every `behind.*.wait_ticks / wait_run_max / waits` 0 on crosslong (1049/759/3 at base) and aware-cross-behind (87/47/1); awarebig-cross waits 0 (283), ON 7571 <= OFF 8426; crosslong done 4546 -> 3748; giver's extra path crosslong 7 -> 28 cells, aware-cross 1 -> 16 |
+| 7 | aware cross contacts <= 5.0 permille, stopped <= 7% (world test) | 10.90 -> 0.00, 9.8% -> 2.3% |
+| 8 | H half-bands: aware headon contacts <= 3.15, stopped <= 5.1%; awarebig head-on reversals <= OFF + 2 | dropped by its exit rule. Midpoint frame, width r/2+32: headon 3.06 / 2.3%, aware-seen click t90 1638/1717, awaredense done 8838 -> 8233, but awarebig-headon reversals 7 (OFF 3) on every width / length / charge variant (6-21); the band behind each group turns its back-left bodies round as it is placed (t 2656-3321). Forward-only frame: reversals 4 but aware headon done 1998 -> 2431, seen 2215 -> 3511 |
+| 9 | J (knob): 2000x1 crossed @12000 >= 1500 (3-seed mean), >= 1400 @24000; 500/600/800 per side >= 85% | stop rule fired, reverted. J1+usable fields: mean 1382 (base 1229), @24000 1596 (1194), density 79/50/54% (76/53/57%), cross_gap_max @24000 11283, spin up (dens 761 -> 1379); J1+J2: 1339, 80/52/54%; J2 alone: no change. MV-03 needs the group-level lengthwise re-shape (W9, decision 7) |
+
+**Ruling (i) floor keys** (core-five medians, Legion vs Retail x1.1): aware-headon a00 / b00 pass (no exception left); aware-seen
+a00 passes (its exception can be removed), b00 passes; aware-cross a00 1947 -> 1517 vs 1759 passes (exception removable).
+**aware-unseen a00 2162 vs 1877 and b00 2207 vs 1929 still fail**: the enemy is never seen (sight 16 px), so no awareness step
+reaches it; half-bands applied without the too-late rule (the only lever found: 2072 / 2072) wreck awaredense (312/400 arrived,
+105 re-plans). This W7 gate is open; it belongs with the head-on jam (W9, decision 7) or W8 lanes.
+
+Sweep of the chain head (Windows, 17cccf5c code): 129 failed keys (w7-a head: 11). Besides the 11 carried:
+- decision-5 cost on the giver (licence candidates, floor holds): aware-cross b00 t90 1332 -> 1542 [band 1465], t50, done,
+  gate.cross.files 664 -> 385, reversals 1 -> 5;
+- step 6 head-on detection: densehead contact_other 140 -> 199 (bound 164) while its MV-02 lane crossings fall 603 -> 350;
+  work.legion_total.p99 15612 -> 19886 (steering counters: line sweeps, pass scans); aware-attack click a00 done 2117 -> 2387;
+  aware-seen a00 done 2250 -> 2608 (b00 2702 -> 2205); aware-* work classes up (legion_total p99 +20%). A shorter head-on
+  horizon (120-330 ticks) or a meeting-point corridor fixes densehead (contacts 114, crossings 205) but puts aware-headon
+  back over the floor (2072-2252);
+- ringcross: outcomes unmoved, field work 529k -> 971k (aware re-plans), its pinned hashes change (behaviour step);
+- battle-assault mixed, total Legion work -9%. Aware work (`aware.work_max`): crosslong 116 -> 388, aware-cross-behind
+  115 -> 212, under each scenario's legion_total per-tick max (389105 / 209272): within the declared cap.
+Retail byte-identical (122 rows); serial == workers everywhere; crowdbench rows hash-identical (no formation movers);
+ctest `-L quick` and every non-nightly `legion_*` / navigation test: only `legion_acceptance_crowdheld_legion` (W5/W9 gate)
+fails, plus `cobanim` (no extracted assets in the worktree).
+
 ## W7 steps 1-5 (2026-10-10, task w7-a): measured state (not an exit)
 
 Head chain on `7dbc218e` (W7 step 0): step 1 Trapped soft, step 2 parting, step 3 approach clearance, step 5 awareness
