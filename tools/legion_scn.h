@@ -121,7 +121,7 @@ struct ChurnSpec {
 };
 
 struct MapSpec {
-    enum Kind { Ascii, Flat, Gen1, Snapshot };
+    enum Kind { Ascii, Flat, Gen1, Snapshot, Named };
     Kind kind = Flat;
     int width = 0, height = 0;
     std::vector<std::string> rows;    // ascii
@@ -195,6 +195,7 @@ struct Scenario {
         for (const auto& t : types)
             if (t.kind == TypeSpec::Fbi) return "fbi type '" + t.fbi + "'";
         if (map.kind == MapSpec::Gen1) return "gen1 map";
+        if (map.kind == MapSpec::Named) return "map '" + map.recipe + "'";
         if (map.kind == MapSpec::Snapshot) return "snapshot " + map.file;
         return {};
     }
@@ -367,6 +368,11 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
                 if (!tak::mapgen::isGeneratedMapId(w[2])) c.fail("not a ~gen1~ recipe: " + w[2]);
                 s.map.kind = MapSpec::Gen1;
                 s.map.recipe = w[2];
+            } else if (w[1] == "named") {   // a map of the install, by name (situations cut from retail-map recordings)
+                if (w.size() < 3) c.fail("map named NAME");
+                s.map.kind = MapSpec::Named;
+                s.map.recipe = w[2];
+                for (size_t i = 3; i < w.size(); ++i) s.map.recipe += " " + w[i];
             } else if (w[1] == "snapshot") {
                 need(3, 3);
                 s.map.kind = MapSpec::Snapshot;
@@ -712,6 +718,7 @@ inline std::string format(const Scenario& s) {
         break;
     case MapSpec::Flat: o << "map flat " << s.map.width << " " << s.map.height << "\n"; break;
     case MapSpec::Gen1: o << "map gen1 " << s.map.recipe << "\n"; break;
+    case MapSpec::Named: o << "map named " << s.map.recipe << "\n"; break;
     case MapSpec::Snapshot: o << "map snapshot " << s.map.file << "\n"; break;
     }
     for (const auto& v : s.map.overlays) {
@@ -971,7 +978,10 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
         cfg.startSeed = s.seed;
         cfg.slots.resize(size_t(s.players));   // unused slots: no monarchs
         if (s.map.kind == MapSpec::Gen1) cfg.mapPath = s.map.recipe;
-        else {
+        else if (s.map.kind == MapSpec::Named) {
+            cfg.mapPath = tak::hpi::findMap(*b->vfs, s.map.recipe);
+            if (cfg.mapPath.empty()) throw std::runtime_error(s.origin + ": map '" + s.map.recipe + "' is not in the install");
+        } else {
             const auto path = std::filesystem::path(s.dir) / s.map.file;
             if (s.map.file.size() > 4 && s.map.file.compare(s.map.file.size() - 4, 4, ".kmp") == 0) {
                 auto pkg = tak::net::maps::importSnapshot(*b->vfs, path);

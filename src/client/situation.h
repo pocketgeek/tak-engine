@@ -40,7 +40,12 @@
 
 namespace tak::situation {
 
-inline constexpr uint32_t kCommandWindow = 600;   // ticks of commands kept
+inline constexpr uint32_t kCommandWindow = 600;   // ticks of commands kept (TAK_SITUATION_CMDS=N overrides: timing runs
+                                                  // that simulate more than 600 ticks keep the recording's commands for all of them)
+inline uint32_t commandWindow() {
+    if (const char* e = std::getenv("TAK_SITUATION_CMDS")) if (const unsigned long n = std::strtoul(e, nullptr, 10)) return uint32_t(n);
+    return kCommandWindow;
+}
 inline constexpr uint32_t kTruthTicks[] = {100, 300};   // where the recording's positions are sampled (the last ends the harvest)
 
 struct Request {
@@ -129,6 +134,7 @@ private:
     std::vector<Click> clicks_;
     std::vector<std::pair<uint32_t, std::vector<std::pair<int32_t, int32_t>>>> truths_;
     uint32_t clockTick_ = 0, clockRng_ = 0;
+    std::vector<int> teams_;   // the recording's team of every player
     std::vector<uint16_t> explored_;   // the recording's navigation exploration masks at the snapshot
 
     static uint64_t pointKey(float x, float z) {
@@ -143,6 +149,8 @@ private:
         explored_ = w.navigationExploration();
         clockTick_ = w.tickCount();
         clockRng_ = w.gameRngState();
+        teams_.clear();
+        for (int p = 0; p < w.numPlayers(); ++p) teams_.push_back(w.player(p).team);
         std::set<int> inSnapshot;
         for (const auto& u : w.units()) {
             if (!u.alive() || !u.type || u.inTransport || u.underConstruction) continue;
@@ -205,7 +213,7 @@ private:
             }
             clicks_.push_back(std::move(o.c));
         };
-        for (uint32_t k = 0; k < kCommandWindow && req_.tick + k < bundles.size(); ++k) {
+        for (uint32_t k = 0, win = commandWindow(); k < win && req_.tick + k < bundles.size(); ++k) {
             // A cluster that has been quiet for two ticks is a finished click.
             for (auto it = open.begin(); it != open.end();) {
                 if (it->second.last + 2 < k) { flush(it->second); it = open.erase(it); }
@@ -246,8 +254,10 @@ private:
     }
 
     bool write() const {
-        if (meta_.mapId.rfind("~gen1~", 0) != 0) {
-            std::fprintf(stderr, "situation: map '%s' is not a ~gen1~ recipe; a .scn cannot name it\n", meta_.mapId.c_str());
+        // A ~gen1~ recipe names itself; any other map is named and resolved through the install (data-gated, like the fbi types).
+        const bool gen1 = meta_.mapId.rfind("~gen1~", 0) == 0;
+        if (!gen1 && (meta_.mapId.empty() || meta_.mapId.find('\n') != std::string::npos)) {
+            std::fprintf(stderr, "situation: map '%s' cannot be named in a .scn\n", meta_.mapId.c_str());
             return false;
         }
         // Bodies go out in the recording's unit-id order, because spawn order is id order in the new world and
@@ -283,11 +293,12 @@ private:
         if (name.size() > 4 && name.compare(name.size() - 4, 4, ".scn") == 0) name.resize(name.size() - 4);
         std::fprintf(f, "scn 1\nname %s\n", name.c_str());
         std::fprintf(f, "# Situation cut by TAK_SITUATION (src/client/situation.h) from %s,\n", meta_.source.c_str());
-        std::fprintf(f, "# the world at tick %u of the recording and the next %u ticks of its human commands.\n",
-                     req_.tick, kCommandWindow);
+        std::fprintf(f, "# the world at tick %u of the recording and the next %u ticks of its commands.\n",
+                     req_.tick, commandWindow());
         std::fprintf(f, "# Bodies are exact (raw 16.16 px, raw BAM, raw hp, raw individual speed); `truth` holds the recording's own\n"
                         "# positions at +%u and +%u ticks, in group order.\n", kTruthTicks[0], kTruthTicks[std::size(kTruthTicks) - 1]);
         std::fprintf(f, "ticks 3000\nseed %u\nplayers %d\nweapons on\n", meta_.seed, meta_.players);
+        for (size_t p = 0; p < teams_.size() && int(p) < meta_.players; ++p) std::fprintf(f, "team %zu %d\n", p, teams_[p]);
         if (explored_.empty()) std::fprintf(f, "explored all\n");
         else {   // what the recording's players had explored: pathing treats unexplored ground differently
             std::fprintf(f, "explored rle");
@@ -300,7 +311,7 @@ private:
             std::fprintf(f, "\n");
         }
         if (meta_.crusades) std::fprintf(f, "crusades on\n");
-        std::fprintf(f, "map gen1 %s\n", meta_.mapId.c_str());
+        std::fprintf(f, gen1 ? "map gen1 %s\n" : "map named %s\n", meta_.mapId.c_str());
         for (const auto& t : types) std::fprintf(f, "type %s fbi %s\n", t.c_str(), t.c_str());
         for (const auto& run : runs) {
             const Body& first = bodies[run.first];
