@@ -768,6 +768,14 @@ struct LegionNavigator::Impl {
         return u&&u->alive()&&(u->orders.empty()||(u->orders[World::currentLeg(u->orders)].mission.pending&0x500));
     }
     static bool idleBody(const Unit* u) {return u&&u->alive()&&u->orders.empty();}
+    // A member parted holding its order (see Part): its part and yield step
+    // stand while that order's leg does.
+    bool heldPart(const Unit& u) const {
+        const auto part=parts.find(u.id);
+        if(part==parts.end()||!part->second.leg||u.orders.empty())return false;
+        const auto& leg=u.orders[World::currentLeg(u.orders)];
+        return legKey(leg,kindOf(u))==part->second.leg;
+    }
     // Unit id -> it may have an entry in approachDone, parts or yielding (a
     // hint: set on insert, cleared when a check finds none). Lets the orders
     // event skip the tree lookups for the units in none of the maps.
@@ -785,7 +793,9 @@ struct LegionNavigator::Impl {
         const Unit* u=w.unit(id);
         if(isAnchor(id)&&!settledBody(u)) {yielding.erase(id);dropAnchor(id);}
         if(!watched||idleBody(u))return;
-        approachDone.erase(id);parts.erase(id);yielding.erase(id);
+        approachDone.erase(id);
+        if(u&&heldPart(*u))return;
+        parts.erase(id);yielding.erase(id);
         watchMark[size_t(id)]=0;
     }
     std::map<int,Anchor>::iterator dropAnchor(std::map<int,Anchor>::iterator it) {
@@ -3641,7 +3651,7 @@ struct LegionNavigator::Impl {
     void serviceYields() {
         for(auto it=yielding.begin();it!=yielding.end();) {
             Unit* u=w.unit(it->first);
-            if(!u||!u->alive()||!u->orders.empty()) {it=yielding.erase(it);continue;}
+            if(!u||!u->alive()||(!u->orders.empty()&&!heldPart(*u))) {it=yielding.erase(it);continue;}
             const int W=width(),fx=u->type->footX,fz=u->type->footZ;
             const Fixed tx=centre(it->second.cell%W,fx),tz=centre(it->second.cell/W,fz);
             const int64_t dx=int64_t(tx.v)-u->x.v,dz=int64_t(tz.v)-u->z.v;
@@ -3697,7 +3707,12 @@ struct LegionNavigator::Impl {
     // times. Opposing columns 250x8 at 50% moving, where idle bodies stand
     // between the movers and their goals: crossed 680 -> 894 and settled
     // 328 -> 644 (Retail 1000 / 475), means of seeds 0/7/42.
-    struct Part {uint8_t count=0;int8_t sx=0,sz=0;};
+    // W7 (PLAN 3.3 C): a still same-player member parts too, keeping its
+    // order (see partable); `leg` is then its leg key when parted (0 for an
+    // idle body), so a new order forgets the part as it does an idle body's.
+    // A stuck body (stuckBody) may step its full width across, so a 4x4 can
+    // clear a mouth narrower than itself.
+    struct Part {uint8_t count=0;int8_t sx=0,sz=0;uint64_t leg=0;};
     std::map<int,Part> parts;
     // Bodies whose approach order (an unreachable goal) dropped, idle since:
     // unit id -> the member's point (player, issue tick, requested point).
@@ -3718,10 +3733,34 @@ struct LegionNavigator::Impl {
     }
     bool partable(const Unit& u,int id) const {
         const Unit* b=w.unit(id);
-        if(!b||!b->alive()||b->player!=u.player||!b->orders.empty()||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly)return false;
+        if(!b||!b->alive()||b->player!=u.player||b->speed!=Fixed()||!b->type||b->type->isStructure()||b->type->canFly)return false;
         if(anchors.count(id)||yielding.count(id))return false;
+        if(!b->orders.empty()&&!partableMember(id))return false;
         const auto part=parts.find(id);
         return part==parts.end()||part->second.count<kMaxParts;
+    }
+    // A member with an order that parts a lane like an idle body (PLAN 3.3
+    // C, C8, C15), keeping its order: a stuck one (trappedStill), never one
+    // the settle rule found queued to its own destination crowd, a reach
+    // member (an attack or guard ring, any band) or a give-way holder.
+    // (The plan's wider set -- any member Holding or Waiting kRestAfter
+    // ticks -- was measured and restricted by the step's exit rule: on
+    // opposingcolumns 250x8@50 crossed 892 -> 889 (s0/s1), 875 -> 873 (s2),
+    // arrived 626 -> 601, held at end 344 -> 368, and spin appeared on
+    // groupdetour 200x1 (0 -> 38), jagged 200x1 (0 -> 2) and sharedgoal
+    // 2000x1 (0 -> 12).)
+    bool partableMember(int id) const {
+        const Member* m=member(id);
+        if(!m||m->queued||giveWayHolder(*m)||!policy(m->kind).completes||!trappedStill(*m))return false;
+        if(m->slot>=0)if(const auto g=groups.find(m->group);g!=groups.end()&&ringMember(g->second,*m))return false;
+        return true;
+    }
+    // A body stuck short of an order it cannot carry out: a trappedStill
+    // member, or an idle body whose approach order dropped at its nearest
+    // reachable spot. It may part by its full width (see Part).
+    bool stuckBody(int id) const {
+        if(const Member* m=member(id))return trappedStill(*m);
+        return approachDone.count(id)>0;
     }
     bool partLane(const Unit& u,Member& m,const Plane& p,int ox,int oz,int nx,int nz) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -3771,7 +3810,9 @@ struct LegionNavigator::Impl {
                 const int side=2*b0+bw>=2*l0+across?1:-1;
                 const auto part=parts.find(ids[size_t(q)]);
                 int best=-1;
-                for(int shift:{side,-side,2*side,-2*side}) {
+                const int wide=bw>2&&stuckBody(ids[size_t(q)])?bw:0;
+                for(int shift:{side,-side,2*side,-2*side,wide*side,-wide*side}) {
+                    if(!shift)continue;
                     if(b0+shift<l0+across&&l0<b0+shift+bw)continue;   // still in the lane
                     if(part!=parts.end()&&part->second.sx*shift*px+part->second.sz*shift*pz<0)continue;
                     const int tx=bx+shift*px,tz=bz+shift*pz;
@@ -3782,7 +3823,9 @@ struct LegionNavigator::Impl {
                         reserved=tx<rx+feetX[size_t(r)]&&rx<tx+bfx&&tz<rz+feetZ[size_t(r)]&&rz<tz+bfz;
                     }
                     if(reserved||!yieldFree(b,tx,tz))continue;
-                    if(std::abs(shift)==2&&!yieldFree(b,bx+shift/2*px,bz+shift/2*pz))continue;
+                    bool way=true;
+                    for(int k=1;k<std::abs(shift)&&way;++k)way=yieldFree(b,bx+(shift<0?-k:k)*px,bz+(shift<0?-k:k)*pz);
+                    if(!way)continue;
                     best=tz*W+tx;break;
                 }
                 if(best<0)ok=false;
@@ -3793,6 +3836,7 @@ struct LegionNavigator::Impl {
                 const Unit& b=*w.unit(ids[size_t(q)]);
                 const int bx=footprintOrigin(b.x,b.type->footX),bz=footprintOrigin(b.z,b.type->footZ);
                 auto& part=parts[ids[size_t(q)]];++part.count;++stats.parts;markWatch(ids[size_t(q)]);
+                if(const Member* pm=b.orders.empty()?nullptr:member(ids[size_t(q)]))part.leg=pm->controller;
                 part.sx=int8_t(std::clamp(cells[size_t(q)]%W-bx,-1,1));part.sz=int8_t(std::clamp(cells[size_t(q)]/W-bz,-1,1));
                 yielding[ids[size_t(q)]]=Yield{cells[size_t(q)],0};
             }
@@ -4958,6 +5002,9 @@ struct LegionNavigator::Impl {
     void move(Unit& u,Fixed maximum) {
         contactRefused=nullptr;pivoting=nullptr;
         Member* found=member(u.id);
+        // A member parting a lane (partable) takes its side-step from
+        // serviceYields; it keeps its order and hold clock meanwhile.
+        if(found&&yielding.count(u.id)&&heldPart(u)) {u.speed=Fixed();u.turnReqBam=0;return;}
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const Kind kind=kindOf(u);
         const Policy rule=policy(kind);
@@ -6404,7 +6451,10 @@ struct LegionNavigator::Impl {
             h=mix(h,0x61646f6e65ull);h=mix(h,uint64_t(id));h=mix(h,uint64_t(uint32_t(std::get<0>(c)))<<32|std::get<1>(c));
             h=mix(h,uint64_t(uint32_t(std::get<2>(c)))<<32|uint32_t(std::get<3>(c)));
         }
-        for(const auto& [id,n]:parts) {h=mix(h,uint64_t(id));h=mix(h,n.count);h=mix(h,uint64_t(uint8_t(n.sx))|uint64_t(uint8_t(n.sz))<<8);}
+        for(const auto& [id,n]:parts) {
+            h=mix(h,uint64_t(id));h=mix(h,n.count);h=mix(h,uint64_t(uint8_t(n.sx))|uint64_t(uint8_t(n.sz))<<8);
+            if(n.leg) {h=mix(h,0x706172746c6567ull);h=mix(h,n.leg);}
+        }
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             h=mix(h,uint64_t(m.lineCell));h=mix(h,m.line);h=mix(h,m.state);h=mix(h,m.best);
