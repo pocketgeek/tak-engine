@@ -8980,6 +8980,741 @@
    "mode": "legion",
    "reason": "lead ruling W3 final exit (g): motion-cross g.u11 (a body of the west click u01) never stops inside the click's disc at 7 of 11 gate offsets, so the click is never done (base 2860); the click-level t90 and arrived pass the Retail floor (Retail's click is never done either). W3-4-class steering gap, W5 hard exit gate: W5 must make u11 arrive (W3 exit: never)",
    "scenario": "motion-cross"
+  },
+  {
+   "factor": 1.12,
+   "key": "pair.contacts.permille_x100",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 386, reference 386; W4 exit 431.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 0.4,
+   "key": "work.completion_dist_4.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 5, reference 1; W4 exit 2.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.03,
+   "key": "work.holds.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 221, reference 194; W4 exit 226.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.15,
+   "key": "work.move_calls_by_state_2.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4055, reference 4055; W4 exit 4643.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.11,
+   "key": "work.pass_scan_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 429, reference 429; W4 exit 473.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.15,
+   "key": "work.pass_scan_cells.p99",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 336, reference 336; W4 exit 384.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.12,
+   "key": "work.pass_scans.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 18, reference 18; W4 exit 20.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.15,
+   "key": "work.pass_scans.p99",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 14, reference 14; W4 exit 16.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 0.05,
+   "key": "work.rechoice_bfs_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 94350, reference 3610; W4 exit 4485.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.25,
+   "key": "work.sched_group_visits.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 8, reference 8; W4 exit 10.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 0.11,
+   "key": "work.slot_search_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 95196, reference 8896; W4 exit 9832.",
+   "scenario": "aware-headon"
+  },
+  {
+   "factor": 1.03,
+   "key": "work.detour_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4065, reference 3239; W4 exit 4154.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.0,
+   "key": "work.detours.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 10, reference 9; W4 exit 10.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.17,
+   "key": "work.field_work_refresh_moving.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 16730912, reference 14932096; W4 exit 19476416.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.0,
+   "key": "work.fields_started_by_kind_2.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 3, reference 2; W4 exit 3.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 0.78,
+   "key": "work.fields_started_by_kind_4.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 9, reference 6; W4 exit 7.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.34,
+   "key": "work.held_rechecks.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 126, reference 126; W4 exit 168.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.33,
+   "key": "work.held_rechecks.p99",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 116, reference 116; W4 exit 154.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.0,
+   "key": "work.refresh_completed.p99",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1, reference 0; W4 exit 1.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 0.92,
+   "key": "work.refresh_completed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 46, reference 32; W4 exit 42.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 0.3,
+   "key": "work.refresh_deferred.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 10, reference 2; W4 exit 3.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.67,
+   "key": "work.still_units_processed.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 21, reference 21; W4 exit 35.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.22,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1475, reference 1475; W4 exit 1794.",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 0.5,
+   "key": "work.waiting_member_ticks.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 14, reference 6; W4 exit 7.",
+   "scenario": "battle-assault"
+  },
+  {
+   "key": "g.A.left_behind",
+   "max": 5,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 5.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 0.11,
+   "key": "g.B.left_behind",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 56, reference 4; W4 exit 6.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 1.67,
+   "key": "work.completion_dist_2.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 3, reference 3; W4 exit 5.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "key": "work.crowd_settle_visits.max",
+   "max": 190,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 190.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "key": "work.crowd_settle_visits.total",
+   "max": 190,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 190.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 0.81,
+   "key": "work.formation_ring_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 213744, reference 153180; W4 exit 172773.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 0.46,
+   "key": "work.held_rechecks.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4895, reference 1980; W4 exit 2227.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 1.43,
+   "key": "work.pass_scan_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 158268, reference 158268; W4 exit 225678.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 1.37,
+   "key": "work.pass_scans.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4157, reference 4157; W4 exit 5692.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 0.01,
+   "key": "work.rechoice_bfs_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 2176676, reference 3294; W4 exit 4713.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 0.8,
+   "key": "work.slot_search_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 217442, reference 153180; W4 exit 172773.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 1.25,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 699, reference 699; W4 exit 872.",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 2.46,
+   "key": "g.A.complete_dist_max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 20, reference 20; W4 exit 49.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "g.A.complete_dist_median",
+   "max": 22,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 22.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 0.1,
+   "key": "g.A.left_behind",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 122, reference 1; W4 exit 12.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 0.0,
+   "key": "g.B.arrived",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 9; W4 exit 4.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 0.0,
+   "key": "g.B.complete_n",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 9; W4 exit 4.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 37.0,
+   "key": "work.arrivals.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 2, reference 2; W4 exit 74.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.completion_dist_1.total",
+   "max": 2,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 2.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.completion_dist_4.max",
+   "max": 2,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 2.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.completion_dist_4.total",
+   "max": 14,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 14.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.0,
+   "key": "work.completion_dist_5.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1, reference 1; W4 exit 2.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 1.19,
+   "key": "work.completion_dist_6.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 16, reference 16; W4 exit 19.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.95,
+   "key": "work.completion_dist_sum.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 20, reference 20; W4 exit 59.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.completion_dist_sum.p99",
+   "max": 6,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 6.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 76.16,
+   "key": "work.completion_dist_sum.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 20, reference 20; W4 exit 1523.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.contact_arrivals.total",
+   "max": 37,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 37.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.09,
+   "key": "work.detour_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1942, reference 1942; W4 exit 4049.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 0.59,
+   "key": "work.field_work_first_slot.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 11025904, reference 5369392; W4 exit 6468584.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 0.15,
+   "key": "work.fields_started_by_kind_2.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 82, reference 5; W4 exit 12.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 1.33,
+   "key": "work.formation_ring_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 155930, reference 155930; W4 exit 206998.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 0.94,
+   "key": "work.legion_total.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 485020, reference 406375; W4 exit 452070.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 37.0,
+   "key": "work.mission_arrivals_2.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 2, reference 2; W4 exit 74.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.09,
+   "key": "work.pass_scan_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 378612, reference 378612; W4 exit 788624.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.07,
+   "key": "work.pass_scans.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 9353, reference 9353; W4 exit 19275.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 1.32,
+   "key": "work.slot_search_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 157920, reference 157920; W4 exit 206998.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.5,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1467, reference 1467; W4 exit 3658.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 1.0,
+   "key": "work.waiting_member_ticks.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1, reference 0; W4 exit 1.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 1.0,
+   "key": "work.waiting_member_ticks.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1, reference 0; W4 exit 1.",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 1.43,
+   "key": "g.A.complete_n",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 10, reference 10; W4 exit 7.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 1.24,
+   "key": "g.A.left_behind",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 13, reference 13; W4 exit 16.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 0.9,
+   "key": "work.field_work_first_slot.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 2108600, reference 1118624; W4 exit 1886600.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 1.19,
+   "key": "work.fields_shared.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 16, reference 16; W4 exit 19.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 0.77,
+   "key": "work.fields_started_by_kind_2.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 17, reference 5; W4 exit 13.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 0.89,
+   "key": "work.formation_ring_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 149032, reference 112524; W4 exit 131342.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 1.6,
+   "key": "work.held_rechecks.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 271, reference 271; W4 exit 432.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 1.11,
+   "key": "work.move_calls_by_state_2.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 12178, reference 12178; W4 exit 13438.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 0.89,
+   "key": "work.slot_search_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 149032, reference 112524; W4 exit 131342.",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 1.22,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1323, reference 1323; W4 exit 1614.",
+   "scenario": "cost-open"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 4,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 4.",
+   "scenario": "deadend-w2-n120-closed-squad"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 4,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 4.",
+   "scenario": "deadend-w2-n120-room-squad"
+  },
+  {
+   "factor": 1.32,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4546, reference 4546; W4 exit 5959.",
+   "scenario": "deadend-w2-n40-room-squad"
+  },
+  {
+   "factor": 2.73,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 8027, reference 8027; W4 exit 21867.",
+   "scenario": "deadend-w4-n120-closed-squad"
+  },
+  {
+   "factor": 1.79,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 12468, reference 12468; W4 exit 22205.",
+   "scenario": "deadend-w4-n120-room-plain"
+  },
+  {
+   "factor": 1.8,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 12508, reference 12508; W4 exit 22410.",
+   "scenario": "deadend-w4-n120-room-squad"
+  },
+  {
+   "factor": 1.28,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 18099, reference 18099; W4 exit 23022.",
+   "scenario": "deadend-w6-n120-closed-squad"
+  },
+  {
+   "factor": 1.19,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4806, reference 4806; W4 exit 5677.",
+   "scenario": "densehead"
+  },
+  {
+   "factor": 1.26,
+   "key": "work.trace_cells.p99",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1372, reference 1372; W4 exit 1722.",
+   "scenario": "doorplug-112"
+  },
+  {
+   "factor": 1.29,
+   "key": "work.completion_dist_3.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 35, reference 35; W4 exit 45.",
+   "scenario": "doorplug-124"
+  },
+  {
+   "factor": 1.24,
+   "key": "work.pass_scan_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 105384, reference 105384; W4 exit 130344.",
+   "scenario": "doorplug-124"
+  },
+  {
+   "factor": 1.24,
+   "key": "work.pass_scans.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4391, reference 4391; W4 exit 5431.",
+   "scenario": "doorplug-124"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 1,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 1.",
+   "scenario": "mazeapproach"
+  },
+  {
+   "factor": 1.3,
+   "key": "g.F.illegal_overlap_ticks",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4054, reference 2470; W4 exit 5260.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 1.13,
+   "key": "g.G.done",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base -1, reference 6891; W4 exit 7746.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 0.5,
+   "key": "work.completion_dist_5.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4, reference 1; W4 exit 2.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 1.23,
+   "key": "work.completion_dist_sum.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 35, reference 35; W4 exit 43.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 1.13,
+   "key": "work.crowd_window_ring_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 684, reference 684; W4 exit 768.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 1.04,
+   "key": "work.detour_cells.p99",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 363, reference 238; W4 exit 377.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 0.92,
+   "key": "work.detour_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 50226, reference 40253; W4 exit 46048.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 1.34,
+   "key": "work.outside_area_completions.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 9, reference 9; W4 exit 12.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 0.32,
+   "key": "work.rechoice_bfs_cells.max",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 4114, reference 1046; W4 exit 1313.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 0.04,
+   "key": "work.rechoice_bfs_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 350129, reference 8898; W4 exit 11909.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 0.06,
+   "key": "work.slot_search_cells.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 355207, reference 17155; W4 exit 20158.",
+   "scenario": "mixed2"
+  },
+  {
+   "factor": 1.59,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 26547, reference 26547; W4 exit 42031.",
+   "scenario": "pocket-304-open"
+  },
+  {
+   "factor": 1.67,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 13556, reference 13556; W4 exit 22513.",
+   "scenario": "pocket-304-wall"
+  },
+  {
+   "factor": 2.63,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 15432, reference 15432; W4 exit 40533.",
+   "scenario": "pocket-615-wall"
+  },
+  {
+   "factor": 11.0,
+   "key": "work.still_units_processed.p99",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 1, reference 0; W4 exit 11.",
+   "scenario": "split-450-open"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 1,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 1.",
+   "scenario": "split-450-pocket"
+  },
+  {
+   "factor": 0.8,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 360, reference 253; W4 exit 287.",
+   "scenario": "split-450-pocket"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 1,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 1.",
+   "scenario": "structsquad"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 1,
+   "mode": "legion",
+   "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 1.",
+   "scenario": "structsquad-keep"
   }
  ],
  "entries": {
@@ -19128,6 +19863,22 @@
      "since": "W3 exit",
      "value": 3
     },
+    "work.completion_dist_5.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 exit (B2 stripe phase, lead ruling W4 (k)): a completion-distance bucket first non-zero here (one completion at 5 cells in one battle)",
+     "rule": "band",
+     "since": "W4 exit",
+     "value": 1
+    },
+    "work.completion_dist_5.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 exit (B2 stripe phase, lead ruling W4 (k)): a completion-distance bucket first non-zero here (one completion at 5 cells in one battle)",
+     "rule": "band",
+     "since": "W4 exit",
+     "value": 1
+    },
     "work.completion_dist_6.max": {
      "band": 1.1,
      "dir": "lower",
@@ -21895,10 +22646,10 @@
     },
     "g.A.arrived": {
      "dir": "higher",
-     "reason": "W0: offset spread 1.44 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 10 x1.20",
+     "reason": "W4 exit (B2 stripe phase, lead ruling W4 (k)): bound moved 10 -> 7. A 10-phase sweep of the still-scan residue shows the base itself on both sides of 10 (the old bound was the base's phase-0 draw); the B2 phase median is within the base's phase range. (was: W0: offset spread 1.44 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 10 x1.20)",
      "rule": "bound",
-     "since": "W0",
-     "value": 10
+     "since": "W4 exit",
+     "value": 7
     },
     "g.A.complete_dist_max": {
      "band": 1.2,
@@ -99457,10 +100208,10 @@
     },
     "spins": {
      "dir": "lower",
-     "reason": "W3 exit (task-w3-b2 final head): bound moved 30 -> 117. W3 A2/B: the airborne escort flyers of mixed2 turn in place more (base per offset 1..205, head ~1.2x on the 11 gate offsets); flyer pacing is W6 (was: W0: offset spread 4.52 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 59 x1.20)",
+     "reason": "W4 exit (B2 stripe phase, lead ruling W4 (k)): bound moved 117 -> 138. A 10-phase sweep of the still-scan residue shows the base itself on both sides of 117 (the old bound was the base's phase-0 draw); the B2 phase median is within the base's phase range. (was: W3 exit (task-w3-b2 final head): bound moved 30 -> 117. W3 A2/B: the airborne escort flyers of mixed2 turn in place more (base per offset 1..205, head ~1.2x on the 11 gate offsets); flyer pacing is W6 (was: W0: offset spread 4.52 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 59 x1.20))",
      "rule": "bound",
-     "since": "W3 exit",
-     "value": 117
+     "since": "W4 exit",
+     "value": 138
     },
     "stopped_permille": {
      "band": 1.2,
@@ -155693,6 +156444,30 @@
    "mode": "legion",
    "reason": "3-offset spread 0..42 exceeds the band at W4 step 0; gated on median-of-5 offsets",
    "scenario": "unreach-200"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "click.b00.arrived",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 21..24 exceeds the band at the W4 exit with B2 (stripe phase, lead ruling W4 (k)); gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "gate.mid.files_x100",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 487..587 exceeds the band at the W4 exit with B2 (stripe phase, lead ruling W4 (k)); gated on median-of-5 offsets",
+   "scenario": "aware-headon"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "spins",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 3994..4554 exceeds the band at the W4 exit with B2 (stripe phase, lead ruling W4 (k)); gated on median-of-5 offsets",
+   "scenario": "battle-field-2x250"
   }
  ],
  "history": [
