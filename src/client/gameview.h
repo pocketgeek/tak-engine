@@ -840,7 +840,11 @@ public:
     // least worth drawing.
     static constexpr size_t kMaxPendingHits = 4096;
     std::mutex hitQueueMutex_;
-    std::deque<tak::sim::World::HitFx> hitQueue_;
+    // Each impact carries its tick: cosmeticStep releases it once the DISPLAYED tick (front())
+    // reaches it, so with the presentation clock (WE S4) an impact lands with the poses it
+    // belongs to rather than up to lagTarget ticks early.
+    struct QueuedHit { uint32_t tick = 0; tak::sim::World::HitFx hit; };
+    std::deque<QueuedHit> hitQueue_;
     uint8_t pendingMonarchAlerts_ = 0; // guarded by hitQueueMutex_; survives queue overflow
     tak::MonarchAlert monarchAlert_;
     std::deque<tak::sim::World::SoundReq> missionSoundQueue_;
@@ -2696,18 +2700,56 @@ private:
 
     // Render-side motion interpolation: glide units between 30Hz sim ticks (see
     // captureFrame / interpPose). Viewer-only, never hashed.
-    // TRIPLE-buffered render snapshot for the sim/render decouple. The writer (the sim
-    // worker in threaded mode, or captureFrame inline) fills a spare buffer and publishes
-    // it (published_); the render pins the newest published buffer for a whole frame
-    // (beginFrame -> reading_) so a concurrent publish never tears its reads. The writer
-    // always picks the third buffer -- never published_, never reading_ -- so with three
-    // buffers there is always a free one even if a render frame spans two ticks. Two
-    // buffers would tear in exactly that case. front() returns the render's pinned buffer.
-    Frame frameBuf_[3];
-    std::mutex frameMutex_;             // guards published_/reading_ (brief index swaps only)
-    int published_ = 0;                 // newest fully-written buffer (writer sets under lock)
-    int reading_ = -1;                  // buffer the render pinned this frame, or -1
-    int renderReadIdx_ = 0;             // render-thread's pinned buffer (mirrors reading_)
+    // Render snapshot RING for the sim/render decouple (WE S4; was a triple buffer). The writer
+    // (the sim worker in threaded mode, or captureFrame inline) fills the OLDEST free slot and
+    // publishes it (published_); the render pins one slot for a whole frame (beginFrame /
+    // presentFrame -> reading_) so a concurrent publish never tears its reads. A slot is free
+    // unless it is published_, reading_ or shown_ (the slot the presentation clock showed last
+    // frame, kept so the next frame can stay on or after it), so nine of the twelve always are.
+    // Twelve, not the eight the WE design named: at 60 Hz a frame that misses a vsync takes
+    // 27 ms, five ticks at 8x, on top of a lag target of four, and eight slots then dropped
+    // the tick the next frame wanted (measured on the Mac's real display: 50 of 551 frames).
+    // Every tick is captured and each Frame's px/pz/ph is exactly the previous tick's pose, so
+    // any slot interpolates correctly on its own: the presentation clock picks the slot for the
+    // tick it wants to show (presentFrame). front() returns the render's pinned slot.
+    static constexpr int kFrameRing = 12;
+    Frame frameBuf_[kFrameRing];
+    std::mutex frameMutex_;             // guards published_/reading_/shown_/writing_ (brief index swaps only)
+    int published_ = 0;                 // newest fully-written slot (writer sets under lock)
+    int reading_ = -1;                  // slot the render pinned this frame, or -1
+    int shown_ = -1;                    // slot the presentation clock showed last frame, or -1
+    int writing_ = -1;                  // slot the writer is filling (its metadata is not stable), or -1
+    int renderReadIdx_ = 0;             // render-thread's pinned slot (mirrors reading_)
+    // Presentation clock (WE S4, client only, never hashed). The render keeps a display time Td
+    // in ticks and advances it at the game speed every frame, servoed to stay lagTarget ticks
+    // behind the newest snapshot; the frame shows slot ceil(Td) interpolated by Td - (ceil(Td) - 1).
+    // So the game time shown per frame is even even when ticks are published 0, 1 or 2 per frame,
+    // and a single slow tick up to lagTarget is absorbed. lagTarget is the p98 of recent publish
+    // gaps plus a quarter tick, clamped to 1..4 ticks: about 1.25 at 1x, 2-3 at 8x and 240 Hz, 4 at
+    // 60 Hz. The clock runs at the game speed, or at the measured publish rate (0.25 s EMA) when the
+    // game cannot hold that speed, so an overloaded game slows smoothly instead of freezing between
+    // snapshots. Gaps are measured in ticks at that rate. A start gate holds
+    // the first tick until kPresentGate ticks (scaled to the speed) are published, which hides the
+    // spawn tick. Only for live net games: a replay captures once per batch, not per tick.
+    struct PresentClock {
+        bool on = false, started = false, gateOpen = false;
+        bool freeze = false, gate = false, snap = false;   // this frame (TAK_PACELOG columns)
+        double td = 0, dtd = 0, nominal = 0;   // display time, its advance and nominal step (ticks)
+        double rate = 0;                       // measured publish rate, ticks/s (EMA)
+        double lagAfter = 0;                   // EMA of newest - Td after the advance
+        double lagTarget = 1;
+        uint32_t gateTick = 0, seen = 0;
+        uint64_t last = 0;                     // performance counter at the previous frame
+        std::array<float, 128> gaps{};         // recent publish gaps, ticks
+        size_t gapCount = 0, gapNext = 0;
+    };
+    PresentClock present_;
+    static constexpr uint32_t kPresentGate = 15;
+    bool presentClockWanted() const;
+    // The slot holding `tick` (newest capture of it), skipping the slot being written; -1 if none.
+    int ringSlotLocked(uint32_t tick) const;
+    // Pin `slot` for this frame and do the per-frame bookkeeping (caller holds frameMutex_).
+    void pinFrameLocked(int slot);
     uint32_t captureCounter_ = 0;       // monotonic; each Frame.gen gets a unique value
     // Parallel captureFrame (WE S5b). The per-unit record copy runs on its OWN small pool,
     // never pool_: the render drives pool_ concurrently from the main thread, and two
@@ -2755,6 +2797,9 @@ public:
     // because the top-level render loop drives them around the whole per-frame gameView pass.
     void beginFrame();
     void endFrame();
+    // The render loop's beginFrame: advance the presentation clock and pin the slot it shows
+    // (live net games); anywhere else it is beginFrame (pins the newest snapshot).
+    void presentFrame();
 private:
     float interpAlpha_ = 0.0f;          // 0..1 through the current tick interval (per render frame)
     uint32_t lastCosmeticGen_ = 0;      // front().gen last processed by cosmeticStep's per-tick pass

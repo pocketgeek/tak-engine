@@ -18,6 +18,17 @@
 //   world ms (World::tick + transport-effect capture), capture ms (captureFrame), hash ms (the
 //   reported state hash), and the wall and thread-CPU ms of those jobs (wall/CPU > 1.1 is
 //   preemption). At exit a second line, PACEWORK, gives the per-tick means and the lock waits.
+//
+// The presentation columns (WE E3.2) follow: dtd (display time advanced this frame, ticks), nominal (the
+// frame's wall time at the game speed, ticks), freeze (1 = the display time was held at the newest
+// snapshot: nothing newer to show), gate (1 = the start gate holds the display), snap (1 = the display
+// time jumped to stay inside the snapshot ring) and the lag target (ticks). A third exit line, PRESENT,
+// gives what the WE synthesis gates on: the coefficient of variation of the displayed time per frame,
+// the freeze share, and the frames that advanced more than 1.3x their nominal step (snaps excluded).
+// cv is over the raw per-frame advance, so it also carries the frame clock's own jitter (a frame that
+// misses a vsync shows twice the game time, which is correct motion); rate_cv is over dtd / nominal, the
+// display clock's rate against the wall clock, which is what the presentation itself controls.
+// TAK_VSYNC_HZ=N paces the headless --mpai frame loop to an N Hz deadline (a fake vsync).
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -147,11 +158,12 @@ public:
     // dtd mean and CV, freeze frames, frames over 1.3x their nominal step (snaps excluded), snaps.
     struct Present {
         size_t frames = 0, freeze = 0, over13 = 0, snaps = 0;
-        double dtdMean = 0, cv = 0, maxRatio = 0, lagTarget = 0;
+        double dtdMean = 0, cv = 0, rateCv = 0, maxRatio = 0, lagTarget = 0;
     };
     Present present(size_t skip = 0) const {
         Present p;
-        double sum = 0, sum2 = 0, lag = 0;
+        double sum = 0, sum2 = 0, lag = 0, rsum = 0, rsum2 = 0;
+        size_t rated = 0;
         for (size_t i = skip; i < frames_.size(); ++i) {
             const auto& fr = frames_[i];
             if (fr.gate || fr.nominal <= 0) continue;
@@ -160,6 +172,7 @@ public:
             if (fr.freeze) ++p.freeze;
             if (fr.snap) { ++p.snaps; continue; }
             const double ratio = fr.dtd / fr.nominal;
+            ++rated; rsum += ratio; rsum2 += ratio * ratio;
             p.maxRatio = std::max(p.maxRatio, ratio);
             if (ratio > 1.3) ++p.over13;
         }
@@ -168,14 +181,18 @@ public:
         p.dtdMean = sum / n;
         p.cv = p.dtdMean > 0 ? std::sqrt(std::max(0.0, sum2 / n - p.dtdMean * p.dtdMean)) / p.dtdMean : 0;
         p.lagTarget = lag / n;
+        if (rated) {
+            const double rm = rsum / double(rated);
+            p.rateCv = rm > 0 ? std::sqrt(std::max(0.0, rsum2 / double(rated) - rm * rm)) / rm : 0;
+        }
         return p;
     }
     static std::string format(const Present& p) {
         char b[256];
         std::snprintf(b, sizeof b,
-                      "PRESENT frames=%zu dtd_mean=%.4f cv=%.2f%% freeze=%zu (%.2f%%) over_1.3x=%zu max_ratio=%.2f"
+                      "PRESENT frames=%zu dtd_mean=%.4f cv=%.2f%% rate_cv=%.2f%% freeze=%zu (%.2f%%) over_1.3x=%zu max_ratio=%.2f"
                       " snaps=%zu lag_target_mean=%.2f",
-                      p.frames, p.dtdMean, 100.0 * p.cv, p.freeze, p.frames ? 100.0 * double(p.freeze) / double(p.frames) : 0.0,
+                      p.frames, p.dtdMean, 100.0 * p.cv, 100.0 * p.rateCv, p.freeze, p.frames ? 100.0 * double(p.freeze) / double(p.frames) : 0.0,
                       p.over13, p.maxRatio, p.snaps, p.lagTarget);
         return b;
     }

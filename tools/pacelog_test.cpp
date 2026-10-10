@@ -68,6 +68,10 @@ int main() {
     smooth.open("1");
     for (int i = 0; i < 100; ++i) { tak::PaceLog::Frame fr; fr.dtd = i % 2 ? 1.02 : 0.98; fr.nominal = 1; smooth.frame(fr); }
     check(std::abs(smooth.present().cv - 0.02) < 1e-6, "a +-2% alternation is a 2% CV");
+    tak::PaceLog jitter;   // a frame clock that alternates 0.8 and 1.2 ticks, the display time following it exactly
+    jitter.open("1");
+    for (int i = 0; i < 100; ++i) { tak::PaceLog::Frame fr; fr.nominal = i % 2 ? 1.2 : 0.8; fr.dtd = fr.nominal; jitter.frame(fr); }
+    check(jitter.present().cv > 0.19 && jitter.present().rateCv < 1e-6, "frame-clock jitter shows in cv, not in rate_cv");
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::printf("pacelog_test: all passed\n");
     return 0;
