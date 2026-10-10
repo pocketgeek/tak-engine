@@ -237,6 +237,8 @@ public:
     void sendCommands(const std::vector<Command>& cmds);
     // posDigest rides only into the recorded replay trail (format 12), never onto the wire.
     void sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest = 0);
+    // Flow-control progress (WE S3): the last tick processed and the smoothed RTT.
+    void sendProgress(uint32_t tick);
 
     // Set once the server flags us desynced (fatal in M3; reconnect is M5).
     bool desynced() const { return desynced_; }

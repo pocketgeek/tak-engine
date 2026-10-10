@@ -341,6 +341,63 @@ suspect lines.
 
 **Not yet done:** the manual 240 Hz session on the user's display, at 1x and 8x (WE synthesis section 3).
 
+## E3.3: progress acks and an RTT-scaled lead (S3), 2026-10-10
+
+A client-bound game no longer queues 100+ ticks. Net protocol only: no sim, hash or golden change.
+It needs a kNetVersion bump; `protocol.h` carries a placeholder note, and the number is assigned when
+it lands with the next Legion bump.
+
+- **Msg::Progress** (C->S: `u32 tick`, `u32 rttMs`). A seated or spectating client sends the tick it
+  has PROCESSED (the worker's `simProcessedTick_`, never the push position) whenever it has moved
+  `kProgressPeriod` = 4 ticks since the last report, at most once per frame. The server moves the
+  client's ack tick (same "not closed yet -> ignore" check as StateHash). Progress is never
+  hash-checked and never recorded.
+- **Lead.** `flowLeadTicks(speed, rttMs) = clamp(4 + 2 * rttTicks + 16, 16, 120)`, per client, where
+  rttTicks is the client's smoothed ping at the room's speed. It replaces the flat `kMaxLeadTicks = 120`
+  past a hash sent every 30 ticks. A client that has not sent Progress yet (or an older one) keeps
+  120. The ping includes one rendered frame of polling delay, so a 60 Hz client gets about 30.
+  - The first cut let the client add its jitter-buffer depth to the reserve. Under flow control the
+    bundles arrive in bursts of a few ticks, the measured jitter grows, and the lead fed back into
+    itself (backlog crept from 27 to 40 over two minutes at 2x). The reserve is fixed at 16.
+- **Worker inbox.** A seated player's sim worker is fed only while its inbox holds 2 ticks or fewer at
+  the start of the frame, and the 512-tick fast-forward is off for it. Undelivered bundles wait in
+  `mp_`, where the jitter servo, the 900-tick guard and the server's flow control see them. Rejoin
+  catch-up (`cmdCatchUp_`) and spectators keep the 512 path. The inbox can hold 2 plus one frame's
+  budget right after a push (inbox_p99 5-8 at 60 Hz, 16 at 20 fps).
+- **Server.** `ackTick` and the lead are reset when a client starts, rejoins or spectates a game (a
+  lobby client that played an earlier game used to carry its old ack tick into the next one).
+- **TAK_SIM_SLOW_US=N** (debug) sleeps N us per simulated tick to play a slow client;
+  `tools/pace_check.sh --slow-us N`. The PACE line gains `backlog_p99` / `backlog_max`: ticks delivered
+  but not yet simulated (jitter buffer + worker queue), sampled after each frame's drain.
+
+Measured with `tools/pace_check.sh --seconds 120` (Inner Circle Legion, 8x, `TAK_SIM_THREAD=1`,
+AUTOPLAY_FORMATION, cores 22-23 on a busy machine; base 57f506c6 with the same slow-client hook
+added locally). The base has no backlog column, so its row is inbox + jitter-buffer depth per frame.
+
+| run | backlog p99 / max, base | backlog p99 / max, S3 | game rate, base / S3 |
+|---|---|---|---|
+| no slowdown, 60 Hz | 18 / 23 | 13 / 25 | 8.00x / 7.98x |
+| slow 6 ms/tick, 60 Hz | 100 / 101 | 25 / 25 | 5.27x / 5.28x |
+| slow 6 ms/tick, 240 Hz | 102 / 105 | 21 / 22 | 4.96x / 5.33x |
+| slow 6 ms/tick, 20 fps (50 ms frame) | 99 / 102 | 31 / 34 | 5.04x / 4.72x |
+| slow 15 ms/tick, 60 Hz | 113 / 115 | 27 / 29 | 2.12x / 2.10x |
+
+- Every row ends on the same hash (da66d89b2ed187e3 at tick 3600; the formation orders are timed by
+  the client, and they land on the same ticks in both builds).
+- At 8x a backlog of 25 ticks is 0.1 s of command latency (was about 0.4 s).
+- A slowed client settles at what it can play (6 ms/tick allows at most 5.3x), and the server follows
+  it in small steps instead of 30-tick bursts.
+- **Cost at 20 fps:** 6% throughput (4.72x vs 5.04x). With a 50 ms frame the worker runs dry between
+  frames once the 2-tick inbox is spent. At 60 Hz and above there is no loss.
+
+Hashes: --mpai Inner Circle 300 s, seed 1, clean XDG: Legion b2261dc31dc84cdf, Retail b240750e5765c02b,
+Legion with `TAK_SIM_THREAD=1` b2261dc31dc84cdf (all equal to E3.2), no DESYNCED / suspect. The two
+recordings replay with `TAK_REPLAY_VERIFY=1` without divergence, to the same final hashes as
+the base binary (Legion f2e4e1be92069a1a, Retail ff78a0babb848c38 at tick 9002). Rejoin and spectate: Ulasem Arena, host +
+joiner + 2 AIs at 4x, joiner killed after its game had run 15 s and rejoined with `--mprejoin`
+(replaying 1881 and 1885 ticks in two runs), plus a `--mpspectate` client joining mid-game: host, rejoiner and spectator
+all end on 78015ff081df2d52 at tick 4500, no DESYNCED / suspect.
+
 ## Reproducing
 
 ```sh
@@ -353,6 +410,7 @@ TAK_PMU=1 TAK_PHASE=1 TAK_PHASE_MS=0 ... taskset -c 0-1 build-o2/takclient repla
 tools/pace_check.sh build-o2 --cpus 4-5     # PACE + PACEWORK lines, pace.txt per frame
 tools/pace_check.sh build-o2 --vsync 240 --seconds 300            # + PRESENT (E3.2) at a 240 Hz fake vsync
 tools/pace_check.sh build-o2 --vsync 60 --bench 4 --no-formation  # the 8-AI Ulasem bench instead
+tools/pace_check.sh build-o2 --vsync 60 --slow-us 6000 --seconds 120  # a slow client: backlog_p99 (E3.3)
 # a real display (debug build): TAK_MPAUTO=1 TAK_BENCH=1 TAK_SPEED=80 TAK_QUIT_TICK=1500 TAK_PACELOG=pace.txt \
 #   takclient game "Ulasem Arena" --data <install> --server 127.0.0.1 --serverport <port of a local takserver>
 ```

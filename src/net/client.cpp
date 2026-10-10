@@ -1049,6 +1049,12 @@ void MpClient::sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest) {
     send(Msg::StateHash, w);
 }
 
+void MpClient::sendProgress(uint32_t tick) {
+    Writer w; w.u32(tick);
+    w.u32(uint32_t(std::min(rttMs_ > 0 ? rttMs_ + 0.5f : 0.0f, 60000.0f)));
+    send(Msg::Progress, w);
+}
+
 }  // namespace tak::net
 
 namespace tak::net {

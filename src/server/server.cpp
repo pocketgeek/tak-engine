@@ -219,7 +219,10 @@ struct Client {
     tak::net::maps::Receiver mapReceive;
     tak::net::maps::Sender mapSend;
 
-    uint32_t ackTick = 0;   // latest tick this client reported a hash for (flow control)
+    uint32_t ackTick = 0;   // latest tick this client reported processing (StateHash or Progress)
+    // How far the room may run past ackTick for this client: kMaxLeadTicks until it sends
+    // Msg::Progress, then flowLeadTicks() from that report's RTT (WE S3).
+    uint32_t leadTicks = kMaxLeadTicks;
     // kCmdCapPerTick is a per-TICK budget, so it has to be tracked per client
     // across messages. Clamping each message independently caps nothing: the
     // server drains every readable message before closing the tick and appends
@@ -1883,6 +1886,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.desyncFlagged.clear();   // fresh sim; old desync flags are stale
             c.cmdQueue.clear();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = slot; c.loaded = true;
+            c.ackTick = 0; c.leadTicks = kMaxLeadTicks;   // flow control starts over with this game
             // GameStarting rebuilds the client's world; then the whole bundle log
             // replays it up to now, after which it receives live bundles. Because that
             // rebuild starts at tick 0, it needs the START slot table -- see writeSlots.
@@ -1934,6 +1938,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 room.spectators.push_back(c.id);
             c.cmdQueue.clear();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = -1; c.loaded = true;
+            c.ackTick = 0; c.leadTicks = kMaxLeadTicks;   // flow control starts over with this game
             // GameStarting (slot 0xFF = spectator) rebuilds the world; the whole
             // bundle log replays it to now, then live bundles stream via broadcast.
             // Same reason as the rejoin above: that rebuild starts at tick 0, so it
@@ -2435,6 +2440,7 @@ void Server::tryStart(Client& c) {
         w.u32(0);                         // fresh game: no history to replay
         it->second->conn.send(Msg::GameStarting, w);
         it->second->loaded = false;
+        it->second->ackTick = 0; it->second->leadTicks = kMaxLeadTicks;
     }
     // Spectators (incl. a host who created the game to watch) get a slot-less
     // GameStarting; they don't gate the first tick, so mark them loaded.
@@ -2446,6 +2452,7 @@ void Server::tryStart(Client& c) {
         w.u32(uint32_t(r->log.size()));   // replay boundary
         it->second->conn.send(Msg::GameStarting, w);
         it->second->loaded = true;
+        it->second->ackTick = 0; it->second->leadTicks = kMaxLeadTicks;
     }
     for(int i=0;i<std::min(kMaxSlots,r->ref->numPlayers());++i)r->defeated[size_t(i)]=r->ref->player(i).defeated;
     std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
@@ -2670,6 +2677,21 @@ void Server::gameMsg(Client& c, const Frame& f) {
             }
             break;
         }
+        case Msg::Progress: {
+            // Flow control only (WE S3): move the ack tick and size this client's lead. Never
+            // hash-checked, never recorded; a tick the server has not closed is ignored.
+            if (!r->running) return;
+            Reader rd(f.payload.data(), f.payload.size());
+            uint32_t tk = rd.u32(), rtt = rd.u32();
+            if (!rd.ok || rd.p != rd.end) {
+                if(!r->campaignBattleId.empty())r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
+                return;
+            }
+            if (tk >= r->tick) break;
+            if (tk > c.ackTick) c.ackTick = tk;
+            c.leadTicks = tak::net::flowLeadTicks(int(r->opts.speed), rtt);
+            break;
+        }
         case Msg::StateHash: {
             if (!r->running) return;
             Reader rd(f.payload.data(), f.payload.size());
@@ -2777,8 +2799,9 @@ void Server::checkHashes(Room& r, uint32_t tick) {
 bool Server::canAdvance(const Room& r) const {
     if(r.campaignResult || r.campaignFault)return false;
     // Slow to the slowest CONSUMER so nobody is flooded past what they can process:
-    // the server may not run more than kMaxLeadTicks past the least-advanced acked
-    // tick. Seated humans are the primary constraint (AIs are server-run and always
+    // the server may not run more than a consumer's lead past its acked tick
+    // (kMaxLeadTicks, or flowLeadTicks() once it sends Msg::Progress -- WE S3).
+    // Seated humans are the primary constraint (AIs are server-run and always
     // current). When a game has NO seated humans -- an all-AI game watched by
     // spectators -- pace to the slowest spectator instead, otherwise the server
     // outruns a spectator that can't sustain the speed and floods it until the
@@ -2793,17 +2816,17 @@ bool Server::canAdvance(const Room& r) const {
         auto it = clients_.find(uint32_t(r.slotClient[i]));
         if (it == clients_.end() || !it->second->loaded) continue;
         anyHuman = true;
-        slowest = std::min(slowest, it->second->ackTick);
+        slowest = std::min(slowest, it->second->ackTick + it->second->leadTicks);
     }
-    if (anyHuman) return r.tick <= slowest + kMaxLeadTicks;
+    if (anyHuman) return r.tick <= slowest;
     bool anySpec = false;
     for (uint32_t sid : r.spectators) {
         auto it = clients_.find(sid);
         if (it == clients_.end()) continue;
         anySpec = true;
-        slowest = std::min(slowest, it->second->ackTick);
+        slowest = std::min(slowest, it->second->ackTick + it->second->leadTicks);
     }
-    if (anySpec) return r.tick <= slowest + kMaxLeadTicks;
+    if (anySpec) return r.tick <= slowest;
     return true;   // no live consumers at all
 }
 

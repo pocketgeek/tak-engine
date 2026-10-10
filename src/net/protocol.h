@@ -19,7 +19,13 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 248;      // 248: Legion W9 -- head-on meets narrow before contact (C1, W9-U2: aim-only, forward-only, latched per
+constexpr uint32_t kNetVersion = 249;      // 249: WE E3.3 (S3) -- Msg::Progress (C->S: last processed tick + RTT ms) every
+                                           //      kProgressPeriod (4) ticks from a seated or spectating client; the server leads each
+                                           //      client by flowLeadTicks() (clamp(ackPeriod + 2*rtt + 16, 16, 120), 120 before its
+                                           //      first Progress) past that ack instead of a flat 120 past the hash ack, and a seated
+                                           //      worker inbox is held to 2 ticks (512 kept for rejoin/spectate). Net flow control only;
+                                           //      no sim or hash change, the pacer still decides when a tick is due
+                                           // 248: Legion W9 -- head-on meets narrow before contact (C1, W9-U2: aim-only, forward-only, latched per
                                            //      Point). A formation Point of 16 or more members whose mission does not engage enemies
                                            //      latches a meet when awareness plans a head-on entry for its group (seen) or when a
                                            //      member's lane scan finds an oncoming body of another command's point (unseen). Its
@@ -346,6 +352,30 @@ inline int cmdSendWindow(int credit, int inFlight) {
     return n > 0 ? n : 0;
 }
 
+// Flow control (WE S3). A client reports the tick it has PROCESSED every
+// kProgressPeriod ticks with Msg::Progress, and the server runs at most
+// flowLeadTicks() past that report instead of a flat kMaxLeadTicks past a hash
+// sent every kHashPeriod. A client-bound game then queues a few dozen ticks
+// instead of 120-150 (0.15 s of command latency at 8x instead of 0.5 s).
+//   lead = clamp(kProgressPeriod + 2 * rttTicks + kFlowReserve, 16, 120)
+// rttTicks is the client's measured round trip (its ping, which also carries one
+// rendered frame of polling delay) in ticks at the room's speed. The reserve is
+// fixed: an earlier cut let the client add its jitter-buffer depth, but under flow
+// control bundles arrive in bursts, the measured jitter grows, and the lead fed
+// back into itself (a slow client's backlog crept from 27 to 40 over 2 minutes).
+// The RTT comes from the client, so a lying client can only buy back the old fixed
+// lead of 120, never more.
+constexpr int kProgressPeriod = 4;
+constexpr uint32_t kFlowLeadMin = 16, kFlowLeadMax = 120, kFlowReserve = 16;
+inline uint32_t flowLeadTicks(int speedTenths, uint32_t rttMs) {
+    if (rttMs > 60000) rttMs = 60000;
+    const uint64_t sp = uint64_t(speedTenths > 0 ? speedTenths : 10);
+    // ticks per second = 30 * speed / 10 = 3 * speedTenths; round the RTT up.
+    const uint64_t rttTicks = (uint64_t(rttMs) * 3 * sp + 999) / 1000;
+    const uint64_t lead = uint64_t(kProgressPeriod) + 2 * rttTicks + kFlowReserve;
+    return uint32_t(lead < kFlowLeadMin ? kFlowLeadMin : lead > kFlowLeadMax ? kFlowLeadMax : lead);
+}
+
 // Message kinds. Lobby and game messages share one stream per connection.
 enum class Msg : uint8_t {
     // handshake / session
@@ -440,6 +470,11 @@ enum class Msg : uint8_t {
     CrusadesGetReplayChunk,      // C->S: battle ID + bounded offset/limit
     CrusadesReplayChunk,         // S->C: request-bound immutable replay bytes
     OverrideOffer, OverrideRequest, OverrideChunk, OverrideReady, OverrideError,
+    Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping).
+                        // Flow control only (WE S3), every kProgressPeriod processed ticks: it
+                        // moves the sender's ack tick and its lead (flowLeadTicks), is never
+                        // hash-checked and never recorded. A tick the server has not closed is
+                        // ignored, as for StateHash.
 
 
 };
