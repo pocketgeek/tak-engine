@@ -12,6 +12,29 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W7 steps 1-5 (2026-10-10, task w7-a): measured state (not an exit)
+
+Head chain on `7dbc218e` (W7 step 0): step 1 Trapped soft, step 2 parting, step 3 approach clearance, step 5 awareness
+correctness. **Step 4 (`blockedByStill`) is not in the chain**: its exit rule ("if it fails, revert E") fired on every variant.
+All numbers: optimized Debug; scenario sweep = every `tools/scenarios/*.scn`, both modes, gate offsets, `legion_check check`
+on Windows (sims equal Linux); crowdbench = the 43-row Legion screen, seed 0.
+
+| Step | Target (PLAN 3.3 / W7) | Result |
+|---|---|---|
+| 1 | rb02 ring N=104 done@3000 >= 30/40; N=208 >= 36/40 by 6000 | 17 -> 36; 17 -> 40/40 (p90 3166). On this head the clot is approach members Holding one cell short of an unreachable approach point (AR-11), not Trapped: those are stamped (reach kinds and sealed-pocket Trapped members are not; measured) |
+| 1 | Holding-queue corridor unchanged; MV-05 gates (C9) | identical; crowdbench hash-identical, softReplans / crowdtrap / rapidreplacement spin unchanged |
+| 2 | 250x8@50 crossed >= 950, held at end <= 120; 250x1@50 crossed >= 125 | not met: the wide set (any member held >= 60) gave 892 -> 889, held 344 -> 368 and new spin (groupdetour 200x1 0 -> 38, jagged 200x1 0 -> 2, sharedgoal 2000x1 0 -> 12); restricted by the exit rule to stuck members (crowdbench hash-identical) |
+| 2 | deadend, tail, attackring/ar06bench, ringcross unchanged (C15) | unchanged (sweep) |
+| 3 | plug >= 38/40 with p50 <= 2940 | 0 -> 40/40, p50 2627; unreach-200 statue 2293 -> 1746, wall touch near 25 -> 0, total work 0.94x; small classes up (detours 34 -> 46): licences needed |
+| 4 | doors 2000x1 within 3%; formation tests within 5%; no zero-crossing window > 3000 | dropped. Plan form: doors 2000x1 arrived 243 -> 183, crossed 497 -> 405; opposingcolumns 2000x1 @24000 arrived 603 -> 392 (crossed 1194 -> 1210, gap 13933 -> 497). Other commands only, formation gate deleted: mixedfootprints 500x4 arrived 1940 -> 1895, squadformation far 325 -> 392; same player, formation gate own-only: 347 failed sweep keys (ringcross g.M.done never, corner-1x448, battles, gen1 routes); narrowed (non-reach holders, formation gate kept): aware-cross click a00 t90 2072 -> 2207, no MV-03 effect |
+| 5 | builds per encounter 1; latency reported (C7); index identity (C34) | builds already 1 per encounter; latency awarebig cross 48, headon 7; TAK_LEGION_VERIFY index-vs-scan passes. Kept: equal charge lists, aware refreshes first inside kRefreshQuota (outcome-neutral on every aware fixture). Not kept: the cap raise (headon legion_total.max 1.95x), the plain swap (aware-cross contacts 548 -> 731), live corridor + line re-probe (contacts +15-26%, densehead crossings 566 -> 571) |
+
+Sweep of the chain head: 11 failed keys -- 10 unreach-200 work classes (step 3, total work 0.91x) and the
+pre-existing `aware-cross-behind` click a00 t90 floor (as at the base). Retail byte-identical on every row.
+Ruling (i) floor keys (aware-headon / seen / unseen click t90) are unchanged from the base by this chain; the
+live-corridor + re-probe A/B clears aware-seen's (1952 vs Retail 1877 x1.1) but not aware-unseen's (awareness off there).
+ctest (`-L quick` and every non-nightly `legion_*`): only `legion_acceptance_crowdheld_legion` fails (W5/W9 gate, as at the base).
+
 ## W7 step 0 (2026-10-10): instruments, fixtures and the base for crossing / opposing traffic (no sim change, protocol 245)
 
 Base head 2d671644 (W5 landed over C1 and W6). Every row below is measured on it with the step-0 instruments
