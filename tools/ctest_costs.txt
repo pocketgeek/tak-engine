@@ -79,6 +79,7 @@ legion_scenario_refreshchurn 9
 legion_tail 9
 legion_motion_open 8
 legion_situation_r9-36060_legion 8
+legion_scenario_goalblock-fight-200 8
 ai_behavior_data 7
 crusades_matchmaking_network 7
 crusades_protocol_network 7
@@ -91,6 +92,8 @@ legion_scenario_mazeform 7
 legion_scenario_strait 7
 legion_scenario_strait-3x48 7
 server_public 7
+legion_scenario_goalblock-200 7
+legion_scenario_goalblock-near-200 7
 build_controls 6
 gui_smoothing_game 6
 legion_check_mazeapproach 6

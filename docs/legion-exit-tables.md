@@ -184,6 +184,112 @@ No Retail key and no outcome key moved.
 | tail-wave/legion/work.anchor_walk_iters.p99 | 454 | 256 | -43.6% | intended |
 | tail-wave/legion/work.anchor_walk_iters.total | 4176028 | 2670014 | -36.1% | intended |
 
+## W5 step 0 (2026-10-09): instruments, fixtures and the base for AR-06 / AR-07 / MV-05 / MV-06 / MV-07 / MV-18 (no sim change)
+
+Head: `task-w5-s0` = `6333e38d` (W4 land, protocol 242) + four instrument-only commits. Every Legion and Retail state hash is
+unchanged: the Windows scenario sweep (all 129 files, both modes, the 11 gate offsets, serial == workers) passes
+`legion_check check` on the 91 baselined scenarios with 0 failures (all 455 `hash@` entries equal, so the counters change
+no state, here and across platforms), and the crowdbench screen reproduces the W4-land baseline row for row (below).
+
+**Added (observation only, never hashed).**
+- `Stats`: `engagedNow` (cumulative like every counter: member-ticks `tickCombat` braked an in-reach ground attacker or a guard
+  within 70 px and Legion routes it; the runner reports it as `gauge.engaged_max` and `engaged.member_ticks`, not as work),
+  and `reachSlotsBuilt`, `softReplans`, `reseedsInPlace`, `briskSteps`, which read 0 until W5 steps 1-4 exist.
+- `LegionNavigator::claimsAudit()` (the claims invariant): every member's claimed arrival slot against its point's claimed
+  cells. `overlaps` (a cell two members claim), `missing` (a claimed footprint cell the point lacks) and `dangling` (a slot on
+  a point that is gone) must be 0 (`claims.bad_max` in `.scn` files that say `probe claims`, an eq-0 safety key);
+  `orphans` (point cells no slot covers) is report-only, a settled body that left the navigator keeps its cells by design.
+- `.scn`: `reach NAME ATTACKERS TARGETS [range=PX] [marks=T,T]` (AR-06: attackers that ever get a shot, when, damage dealt, bodies
+  standing out of range 600 ticks, the longest Legion Holding run out of reach and at field potential 0), `creep NAME GROUPS`
+  (MV-07's goal-area creep counter), `probe claims`. legion_check: `reach.*` ever/now/damage keys are higher-is-better, ever/damage
+  are Retail-floor keys, `reach.*.first` is a time key; `worse`/`better` no longer read a key's -1 ("none") against itself as a loss.
+- 38 fixtures written by `tools/scenarios/gen_w5_fixtures.py` (`legion_w5_fixtures` keeps them equal to its output); 29 are baselined
+  (`legion_check_*`, nightly), the 9 lateblock size-sweep members live in `tools/scenarios/sweeps/`.
+
+**Base values** (W4 head, 3-offset median 0/+1/-1 unless noted; Legion vs Retail on one binary; "plan" is the PLAN section 3.4 target.
+These keys are Retail-floor exception keys, cluster named; every "plan" value FAILS on this base by construction -- the theme
+targets are the exits of W5 steps 1-4.)
+
+| fixture | key | Legion | Retail | plan (W5 exit) |
+|---|---|---|---|---|
+| attackring-f1-64 (64 foot-1 vs mobile) | in reach ever (`reach.ring.ever_end`) | 3 | 44 | >= 35 |
+| | out of reach 600 ticks (`out600_end`) / farthest (cells) | 61 / 58 | 20 / 7 | |
+| | longest Holding run out of reach (`hold_out_max`) | 2192 | 0 | |
+| | damage at 80 s / at 100 s | 157 / 217 | 1738 / 2618 | |
+| attackring-f2-64 (foot 2) | ever | 5 | 15 | |
+| attackring-squad-64 (Alt+1) | ever | 3 | 44 | identical to the plain row |
+| attackring-f1-16 | ever | 1 | 16 | |
+| attackring-r200-64 (range 200) | ever | 3 | 64 | |
+| attackring-mob-40 | ever | 2 | 40 | >= 30 |
+| attackring-mob-100 | ever | 3 | 46 | >= 40 |
+| attackring-struct-60 (4x4 structure, 10-damage shots) | ever by 2400 | 6 | 60 | >= 40 (Retail 50 in the audit) |
+| | damage at 80 s | 3093 | 22037 | >= 15k (audit 1565) |
+| attackring-fight-60 (Fight order) | ever | 10 | 44 | >= 40 |
+| attackring-guard-64 (`range=96`: within 6 cells of the guarded ally) | within 6 cells ever | 15 | 64 | >= 50 |
+| attackring-wall-64 (closed 8x8 wall ring) | ever (distance only) / damage | 33 / 0 | 61 / 616 | no Holding at potential 0 > 60 ticks |
+| | `hold_out_max` / `hold0_max` | 2040 / 0 | 0 / 0 | `hold0_max` <= 60 (0 today: no reach seeds exist yet) |
+| attackring-river-64 (6-cell river, range 200) | ever / damage | 6 / 0 | 16 / 0 | |
+| ringcross (Move group through the firing ring, tick 1500) | `g.M.t90` / `g.M.done` | 3639 / 3796 | 3864 / 4057 | within +10% of this base |
+| | ring ever in reach / `gauge.engaged_max` | 2 / 2 | 44 / - | no worse |
+| fight-retarget (40 fighters, target dies mid-approach) | `g.F.arrived` / `g.F.done` | 37 / never | 40 / 2768 | 40 / settled by the Retail time |
+| | `claims.bad_max` / `claims.orphans_max` | 0 / 156 | | 0 (safety key) |
+| chase-1 (target walks away at equal speed, 900 ticks) | registrations / fields built | 53 / 53 | | 1 / <= 15 |
+| | `work.field_work.max` / total | 349360 / 3.51M | | max <= 40% of base |
+| chase-50 | registrations / fields built / field_work total | 2552 / 53 / 8.40M | | |
+| chase-line (15 idle friendly bodies across the way) | registrations / fields built | 53 / 53 | | |
+| goalblock-200 (2x2 block ON the goal at tick 300, 3000 ticks) | `g.A.arrived` / groups / fields built | 131 / 2 / 3 | 183 | arrives like the control |
+| goalblock-near-200 (block 6 cells off, the control) | `g.A.arrived` / groups / fields built | 194 / 1 / 2 | 167 | |
+| goalblock-fight-200 | `g.A.arrived` / groups / fields built | 130 / 6 / 4 | 87 | |
+| lateblock-none / before-16 / late-16 (40 movers, 16x16-body block) | `g.A.done` | 2297 / 3808 / never | 2228 / 3111 / never | late-16: 39/40 by 4500, 0 permanent |
+| | `g.A.arrived` | 40 / 40 / 30 | 40 / 40 / 39 | |
+| sweep late-4x4 .. 24x20 (`tools/scenarios/sweeps/`) | `g.A.arrived` | 40, 37, 40, 39, 36, 30, 21 | 40, 39, 40, 40, 40, 39, 40 | block sizes 4x4, 6x6, 8x8, 10x10, 12x12, 16x16, 24x20 |
+| keelturn-180 / -90 / -0 (ship, no turn-in-place) | `g.S.done` | 641 / 395 / 538 | 934 / 655 / 799 | |
+| | `sideways` / `crawl_samples` | 19 / 10, 19 / 2, 0 / 0 | 0 / 5, 0 / 8, 0 / 0 | arc turning: sideways -> 0 |
+| staticblock-open / -own / -other | `g.A.done` | 1486 / 2341 / 2341 | 1795 / 1911 / 1911 | <= 2500 (already met on this head) |
+| | goal-area creep (`creep.goal.ticks`) | 135 / 1186 / 1186 | 235 / 78 / 78 | own: -70% (<= 356) |
+
+**Findings the W5 steps must absorb.**
+- AR-06 reproduces the audit's numbers (3/64 ever in reach vs Retail 44; 61 standing out for 600 ticks, one body 58 cells back, 2192
+  ticks of Holding out of reach). `hold0_max` is 0 on every row: the wall-ring gate ("no member Holding at potential 0 for more than
+  60 ticks") can only trip once the reach seeds of step 1 put potential 0 at band-0 cells, so today `hold_out_max` is the key that
+  shows the hold (the wall row 2040, Retail 0).
+- The river row's damage is 0 in both modes (no shot crosses the river in either), so its gate is the in-reach count and the hold only.
+- MV-07: `staticblock` is already at 2341 (< 2500) on this head (the audit's 3269 predates W2-W4): the absolute gate becomes "no worse
+  than the head base"; the creep counter (1186 vs the open ground's 135) is the live MV-07 key. `landedflyers` layout 0 (foot 2)
+  takes 3287 ticks on this head (`legion_world_test landedflyers`; audit 2566, Retail 2163): target <= 2200 stays.
+- AR-07: a block ON the shared goal cell halves arrivals by 3000 ticks (131 vs 194 with the block 6 cells off, Retail 183) and
+  spawns an extra group and field (groups 2 vs 1, fields built 3 vs 2); the claims audit stays clean (0) through the re-registration.
+- The claims invariant holds on every fixture that probes it (fight-retarget, goalblock x3, ringcross, lateblock x3, attackring-fight-60):
+  `claims.bad_max` 0. Orphan cells appear (up to 156 in fight-retarget, 480 in goalblock) while arrived bodies stand on claimed slots.
+- fight-retarget fails its own acceptance on the base: 3 of 40 fighters never settle by tick 3600 (`g.F.done` never at the median
+  offset; Retail settles all 40 by 2768).
+- AR-09: `legion_acceptance_crowdheld_legion` still fails as at the W3 step-0 head (`units_ever_terrain_stuck` 1, `physical_in_goal`
+  62 of 64); it is W5's.
+
+**The W5/W9 hard gates** (w5-w9-gates.md) all have fixtures and baseline entries; their base on the 11 gate offsets (Legion vs
+Retail): doorplug-112 `wall_touch_permille` 11 vs 8, `wall_touch_near_permille` 64 vs 42; tail-corner380 `wall_touch_near_permille` 2 vs 1;
+doorplug-124 `g.A.done` never at offsets +1 and -4 (others 1847..2432, Retail 1921); motion-cross `g.u11.done` never at 7 of 11 offsets and
+`click.u01.done` never (t90 2702 vs 2887, arrived 23 vs 22); `legion_liftflyers` own-run detour 5 vs open 2 (`kLiftDetourSlack`);
+`legion_acceptance_crowdheld_legion` fails as above.
+
+**Can fail.** A gate is shown to fail once before it is trusted:
+- Theme targets: every "plan" value above is missed by the base (the table), so a W5 step that does nothing fails its exit.
+- `claims.bad_max` (eq 0): fault injection (a debug edit of `takeFormation` that skips the claim of every fifth unit, never committed)
+  gives `bad_max` 34 on fight-retarget, 169 on goalblock-200 and 56 on ringcross (overlaps 20/107/18, lost claims 18/62/38).
+- Banded keys: a record with `reach.ring.ever_end` 1 (base 3), `damage_end` 100 (217), chase-1 registrations 80 / fields built 70
+  (53 / 53) and `claims.bad_max` 3 each fail `legion_check check` against the new baseline (`legion_check` exit 1).
+- Hash identity: the existing 455 `hash@` entries (below) are the check that this step moved nothing.
+
+**Gauges the later steps compare with.** `gauge.engaged_max` (most bodies braked in one tick) and `engaged.member_ticks` on the fixtures
+that fight (max / member-ticks, 3-offset median): attackring-f1-64 3 / 6462, struct-60 6 / 13244, fight-60 10 / 20072, guard-64 7 / 14216,
+fight-retarget 5 / 488, ringcross 2 / 9370 -- the engaged count equals the bodies in reach, as it should. `softReplans`, `reseedsInPlace`,
+`briskSteps`, `reachSlotsBuilt` are 0 everywhere.
+
+**MV-06 and opposingcolumns rows** (crowdbench screen baseline `61cb12e6`, turn rate 2500, reproduced row for row by this head):
+doors 200x1 Legion `cap8_moving_samples` 5557 of 71662 moving samples (7.8%), `route_crawl_samples` 1253; doors 2000x1 108916 of
+594072 (18.3%), 480; doors 500x4 81413 of 741450. opposingcolumns 200x1 Legion crossed 200, `spin_unit_ticks` 177; 500x4 crossed 1830, spin 1268;
+2000x1 crossed 1050, spin 1228. The observer's `statue_ticks` / `backward` on motion-open / -wall / -cross are baselined with the scenario set.
+
 ## W4 step 0 (2026-10-09): instruments, the staticidle fixture and the base for B1/B2/B3 (no sim change)
 
 Head: `task-w4-s0` = `task-w3-b2` (through the W3 close-out rulings (e)-(i), `0767dfab`) + instrument-only commits.

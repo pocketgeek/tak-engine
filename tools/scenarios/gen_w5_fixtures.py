@@ -3,6 +3,9 @@
 
   python3 tools/scenarios/gen_w5_fixtures.py [--check]
 
+The lateblock size-sweep members are written to sweeps/ (not baselined: the sweep scripts and the nightly's
+tools/scenarios/*.scn glob leave that directory alone).
+
 The files are committed; --check regenerates them in memory and fails if a committed file differs
 (the legion_w5_fixtures ctest). Edit this script, not the files.
 """
@@ -207,10 +210,10 @@ put("lateblock-before-16", lateblock("lateblock-before-16", 1, 16, 16,
 put("lateblock-late-16", lateblock("lateblock-late-16", 2, 16, 16,
     "a 16x16-body block (32 cells wide) stands from tick 0 but is not yet soft when the order comes at tick 1 (mode 2)."))
 for (bw, bh) in [(4, 4), (6, 6), (8, 8), (10, 10), (12, 12), (24, 20)]:
-    put("lateblock-late-%dx%d" % (bw, bh), lateblock("lateblock-late-%dx%d" % (bw, bh), 2, bw, bh,
+    put("sweeps/lateblock-late-%dx%d" % (bw, bh), lateblock("lateblock-late-%dx%d" % (bw, bh), 2, bw, bh,
         "a %dx%d-body block (%d cells wide), not yet soft at the order (mode 2); the size sweep." % (bw, bh, bw * 2)))
 for (bw, bh) in [(8, 8), (12, 12), (24, 20)]:
-    put("lateblock-before-%dx%d" % (bw, bh), lateblock("lateblock-before-%dx%d" % (bw, bh), 1, bw, bh,
+    put("sweeps/lateblock-before-%dx%d" % (bw, bh), lateblock("lateblock-before-%dx%d" % (bw, bh), 1, bw, bh,
         "a %dx%d-body block stands soft before the order (mode 1); the size-sweep control." % (bw, bh)))
 
 # ---- AR-07 chase / goalblock ---------------------------------------------------------------------------------
@@ -319,6 +322,7 @@ def main():
                 print("differs: " + name)
                 bad += 1
         else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
                 f.write(text)
     if check:

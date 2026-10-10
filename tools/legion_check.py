@@ -212,7 +212,10 @@ def norm(key, x):
 
 
 def worse(lower, cur, ref, band):
-    """cur is worse than ref by more than band (one-sided)."""
+    """cur is worse than ref by more than band (one-sided). Equal or better is never worse, whatever the
+    sign: a key's -1 (none: no near-wall samples, no completions) must not read as a loss against itself."""
+    if (cur <= ref) if lower else (cur >= ref):
+        return False
     if lower:
         return cur > ref * band + 1e-9 if ref != INF else False
     return cur * band + 1e-9 < ref
@@ -220,6 +223,8 @@ def worse(lower, cur, ref, band):
 
 def better(lower, cur, ref, band):
     """cur is better than ref by more than band."""
+    if (cur >= ref) if lower else (cur <= ref):
+        return False
     if lower:
         return cur * band + 1e-9 < ref
     return cur > ref * band + 1e-9 if ref != INF else False
