@@ -19,7 +19,19 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 247;      // 247: Legion W8 -- the passage gate (MV-10): a short passage on a member's descent chain (a strip
+constexpr uint32_t kNetVersion = 248;      // 248: Legion W9 -- head-on meets narrow before contact (C1, W9-U2: aim-only, forward-only, latched per
+                                           //      Point). A formation Point of 16 or more members whose mission does not engage enemies
+                                           //      latches a meet when awareness plans a head-on entry for its group (seen) or when a
+                                           //      member's lane scan finds an oncoming body of another command's point (unseen). Its
+                                           //      members then aim six cells ahead into the right half of their own lateral extent,
+                                           //      shifted a body further right, on an increasing map of lateral position driven by
+                                           //      the group's never-falling progress, once the gap is within twice the span plus two
+                                           //      leads and not near the goal; the latch is released when the other tail is behind
+                                           //      this group's rear or after 90 ticks without contact. Hashed Point::meet and
+                                           //      Member::meetSeen (folded only when set); the derived pendingMeets / meetIds indexes
+                                           //      are checked by TAK_LEGION_VERIFY. The other W9 lanes kept no sim change; the new
+                                           //      Stats counters (sealSettles .. orderInversionsTaken) are never hashed
+                                           // 247: Legion W8 -- the passage gate (MV-10): a short passage on a member's descent chain (a strip
                                            //      narrower than the band and than the lane grid, two to 24 chain cells long, not
                                            //      within the lane-near distance of the destination) forms a wall-to-wall gate at its
                                            //      narrowest cell. A member within 12 chain cells of the gate commits to the lane point
