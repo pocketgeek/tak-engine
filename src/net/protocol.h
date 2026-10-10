@@ -19,7 +19,21 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 245;      // 245: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
+constexpr uint32_t kNetVersion = 246;      // 246: Legion W7 -- crossing groups take the longer route (user decision 5): the later of two crossing
+                                           //      groups plans round a time-swept corridor covering the other stream's band from its
+                                           //      tail to 450 ticks past its head (charge 12x, not a wall: with no detour at all it
+                                           //      crosses as before), sticky until it has crossed or the tail has passed, re-placed on
+                                           //      drift at most every 90 ticks; the 10 s wait at the stream's edge does not exist.
+                                           //      Awareness detection samples each group's own descent chain every 15 ticks (450
+                                           //      ahead) against each mover's measured velocity; the class (head-on / same way /
+                                           //      crossing) is an integer dot-product test on the line to the destination and is
+                                           //      stored as hashed avoidKind (folded only when set); a shared awareness field is shared
+                                           //      only between equal charge lists; aware refreshes are served first inside the refresh
+                                           //      quota (at most 8 aware starts a tick). Stuck approach members of a completing kind
+                                           //      are soft bodies to other convoys (a clot is no longer a wall to routes behind it);
+                                           //      stuck members part a lane for others and keep their order (the leg key is hashed
+                                           //      when set); approach points clear of bodies that cannot move
+                                           // 245: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
                                            //      member state 6): settled and still to local steering, never yielding or parting,
                                            //      soft to other commands only (as is a member held on its ring spot); a reach kind's
                                            //      held same-target peer (30 ticks) is settled to the bodies behind it, and reach kinds
