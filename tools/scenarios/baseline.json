@@ -9715,6 +9715,195 @@
    "mode": "legion",
    "reason": "B2 stripe phase (lead ruling W4 (k), 2026-10-09; W4 exit with B1+B2, task-w4-exit 7be70dab): the striped scanStill (id % 30 == tick % 30) moves the moment each still body turns into a soft obstacle, which re-rolls the battle/crowd outcome at every offset. On a 10-phase sweep of the scan residue (base: the whole scan on tick % 30 == k; B2: the stripe shifted by k; Windows, gate offsets) this key's B2 phase median is within the base's own phase range; the base's value is its phase-0 draw. Base 0, reference 0; W4 exit 1.",
    "scenario": "structsquad-keep"
+  },
+  {
+   "factor": 1.31,
+   "key": "work.formation_ring_cells.total",
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 26553437 exceeds what main's baseline value licenses (20417743), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 2.65e+07 [25921451..27993613] is within the base's own range: base median 2.67e+07 [25899882..27457740]",
+   "scenario": "battle-assault"
+  },
+  {
+   "key": "work.group_loop_iters.total",
+   "max": 924152,
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 8.183e+05 [804104..825376], C1 9.154e+05 [898946..924152]; this head (phase 0) 924152",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.19,
+   "key": "work.mission_legs_4.max",
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 13 exceeds what main's baseline value licenses (11), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 12 [11..13] is within the base's own range: base median 11 [11..12]",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 2.46,
+   "key": "work.sched_group_visits.max",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 11 [10..12], C1 48 [47..51]; this head (phase 0) 49",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 2.93,
+   "key": "work.sched_group_visits.p99",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 7 [7..7], C1 43 [41..45]; this head (phase 0) 41",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 7.5,
+   "key": "work.sched_group_visits.total",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 6923 [6815..7146], C1 1.022e+05 [97612..104492]; this head (phase 0) 104132",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.23,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 1806 exceeds what main's baseline value licenses (1475), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 1806 [1777..1848] is within the base's own range: base median 1801 [1763..1824]",
+   "scenario": "battle-assault"
+  },
+  {
+   "factor": 1.12,
+   "key": "work.group_loop_iters.p99",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 319.5 [308..324], C1 342 [331..348]; this head (phase 0) 341",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 1.07,
+   "key": "work.group_loop_iters.total",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 1.442e+05 [142072..149414], C1 1.808e+05 [177733..186961]; this head (phase 0) 181025",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 4.3,
+   "key": "work.sched_group_visits.max",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 6 [6..6], C1 41 [40..43]; this head (phase 0) 43",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 12.67,
+   "key": "work.sched_group_visits.p99",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 3 [3..3], C1 37.5 [35..38]; this head (phase 0) 38",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "factor": 23.09,
+   "key": "work.sched_group_visits.total",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 1549 [1516..1586], C1 3.684e+04 [36169..38909]; this head (phase 0) 36865",
+   "scenario": "battle-field-2x250"
+  },
+  {
+   "key": "work.completion_dist_3.total",
+   "max": 12,
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 12 exceeds what main's baseline value licenses (0), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 9 [7..12] is within the base's own range: base median 9 [7..11]",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.completion_dist_4.total",
+   "max": 15,
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 15 exceeds what main's baseline value licenses (0), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 11.5 [7..15] is within the base's own range: base median 12.5 [7..15]",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 1.44,
+   "key": "work.completion_dist_6.total",
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 23 exceeds what main's baseline value licenses (16), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 19 [12..31] is within the base's own range: base median 19 [12..31]",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 3.1,
+   "key": "work.completion_dist_sum.max",
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 62 exceeds what main's baseline value licenses (20), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 55 [49..76] is within the base's own range: base median 55.5 [49..76]",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.group_loop_iters.total",
+   "max": 496084,
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 4.23e+05 [419643..433980], C1 5.015e+05 [494892..513079]; this head (phase 0) 496084",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.12,
+   "key": "work.pass_scan_cells.total",
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 802109 exceeds what main's baseline value licenses (378612), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 7.768e+05 [690719..802109] is within the base's own range: base median 7.805e+05 [690719..797715]",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 5.8,
+   "key": "work.sched_group_visits.max",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 7 [7..8], C1 58.5 [54..62]; this head (phase 0) 58",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 13.0,
+   "key": "work.sched_group_visits.p99",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 4 [4..4], C1 52 [50..53]; this head (phase 0) 52",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 22.85,
+   "key": "work.sched_group_visits.total",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 3246 [3171..3318], C1 7.798e+04 [76630..80648]; this head (phase 0) 76976",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "factor": 2.54,
+   "key": "work.still_units_processed.total",
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 3717 exceeds what main's baseline value licenses (1467), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 3620 [3013..4241] is within the base's own range: base median 3566 [3013..4241]",
+   "scenario": "battle-field-2x500"
+  },
+  {
+   "key": "work.field_work_first_slot.total",
+   "max": 1935720,
+   "mode": "legion",
+   "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): the C1 land head's phase-0 draw 1935720 exceeds what main's baseline value licenses (2108600), but over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median 2.028e+06 [1580080..2194040] is within the base's own range: base median 1.951e+06 [1500632..2107736]",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 1.34,
+   "key": "work.group_loop_iters.total",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 1.721e+04 [17112..17361], C1 2.436e+04 [24113..24888]; this head (phase 0) 24269",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 4.41,
+   "key": "work.sched_group_visits.max",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 4 [4..4], C1 22 [22..22]; this head (phase 0) 22",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 10.0,
+   "key": "work.sched_group_visits.p99",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 2 [2..2], C1 20 [20..20]; this head (phase 0) 20",
+   "scenario": "battle-field-2x60"
+  },
+  {
+   "factor": 20.49,
+   "key": "work.sched_group_visits.total",
+   "mode": "legion",
+   "reason": "W4 C1 (paused solo first builds), lead ruling (r) 2026-10-09, re-taken at the C1 land head on W4 with B1 + B2: battle scenarios' Legion state diverges from the first paused build on, and the waited loop serves paused builds' demand, so the scheduler bookkeeping and small counts rise while field work falls; 10-stripe-phase medians (Windows, TAK_X_STILL_PHASE experiment) base 400.5 [398..404], C1 7976 [7597..8077]; this head (phase 0) 8072",
+   "scenario": "battle-field-2x60"
   }
  ],
  "entries": {
@@ -18145,10 +18334,10 @@
     },
     "parked_no_progress": {
      "dir": "lower",
-     "reason": "W3 exit (task-w3-b2 final head): bound moved 177 -> 346. W3 A2/B (one formation per click, one settle rule): incidental (was: W0: offset spread 4.21 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 176 x1.20)",
+     "reason": "W4 C1 land, B2 stripe phase (lead rulings W4 (k)/(p)): bound moved 346 -> 396. C1's phase-0 draw is 396 (gate offsets core-five median); over 10 stripe phases (Windows, TAK_X_STILL_PHASE experiment) C1's median is 245 [201..396], below the base's 263.5 [170..309]. Was: W3 exit (task-w3-b2 final head): bound moved 177 -> 346. W3 A2/B (one formation per click, one settle rule): incidental (was: W0: offset spread 4.21 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 176 x1.20)",
      "rule": "bound",
-     "since": "W3 exit",
-     "value": 346
+     "since": "W4 C1 land",
+     "value": 396
     },
     "reversals": {
      "band": 1.2,
