@@ -101614,16 +101614,16 @@
     "work.lift_target_polls.max": {
      "rule": "bound",
      "dir": "lower",
-     "value": 1,
+     "value": 2,
      "since": "W6 land (task-w6-land, protocol 243)",
-     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 8 flyers, so <= 1 a tick"
+     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 16 flyers, so <= 2 a tick"
     },
     "work.lift_target_polls.p99": {
      "rule": "bound",
      "dir": "lower",
-     "value": 1,
+     "value": 2,
      "since": "W6 land (task-w6-land, protocol 243)",
-     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 8 flyers, so <= 1 a tick"
+     "reason": "W6 FL-01 declared tolerance (PLAN 3.0): lifted flyers poll for a target every 8 ticks staggered by id (acquireTarget calls by lifted flyers, a new work class), per tick <= lifted flyers / 8; this fixture has 16 flyers, so <= 2 a tick"
     },
     "work.lift_target_polls.total": {
      "rule": "band",
