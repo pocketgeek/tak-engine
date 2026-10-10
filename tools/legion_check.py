@@ -58,6 +58,17 @@ gapsweep) the Retail floor of `gate.X.crossings` compares legion crossings / fil
 crossings / files abreast (`gate.X.files_x100`, a mean under 1 read as 1), because the passage gate takes
 a gap two or three abreast where Retail single-files. Corner and head-on fixtures keep the raw count.
 
+W9-U1 (user, 2026-10-10): where Retail itself is 0 or 1, x1.1 of it is 0 or 1.1, below Retail's own spread
+(0..10 on corner crossings, ruling (a)), so three keys are judged on the eleven-offset median with a
+one-event tolerance, `legion <= max(retail x1.1, retail + 1)`: corner-1x448 `gate.top.crossings`,
+tail-corner380 `wall_touch_near_permille`, and the GAP fixtures' per-file crossing key
+(`gate.X.crossings_per_file_x100`, below). Every other Retail-floor key keeps legion <= retail x1.1.
+
+The gap per-file key (W9 step 0, W8-1): for a GAP fixture `regate` derives `gate.X.crossings_per_file_x100` =
+crossings x 10000 / max(100, files_x100) at EACH offset and takes the median of the eleven, the number the
+W8-1 rule compares (a ratio of the per-offset medians used to stand in for it); the floor reads it, an INFO
+line prints it for every GAP fixture, and it is a plain key for the exit table.
+
 Precedence (PLAN 3.0): eq/safety, then the Retail floor, then a declared
 tolerance or accepted regression, then the bands. A tolerance never licenses a
 Retail-floor failure; one with a `step` licenses its loss only when `--step`
@@ -95,7 +106,7 @@ BAD_CLUSTERS = ("", "UNASSIGNED", "TODO", "?")
 CORE_OFFSETS = (0, 1, -1, 2, -2)
 WIDE_OFFSETS = (0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5)
 WIDE_MIN = 9
-WIDE_KEYS = ("gate.*.crossings", "wall_touch_permille", "wall_touch_near_permille")
+WIDE_KEYS = ("gate.*.crossings", "wall_touch_permille", "wall_touch_near_permille", "gate.*.crossings_per_file_x100")
 WIDE_T90_MAX_N = 9
 # Ruling (b): contact_settled is per arrived unit (W3-1), so its Retail floor is only read where
 # at least this many units arrive in both modes (the motion-* scenarios deliver 1-3).
@@ -191,7 +202,27 @@ def regate(rec):
             varying[k] = vals
     rec["all_keys"], rec["all_varying"] = rec["keys"], rec.get("varying", {})
     rec["keys"], rec["varying"] = keys, varying
+    add_per_file_keys(rec, wide)
     return rec
+
+
+def add_per_file_keys(rec, offs):
+    """W9 step 0 (user decision W8-1): for a GAP fixture, `gate.X.crossings_per_file_x100` = crossings x 10000 /
+    max(100, files_x100) at each offset (a mean under one file reads as one), medianed over the eleven."""
+    if not any(fnmatch.fnmatch(rec.get("scenario", ""), g) for g in GAP_SCENARIOS):
+        return
+    src = dict(rec, keys=rec["all_keys"], varying=rec["all_varying"])
+    for k in sorted(rec["all_keys"]):
+        m = re.fullmatch(r"gate\.(.+)\.crossings", k)
+        fk = "gate.%s.files_x100" % m.group(1) if m else None
+        if not m or fk not in rec["all_keys"]:
+            continue
+        cb, fb = per_offset(src, k), per_offset(src, fk)
+        vals = [(cb[o] * 10000 + max(100, fb[o]) // 2) // max(100, fb[o]) for o in offs]
+        pk = "gate.%s.crossings_per_file_x100" % m.group(1)
+        rec["keys"][pk] = median_of(pk, vals)
+        if any(v != vals[0] for v in vals):
+            rec["varying"][pk] = vals
 
 
 def arrived_median(rec):
@@ -488,9 +519,21 @@ def spread_check(doc, rpt, scn, mode, key, e, rec, exc):
              "it on median-of-5" % (fmt(lo), fmt(hi), band))
 
 
-def floor_passes(lower, legion, retail):
-    """legion <= retail x1.1 (lower is better) or legion x1.1 >= retail."""
+def floor_passes(lower, legion, retail, tolerance=False):
+    """legion <= retail x1.1 (lower is better) or legion x1.1 >= retail. `tolerance` (W9-U1, small counts where
+    Retail is 0 or 1): legion <= max(retail x1.1, retail + 1)."""
+    if lower and tolerance and retail != INF and legion <= retail + 1 + 1e-9:
+        return True
     return not worse(True, legion, retail, FLOOR) if lower else legion * FLOOR + 1e-9 >= retail
+
+
+# W9-U1 (user, 2026-10-10): the keys judged with the one-event tolerance, as (scenario glob, key glob).
+U1_KEYS = (("corner-1x448", "gate.top.crossings"), ("tail-corner380", "wall_touch_near_permille"),
+           ("gap*", "gate.*.crossings"))
+
+
+def u1_applies(scn, key):
+    return any(fnmatch.fnmatch(scn, s) and fnmatch.fnmatch(key, k) for s, k in U1_KEYS)
 
 
 def need_median5(rpt, path, exc, rec):
@@ -549,6 +592,10 @@ def per_file_floor(scn, key, lrec, rrec):
     lc_, rc_ = lrec.get("keys", {}).get(key), rrec.get("keys", {}).get(key)
     if any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in (lf, rf, lc_, rc_)):
         return None
+    pk = "gate.%s.crossings_per_file_x100" % m.group(1)
+    lp, rp = lrec.get("keys", {}).get(pk), rrec.get("keys", {}).get(pk)
+    if isinstance(lp, int) and isinstance(rp, int) and not isinstance(lp, bool) and not isinstance(rp, bool):
+        return (lp / 100.0, rp / 100.0)      # the median of the per-offset ratios (W9 step 0)
     return (lc_ / max(1.0, lf / 100.0), rc_ / max(1.0, rf / 100.0))
 
 
@@ -575,8 +622,16 @@ def floor_check(doc, rpt, recs):
                 continue
             lower = fd == "lower"
             lo, re_, per_file = floor_pair(scn, key, lrec, rrec)
-            passes = floor_passes(lower, lo, re_)
+            tol = u1_applies(scn, key)
+            strict = floor_passes(lower, lo, re_)
+            passes = floor_passes(lower, lo, re_, tol)
             pfx = " per file (W8-1)" if per_file else ""
+            if per_file:
+                rpt.info.append("gap per file (W8-1) %s/legion/%s: legion %s vs retail %s%s" % (
+                    scn, key, fmt(lo), fmt(re_), "" if strict else " (above x1.1" + (", inside U1)" if passes else ")")))
+            if passes and not strict:
+                rpt.info.append("W9-U1 tolerance %s/legion/%s%s: legion %s <= max(retail x1.1, retail + 1) = %s" % (
+                    scn, key, pfx, fmt(lo), fmt(max(re_ * FLOOR, re_ + 1))))
             exc = floor_exception_for(doc, scn, key)
             path = "%s/legion/%s" % (scn, key)
             need_wide(rpt, path, key, lrec)

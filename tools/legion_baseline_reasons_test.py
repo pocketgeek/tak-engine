@@ -26,6 +26,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import legion_check as lc  # noqa: E402
+import legion_w9_census as w9c  # noqa: E402
 
 S = "scn"
 
@@ -404,6 +405,105 @@ class Gate(unittest.TestCase):
         d = lc.empty_baseline()
         lc.write_base(d, {("gap6", "legion"): l, ("gap6", "retail"): r}, "step 0", "W8", ["*"], False, [("*", "MV-02")])
         self.assertFalse(any(x["key"] == "gate.top.crossings" for x in d["exceptions"]), d["exceptions"])
+
+    def test_w9_u1_tolerance_on_small_counts(self):
+        # User decision W9-U1 (2026-10-10): on corner-1x448 gate.top.crossings and tail-corner380
+        # wall_touch_near_permille the eleven-offset median passes when legion <= max(retail x1.1, retail + 1).
+        def pair(scn, key, lvals, rvals):
+            l = self.wide_rec(**{key: lvals})
+            r = self.wide_rec(mode="retail", **{key: rvals})
+            l["scenario"] = r["scenario"] = scn
+            return l, r
+        doc = lambda scn: dict(lc.empty_baseline(), entries={scn: {"legion": {}}})
+        zero = [0] * 11
+        # Retail 0: one event passes, two fail (x1.1 of 0 is 0 without U1)
+        l, r = pair("corner-1x448", "gate.top.crossings", [1] * 11, zero)
+        res = run_check(doc("corner-1x448"), l, r)
+        self.assertTrue(res.ok, res.fails)
+        self.assertTrue(any("W9-U1 tolerance" in i for i in res.info), res.info)
+        l, r = pair("corner-1x448", "gate.top.crossings", [2] * 11, zero)
+        res = run_check(doc("corner-1x448"), l, r)
+        self.assertFalse(res.ok)
+        self.assertTrue(any("Retail floor" in f for f in res.fails), res.fails)
+        # the median of the eleven decides, not one offset: four of eleven at 4 events leave the median at 1
+        l, r = pair("corner-1x448", "gate.top.crossings", [1, 1, 1, 1, 1, 1, 1, 4, 4, 4, 4], zero)
+        self.assertTrue(run_check(doc("corner-1x448"), l, r).ok)
+        # Retail 1: legion 2 passes (retail + 1), legion 3 fails
+        l, r = pair("corner-1x448", "gate.top.crossings", [2] * 11, [1] * 11)
+        self.assertTrue(run_check(doc("corner-1x448"), l, r).ok)
+        l, r = pair("corner-1x448", "gate.top.crossings", [3] * 11, [1] * 11)
+        self.assertFalse(run_check(doc("corner-1x448"), l, r).ok)
+        # Retail 40: the plain x1.1 bound is wider than retail + 1 and still applies (44 passes, 46 fails)
+        l, r = pair("corner-1x448", "gate.top.crossings", [44] * 11, [40] * 11)
+        self.assertTrue(run_check(doc("corner-1x448"), l, r).ok)
+        l, r = pair("corner-1x448", "gate.top.crossings", [46] * 11, [40] * 11)
+        self.assertFalse(run_check(doc("corner-1x448"), l, r).ok)
+        # tail-corner380 near-wall permille: Retail 1, legion 2 passes, legion 3 fails
+        l, r = pair("tail-corner380", "wall_touch_near_permille", [2] * 11, [1] * 11)
+        self.assertTrue(run_check(doc("tail-corner380"), l, r).ok)
+        l, r = pair("tail-corner380", "wall_touch_near_permille", [3] * 11, [1] * 11)
+        self.assertFalse(run_check(doc("tail-corner380"), l, r).ok)
+        # the tolerance is for those keys only: another fixture's crossings, and another key, keep x1.1
+        l, r = pair("corner-8x56", "gate.top.crossings", [1] * 11, zero)
+        self.assertFalse(run_check(doc("corner-8x56"), l, r).ok)
+        l, r = pair("tail-corner380", "wall_touch_permille", [2] * 11, [1] * 11)
+        self.assertFalse(run_check(doc("tail-corner380"), l, r).ok)
+        # a floor exception clears when the tolerance passes (and stays when it does not)
+        l, r = pair("corner-1x448", "gate.top.crossings", [1] * 11, zero)
+        d = doc("corner-1x448")
+        d["exceptions"] = [{"scenario": "corner-1x448", "key": "gate.top.crossings", "cluster": "MV-02",
+                            "reason": "lane crossings over Retail", "median5": True}]
+        res = run_check(d, l, r)
+        self.assertTrue(res.ok, res.fails)
+        self.assertEqual(len(res.cleared), 1)
+
+    def test_w9_gap_per_file_key_is_the_median_of_per_offset_ratios(self):
+        # W9 step 0: gate.X.crossings_per_file_x100 = crossings x 10000 / max(100, files_x100) at each offset,
+        # medianed over the eleven -- not the ratio of the two medians.
+        cross = [4, 4, 4, 4, 4, 4, 30, 30, 30, 30, 30]       # median 4
+        files = [200, 200, 200, 200, 200, 200, 600, 600, 600, 600, 600]   # median 200
+        l = self.wide_rec(**{"gate.top.crossings": cross, "gate.top.files_x100": files})
+        l["scenario"] = "gap6"
+        l2 = lc.regate(dict(l, keys=l["all_keys"], varying=l["all_varying"], scenario="gap6"))
+        self.assertEqual(l2["keys"]["gate.top.crossings_per_file_x100"], 200)      # 6 offsets at 2.0, 5 at 0.5 -> median 2.0
+        self.assertTrue(l2["wide"])
+        # a mean under one file reads as one file: 5 crossings over 0.4 files is 5.0
+        z = self.wide_rec(**{"gate.top.crossings": [5] * 11, "gate.top.files_x100": [40] * 11})
+        z2 = lc.regate(dict(z, keys=z["all_keys"], varying=z["all_varying"], scenario="gap8"))
+        self.assertEqual(z2["keys"]["gate.top.crossings_per_file_x100"], 500)
+        # a fixture that is not a GAP fixture gets no such key
+        n = self.wide_rec(**{"gate.top.crossings": [5] * 11, "gate.top.files_x100": [40] * 11})
+        n2 = lc.regate(dict(n, keys=n["all_keys"], varying=n["all_varying"], scenario="corner-8x56"))
+        self.assertNotIn("gate.top.crossings_per_file_x100", n2["keys"])
+        # U1 on the per-file key: legion 1.4 per file vs Retail 0 passes, 2.5 vs 0 fails, and the verdict names it
+        def pair(lcross, rcross, files=100):
+            a = self.wide_rec(**{"gate.top.crossings": [lcross] * 11, "gate.top.files_x100": [files] * 11})
+            b = self.wide_rec(mode="retail", **{"gate.top.crossings": [rcross] * 11, "gate.top.files_x100": [files] * 11})
+            a["scenario"] = b["scenario"] = "gap6"
+            return a, b
+        doc = dict(lc.empty_baseline(), entries={"gap6": {"legion": {}}})
+        a, b = pair(1, 0)
+        res = run_check(doc, a, b)
+        self.assertTrue(res.ok, res.fails)
+        self.assertTrue(any(i.startswith("gap per file (W8-1) gap6/legion/gate.top.crossings") for i in res.info), res.info)
+        a, b = pair(2, 0)
+        res = run_check(doc, a, b)
+        self.assertFalse(res.ok)
+        self.assertTrue(any("per file (W8-1)" in f for f in res.fails), res.fails)
+
+    def test_w9_census_gate_flags_a_moved_scenario_its_census_excludes(self):
+        # W9 step 0: a step may move only the scenarios its predicates fire on (tools/legion_w9_census.py).
+        census = {"a": {"b2_lane_differs": 3}, "b": {"b2_lane_differs": 0, "b3_fold_binds": 9}, "c": {}}
+        self.assertEqual(w9c.covered(census, "B2"), {"a"})
+        self.assertEqual(w9c.covered(census, "B3"), {"b"})
+        base = {"a": "h1", "b": "h2", "c": "h3"}
+        self.assertEqual(w9c.moved(census, "B2", base, dict(base, a="x")), [])           # a is covered
+        self.assertEqual(w9c.moved(census, "B2", base, dict(base, a="x", b="y")), ["b"])   # b is not
+        self.assertEqual(w9c.moved(census, "B2", base, base), [])
+        # the committed census: the flowing controls read 0 for B2 / B3 fold / C1, and A2 / B1 fire nowhere at offset 0
+        committed = w9c.load_census(w9c.DEFAULT)
+        self.assertEqual(w9c.controls_clean(committed), [])
+        self.assertEqual(w9c.controls_clean(dict(committed, uturn={"b3_fold_binds": 1})), ["uturn: b3_fold_binds = 1"])
 
     def test_contact_settled_floor_needs_ten_arrivals_in_both_modes(self):
         doc = baseline({"contact_settled_permille": entry(100, band=1.20)})
