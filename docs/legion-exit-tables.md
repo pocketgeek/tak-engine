@@ -12,6 +12,128 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W9 step 0 (2026-10-10): instruments, census, traces and the base for tails, files and head-on meetings (no sim change, protocol 247)
+
+Base head 8fcc03d6 (W8 landed, protocol 247). Every number is measured on it with the step-0 instruments (optimized Debug, `legion_scenario`, both modes,
+serial == workers, the eleven gate offsets 0, +-1 .. +-5 unless noted; the gate reads the small-count keys on the eleven and every other key on the core five).
+**Hash-identical:** `tools/legion_identity.sh --quick` base 8fcc03d6 vs candidate c71c69d8 -- 197 rows SAME (replays L-bench `3a8434b5ee63f4bc` / R-bench `10d19f7dfd9a1aa9` final and 61 / 62 checkpoints, both navigation goldens, `--mpai` Legion `4d8c06c9747f5a66` and Retail `56cfcbf8ef57181e` at 60 s twice per build, check-determinism golden `dcef618cd2e4d558`, the 12 quick crowdbench rows, every existing ctest); the one FAIL row is `legion_acceptance_crowdheld_legion`, which fails identically in both builds (W5/W9 hard gate 14; the same two values, 62 in goal and 1 ever stuck). Beyond the harness: 40 scenario records (20 scenarios x both modes x the 11 gate offsets, serial == workers) equal the base in every hash and every pre-existing key including the `work.*` counters, and the crowdbench screen (86 rows) has 0 differences against the committed baseline. Windows (oden-win, build-o2: observer selftest, issue_selection_test, observer_neutral, legion_baseline_reasons, sbend, uturn, gap6, doorplug-124, smoke, doc links): 10 of 10 passed, `--mpai` Legion `b2261dc31dc84cdf` / Retail `b240750e5765c02b`; Mac (arm64): fp_contract, fixed, detmath, navigation_determinism 4 of 4, `--mpai` the same two hashes (both equal main's at 300 s).
+
+What was added (W9 plan section 4, "S0"):
+
+| Plan item | Where |
+|---|---|
+| the twelve never-hashed mechanism counters | `Stats::sealSettles, creepPresses, deepRechoices, anchorAdvances, gateLaneMoves, gateHolds, foldBinds, turnGuardRejects, clearAims, meetLatches, orderInversionsAvoided / Taken` (0 until their step); `w9.*` under `probe w9` / `--w9`; crowdbench `legion_<name>` (screen baseline gains the 12 keys, all 0) |
+| observer: wall touch moving / still, gate / ring / corner | `wall_still_samples`, `wall_touch_still_permille`, `wall_touch_{gate,ring,corner,flat}_permille` and the `_near_` variants (`tools/legion_observe.h`) |
+| observer: crossings by flip site | `gate.NAME.cross_{none,field,gate,pivot,pass,blocked,direct}` from `Member::site` / `LegionNavigator::steerSite()`; `none` reads 0 on every swept fixture |
+| legion_check: gap per-file key, W9-U1 | `gate.X.crossings_per_file_x100` (median of the per-offset ratios); `legion <= max(retail x1.1, retail + 1)` on corner-1x448 `gate.top.crossings`, tail-corner380 `wall_touch_near_permille`, the GAP per-file key; two unit tests in `legion_baseline_reasons` (the rule fails when mutated) |
+| per-body decision traces | `TAK_LEGION_TRACE=ID[,ID|all]` / `legion_scenario --trace ID|GROUP` (debug build): settle windows with their bound, re-choices, yield requests with the refusal reason, gate declines / commits / releases, pinwheel turns |
+| the predicate census (debug only) | `LegionNavigator::census()` (`struct Census` in `src/sim/legion.cpp`), `census.*` keys, `TAK_LEGION_CENSUS=1`; `tools/scenarios/w9-census.json` (131 scenarios) and `tools/legion_w9_census.py` (`moved STEP` = the stop-and-re-diagnose gate) |
+| `rechoose` scratch reuse | generation-stamped seen marks and a reused queue (hash-neutral; was two allocations a call) |
+
+## The section-3 table, reproduced on the W8 head
+
+| # | Gate | Plan "now" | Measured | Retail | Reading |
+|---|---|---|---|---|---|
+| 1 | densehead `gate.mid.crossings` | 447 | **447** | 208 | reproduced (needs <= 228) |
+| 2 | strait-2x150 `gate.strait.crossings` | 22 | **22** | 8 | reproduced (needs <= 8.8) |
+| 3 | corner-1x448 `gate.top.crossings` | 4 | **4** | 0 | reproduced; U1 allows 1, so still a miss |
+| 4 | corner-8x56 `gate.top.crossings` | 3 | **3** | 2 | reproduced (needs <= 2.2) |
+| 5 | gap per file (W8-1/U1) | 2-22 raw | raw medians gap6 3, gap8 7, gap10 6, gap14 11; gapsweep g6 3, g8 10, g10 23, g14 23, g20 14. **Per file** (legion / Retail): gap6 1.06 / 1.29 (passes), gap8 2.05 / 0, gap10 1.56 / 0.65 (inside U1: <= 1.65), gap14 2.74 / 0; gapsweep g6 1.06, g8 2.91, g10 5.50, g14 5.37, g20 3.28, each vs 0 | | raw range reproduced; per file computed for the first time |
+| 6 | attackring-wall-64 wall touch / near | 58 / 112 | **58 / 112** | 25 / 81 | reproduced (needs <= 27.5 / 89.1) |
+| 7 | ringcross `g.M.t90` | 4689 | **4291** (gate reading: core-five median); 4689 is the eleven-offset median | 3854 | **see finding 1**; needs <= 4239 |
+| 8 | aware-unseen click t90 a00 / b00 | 2162 / 2207 | **2162 / 2207** | 1877 / 1929 | reproduced |
+| 9 | doorplug-124 `g.A.done` | never at +1, -4 | never at **+1, -4** (1982, 1892, 2432 ... elsewhere) | never at 0, -2, +4, -4, +5 | reproduced |
+| 10 | doorplug-112 wall touch / near | 11 / 64 | **11 / 64** | 8 / 42 | reproduced |
+| 11 | tail-corner380 near-wall | 2 | **2** | 1 | reproduced; U1 clears it (2 <= 2) |
+| 12 | motion-cross `g.u11` / `click.u01.done` | never at 7/11; never | `g.u11.done` never at **+1, -2, +3, -3, +4, -4, +5** (7/11); `click.u01.done` never at 10/11 (2837 at -1); click arrived 23 vs 22, t90 2702 vs 2887 | `click.u01.done` never | reproduced |
+| 13 | liftflyers own detour | 5 vs 2 | **5 vs 2** (open 2, own 5, enemy 4, guards 2, on-goal 3) | -- | reproduced |
+| 14 | crowdheld_legion | 62 in goal, stuck 1 | **62 in goal, units_ever_terrain_stuck 1** (`legion_acceptance_test legion crowdheld`) | -- | reproduced |
+| 15 | jagged `arrived_settled` 2000x1 / 500x4 | 660 / 1312 | **660 / 1312** (the screen: 86 rows, 0 differences against the committed baseline) | -- | reproduced |
+
+Controls on the same sweep (Legion, medians): doubleturn, uturn, opentangent, wall-4x50 hash-identical to the baseline hashes; their B2 / B3-fold / C1 census rows read 0.
+
+### Crossings by flip site (Legion, summed over the eleven gate offsets; the median is the gated number)
+
+| Fixture / gate | crossings (median) | field | gate | pivot | pass | blocked | direct |
+|---|---|---|---|---|---|---|---|
+| densehead mid | 5180 (447) | 0 | 0 | 0 | **4422** | 758 | 0 |
+| strait-2x150 strait | 223 (22) | 0 | 0 | 0 | 0 | **148** | 75 |
+| corner-1x448 top | 56 (4) | 14 | 0 | **10** | 0 | **32** | 0 |
+| corner-8x56 top | 26 (3) | **20** | 0 | 1 | 0 | 5 | 0 |
+| gap6 top (= gapsweep g6) | 47 (3) | 1 | **5** | 0 | 1 | 12 | 28 |
+| gap8 top | 74 (7) | 3 | 0 | 0 | 1 | 5 | **65** |
+| gap10 top | 91 (6) | 5 | 0 | 0 | 0 | 7 | **79** |
+| gap14 top | 142 (11) | 6 | 0 | 0 | 1 | 0 | **135** |
+| gapsweep g8 / g10 / g14 / g20 | 127 / 205 / 249 / 171 | 3 / 7 / 20 / 15 | 0 | 0 / 0 / 0 / 3 | 0 / 0 / 0 / 1 | 9 / 8 / 16 / 8 | 115 / 190 / 213 / 144 |
+| doorplug-124 door | 80 (8) | 4 | **24** | 0 | 0 | **52** | 0 |
+| uturn top | 182 (11) | 12 | 0 | 0 | 0 | 7 | **163** |
+| wall-4x50 top | 321 (33) | 41 | 0 | 0 | 0 | 14 | 266 |
+| sbend t2 | 132 (9) | 0 | 0 | 0 | 0 | 0 | 132 |
+| opentangent tangent | 11 (0) | 0 | 0 | **10** | 0 | 1 | 0 |
+
+### Wall touch by place (medians, permille; "near" = within 10 cells of a wall)
+
+| Fixture | Legion touch (gate / ring / corner / flat) | near | still samples, touch | Retail touch | near |
+|---|---|---|---|---|---|
+| attackring-wall-64 | 58 (0 / **58** / 0 / 0) | 112 | 8274, 251 | 25 (ring 25) | 81 |
+| doorplug-112 | 11 (**11** / 0 / 0 / 0) | 64 (gate 72) | 24048, 57 | 8 (gate 7, flat 2) | 42 |
+| doorplug-124 | 33 (gate 33) | 138 | 1369, 64 | 17 | 67 |
+| tail-corner380 | 0 | 2 (flat 2) | 5228, 0 | 0 | 1 |
+| gap6 | 73 (gate 51, flat 20) | 196 | 447, 300 | 34 | 68 |
+| corner-1x448 | 50 (gate 21, corner 1, flat 24) | 90 | 145430, 89 | 35 | 107 |
+
+(The "ring" class is every body on an attack / guard leg, so attackring-wall-64 reads 58 of 58 as ring: the walls it touches are the 8x8 ring round the target. The wall touches of a Legion run that stand still are not in `wall_touch_permille`.)
+
+## The predicate census (debug build, Legion, offset 0, all 131 scenarios)
+
+`tools/scenarios/w9-census.json`; `legion_w9_census.py table` lists the scenario sets. Counts are scenarios where the trigger fires at least once:
+
+| Step | Predicate (census key) | Scenarios | Where |
+|---|---|---|---|
+| A1 | `a1_inside` (re-choice inside areaBound + slack) | 103 | nearly every formation area; liftflyers 13: 3 re-choices, all inside |
+| A2 | `a2_seal` | **0 of 131**; 3 events in the crowdheld acceptance run (unit 13) | none of the scenario files |
+| A3 | `a3_creep` (not pressed, still two windows, inside the bound) | 101 (95 with `a3_stall_reset`: the stalledFor proxy was reset by the creep) | motion-cross 42 / 42 |
+| A4 | `a4_release_slotted` | 10: gapsweep 94, doorplug-124 60, gap6 46, gap8 46, strait 10, strait-3x48 9, strait-3x80 9, mixed2 3, doorform 1, strait-4x24 1 | **all releases are the passing group's** (see finding 2) |
+| B1 | `b1_engaged_wall`, `b1_center_blocked`, `b1_width_changed` | **0 of 131** | `b1_gate_scans` 0 on ringcross and every attackring fixture |
+| B2 | `b2_lane_differs` / `b2_margin` | 10 / 3 | doorplug-124 58 / 60 of 60 commits, gap6 39, gap8 38 (margin 48), gapsweep 84 (margin 48), strait-3x80 27, doorform 19, strait-3x48 18, strait 15, strait-4x24 8, mixed2 3; **doorplug-112: 0 commits** |
+| B3 fold | `b3_fold_binds` | 16 | mazeform 12184, mixed2 4393, strait-2x150 3633, strait 1767, strait-3x80 1619, strait-3x48 787, strait-4x24 540, gen1-route-65845 307, gapsweep 296, battle-assault 246, gap10 158, gap14 113, gen1-route-36057 57, gen1-route-45941 40, strait-2x48 34, gen1-route-54772 7; **0 on every corner fixture and on the four controls** |
+| B3 guard | `b3_guard_rejects` (= chord 12 or face) | 35 | corner-1x448 379 of 447 turns (face 379, chord 15), corner-8x56 409 of 445 (face 409, chord 21), corner-8x30 215, corner-4x50 191, battle-assault 598 ... controls 1-5 |
+| B4 | `b4_clear_alt` (the string-pull hugs and a clear nearer cell exists) | 72 | corner-1x448 18502, gen1-route-65845 22954, attackring-wall-64 2129 ... |
+| B6 | `b6_blocked` (blocked branch of a Point of 16+; upper bound) | 107 | nearly everywhere |
+| C1 | `c1_headon_entries` / `c1_unseen` | 5 / 7 | densehead 2 / 4615, aware-unseen 0 / 732, aware-attack 1 / 279, aware-headon 2 / 113, aware-seen 2 / 106, battle-assault 0 / 53, battle-field-2x500 0 / 2, ringcross 1 / 0; **motion-cross 0 / 0, 0 on the four controls** |
+
+The flowing controls (doubleturn, uturn, opentangent, wall-4x50) read 0 for `b2_commits`, `b2_lane_differs`, `b3_fold_binds`, `c1_headon_entries` and `c1_unseen`
+(`legion_w9_census.py controls`), so B2 / B3-fold / C1 are NOT exact-hash gates on them. A1 and A3 fire in 103 and 101 scenarios: the census cannot bound
+those two steps, and their guard is the per-key list of the plan. The census is taken at offset 0; `legion_w9_census.py moved STEP` compares offset-0 hashes.
+
+## Per-body decision traces: what they confirm and what they do not
+
+| Plan diagnosis | Trace | Verdict |
+|---|---|---|
+| crowdheld 13 / 29 attempt a yield and are refused | `TAK_LEGION_TRACE=13,29 legion_acceptance_test legion crowdheld`: 13 makes 426 attempts: 303 first refusals "blocker has no free cell", 121 "blocker is not a settled arrival"; its settle windows reach two consecutive refusal windows 5 times, `a2_seal` = 3. 29 makes 209 attempts: 206 "blocker is not a settled arrival", 3 "no free cell"; its last windows read refusal bits 1 and 2, never both | **13 confirmed; 29 only partly**: A2's two-window rule over genuine refusals (spent yields / no free cell) would NOT seal 29; the 206 refusals by an unsettled blocker are not counted by the plan's definition |
+| group_legion's late units have yields left | `legion_acceptance_test legion group` traced for all units: 11 grants, the blockers had used 0 (6) or 1 (5) of kMaxYields 3; one genuine refusal (unit 38, no free cell); 7992 of 8005 attempts are "blocker is not a settled arrival" | confirmed |
+| u11 (motion-cross, unit 12) sits inside areaBound + slack | offset +1: potential 31-47 against areaBound 30 + slack 30, queued 1, `press` 0 at every window, `stalledFor` 6-26 (< 45) while `stillSince` grows to 270+; `a3_creep` 21 of 21 with the stall reset | **confirmed** (the creep resets the proxy) |
+| the doorplug-124 tails are what A4's release hook empties | tails of A: ids 5, 13 at +1 (potential 88-98 against areaBound 52 + slack 20, rechoices 3 of 3 spent, queued 1, `press` flips 1 / 0, 425 yield attempts all "not a settled arrival"); ids 21, 22 at -4. **Group A never commits a gate**: 23 members decline with "gate within kLaneNear of the destination", 34 with "no strip within kGateCommit cells", 11 "inside a strip"; all 60 releases (offsets +1, 0, -4, +3) are group B's | **refuted for A4 as designed** (finding 2) |
+| liftflyers body 13 re-chooses a free slot walking | `legion_world_test liftflyers`, own run: potential 53 / 45 / 38 against areaBound 42 (+ slack 20: all inside), rechoices 1 -> 3, goal moved 9152 -> 8757 -> 11161 with 415 / 191 BFS cells | confirmed |
+| B1: the gate reads own Engaged ring bodies as walls (ringcross) | ringcross, offsets 0 and 2, group M traced: every member's gate decision is "no strip within kGateCommit cells"; `b1_gate_scans` 0, `b1_engaged_wall` 0 in all 131 scenarios | **refuted** (finding 1) |
+
+## Findings that change the plan's premises (for the lead)
+
+1. **ringcross is not a W8-gate effect and B1 round 1 cannot move it.** ringcross has no static walls: its gate decision is "no strip" for every member (0 gate scans at offsets 0 and 2). Its
+   Legion hashes in `baseline.json` are identical at the W7 head (4fa6d497) and the W8 head (8fcc03d6), so W8 did not change it. The plan's "4291 -> 4689 at the W8 gate" compares the
+   gate reading (core-five median, 4291, unchanged since W5) with the eleven-offset median (4689); the gate is 4291 vs <= 4239 (the offsets: 0 4021, +1 3955, -1 4291, +2 4689, -2 4921).
+   B1's round 1 (the gate ignores own Engaged bodies) has nothing to act on; the round-2 halo (Move fields plan round the ring) is the only B1 lever left.
+2. **A4's hook never fires for the group whose tails fail.** In doorplug-124 group A (the settled order) declines every gate (the door is within kLaneNear of its destination); the 60 releases
+   are group B's, whose slots are at (200, 50). The tails 5 / 13 (offset +1) and 21 / 22 (-4) sit 16-26 potential above areaBound with all three re-choices spent. A4 as designed (deepest slot on a gate
+   release) would not touch them.
+3. **B2 cannot reach doorplug-112 or the gap8/10/14 crossings.** doorplug-112 commits no gate (`b2_commits` 0: its members decline with "gate point covered by a soft body", A's crowd spills into the door mouth), so B2's
+   wall margin has nothing to narrow there; its 11 wall touches are all within 6 cells of the door. The gap fixtures' crossings are mostly "direct" (straight walks to the goal): gap8 65 of 74, gap10 79 of 91,
+   gap14 135 of 142; the gate site holds 5 of 47 on gap6 and 0 elsewhere.
+4. **The corner crossings come from the field and the blocked branch more than from the pinwheel**: corner-1x448 pivot 10 of 56 (blocked 32, field 14); corner-8x56 pivot 1 of 26 (field 20, blocked 5).
+   B3's fold has no effect on a corner (`b3_fold_binds` 0 on every corner fixture); the plan already expects the hug removal (round 2) to carry them, but its face guard, as defined (three illegal
+   neighbours on one side), rejects 379 of 447 turns on corner-1x448 and 409 of 445 on corner-8x56 (the chord half rejects 15 and 21): the descent chain meets the wall end, not a wall face.
+5. **densehead is the pass step**: 4422 of 5180 crossings; C1's contact trigger (`c1_unseen` 4615) is where those are, and `c1_headon_entries` is 2.
+
 ## W8 exit (2026-10-10): the passage gate -- instruments, nearObstacle memo, MV-10 (protocol 247)
 
 Head: `task-w8-land` = `task-w8-b` `5c9b87b5` (W8 step 0 instruments `a9edd831`..`787fe029`, step 1 `61b1c8cb`, step 2 the passage gate `880135d1`,
