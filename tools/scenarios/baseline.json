@@ -14082,6 +14082,482 @@
    "mode": "legion",
    "reason": "W8 exit (PLAN 3.2 step 2, the passage gate): the strait's short passages end within 24 chain cells of a gate, so members commit and take them abreast. Outcome keys are in band or better (strait-3x48 reversals 90 -> 47, strait-3x80 reversals 301 -> 248 and files 2.16 -> 2.96, strait-4x24 arrivals 22 -> 23); the counters of the extra small corrections rise by one or two (completion-distance classes, arrivals per tick, pass scans p99 +10%; strait-4x24 detours 27 -> 29, held rechecks 42 -> 141). Pinned at the exit value.",
    "scenario": "strait-4x24"
+  },
+  {
+   "key": "work.completion_dist_0.max",
+   "max": 1,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-attack"
+  },
+  {
+   "key": "work.completion_dist_0.total",
+   "max": 1,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-attack"
+  },
+  {
+   "key": "work.contact_arrivals.total",
+   "max": 14,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-attack"
+  },
+  {
+   "key": "work.legion_total.p99",
+   "max": 2078,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-attack"
+  },
+  {
+   "key": "work.line_sweeps.max",
+   "max": 106,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-attack"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 2003,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-attack"
+  },
+  {
+   "key": "work.completion_dist_1.total",
+   "max": 8,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-headon"
+  },
+  {
+   "key": "work.legion_total.p99",
+   "max": 2606,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-headon"
+  },
+  {
+   "key": "work.line_sweeps.total",
+   "max": 112538,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-headon"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 2328,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-headon"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 2495,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-headon"
+  },
+  {
+   "key": "region.goalA.inside",
+   "max": 21,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-seen"
+  },
+  {
+   "key": "work.completion_dist_2.max",
+   "max": 2,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-seen"
+  },
+  {
+   "key": "work.legion_total.p99",
+   "max": 2673,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-seen"
+  },
+  {
+   "key": "work.slides.total",
+   "max": 450,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-seen"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 2301,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-seen"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 2600,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-seen"
+  },
+  {
+   "key": "work.completion_dist_1.total",
+   "max": 8,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "work.completion_dist_2.total",
+   "max": 15,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "work.line_sweeps.p99",
+   "max": 19,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "work.line_sweeps.total",
+   "max": 10950,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "work.slides.max",
+   "max": 5,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "work.slot_search_cells.max",
+   "max": 2220,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 2293,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
+   "scenario": "aware-unseen"
+  },
+  {
+   "key": "g.B.complete_dist_max",
+   "max": 26,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "gate.mid.files_x100",
+   "max": 1235,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.arrivals.max",
+   "max": 6,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.arrivals.p99",
+   "max": 2,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.arrivals.total",
+   "max": 394,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.aware_pairs.p99",
+   "max": 4,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.aware_pairs.total",
+   "max": 346,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_0.max",
+   "max": 1,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_0.total",
+   "max": 1,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_1.total",
+   "max": 3,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_2.max",
+   "max": 2,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_2.total",
+   "max": 14,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_3.max",
+   "max": 2,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_3.p99",
+   "max": 1,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_3.total",
+   "max": 52,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_4.max",
+   "max": 4,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_4.total",
+   "max": 158,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_5.max",
+   "max": 4,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_5.total",
+   "max": 169,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_sum.max",
+   "max": 97,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_sum.p99",
+   "max": 32,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.completion_dist_sum.total",
+   "max": 5363,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.contact_arrivals.max",
+   "max": 6,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.contact_arrivals.p99",
+   "max": 2,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.contact_arrivals.total",
+   "max": 263,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.detour_cells.max",
+   "max": 2220,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.holds.p99",
+   "max": 8,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.legion_total.p99",
+   "max": 23132,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.line_sweeps.max",
+   "max": 1248,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.line_sweeps.p99",
+   "max": 1194,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.line_sweeps.total",
+   "max": 1214483,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.mission_arrivals_1.max",
+   "max": 6,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.mission_arrivals_1.p99",
+   "max": 2,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.mission_arrivals_1.total",
+   "max": 394,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.move_calls_by_state_1.total",
+   "max": 959952,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.outside_area_completions.max",
+   "max": 2,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.outside_area_completions.total",
+   "max": 42,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.slides.max",
+   "max": 22,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.slides.p99",
+   "max": 13,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.slides.total",
+   "max": 10748,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.still_units_processed.p99",
+   "max": 14,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.still_units_processed.total",
+   "max": 16850,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.trace_cells.p99",
+   "max": 21434,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
+  },
+  {
+   "key": "work.trace_cells.total",
+   "max": 21783801,
+   "mode": "legion",
+   "reason": "W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the two 100-body columns of densehead narrow into the right half of their own extent before they meet and pass each other instead of jamming (gate.mid.crossings 447 -> 39 against Retail 208; arrivals 69 / 70 -> 197 / 198 of 200; g.A / g.B t90 never -> 3424 / 3292; contact_other 199 -> 1 permille). The counters below rise because bodies that used to stand left behind (131 in the base) now flow, arrive and settle (arrivals, completion distances, still units, slides, line sweeps, trace cells, aware pairs scale with that), and gate.mid.files_x100 falls 1929 -> 1235 by design (the groups narrow); g.B.complete_dist_max 18 -> 26 is more bodies completing. Pinned at the exit value (docs/legion-exit-tables.md, W9 exit).",
+   "scenario": "densehead"
   }
  ],
  "entries": {
@@ -56834,10 +57310,10 @@
     },
     "contact_other_permille": {
      "dir": "lower",
-     "reason": "W7 exit, bound raised 552 -> 566: W7 exit (PLAN 3.3 G detection, C28): detection samples each group's own descent chain every 15 ticks up to 450 ahead against each mover at its measured velocity, so an encounter is found earlier and head-on / crossing groups plan round each other sooner (aware-headon click t90 2027 -> 1909, aware-seen b00 1937 -> 1871, within Retail). The earlier plan costs line sweeps, trace cells and pass scans and moves the straggler's `done` (aware-seen a00 done 2161 -> 2608, aware-attack a00 done 2152 -> 2387; b00 aware-seen done 2702 -> 2205). Declared aware-work cap held: per-tick max of aware work stays under each scenario's legion_total per-tick max. Pinned at the exit value.",
+     "reason": "W9 exit, bound raised 566 -> 622: W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
      "rule": "bound",
-     "since": "W7 exit (2026-10-10)",
-     "value": 566
+     "since": "W9 exit (2026-10-10)",
+     "value": 622
     },
     "contact_own_permille": {
      "band": 1.1,
@@ -58299,10 +58775,10 @@
     },
     "contact_other_permille": {
      "dir": "lower",
-     "reason": "W3 exit (task-w3-b2 final head): bound moved 458 -> 483. W3 A2/B: one formation per click packs a click's bodies closer: incidental (was: W0: offset spread 1.36 exceeds band 1.20 and the key passes the Retail floor, so no median5 exception: one-sided bound at median 483 x1.20)",
+     "reason": "W9 exit, bound raised 483 -> 585: W9 exit (lane C step C1, decision 7 / W9-U2, protocol 248): the head-on meet of the 16+ columns narrows before contact (aware-unseen click a00 / b00 t90 2162 / 2207 -> 1757 / 1792 against Retail 1877 / 1929; every aware-* click t90 and done is faster; groups' cross contacts pair.contacts fall 4-50x). The aware fixtures' observers are one-body groups, so contact_other counts a body's own click-mates, and the narrowed column packs the click closer (the W3 exit licensed the same cause); the work counters rise by the extra steering of the latched Points (line sweeps, trace cells, still units, slides, slot search) and the completion-distance classes (a body or two settles 1-2 cells further out). Pinned at the exit value.",
      "rule": "bound",
-     "since": "W3 exit",
-     "value": 483
+     "since": "W9 exit (2026-10-10)",
+     "value": 585
     },
     "contact_own_permille": {
      "band": 1.1,
@@ -259858,14 +260334,6 @@
   },
   {
    "cluster": "W9",
-   "key": "gate.mid.crossings",
-   "median5": true,
-   "mode": "legion",
-   "reason": "user decision W8-2 (2026-10-10): W8 ships only the passage gate (S1 corner lanes failed their stop rule; S3, S4 and D2 were dropped), so this Retail-floor result moves from the W8 exit to the W9 exit as a HARD EXIT GATE (group-level re-shaping, decision 7); cluster W9. Before: cluster MV-02: accepted until W8 (user decision W3-2, 2026-10-09); W8 exit must bring within Retail. W3 (A2: one formation per click) reorders the lanes of a 200-body head-on / 150-boat strait crossing: legion 643 vs retail 204 at W3 B round 2 (b187f96d), median of 5 offsets; base 7a01f7bb passed the floor",
-   "scenario": "densehead"
-  },
-  {
-   "cluster": "W9",
    "key": "gate.strait.crossings",
    "median5": true,
    "mode": "legion",
@@ -260338,13 +260806,6 @@
    "median5": true,
    "reason": "user decision W5-1 (2026-10-10): moved from the W5 exit to the W9 exit, HARD EXIT GATE at W9. user decision W3-4 (2026-10-09): a steering gap round a settled crowd (doorplug-112 wall touch near) -- accepted for W3; W5/W9 HARD EXIT GATE: fixed by W5 (units that never arrive) / W9 (group re-shaping), this exception must be gone at that exit (W3 exit: legion 64 vs retail 42)",
    "scenario": "doorplug-112"
-  },
-  {
-   "cluster": "W9",
-   "key": "wall_touch_near_permille",
-   "median5": true,
-   "reason": "user decision W5-1 (2026-10-10): moved from the W5 exit to the W9 exit, HARD EXIT GATE at W9. user decision W3-4 (2026-10-09): a steering gap round a settled crowd (tail-corner380 wall touch near) -- accepted for W3; W5/W9 HARD EXIT GATE: fixed by W5 (units that never arrive) / W9 (group re-shaping), this exception must be gone at that exit (W3 exit: legion 2 vs retail 1)",
-   "scenario": "tail-corner380"
   },
   {
    "cluster": "AR-08",
@@ -262226,13 +262687,6 @@
   },
   {
    "cluster": "MV-09",
-   "key": "click.a00.t90",
-   "median5": true,
-   "reason": "fails legion <= retail x1.1 at W3-exit-f: legion 2206 vs retail 1877",
-   "scenario": "aware-unseen"
-  },
-  {
-   "cluster": "MV-09",
    "key": "click.a00.done",
    "median5": true,
    "mode": "retail",
@@ -262366,13 +262820,6 @@
    "mode": "legion",
    "reason": "offset spread 35..39 exceeds the band on the W3 exit head (task-w3-b2), first read by the click-level keys of lead ruling W3 final exit (f); gated on median-of-5 offsets",
    "scenario": "motion-open"
-  },
-  {
-   "cluster": "MV-09",
-   "key": "click.b00.t90",
-   "median5": true,
-   "reason": "fails legion <= retail x1.1 at the W3 exit (2207 vs Retail 1929): crossing-group arrival ~5% slower than Retail under A2's one formation per click; lead ruling (i), accepted until W7; W7 exit must bring within Retail",
-   "scenario": "aware-unseen"
   },
   {
    "cluster": "offset-spread",
@@ -273980,13 +274427,6 @@
    "scenario": "gap10"
   },
   {
-   "cluster": "MV-10",
-   "key": "gate.top.crossings",
-   "median5": true,
-   "reason": "user decision W8-1 (2026-10-10): GAP fixtures are judged lane swaps PER FILE (crossings / files abreast) against Retail's per-file value; Retail single-files these gaps with 0 swaps, so a nonzero per-file legion value still fails the floor. first baselined at the W8 exit: the step-0 fixture already failed this Retail floor on the W7 exit sim (hash-identical to the base wherever the passage gate does not act); not caused by the gate. fails legion <= retail x1.1 at W8 exit (2026-10-10): legion 1.485 vs retail 0.5319",
-   "scenario": "gap10"
-  },
-  {
    "cluster": "offset-spread",
    "key": "g.A.done",
    "median5": true,
@@ -277303,6 +277743,62 @@
    "mode": "retail",
    "reason": "offset spread 4284..never exceeds the band; kept as a spread exception when the ratchet cleared its Retail-floor exception (2026-10-10T12:00:00Z: fails legion <= retail x1.1 at W3: legion 4859 vs retail 4348)",
    "scenario": "doorplug-124"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "contact_other_permille",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread exceeds the band at the W9 exit (the head-on meet latches at a different tick for each start offset, and the keys that were 'never' at every offset in the base now complete); gated on median-of-5 offsets",
+   "scenario": "aware-attack"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.A.left_behind",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread exceeds the band at the W9 exit (the head-on meet latches at a different tick for each start offset, and the keys that were 'never' at every offset in the base now complete); gated on median-of-5 offsets",
+   "scenario": "densehead"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.B.done",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread exceeds the band at the W9 exit (the head-on meet latches at a different tick for each start offset, and the keys that were 'never' at every offset in the base now complete); gated on median-of-5 offsets",
+   "scenario": "densehead"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.B.left_behind",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread exceeds the band at the W9 exit (the head-on meet latches at a different tick for each start offset, and the keys that were 'never' at every offset in the base now complete); gated on median-of-5 offsets",
+   "scenario": "densehead"
+  },
+  {
+   "cluster": "offset-spread",
+   "key": "g.B.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread exceeds the band at the W9 exit (the head-on meet latches at a different tick for each start offset, and the keys that were 'never' at every offset in the base now complete); gated on median-of-5 offsets",
+   "scenario": "densehead"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "legion",
+   "reason": "offset spread 1625..1982 exceeds the band; kept as a spread exception when the ratchet cleared its Retail-floor exception (2026-10-10T12:00:00Z: fails legion <= retail x1.1 at W3-exit-f: legion 2206 vs retail 1877)",
+   "scenario": "aware-unseen"
+  },
+  {
+   "cluster": "MV-09",
+   "key": "click.a00.t90",
+   "median5": true,
+   "mode": "retail",
+   "reason": "offset spread 1804..2054 exceeds the band; kept as a spread exception when the ratchet cleared its Retail-floor exception (2026-10-10T12:00:00Z: fails legion <= retail x1.1 at W3-exit-f: legion 2206 vs retail 1877)",
+   "scenario": "aware-unseen"
   }
  ],
  "history": [
@@ -301325,6 +301821,624 @@
    ],
    "reason": "W8 exit: ratchet on the 13 fixtures the passage gate moves (gap6, gap8, gapsweep, doorform, doorplug-124, mixed2, strait family, gen1-route-45941 / 54772), improvements beyond the offset spread; the other ratchets are left unapplied (W4 ruling (q))",
    "when": "2026-10-10T12:00:00Z"
+  },
+  {
+   "cleared_exceptions": [
+    "densehead/gate.mid.crossings",
+    "tail-corner380/wall_touch_near_permille",
+    "aware-unseen/click.a00.t90",
+    "aware-unseen/click.b00.t90",
+    "gap10/gate.top.crossings"
+   ],
+   "ratchets": [
+    {
+     "key": "aware-attack/legion/pair.contacts.permille_x100",
+     "new": 292,
+     "old": 562
+    },
+    {
+     "key": "aware-attack/legion/stopped_permille",
+     "new": 47,
+     "old": 66
+    },
+    {
+     "key": "aware-attack/legion/work.detour_cells.p99",
+     "new": 0,
+     "old": 419
+    },
+    {
+     "key": "aware-attack/legion/work.holds.p99",
+     "new": 1,
+     "old": 2
+    },
+    {
+     "key": "aware-attack/legion/work.holds.total",
+     "new": 142,
+     "old": 263
+    },
+    {
+     "key": "aware-attack/legion/work.move_calls_by_state_2.max",
+     "new": 16,
+     "old": 24
+    },
+    {
+     "key": "aware-attack/legion/work.move_calls_by_state_2.p99",
+     "new": 13,
+     "old": 20
+    },
+    {
+     "key": "aware-attack/legion/work.move_calls_by_state_2.total",
+     "new": 3646,
+     "old": 5324
+    },
+    {
+     "key": "aware-attack/legion/work.pass_scan_cells.total",
+     "new": 130584,
+     "old": 166610
+    },
+    {
+     "key": "aware-attack/legion/work.pass_scans.total",
+     "new": 5530,
+     "old": 7070
+    },
+    {
+     "key": "aware-headon/legion/click.a00.done",
+     "new": 1892,
+     "old": 2297
+    },
+    {
+     "key": "aware-headon/legion/click.b00.done",
+     "new": 1748,
+     "old": 2487
+    },
+    {
+     "key": "aware-headon/legion/click.b00.t90",
+     "new": 1716,
+     "old": 2134
+    },
+    {
+     "key": "aware-headon/legion/pair.contacts.permille_x100",
+     "new": 26,
+     "old": 386
+    },
+    {
+     "key": "aware-headon/legion/stopped_permille",
+     "new": 14,
+     "old": 50
+    },
+    {
+     "key": "aware-headon/legion/work.completion_dist_4.max",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "aware-headon/legion/work.completion_dist_4.total",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "aware-headon/legion/work.completion_dist_sum.total",
+     "new": 171,
+     "old": 189
+    },
+    {
+     "key": "aware-headon/legion/work.contact_arrivals.total",
+     "new": 5,
+     "old": 13
+    },
+    {
+     "key": "aware-headon/legion/work.crowd_window_ring_cells.max",
+     "new": 96,
+     "old": 416
+    },
+    {
+     "key": "aware-headon/legion/work.crowd_window_ring_cells.p99",
+     "new": 0,
+     "old": 36
+    },
+    {
+     "key": "aware-headon/legion/work.crowd_window_ring_cells.total",
+     "new": 1344,
+     "old": 4192
+    },
+    {
+     "key": "aware-headon/legion/work.detour_cells.total",
+     "new": 2331,
+     "old": 11476
+    },
+    {
+     "key": "aware-headon/legion/work.detours.total",
+     "new": 2,
+     "old": 15
+    },
+    {
+     "key": "aware-headon/legion/work.group_loop_iters.total",
+     "new": 268,
+     "old": 307
+    },
+    {
+     "key": "aware-headon/legion/work.holds.total",
+     "new": 96,
+     "old": 194
+    },
+    {
+     "key": "aware-headon/legion/work.move_calls_by_state_2.max",
+     "new": 8,
+     "old": 19
+    },
+    {
+     "key": "aware-headon/legion/work.move_calls_by_state_2.p99",
+     "new": 4,
+     "old": 15
+    },
+    {
+     "key": "aware-headon/legion/work.move_calls_by_state_2.total",
+     "new": 987,
+     "old": 4055
+    },
+    {
+     "key": "aware-headon/legion/work.pass_scan_cells.max",
+     "new": 264,
+     "old": 429
+    },
+    {
+     "key": "aware-headon/legion/work.pass_scan_cells.p99",
+     "new": 240,
+     "old": 336
+    },
+    {
+     "key": "aware-headon/legion/work.pass_scan_cells.total",
+     "new": 59007,
+     "old": 125858
+    },
+    {
+     "key": "aware-headon/legion/work.pass_scans.max",
+     "new": 11,
+     "old": 18
+    },
+    {
+     "key": "aware-headon/legion/work.pass_scans.p99",
+     "new": 10,
+     "old": 14
+    },
+    {
+     "key": "aware-headon/legion/work.pass_scans.total",
+     "new": 2461,
+     "old": 5287
+    },
+    {
+     "key": "aware-headon/legion/work.rechoice_bfs_cells.max",
+     "new": 521,
+     "old": 651
+    },
+    {
+     "key": "aware-headon/legion/work.rechoice_bfs_cells.total",
+     "new": 1503,
+     "old": 3610
+    },
+    {
+     "key": "aware-headon/legion/work.slot_search_cells.total",
+     "new": 6789,
+     "old": 8896
+    },
+    {
+     "key": "aware-seen/legion/pair.contacts.permille_x100",
+     "new": 16,
+     "old": 390
+    },
+    {
+     "key": "aware-seen/legion/stopped_permille",
+     "new": 15,
+     "old": 49
+    },
+    {
+     "key": "aware-seen/legion/work.contact_arrivals.total",
+     "new": 6,
+     "old": 10
+    },
+    {
+     "key": "aware-seen/legion/work.crowd_window_ring_cells.max",
+     "new": 160,
+     "old": 640
+    },
+    {
+     "key": "aware-seen/legion/work.crowd_window_ring_cells.total",
+     "new": 1888,
+     "old": 6084
+    },
+    {
+     "key": "aware-seen/legion/work.detour_cells.max",
+     "new": 528,
+     "old": 1083
+    },
+    {
+     "key": "aware-seen/legion/work.detours.max",
+     "new": 1,
+     "old": 2
+    },
+    {
+     "key": "aware-seen/legion/work.detours.total",
+     "new": 3,
+     "old": 19
+    },
+    {
+     "key": "aware-seen/legion/work.holds.total",
+     "new": 107,
+     "old": 166
+    },
+    {
+     "key": "aware-seen/legion/work.move_calls_by_state_2.max",
+     "new": 6,
+     "old": 16
+    },
+    {
+     "key": "aware-seen/legion/work.move_calls_by_state_2.p99",
+     "new": 4,
+     "old": 13
+    },
+    {
+     "key": "aware-seen/legion/work.move_calls_by_state_2.total",
+     "new": 1132,
+     "old": 3948
+    },
+    {
+     "key": "aware-seen/legion/work.pass_scan_cells.max",
+     "new": 312,
+     "old": 466
+    },
+    {
+     "key": "aware-seen/legion/work.pass_scan_cells.p99",
+     "new": 264,
+     "old": 384
+    },
+    {
+     "key": "aware-seen/legion/work.pass_scan_cells.total",
+     "new": 61370,
+     "old": 128055
+    },
+    {
+     "key": "aware-seen/legion/work.pass_scans.max",
+     "new": 13,
+     "old": 20
+    },
+    {
+     "key": "aware-seen/legion/work.pass_scans.p99",
+     "new": 11,
+     "old": 16
+    },
+    {
+     "key": "aware-seen/legion/work.pass_scans.total",
+     "new": 2558,
+     "old": 5386
+    },
+    {
+     "key": "aware-seen/legion/work.rechoice_bfs_cells.total",
+     "new": 1532,
+     "old": 3860
+    },
+    {
+     "key": "aware-seen/legion/work.slot_search_cells.total",
+     "new": 6818,
+     "old": 9146
+    },
+    {
+     "key": "aware-unseen/legion/click.a00.t90",
+     "new": 1757,
+     "old": 2206
+    },
+    {
+     "key": "aware-unseen/legion/click.b00.t50",
+     "new": 1532,
+     "old": 1721
+    },
+    {
+     "key": "aware-unseen/legion/pair.contacts.permille_x100",
+     "new": 102,
+     "old": 783
+    },
+    {
+     "key": "aware-unseen/legion/stopped_permille",
+     "new": 22,
+     "old": 94
+    },
+    {
+     "key": "aware-unseen/legion/work.aware_pairs.total",
+     "new": 202,
+     "old": 230
+    },
+    {
+     "key": "aware-unseen/legion/work.completion_dist_4.total",
+     "new": 0,
+     "old": 3
+    },
+    {
+     "key": "aware-unseen/legion/work.contact_arrivals.total",
+     "new": 5,
+     "old": 17
+    },
+    {
+     "key": "aware-unseen/legion/work.crowd_window_ring_cells.max",
+     "new": 192,
+     "old": 736
+    },
+    {
+     "key": "aware-unseen/legion/work.crowd_window_ring_cells.p99",
+     "new": 0,
+     "old": 36
+    },
+    {
+     "key": "aware-unseen/legion/work.crowd_window_ring_cells.total",
+     "new": 1600,
+     "old": 7992
+    },
+    {
+     "key": "aware-unseen/legion/work.detour_cells.max",
+     "new": 601,
+     "old": 1166
+    },
+    {
+     "key": "aware-unseen/legion/work.detour_cells.p99",
+     "new": 0,
+     "old": 542
+    },
+    {
+     "key": "aware-unseen/legion/work.detour_cells.total",
+     "new": 3556,
+     "old": 30657
+    },
+    {
+     "key": "aware-unseen/legion/work.detours.max",
+     "new": 1,
+     "old": 2
+    },
+    {
+     "key": "aware-unseen/legion/work.detours.p99",
+     "new": 0,
+     "old": 1
+    },
+    {
+     "key": "aware-unseen/legion/work.detours.total",
+     "new": 6,
+     "old": 51
+    },
+    {
+     "key": "aware-unseen/legion/work.held_rechecks.max",
+     "new": 1,
+     "old": 3
+    },
+    {
+     "key": "aware-unseen/legion/work.holds.max",
+     "new": 3,
+     "old": 5
+    },
+    {
+     "key": "aware-unseen/legion/work.holds.p99",
+     "new": 1,
+     "old": 2
+    },
+    {
+     "key": "aware-unseen/legion/work.holds.total",
+     "new": 136,
+     "old": 356
+    },
+    {
+     "key": "aware-unseen/legion/work.legion_total.total",
+     "new": 982561,
+     "old": 1174675
+    },
+    {
+     "key": "aware-unseen/legion/work.move_calls_by_state_2.max",
+     "new": 11,
+     "old": 31
+    },
+    {
+     "key": "aware-unseen/legion/work.move_calls_by_state_2.p99",
+     "new": 7,
+     "old": 25
+    },
+    {
+     "key": "aware-unseen/legion/work.move_calls_by_state_2.total",
+     "new": 1607,
+     "old": 7917
+    },
+    {
+     "key": "aware-unseen/legion/work.moves.total",
+     "new": 75026,
+     "old": 85086
+    },
+    {
+     "key": "aware-unseen/legion/work.pass_scan_cells.max",
+     "new": 478,
+     "old": 627
+    },
+    {
+     "key": "aware-unseen/legion/work.pass_scan_cells.p99",
+     "new": 371,
+     "old": 528
+    },
+    {
+     "key": "aware-unseen/legion/work.pass_scan_cells.total",
+     "new": 98829,
+     "old": 221025
+    },
+    {
+     "key": "aware-unseen/legion/work.pass_scans.max",
+     "new": 20,
+     "old": 28
+    },
+    {
+     "key": "aware-unseen/legion/work.pass_scans.p99",
+     "new": 16,
+     "old": 23
+    },
+    {
+     "key": "aware-unseen/legion/work.pass_scans.total",
+     "new": 4139,
+     "old": 9494
+    },
+    {
+     "key": "aware-unseen/legion/work.rechoice_bfs_cells.total",
+     "new": 1470,
+     "old": 6260
+    },
+    {
+     "key": "aware-unseen/legion/work.slot_search_cells.total",
+     "new": 4536,
+     "old": 9326
+    },
+    {
+     "key": "aware-unseen/legion/work.still_units_processed.max",
+     "new": 2,
+     "old": 48
+    },
+    {
+     "key": "aware-unseen/legion/work.still_units_processed.p99",
+     "new": 2,
+     "old": 39
+    },
+    {
+     "key": "densehead/legion/g.A.complete_n",
+     "new": 197,
+     "old": 60
+    },
+    {
+     "key": "densehead/legion/g.A.left_behind",
+     "new": 3,
+     "old": 140
+    },
+    {
+     "key": "densehead/legion/g.A.t90",
+     "new": 3424,
+     "old": -1
+    },
+    {
+     "key": "densehead/legion/g.B.complete_n",
+     "new": 198,
+     "old": 72
+    },
+    {
+     "key": "densehead/legion/g.B.left_behind",
+     "new": 2,
+     "old": 148
+    },
+    {
+     "key": "densehead/legion/g.B.t90",
+     "new": 3292,
+     "old": -1
+    },
+    {
+     "key": "densehead/legion/region.goalA.inside",
+     "new": 189,
+     "old": 79
+    },
+    {
+     "key": "densehead/legion/region.goalB.inside",
+     "new": 183,
+     "old": 79
+    },
+    {
+     "key": "densehead/legion/stopped_permille",
+     "new": 123,
+     "old": 416
+    },
+    {
+     "key": "densehead/legion/work.crowd_window_ring_cells.max",
+     "new": 1440,
+     "old": 2048
+    },
+    {
+     "key": "densehead/legion/work.crowd_window_ring_cells.p99",
+     "new": 768,
+     "old": 1920
+    },
+    {
+     "key": "densehead/legion/work.crowd_window_ring_cells.total",
+     "new": 158752,
+     "old": 546560
+    },
+    {
+     "key": "densehead/legion/work.detour_cells.p99",
+     "new": 1049,
+     "old": 1201
+    },
+    {
+     "key": "densehead/legion/work.detour_cells.total",
+     "new": 389851,
+     "old": 800766
+    },
+    {
+     "key": "densehead/legion/work.detours.p99",
+     "new": 2,
+     "old": 4
+    },
+    {
+     "key": "densehead/legion/work.detours.total",
+     "new": 782,
+     "old": 2572
+    },
+    {
+     "key": "densehead/legion/work.held_rechecks.max",
+     "new": 10,
+     "old": 132
+    },
+    {
+     "key": "densehead/legion/work.held_rechecks.p99",
+     "new": 8,
+     "old": 116
+    },
+    {
+     "key": "densehead/legion/work.held_rechecks.total",
+     "new": 6541,
+     "old": 217524
+    },
+    {
+     "key": "densehead/legion/work.holds.total",
+     "new": 6259,
+     "old": 8265
+    },
+    {
+     "key": "densehead/legion/work.move_calls_by_state_2.max",
+     "new": 129,
+     "old": 246
+    },
+    {
+     "key": "densehead/legion/work.move_calls_by_state_2.p99",
+     "new": 111,
+     "old": 238
+    },
+    {
+     "key": "densehead/legion/work.move_calls_by_state_2.total",
+     "new": 133676,
+     "old": 531176
+    },
+    {
+     "key": "densehead/legion/work.moves.total",
+     "new": 1091239,
+     "old": 1307288
+    },
+    {
+     "key": "densehead/legion/work.pass_scan_cells.total",
+     "new": 724204,
+     "old": 1601913
+    },
+    {
+     "key": "densehead/legion/work.pass_scans.total",
+     "new": 30188,
+     "old": 68401
+    },
+    {
+     "key": "densehead/legion/work.rechoice_bfs_cells.max",
+     "new": 1403,
+     "old": 2496
+    },
+    {
+     "key": "densehead/legion/work.slot_search_cells.p99",
+     "new": 582,
+     "old": 817
+    }
+   ],
+   "reason": "W9 exit: ratchet on the five fixtures C1 moves (densehead, aware-attack, aware-headon, aware-seen, aware-unseen), improvements beyond the offset spread; clears the five Retail-floor exceptions the exit passes (aware-unseen click a00 / b00 t90, densehead gate.mid.crossings, gap10 gate.top.crossings per file under W9-U1, tail-corner380 near wall under W9-U1); the other ratchets are left unapplied (W4 ruling (q))",
+   "when": "2026-10-10T12:00:00Z"
   }
  ],
  "references": {
@@ -301939,6 +303053,8 @@
     "click.b00.done": 2150,
     "contact_settled_permille": 0,
     "gate.mid.crossings": 0,
+    "pair.contacts.permille_x100": 292,
+    "stopped_permille": 47,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
     "work.completion_dist_0.max": 0,
@@ -301951,9 +303067,16 @@
     "work.crowd_window_ring_cells.max": 704,
     "work.crowd_window_ring_cells.p99": 0,
     "work.crowd_window_ring_cells.total": 6112,
-    "work.detour_cells.p99": 419,
+    "work.detour_cells.p99": 0,
     "work.detour_cells.total": 17938,
+    "work.holds.p99": 1,
+    "work.holds.total": 142,
     "work.legion_total.p99": 1726,
+    "work.move_calls_by_state_2.max": 16,
+    "work.move_calls_by_state_2.p99": 13,
+    "work.move_calls_by_state_2.total": 3646,
+    "work.pass_scan_cells.total": 130584,
+    "work.pass_scans.total": 5530,
     "work.rechoice_bfs_cells.max": 1038,
     "work.rechoice_bfs_cells.p99": 0,
     "work.rechoice_bfs_cells.total": 4294,
@@ -302012,32 +303135,50 @@
   },
   "aware-headon": {
    "legion": {
-    "click.a00.done": 2297,
+    "click.a00.done": 1892,
+    "click.b00.done": 1748,
+    "click.b00.t90": 1716,
     "contact_settled_permille": 0,
     "gate.mid.crossings": 0,
+    "pair.contacts.permille_x100": 26,
+    "stopped_permille": 14,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
     "work.completion_dist_0.max": 0,
     "work.completion_dist_0.total": 0,
     "work.completion_dist_1.total": 5,
     "work.completion_dist_2.total": 13,
-    "work.completion_dist_4.total": 1,
+    "work.completion_dist_4.max": 0,
+    "work.completion_dist_4.total": 0,
+    "work.completion_dist_sum.total": 171,
     "work.contact_arrivals.p99": 0,
-    "work.contact_arrivals.total": 13,
+    "work.contact_arrivals.total": 5,
     "work.crowd_settle_visits.max": 48,
     "work.crowd_settle_visits.total": 48,
-    "work.crowd_window_ring_cells.max": 416,
-    "work.crowd_window_ring_cells.total": 4192,
+    "work.crowd_window_ring_cells.max": 96,
+    "work.crowd_window_ring_cells.p99": 0,
+    "work.crowd_window_ring_cells.total": 1344,
     "work.detour_cells.p99": 0,
-    "work.detour_cells.total": 11476,
-    "work.holds.total": 194,
+    "work.detour_cells.total": 2331,
+    "work.detours.total": 2,
+    "work.group_loop_iters.total": 268,
+    "work.holds.total": 96,
     "work.legion_total.p99": 1997,
-    "work.rechoice_bfs_cells.max": 651,
+    "work.move_calls_by_state_2.max": 8,
+    "work.move_calls_by_state_2.p99": 4,
+    "work.move_calls_by_state_2.total": 987,
+    "work.pass_scan_cells.max": 264,
+    "work.pass_scan_cells.p99": 240,
+    "work.pass_scan_cells.total": 59007,
+    "work.pass_scans.max": 11,
+    "work.pass_scans.p99": 10,
+    "work.pass_scans.total": 2461,
+    "work.rechoice_bfs_cells.max": 521,
     "work.rechoice_bfs_cells.p99": 0,
-    "work.rechoice_bfs_cells.total": 3610,
+    "work.rechoice_bfs_cells.total": 1503,
     "work.slot_search_cells.max": 1258,
     "work.slot_search_cells.p99": 0,
-    "work.slot_search_cells.total": 8896,
+    "work.slot_search_cells.total": 6789,
     "work.still_units_processed.max": 2,
     "work.still_units_processed.p99": 2,
     "work.trace_cells.max": 4476
@@ -302047,6 +303188,8 @@
    "legion": {
     "contact_settled_permille": 0,
     "gate.mid.crossings": 0,
+    "pair.contacts.permille_x100": 16,
+    "stopped_permille": 15,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
     "work.completion_dist_0.max": 0,
@@ -302056,51 +303199,91 @@
     "work.completion_dist_4.max": 0,
     "work.completion_dist_4.total": 0,
     "work.contact_arrivals.p99": 0,
-    "work.contact_arrivals.total": 10,
+    "work.contact_arrivals.total": 6,
     "work.crowd_settle_visits.max": 48,
     "work.crowd_settle_visits.total": 48,
-    "work.crowd_window_ring_cells.max": 640,
+    "work.crowd_window_ring_cells.max": 160,
+    "work.crowd_window_ring_cells.total": 1888,
+    "work.detour_cells.max": 528,
     "work.detour_cells.p99": 0,
     "work.detour_cells.total": 10292,
-    "work.holds.total": 166,
+    "work.detours.max": 1,
+    "work.detours.total": 3,
+    "work.holds.total": 107,
     "work.legion_total.p99": 2068,
+    "work.move_calls_by_state_2.max": 6,
+    "work.move_calls_by_state_2.p99": 4,
+    "work.move_calls_by_state_2.total": 1132,
+    "work.pass_scan_cells.max": 312,
+    "work.pass_scan_cells.p99": 264,
+    "work.pass_scan_cells.total": 61370,
+    "work.pass_scans.max": 13,
+    "work.pass_scans.p99": 11,
+    "work.pass_scans.total": 2558,
     "work.rechoice_bfs_cells.max": 726,
     "work.rechoice_bfs_cells.p99": 0,
-    "work.rechoice_bfs_cells.total": 3860,
+    "work.rechoice_bfs_cells.total": 1532,
     "work.slot_search_cells.max": 2220,
     "work.slot_search_cells.p99": 0,
-    "work.slot_search_cells.total": 9146,
+    "work.slot_search_cells.total": 6818,
     "work.still_units_processed.max": 2,
     "work.still_units_processed.p99": 2
    }
   },
   "aware-unseen": {
    "legion": {
+    "click.a00.t90": 1757,
     "click.b00.done": 2397,
+    "click.b00.t50": 1532,
     "contact_settled_permille": 0,
     "gate.mid.crossings": 0,
+    "pair.contacts.permille_x100": 102,
+    "stopped_permille": 22,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
+    "work.aware_pairs.total": 202,
     "work.completion_dist_0.max": 0,
     "work.completion_dist_0.total": 0,
     "work.completion_dist_1.total": 6,
     "work.completion_dist_2.total": 13,
-    "work.completion_dist_4.total": 3,
+    "work.completion_dist_4.total": 0,
     "work.contact_arrivals.p99": 0,
-    "work.contact_arrivals.total": 17,
+    "work.contact_arrivals.total": 5,
     "work.crowd_settle_visits.max": 48,
     "work.crowd_settle_visits.total": 48,
-    "work.crowd_window_ring_cells.max": 736,
-    "work.detour_cells.total": 30657,
+    "work.crowd_window_ring_cells.max": 192,
+    "work.crowd_window_ring_cells.p99": 0,
+    "work.crowd_window_ring_cells.total": 1600,
+    "work.detour_cells.max": 601,
+    "work.detour_cells.p99": 0,
+    "work.detour_cells.total": 3556,
+    "work.detours.max": 1,
+    "work.detours.p99": 0,
+    "work.detours.total": 6,
+    "work.held_rechecks.max": 1,
+    "work.holds.max": 3,
+    "work.holds.p99": 1,
+    "work.holds.total": 136,
     "work.legion_total.p99": 1594,
-    "work.legion_total.total": 1174675,
+    "work.legion_total.total": 982561,
+    "work.move_calls_by_state_2.max": 11,
+    "work.move_calls_by_state_2.p99": 7,
+    "work.move_calls_by_state_2.total": 1607,
+    "work.moves.total": 75026,
+    "work.pass_scan_cells.max": 478,
+    "work.pass_scan_cells.p99": 371,
+    "work.pass_scan_cells.total": 98829,
+    "work.pass_scans.max": 20,
+    "work.pass_scans.p99": 16,
+    "work.pass_scans.total": 4139,
     "work.rechoice_bfs_cells.max": 1237,
     "work.rechoice_bfs_cells.p99": 0,
-    "work.rechoice_bfs_cells.total": 6260,
+    "work.rechoice_bfs_cells.total": 1470,
     "work.slot_search_cells.max": 1635,
     "work.slot_search_cells.p99": 0,
-    "work.slot_search_cells.total": 9326,
-    "work.still_units_processed.p99": 39
+    "work.slot_search_cells.total": 4536,
+    "work.still_units_processed.max": 2,
+    "work.still_units_processed.p99": 2
    }
   },
   "battle-assault": {
@@ -304223,10 +305406,16 @@
   "densehead": {
    "legion": {
     "contact_settled_permille": 0,
-    "g.B.complete_n": 72,
-    "region.goalA.inside": 79,
-    "region.goalB.inside": 79,
+    "g.A.complete_n": 197,
+    "g.A.left_behind": 3,
+    "g.A.t90": 3424,
+    "g.B.complete_n": 198,
+    "g.B.left_behind": 2,
+    "g.B.t90": 3292,
+    "region.goalA.inside": 189,
+    "region.goalB.inside": 183,
     "reversals": 73,
+    "stopped_permille": 123,
     "wall_touch_near_permille": 0,
     "wall_touch_permille": 0,
     "work.anchor_walk_iters.max": 256,
@@ -304246,10 +305435,14 @@
     "work.crowd_settle_visits.max": 400,
     "work.crowd_settle_visits.p99": 0,
     "work.crowd_settle_visits.total": 400,
-    "work.crowd_window_ring_cells.max": 2048,
-    "work.crowd_window_ring_cells.p99": 1920,
-    "work.crowd_window_ring_cells.total": 546560,
+    "work.crowd_window_ring_cells.max": 1440,
+    "work.crowd_window_ring_cells.p99": 768,
+    "work.crowd_window_ring_cells.total": 158752,
     "work.detour_cells.max": 1906,
+    "work.detour_cells.p99": 1049,
+    "work.detour_cells.total": 389851,
+    "work.detours.p99": 2,
+    "work.detours.total": 782,
     "work.field_work.p99": 0,
     "work.field_work.total": 1196592,
     "work.field_work_refresh_moving.total": 797728,
@@ -304263,9 +305456,11 @@
     "work.group_loop_iters.total": 1488,
     "work.groups.max": 1,
     "work.groups.total": 2,
-    "work.held_rechecks.p99": 116,
-    "work.held_rechecks.total": 217524,
+    "work.held_rechecks.max": 10,
+    "work.held_rechecks.p99": 8,
+    "work.held_rechecks.total": 6541,
     "work.holds.p99": 7,
+    "work.holds.total": 6259,
     "work.join_iterations.max": 256,
     "work.join_iterations.total": 1198,
     "work.legion_total.p99": 15612,
@@ -304273,10 +305468,15 @@
     "work.line_sweeps.max": 1060,
     "work.line_sweeps.p99": 907,
     "work.line_sweeps.total": 423485,
-    "work.move_calls_by_state_2.total": 531176,
+    "work.move_calls_by_state_2.max": 129,
+    "work.move_calls_by_state_2.p99": 111,
+    "work.move_calls_by_state_2.total": 133676,
+    "work.moves.total": 1091239,
     "work.outside_area_completions.max": 1,
     "work.outside_area_completions.total": 2,
-    "work.rechoice_bfs_cells.max": 2496,
+    "work.pass_scan_cells.total": 724204,
+    "work.pass_scans.total": 30188,
+    "work.rechoice_bfs_cells.max": 1403,
     "work.rechoice_bfs_cells.p99": 540,
     "work.rechoice_bfs_cells.total": 46480,
     "work.refresh_completed.max": 1,
@@ -304291,7 +305491,7 @@
     "work.slides.max": 14,
     "work.slides.p99": 9,
     "work.slides.total": 8180,
-    "work.slot_search_cells.p99": 817,
+    "work.slot_search_cells.p99": 582,
     "work.slot_search_cells.total": 741253,
     "work.still_units_processed.max": 11,
     "work.still_units_processed.p99": 6
