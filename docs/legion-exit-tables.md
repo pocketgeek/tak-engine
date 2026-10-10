@@ -12,6 +12,48 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W9 lane A (2026-10-10, task w9-a): tails -- every step stopped by its rule (no sim change)
+
+Base: `task-w9-s0` (`e4bf114d`, the W8 head with the W9 step-0 instruments, protocol 247). A1 was measured first and
+failed, so A2-A5 were each measured on that same head (steps are independent consumers; A3 was first measured on the A1
+head, then again on S0). Numbers: optimized Debug, Legion, the eleven gate offsets in the order 0, +1, -1, +2, -2, +3,
+-3, +4, -4, +5, -5; affected-file sweeps locally, A1's full sweeps (all 131 files, both modes, serial == workers) and
+every crowdbench screen (Legion, 43 cases x seeds 0/7/42, the S0 head retaken as the base) on oden-win. Each attempt's
+code is on its own branch with its numbers in the commit messages: `task-w9-a-A1` (round 1, then round 2 on top), `task-w9-a-A2`,
+`task-w9-a-A3` (rounds 1, 2), `task-w9-a-A4` (rounds 1, 2). Retail: 0 of 131 Retail rows change under A1 (the only
+step swept in full); the other steps touch Legion code only.
+
+| Step | Round | Mechanism | Its gate | Other results | Verdict |
+|---|---|---|---|---|---|
+| A1 | 1 | `rechoose`: inside areaBound + slack, search the Chebyshev 2*foot+1 box round `m.goal` | liftflyers own detour 5 -> **2** (open 2; fault injection with the whole window trips it): gate 13 met; doorplug-124 `g.A.done` 11/11 (gate 9 met as a side effect) | 87 of 131 Legion rows move; `legion_check --cumulative` 634 FAIL lines (183 hash, 137 non-work); new nevers corner-4x50 `g.D.t90`, corner-8x30 `g.E` / `g.G` / `g.H` done, strait-2x48 `g.B.t90` (-1), corner-8x56 `g.D.t90`, gen1-route-65845 `g_zonter.t90`; Retail floor starts failing on corner-4x50 `g.D.arrived` 43 vs 49 and `g.D.t90` never vs 8251, gen1-route-61923 `contact_other` 466 vs 421; crowdbench 15 rows move, mixedfootprints 200x1 seed 0 never completes (198 of 200, see below) | revert triggers (nevers, Retail floor) |
+| A1 | 2 | INSIDE alone: pressed inside areaBound settles, no re-choice | liftflyers own detour **5** (missed) | crowdbench mixedfootprints 200x1 / sharedgoal seed 0 arrivals equal to the base | acceptance missed |
+| A1 | 1+2 | both | liftflyers 2 (met); doorplug-124 `g.A.done` 11/11 | 102 of 131 Legion rows move; 915 FAIL lines (196 non-work); Retail floor starts failing on deadend-w2-n120-closed-plain wall touch 31 vs 26 / near 515 vs 410, deadend-w4-n120-closed-squad near 505 vs 421, deadend-w4-n120-room-plain `g.A.arrived` 22 vs 35, gen1-route-61923 `contact_other`; the same nevers; crowdbench mixedfootprints 200x1 seed 0 still never | revert triggers; both rounds spent |
+| A2 | 1 | `Member::yieldRefused` (hard refusals: spent budget, no free cell); a sealed distinct-goal member settles after two refusal windows and two still windows | crowdheld still FAILS: `units_ever_terrain_stuck` 1 -> 0, `physical_in_goal` 62 -> **62** of 64 | unit 13 seals at t=6886 five cells from its own goal (outside the 32 px radius by decision 3); unit 29 is still for three windows when the run ends; group_legion 64, the other acceptance checks pass | acceptance missed; no round 2 in the plan |
+| A3 | 1 | creep counts as pressed inside areaBound + slack | motion-cross `g.u11.done` **11/11**, `click.u01.done` 9/11 (never at +2, +4; core five 2837) | doorplug-124 `g.A.done` never at +3, +5, -5 (base +1, -4); crowdbench seed 0 sharedgoal 500x4 1674 -> 1443, 200x1 198 -> 188, mixedfootprints 200x1 never (197) | band failures, a new never |
+| A3 | 2 | FREE probe (R = 12) instead: re-target to a free cell nearer the point | `g.u11.done` never at +5 (missed); click 8/11 | sharedgoal / mixedfootprints at the base's values; doorplug-124 `g.A.done` never at +3 | acceptance missed (1+2 together: u11 11/11, sharedgoal 500x4 1433, mixedfootprints never) |
+| A4 | 1 | deepest free cell of the Point's area in the lateral sector on a crossed gate release (`deepRechoose`) | doorplug-124 `g.A.done` unchanged (never at +1, -4) | as S0 finding 2 said: group A never commits a gate; strait-3x48 `g.B.done` never at 10 of 11 (base 7) | acceptance missed |
+| A4 | 2 | anchor advance instead: the settled row in front of a pressed queued body steps one cell deeper (a yield kind, kMaxYields) | `g.A.done` never at -4, +5 (missed) | gap8 `g.A.done` 11/11 (base 8/11), strait-3x48 `g.B.done` never at 5 (base 7), gap6 never at +1..+4 (base +1, +2, +4, +5) | acceptance missed (1+2 together: never at -4, +5) |
+| A5 | -- | `kCoverAhead` 40 / 60 / 80 | jagged 2000x1 seed 0: 660 / 660 / 660 (needs >= 690); seeds 7, 42: 670 / 675 / 675, 661 / 661 / 657; field work x1.005 / x1.011 | 500x4: 1312 / 1316 / 1316 | not kept; gate 15 report-only (W9-U3) |
+
+Gates 9 (doorplug-124), 12 (motion-cross u11), 13 (liftflyers), 14 (crowdheld) and 15 (jagged) stay open: lane A
+delivers none of them within the stop rule.
+
+Findings for the lead:
+
+1. **A1 meets gates 13 and 9, but a local re-choice changes the final packing almost everywhere** (87 of 131 Legion
+   files), and the census could not bound it (a1_inside fires in 103). The crowdbench never it exposes is a pre-existing
+   gap: in mixedfootprints 200x1 seed 0 units 29 and 44 (foot 2) stop at potential 152 / 146 against areaBound 81 +
+   slack 30, touching settled 4-foot anchors of the same point (45, 60) that are physically nearer the point, but
+   `settleWindow`'s `nearer()` reads the other body's origin with the member's own footprint (potential 166 / 174), so the
+   queue chain never starts and every yield is refused ("blocker has no free cell"). A `nearer()` that reads the other
+   body by its own footprint would be a W9-external fix.
+2. **crowdheld cannot pass by sealing.** Its rule is `physical_in_goal == moving`: a body settled where it stands
+   (decision 3) five cells short of its distinct goal is never in the goal's 32 px radius. Passing needs unit 13 to
+   reach its goal (a deeper yield) or a re-read of the acceptance under decision 3.
+3. **Creep as press settles creepers in every shared area** (sharedgoal -14%); the probe alone leaves u11 short at +5.
+4. **A4's anchor advance moves which offsets fail, not how many** on doorplug-124 (2 of 11 before and after), while it
+   completes gap8 at every offset.
+
 ## W9 step 0 (2026-10-10): instruments, census, traces and the base for tails, files and head-on meetings (no sim change, protocol 247)
 
 Base head 8fcc03d6 (W8 landed, protocol 247). Every number is measured on it with the step-0 instruments (optimized Debug, `legion_scenario`, both modes,
