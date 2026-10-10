@@ -140,7 +140,10 @@ def check(root):
         if doc_q != int(q.group(1).replace("'", '')):
             problems.append(f'doc quota {doc_q} != kFieldQuota {q.group(1)}')
 
-    if os.path.isdir(os.path.join(root, '.git')) or os.path.isfile(os.path.join(root, '.git')):
+    shallow = subprocess.run(['git', '-C', root, 'rev-parse', '--is-shallow-repository'],
+                             capture_output=True, text=True).stdout.strip() == 'true'
+    # A shallow clone (CI checks out one commit) cannot resolve older "as of" commits; skip the check there.
+    if not shallow and (os.path.isdir(os.path.join(root, '.git')) or os.path.isfile(os.path.join(root, '.git'))):
         for h in re.findall(r'(?i)\bas of ([0-9a-f]{7,40})\b', doc):
             # cat-file -t, not 'h^{commit}': MSYS git behind a mingw python drops the braces
             r = subprocess.run(['git', '-C', root, 'cat-file', '-t', h], capture_output=True, text=True)
