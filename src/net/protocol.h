@@ -19,7 +19,18 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 246;      // 246: Legion W7 -- crossing groups take the longer route (user decision 5): the later of two crossing
+constexpr uint32_t kNetVersion = 247;      // 247: Legion W8 -- the passage gate (MV-10): a short passage on a member's descent chain (a strip
+                                           //      narrower than the band and than the lane grid, two to 24 chain cells long, not
+                                           //      within the lane-near distance of the destination) forms a wall-to-wall gate at its
+                                           //      narrowest cell. A member within 12 chain cells of the gate commits to the lane point
+                                           //      with the fewest same-player bodies queued before the line, aims at it while it is in
+                                           //      a straight legal line and is released once it crosses the line (hashed gateCell /
+                                           //      gateLane / gateAxis / gateSign, folded only when set), so a gap of two or three
+                                           //      bodies is taken two or three abreast instead of in single file. Also: memoised
+                                           //      nearObstacle clearance (static part per plane epoch) and a vertex probe steering does
+                                           //      not read; the new Stats counters (pivot*, lane*, vertex_*, pass_filter_holds) are
+                                           //      never hashed
+                                           // 246: Legion W7 -- crossing groups take the longer route (user decision 5): the later of two crossing
                                            //      groups plans round a time-swept corridor covering the other stream's band from its
                                            //      tail to 450 ticks past its head (charge 12x, not a wall: with no detour at all it
                                            //      crosses as before), sticky until it has crossed or the tail has passed, re-placed on
