@@ -1386,6 +1386,11 @@ blocked, and its stale paused build is what it waits for). B1's
 `work.demand_resumes` keeps counting resumed suppressed refreshes only; C1's
 resumes of a paused build count `work.paused_resumes`.
 
+With W5 (protocol 245): an attack or guard group's first field is never paused. The ring of a reach
+group is planned from a done field (`ringClaim`); a paused field never finishes while its members are
+covered, so the ring came late or not at all (attackring-r200-64 `reach.ring.ever_end` 57 -> 37 on the
+first merged head). Reach groups build to done, as on the W5 head.
+
 ## Instruments
 
 What each tool sees, and what it cannot. A number is only as good as the
