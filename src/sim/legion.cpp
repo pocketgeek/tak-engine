@@ -8,6 +8,7 @@
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <set>
 #include <tuple>
@@ -373,6 +374,12 @@ struct LegionNavigator::Impl {
         // when set (C27). reachIds: its members, ascending (derived from
         // `members`, never hashed).
         int reachTarget=0,reachBucket=-1,reachCentre=-1;
+        // MV-05 (see softBlocks): the last soft re-plan (hashed when set),
+        // and this stripe cycle's Moving/Holding members: their origin sums
+        // and the origin with the highest potential (derived from the
+        // members' updates of the cycle, as movingTick is; never hashed).
+        uint32_t softReplanTick=kNoTick;
+        uint32_t scanCycle=~0u;int64_t scanSumX=0,scanSumZ=0;int scanCount=0,scanTail=-1;uint16_t scanTailPot=0;
         std::vector<int> reachIds;
         // Two or more members: arrival spots round the target at weapon reach.
         // cells: band 0 (centre distance R-1.5 .. R-0.5 bodies, in the
@@ -1165,6 +1172,104 @@ struct LegionNavigator::Impl {
         if(m.state!=Holding||m.slot<0||policy(m.kind).completes||!u.type)return false;
         return footprintOrigin(u.z,u.type->footZ)*width()+footprintOrigin(u.x,u.type->footX)==m.goal;
     }
+    // ---- MV-05: a block that forms on a planned way ---------------------
+    // Cells scanStill made soft over the last kStillScan ticks (one stripe
+    // cycle; never hashed: a function of the stamps, which are). Every
+    // kStillScan ticks they are binned into kSoftTile-cell tiles; tiles with
+    // at least kSoftTileDense added cells are dense, 8-connected dense tiles
+    // form a block, and a block whose box spans kSoftBlockCells or more
+    // re-plans (once per kSoftReplanCooldown ticks) every active group whose
+    // descent chain from its members' centroid or its tail (the member
+    // with the highest potential) meets the block on cells soft to it
+    // (PLAN 3.4, C21). Blocks leaving never re-plan.
+    static constexpr int kSoftTile=16,kSoftTileDense=64,kSoftBlockCells=20,kSoftChain=48;
+    static constexpr uint32_t kSoftReplanCooldown=300;
+    // A block stays on the list kSoftBlockKeep ticks after it formed: a
+    // group still far from it (its chain looks kSoftChain cells ahead) meets
+    // it in a later cycle. Derived from the stamps' history; never hashed.
+    static constexpr uint32_t kSoftBlockKeep=1800;
+    std::vector<int> softAdded;
+    std::vector<std::pair<uint32_t,std::array<int,4>>> softBlockList;
+    void softBlocks() {
+        const uint32_t now=w.tickCounter_;
+        softBlockList.erase(std::remove_if(softBlockList.begin(),softBlockList.end(),
+            [&](const auto& b) {return now-b.first>kSoftBlockKeep;}),softBlockList.end());
+        newBlocks();
+        if(softBlockList.empty())return;
+        replanForBlocks();
+    }
+    void newBlocks() {
+        if(softAdded.empty())return;
+        std::sort(softAdded.begin(),softAdded.end());
+        softAdded.erase(std::unique(softAdded.begin(),softAdded.end()),softAdded.end());
+        const int W=w.occW_;
+        if(W<=0) {softAdded.clear();return;}
+        const int TW=(W+kSoftTile-1)/kSoftTile;
+        std::map<int,std::array<int,5>> tiles;   // tile -> count, box
+        for(const int c:softAdded) {
+            const int x=c%W,z=c/W,t=(z/kSoftTile)*TW+x/kSoftTile;
+            auto [it,fresh]=tiles.try_emplace(t,std::array<int,5>{0,x,z,x,z});
+            auto& v=it->second;++v[0];
+            v[1]=std::min(v[1],x);v[2]=std::min(v[2],z);v[3]=std::max(v[3],x);v[4]=std::max(v[4],z);
+        }
+        softAdded.clear();
+        std::vector<int> dense;
+        for(const auto& [t,v]:tiles)if(v[0]>=kSoftTileDense)dense.push_back(t);
+        if(dense.empty())return;
+        // Union-find over the dense tiles, in tile order.
+        std::map<int,int> parent;
+        for(const int t:dense)parent[t]=t;
+        std::function<int(int)> root=[&](int t) {int& p=parent[t];return p==t?t:p=root(p);};
+        for(const int t:dense)for(const int d:{1,TW-1,TW,TW+1}) {
+            const int o=t+d;
+            if(!parent.count(o)||(d!=TW&&std::abs(o%TW-t%TW)>1))continue;
+            const int a=root(t),b=root(o);
+            if(a!=b)parent[std::max(a,b)]=std::min(a,b);
+        }
+        std::map<int,std::array<int,4>> blocks;
+        for(const int t:dense) {
+            const auto& v=tiles[t];
+            auto [it,fresh]=blocks.try_emplace(root(t),std::array<int,4>{v[1],v[2],v[3],v[4]});
+            auto& b=it->second;
+            b={std::min(b[0],v[1]),std::min(b[1],v[2]),std::max(b[2],v[3]),std::max(b[3],v[4])};
+        }
+        for(const auto& [r,b]:blocks)if(std::max(b[2]-b[0],b[3]-b[1])+1>=kSoftBlockCells)softBlockList.push_back({w.tickCounter_,b});
+    }
+    void replanForBlocks() {
+        const uint32_t now=w.tickCounter_;
+        for(auto& [id,g]:groups) {
+            ++stats.groupLoopIters;
+            if(!g.soft||!g.field||!g.field->done||g.next||g.seeds.empty()||g.scanCount==0||g.scanCycle!=now/kStillScan)continue;
+            if(g.softReplanTick!=kNoTick&&now-g.softReplanTick<kSoftReplanCooldown)continue;
+            const Field& f=*g.field;
+            const Plane& p=plane(g.plane);
+            const int fx=p.footX,fz=p.footZ,foot=std::max(fx,fz);
+            const uint64_t command=g.command;
+            const int counts=softCountsFor(fx,fz);
+            const uint32_t nearSeed=uint32_t(2*foot*kOrthogonal);
+            bool hit=false;
+            const int Wp=width();
+            const int centroid=int(g.scanSumZ/g.scanCount)*Wp+int(g.scanSumX/g.scanCount);
+            for(const int start:{centroid,g.scanTail}) {
+                if(start<0||hit)continue;
+                int cell=start;
+                for(int k=0;k<kSoftChain&&!hit;++k) {
+                    const uint16_t v=f.at(size_t(cell));
+                    if(v==kUnreached||v<nearSeed)break;
+                    const int x=cell%Wp,z=cell/Wp;
+                    for(const auto& [formed,b]:softBlockList)
+                        if(formed>=g.built&&x+fx>b[0]&&x<=b[2]&&z+fz>b[1]&&z<=b[3]&&softAt(x,z,fx,fz,command,counts)) {hit=true;break;}
+                    const int next=descend(p,f,x,z,g.seeds.front());
+                    if(next<0)break;
+                    cell=next;
+                }
+            }
+            if(!hit)continue;
+            g.softReplanTick=now;g.stale=true;g.demand=true;
+            listGroup(g);
+            ++stats.softReplans;
+        }
+    }
     void scanStill() {
         if(w.occW_<=0)return;
         const size_t n=size_t(w.occW_)*w.occH_;
@@ -1214,6 +1319,9 @@ struct LegionNavigator::Impl {
             if(b.stamped&&b.ox==ox&&b.oz==oz&&b.fx==fx&&b.fz==fz&&b.kind==kind&&b.owner==owner&&b.player==u.player)continue;
             unstamp(int(id));
             b.ox=ox;b.oz=oz;b.fx=fx;b.fz=fz;b.kind=kind;b.owner=owner;b.player=u.player;
+            // MV-05: cells a body standing still makes soft that were not
+            // (a liftable flyer and an engaged or ring-held member never).
+            if(kind!=3&&!m)forStampCells(b,[&](size_t c) {if(!soft[c])softAdded.push_back(int(c));});
             stamp(int(id));
         }
         stats.stillUnitsProcessed+=processed;
@@ -2834,6 +2942,8 @@ struct LegionNavigator::Impl {
             scanStill();
             liftFlyers();
         }
+        // The stripe cycle's last tick: the soft cells it added, as blocks.
+        if(w.tickCounter_%kStillScan==kStillScan-1)softBlocks();
         awareScan();
         prebuildStep();
         prune();
@@ -4646,6 +4756,13 @@ struct LegionNavigator::Impl {
         if(!legal(p,m.goal%W,m.goal/W)&&!regoal(u,m,g,p,ox,oz)) {registerMove(u);w.brakeGround(u);return;}
         const int here=oz*W+ox;
         const Field* f=g.field&&g.field->done?g.field.get():nullptr;
+        if(f&&(m.state==Moving||m.state==Holding)) {
+            // MV-05's probe of the group (see softBlocks).
+            const uint32_t cycle=w.tickCounter_/kStillScan;
+            if(g.scanCycle!=cycle) {g.scanCycle=cycle;g.scanSumX=g.scanSumZ=0;g.scanCount=0;g.scanTail=-1;g.scanTailPot=0;}
+            g.scanSumX+=ox;g.scanSumZ+=oz;++g.scanCount;
+            if(const uint16_t v=f->at(size_t(here));v!=kUnreached&&(g.scanTail<0||v>g.scanTailPot)) {g.scanTail=here;g.scanTailPot=v;}
+        }
         if(f)claimSlot(u,m,g,p,here);
         // A first field still building already steers a body its frontier
         // has passed (see Field::settled): no standing still for the rest
@@ -5941,6 +6058,7 @@ struct LegionNavigator::Impl {
             }
             h=mix(h,uint64_t(uint32_t(g.bodyMinX))<<32|uint32_t(g.bodyMinZ));h=mix(h,uint64_t(uint32_t(g.bodyMaxX))<<32|uint32_t(g.bodyMaxZ));h=mix(h,g.full);h=mix(h,g.waited);
             if(g.demand)h=mix(h,0x64656d616e64ull);
+            if(g.softReplanTick!=kNoTick) {h=mix(h,0x7265706c616eull);h=mix(h,g.softReplanTick);}
             if(g.reachTarget) {h=mix(h,0x7265616368ull);h=mix(h,uint64_t(uint32_t(g.reachTarget))<<32|uint32_t(g.reachBucket));h=mix(h,uint64_t(uint32_t(g.reachCentre)));}
             if(g.ring.tried) {
                 h=mix(h,0x72696e67ull);h=mix(h,uint64_t(g.ring.assigned)|uint64_t(uint32_t(g.ring.R))<<8);h=mix(h,uint64_t(g.ring.band0));
