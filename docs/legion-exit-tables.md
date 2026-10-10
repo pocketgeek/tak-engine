@@ -12,6 +12,48 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W4 C1 land (2026-10-09): paused solo first builds on W4 with B1 + B2 (protocol 243)
+
+Head: `task-c1-land` = origin/main `6333e38d` (W4 with B1 + B2, protocol 242) + C1's code (`588f80ea` from
+`task-w4-c1`, which was built on the B3-only exit `55a83ee2`), then protocol 243, the Legion navigation golden and
+the baselines redone on this base. Lead rulings applied: (r) the battle licences, (s) jagged accepted. What C1 is:
+`legion-pathfinding.md`, "Paused first builds"; its gates on the old base are in `task-w4-c1` (`3c986230`,
+margin round 40 / 80 / 160 / 320, kept 40).
+
+**Interaction with B1 / B2 (new on this base).** (1) B1 already counts its resumed suppressed refreshes in
+`demand_resumes` and checks it against `refresh_suppressed`; C1's resumes of a paused build now count in their own
+class, `paused_resumes`. (2) B1's blocked re-request counted a member stalled on a paused build as blocked (`!done`),
+so `legion_staticidle`'s parked guards refreshed again (refresh_idle 12728 vs 0): a paused build is now a finished
+field there, read through `known()` (`freeDescent` too). (3) B1's active rule also counts a group whose member waited
+on its paused build in the last 2 ticks (such a member neither moves nor counts as blocked); in the runs below it
+changes no hash (Ulasem seeds 1 / 2 identical with and without it). (4) B2's soft view: relaxations only ever add
+soft cost, so a resumed slice cannot lower a settled potential; the debug invariants (`TAK_LEGION_VERIFY`: no
+relaxation lowers a settled potential, member ids, `verifySoft`) hold in every Legion world test, the scenario
+ctests, an `--mpai` Legion run, crowdbench jagged / rapidreplacement / open / doors 500x4 and churn 200x1, and
+battle-field-2x60 with verify on.
+
+| Gate | Result |
+|---|---|
+| rapidreplacement 2000x1 `legion_field_work` <= base x0.85 | **0.669** (161549344 -> 108002304); waiting 0 -> 0; arrived 2000 / 2000 (identical to C1 on the old base) |
+| Ulasem 8-AI `fieldWorkFirstSolo` down >= 30% (seeds 1 and 2, reproducible) | **-45.6% / -47.6%** (54.48 -> 29.62, 57.14 -> 29.92 per unit-tick); seeds 3 / 4 -38.8% / -40.6% |
+| `waitingMemberTicks` <= base +5% | crowdbench screen (86 rows, seed 0): Legion total 613831 -> 614700 (+0.14%); singleunit +0.1% / -0.7%; **churn 2000x1 0 -> 240** (one member waits ticks 1918-2150 for a field in a run whose field quota is pegged all 6000 ticks in both builds, ~1100 groups queued); every other row equal. Ulasem per unit-tick: s1 0.0295 -> 0.0286 (-3%), **s2 0.0191 -> 0.0304 (+59%)**, s3 0.0258 -> 0.0277 (+7%), s4 0.0411 -> 0.0247 (-40%); mean of the four 0.0289 -> 0.0279 (-3.6%). The waits are members of groups with no field while the field cell budget is full and nothing is past tenure (instrumented, seed 2: both base and C1 at the 48-map cell cap from tick ~1200 with `novictim`), so they follow each game's own trajectory |
+| pausedemand | **PASS** (waits 2 ticks, paused_resumes 1) |
+| crowdbench matrix (13 scenarios + jagged, 200x1 / 500x4 / 2000x1, seed 0, Legion) | every outcome key within 2% except jagged (ruling (s)): 2000x1 arrived_settled 694 -> 660, orders_complete 779 -> 754, spin 53 -> 62 -- the same numbers as on the old base; maze 500x4 crossed 473 -> 474; field work 0.40-1.00x |
+| Scenario set (`legion_check check --cumulative --require-all`, 91 files, both modes, gate offsets; oden-win) | after the baseline commits **PASS**: 16987 keys, 0 failed, 259 ratchets (not applied, ruling (q)), 1292 licensed, 113 Retail-floor exceptions (unchanged). Before them: 24 unbaselined `fields_paused*` / `paused_resumes*` (battles only) and 28 battle-scenario keys (below) |
+| 10-stripe-phase sweep (battles, TAK_X_STILL_PHASE experiment on both heads, Windows) | C1's systematic moves: `sched_group_visits` (battle-assault total median 6923 -> 102183) and `group_loop_iters` (x1.07-1.42) -- ruling (r)'s class. Every other failing key's C1 median lies inside the base's phase range (e.g. battle-assault `parked_no_progress` 263.5 [170..309] -> 245 [201..396]; 2x500 `pass_scan_cells` 780494 -> 776802). Combat keys at all 10 phases at or below W0; total Legion work per run 0.55-0.60x the base's median, field work 0.26-0.45x, per-tick p99 0.59-0.98x, max 0.92-1.00x |
+| `legion_cost` scaling / battle (`--cumulative` and the ctest form) | ok / ok, after the contact windows' `group_loop_iters` of 2x60 (15870 -> 23254) and 2x250 (157510 -> 178521) were re-taken under ruling (r) (run max / p99: 2x60 393639 / 74137; 2x250 396709 / 104880; 2x500 405292 / 141812; battle-assault 434165 / 393379) |
+| Exact | Retail navigation golden unchanged, Legion golden regenerated (16 of 24 move, serial == workers). `--mpai` Inner Circle 300 s seed 1: Legion **b2261dc31dc84cdf** (unchanged from protocol 242: as on the old base, C1 moves no Inner Circle hash) on Linux (twice, plus once with `TAK_LEGION_VERIFY`), Windows and the Mac; Retail b240750e5765c02b everywhere |
+| Suites | Linux build-o2 full ctest 307 / 308; Release `ctest -L quick` 203 / 204; Windows (legion_, navigation, replay, fp/fixed/detmath, crowdbench) 194 / 195; Mac fp_contract / fixed / detmath / navigation_determinism 4 / 4. The one failure everywhere is `legion_acceptance_crowdheld_legion` (units_ever_terrain_stuck 1), which fails identically on main `6333e38d` (recorded for W5) |
+
+**Baseline changes.** Work classes: `fields_paused` / `paused_resumes` max / p99 / total for the four battle files
+(Legion), the only scenarios where they are non-zero. Licences (28, battles only): 17 of ruling (r)'s class
+(`sched_group_visits`, `group_loop_iters`), re-taken at this head; 10 licences and one bound under the B2 stripe
+phase (rulings (k)/(p): this head's phase-0 draw exceeds what main's phase-0 values license, but C1's 10-phase median
+is inside the base's own range): `formation_ring_cells`, `still_units_processed`, `completion_dist_3/4/6` and
+`completion_dist_sum.max`, `pass_scan_cells`, `mission_legs_4.max`, 2x60 `field_work_first_slot`, and battle-assault
+`parked_no_progress` (a bound, which licences do not cover: 346 -> 396; **lead to confirm**). The crowdbench screen
+baseline is retaken on this head.
+
 ## W4 exit with B1 + B2 (2026-10-09): gates re-run on the combined head -- B2 fails the scenario set
 
 Head: `task-w4-exit` = the B3-only exit (`55a83ee2`) + `task-w4-b1` (merge `cfeef687`) + `task-w4-b2` (merge
