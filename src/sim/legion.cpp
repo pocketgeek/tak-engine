@@ -5607,6 +5607,16 @@ int LegionNavigator::unitGroup(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?0:found->second.group;
 }
+void LegionNavigator::noteFlyerEvent(FlyerEvent e) {
+    auto& s=impl_->stats;
+    switch(e) {
+    case FlyerEvent::StationOverflow:++s.stationOverflow;break;
+    case FlyerEvent::ReleaseA:++s.stationReleasesA;break;
+    case FlyerEvent::ReleaseB:++s.stationReleasesB;break;
+    case FlyerEvent::CapHit:++s.capHits;break;
+    case FlyerEvent::GoAround:++s.goArounds;break;
+    }
+}
 bool LegionNavigator::advancing(int id,uint32_t limit) const {
     const auto found=impl_->members.find(id);
     if(found==impl_->members.end())return false;

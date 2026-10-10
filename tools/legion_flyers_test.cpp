@@ -582,7 +582,8 @@ CtrlRun ctrlRun(int kind,bool serial=true) {
             std::printf("  t=%d",t);
             for(size_t k=0;k<sets.size();++k) {
                 int busy=0;double ax=0,az=0;for(int id:sets[k].ground){const auto& u=*f.world.unit(id);busy+=!u.orders.empty();ax+=u.x.toFloat();az+=u.z.toFloat();}
-                std::printf(" | set%zu busy=%d ground %.0f,%.0f",k,busy,ax/sets[k].ground.size(),az/sets[k].ground.size());
+                float fa=0;int fh=0;for(int id:sets[k].flyers){fa=std::max(fa,dist(*f.world.unit(id),float(ax/sets[k].ground.size()),float(az/sets[k].ground.size())));fh=std::max(fh,run[id]);}
+                std::printf(" | set%zu busy=%d ground %.0f,%.0f fly_away=%.0f hover=%d",k,busy,ax/sets[k].ground.size(),az/sets[k].ground.size(),fa,fh);
             }
             std::printf("\n");
         }
@@ -1104,6 +1105,10 @@ Out splitPatrolRun(bool sameRoute,bool serial=true) {
     for(int id:all)f.command(tak::net::Cmd::SetSquad,id,-1,0,0);
     f.tick(300);
     for(int id:ground)f.command(tak::net::Cmd::Patrol,id,0,60*16,40*16);
+    // The air click lands a tick after the ground's, as a player's second click does. (Two clicks of one class
+    // applied in the same tick open two convoys with the same convoyTick, which the stations' (class,
+    // convoyTick) key cannot tell apart: a disclosed limit of PLAN C4's key.)
+    if(!sameRoute)f.tick(1);
     for(int id:flyers)f.command(tak::net::Cmd::Patrol,id,0,sameRoute?60*16:200*16,sameRoute?40*16:80*16);
     int stationTicks=0,holdTicks=0;float awayMax=0,speedMax=0;
     for(int t=0;t<1500;++t) {

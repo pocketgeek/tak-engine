@@ -216,6 +216,9 @@ public:
     // and kStationStall (formation stations). Reads hashed member state only.
     static constexpr uint32_t kLiftStall=120,kStationStall=450;
     bool advancing(int id,uint32_t limit) const;
+    // W6 behaviour counters World's flyer rules raise (Stats, observation only).
+    enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround};
+    void noteFlyerEvent(FlyerEvent);
     // Test hook: the unit's group field potential at an origin (-1 if none).
     int fieldPotential(int id,int originX,int originZ) const;
     // Test hook: the slot shape of the unit's formation (valid=false if it
