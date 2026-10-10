@@ -256,7 +256,7 @@ Two cases do not meet the 3 pp bar, and why:
 
 Absolute ms are not comparable between modes (a situation tick ran from 18% cheaper to 4% dearer than the recording's, base
 build), and the host differs between days, so compare only within one pair.
-Round wall: 9-11 minutes for two swapped rounds of all four situations (sum of run times 8-10 min, plus the wait for the
+Round wall: 7-11 minutes for two swapped rounds of all four situations (430 s with the committed defaults, 363 s of it run time, plus the wait for the
 timing cores), against ~70 minutes.
 
 ## Developer launch modes
