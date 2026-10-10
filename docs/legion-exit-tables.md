@@ -189,7 +189,8 @@ No Retail key and no outcome key moved.
 Head: `task-w5-s0` = `6333e38d` (W4 land, protocol 242) + four instrument-only commits. Every Legion and Retail state hash is
 unchanged: the Windows scenario sweep (all 129 files, both modes, the 11 gate offsets, serial == workers) passes
 `legion_check check` on the 91 baselined scenarios with 0 failures (all 455 `hash@` entries equal, so the counters change
-no state, here and across platforms), and the crowdbench screen reproduces the W4-land baseline row for row (below).
+no state, here and across platforms), and the crowdbench screen (Windows, 86 rows, both modes) reproduces the W4-land baseline with 0
+differences; the five new `legion_*` counters read 0 on every row and join `crowdbench_screen_baseline.jsonl`.
 
 **Added (observation only, never hashed).**
 - `Stats`: `engagedNow` (cumulative like every counter: member-ticks `tickCombat` braked an in-reach ground attacker or a guard
