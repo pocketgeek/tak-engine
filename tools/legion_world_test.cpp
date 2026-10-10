@@ -487,7 +487,11 @@ void staticidle() {
     const int friendly=f.spawn(type,100,50);
     f.start();
     for(int id:ids)f.world.guard(id,friendly,false);
-    for(int t=0;t<900;++t)f.world.tick(1.f/30);
+    // 2400 ticks, not 900 (W5 exit): the guards walk ~90 cells (~700 ticks), then twelve of them settle round
+    // the ward; a reach kind never takes the settle rule (its owner ends the approach), so the last few keep
+    // routing round the engaged ones until the crowd has packed (quiet by tick ~2000 here, measured; at the
+    // W4 head it was quiet by 900 because the settle rule parked them).
+    for(int t=0;t<2400;++t)f.world.tick(1.f/30);
     int held=0;
     // Holding, or Engaged (6: braked within 70 px of the ward by its guard order, AR-06)
     for(int id:ids) {const int s=f.world.legionNavigator()->unitState(id);held+=!f.world.unit(id)->orders.empty()&&(s==2||s==6);}
