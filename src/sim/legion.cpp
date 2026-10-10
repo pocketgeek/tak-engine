@@ -724,6 +724,9 @@ struct LegionNavigator::Impl {
     // LPROBE only: wall time (ms, summed over the ticks) of syncStatic,
     // stampGrounded and liftFlyers. Measured only while the probe is on.
     double probeSyncMs=0,probeStampMs=0,probeLiftMs=0;
+    // LPROBE only: the longest single syncStatic (ms) since the last LPROBE
+    // line (the static-refresh spike, PF-05); reset by each line.
+    mutable double probeSyncMaxMs=0;
     static uint64_t seedsKey(const std::vector<int>& seeds) {
         uint64_t h=mix(0x7365656473ull,seeds.size());
         for(int c:seeds)h=mix(h,uint32_t(c));
@@ -1835,6 +1838,20 @@ struct LegionNavigator::Impl {
         p.liveComps=next;
     }
     // ---- incremental static change ------------------------------------
+    // A plane refresh's scratch: splitSearch's marks (a cache, never state)
+    // and the whole-plane relabels it did (added to stats.planeRelabels by
+    // the caller). A refresh touches only its own plane and this, so planes
+    // refresh concurrently with one scratch per thread (see syncStatic).
+    struct RefreshScratch {
+        std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
+        uint64_t relabels=0;
+    };
+    // Indexed by SimPool slot (0 = the calling thread, used by serial callers).
+    std::vector<RefreshScratch> refreshScratch;
+    RefreshScratch& serialScratch() {
+        if(refreshScratch.empty())refreshScratch.resize(1);
+        return refreshScratch[0];
+    }
     // A static change (feature placed/removed, corpse, structure built or
     // gone, yard opened/closed) touches a few cells. Recompute the cell layer
     // there, the origins whose footprint covers it, and repair the component
@@ -1851,7 +1868,8 @@ struct LegionNavigator::Impl {
     // few dozen changed cells. Clusters are rectangles whose boxes, grown by
     // the relabel margin plus the footprint, overlap; cluster order is the
     // order of each cluster's first rectangle.
-    uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,std::array<int,4>* box=nullptr) {
+    uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
+                          std::array<int,4>* box=nullptr) {
         const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
         std::vector<int> cluster(rects.size());
         for(size_t i=0;i<rects.size();++i)cluster[i]=int(i);
@@ -1871,13 +1889,14 @@ struct LegionNavigator::Impl {
             part.clear();
             for(size_t j=i;j<rects.size();++j)if(root(int(j))==int(i))part.push_back(rects[j]);
             std::array<int,4> b{0,0,-1,-1};
-            work+=refreshCluster(p,part,changedAny,&b);
+            work+=refreshCluster(p,part,changedAny,scratch,&b);
             if(box&&b[2]>=0)*box=(*box)[2]<0?b:std::array<int,4>{std::min((*box)[0],b[0]),std::min((*box)[1],b[1]),
                 std::max((*box)[2],b[2]),std::max((*box)[3],b[3])};
         }
         return work;
     }
-    uint64_t refreshCluster(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,std::array<int,4>* box) {
+    uint64_t refreshCluster(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
+                            std::array<int,4>* box) {
         const int W=width(),H=height();
         uint64_t work=0;
         for(const auto& r:rects)work+=computeCells(p,r[0],r[1],r[0]+r[2]-1,r[1]+r[3]-1);
@@ -1899,20 +1918,19 @@ struct LegionNavigator::Impl {
         if(added.empty()&&removed.empty())return work;
         changedAny=true;
         if(box)*box={bx0,bz0,bx1,bz1};
-        return work+relabel(p,added,removed,bx0,bz0,bx1,bz1);
+        return work+relabel(p,added,removed,bx0,bz0,bx1,bz1,scratch);
     }
     static constexpr int kRelabelMargin=8;   // relabel's local window margin (cells)
     void emptyBox(std::array<int,4>& b) const {b={width(),height(),-1,-1};}
-    // Scratch marks for splitSearch (a cache, never state).
-    std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
     // Interleaved searches of the current plane from `reps` (one cell each),
     // one cell per search per round. Searches that meet are one component.
     // A class of searches that runs dry has visited a whole component cut
     // off from the rest: it takes a fresh label (sizes, boxes and `touched`
     // kept exact). Stops once at most one class is still open; that one
     // keeps its labels. ~0 if the work passes a whole map (caller relabels).
-    uint64_t splitSearch(Plane& p,const std::vector<int>& reps,std::set<int>& touched) {
+    uint64_t splitSearch(Plane& p,const std::vector<int>& reps,std::set<int>& touched,RefreshScratch& scratch) {
         const int W=width();const size_t n=p.legal.size();
+        auto& seenGen=scratch.seenGen;auto& seenBy=scratch.seenBy;auto& markGen=scratch.markGen;
         if(seenGen.size()!=n) {seenGen.assign(n,0);seenBy.assign(n,0);markGen=0;}
         if(++markGen==0) {std::fill(seenGen.begin(),seenGen.end(),0);markGen=1;}
         const int k=int(reps.size());
@@ -1976,7 +1994,8 @@ struct LegionNavigator::Impl {
         while(!col(b[2]))--b[2];
         return work;
     }
-    uint64_t relabel(Plane& p,const std::vector<int>& added,const std::vector<int>& removed,int bx0,int bz0,int bx1,int bz1) {
+    uint64_t relabel(Plane& p,const std::vector<int>& added,const std::vector<int>& removed,int bx0,int bz0,int bx1,int bz1,
+                     RefreshScratch& scratch) {
         const int W=width(),H=height();
         uint64_t work=0;
         std::set<int> touched;   // labels that lost cells (box may shrink)
@@ -2041,8 +2060,8 @@ struct LegionNavigator::Impl {
         bool split=false;
         for(const auto& [l,cells]:reps) {
             if(cells.size()<2)continue;
-            const uint64_t spent=splitSearch(p,cells,touched);
-            if(spent==~0ull) {labelPlane(p);++stats.planeRelabels;return work+uint64_t(W)*H*2;}
+            const uint64_t spent=splitSearch(p,cells,touched,scratch);
+            if(spent==~0ull) {labelPlane(p);++scratch.relabels;return work+uint64_t(W)*H*2;}
             work+=spent;split=true;
         }
         if(split) {
@@ -2109,7 +2128,7 @@ struct LegionNavigator::Impl {
         }
         // Dead labels are never reused; renumber once they dominate.
         if(p.compSize.size()>4*size_t(std::max(p.liveComps,1))+1024) {
-            labelPlane(p);++stats.planeRelabels;work+=uint64_t(W)*H*2;
+            labelPlane(p);++scratch.relabels;work+=uint64_t(W)*H*2;
         }
         (void)H;
         return work;
@@ -2942,7 +2961,8 @@ struct LegionNavigator::Impl {
         if(lastWorldEpoch==~0ull) {lastWorldEpoch=0;changed=true;}   // the first epoch, as before
         structureList=&structures;
         if(all||!rects.empty()) {
-            std::vector<Plane*> refreshed;
+            auto& refreshed=refreshList;
+            refreshed.clear();
             touch.assign(planes.size(),{0,0,-1,-1});
             for(auto& p:planes) {
                 // A background build keeps going on what it has read and
@@ -2956,12 +2976,23 @@ struct LegionNavigator::Impl {
                 // Unbuilt planes build fresh; stale ones rebuild on use.
                 if(p.legacy||p.epoch==~0ull||p.epoch!=epoch)continue;
                 if(all) {changed=true;touch[size_t(&p-planes.data())]={0,0,width()-1,height()-1};continue;}
-                bool any=false;
-                const uint64_t work=refreshPlane(p,rects,any,&touch[size_t(&p-planes.data())]);
-                planeDebt=std::min(planeDebt+work,kFieldQuota/2);
-                if(any) {changed=true;++stats.planeRefreshes;}
                 refreshed.push_back(&p);
             }
+            // Each refresh reads the world and structureList and writes only
+            // its own plane, touch slot, result and scratch; the results are
+            // merged in plane order (planeDebt's capped sum of nonnegative
+            // work is order-independent anyway).
+            refreshResults.assign(refreshed.size(),{});
+            for(size_t k=0;k<refreshed.size();++k) {
+                Plane& p=*refreshed[k];
+                auto& r=refreshResults[k];
+                r.work=refreshPlane(p,rects,r.any,serialScratch(),&touch[size_t(&p-planes.data())]);
+            }
+            for(const auto& r:refreshResults) {
+                planeDebt=std::min(planeDebt+r.work,kFieldQuota/2);
+                if(r.any) {changed=true;++stats.planeRefreshes;}
+            }
+            for(auto& scratch:refreshScratch) {stats.planeRelabels+=scratch.relabels;scratch.relabels=0;}
             if(changed)for(auto* p:refreshed)p->epoch=epoch+1;
         }
         if(changed)staticChanged(touch.empty()?nullptr:&touch);
@@ -2970,6 +3001,11 @@ struct LegionNavigator::Impl {
     // Per plane, the bounding box of origins whose legality changed in this
     // sync ({0,0,-1,-1}: none).
     std::vector<std::array<int,4>> touch;
+    // syncStatic's scratch: the planes refreshed incrementally (plane order)
+    // and each one's work and whether its legality changed.
+    struct RefreshResult {uint64_t work=0;bool any=false;};
+    std::vector<Plane*> refreshList;
+    std::vector<RefreshResult> refreshResults;
     // Does a static change box (on the group's plane) reach the group's
     // fields? A field covers its seeds' component box; a change farther
     // than one cell from every cell of that box cannot alter any step
@@ -3103,7 +3139,11 @@ struct LegionNavigator::Impl {
                         const auto pending=std::move(p.pending);
                         clearStage(p);
                         bool changed=false;
-                        if(!pending.empty())refreshPlane(p,pending,changed);
+                        if(!pending.empty()) {
+                            auto& scratch=serialScratch();
+                            refreshPlane(p,pending,changed,scratch);
+                            stats.planeRelabels+=scratch.relabels;scratch.relabels=0;
+                        }
                         break;
                     }
                     if(!budget)break;
@@ -3314,6 +3354,7 @@ struct LegionNavigator::Impl {
             liftFlyers();
             const auto t4=Clock::now();
             probeSyncMs+=ms(t0,t1);probeStampMs+=ms(t1,t2);probeLiftMs+=ms(t3,t4);
+            probeSyncMaxMs=std::max(probeSyncMaxMs,ms(t0,t1));
         } else {
             syncStatic();
             stampGrounded();
@@ -3458,7 +3499,7 @@ struct LegionNavigator::Impl {
         std::fprintf(stderr,"LPROBE tick=%u units=%zu groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
             " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu paused_resumes=%llu"
-            " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f\n",
+            " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f sync_max_ms=%.3f\n",
             w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
@@ -3467,7 +3508,8 @@ struct LegionNavigator::Impl {
             (unsigned long long)s.demandResumes,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.fieldsPaused,(unsigned long long)s.pausedResumes,(unsigned long long)s.stillUnitsProcessed,
             (unsigned long long)s.stillPerResidueMax,(unsigned long long)s.quotaPegRunMax,(unsigned long long)s.anchorWalkIters,
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
-            probeSyncMs,probeStampMs,probeLiftMs);
+            probeSyncMs,probeStampMs,probeLiftMs,probeSyncMaxMs);
+        probeSyncMaxMs=0;
     }
 #ifndef NDEBUG
     // TAK_LEGION_VERIFY: every derived index and work list against a full
