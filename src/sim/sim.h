@@ -1,5 +1,6 @@
 #pragma once
 #include "sim/retailreclaimarea.h"
+#include "sim/heapoptional.h"
 
 #include "sim/fixed.h"
 #include "sim/convoy.h"
@@ -31,6 +32,7 @@
 #include "cob/retailstate.h"
 #include "sim/simprobe.h"
 
+#include <cstddef>
 #include <algorithm>
 #include <atomic>
 #include <thread>
@@ -566,7 +568,23 @@ struct ManaBuildArea {
     std::vector<uint32_t> visited;
 };
 
-struct Order {
+// Field placement is part of the design (WE D2), checked by the static_asserts
+// after the struct: a new field must say which cache line it belongs on.
+//  - Line 0 (bytes 0-63) holds everything the per-tick order predicates read:
+//    groundMissionOrder's `plain`, currentLeg, hasQueuedWork/hasQueuedBuild,
+//    tickCombat's and findTarget's front-order tests. A queue scan then touches
+//    one line per Order. Add a field here only if such a predicate reads it.
+//  - Line 1 (64-127): the per-order mission state the movers read once they have
+//    the order (controller, the presence of park/buildRectangle/flightGoal,
+//    convoyTick, missionTarget).
+//  - Lines 2+ : everything else (transport, display, flight stations).
+// Large, rarely engaged payloads are HeapOptional (one pointer here), so the
+// record is 5 lines instead of 7 (432 B, unaligned).
+struct alignas(64) Order {
+    // ---- line 0: the predicate line --------------------------------------
+    // x, z, targetId stay FIRST: Order is built with aggregate initialisers like
+    // {x, z, targetId}. A positional initialiser naming more than these three
+    // would silently pick up whatever follows, so none does (and none may).
     Fixed x, z;   // goal, in the same fixed-point domain as Unit::x/z
     int targetId = 0;      // nonzero = attack (or board, if load) target
     bool load = false;     // board the friendly transport `targetId`
@@ -574,7 +592,6 @@ struct Order {
     bool attackMove = false;   // engage enemies encountered en route
     bool patrol = false;       // loop: completed orders re-queue at the back
     bool guard = false;        // follow friendly `targetId`, engage threats
-    int32_t wait = 0;          // >0: hold position, counting down in TICKS (SetMission "w N")
     bool waitAttack = false;   // hold until an enemy is in sight, then release (SetMission "wa")
     // Last waypoint of the order the PLAYER actually gave. One order can expand
     // into a whole route, so the queue interleaves pathfinding waypoints with
@@ -582,6 +599,10 @@ struct Order {
     // sense that it changes no movement maths -- but the repath paths need it to
     // tell "the rest of this leg" from "everything queued behind it".
     bool goal = false;
+    // Owned by the issued ground-move goal, never its intermediate waypoints.
+    // Other mission kinds retain their existing handlers until ported.
+    bool groundMission = false;
+    int32_t wait = 0;          // >0: hold position, counting down in TICKS (SetMission "w N")
     // This order is a BUILD: put `buildType` down here. Builds used to live in a
     // separate list, which meant they could never interleave with moves -- "go
     // here, build that, go there" was inexpressible -- and the order line could
@@ -589,87 +610,36 @@ struct Order {
     // The order sits at the builder's working position; the site is footZ*8+24
     // north of it.
     const UnitType* buildType = nullptr;
+    HeapOptional<RetailReclaimArea> reclaimArea;
+    HeapOptional<ManaBuildArea> manaBuildArea;
     // This order is a RECLAIM: consume feature `reclaimFeat` (negative = a corpse
     // record). Reclaims used to live in Unit::reclaimQueue, a THIRD parallel list
     // with the same defect the build list had -- nothing drained it unless a
     // reclaim was already running, so an area reclaim queued behind anything else
     // sat there forever. One queue, like everything else.
     int reclaimFeat = 0;
-    std::optional<RetailReclaimArea> reclaimArea;
-    std::optional<ManaBuildArea> manaBuildArea;
     // This order is a REPAIR: mend unit `repairTarget`. repairId was a single int,
     // so a second queued repair simply overwrote the first and it was lost. Same
     // shape as the build and reclaim lists, same fix.
     int repairTarget = 0;
-    bool patrolRepair = false; // automatic patrol detour; clickX/Z retain its local anchor
+    bool transportUnloadApproach = false; // native surface unload circle/poll mission
+    bool navigationConsumed = false; // only the final stored point remains
     // This target was picked by auto-acquisition, not asked for by the player.
     // The move standing order gates only AUTO engagement: a Defensive unit told
     // explicitly to attack something across the map still walks over and does it.
     bool autoTarget = false;
+    bool flightMoveMission = false;
     bool landing = false; // controller owned by the VTOL landing mission
+    bool transportPickup = false; // carrier-owned air/surface pickup mission
+    // Inactive navigator: either consumed or disabled with stored points intact.
+    bool navigationExhausted = false;
+    bool hasSegment = false;
+
+    // ---- line 1: mission state ---------------------------------------------
     // Tick this order was issued, for the order-line beads: retail phases the
     // trail by (now - orderCreationTick) so each segment's dots crawl toward the
     // destination independently (icd 0x4d5747 reading order+0x5e).
     uint32_t issuedTick = 0;
-    // Automatic Legion production exit. A blocked generated parking point
-    // may retire once the child has cleared this original birthplace.
-    std::optional<std::pair<Fixed,Fixed>> productionExit;
-    // Where the player actually CLICKED, when that differs from x/z. order()
-    // snaps a destination the unit cannot stand on to the nearest cell it fits
-    // in, so x/z is where the unit will END UP -- but the on-map marker belongs
-    // under the cursor the player aimed at, not on the spot the engine chose.
-    // Display only: never folded into stateHash, never steered on.
-    //
-    // Declared LAST on purpose. Order is built with aggregate initialisers like
-    // {x, z, targetId}; a field inserted after x/z silently becomes the third
-    // one and every such call site starts setting the wrong member.
-    Fixed clickX = Fixed(), clickZ = Fixed();
-    // Navigator segment start retained when preceding route nodes are consumed.
-    // This belongs to this route leg, never to the next queued player command.
-    Fixed segmentX, segmentZ;
-    bool hasSegment = false;
-    // Owned by the issued ground-move goal, never its intermediate waypoints.
-    // Other mission kinds retain their existing handlers until ported.
-    bool transportPickup = false; // carrier-owned air/surface pickup mission
-    uint32_t transportProductionAhead = 0; // finite outputs preceding a queued boarding order
-    bool transportUnloadApproach = false; // native surface unload circle/poll mission
-    bool transportUnloadReleasePending = false; // unload's one-tick empty mission tail
-    bool transportUnloadTransferDeferred = false; // approach arrival wakes unload next tick
-    int transportTicks = 0; // native load/unload effect waits fifteen ticks
-    int transportPassenger = 0;
-    RetailMissionState transportMission{2};
-    uint32_t transportApproachAttempts = 0;
-    Fixed transportX, transportY, transportZ;
-    bool groundMission = false;
-    // Inactive navigator: either consumed or disabled with stored points intact.
-    bool navigationExhausted = false;
-    bool navigationConsumed = false; // only the final stored point remains
-    bool flightMoveMission = false;
-    // A Shift-queued ground patrol point whose loop has no return point yet.
-    // Retail's patrol mission owns that point: Initialize (40388d) appends
-    // one where the unit stands when the patrol STARTS, unless another
-    // patrol leg in the queue already belongs to a loop. So "move to A,
-    // Shift-patrol B" laps A<->B, and Shift-patrols B, C lap start, B, C.
-    // Hashed when set; ordinary patrol() loops never set it.
-    bool patrolOpen = false;
-    RetailMissionState mission;
-    uint32_t missionRadius = 0;
-    RetailGroundResponse groundResponse;
-    // Retail Move_Ground_Formation (402880) pushed ahead of a Move_Ground:
-    // its mission+0x56 level. Negative = move to the moving members' centre
-    // until within that level; positive = stop and wait for the group.
-    int8_t formationLevel = 0;
-    uint64_t controller = 0;
-    std::optional<RetailParkState> park;
-    // Restored MobileBuild approach; production after arrival still uses the
-    // World's construction host. Bounds use retail footprint-origin cells.
-    std::optional<RetailRectGoal> buildRectangle;
-    Fixed buildX, buildZ;
-    std::optional<RetailFlightGoal> flightGoal;
-    uint32_t hoverAttackRefresh = 0;
-    Fixed hoverAttackTargetX, hoverAttackTargetZ;
-    // Mission destination can change while the navigator retains its old route.
-    std::optional<std::pair<Fixed,Fixed>> missionTarget;
     // Legion only (sim/convoy.h): the tick this order's convoy opened, one
     // value for every order one click gave a selection, even across the
     // client's 64-per-tick uplink split. issuedTick stays the identity of the
@@ -678,15 +648,96 @@ struct Order {
     // anchors, rallies, waypoints spliced in by a route). Retail never sets
     // it; hashed with a tag when set.
     uint32_t convoyTick = ConvoyTable::kNone;
+    uint64_t controller = 0;
+    HeapOptional<RetailParkState> park;
+    // Restored MobileBuild approach; production after arrival still uses the
+    // World's construction host. Bounds use retail footprint-origin cells.
+    HeapOptional<RetailRectGoal> buildRectangle;
+    HeapOptional<RetailFlightGoal> flightGoal;
+    // Mission destination can change while the navigator retains its old route.
+    std::optional<std::pair<Fixed,Fixed>> missionTarget;
+    bool patrolRepair = false; // automatic patrol detour; clickX/Z retain its local anchor
+    // A Shift-queued ground patrol point whose loop has no return point yet.
+    // Retail's patrol mission owns that point: Initialize (40388d) appends
+    // one where the unit stands when the patrol STARTS, unless another
+    // patrol leg in the queue already belongs to a loop. So "move to A,
+    // Shift-patrol B" laps A<->B, and Shift-patrols B, C lap start, B, C.
+    // Hashed when set; ordinary patrol() loops never set it.
+    bool patrolOpen = false;
+    bool transportUnloadReleasePending = false; // unload's one-tick empty mission tail
+    bool transportUnloadTransferDeferred = false; // approach arrival wakes unload next tick
+    // Retail Move_Ground_Formation (402880) pushed ahead of a Move_Ground:
+    // its mission+0x56 level. Negative = move to the moving members' centre
+    // until within that level; positive = stop and wait for the group.
+    int8_t formationLevel = 0;
     // Legion flight stations (W6 FL-04, a flyer's last order): the release
     // from its station once the ground stops advancing (1, release A) or its
     // centroid has stood within 16 px of stationRef since stationRefTick for
     // 900 ticks (2, release B); sticky for the order. stationRefTick 0: no
     // reference yet. Hashed with a tag when set.
     uint8_t stationFree = 0;
+    uint32_t missionRadius = 0;
+
+    // ---- lines 2+: the rest ------------------------------------------------
+    RetailMissionState mission;
+    RetailGroundResponse groundResponse;
+    // Navigator segment start retained when preceding route nodes are consumed.
+    // This belongs to this route leg, never to the next queued player command.
+    Fixed segmentX, segmentZ;
+    // Where the player actually CLICKED, when that differs from x/z. order()
+    // snaps a destination the unit cannot stand on to the nearest cell it fits
+    // in, so x/z is where the unit will END UP -- but the on-map marker belongs
+    // under the cursor the player aimed at, not on the spot the engine chose.
+    // Display only: never folded into stateHash, never steered on.
+    Fixed clickX = Fixed(), clickZ = Fixed();
+    // Automatic Legion production exit. A blocked generated parking point
+    // may retire once the child has cleared this original birthplace.
+    std::optional<std::pair<Fixed,Fixed>> productionExit;
+    uint32_t transportProductionAhead = 0; // finite outputs preceding a queued boarding order
+    int transportTicks = 0; // native load/unload effect waits fifteen ticks
+    int transportPassenger = 0;
+    RetailMissionState transportMission{2};
+    uint32_t transportApproachAttempts = 0;
+    Fixed transportX, transportY, transportZ;
+    Fixed buildX, buildZ;
+    uint32_t hoverAttackRefresh = 0;
+    Fixed hoverAttackTargetX, hoverAttackTargetZ;
     int32_t stationRefX = 0, stationRefZ = 0;
     uint32_t stationRefTick = 0;
 };
+// Which line each field sits on (WE D2). Moving a field across a line, or
+// growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
+// with non-public members of members is conditionally supported; GCC, Clang
+// and MSVC all give the real offset, Clang just warns.)
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
+#define TAK_ORDER_LINE(field, line) \
+    static_assert(offsetof(Order, field) / 64 == (line) && \
+                  (offsetof(Order, field) + sizeof(Order::field) - 1) / 64 == (line), \
+                  "Order::" #field " must sit on cache line " #line)
+TAK_ORDER_LINE(x, 0); TAK_ORDER_LINE(z, 0); TAK_ORDER_LINE(targetId, 0);
+TAK_ORDER_LINE(load, 0); TAK_ORDER_LINE(unload, 0); TAK_ORDER_LINE(attackMove, 0);
+TAK_ORDER_LINE(patrol, 0); TAK_ORDER_LINE(guard, 0); TAK_ORDER_LINE(waitAttack, 0);
+TAK_ORDER_LINE(goal, 0); TAK_ORDER_LINE(groundMission, 0); TAK_ORDER_LINE(wait, 0);
+TAK_ORDER_LINE(buildType, 0); TAK_ORDER_LINE(reclaimArea, 0); TAK_ORDER_LINE(manaBuildArea, 0);
+TAK_ORDER_LINE(reclaimFeat, 0); TAK_ORDER_LINE(repairTarget, 0);
+TAK_ORDER_LINE(transportUnloadApproach, 0); TAK_ORDER_LINE(navigationConsumed, 0);
+TAK_ORDER_LINE(autoTarget, 0); TAK_ORDER_LINE(flightMoveMission, 0); TAK_ORDER_LINE(landing, 0);
+TAK_ORDER_LINE(transportPickup, 0); TAK_ORDER_LINE(navigationExhausted, 0);
+TAK_ORDER_LINE(hasSegment, 0);
+TAK_ORDER_LINE(issuedTick, 1); TAK_ORDER_LINE(convoyTick, 1); TAK_ORDER_LINE(controller, 1);
+TAK_ORDER_LINE(park, 1); TAK_ORDER_LINE(buildRectangle, 1); TAK_ORDER_LINE(flightGoal, 1);
+TAK_ORDER_LINE(missionTarget, 1); TAK_ORDER_LINE(patrolRepair, 1); TAK_ORDER_LINE(patrolOpen, 1);
+TAK_ORDER_LINE(transportUnloadReleasePending, 1); TAK_ORDER_LINE(transportUnloadTransferDeferred, 1);
+TAK_ORDER_LINE(formationLevel, 1); TAK_ORDER_LINE(stationFree, 1); TAK_ORDER_LINE(missionRadius, 1);
+static_assert(offsetof(Order, mission) == 128, "line 1 ends at byte 127; line 2 starts with mission");
+static_assert(sizeof(Order) == 320, "Order is five cache lines (the cold tail has room left); a new field names its line above");
+#undef TAK_ORDER_LINE
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 struct Unit {
     int id = 0;

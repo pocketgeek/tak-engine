@@ -10200,12 +10200,19 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // Goal satisfaction belongs to the mission, independently of the
         // navigator's next intermediate point (retail 0x4e5150). A stale
         // waypoint can be occupied even after we have reached the goal area.
-        const Order legGoal = u.orders[currentLeg(u.orders)];
-        const bool rectangleReached = legGoal.buildRectangle && legGoal.buildRectangle->accepts(
+        //
+        // The current leg as it stands at the top of this update. This was a copy of
+        // the whole Order every tick for every mover; with the HeapOptional payloads
+        // a copy also allocates. It is now a reference, read only while nothing has
+        // written to the queue, plus an exact copy taken where the old snapshot and
+        // the live order can differ (the completed-mission writes below).
+        const Order& leg = u.orders[currentLeg(u.orders)];
+        const bool legHasRectangle = leg.buildRectangle.has_value();
+        const bool rectangleReached = leg.buildRectangle && leg.buildRectangle->accepts(
             footprintOrigin(u.x,u.type->footX), footprintOrigin(u.z,u.type->footZ));
         if (u.type->canFly) {
-            if (legGoal.buildRectangle && legGoal.flightGoal &&
-                legGoal.flightGoal->accepts({u.x.v,u.flightY.v,u.z.v})) {
+            if (leg.buildRectangle && leg.flightGoal &&
+                leg.flightGoal->accepts({u.x.v,u.flightY.v,u.z.v})) {
                 u.orders[currentLeg(u.orders)].mission.pending |= 0x100;
                 // Arrival retires the approach controller, not the independent
                 // flight body. Native 4dc800 still moves/climbs on this update.
@@ -10220,11 +10227,16 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             return;
         }
         Order* completed = nullptr;
-        if (rectangleReached && !(legGoal.mission.pending & 0x100))
+        if (rectangleReached && !(leg.mission.pending & 0x100))
             completed = &u.orders[currentLeg(u.orders)];
         else if (auto* goal = navigationMissionOrder(u);goal && !goal->buildRectangle) {
             if (goal->controller && groundMissionAccepts(u,*goal)) completed = goal;
         }
+        // Nothing has written to the queue since `leg` was taken; the completed
+        // block below does, so keep the leg's value from before it.
+        std::optional<Order> legBefore;
+        if (completed) legBefore.emplace(leg);
+        const Order& legGoal = legBefore ? *legBefore : leg;
         if (completed) {
             // 4e5168..4e5186 detaches satisfied circle, ring and rectangle
             // controllers. The mover then brakes on its retained final point
@@ -10240,10 +10252,13 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         if (!groundMissionOrder(u,true) && legGoal.goal && !legGoal.targetId && !legGoal.buildType &&
             !legGoal.reclaimFeat && !legGoal.repairTarget && !legGoal.load && !legGoal.unload &&
             fxLen(legGoal.x - u.x, legGoal.z - u.z) < goalRadius) {
+            // dropLeg erases the order `leg` refers to: copy the lap first.
+            std::optional<Order> lap;
+            if (legGoal.patrol) lap.emplace(legGoal);
             cancelPath(u);
             dropLeg(u);
             u.routeStamp = -1;
-            if (legGoal.patrol) u.orders.push_back(legGoal);
+            if (lap) u.orders.push_back(std::move(*lap));
             return;
         }
         // 0x4e5192..0x4e51c0 advances one navigator point using integer
@@ -10384,7 +10399,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // over one pixel, which is exactly what it looked like.)
         float foot = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
         float arrive = o.goal ? std::max(16.0f, foot) : 3.0f;
-        if (!groundMissionOrder(u,true) && !legGoal.buildRectangle && (u.type->canFly || o.goal) && dist < arrive) {
+        if (!groundMissionOrder(u,true) && !legHasRectangle && (u.type->canFly || o.goal) && dist < arrive) {
             if (o.buildType || o.reclaimFeat || o.repairTarget)
                 return;   // the job is claimed above; its order blocks the queue
             if (o.targetId == 0 || !o.goal) {
@@ -11056,25 +11071,43 @@ void World::tick(float dt) {
     TAK_PASS();
     for (size_t unitIndex=0;unitIndex<units_.size();++unitIndex) {
 #if defined(__GNUC__) || defined(__clang__)
-        // Fetch upcoming thread flags while the current unit runs. This is
-        // only a cache hint; scripts still execute in their original order.
-        if (unitIndex+8<units_.size()) {
-            const size_t id=size_t(units_[unitIndex+8].id);
-            if (id<unitScriptById_.size()) if (const auto* next=unitScriptById_[id]) {
-                for (const auto& thread:next->state.vm.threads)
-                    __builtin_prefetch(thread.words.data(),0,1);
-                __builtin_prefetch(&next->state.vm.active,0,1);
-            }
-        }
-        // And the Unit itself, two ahead: this loop reads fields spread over most of a
-        // Unit's ~20 cache lines (type, the emitters, retailSite/retailBuild, reloads, ...),
-        // and at 10k+ units units_ does not stay in cache between ticks. Before WE E1.3/E2.1
-        // findTarget's candidate walks touched the neighbours' lines by the way; once they
-        // got cheaper, those misses moved into this loop (L-2h: "other" +7%, the same
-        // instructions, +2M L1-miss stall cycles per tick). Only a cache hint.
-        if (unitIndex+2<units_.size()) {
-            const char* ahead=reinterpret_cast<const char*>(&units_[unitIndex+2]);
+        // Cache hints for the units ahead, in three stages so that every address
+        // is computed from data an earlier stage already fetched (WE D2). Hints
+        // only: the same code paths run in the same order on the same values.
+        //  - i+4: every line of the Unit. This loop reads fields spread over most
+        //    of a Unit's ~20 cache lines (type, the emitters, retailSite/
+        //    retailBuild, reloads, ...), and at 10k+ units units_ does not stay
+        //    in cache between ticks (WE E2.1b: once findTarget's candidate walks
+        //    got cheaper, their incidental warming of the neighbours' lines was
+        //    gone and the misses moved here).
+        //  - i+2 (its lines arrived two iterations ago): its orders' predicate
+        //    lines (Order line 0, plus the front order's line 1) and the line
+        //    of its script VM that holds the active-thread mask.
+        //  - i+1: the first line of each ACTIVE script thread only (the mask
+        //    fetched one iteration ago), not all sixteen.
+        if (unitIndex+4<units_.size()) {
+            const char* ahead=reinterpret_cast<const char*>(&units_[unitIndex+4]);
             for (size_t at=0;at<sizeof(Unit);at+=64) __builtin_prefetch(ahead+at,0,3);
+        }
+        if (unitIndex+2<units_.size()) {
+            const Unit& next=units_[unitIndex+2];
+            if (const size_t n=next.orders.size()) {
+                const Order* o=next.orders.data();
+                __builtin_prefetch(o,0,3);
+                __builtin_prefetch(reinterpret_cast<const char*>(o)+64,0,3);
+                for (size_t k=1;k<n && k<4;++k) __builtin_prefetch(o+k,0,3);
+            }
+            const size_t id=size_t(next.id);
+            if (id<unitScriptById_.size()) if (const auto* script=unitScriptById_[id])
+                __builtin_prefetch(&script->state.vm.active,0,3);
+        }
+        if (unitIndex+1<units_.size()) {
+            const size_t id=size_t(units_[unitIndex+1].id);
+            if (id<unitScriptById_.size()) if (const auto* script=unitScriptById_[id]) {
+                const auto& vm=script->state.vm;
+                for (uint32_t m=vm.activeThreadMask();m;m&=m-1)
+                    __builtin_prefetch(vm.threads[size_t(std::countr_zero(m))].words.data(),0,3);
+            }
         }
 #endif
         if (!units_[unitIndex].type) continue;
