@@ -740,6 +740,12 @@ DescentRun descentRun(int who,int column,int foot,int start,bool legion=true,boo
         if(enter&&r.enterTick<0)r.enterTick=t;
         bool busy=false;for(int id:ids)busy|=!f.world.unit(id)->orders.empty();
         if(!busy&&r.arrive<0)r.arrive=t;
+        if(verbose()&&t%50==0) {
+            std::printf("  t=%d flyer %.0f,%.0f mode=%d stage=%d |",t,a.x.toFloat(),a.z.toFloat(),a.flightGroundMode,a.landing?int(a.landing->mission.stage):-1);
+            for(int id:ids) {const auto& u=*f.world.unit(id);
+                std::printf(" %.0f,%.0f/%zu s%d",u.x.toFloat(),u.z.toFloat(),u.orders.size(),f.world.legionNavigator()?f.world.legionNavigator()->unitState(id):-1);}
+            std::printf("\n");
+        }
     }
     r.landed=f.world.unit(fid)->flightGroundMode==1;
     for(int id:ids)r.left+=!f.world.unit(id)->orders.empty();
@@ -770,10 +776,16 @@ void landunder() {
     const Fixed slow=Fixed::raw(32768);   // 0.5 px/tick: still inside the footprint when the flyer touches down
     const auto fast=descentRun(0,1,2,29),walkingLate=descentRun(0,1,2,31,true,true,slow),walkingOwn=descentRun(1,1,2,30,true,true,slow),
         walking=descentRun(0,1,2,30,true,true,slow);
-    for(const auto* r:{&fast,&walkingLate,&walking,&walkingOwn})print(r->out);
+    // Control: the walker starts far enough back that the enemy flyer has landed before it gets there.
+    const auto landedFirst=descentRun(0,1,2,22,true,true,slow);
+    for(const auto* r:{&fast,&walkingLate,&walking,&walkingOwn,&landedFirst})print(r->out);
     if(requireW6()) {
         check(fast.overlap==0&&walking.overlap==0&&walkingOwn.overlap==0&&walkingLate.overlap==0,"landunder: a body ended up under a landed flyer");
-        check(walking.arrive>=0&&walkingOwn.arrive>=0,"landunder: the walker never arrived");
+        // The enemy walker's arrival is not asserted: blocked in front of the landed enemy flyer it never gets
+        // round (0.5 px/tick against the 45-tick side-step timeout), exactly as the landedFirst control, which
+        // involves no descent and fails the same on the step-0 head (hash 046b1c1be5685fae). Before W6 it
+        // arrived only by walking in under the descending flyer (overlap 394). A never-arrive for W5.
+        check(walkingOwn.arrive>=0,"landunder: the own-squad walker never arrived");
     }
     checkWorkers("landunder",[&](bool serial) {return descentRun(0,1,2,30,true,serial,slow).out;},walking.out);
 }

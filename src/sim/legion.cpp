@@ -937,7 +937,12 @@ struct LegionNavigator::Impl {
                     if(!o) {o=u.id;liftHomeCells.push_back(cz*w.occW_+cx);}
                 }
             }
-            if(!u.alive()||u.embarked()||!u.type||!u.type->canFly||u.flightGroundMode!=1)continue;
+            // W6 FL-03: a stage-3 descender stands on its touchdown footprint
+            // (its own position: retail descends vertically from the site
+            // stage 2 found free) as a landed flyer does, so no member steps
+            // in under it while it comes down (bodiesFree's leave-only rule
+            // lets a body already there step out).
+            if(!u.alive()||u.embarked()||!u.type||!u.type->canFly||!World::flyerGrounded(u))continue;
             ids.push_back(u.id);
             const int fx=u.type->footX,fz=u.type->footZ;
             const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
@@ -3478,12 +3483,20 @@ struct LegionNavigator::Impl {
     // Mobile bodies at an origin (static legality is checked separately).
     bool bodiesFree(const Unit& u,int x,int z) const {
         const int fx=u.type->footX,fz=u.type->footZ;
+        const int ox=groundedCells.empty()?0:footprintOrigin(u.x,fx),oz=groundedCells.empty()?0:footprintOrigin(u.z,fz);
         if(w.occW_>0) {
             for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
                 const int cx=x+i,cz=z+j;
                 if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
                 const int32_t o=occAt(size_t(cz)*w.occW_+cx);
-                if(o&&o!=u.id)return false;
+                if(o&&o!=u.id) {
+                    // Leave-only (W6 FL-03): a grounded flyer's cell the body
+                    // already stands on does not block it (a flyer that came
+                    // down over it), so it can step out; a cell it does not
+                    // stand on does, so it never goes deeper.
+                    if(!w.occ_[size_t(cz)*w.occW_+cx]&&ox<=cx&&cx<ox+fx&&oz<=cz&&cz<oz+fz)continue;
+                    return false;
+                }
             }
         }
         if(placementPlane())return w.mobilePlacement(u,x,z,false);
