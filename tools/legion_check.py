@@ -142,8 +142,11 @@ def floor_dir(key):
         return "higher"
     if key.startswith("reach.") and (".ever_" in key or ".damage_" in key):
         return "higher"          # W5 step 0: the AR-06 rows (the army that gets a shot, the damage dealt)
+    # wall_touch_permille / wall_touch_near_permille only: the W9 step 0 splits (wall_touch_{gate,ring,corner,flat}_permille,
+    # the _near_ variants, wall_touch_still_permille) are report-only, like gate.X.cross_<site>.
     if (key.endswith(".t90") or key in ("spins", "parked_no_progress") or key.endswith(".crossings")
-            or key.startswith("wall_touch") or (key.startswith("contact_") and key.endswith("_permille"))):
+            or key in ("wall_touch_permille", "wall_touch_near_permille")
+            or (key.startswith("contact_") and key.endswith("_permille"))):
         return "lower"
     return None
 

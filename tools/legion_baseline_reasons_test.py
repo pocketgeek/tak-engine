@@ -457,6 +457,19 @@ class Gate(unittest.TestCase):
         self.assertTrue(res.ok, res.fails)
         self.assertEqual(len(res.cleared), 1)
 
+    def test_w9_step0_splits_are_report_only(self):
+        # The wall-touch places, the still samples and the flip-site counts are instruments, not Retail-floor keys.
+        for k in ("wall_touch_gate_permille", "wall_touch_ring_permille", "wall_touch_near_corner_permille",
+                  "wall_touch_flat_permille", "wall_touch_still_permille", "gate.top.cross_pass", "gate.top.crossings_per_file_x100"):
+            self.assertIsNone(lc.floor_dir(k), k)
+        self.assertEqual(lc.floor_dir("wall_touch_permille"), "lower")
+        self.assertEqual(lc.floor_dir("wall_touch_near_permille"), "lower")
+        self.assertEqual(lc.floor_dir("gate.top.crossings"), "lower")
+        legion = self.wide_rec(**{"wall_touch_gate_permille": [40] * 11, "wall_touch_permille": [10] * 11})
+        retail = self.wide_rec(mode="retail", **{"wall_touch_gate_permille": [1] * 11, "wall_touch_permille": [10] * 11})
+        res = run_check(dict(lc.empty_baseline(), entries={S: {"legion": {}}}), legion, retail)
+        self.assertTrue(res.ok, res.fails)
+
     def test_w9_gap_per_file_key_is_the_median_of_per_offset_ratios(self):
         # W9 step 0: gate.X.crossings_per_file_x100 = crossings x 10000 / max(100, files_x100) at each offset,
         # medianed over the eleven -- not the ratio of the two medians.
