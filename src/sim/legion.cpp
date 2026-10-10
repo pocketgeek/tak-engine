@@ -50,6 +50,7 @@ constexpr uint32_t kRestStride=2;
 // is set (no tool wires it yet: legion_identity.sh --verify, crowdbench and
 // the world tests only set the variable). Observation only, never hashed.
 uint32_t gRestStride=kRestStride;
+bool gAwareOff=false;
 #ifndef NDEBUG
 bool gVerify=std::getenv("TAK_LEGION_VERIFY")!=nullptr;
 #else
@@ -384,6 +385,7 @@ struct LegionNavigator::Impl {
         // fields plan round, their corridors as planned, and the scans each
         // has been off its way.
         std::vector<uint64_t> avoidCmd;std::vector<Field::Corridor> avoidSeg;std::vector<uint8_t> avoidOff;
+        uint32_t awareAt=0;   // tick of the first awareScan replan not yet served by an install (Stats only, never hashed)
         // Demand-driven refresh (see active): the last tick a member started
         // its update Moving, the last tick a member was blocked (no progress
         // for kBlockedRetry ticks outside its destination area), and the
@@ -2479,6 +2481,14 @@ struct LegionNavigator::Impl {
         }
         return false;
     }
+    // Stats only (W7 step 0): a field became the group's current one; when it was started
+    // after the group's pending aware replan, that replan's latency ends here.
+    void noteAwareInstall(Group& g,const Field& f) {
+        if(!g.awareAt||f.started<g.awareAt)return;
+        const uint64_t latency=w.tickCounter_-g.awareAt;
+        stats.awareLatencyMax=std::max(stats.awareLatencyMax,latency);stats.awareLatencySum+=latency;++stats.awareLatencyN;
+        g.awareAt=0;
+    }
     // At the cap a new field may only displace one that has served its
     // group for a while (oldest build first); otherwise the group waits for
     // a slot. Evicting the least recently used field every tick thrashed:
@@ -2497,7 +2507,7 @@ struct LegionNavigator::Impl {
                 else if(g.field) {
                     if(g.next&&!g.next->done)++stats.refreshDiscards;
                     ++stats.refreshCompleted;
-                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);
+                    g.field=std::move(shared);g.next.reset();g.stale=false;g.demand=false;restaleSlots(g);noteAwareInstall(g,*g.field);
                 }
                 else g.field=std::move(shared);
                 listGroup(g);
@@ -2541,6 +2551,7 @@ struct LegionNavigator::Impl {
         f->seeds=g.seeds;f->seedKey=seedsKey(f->seeds);f->started=w.tickCounter_;
         f->plane=g.plane;f->epoch=epoch;f->serial=++fieldSerial;f->command=g.soft?g.command:kNoSoft;f->softCounts=softCountsFor(planes[size_t(g.plane)].footX,planes[size_t(g.plane)].footZ);
         f->avoid=g.avoidSeg;
+        if(!f->avoid.empty())++stats.awareBuilds;
         f->ownArrivals=ownsArrivals(f->command);
         ++stats.fieldsStartedByKind[size_t(g.kind)&15];
         f->liftAllied=std::any_of(liftSoftPlayers.begin(),liftSoftPlayers.end(),
@@ -3194,7 +3205,7 @@ struct LegionNavigator::Impl {
                     (policy(g.kind).area&&!g.approach&&g.members>int(g.sharing.size())?stats.fieldWorkFirstSlot:stats.fieldWorkFirstSolo)+=spent;
             }
             if(f.done) {
-                ++stats.fieldsBuilt;
+                ++stats.fieldsBuilt;noteAwareInstall(g,f);
                 if(g.next) {g.field=std::move(g.next);++fieldsDone;g.stale=g.field->epoch!=epoch;g.demand=false;restaleSlots(g);++stats.refreshCompleted;}
                 listGroup(g);
             }
@@ -3426,7 +3437,7 @@ struct LegionNavigator::Impl {
     // half the corridor's radius. Deterministic: integer, ordered, on a fixed
     // cadence; the plans are hashed.
     void awareScan() {
-        if(w.tickCounter_%kAwareScan!=kAwareScan/2)return;
+        if(w.tickCounter_%kAwareScan!=kAwareScan/2||gAwareOff)return;
         struct Mover {uint64_t command;int player;uint32_t issue;int64_t px,pz,cx,cz,ax,az,r,dx,dz;};
         std::vector<Mover> movers;
         for(auto& [key,pt]:points) {
@@ -3460,7 +3471,7 @@ struct LegionNavigator::Impl {
             auto& a=acc[m.group];a.sx+=v->x.v>>16;a.sz+=v->z.v>>16;++a.n;a.sight=std::max<int64_t>(a.sight,w.sightDistance(*v->type));
         }
         const int W=width();
-        uint64_t pairs=0;
+        uint64_t pairs=0,work=0;
         stats.groupLoopIters+=groups.size();
         for(auto& [id,g]:groups) {
             const auto a=acc.find(id);
@@ -3472,6 +3483,7 @@ struct LegionNavigator::Impl {
                 if(c>=0&&g.field->at(size_t(c))!=kUnreached) {
                     std::vector<int> chain{c};
                     for(int k=0;k<kAwareChain;++k) {const int next=descend(p,*g.field,chain.back()%W,chain.back()/W,chain.back());if(next<0)break;chain.push_back(next);}
+                    work+=chain.size();
                     const int64_t tx=(chain.back()%W)*16-cx,tz=(chain.back()/W)*16-cz;
                     const bool engages=g.kind==Kind::Fight||g.kind==Kind::Attack||g.kind==Kind::Guard||g.kind==Kind::Patrol;
                     pairs+=movers.size();
@@ -3509,7 +3521,7 @@ struct LegionNavigator::Impl {
                         }
                         Field::Corridor cor{mv.cx,mv.cz,mv.ax,mv.az,mv.r};
                         bool meets=false;
-                        for(size_t k=0;k<chain.size()&&!meets;k+=4)
+                        for(size_t k=0;k<chain.size()&&!meets;k+=4,++work)
                             meets=Field::segDist2(int64_t(chain[k]%W)*16+8,int64_t(chain[k]/W)*16+8,cor)<=(cor.r+32)*(cor.r+32);
                         if(!meets)continue;
                         // Head on: keep right (plan round a corridor shifted left).
@@ -3534,7 +3546,7 @@ struct LegionNavigator::Impl {
             }
             for(size_t i=0;i<want.size();++i)
                 if(std::find(g.avoidCmd.begin(),g.avoidCmd.end(),want[i])==g.avoidCmd.end()) {
-                    cmd.push_back(want[i]);keep.push_back(seg[i]);off.push_back(0);replan=true;
+                    cmd.push_back(want[i]);keep.push_back(seg[i]);off.push_back(0);replan=true;++stats.awareEncounters;
                 }
             if(replan) {
                 // New corridors replace the planned ones (the movers moved on).
@@ -3543,12 +3555,13 @@ struct LegionNavigator::Impl {
             }
             g.avoidCmd.swap(cmd);g.avoidSeg.swap(keep);g.avoidOff.swap(off);
             if(replan&&g.field&&g.field->done) {
+                ++stats.awareReplans;if(!g.awareAt)g.awareAt=w.tickCounter_;
                 if(g.next&&!g.next->done)++stats.refreshDiscards;
                 g.next.reset();g.stale=true;g.demand=true;   // not a static change: refresh even if idle (C6)
                 listGroup(g);
             }
         }
-        stats.awarePairs+=pairs;
+        stats.awarePairs+=pairs;stats.awareWork+=work;
     }
     // Members whose unit died, embarked, lost its orders or left Legion's
     // plain-move domain (no more move() calls) are dropped here, a bounded
@@ -3759,7 +3772,7 @@ struct LegionNavigator::Impl {
             for(int q=0;q<count;++q) {
                 const Unit& b=*w.unit(ids[size_t(q)]);
                 const int bx=footprintOrigin(b.x,b.type->footX),bz=footprintOrigin(b.z,b.type->footZ);
-                auto& part=parts[ids[size_t(q)]];++part.count;markWatch(ids[size_t(q)]);
+                auto& part=parts[ids[size_t(q)]];++part.count;++stats.parts;markWatch(ids[size_t(q)]);
                 part.sx=int8_t(std::clamp(cells[size_t(q)]%W-bx,-1,1));part.sz=int8_t(std::clamp(cells[size_t(q)]/W-bz,-1,1));
                 yielding[ids[size_t(q)]]=Yield{cells[size_t(q)],0};
             }
@@ -6508,6 +6521,7 @@ LegionNavigator::SlotShape LegionNavigator::slotShape(int id) const {
 }
 LegionNavigator::SlotShape LegionNavigator::lastSlotShape() const {return impl_->lastShape;}
 void LegionNavigator::setRestStrideForTest(int stride) {gRestStride=uint32_t(std::max(stride,1));}
+void LegionNavigator::setAwareOffForTest(bool off) {gAwareOff=off;}
 void LegionNavigator::setVerify(bool on) {gVerify=on;}
 bool LegionNavigator::verifying() {return gVerify;}
 void LegionNavigator::setProbe(uint32_t ticks) {gProbe=ticks;}

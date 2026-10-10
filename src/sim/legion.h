@@ -132,6 +132,23 @@ public:
         // out (step 1), stale-block re-plans MV-05 triggered (step 3), chase re-seeds that
         // kept the group (step 2), brisk-tier steps taken unturned at cap/2 (step 4).
         uint64_t engagedNow=0,reachSlotsBuilt=0,softReplans=0,reseedsInPlace=0,briskSteps=0;
+        // ---- W7 step 0 instruments (observation only, never hashed) ----------
+        // parts: bodies a parting shifted aside (one per body per part).
+        // awareEncounters: (group, mover) corridors newly planned round by awareScan.
+        // awareReplans: awareScan decisions that asked a group for a new field.
+        // awareBuilds: fresh (unshared) field builds that carry a mover corridor; per
+        // encounter that is awareBuilds / awareEncounters.
+        // awareLatencyMax/Sum/N: ticks from an awareScan replan to the install of a
+        // field started after it (the encounter's plan latency); max is a running
+        // maximum, not work.
+        // giveWayTicks / giveWayTimeouts / giveWayStarts: member-ticks in a give-way hold, holds
+        // that ended on their timeout and holds begun. Declared for W7 step 6 and 0 until then;
+        // under user decision 5 W7 builds no hold, so they must stay 0 after W7 too.
+        // awareWork: cells of the descent chains awareScan walked plus its corridor tests (the
+        // pair count is awarePairs); the step-6 detection samples add to it.
+        uint64_t parts=0,awareEncounters=0,awareReplans=0,awareBuilds=0,awareWork=0;
+        uint64_t awareLatencyMax=0,awareLatencySum=0,awareLatencyN=0;
+        uint64_t giveWayTicks=0,giveWayTimeouts=0,giveWayStarts=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -173,6 +190,9 @@ public:
         array("completion_dist",s.completionDist,10);f("completion_dist_sum",s.completionDistSum);f("completion_dist_max",s.completionDistMax);
         f("engaged_now",s.engagedNow);f("reach_slots_built",s.reachSlotsBuilt);f("soft_replans",s.softReplans);
         f("reseeds_in_place",s.reseedsInPlace);f("brisk_steps",s.briskSteps);
+        f("parts",s.parts);f("aware_encounters",s.awareEncounters);f("aware_replans",s.awareReplans);f("aware_builds",s.awareBuilds);f("aware_work",s.awareWork);
+        f("aware_latency_max",s.awareLatencyMax);f("aware_latency_sum",s.awareLatencySum);f("aware_latency_n",s.awareLatencyN);
+        f("giveway_ticks",s.giveWayTicks);f("giveway_timeouts",s.giveWayTimeouts);f("giveway_starts",s.giveWayStarts);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));
@@ -261,6 +281,9 @@ public:
     // Test hook (process-wide; the settlelatency probe): a long-held body's
     // full re-evaluation stride (default 2). Changes behaviour and hashes.
     static void setRestStrideForTest(int stride);
+    // Test hook (process-wide; the awareness fixtures' OFF arm): awareScan does
+    // nothing while set. Changes behaviour and hashes when set; default off.
+    static void setAwareOffForTest(bool off);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only

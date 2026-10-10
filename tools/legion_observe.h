@@ -123,9 +123,11 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -1079,7 +1081,7 @@ public:
     void sample(Observer& obs,const sim::World& w) {
         if(!const_cast<sim::World&>(w).legionNavigator())return;   // a plain accessor
         const auto s=w.legionStats();
-        size_t i=0;uint64_t total=0;
+        size_t i=0;uint64_t total=0,awareTickWork=0;
         sim::LegionNavigator::forEachStat(s,[&](const char* name,uint64_t v) {
             const std::string_view n(name);
             if(i>=last_.size())last_.push_back(0);
@@ -1089,9 +1091,16 @@ public:
             if(n=="engaged_now") {   // W5 step 0: a per-tick population, not work (Stats::engagedNow)
                 engagedMax_=std::max(engagedMax_,d);engagedTicks_+=d;return;
             }
+            if(isW7Instrument(n)) {   // W7 step 0: observation counters, reported by w7() and never summed as work
+                w7_[std::string(n)]=v;
+                if(n=="aware_work")awareTickWork+=d;
+                return;
+            }
+            if(n=="aware_pairs")awareTickWork+=d;
             if(d||n=="midroute_completions")obs.work(n,d);   // a safety key: always present, 0 when clean
             if(totalClass(n))total+=d;
         });
+        awareWorkMax_=std::max(awareWorkMax_,awareTickWork);
         // World's convoy lookups (sim/convoy.h), a work class outside Stats.
         const uint64_t convoy=w.convoyStats().tests;
         const uint64_t d=convoy>=lastConvoy_?convoy-lastConvoy_:0;lastConvoy_=convoy;
@@ -1113,13 +1122,98 @@ public:
     // W5 step 0: the most bodies tickCombat braked in reach on one tick (Stats::engagedNow's largest
     // per-tick delta) and the member-ticks summed over the run.
     uint64_t engagedMax() const {return engagedMax_;}
+    // W7 step 0: the latest cumulative value of each awareness / parting / give-way counter
+    // (Stats::parts, awareEncounters, awareReplans, awareBuilds, awareWork, awareLatency*, giveWay*),
+    // and the most awareness work (aware_pairs + aware_work) any one tick spent.
+    const std::map<std::string,uint64_t>& w7() const {return w7_;}
+    uint64_t awareWorkMax() const {return awareWorkMax_;}
+    static bool isW7Instrument(std::string_view n) {
+        return n=="parts"||n=="aware_work"||n=="aware_encounters"||n=="aware_replans"||n=="aware_builds"||
+            n.substr(0,14)=="aware_latency_"||n.substr(0,8)=="giveway_";
+    }
     uint64_t engagedMemberTicks() const {return engagedTicks_;}
 private:
     void gauge(std::string_view n,uint64_t v) {(n=="quota_peg_run_max"?quotaPegRunMax_:stillPerResidueMax_)=v;}
     std::vector<uint64_t> bins_;
+    std::map<std::string,uint64_t> w7_;
+    uint64_t awareWorkMax_=0;
     uint64_t ticks_=0,stillPerResidueMax_=0,quotaPegRunMax_=0,engagedMax_=0,engagedTicks_=0;
     std::vector<uint64_t> last_;
     uint64_t lastConvoy_=0;
+};
+
+
+// `behind NAME LATER EARLIER [cells=N]` (PLAN W7 step 0, user decision 5): the route-behind metric. LATER is the group
+// that gives way to the stream EARLIER; under decision 5 it always routes behind that stream and never waits at its
+// edge. Per LATER member the path it walked while ordered against the straight line from its first ordered position to
+// its click, and the WAIT: a LATER member with orders that stood (a step of no more than an eighth of its speed) with a
+// moving EARLIER member within `cells` (default 8) cells; a group wait is a tick on which at least a quarter of the
+// LATER members with orders (and 2) do so, a wait is a run of at least 30 such ticks. Read-only.
+//   behind.NAME.members          LATER members that were ever ordered
+//   behind.NAME.path_cells       mean path walked (cells), straight_cells the mean straight line, extra_cells the
+//                                difference, detour_permille path / straight - 1
+//   behind.NAME.wait_member_ticks  member-ticks standing at the stream
+//   behind.NAME.wait_ticks / .wait_run_max / .waits   group-level wait ticks, the longest run, runs of >= 30
+struct BehindProbe {
+    std::string name;
+    int64_t edge = 8 * 16;
+    struct Late { int id; int64_t cx, cz; int32_t px = INT32_MIN, pz = INT32_MIN; int64_t sx = 0, sz = 0; double path = 0; bool started = false; };
+    std::vector<Late> late;
+    std::vector<int> early;
+    std::vector<std::pair<int32_t, int32_t>> earlyPrev, stream;
+    int64_t memberWait = 0, groupWait = 0, run = 0, runMax = 0, waits = 0;
+    void sample(const sim::World& w) {
+        if (earlyPrev.size() != early.size()) earlyPrev.assign(early.size(), {INT32_MIN, INT32_MIN});
+        stream.clear();
+        for (size_t i = 0; i < early.size(); ++i) {
+            const auto* u = w.unit(early[i]);
+            if (!u || !u->alive() || u->orders.empty()) { earlyPrev[i] = {INT32_MIN, INT32_MIN}; continue; }
+            if (earlyPrev[i].first != INT32_MIN && (u->x.v != earlyPrev[i].first || u->z.v != earlyPrev[i].second))
+                stream.push_back({int32_t(int64_t(u->x.v) >> 16), int32_t(int64_t(u->z.v) >> 16)});
+            earlyPrev[i] = {u->x.v, u->z.v};
+        }
+        int64_t active = 0, nearWait = 0;
+        for (auto& b : late) {
+            const auto* u = w.unit(b.id);
+            if (!u || !u->alive() || !u->type) continue;
+            const bool ordered = !u->orders.empty();
+            if (ordered && !b.started) { b.started = true; b.sx = int64_t(u->x.v) >> 16; b.sz = int64_t(u->z.v) >> 16; }
+            if (ordered && b.px != INT32_MIN) {
+                const double dx = double(u->x.v) - b.px, dz = double(u->z.v) - b.pz;
+                b.path += std::sqrt(dx * dx + dz * dz) / 65536.0;
+                ++active;
+                const int64_t cap = int64_t(u->baseSpeed.v) / 8;
+                if (int64_t(dx) * int64_t(dx) + int64_t(dz) * int64_t(dz) <= cap * cap) {
+                    const int64_t x = int64_t(u->x.v) >> 16, z = int64_t(u->z.v) >> 16;
+                    for (const auto& e : stream)
+                        if (std::abs(e.first - x) <= edge && std::abs(e.second - z) <= edge) { ++nearWait; break; }
+                }
+            }
+            b.px = u->x.v; b.pz = u->z.v;
+        }
+        memberWait += nearWait;
+        if (nearWait >= 2 && nearWait * 4 >= active) { ++groupWait; ++run; }
+        else { if (run >= 30) ++waits; runMax = std::max(runMax, run); run = 0; }
+    }
+    void report(Keys& k) const {
+        const std::string p = "behind." + name + ".";
+        double path = 0, straight = 0;
+        int64_t n = 0;
+        for (const auto& b : late) {
+            if (!b.started) continue;
+            const double dx = double(b.cx - b.sx), dz = double(b.cz - b.sz);
+            path += b.path; straight += std::sqrt(dx * dx + dz * dz); ++n;
+        }
+        k.emplace_back(p + "members", n);
+        k.emplace_back(p + "path_cells", n ? int64_t(std::llround(path / 16.0 / double(n))) : 0);
+        k.emplace_back(p + "straight_cells", n ? int64_t(std::llround(straight / 16.0 / double(n))) : 0);
+        k.emplace_back(p + "extra_cells", n ? int64_t(std::llround((path - straight) / 16.0 / double(n))) : 0);
+        k.emplace_back(p + "detour_permille", straight > 0 ? int64_t(std::llround((path / straight - 1.0) * 1000.0)) : 0);
+        k.emplace_back(p + "wait_member_ticks", memberWait);
+        k.emplace_back(p + "wait_ticks", groupWait);
+        k.emplace_back(p + "wait_run_max", std::max(runMax, run));
+        k.emplace_back(p + "waits", waits + (run >= 30 ? 1 : 0));
+    }
 };
 
 }
