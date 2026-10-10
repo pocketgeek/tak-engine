@@ -1552,6 +1552,26 @@ Rules that came out of using them:
   right-click sends one shared point, so it uses formation slots instead and
   is not affected. Measured by `ctest:legion_acceptance_crowdheld_legion`
   (the 61/64 ratchet) and `ctest:legion_crowdhold`.
+* **Limits accepted at the close of the 2026-10 plan (user decision W9-1).**
+  W9 cleared the head-on jam; eleven harder gates resisted every local fix
+  (each attempt broke more scenarios than it fixed, so the stop rule reverted
+  it) and are accepted as known limitations, re-openable later. Lane order:
+  corners still swap 3-4 bodies across the top gate (Retail 0-2), a long
+  strait 22 (Retail 8), and wider gaps 2-5 swaps per file (Retail 0) because
+  Legion takes gaps several abreast. Walls: an attack ring against a wall and
+  the bodies queued in doorplug-112 touch the wall about twice as often as
+  Retail. Tails: a Move group crossing its own firing ring arrives about 11%
+  later than Retail; one doorplug-124 body and one motion-cross body never
+  finish from some start offsets; a lifted flyer detours 5 cells against 2.
+  The attempts are parked on branches task-w9-a-A1..A4 and
+  task-w9-b-b1..b6-reverted with their numbers; an unplanned probe that removes
+  the corner hug behind a turn guard brought both corner fixtures within
+  Retail and is the first lead to try. Measured by
+  `corner-1x448:gate.top.crossings`, `corner-8x56:gate.top.crossings`,
+  `strait-2x150:gate.strait.crossings`, `attackring-wall-64:wall_touch_permille`,
+  `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
+  `doorplug-124:g.A.done`, `motion-cross:click.u01.done` and
+  `ctest:legion_liftflyers`.
 * **Approaching an unreachable goal counts as trapped movement.** The
   acceptance and matrix observers classify a unit as Trapped whenever its
   origin cannot statically reach its goal disc, and any move or turn more
