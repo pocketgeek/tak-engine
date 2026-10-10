@@ -148,6 +148,7 @@ struct Scenario {
     int roundTrip = -1;               // `uplink R`: the 512-command window
     bool probeApproach = false;       // `probe approach`: the runner reports per-unit approach arrival and order completion
     bool probeLanes = false;          // `probe lanes`: the runner reports the lanes.* counters (W8 step 0)
+    bool probeW9 = false;             // `probe w9`: the runner reports the w9.* counters and the debug-build census.* keys (W9 step 0)
     bool probeAware = false;          // `probe aware`: the runner reports the aware.* counters (W7 step 0)
     bool probeClaims = false;         // `probe claims`: the runner audits the arrival-slot claims every 10 ticks (W5 step 0)
     std::vector<int> gateOffsets;     // `gateoffsets O,O,..`: legion_scenario's gate offsets where 0,+-1..+-5 leave the map
@@ -363,8 +364,10 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
             }
         } else if (k == "probe") {
             need(2, 2);
-            if (w[1] != "approach" && w[1] != "claims" && w[1] != "aware" && w[1] != "lanes") c.fail("probe approach|claims|aware|lanes");
-            (w[1] == "approach" ? s.probeApproach : w[1] == "aware" ? s.probeAware : w[1] == "lanes" ? s.probeLanes : s.probeClaims) = true;
+            if (w[1] != "approach" && w[1] != "claims" && w[1] != "aware" && w[1] != "lanes" && w[1] != "w9")
+                c.fail("probe approach|claims|aware|lanes|w9");
+            (w[1] == "approach" ? s.probeApproach : w[1] == "aware" ? s.probeAware : w[1] == "lanes" ? s.probeLanes
+             : w[1] == "w9" ? s.probeW9 : s.probeClaims) = true;
         } else if (k == "uplink") { need(2, 2); s.roundTrip = int(c.integer(w[1], 1, 600)); }
         else if (k == "gateoffsets") {
             need(2, 2);
@@ -735,6 +738,7 @@ inline std::string format(const Scenario& s) {
     if (s.probeClaims) o << "probe claims\n";
     if (s.probeAware) o << "probe aware\n";
     if (s.probeLanes) o << "probe lanes\n";
+    if (s.probeW9) o << "probe w9\n";
     if (!s.gateOffsets.empty()) {
         o << "gateoffsets ";
         for (size_t i = 0; i < s.gateOffsets.size(); ++i) o << (i ? "," : "") << s.gateOffsets[i];

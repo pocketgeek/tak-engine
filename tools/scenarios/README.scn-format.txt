@@ -44,6 +44,15 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 lanes.* keys (pivot_calls, pivot_work, pivot_sweeps: the pinwheel's steering
                                 work, the base the S1 corner lanes are gated against; lane_work, lane_clipped:
                                 0 until W8 step 3 builds the lanes; W8 step 0).
+  probe w9                      Legion only: the runner reports the W9 instruments (W9 step 0): w9.* (the twelve
+                                never-hashed mechanism counters of LegionNavigator::Stats: seal_settles,
+                                creep_presses, deep_rechoices, anchor_advances, gate_lane_moves, gate_holds,
+                                fold_binds, turn_guard_rejects, clear_aims, meet_latches,
+                                order_inversions_avoided / _taken; 0 until their step builds them) and, in a
+                                debug build (NDEBUG undefined), census.* (how often each mechanism's trigger
+                                WOULD fire, definitions in legion.cpp's struct Census). `legion_scenario --w9`
+                                turns it on for any file; `--trace ID[,ID...]` prints one stderr line per
+                                decision of those members (debug build).
   probe claims                  Legion only: every 10 ticks the navigator audits
                                 its arrival-slot claims (the claims invariant);
                                 keys claims.bad_max (overlapping + lost +

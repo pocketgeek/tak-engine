@@ -84,6 +84,7 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -142,6 +143,9 @@ struct Options {
     uint32_t catchup = 0;   // --catchup N: the path budget is unlimited for the first N ticks (a harvested situation re-issues every
                             // in-flight order at tick 0; the retail request queue would drain that backlog over ~2000 ticks)
     int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
+    bool w9 = false;        // --w9: report the W9 instruments for any file (as `probe w9`)
+    std::vector<int> trace; // --trace IDS: decision trace lines on stderr for these members (debug build)
+    std::vector<std::string> traceGroups;   // ... and whole groups, by name (a token that is not a number)
     // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
     std::string gate;                  // check | baseline | exit-table | anchor | "" (none)
     std::string gateFile;              // the baseline (check, baseline), old base (exit-table), anchor
@@ -159,7 +163,7 @@ void emit(const std::string& line) {
     std::fprintf(stderr, "legion_scenario: %s\n"
         "usage: legion_scenario <file.scn|builtin:NAME> [--mode legion|retail|both] [--offsets 0,1,-1|gate]\n"
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
-        "       [--no-observer] [--neutral] [--wanderers on|off]\n"
+        "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--trace ID[,ID...]]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
         "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
@@ -699,6 +703,12 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
     auto b = scn::build(s, bo);
     if (!b->skipped.empty()) { r.skipped = b->skipped; return r; }
     auto& w = *b->world;
+    if (!opt.traceGroups.empty()) {   // --trace with group names: the ids exist only now
+        std::vector<int> ids = opt.trace;
+        for (const auto& name : opt.traceGroups)
+            if (const auto g = b->groups.find(name); g != b->groups.end()) ids.insert(ids.end(), g->second.begin(), g->second.end());
+        tak::sim::LegionNavigator::setTrace(ids);
+    }
     scn::OrderFeed feed(s, *b, opt.window);
     std::optional<obs::Observer> o;
     obs::NavWork navWork;
@@ -893,6 +903,23 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                     r.keys.emplace_back("aware." + (name.rfind("aware_", 0) == 0 ? name.substr(6) : name), int64_t(v));
                 r.keys.emplace_back("aware.work_max", int64_t(navWork.awareWorkMax()));
             }
+            if (s.probeW9 || opt.w9) {   // W9 step 0: the mechanism counters (0 until their step) and the debug census
+                for (const auto& [name, v] : navWork.w9())
+                    r.keys.emplace_back("w9." + name, int64_t(v));
+                if (const auto* ln = const_cast<tak::sim::World&>(w).legionNavigator())
+                    for (const auto& [name, v] : ln->census())
+                        r.keys.emplace_back("census." + name, int64_t(v));
+                if (o) {   // the tails (members not arrived at the end), so a second run can trace them
+                    for (size_t g = 0; g < o->groupCount(); ++g) {
+                        const auto ids = o->leftBehind(w, g);
+                        if (ids.empty()) continue;
+                        std::string list;
+                        for (int id : ids) list += (list.empty() ? "" : ",") + std::to_string(id);
+                        std::fprintf(stderr, "TAIL %s group %s offset=%d: %zu not arrived: %s\n", s.name.c_str(),
+                                     o->groupName(g).c_str(), offset, ids.size(), list.c_str());
+                    }
+                }
+            }
             if (s.probeLanes) {   // W8 step 0: pivot_work is the base steering work, lane_work / lane_clipped stay 0 until S1
                 for (const auto& [name, v] : navWork.w8())   // pivot_work -> lanes.pivot_work
                     r.keys.emplace_back("lanes." + name, int64_t(v));
@@ -1033,6 +1060,18 @@ int main(int argc, char** argv) {
             const long v = std::atol(value().c_str());
             if (v < 0 || v > 100000) usage("--catchup N takes 0..100000 ticks");
             opt.catchup = uint32_t(v);
+        } else if (a == "--w9") opt.w9 = true;
+        else if (a == "--trace") {
+            const auto v = value();
+            for (size_t pos = 0; pos < v.size();) {
+                const size_t comma = v.find(',', pos);
+                const std::string tok = v.substr(pos, comma == std::string::npos ? comma : comma - pos);
+                if (tok == "all") opt.trace.push_back(-1);
+                else if (!tok.empty() && std::isdigit(static_cast<unsigned char>(tok[0]))) opt.trace.push_back(std::atoi(tok.c_str()));
+                else if (!tok.empty()) opt.traceGroups.push_back(tok);
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
         } else if (a == "--no-observer") opt.observer = false;
         else if (a == "--neutral") opt.neutral = true;
         else if (a == "-h" || a == "--help") usage("help");
@@ -1042,6 +1081,7 @@ int main(int argc, char** argv) {
     if (opt.files.empty()) usage("no scenario file");
     const bool gate = !opt.gate.empty();
     if (opt.files.size() > 1 && !opt.neutral && !gate) usage("one scenario file (several only with --neutral or a gate mode)");
+    if (!opt.trace.empty() && opt.traceGroups.empty()) tak::sim::LegionNavigator::setTrace(opt.trace);   // debug builds; a no-op in release
     if (gate && opt.neutral) usage("--neutral and a gate mode do not combine");
     for (size_t i = 0; i + 1 < opt.gateArgs.size(); ++i)
         if (opt.gateArgs[i] == "--ratchet" && opt.gate != "check") usage("--ratchet goes with --check");

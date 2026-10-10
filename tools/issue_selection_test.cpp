@@ -572,6 +572,7 @@ hug turn 5 0 5 12 30 8 30 12 tip1=11 tip2=8 cells=1
 probe claims
 probe aware
 probe lanes
+probe w9
 churn 40 9 2 2 every=5 walk=2,0,8 toggle until=60
 at 30 move F,A,B 50 8
 at 60 fight A,B @E queue
@@ -708,8 +709,8 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
         const auto& bh = *ascii.shape("later");
         check(bh.kind == "behind" && bh.a == "E*" && bh.b == "A,B" && bh.cells == 6 && ascii.probeAware, "ascii: behind shape, probe aware");
         const auto& hg = *ascii.shape("turn");
-        check(hg.kind == "hug" && hg.ax0 == 30 && hg.az1 == 12 && hg.tip1 == 11 && hg.tip2 == 8 && hg.cells == 1 && ascii.probeLanes,
-              "ascii: hug shape, probe lanes");
+        check(hg.kind == "hug" && hg.ax0 == 30 && hg.az1 == 12 && hg.tip1 == 11 && hg.tip2 == 8 && hg.cells == 1 && ascii.probeLanes && ascii.probeW9,
+              "ascii: hug shape, probe lanes, probe w9");
     }
     check(ascii.group("A")->squad == -1 && ascii.group("E")->weapons == 1, "ascii: group options");
     check(ascii.orders[0].selection == std::vector<std::string>{"F", "A", "B"}, "ascii: selection order kept");
