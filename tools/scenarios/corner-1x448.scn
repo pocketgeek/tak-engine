@@ -20,6 +20,7 @@ name corner-1x448
 ticks 9000
 # The gate offsets (W3 round 4, ruling (a)): -5 / +5 spawn groups A / G off the map, so nine.
 gateoffsets 0,1,-1,2,-2,3,-3,4,-4
+probe lanes
 seed 7
 map flat 220 170
 wall 80 60 40 110

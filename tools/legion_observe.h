@@ -60,6 +60,9 @@
 //   free samples (a step of at least half its base speed) the member stops
 //   (under a quarter) or deviates by more than 45 degrees. crawl_samples: a
 //   sample's step is positive but no more than cap/8 per tick.
+//   transit_samples: ordered ground samples more than 10 cells from the final goal; transit_held_permille: those
+//   at no speed; the _far_ pair counts only samples more than 100 cells out (W8 step 0, the MV-12 spacing probe's
+//   far held); g.NAME.stops: a transit sample held right after a moving one (the probe's stops by fast / slow type).
 //   follow_chain_max/mean: the longest run of same-group movers each within
 //   two body widths behind the next (inside 45 degrees of its own motion),
 //   at exactly the same speed.
@@ -321,6 +324,7 @@ public:
             std::sort(dists.begin(),dists.end());
             put(p+"n",n);put(p+"radius_px",detail::isqrt(gs.radius2));
             put(p+"arrived",gs.arrived);put(p+"t50",gs.t50);put(p+"t90",gs.t90);put(p+"done",gs.done);
+            put(p+"stops",gs.stops);
             put(p+"left_behind",n-gs.arrived-gs.dead);put(p+"dead",gs.dead);put(p+"orders_done",gs.ordersDone);
             for(const auto& c:clicks_)if(c.name==cfg_.groups[g].click)put(p+"click_n",c.n);
             put(p+"complete_n",int64_t(dists.size()));put(p+"complete_outside_radius",outside);
@@ -352,6 +356,8 @@ public:
         }
         put("waiting_held",waitingHeld_);put("waiting_no_progress",waitingNoProgress_);
         put("parked_held",parkedHeld_);put("parked_no_progress",parkedNoProgress_);
+        put("transit_samples",transit_);put("transit_held_permille",detail::permille(transitHeld_,transit_));
+        put("transit_far_samples",transitFar_);put("transit_far_held_permille",detail::permille(transitFarHeld_,transitFar_));
         put("decision_samples",ordered_);put("stopped_permille",detail::permille(stopped_,ordered_));
         put("flips",flips_);
         put("flip_rate_per30_permille",flipSamples_?(flips_*30*1000+flipSamples_*cfg_.decisionEvery/2)/(flipSamples_*cfg_.decisionEvery):0);
@@ -457,6 +463,7 @@ private:
         // decision samples: positions at the last 11 samples (10 steps).
         std::vector<std::pair<int32_t,int32_t>> ring;
         int lastClass=-1,aimSign=0,freeRun=0;
+        int wasHeld=-1;          // transit: the last sample's held class (1 held, 0 moving), -1 none yet
         int64_t speed=0;bool chainMover=false;int64_t stepX=0,stepZ=0;
         // flyers
         int mode=-1;bool landing=false,landedOnce=false;
@@ -468,6 +475,7 @@ private:
         int64_t radius2=0;int foot=0;
         int n=0,arrived=0,dead=0;int64_t t50=-1,t90=-1,done=-1,ordersDone=-1;
         int64_t awayMax=0,awaySum=0,awaySamples=0,illegalOverlap=0;
+        int64_t stops=0;         // transit samples: held right after a moving one (W8 step 0, the MV-12 fast/slow stops)
     };
     // A click read as one command (ruling W3 final exit (f)): its groups' bodies together.
     struct ClickStats {std::string name;std::vector<int> groups;int n=0,arrived=0;int64_t t50=-1,t90=-1,done=-1;};
@@ -793,6 +801,20 @@ private:
         const int64_t step=detail::isqrt(sx*sx+sz*sz);   // raw px over `every` ticks
         const int64_t base=std::max<int64_t>(1,u->baseSpeed.v);
         if(orders) {++ordered_;stopped_+=u->speed.v<=0;}
+        if(orders&&!m.flyer) {
+            // W8 step 0 (MV-12 spacing probe): a sample more than 10 cells from the final goal is in transit;
+            // more than 100 is far. Held = no speed. A stop is a held sample right after a moving one.
+            const auto& goal=u->orders.back();
+            const int64_t gx=(int64_t(goal.x.v)-u->x.v)>>16,gz=(int64_t(goal.z.v)-u->z.v)>>16;
+            const int64_t cells=detail::isqrt(gx*gx+gz*gz)/16;
+            if(cells>10) {
+                const int held=u->speed.v<=0;
+                ++transit_;transitHeld_+=held;
+                if(cells>100) {++transitFar_;transitFarHeld_+=held;}
+                if(held&&m.wasHeld==0&&m.group>=0&&size_t(m.group)<groupStats_.size())++groupStats_[size_t(m.group)].stops;
+                m.wasHeld=held;
+            } else m.wasHeld=-1;
+        } else m.wasHeld=-1;
         if(orders&&hasPrev) {
             ++flipSamples_;
             const int cls=moved?1:0;
@@ -1034,6 +1056,7 @@ private:
     int64_t start_=-1,samples_=0;
     int64_t spins_=0,reversals_=0,stopGo_=0,sideways_=0,backward_=0,back_=0,walkInPlace_=0,statue_=0,crawl_=0;
     int64_t waitingHeld_=0,waitingNoProgress_=0,parkedHeld_=0,parkedNoProgress_=0;
+    int64_t transit_=0,transitHeld_=0,transitFar_=0,transitFarHeld_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;
     int64_t spacingSamples_=0,contactOwn_=0,contactOther_=0,contactSettled_=0;
     static constexpr int64_t kConvoyCommand=int64_t(1)<<40;   // convoy commands, apart from plain selections
@@ -1091,6 +1114,10 @@ public:
             if(n=="engaged_now") {   // W5 step 0: a per-tick population, not work (Stats::engagedNow)
                 engagedMax_=std::max(engagedMax_,d);engagedTicks_+=d;return;
             }
+            if(isW8Instrument(n)) {   // W8 step 0: the lane counters, reported by w8() and never summed as work
+                w8_[std::string(n)]=v;
+                return;
+            }
             if(isW7Instrument(n)) {   // W7 step 0: observation counters, reported by w7() and never summed as work
                 w7_[std::string(n)]=v;
                 if(n=="aware_work")awareTickWork+=d;
@@ -1132,10 +1159,16 @@ public:
             n.substr(0,14)=="aware_latency_"||n.substr(0,8)=="giveway_";
     }
     uint64_t engagedMemberTicks() const {return engagedTicks_;}
+    // W8 step 0: the latest cumulative value of each lane counter (Stats::pivotCalls, pivotWork, pivotSweeps,
+    // laneWork, laneClipped). pivot_work is the base lane steering work the S1 lanes are gated against (<= 1.5x).
+    const std::map<std::string,uint64_t>& w8() const {return w8_;}
+    static bool isW8Instrument(std::string_view n) {
+        return n=="pivot_calls"||n=="pivot_work"||n=="pivot_sweeps"||n=="lane_work"||n=="lane_clipped";
+    }
 private:
     void gauge(std::string_view n,uint64_t v) {(n=="quota_peg_run_max"?quotaPegRunMax_:stillPerResidueMax_)=v;}
     std::vector<uint64_t> bins_;
-    std::map<std::string,uint64_t> w7_;
+    std::map<std::string,uint64_t> w7_,w8_;
     uint64_t awareWorkMax_=0;
     uint64_t ticks_=0,stillPerResidueMax_=0,quotaPegRunMax_=0,engagedMax_=0,engagedTicks_=0;
     std::vector<uint64_t> last_;

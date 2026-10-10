@@ -149,6 +149,15 @@ public:
         uint64_t parts=0,awareEncounters=0,awareReplans=0,awareBuilds=0,awareWork=0;
         uint64_t awareLatencyMax=0,awareLatencySum=0,awareLatencyN=0;
         uint64_t giveWayTicks=0,giveWayTimeouts=0,giveWayStarts=0;
+        // ---- W8 step 0 instruments (observation only, never hashed) ----------
+        // pivotCalls: pivotAim evaluations (one per origin change of a pinwheel-eligible member);
+        // pivotWork: the cells and probes they touch (descent chain cells, the wall scan up to the first
+        // touch, the narrow-strip tests, the arc's free-width probes and one per sweep started);
+        // pivotSweeps: the line sweeps they started. laneWork / laneClipped are the S1 corner lanes' own
+        // counters (vertex-search and arc cells; arcs clamped to the group's field window) and stay 0
+        // until W8 step 3 builds the lanes: a crowdbench row with pivotWork and laneWork both 0 is
+        // required to stay hash-identical through W8 step 3.
+        uint64_t pivotCalls=0,pivotWork=0,pivotSweeps=0,laneWork=0,laneClipped=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -193,6 +202,8 @@ public:
         f("parts",s.parts);f("aware_encounters",s.awareEncounters);f("aware_replans",s.awareReplans);f("aware_builds",s.awareBuilds);f("aware_work",s.awareWork);
         f("aware_latency_max",s.awareLatencyMax);f("aware_latency_sum",s.awareLatencySum);f("aware_latency_n",s.awareLatencyN);
         f("giveway_ticks",s.giveWayTicks);f("giveway_timeouts",s.giveWayTimeouts);f("giveway_starts",s.giveWayStarts);
+        f("pivot_calls",s.pivotCalls);f("pivot_work",s.pivotWork);f("pivot_sweeps",s.pivotSweeps);
+        f("lane_work",s.laneWork);f("lane_clipped",s.laneClipped);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));

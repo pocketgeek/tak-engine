@@ -358,6 +358,15 @@ obs::Config configFor(const scn::Scenario& s, const scn::Built& b) {
             if (sh.minCells) l.minCells = sh.minCells;
             l.sameGroup = !sh.acrossGroups;
             cfg.laneOrders.push_back(l);
+        } else if (sh.kind == "hug") {
+            obs::Hug h;
+            h.name = sh.name;
+            h.first = laneLine(s, sh.x0, sh.z0, sh.x1, sh.z1, 1);
+            h.second = laneLine(s, sh.ax0, sh.az0, sh.ax1, sh.az1, 1);
+            h.tipFirst = sh.tip1;
+            h.tipSecond = sh.tip2;
+            if (sh.cells) h.cells = sh.cells;
+            cfg.hugs.push_back(h);
         } else if (sh.kind == "pair") {
             obs::Pair p;
             p.name = sh.name;
@@ -883,6 +892,10 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                 for (const auto& [name, v] : navWork.w7())   // aware_builds -> aware.builds, parts -> aware.parts
                     r.keys.emplace_back("aware." + (name.rfind("aware_", 0) == 0 ? name.substr(6) : name), int64_t(v));
                 r.keys.emplace_back("aware.work_max", int64_t(navWork.awareWorkMax()));
+            }
+            if (s.probeLanes) {   // W8 step 0: pivot_work is the base steering work, lane_work / lane_clipped stay 0 until S1
+                for (const auto& [name, v] : navWork.w8())   // pivot_work -> lanes.pivot_work
+                    r.keys.emplace_back("lanes." + name, int64_t(v));
             }
             r.keys.emplace_back("legion_groups", groupsAfter);
             r.keys.emplace_back("legion_groups_peak", groupsPeak);

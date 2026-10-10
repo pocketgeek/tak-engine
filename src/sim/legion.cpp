@@ -5567,6 +5567,7 @@ struct LegionNavigator::Impl {
             if(next<0)break;
             chain[size_t(n++)]=next;
         }
+        ++stats.pivotCalls;stats.pivotWork+=uint64_t(n);   // W8 step 0: the chain cells
         // Outward (away from illegal origins) vector at a chain cell; zero
         // when no illegal origin is within a cell.
         auto wall=[&](int c,int& vx,int& vz) {
@@ -5576,6 +5577,7 @@ struct LegionNavigator::Impl {
         };
         int touch=-1;
         for(int i=0;i<n&&touch<0;++i) {int vx,vz;if(wall(chain[size_t(i)],vx,vz))touch=i;}
+        stats.pivotWork+=uint64_t(touch<0?n:touch+1);   // W8 step 0: the wall scan
         if(touch<0)return -1;
         // A passage on the way (a strip narrower than kLaneSpan across, as
         // the passage lanes use) ends the look-ahead: there the field and its
@@ -5593,7 +5595,12 @@ struct LegionNavigator::Impl {
         // Nor near the destination: there the formation's slots and the
         // area logic place the bodies (a rock among the slots is no wall
         // end to wheel round).
-        for(int i=touch;i<n;++i)if(narrow(chain[size_t(i)])||f.at(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
+        int narrowTests=0;
+        for(int i=touch;i<n;++i) {
+            ++narrowTests;
+            if(narrow(chain[size_t(i)])||f.at(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
+        }
+        stats.pivotWork+=uint64_t(narrowTests);   // W8 step 0
         if(touch>=n)return -1;
         if(m.pivotR==0) {
             // Taken once, as the wall end comes into reach: a turn of the
@@ -5675,6 +5682,7 @@ struct LegionNavigator::Impl {
             };
             int64_t r=0;
             while(r<R&&open(r+1))++r;
+            stats.pivotWork+=uint64_t(r)+1;   // W8 step 0: the free-width probes
             if(r<int64_t(kPivotMinBodies)*foot)continue;
             const int qx=cx+int(nx*r/len),qz=cz+int(nz*r/len);
             if((qx-mx)*(qx-mx)+(qz-mz)*(qz-mz)<int64_t(kPivotLead)*kPivotLead&&j+1<n)continue;
@@ -5682,6 +5690,7 @@ struct LegionNavigator::Impl {
             // behind the body: walking back to it reads as reversing).
             if((qx-mx)*tx+(qz-mz)*tz<=0)continue;
             if(++sweeps>kPivotSweeps)return -1;
+            ++stats.pivotSweeps;++stats.pivotWork;   // W8 step 0
             if(sweep(p,u,u.x,u.z,centre(qx,fx),centre(qz,fz)))return qz*W+qx;
         }
         return -1;

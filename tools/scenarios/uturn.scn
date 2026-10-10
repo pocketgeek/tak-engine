@@ -12,6 +12,7 @@ scn 1
 # spread 7.93, reversals 3.
 name uturn
 ticks 6000
+probe lanes
 seed 7
 map flat 200 140
 wall 98 48 4 92

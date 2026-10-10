@@ -40,6 +40,10 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 LegionNavigator::Stats as aware.* keys (parts, encounters, replans, builds,
                                 latency_max / _sum / _n, work, work_max, giveway_starts / _ticks / _timeouts;
                                 W7 step 0) and the route-behind metric of every `behind` shape.
+  probe lanes                   Legion only: the runner reports the lane counters of LegionNavigator::Stats as
+                                lanes.* keys (pivot_calls, pivot_work, pivot_sweeps: the pinwheel's steering
+                                work, the base the S1 corner lanes are gated against; lane_work, lane_clipped:
+                                0 until W8 step 3 builds the lanes; W8 step 0).
   probe claims                  Legion only: every 10 ticks the navigator audits
                                 its arrival-slot claims (the claims invariant);
                                 keys claims.bad_max (overlapping + lost +
@@ -139,6 +143,12 @@ Shapes (for the runner's metrics; never affect the world):
         within `window` ticks (300) swap when their order flips by at least
         `mincells` (2) at both lines. Pairs of one group, or of all groups with
         across=all. Keys lane.NAME.pairs / .swaps / .swaps_permille.
+  hug NAME BX0 BZ0 BX1 BZ1 AX0 AZ0 AX1 AZ1 tip1=N tip2=N [cells=N]
+        the observer's hug probe (the MV-13 S-bend, W8 step 0): the two lines are the lane probe's, one per
+        vertex (each horizontal or vertical); tip1 / tip2 are the lateral cell of each vertex's tip (x on a
+        horizontal line, z on a vertical one). A member hugs a vertex when its lateral cell on first
+        entering the vertex's line is within `cells` (2) of the tip; it carries over when it hugs both.
+        Keys hug.NAME.first / .second / .carry.
   reach NAME ATTACKERS TARGETS [range=PX] [marks=T,T]
         the AR-06 probe (comma lists of groups, a trailing * is a prefix): how
         many attackers ever get a shot at the targets, when, the damage dealt

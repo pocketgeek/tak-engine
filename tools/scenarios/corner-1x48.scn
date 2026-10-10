@@ -14,6 +14,7 @@ scn 1
 # stop-go 266, reversals 14.
 name corner-1x48
 ticks 9000
+probe lanes
 seed 7
 map flat 220 170
 wall 80 60 40 110
