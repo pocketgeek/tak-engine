@@ -824,6 +824,16 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
               sc.groups[0].spots[2].id == 40 && sc.truths.size() == 2 && sc.truths[1].pos.size() == 4 && sc.truths[1].tick == 100,
               "situation: spots and truth parsed");
         check(sc.groupOfBody(3) == 1 && sc.groupOfBody(4) == -1, "situation: body numbers span the groups in file order");
+        {   // the body locator is a cumulative index: it agrees with a linear walk, and a named map round-trips
+            const auto at = sc.locateBody(2);
+            check(at.first == 0 && at.second == 2 && sc.locateBody(3).first == 1 && sc.locateBody(3).second == 0,
+                  "situation: a body number locates its group and its index inside it");
+            const std::string named = "scn 1\nname n\nplayers 2\nmap named Ulasem Arena\ntype m fbi aracommander\ngroup a 0 m 1 cells 5,5\n";
+            roundTrip(named, "named map");
+            const auto nm = tak::scn::parse(named, "named map");
+            check(nm.map.kind == tak::scn::MapSpec::Named && nm.map.recipe == "Ulasem Arena" && !nm.needsData().empty(),
+                  "situation: `map named` keeps a multi-word name and needs the install");
+        }
         tak::scn::BuildOptions opt;
         auto b = tak::scn::build(sc, opt);
         const auto& ids = b->groups.at("a");

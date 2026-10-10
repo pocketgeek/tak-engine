@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -158,19 +159,32 @@ struct Scenario {
         std::vector<std::pair<int32_t, int32_t>> pos;
     };
     std::vector<Truth> truths;        // ascending ticks; a file may carry several (`truth 100 ...`, `truth 300 ...`)
+    mutable std::vector<size_t> bodyStart_;                       // groups[g]'s first body number (indexGroups)
+    mutable std::unordered_map<std::string, size_t> nameIndex_;   // group name -> index
 
     const TypeSpec* type(const std::string& n) const {
         for (const auto& t : types) if (t.name == n) return &t;
         return nullptr;
     }
-    // The group a body number "#N" falls in (bodies are numbered across the groups in file order); -1 when out of range.
-    int groupOfBody(size_t n) const {
-        for (size_t g = 0; g < groups.size(); ++g) {
-            if (n < size_t(groups[g].count)) return int(g);
-            n -= size_t(groups[g].count);
+    // Group lookups by name and by body number stay O(log n) however many groups a situation holds (a harvested 10k-body
+    // situation has 10k groups and hundreds of clicks naming bodies): the index grows with `groups` and is never rebuilt.
+    void indexGroups() const {
+        while (bodyStart_.size() < groups.size()) {
+            const size_t g = bodyStart_.size();
+            bodyStart_.push_back(g ? bodyStart_[g - 1] + size_t(groups[g - 1].count) : 0);
+            nameIndex_.emplace(groups[g].name, g);
         }
-        return -1;
     }
+    // The group a body number "#N" falls in (bodies are numbered across the groups in file order) and the body's
+    // index inside it; group -1 when out of range.
+    std::pair<int, size_t> locateBody(size_t n) const {
+        indexGroups();
+        if (groups.empty()) return {-1, 0};
+        if (n >= bodyStart_.back() + size_t(groups.back().count)) return {-1, 0};
+        const size_t g = size_t(std::upper_bound(bodyStart_.begin(), bodyStart_.end(), n) - bodyStart_.begin()) - 1;
+        return {int(g), n - bodyStart_[g]};
+    }
+    int groupOfBody(size_t n) const { return locateBody(n).first; }
     static bool isBodyToken(const std::string& t) { return t.size() > 1 && t[0] == '%'; }
     static size_t bodyNumber(const std::string& t) { return size_t(std::strtoul(t.c_str() + 1, nullptr, 10)); }
     // Does the order's selection include (a body of) group index `g`?
@@ -181,8 +195,9 @@ struct Scenario {
         return false;
     }
     const GroupSpec* group(const std::string& n) const {
-        for (const auto& g : groups) if (g.name == n) return &g;
-        return nullptr;
+        indexGroups();
+        const auto it = nameIndex_.find(n);
+        return it == nameIndex_.end() ? nullptr : &groups[it->second];
     }
     const Shape* shape(const std::string& n) const {
         for (const auto& s : shapes) if (s.name == n) return &s;
@@ -666,12 +681,15 @@ inline Scenario parse(const std::string& text, const std::string& origin = "<scn
         if (p >= s.players || t >= s.players) c.fail("team outside players");
     for (const auto& o : s.orders) {   // one click is one player's selection
         int owner = -1;
-        for (size_t gi = 0; gi < s.groups.size(); ++gi)
-            if (s.selects(o, gi)) {
-                const auto& g = s.groups[gi];
-                if (owner >= 0 && g.owner != owner) c.fail("an order's selection spans two players");
-                owner = g.owner;
-            }
+        auto take = [&](const GroupSpec& g) {
+            if (owner >= 0 && g.owner != owner) c.fail("an order's selection spans two players");
+            owner = g.owner;
+        };
+        if (o.selection[0] == "all") { for (const auto& g : s.groups) take(g); continue; }
+        for (const auto& t : o.selection) {
+            if (Scenario::isBodyToken(t)) { if (const int gi = s.groupOfBody(Scenario::bodyNumber(t)); gi >= 0) take(s.groups[size_t(gi)]); }
+            else if (const GroupSpec* g = s.group(t)) take(*g);
+        }
     }
     std::stable_sort(s.orders.begin(), s.orders.end(),
                      [](const OrderSpec& a, const OrderSpec& b) { return a.tick < b.tick; });
@@ -1138,12 +1156,10 @@ public:
                 if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
         };
         auto addBody = [&](size_t n) {
-            for (const auto& g : s_.groups) {
-                if (n >= size_t(g.count)) { n -= size_t(g.count); continue; }
-                const int id = b_.groups.at(g.name)[n];
-                if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
-                return;
-            }
+            const auto [gi, at] = s_.locateBody(n);
+            if (gi < 0) return;
+            const int id = b_.groups.at(s_.groups[size_t(gi)].name)[at];
+            if (const auto* u = b_.world->unit(id); u && u->alive()) out.push_back(id);
         };
         if (o.selection[0] == "all") for (const auto& g : s_.groups) add(g.name);
         else for (const auto& n : o.selection) {
