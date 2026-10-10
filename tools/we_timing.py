@@ -61,6 +61,8 @@ def main():
             if not pr:
                 continue
             bm, cm = st.median(bs), st.median(cs)
+            if bm <= 0 or cm <= 0:   # a phase the mode never runs (nav under Retail)
+                continue
             print(f"{k:9} {bm:9.3f} {cm:9.3f} {100 * (cm / bm - 1):+8.1f} {st.median(pr):+14.1f} "
                   f"{min(pr):+8.1f}..{max(pr):+.1f}")
         hb = {p['base']['hash'] for p in pairs}

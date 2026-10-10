@@ -14,18 +14,20 @@
 #   --warm N                warm-up ticks, dropped (default 1500: the rebuilt world needs ~1000 ticks to settle its
 #                           Retail waypoint queues; see docs/development.md)
 #   --ticks N               ticks measured after the warm-up (default 1000)
+#   --catchup N             ticks of unlimited path budget at the start, draining the order backlog a situation re-issues at
+#                           tick 0 (default 60; 0 = off)
 #   --counters              also collect TAK_SIMSTATS work counters (adds instrument cost: not for ms comparisons)
 #   --data DIR              game install (default $TAK_DATA or ~/TAK/assets/game)
 #   --out DIR               logs + report (default $TMPDIR/we-timing-<date>)
 # Every timed run goes through /home/pocket_geek/tak-tmp/tools/timing.sh (flock; cores 0-3): one pair on 0-1 + 2-3.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-BASE= CAND= SITS= ROUNDS=2 WARM=1500 TICKS=1000 COUNTERS= INNER=
+BASE= CAND= SITS= ROUNDS=2 WARM=1500 TICKS=1000 CATCHUP=60 COUNTERS= INNER=
 DATA=${TAK_DATA:-$HOME/TAK/assets/game}; OUT=
 TIMING=${TAK_TIMING_SH:-/home/pocket_geek/tak-tmp/tools/timing.sh}
 while [ $# -gt 0 ]; do case $1 in
   --base) BASE=$2; shift 2;; --cand) CAND=$2; shift 2;; --sits) SITS=$2; shift 2;; --rounds) ROUNDS=$2; shift 2;;
-  --warm) WARM=$2; shift 2;; --ticks) TICKS=$2; shift 2;; --counters) COUNTERS=1; shift;; --data) DATA=$2; shift 2;;
+  --warm) WARM=$2; shift 2;; --ticks) TICKS=$2; shift 2;; --counters) COUNTERS=1; shift;; --catchup) CATCHUP=$2; shift 2;; --data) DATA=$2; shift 2;;
   --out) OUT=$2; shift 2;; --inner) INNER=1; shift;; *) echo "we_timing.sh: unknown option $1" >&2; exit 2;; esac; done
 [ -n "$BASE" ] && [ -n "$CAND" ] || { sed -n 2,22p "$0" >&2; exit 2; }
 for d in "$BASE" "$CAND"; do [ -x "$d/legion_scenario" ] || { echo "we_timing.sh: $d/legion_scenario missing" >&2; exit 2; }; done
@@ -39,7 +41,7 @@ if [ -z "$INNER" ]; then
     [ -s "$OUT/scn/$s.scn" ] || zcat "$HERE/scenarios/we-timing/$s.scn.gz" > "$OUT/scn/$s.scn"
   done
   echo "we_timing: base=$BASE cand=$CAND sits=$SITS rounds=$ROUNDS warm=$WARM out=$OUT"
-  args=(--inner --base "$BASE" --cand "$CAND" --sits "$SITS" --rounds "$ROUNDS" --warm "$WARM" --data "$DATA" --out "$OUT")
+  args=(--inner --base "$BASE" --cand "$CAND" --sits "$SITS" --rounds "$ROUNDS" --warm "$WARM" --catchup "$CATCHUP" --data "$DATA" --out "$OUT")
   [ -n "$TICKS" ] && args+=(--ticks "$TICKS"); [ -n "$COUNTERS" ] && args+=(--counters)
   start=$(date +%s)
   "$TIMING" bash "$0" "${args[@]}"
@@ -55,7 +57,7 @@ one() {   # one <build> <cores> <sit> <log>
   local t0=$(date +%s.%N)
   env TAK_PHASE=1 TAK_PHASE_MS=0 ${COUNTERS:+TAK_SIMSTATS=1} taskset -c "$2" "$1/legion_scenario" "$OUT/scn/$3.scn" \
       --mode $([ $mode = R ] && echo retail || echo legion) --data "$DATA" --ticks $((WARM + ticks)) --offsets 0 \
-      --no-observer --workers 2> "$4.err" > "$4.out" || { echo "run failed: $4 ($(tail -1 "$4.err"))" >&2; return 0; }
+      --no-observer --workers --catchup "$CATCHUP" 2> "$4.err" > "$4.out" || { echo "run failed: $4 ($(tail -1 "$4.err"))" >&2; return 0; }
   grep -E "^SIMPHASE|^SIMSTATS" "$4.err" > "$4" || true
   echo "wall $(echo "$(date +%s.%N) - $t0" | bc)" >> "$4.out"; rm -f "$4.err"
 }

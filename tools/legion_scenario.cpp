@@ -139,6 +139,8 @@ struct Options {
     const char* data = nullptr;
     bool json = false, observer = true, neutral = false;
     uint32_t ticks = 0;     // 0: the file's
+    uint32_t catchup = 0;   // --catchup N: the path budget is unlimited for the first N ticks (a harvested situation re-issues every
+                            // in-flight order at tick 0; the retail request queue would drain that backlog over ~2000 ticks)
     int wanderers = -1;     // --wanderers on|off overrides the file's; -1: the file's
     // Gate modes: the JSON lines go to tools/legion_check.py instead of stdout.
     std::string gate;                  // check | baseline | exit-table | anchor | "" (none)
@@ -781,6 +783,10 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                     o->noteSelection(feed.selection(od), convoys[size_t(&od - s.orders.data())]);
         const size_t landed = feed.apply(t);
         if (landed) { commands += int64_t(landed); lastCommand = t; }
+        if (opt.catchup) {
+            if (t == 0) w.setPathBudget(1 << 28);
+            else if (t == opt.catchup) w.setPathBudget(tak::sim::kPathBudgetDefault);
+        }
         w.tick(1.f / 30);
         nav = w.legionNavigator();
         if (o) {
@@ -976,6 +982,10 @@ int main(int argc, char** argv) {
             opt.gateArgs.push_back(value());
         } else if (a == "--cumulative" || a == "--require-all" || a == "--hashes") {
             opt.gateArgs.push_back(a);
+        } else if (a == "--catchup") {
+            const long v = std::atol(value().c_str());
+            if (v < 0 || v > 100000) usage("--catchup N takes 0..100000 ticks");
+            opt.catchup = uint32_t(v);
         } else if (a == "--no-observer") opt.observer = false;
         else if (a == "--neutral") opt.neutral = true;
         else if (a == "-h" || a == "--help") usage("help");
