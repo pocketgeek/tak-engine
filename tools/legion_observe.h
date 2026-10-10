@@ -1163,7 +1163,7 @@ public:
     // laneWork, laneClipped). pivot_work is the base lane steering work the S1 lanes are gated against (<= 1.5x).
     const std::map<std::string,uint64_t>& w8() const {return w8_;}
     static bool isW8Instrument(std::string_view n) {
-        return n=="pivot_calls"||n=="pivot_work"||n=="pivot_sweeps"||n=="lane_work"||n=="lane_clipped";
+        return n=="pivot_calls"||n=="pivot_work"||n=="pivot_sweeps"||n=="lane_work"||n=="lane_clipped"||n.substr(0,7)=="vertex_";
     }
 private:
     void gauge(std::string_view n,uint64_t v) {(n=="quota_peg_run_max"?quotaPegRunMax_:stillPerResidueMax_)=v;}

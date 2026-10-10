@@ -356,6 +356,48 @@ void checkClaims(World& world,const char* where) {
 // bodies on its straight way (of the same player, then of another): it
 // must plan round the block, not walk into it and wait against its face.
 // Every member arrives in about the time of the way round, nobody spins.
+// W8 step 1 (PLAN 3.2 T2, C10): nearObstacle -- the static clearance memo plus the per-query
+// soft part -- against an exhaustive search on 1e5 random origins (no command, a command
+// without arrivals, and each command with settled arrivals: their own arrivals are not soft
+// to them, everyone else's are), including the map edge; and every member's vertex probe
+// against an exhaustive visibility scan of its descent chain. The map is corner-1x48's
+// ragged corner with an idle block of the other player (soft to every command) and a
+// settled 24-body arrival of player 0 (soft to every command but its own).
+void lanegeom() {
+    Fixture f(220,170);
+    f.rect(80,60,40,110);f.rect(150,0,4,78);
+    for(const auto& [x,z]:std::vector<std::pair<int,int>>{{81,58},{86,57},{91,59},{96,58},{101,57},{106,59},{111,58},{116,57},
+        {78,59},{79,57},{77,61},{76,64},{79,66},{78,73}})f.wall(x,z);
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> idle,early,ids;
+    for(int c=0;c<6;++c)for(int r=0;r<4;++r)idle.push_back(f.spawn(type,125+c*3,20+r*3,1));
+    for(int i=0;i<24;++i)early.push_back(f.spawn(type,20+(i%6)*3,20+(i/6)*3));
+    for(int i=0;i<48;++i)ids.push_back(f.spawn(type,14+(i%8)*3,104+(i/8)*3));
+    f.start();
+    for(int id:early)f.world.order(id,60*16,40*16,false);
+    for(int t=0;t<900;++t)f.world.tick(1.f/30);
+    for(int id:ids)f.world.order(id,190*16,25*16,false);
+    auto* legion=f.world.legionNavigator();
+    int bad=0;
+    for(int t=1;t<=1800;++t) {
+        f.world.tick(1.f/30);
+        if(t%600==0) {
+            std::string report;
+            bad+=legion->laneGeometryCheck(*f.world.unit(ids[0]),34000,uint64_t(t)*2654435761u,&report);
+            std::printf("lanegeom t=%d %s",t,report.c_str());
+        }
+    }
+    const auto s=f.world.legionStats();
+    const uint64_t bent=s.vertexCalls-s.vertexVisible;
+    std::printf("lanegeom vertex calls=%llu found=%llu visible=%llu near=%llu blocked=%llu work=%llu found_of_bent_permille=%llu\n",
+        (unsigned long long)s.vertexCalls,(unsigned long long)s.vertexFound,(unsigned long long)s.vertexVisible,
+        (unsigned long long)s.vertexNear,(unsigned long long)s.vertexBlocked,(unsigned long long)s.vertexWork,
+        (unsigned long long)(bent?s.vertexFound*1000/bent:0));
+    check(bad==0,"nearObstacle or the vertex probe differs from the exhaustive search");
+    check(s.vertexFound>0,"the vertex probe never found a vertex at the corner");
+}
+
 int staticblockRun(int owner) {
     Fixture f(200,100);f.publish();
     const auto type=mover(2);
@@ -3172,7 +3214,7 @@ int main(int argc,char** argv) {
         {"approachhold",approachhold},{"approachopen",approachopen},
         {"churnfield",churnfield},{"planeincremental",planeincremental},{"planeprebuild",planeprebuild},{"penstale",penstale},{"legacyyield",legacyyield},{"approachchurn",approachchurn},{"lattice",lattice},{"wallend",wallend},
         {"navalclearance",navalclearance},{"navalisland",navalisland},{"hovershore",hovershore},{"navalmissions",navalmissions},{"squadformation",squadformation},
-        {"pinwheel",pinwheel},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
+        {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong}};

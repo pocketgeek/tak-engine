@@ -158,6 +158,12 @@ public:
         // until W8 step 3 builds the lanes: a crowdbench row with pivotWork and laneWork both 0 is
         // required to stay hash-identical through W8 step 3.
         uint64_t pivotCalls=0,pivotWork=0,pivotSweeps=0,laneWork=0,laneClipped=0;
+        // W8 step 1 (the vertex probe, unused by steering): vertexCalls counts probes of
+        // pinwheel-eligible members far from their destination (one per origin change), split
+        // by outcome: a vertex found, the whole 128-cell chain visible, the vertex within 32
+        // cells of the destination, or nothing past the body's own cell visible; vertexWork
+        // is the chain cells, line probes and clearance-ring cells they touch.
+        uint64_t vertexCalls=0,vertexFound=0,vertexVisible=0,vertexNear=0,vertexBlocked=0,vertexWork=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -204,6 +210,8 @@ public:
         f("giveway_ticks",s.giveWayTicks);f("giveway_timeouts",s.giveWayTimeouts);f("giveway_starts",s.giveWayStarts);
         f("pivot_calls",s.pivotCalls);f("pivot_work",s.pivotWork);f("pivot_sweeps",s.pivotSweeps);
         f("lane_work",s.laneWork);f("lane_clipped",s.laneClipped);
+        f("vertex_calls",s.vertexCalls);f("vertex_found",s.vertexFound);f("vertex_visible",s.vertexVisible);
+        f("vertex_near",s.vertexNear);f("vertex_blocked",s.vertexBlocked);f("vertex_work",s.vertexWork);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));
@@ -246,6 +254,12 @@ public:
     // Test hook: does the unit's (incrementally maintained) plane equal a
     // fresh whole-map build: legality, component partition, sizes, boxes?
     bool planeMatchesRebuild(const Unit&);
+    // Test hook (W8 step 1, read-only): nearObstacle (static memo plus the per-query
+    // soft part) against an exhaustive search on `queries` random origins of the
+    // unit's plane, for no command, every command with settled arrivals and one
+    // without; then every member's vertex probe against an exhaustive scan of
+    // its chain. Returns the mismatches; `report` gets the counts.
+    int laneGeometryCheck(const Unit&,int queries,uint64_t seed,std::string* report);
     // Test hook: the unit's movement state (0 none, 1 moving, 2 holding,
     // 3 waiting for its field, 4 arrived, 5 trapped, 6 engaged) and its group's identity.
     int unitState(int id) const;

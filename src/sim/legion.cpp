@@ -133,6 +133,11 @@ constexpr int kPivotSweeps=48;                 // line probes per pivot aim (bou
 constexpr int kPivotAhead=4;                   // an arc aim is at least this many descent cells ahead
 constexpr int kPivotNear=32;                   // no pinwheel within this many cells of the destination
 constexpr int kPivotLead=6;                    // pursuit distance along the arc (cells)
+// W8 (PLAN 3.2 T2): obstacle clearance and the visible vertex of a descent
+// chain (see nearObstacle, vertexProbe).
+constexpr int kObstacleReach=32;               // rings nearObstacle scans (Chebyshev cells)
+constexpr int kVertexChain=128;                // descent cells the vertex search walks
+constexpr int kLaneNear=32;                    // no vertex within this many cells of the destination
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr int kApproachRegion=256;             // origins a region needs before an unreachable goal is approached
 // Moving mission goals (chase, guard) re-seed their field at most once per
@@ -218,6 +223,14 @@ struct LegionNavigator::Impl {
         std::vector<int> column;
         std::vector<std::array<int,4>> pending;   // static changes during the build
         std::array<int,4> box{};                  // box of the component being flooded
+        // nearObstacle's static memo (C10): per origin, the packed clearance
+        // and outward normal, valid where nearGen holds nearGenCur. A pure
+        // function of `legal`; a new epoch starts a new generation. Derived,
+        // never hashed.
+        mutable std::vector<uint64_t> nearMemo;
+        mutable std::vector<uint32_t> nearGen;
+        mutable uint32_t nearGenCur=0;
+        mutable uint64_t nearEpoch=~0ull;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
@@ -623,6 +636,9 @@ struct LegionNavigator::Impl {
         // rounds (cells; 0 not yet measured, -1 hugs as the inner file), and
         // the arc cell it aims at from origin pivotCell.
         int16_t pivotR=0;int pivotCell=-1,pivotAim=-1;
+        // W8 step 1: the origin of the last vertex probe (instrument only:
+        // it gates a Stats-only probe, never a decision; not hashed).
+        int vertexCell=-1;
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
@@ -5490,6 +5506,9 @@ struct LegionNavigator::Impl {
             if(potential==kUnreached) {trapped(u,m);return;}
             int cell=aimCell(u,m,p,*f,ox,oz);
             if(cell<0) {hold(u,m);return;}
+            if(f->done&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
+                m.vertexCell=here;vertexInstrument(u,m,g,p,*f,ox,oz);
+            }
             if(f->done&&m.pivotR>=0&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;}
@@ -5540,6 +5559,144 @@ struct LegionNavigator::Impl {
         }
         if(memo)a={u.x.v,u.z.v,m.goal,u.type,f.serial,epoch,f.work,cell};
         return cell;
+    }
+    // ---- W8 (PLAN 3.2 T2): obstacle clearance and the visible vertex ----
+    // nearObstacle, split in two (C10). The static part is the Chebyshev
+    // clearance d of origin (x,z) -- the first square ring 1..kObstacleReach
+    // holding an illegal origin or the map edge, kObstacleReach+1 when none
+    // does -- and the outward normal, minus the sum of that ring's obstacle
+    // offsets (so a pocket's normal leads out of it). It is a pure function
+    // of the plane's legality, memoised per plane and dropped with the
+    // plane's epoch. The soft part (origins whose footprint covers a soft
+    // body of another command, softAt) is scanned per query out to the
+    // static clearance and never cached: it depends on the querying command
+    // and the soft scan, so a cache would hand one command's answer to
+    // another (and a late joiner would differ).
+    struct Clearance {int d=0,nx=0,nz=0;};
+    // Sum of the offsets of ring r's origins for which `hit` holds, in a
+    // fixed order; `any` tells whether one did.
+    template<class Hit> static void ringSum(int x,int z,int r,const Hit& hit,bool& any,int& sx,int& sz,uint64_t& work) {
+        auto at=[&](int i,int j) {if(hit(x+i,z+j)) {any=true;sx+=i;sz+=j;}};
+        for(int i=-r;i<=r;++i) {at(i,-r);at(i,r);}
+        for(int j=-r+1;j<r;++j) {at(-r,j);at(r,j);}
+        work+=uint64_t(8*r);
+    }
+    Clearance nearStatic(const Plane& p,int x,int z,uint64_t& work) const {
+        const size_t W=size_t(width()),c=size_t(z)*W+size_t(x),n=W*size_t(height());
+        if(p.nearMemo.size()!=n) {p.nearMemo.assign(n,0);p.nearGen.assign(n,0);p.nearGenCur=0;p.nearEpoch=~0ull;}
+        if(p.nearEpoch!=p.epoch) {
+            p.nearEpoch=p.epoch;
+            if(++p.nearGenCur==0) {std::fill(p.nearGen.begin(),p.nearGen.end(),0u);p.nearGenCur=1;}
+        }
+        if(p.nearGen[c]==p.nearGenCur) {
+            const uint64_t e=p.nearMemo[c];
+            return {int(e>>32),int(int16_t(uint16_t(e>>16))),int(int16_t(uint16_t(e)))};
+        }
+        Clearance out{kObstacleReach+1,0,0};
+        for(int r=1;r<=kObstacleReach;++r) {
+            bool any=false;int sx=0,sz=0;
+            ringSum(x,z,r,[&](int cx,int cz) {return !legal(p,cx,cz);},any,sx,sz,work);
+            if(any) {out={r,-sx,-sz};break;}
+        }
+        p.nearGen[c]=p.nearGenCur;
+        p.nearMemo[c]=uint64_t(uint32_t(out.d))<<32|uint64_t(uint16_t(int16_t(out.nx)))<<16|uint64_t(uint16_t(int16_t(out.nz)));
+        return out;
+    }
+    // The clearance of origin (x,z) for a footprint (fx,fz) of `command`:
+    // the static part, closed in by soft origins (counts: softCountsFor).
+    Clearance nearObstacle(const Plane& p,int x,int z,int fx,int fz,uint64_t command,int counts,uint64_t& work) const {
+        const Clearance s=nearStatic(p,x,z,work);
+        if(!softCellCount||command==kNoSoft)return s;
+        for(int r=1;r<=std::min(s.d,kObstacleReach);++r) {
+            bool any=false;int sx=0,sz=0;
+            // Inside the static clearance every origin is legal; on its ring
+            // only legal origins are asked (the illegal ones are counted in
+            // the static normal).
+            ringSum(x,z,r,[&](int cx,int cz) {return (r<s.d||legal(p,cx,cz))&&softAt(cx,cz,fx,fz,command,counts);},any,sx,sz,work);
+            if(any)return r<s.d?Clearance{r,-sx,-sz}:Clearance{r,s.nx-sx,s.nz-sz};
+        }
+        return s;
+    }
+    // The same answer by exhaustive search (the brute-force check).
+    Clearance nearObstacleBrute(const Plane& p,int x,int z,int fx,int fz,uint64_t command,int counts) const {
+        for(int r=1;r<=kObstacleReach;++r) {
+            bool any=false;int sx=0,sz=0;
+            for(int j=-r;j<=r;++j)for(int i=-r;i<=r;++i) {
+                if(std::max(std::abs(i),std::abs(j))!=r)continue;
+                const bool ok=legal(p,x+i,z+j);
+                if(!ok||(softCellCount&&command!=kNoSoft&&softAt(x+i,z+j,fx,fz,command,counts))) {any=true;sx+=i;sz+=j;}
+            }
+            if(any)return {r,-sx,-sz};
+        }
+        return {kObstacleReach+1,0,0};
+    }
+    // Vertex by visibility (T2 3.2, S1-L1). The member's descent chain (up
+    // to kVertexChain cells, the steps pivotAim walks) and V, the last chain
+    // cell the body reaches in a straight legal footprint line that crosses
+    // no soft origin, found by a binary search over the chain (visibility is
+    // a prefix of it round one corner): the first sweep tests the chain's
+    // end, at most 8 in all. The turn side is the sign of
+    // cross(V - P, chain[j+6] - V). No vertex (code) when the whole chain is
+    // visible (1), V is within kLaneNear of the destination (2), or nothing
+    // past the body's own cell is visible (3).
+    struct Vertex {int v=-1,at=-1,n=0,side=0;uint8_t code=0;};
+    template<size_t N>
+    Vertex vertexProbe(const Unit& u,const Member& m,const Plane& p,const Field& f,int ox,int oz,uint64_t command,int counts,
+                       std::array<int,N>& chain,uint64_t& work) const {
+        static_assert(N>=size_t(kVertexChain)+1);
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        Vertex out;
+        int n=0;chain[size_t(n++)]=oz*W+ox;
+        while(n<=kVertexChain) {
+            const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz);
+            if(next<0)break;
+            chain[size_t(n++)]=next;
+        }
+        out.n=n;work+=uint64_t(n);
+        auto visible=[&](int c) {
+            ++work;
+            const Fixed tx=centre(c%W,fx),tz=centre(c/W,fz);
+            return sweep(p,u,u.x,u.z,tx,tz)&&
+                (!softCellCount||command==kNoSoft||trace(u,u.x,u.z,tx,tz,[&](int cx,int cz) {return !softAt(cx,cz,fx,fz,command,counts);}));
+        };
+        if(n<2||visible(chain[size_t(n-1)])) {out.code=1;return out;}
+        int lo=0,hi=n-1;
+        while(hi-lo>1) {
+            const int mid=(lo+hi)/2;
+            (visible(chain[size_t(mid)])?lo:hi)=mid;
+        }
+        out.at=lo;out.v=chain[size_t(lo)];
+        if(lo==0) {out.code=3;return out;}
+        if(f.at(size_t(out.v))<kLaneNear*kOrthogonal) {out.code=2;return out;}
+        const int b=chain[size_t(std::min(lo+6,n-1))];
+        const int64_t ax=out.v%W-ox,az=out.v/W-oz,bx=b%W-out.v%W,bz=b/W-out.v/W;
+        const int64_t cross=ax*bz-az*bx;
+        out.side=cross>0?1:cross<0?-1:0;
+        return out;
+    }
+    // The W8 step 1 probe: the vertex search run where the pinwheel would
+    // run, counted in Stats and used by nothing. Its sweeps are kept out of
+    // the line-sweep and trace counters (they are not steering work).
+    void vertexInstrument(const Unit& u,const Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+        const int fx=u.type->footX,fz=u.type->footZ;
+        const uint64_t sweeps=stats.lineSweeps,cells=stats.traceCells;
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const int counts=!softCellCount?-1:softCountsFor(fx,fz);
+        uint64_t work=0;
+        std::array<int,kVertexChain+1> chain{};
+        // Only members far from the destination count (kLaneNear twice over).
+        if(f.at(size_t(oz*width()+ox))<2*kLaneNear*kOrthogonal)return;
+        const Vertex v=vertexProbe(u,m,p,f,ox,oz,command,counts,chain,work);
+        if(v.code==0) {
+            // The clearance at the look-ahead cell past V (the "already clear"
+            // test S1 reads).
+            const int c=chain[size_t(std::min(v.at+6,v.n-1))];
+            nearObstacle(p,c%width(),c/width(),fx,fz,command,counts,work);
+        }
+        ++stats.vertexCalls;
+        (v.code==0?stats.vertexFound:v.code==1?stats.vertexVisible:v.code==2?stats.vertexNear:stats.vertexBlocked)+=1;
+        stats.vertexWork+=work;
+        stats.lineSweeps=sweeps;stats.traceCells=cells;
     }
     // Pinwheel: a formation keeps its width round the end of a wall. The
     // field's shortest ways past a convex wall end all touch its tip, so
@@ -6752,6 +6909,71 @@ bool LegionNavigator::planeMatchesRebuild(const Unit& u) {
     int live=0;
     for(int n:p.compSize)live+=n>0;
     return live==int(to.size())&&live==p.liveComps&&fresh.liveComps==int(to.size());
+}
+int LegionNavigator::laneGeometryCheck(const Unit& u,int queries,uint64_t seed,std::string* report) {
+    if(!u.type)return 1;
+    auto& I=*impl_;
+    I.syncStatic();
+    const auto& p=I.plane(I.planeFor(*u.type));
+    const int W=I.width(),H=I.height(),fx=u.type->footX,fz=u.type->footZ;
+    const int counts=!I.softCellCount?-1:I.softCountsFor(fx,fz);
+    std::vector<uint64_t> commands{Impl::kNoSoft,Impl::commandKey(u.player,0xfffffu)};
+    for(const auto& [command,n]:I.softOwnerCount)commands.push_back(command);
+    int bad=0;uint64_t work=0,soft=0,edge=0;
+    uint64_t x=seed|1;
+    auto next=[&]() {x^=x<<13;x^=x>>7;x^=x<<17;return x;};
+    for(int q=0;q<queries;++q) {
+        const int ox=int(next()%uint64_t(W)),oz=int(next()%uint64_t(H));
+        const uint64_t command=commands[size_t(next()%commands.size())];
+        const auto a=I.nearObstacle(p,ox,oz,fx,fz,command,counts,work),b=I.nearObstacleBrute(p,ox,oz,fx,fz,command,counts);
+        if(a.d!=b.d||a.nx!=b.nx||a.nz!=b.nz) {
+            if(++bad<=5&&report)*report+="nearObstacle ("+std::to_string(ox)+","+std::to_string(oz)+") fast "+std::to_string(a.d)+"/"+
+                std::to_string(a.nx)+","+std::to_string(a.nz)+" brute "+std::to_string(b.d)+"/"+std::to_string(b.nx)+","+std::to_string(b.nz)+"\n";
+        }
+        soft+=a.d<I.nearStatic(p,ox,oz,work).d;
+        edge+=std::min({ox,oz,W-1-ox,H-1-oz})<a.d;
+    }
+    // Every member with a finished field: the binary search against the
+    // exhaustive scan of its chain.
+    int members=0,found=0,monotone=0,vbad=0;
+    for(const auto& [id,m]:I.members) {
+        const Unit* v=I.w.unit(id);
+        const auto group=I.groups.find(m.group);
+        if(!v||!v->type||group==I.groups.end()||!group->second.field||!group->second.field->done)continue;
+        const auto& g=group->second;const auto& f=*g.field;
+        const auto& vp=I.plane(g.plane);
+        const int vx=footprintOrigin(v->x,v->type->footX),vz=footprintOrigin(v->z,v->type->footZ);
+        if(f.at(size_t(vz)*W+vx)==kUnreached)continue;
+        const uint64_t command=g.soft?g.command:Impl::kNoSoft;
+        const int vc=!I.softCellCount?-1:I.softCountsFor(v->type->footX,v->type->footZ);
+        std::array<int,kVertexChain+1> chain{};
+        const auto r=I.vertexProbe(*v,m,vp,f,vx,vz,command,vc,chain,work);
+        ++members;found+=r.code==0;
+        // Exhaustive: every chain cell's visibility; the prefix end.
+        std::vector<bool> vis(size_t(r.n));
+        for(int j=0;j<r.n;++j) {
+            const int c=chain[size_t(j)];
+            const Fixed tx=Impl::centre(c%W,v->type->footX),tz=Impl::centre(c/W,v->type->footZ);
+            vis[size_t(j)]=I.sweep(vp,*v,v->x,v->z,tx,tz)&&(!I.softCellCount||command==Impl::kNoSoft||
+                I.trace(*v,v->x,v->z,tx,tz,[&](int cx,int cz) {return !I.softAt(cx,cz,v->type->footX,v->type->footZ,command,vc);}));
+        }
+        int prefix=0;while(prefix+1<r.n&&vis[size_t(prefix+1)])++prefix;
+        bool mono=true;for(int j=prefix+1;j<r.n;++j)if(vis[size_t(j)])mono=false;
+        monotone+=mono;
+        const int fast=r.code==1?r.n-1:r.at;
+        // The search always ends on a visible cell followed by a hidden one
+        // (or the visible end); where visibility is a prefix it is the
+        // prefix end exactly.
+        const bool boundary=r.code==1?(r.n<2||vis[size_t(r.n-1)]):(vis[size_t(fast)]&&!vis[size_t(fast+1)]);
+        if(!boundary||(mono&&fast!=prefix)) {
+            if(++vbad<=5&&report)*report+="vertex unit "+std::to_string(id)+" fast "+std::to_string(fast)+" prefix "+
+                std::to_string(prefix)+" n "+std::to_string(r.n)+"\n";
+        }
+    }
+    if(report)*report+="queries "+std::to_string(queries)+" mismatches "+std::to_string(bad)+" soft-closer "+std::to_string(soft)+
+        " edge-bound "+std::to_string(edge)+" commands "+std::to_string(commands.size())+" | vertex members "+std::to_string(members)+
+        " found "+std::to_string(found)+" monotone "+std::to_string(monotone)+" mismatches "+std::to_string(vbad)+"\n";
+    return bad+vbad;
 }
 int LegionNavigator::unitState(int id) const {
     const auto found=impl_->members.find(id);
