@@ -848,14 +848,19 @@ armies:
   instead of stop-starting.
 - **Flyers land cleanly.** Flyers never land on top of other flyers or ground
   units.
-- **Flyers stay with the army.** Flyers in a formation with ground units hold
-  places over the ground units and keep to their pace, instead of racing
-  ahead and waiting at the destination.
+- **Flyers stay with the army.** Flyers in a formation or a Ctrl+number group
+  with ground units hold places over the ground units of the same order and
+  keep to their pace, instead of racing ahead and waiting at the destination.
+  When the ground stops, for instance at a wall or in a dead end, the flyers
+  go on to land at their destination instead of hovering for minutes.
+- **Flyers do not trap walkers.** A flyer that has lifted to let an army pass
+  comes back down after at most a minute, and it fights while it is up. Ground
+  units no longer walk in under a flyer that is coming down to land.
 
 Legion handles ground units, ships and hovercraft for moves, fight-moves,
 patrols, attacks, guarding, building, repairing, reclaiming and transport
 orders. Flyers in flight use the original game's movement, except that flyers
-in a formation with ground units keep station over them.
+in a formation or Ctrl+number group with ground units keep station over them.
 
 **Known limits of Legion:**
 
@@ -873,7 +878,7 @@ in a formation with ground units keep station over them.
 - When a group goes round a parked crowd, it can still pass by one side in a
   narrow file.
 - Idle units of **other players** do not step aside for you.
-- A ground unit can still walk in under a flyer that is coming down to land.
+- Two separate clicks of one kind given in the same moment share one set of flyer stations.
 - With thousands of units, Legion uses more processor time than Retail.
 
 ### Which should I choose?

@@ -388,6 +388,13 @@ it produces still inherit it) but never sets its centre, area, busy count or
 pace, so a building in an Alt+N selection no longer holds the army at a
 standstill (`legion_structsquad`, `legion_factorysquad`, `structsquad*.scn`).
 The centre sums are integers of the Fixed positions, and the pace is a Fixed.
+The rest-time rejoin (W6) uses the formation's ground only (flyers are never
+re-ordered) and gathers at P, the modal settled-arrival point of its members,
+not at the centroid: a body settled at P is never re-ordered, and another is
+sent to P only if it is beyond the settled crowd's reach of P and farther from
+P than the centroid is (with no settled member, the centroid rule stands). A
+dead-end queue is no longer pulled back on itself (`legion_flyers_deadendrejoin`:
+holding 0, no anchored body re-ordered) and a factory's joiner still gathers.
 
 The in-game right-click in Legion mode sends one shared point for ground
 units, boats and hovercraft with footprints up to 8 whose order is not
@@ -463,18 +470,34 @@ formation flew at about 4 px/tick against the ground's 0.6. They got up to
 5,500 px ahead, landed at the goal, and waited there for up to 2,000 ticks.
 
 `World::planLegionFlightStations` (Legion only) runs every tick. It covers a
-flyer in a `squad < 0` formation that has ground members still under way,
-when the flyer's head order is a plain move, fight-move or patrol leg with
-no target or job. The ground counts as "the same command" when one of these
-holds:
-- some busy ground member's last order lies within 96 px of the flyer's own
-  destination (the move UI offsets a flyer's point by up to 60 px per axis
-  from the shared ground point);
-- both the flyer and the ground are patrolling.
+flyer in a squad -- an Alt+N formation or (since W6) a Ctrl+N group -- that
+has ground members still under way, when the flyer's head order is a plain
+move, fight-move or patrol leg with no target or job. Since W6 the flyer is
+paired with the ground of its own click: the busy ground members' last orders
+fall into up to 4 buckets per squad keyed by (order class, `convoyTick`), and
+a flyer whose last order carries the same key keeps station over that bucket
+(a 5th click counts `stationOverflow` and flies free). The convoy table puts
+a flyer's click, offset up to 60 px per axis, in its ground's convoy, so the
+96 px point match and the "any patrol joins any patrol" capture are gone. Two
+clicks of one class applied in the same tick share a `convoyTick` and so a
+station: a known limit.
 
 - **Station.** Each flyer has a station on a square spiral, `16 * foot + 16`
-  px apart, over the ground members' integer centroid. Stations are numbered
-  in unit order.
+  px apart, over the ground members' integer centroid (a squad with one
+  bucket: all its ground; with several, each bucket's busy members). Stations
+  are numbered in unit order.
+- **Release (W6, FL-04).** When the ground stops, the flyer is released for
+  its order and flies it uncapped to land, as retail's VTOL_Move ends:
+  release A when no busy member of its bucket has made headway for 450 ticks
+  (`LegionNavigator::advancing`; a member with a weapon reloading counts as
+  engaged, so a fight does not free the wing), release B when the bucket's
+  centroid has stayed within 16 px for 900 ticks with nobody engaged. Both
+  are sticky on the flyer's order (`Order::stationFree` and the B reference,
+  hashed when set). A dead-end queue, a sealed wall or an unreachable goal no
+  longer keeps the wing hovering for minutes (MIXED_SEAL 5149 -> 458 ticks).
+- **No yaw on the spot (W6).** A station flyer with no horizontal velocity
+  (the vertical take-off at the start of a leg, or held still by the ground's
+  pace) does not turn toward its lead point until it moves.
 - **Flight (formation-air2).** The flyer does not steer at the station
   itself. A point destination puts retail's flight model in its arrival
   regime. There the navigator keeps its old heading inside 16 px, and the
@@ -503,7 +526,8 @@ holds:
   refusal. The first version held flyers over the centroid until every
   ground member had finished, so they hovered while stragglers arrived.
 - **Determinism.** Everything is derived each tick from hashed state with
-  integer arithmetic. Nothing persists, so nothing new is hashed.
+  integer arithmetic; the only persistent state is the release on the
+  flyer's order, hashed when set.
 
 Flyers ordered on their own, or to another destination, fly as before. Test:
 `legion_world_test mixedformation` uses 20 ground bodies and 8 flyers at
@@ -539,17 +563,31 @@ belongs to an allied player. Enemy flyers and busy flyers stay obstacles.
   commands, so the group does not detour for flyers that will lift. It is
   still an obstacle to everyone else's.
 - **Hysteresis:** every further request extends the hover by 90 ticks. So
-  does any allied member within 6 cells of the flyer that is moving, or has
-  been held for under 60 ticks, or is bound for a goal there. The flyer
-  lands only into a settled area, not in front of the stragglers of a group
-  that is still coming in. When the 90 ticks run out, the retail landing
-  mission takes over and searches from the spot it holds over: the flyer
-  lands on its own spot if that is free, else on the nearest free site.
-  It cannot lift again for 240 ticks, which prevents bobbing up and down.
-- **Determinism:** the lift state (`Unit::legionLift`, its spot and expiry,
-  and the rest tick) is hashed. The overlays are rebuilt each tick from
-  hashed state, and members are visited in id order.
-- A hovering flyer skips its combat update until it lands again.
+  does any allied member within 6 cells of the flyer that is making headway
+  (W6: a new best on its field within 120 ticks), or that is bound for a goal
+  there and moving or held for under 60 ticks. A member that is not making
+  headway asks only for a flyer on its next 2 planned cells. The flyer lands
+  only into a settled area, not in front of the stragglers of a group that is
+  still coming in. When the 90 ticks run out, the retail landing mission
+  takes over and searches from the spot it holds over: the flyer lands on its
+  own spot if that is free, else on the nearest free site. It cannot lift
+  again for 240 ticks, which prevents bobbing up and down.
+- **Cap (W6, 60 s):** an episode lasts at most 1800 ticks, the quiet period
+  included, unless a member is blocked by the flyer itself (it covers the
+  member's next 2 planned cells, and the member is advancing or only briefly
+  held). A capped episode rests 600 ticks once landed.
+- **Combat (W6):** a lifted flyer polls for a target every 8 ticks (staggered
+  by id), the call the landed VTOL standby makes; a target ends the lift and
+  it fights.
+- **Own squad:** a squad's landed flyer does not lift for a member of its own
+  squad that is making headway (it settles beside it); it does for a stalled
+  one whose goal or next 2 planned cells it covers.
+- **Determinism:** the lift state (`Unit::legionLift`, its spot, expiry and
+  start tick, and the rest tick) is hashed. The overlays are rebuilt each
+  tick from hashed state, and members are visited in id order.
+- **Descent (W6, FL-03):** a flyer in the landing mission's stage 3 is
+  stamped on its touchdown footprint as a landed one, so no member steps in
+  under it while it comes down; a body already there may only step out.
 
 Test: `legion_world_test liftflyers`. 40 ground bodies cross a block of 12
 landed flyers: 4 columns by 3 rows, with a one-cell gap between them.
@@ -1158,6 +1196,36 @@ Trapped ownership, W8's lane cap). `convoy_test`
 covers the click shapes (flyers first with saturated offsets, opposite
 corners, all-air, the 974-unit window at round trips 0/8/16/24, patrol, two
 clicks 48 px apart) and the index against the scan.
+
+### Flyers and group records (W6, protocol 243)
+
+W6 (T5 and T6) makes the flyers of a squad follow the click they belong to and
+keeps a landing or lifting flyer from trapping ground units. All of it is in
+the sections it changes (the rest-time rejoin under Formations, flight
+stations, the lift area and landing); this is the list.
+
+- **Flight stations pair on the click.** A Ctrl+N group's flyers keep station
+  over the ground of their own click, like an Alt+N formation's; up to 4
+  buckets a squad, keyed by (order class, `convoyTick`).
+- **Release.** A station flyer is released for its order when the ground
+  stops (no headway for 450 ticks, or a centroid still for 900), so a sealed
+  wall or a dead end no longer keeps the wing hovering.
+- **Landing is safe.** A descending flyer is stamped on its touchdown
+  footprint from stage 3 (leave-only); no walker steps in under it.
+- **Lift episodes are bounded.** At most 1800 ticks (60 s) and a 600-tick
+  rest; kept up only by members making headway; a lifted flyer polls for a
+  target every 8 ticks and fights (`work.lift_target_polls`, bound lifted
+  flyers / 8 a tick). An own-squad landed flyer lifts only for a stalled
+  squad member whose goal or next 2 cells it covers.
+- **The rejoin gathers ground only,** at the formation's modal settled point;
+  a settled body is never re-ordered, so a dead-end queue is not pulled back.
+- **Not built:** the touchdown backstop (C5) and home-excluded landing (step 7,
+  C20); the post-release cap floor (it moved Alt+1 start offsets).
+
+Exit numbers: `docs/legion-exit-tables.md` "W6 exit"; the cases are in
+`tools/legion_flyers_test.cpp` (`docs/legion-w6-step0.md`). Hashes: the
+crowdbench Legion rows without flyers or squads, the Legion navigation golden
+and the Inner Circle `--mpai` hash are unchanged from protocol 242.
 
 ### Upkeep on demand (W4, protocol 242)
 

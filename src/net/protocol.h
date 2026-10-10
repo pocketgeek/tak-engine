@@ -19,7 +19,7 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 243;      // 243: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
+constexpr uint32_t kNetVersion = 244;      // 244: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
                                            //      member state 6): settled and still to local steering, never yielding or parting,
                                            //      soft to other commands only (as is a member held on its ring spot); a reach kind's
                                            //      held same-target peer (30 ticks) is settled to the bodies behind it, and reach kinds
@@ -31,6 +31,17 @@ constexpr uint32_t kNetVersion = 243;      // 243: Legion W5 -- attack and guard
                                            //      in place and reseats its members with their clocks; an illegal goal re-claims in its
                                            //      group; a soft block of 20+ cells formed on a group's way after its field re-plans it
                                            //      once (300-tick cooldown)
+                                           // 243: Legion W6 -- flyers are paired with the ground of their own click on (order class,
+                                           //      convoyTick) for Ctrl+N and Alt+N squads (up to 4 stations a squad) and released
+                                           //      for their order when the ground stops (no headway for 450 ticks, or a centroid
+                                           //      still for 900; hashed on the order when set); a landing flyer is stamped on its
+                                           //      touchdown footprint from the start of its descent (leave-only); the rest-time
+                                           //      rejoin gathers ground only, at the formation's modal settled point, never
+                                           //      re-ordering a settled body; a lift episode is capped at 1800 ticks (hashed start
+                                           //      tick) with a 600-tick rest, kept up only by members making headway, and a lifted
+                                           //      flyer polls for a target every 8 ticks; a stalled squad member lifts its own
+                                           //      squad's flyer off its goal or next cells; a station flyer without horizontal
+                                           //      velocity does not yaw
                                            // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
                                            //      unit's orders change (World::noteOrders from the order helpers, mission dispatch,
                                            //      target acquisition and the death edge) instead of by a per-tick walk; prune's
