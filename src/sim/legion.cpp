@@ -2244,6 +2244,39 @@ struct LegionNavigator::Impl {
         }
         return best;
     }
+    // Approach clearance (PLAN 3.3 D, RB-02): the approach point an
+    // unreachable goal resolves to prefers an origin with clearance c =
+    // min(footprint, 3) -- every origin within Chebyshev c-1 of it in the
+    // region -- within the nearest point's distance + 2c + 4 cells, nearest
+    // first (ties: lowest index). The nearest point itself often stands in
+    // a gap's mouth (the gap is the nearest way toward the goal), and the
+    // crowd stopping there plugs it for every smaller body. None: `near`.
+    // Cached with the resolution (resolved), so paid once per goal.
+    int clearApproach(const Plane& p,int x,int z,int comp,int near) const {
+        const int c=std::min(std::max(p.footX,p.footZ),3);
+        if(near<0||c<=1)return near;
+        const int W=width(),H=height();
+        const auto& b=p.compBox[size_t(comp)];
+        const int64_t nx=near%W-x,nz=near/W-z;
+        const int64_t bound=int64_t(isqrtFloor(uint64_t(nx*nx+nz*nz)))+1+2*c+4;
+        auto clear=[&](int cx,int cz) {
+            for(int j=-(c-1);j<=c-1;++j)for(int i=-(c-1);i<=c-1;++i) {
+                const int ox=cx+i,oz=cz+j;
+                if(ox<0||oz<0||ox>=W||oz>=H||p.comp[size_t(oz*W+ox)]!=comp)return false;
+            }
+            return true;
+        };
+        int best=-1;int64_t bestD=0;
+        for(int cz=std::max<int64_t>(b[1],z-bound);cz<=std::min<int64_t>(b[3],z+bound);++cz)
+            for(int cx=std::max<int64_t>(b[0],x-bound);cx<=std::min<int64_t>(b[2],x+bound);++cx) {
+                const int index=cz*W+cx;
+                if(p.comp[size_t(index)]!=comp)continue;
+                const int64_t d=int64_t(cx-x)*(cx-x)+int64_t(cz-z)*(cz-z);
+                if(d>bound*bound||(best>=0&&(d>bestD||(d==bestD&&index>best))))continue;
+                if(clear(cx,cz)) {best=index;bestD=d;}
+            }
+        return best>=0?best:near;
+    }
     void leave(int id) {
         auto found=members.find(id);
         if(found==members.end())return;
@@ -2356,7 +2389,7 @@ struct LegionNavigator::Impl {
             cached->second.first=nearestLegal(p,gx,gz,reach);
             const int goal=cached->second.first;
             if(reach>=0&&goal>=0&&compAt(p,goal)!=reach&&p.compSize[size_t(reach)]>=kApproachRegion)
-                cached->second.second=nearestReachable(p,gx,gz,reach);
+                cached->second.second=clearApproach(p,gx,gz,reach,nearestReachable(p,gx,gz,reach));
         }
         m.goal=cached->second.first;
         // A goal outside this body's static region, while the region still
