@@ -5549,19 +5549,27 @@ bool World::searchGradeChecksumsValid() const {
     return true;
 }
 
-int World::mapFeatureGrade(int cx,int cz) const {
-    const auto& cell=mapPlacementCells_[size_t(cz)*hW_+cx];
+// mapFeatureGrade's body, inline for the search-plane cell loops.
+static inline int featureGradeAt(const std::vector<RetailMapFeatureCell>& cells,
+                                 const std::vector<RetailMapFeatureType>& types,int hW,int cx,int cz) {
+    const auto& cell=cells[size_t(cz)*hW+cx];
     uint16_t index=cell.feature;
     int ox=cx,oz=cz;
     if (index==0xfffe) {
         ox-=cell.backX;oz-=cell.backZ;
-        index=mapPlacementCells_[size_t(oz)*hW_+ox].feature;
+        index=cells[size_t(oz)*hW+ox].feature;
         if (index>=0xfffa) index=0xffff;
     }
     if (index==0xffff) return 7;
-    if (index>=mapPlacementTypes_.size()) return 0;
-    const auto& type=mapPlacementTypes_[index];
+    if (index>=types.size()) return 0;
+    const auto& type=types[index];
     return type.blocking ? (type.clearable ? 1 : 0) : 7;
+}
+
+// Out of line, as before featureGradeAt existed: inlined into the placement
+// scorers' loops it measured slower there.
+[[gnu::noinline]] int World::mapFeatureGrade(int cx,int cz) const {
+    return featureGradeAt(mapPlacementCells_,mapPlacementTypes_,hW_,cx,cz);
 }
 
 void World::rebuildBodyIndex() const {
@@ -5733,12 +5741,14 @@ int World::rawSearchGrade(const SearchGradePlane& plane,int x,int z,int w,int h,
     return grade;
 }
 
-void World::refreshSearchRect(SearchGradePlane& plane,int x,int z,int w,int h) {
+// The per-cell reference: rates every cell's footprint and clearance ring
+// with rawSearchGrade. refreshSearchRect must equal it (TAK_VERIFY_SEARCH_PLANE
+// checks every refresh in a Debug binary, and pathblock_test compares both).
+void World::refreshSearchRectPerCell(SearchGradePlane& plane,int x,int z,int w,int h) {
     const int width=plane.nav->width(),height=plane.nav->height();
     const int x0=std::max(0,x-plane.footX),z0=std::max(0,z-plane.footZ);
     const int x1=std::min(width,x+w+1),z1=std::min(height,z+h+1);
     if (x1<=x0 || z1<=z0) return;
-    TAK_PROBE(++probe::tl.refreshRects; probe::tl.refreshGradeEvals+=uint64_t(x1-x0)*uint64_t(z1-z0));
     const auto bodies=searchBodyRect(x0-1,z0-1,x1-x0+plane.footX+2,z1-z0+plane.footZ+2);
     for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx) {
         const int grade=retailCachedFootprintGrade(cx,cz,plane.footX,plane.footZ,
@@ -5749,6 +5759,140 @@ void World::refreshSearchRect(SearchGradePlane& plane,int x,int z,int w,int h) {
         const size_t index=size_t(cz)*width+cx;
         setSearchCell(plane,index,uint8_t((plane.cells[index]&8)|grade));
     }
+}
+
+namespace {
+void lowerBytes(uint8_t* __restrict dst,const uint8_t* __restrict src,int n) {
+    for (int x=0;x<n;++x) dst[x]=src[x]<dst[x] ? src[x] : dst[x];
+}
+
+// out(x,z) = minimum of cell over [x,x+w) x [z,z+h) on a width x height grid,
+// where that box fits (0 elsewhere). Separate buffers, so the byte loops vectorize.
+void searchBoxMin(const std::vector<uint8_t>& cell,int width,int height,int w,int h,
+                  std::vector<uint8_t>& rows,std::vector<uint8_t>& out) {
+    out.assign(cell.size(),0);
+    if (w>width || h>height) return;
+    rows.resize(cell.size());
+    const int span=width-w+1;
+    for (int z=0;z<height;++z) {
+        const uint8_t* src=&cell[size_t(z)*width];
+        uint8_t* dst=&rows[size_t(z)*width];
+        std::copy_n(src,span,dst);
+        for (int i=1;i<w;++i) lowerBytes(dst,src+i,span);
+    }
+    for (int z=0;z+h<=height;++z) {
+        uint8_t* dst=&out[size_t(z)*width];
+        std::copy_n(&rows[size_t(z)*width],width,dst);
+        for (int j=1;j<h;++j) lowerBytes(dst,&rows[size_t(z+j)*width],width);
+    }
+}
+
+// retailCachedFootprintGrade from box minima: the footprint, then four
+// clearance strips that together cover the ring round it. Some strip's bounds
+// test fails exactly when that ring leaves the map. foot() is the minimum over
+// the footprint at (cx,cz), ring() the minimum over (footX+2)x(footZ+2) at
+// (cx-1,cz-1); each is read only where its box lies inside the map.
+template<class Foot,class Ring>
+int boxMinFootprintGrade(int cx,int cz,int footX,int footZ,int width,int height,Foot foot,Ring ring) {
+    int grade=cx+footX>=width || cz+footZ>=height ? 0 : foot();
+    if (grade>4 && (cx<1 || cz<1 || cx+footX+1>=width || cz+footZ+1>=height || ring()<6)) grade=4;
+    return grade;
+}
+} // namespace
+
+// rawSearchGrade for one cell, without its rectangle bounds test or bodies:
+// the feature grade, then the terrain grade.
+inline int World::searchCellGrade(const NavGrid& nav,int cx,int cz,bool hasMapCells) const {
+    int grade=7;
+    if (hasMapCells) grade=featureGradeAt(mapPlacementCells_,mapPlacementTypes_,hW_,cx,cz);
+    if (grade) grade=std::min(grade,nav.terrainGrade(cx,cz,!hasMapCells));
+    return grade;
+}
+
+// Every rating refreshSearchRectPerCell makes is the minimum of one per-cell
+// grade over a rectangle (an early zero return is that minimum too), as in
+// buildSearchPlane. So over the window the refreshed cells' footprints and rings
+// cover, rate each cell once (feature, terrain, then the body searchBodyRect
+// keeps there, graded as rawSearchGrade grades it), take the two box minima,
+// and write the output cells in the same order. Each window cell is graded
+// once instead of once per footprint and strip that covers it.
+void World::refreshSearchRect(SearchGradePlane& plane,int x,int z,int w,int h) {
+    const int width=plane.nav->width(),height=plane.nav->height();
+    const int footX=plane.footX,footZ=plane.footZ;
+    const int x0=std::max(0,x-footX),z0=std::max(0,z-footZ);
+    const int x1=std::min(width,x+w+1),z1=std::min(height,z+h+1);
+    if (x1<=x0 || z1<=z0) return;
+    TAK_PROBE(++probe::tl.refreshRects; probe::tl.refreshGradeEvals+=uint64_t(x1-x0)*uint64_t(z1-z0));
+    if (footX<1 || footZ<1 || width!=hW_ || height!=hH_) { refreshSearchRectPerCell(plane,x,z,w,h); return; }
+#ifndef NDEBUG
+    static const bool verify=std::getenv("TAK_VERIFY_SEARCH_PLANE")!=nullptr;
+    std::vector<uint8_t> before,expected;
+    uint64_t checksumBefore=0,checksumExpected=0;
+    if (verify) {
+        // Run the reference, keep its cells, then put the window back.
+        for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx) before.push_back(plane.cells[size_t(cz)*width+cx]);
+        checksumBefore=plane.checksum;
+        refreshSearchRectPerCell(plane,x,z,w,h);
+        checksumExpected=plane.checksum;
+        size_t i=0;
+        for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx,++i) {
+            uint8_t& c=plane.cells[size_t(cz)*width+cx];
+            expected.push_back(c);c=before[i];
+        }
+        plane.checksum=checksumBefore;
+    }
+#endif
+    const bool hasMapCells=mapPlacementCells_.size()==size_t(hW_)*hH_ && !mapPlacementCells_.empty();
+    // The cells the footprints [x0,x1+footX-1) and rings [x0-1,x1+footX) read,
+    // clipped to the map (a box past the map edge is rated 0 or 4 by the bounds
+    // rules, never read).
+    const int gx0=std::max(0,x0-1),gz0=std::max(0,z0-1);
+    const int gx1=std::min(width,x1+footX),gz1=std::min(height,z1+footZ);
+    const int gw=gx1-gx0,gh=gz1-gz0;
+    // The reference's body rectangle, which holds the window.
+    const auto bodies=searchBodyRect(x0-1,z0-1,x1-x0+footX+2,z1-z0+footZ+2);
+    thread_local std::vector<uint8_t> cell,rows,foot,ring;
+    cell.resize(size_t(gw)*gh);
+    TAK_PROBE(probe::tl.refreshCellsRated+=uint64_t(gw)*uint64_t(gh));
+    for (int cz=gz0;cz<gz1;++cz) for (int cx=gx0;cx<gx1;++cx) {
+        int grade=searchCellGrade(*plane.nav,cx,cz,hasMapCells);
+        const Unit* body=bodies.cells[size_t(cz-bodies.z)*bodies.width+cx-bodies.x];
+        if (grade && body) {
+            int value=-1;
+            if (body->type->gate && !body->type->yardMap.empty()) {
+                const int bx=cx-footprintOrigin(body->x,body->type->footX);
+                const int bz=cz-footprintOrigin(body->z,body->type->footZ);
+                const char yard=body->type->yardMap.at(size_t(bz)*body->type->footX+bx);
+                // 506416 marks only c/C gate passages; 508b54 grades them
+                // specially before the ordinary stationary-body rejection.
+                if (yard=='c' || yard=='C') value=3;
+            }
+            if (value<0) value=retailCachedBodyGrade(!body->type->isStructure(),
+                body->id==plane.preparation.requestSlot,body->groundGradeTick,
+                plane.preparation.recent,plane.preparation.stale);
+            grade=std::min(grade,value);
+        }
+        cell[size_t(cz-gz0)*gw+cx-gx0]=uint8_t(grade);
+    }
+    searchBoxMin(cell,gw,gh,footX,footZ,rows,foot);
+    searchBoxMin(cell,gw,gh,footX+2,footZ+2,rows,ring);
+    for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx) {
+        const int grade=boxMinFootprintGrade(cx,cz,footX,footZ,width,height,
+            [&] { return foot[size_t(cz-gz0)*gw+cx-gx0]; },
+            [&] { return ring[size_t(cz-1-gz0)*gw+cx-1-gx0]; });
+        const size_t index=size_t(cz)*width+cx;
+        setSearchCell(plane,index,uint8_t((plane.cells[index]&8)|grade));
+    }
+#ifndef NDEBUG
+    if (verify) {
+        size_t i=0;
+        for (int cz=z0;cz<z1;++cz) for (int cx=x0;cx<x1;++cx,++i)
+            if (plane.cells[size_t(cz)*width+cx]!=expected[i])
+                throw std::runtime_error("box-minimum search plane refresh differs from the per-cell reference");
+        if (plane.checksum!=checksumExpected)
+            throw std::runtime_error("box-minimum search plane refresh checksum differs from the per-cell reference");
+    }
+#endif
 }
 
 void World::ageSearchBody(SearchGradePlane& plane,const RetailGradeBody& body,bool stale) {
@@ -5789,19 +5933,15 @@ void World::buildSearchPlane(SearchGradePlane& plane) {
     plane.cells.assign(size_t(std::max(width,0))*std::max(height,0),0);
     plane.navVersion=nav.version();
     if (width<=0 || height<=0 || footX<1 || footZ<1 || width!=hW_ || height!=hH_) {
-        refreshSearchRect(plane,0,0,width,height);
+        refreshSearchRectPerCell(plane,0,0,width,height);
         return;
     }
     const bool hasMapCells=mapPlacementCells_.size()==size_t(hW_)*hH_ && !mapPlacementCells_.empty();
     // rawSearchGrade for one cell, without its rectangle bounds test: the
     // feature and terrain grades, then the body searchBodyRect keeps there.
     std::vector<uint8_t> cell(size_t(width)*height);
-    for (int cz=0;cz<height;++cz) for (int cx=0;cx<width;++cx) {
-        int grade=7;
-        if (hasMapCells) grade=mapFeatureGrade(cx,cz);
-        if (grade) grade=std::min(grade,nav.terrainGrade(cx,cz,!hasMapCells));
-        cell[size_t(cz)*width+cx]=uint8_t(grade);
-    }
+    for (int cz=0;cz<height;++cz) for (int cx=0;cx<width;++cx)
+        cell[size_t(cz)*width+cx]=uint8_t(searchCellGrade(nav,cx,cz,hasMapCells));
     // searchBodyRect keeps the last eligible unit in vector order on a cell,
     // so stamping in that order and overwriting leaves the same body's grade.
     std::vector<uint8_t> body(cell.size(),0xff);
@@ -5836,39 +5976,14 @@ void World::buildSearchPlane(SearchGradePlane& plane) {
             anyBody=true;
         }
     }
-    // out(x,z) = minimum of cell over [x,x+w) x [z,z+h), where that fits.
-    // Separate buffers, so the byte loops vectorize.
-    std::vector<uint8_t> rows(cell.size());
-    const auto lower=[](uint8_t* __restrict dst,const uint8_t* __restrict src,int n) {
-        for (int x=0;x<n;++x) dst[x]=src[x]<dst[x] ? src[x] : dst[x];
-    };
-    const auto boxMin=[&](int w,int h,std::vector<uint8_t>& out) {
-        out.assign(cell.size(),0);
-        if (w>width || h>height) return;
-        const int span=width-w+1;
-        for (int z=0;z<height;++z) {
-            const uint8_t* src=&cell[size_t(z)*width];
-            uint8_t* dst=&rows[size_t(z)*width];
-            std::copy_n(src,span,dst);
-            for (int i=1;i<w;++i) lower(dst,src+i,span);
-        }
-        for (int z=0;z+h<=height;++z) {
-            uint8_t* dst=&out[size_t(z)*width];
-            std::copy_n(&rows[size_t(z)*width],width,dst);
-            for (int j=1;j<h;++j) lower(dst,&rows[size_t(z+j)*width],width);
-        }
-    };
-    if (anyBody) lower(cell.data(),body.data(),int(cell.size()));
-    std::vector<uint8_t> foot,ring;
-    boxMin(footX,footZ,foot);
-    boxMin(footX+2,footZ+2,ring);
+    if (anyBody) lowerBytes(cell.data(),body.data(),int(cell.size()));
+    std::vector<uint8_t> rows,foot,ring;
+    searchBoxMin(cell,width,height,footX,footZ,rows,foot);
+    searchBoxMin(cell,width,height,footX+2,footZ+2,rows,ring);
     for (int cz=0;cz<height;++cz) for (int cx=0;cx<width;++cx) {
-        // retailCachedFootprintGrade: the footprint, then four clearance
-        // strips that together cover the ring round it. Some strip's bounds
-        // test fails exactly when that ring leaves the map.
-        int grade=cx+footX>=width || cz+footZ>=height ? 0 : foot[size_t(cz)*width+cx];
-        if (grade>4 && (cx<1 || cz<1 || cx+footX+1>=width || cz+footZ+1>=height ||
-                        ring[size_t(cz-1)*width+cx-1]<6)) grade=4;
+        const int grade=boxMinFootprintGrade(cx,cz,footX,footZ,width,height,
+            [&] { return foot[size_t(cz)*width+cx]; },
+            [&] { return ring[size_t(cz-1)*width+cx-1]; });
         if (!grade) continue;
         const size_t index=size_t(cz)*width+cx;
         plane.cells[index]=uint8_t(grade);
@@ -5884,7 +5999,17 @@ bool World::searchGradeBuildMatchesReference() {
         fast.footZ=reference.footZ=existing.footZ;
         buildSearchPlane(fast);
         reference.cells.assign(size_t(reference.nav->width())*reference.nav->height(),0);
-        refreshSearchRect(reference,0,0,reference.nav->width(),reference.nav->height());
+        refreshSearchRectPerCell(reference,0,0,reference.nav->width(),reference.nav->height());
+        if (fast.cells!=reference.cells || fast.checksum!=reference.checksum) return false;
+    }
+    return true;
+}
+
+bool World::searchGradeRefreshMatchesReference(int x,int z,int w,int h) {
+    for (const auto& existing:searchGrades_) {
+        SearchGradePlane fast=existing,reference=existing;
+        refreshSearchRect(fast,x,z,w,h);
+        refreshSearchRectPerCell(reference,x,z,w,h);
         if (fast.cells!=reference.cells || fast.checksum!=reference.checksum) return false;
     }
     return true;
@@ -11529,7 +11654,7 @@ void World::tick(float dt) {
                      " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
                      " near_cells_block_skippable=%llu near_cells_outside_disk=%llu near_cells_tested=%llu"
                      " near_cells_tested_outside_disk=%llu acq_scans=%llu los_calls=%llu"
-                     " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu compact_moved=%llu passes=%llu"
+                     " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu refresh_cells_rated=%llu compact_moved=%llu passes=%llu"
                      " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu"
                      "%s\n",
                      tickCounter_, alive, (unsigned long long)c.vmTicks, (unsigned long long)c.vmSkippable,
@@ -11540,6 +11665,7 @@ void World::tick(float dt) {
                      (unsigned long long)c.nearCellsTestedOutsideDisk, (unsigned long long)c.acqScans,
                      (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
                      (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
+                     (unsigned long long)c.refreshCellsRated,
                      (unsigned long long)c.compactMoved, (unsigned long long)c.passes,
                      (unsigned long long)c.acqGateWalks, (unsigned long long)c.acqGateWalksBefore,
                      (unsigned long long)c.bodyRects, (unsigned long long)c.bodyRectsHeap,

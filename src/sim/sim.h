@@ -1828,6 +1828,9 @@ public:
     // Test hook: build every existing plane's shape afresh both ways (the
     // box-minimum build and the per-cell reference) and compare. Derived only.
     bool searchGradeBuildMatchesReference();
+    // Test hook: refresh one window of every plane both ways (box minima and
+    // the per-cell reference) on copies and compare. Derived only.
+    bool searchGradeRefreshMatchesReference(int x,int z,int w,int h);
 #ifndef NDEBUG
     // Debug-only divergence locator, and the first thing to reach for when the referee
     // reports a desync. TAK_HASHTRACE="lo:hi" dumps a PER-COMPONENT checksum every tick
@@ -2340,6 +2343,8 @@ private:
     int rawSearchGrade(const SearchGradePlane&,int,int,int,int,const SearchBodyRect* = nullptr) const;
     static void setSearchCell(SearchGradePlane&,size_t,uint8_t);
     void refreshSearchRect(SearchGradePlane&,int,int,int,int);
+    void refreshSearchRectPerCell(SearchGradePlane&,int,int,int,int);
+    int searchCellGrade(const NavGrid&,int,int,bool) const;
     void buildSearchPlane(SearchGradePlane&);
     void ageSearchBody(SearchGradePlane&,const RetailGradeBody&,bool);
     void prepareSearchGrade(int,bool);

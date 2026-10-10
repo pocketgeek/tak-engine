@@ -19,7 +19,10 @@
 //                   order -- that walk first -- would have made; A2a),
 //                   body_rects / body_rects_heap (searchBodyRect queries, and those too
 //                   large for BodyCells' inline buffer; A5),
-//                   refresh_rects / refresh_grade_evals / refresh_raw_grades (A3),
+//                   refresh_rects / refresh_grade_evals / refresh_raw_grades (A3: search-plane
+//                   refreshes, the plane cells they rewrite, and rawSearchGrade calls -- since E2.2
+//                   only the per-cell reference makes those, so 0 in a normal run),
+//                   refresh_cells_rated (cells the E2.2 box-minimum refresh grades once each),
 //                   compact_moved, passes (the census of full sweeps over units_ in
 //                   World::tick and the sim.cpp helpers it calls; Legion's own sweeps in
 //                   legion.cpp are not counted), and minflt / minflt_sim / heap_grow (D6: minor page faults
@@ -80,7 +83,7 @@ struct Counters {
     uint64_t nearScans = 0, nearCells = 0, nearCellsMasked = 0, nearBlocksSkipped = 0;
     uint64_t nearCellsBlockSkippable = 0, nearCellsOutsideDisk = 0, acqScans = 0, losCalls = 0;
     uint64_t nearCellsTested = 0, nearCellsTestedOutsideDisk = 0;
-    uint64_t refreshRects = 0, refreshGradeEvals = 0, refreshRawGrades = 0;
+    uint64_t refreshRects = 0, refreshGradeEvals = 0, refreshRawGrades = 0, refreshCellsRated = 0;
     uint64_t acqGateWalks = 0, acqGateWalksBefore = 0, bodyRects = 0, bodyRectsHeap = 0;
     uint64_t compactMoved = 0, passes = 0;
 };

@@ -148,6 +148,16 @@ int main() {
         for (int tick=0;tick<4;++tick) w.tick(1.f/30.f);
         check(w.pathStats().completions()+w.pathStats().failures()>0 && w.searchGradeBuildMatchesReference(),
               "box-minimum plane build matches the per-cell build "+std::to_string(fx)+"x"+std::to_string(fz));
+        // A window refresh (a unit's step, a structure, an overlay edit) takes
+        // box minima over the cells its footprints and rings read. Every window
+        // position, inside, across and off each map edge, must give the
+        // per-cell refresh's cells and checksum.
+        bool windows=true;
+        for (auto [ww,wh] : {std::pair{1,1},{2,2},{3,1},{1,4},{6,2},{9,7},{64,64}})
+            for (int z=-8;z<=66 && windows;z+=ww==64 ? 37 : 3)
+                for (int x=-8;x<=66 && windows;x+=ww==64 ? 37 : 3)
+                    windows=w.searchGradeRefreshMatchesReference(x,z,ww,wh);
+        check(windows,"box-minimum window refresh matches the per-cell refresh "+std::to_string(fx)+"x"+std::to_string(fz));
     }
     // Stress flyers exposed this through a landed body below the map. Aging
     // its clipped footprint read unrelated heap bytes into the cached checksum.
