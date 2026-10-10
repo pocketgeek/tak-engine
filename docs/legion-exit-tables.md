@@ -12,6 +12,46 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W8 steps 4-6 (2026-10-10, task w8-b): S3, S4 and T1-D2 dropped by their rules; the exit obligations not met (no sim change)
+
+Base: task-w8-a 880135d1 (W8 step 2, the passage gate; S1 / step 3 was abandoned by its stop rule on `task-w8-a-s1-attempt`). Kept: one
+instrument, `Stats::passFilterHolds` (b856ab29; crowdbench `legion_pass_filter_holds`, observer `lanes.pass_filter_holds`), hash-identical:
+the 129 Legion screen rows (43 cases x seeds 0/7/42) equal the base's, `ctest -L quick` fails only `legion_acceptance_crowdheld_legion`
+(W5/W9 hard gate) and `cobanim` (no extracted assets), as on the base. Every number below: crowdbench at seeds 0/7/42 (the seed-range bands of
+plan 3.0) or the full scenario sweep on oden-win (both modes, gate offsets).
+
+| Step | Attempt | Measured (base -> attempt) | Verdict |
+|---|---|---|---|
+| 4 S3 wake-follow | the follow scan also runs when the last update was a hold; a moving same-way leader (floor `speed*2 >= cap` unchanged) caps the waking body's speed at its own | mixed 0.5x / 0.4x / 0.7x hash-identical (the fixture's movers reach full speed in one tick, so the half-cap guard never applied); screen: 24 band failures -- jagged 500x4 arrived 1320 -> 1297, 200x1 174 -> 172, jagged 2000x1 spin 77 -> 245, groupdetour 500x4 spin 0 -> 43, dynamicobstacle 200x1 seed 7 done 4081 -> never, churn crossed 82 -> 78; maze unchanged | dropped (bands; no MV-12 gain); code on branch `task-w8-b-s3-attempt` |
+| 5 S4 pass release | a back-step across the pass lane allowed after 6 held updates when `oncomingAt` (passAhead's look-ahead) finds no oncoming body; passUntil cleared | opposingcolumns pass-filter holds 500x4 611545/685697/706976 -> 589647/601341/579828 (target -60%); spin 500x4 median 1390 -> 1878 (+35%), 2000x1 1000 -> 2175 (+117%) | dropped (spin > x1.10); MV-16 closed as an intended trade; counter kept |
+| 6 T1-D2 door tie-break | (a) in `descend()`, inside a strip, a step along it beats an equally steep step across it; (b) re-read: in the on-lane fallback, the equally steep lane cell that keeps the lateral offset wins | (a) doors 200x1: 29814 strip descents, 0 decisions changed; (b) 303 fallbacks, 0 changed. doors 1000x1 crossed 458/450/468 (target >= 500), 200x1 12.2-12.7 ticks per crossing (target <= 9.5): crowdbench doors bodies steer by string-pulled aims, not by per-step descent ties | dropped (never engages; targets missed); MV-15 goes to MV-06 |
+
+MV-12 diagnosis (mixed 0.5x, offset 0, fast-body hold updates by what blocks the step): 31239 behind a moving slow body under the half-cap
+leader floor, 5228 behind a still body, 442 behind a followable leader. Following cannot remove these holds (relaxing the floor to the
+leader's type speed: far held 116 -> 108 permille at 0.5x, 0.4x unchanged); the held share is the pacing problem of T2-simplify 2.5 (MV-08),
+not a following one.
+
+### W8 exit obligations at this head (unchanged from the step-2 head; Legion vs Retail on one binary, gate offsets)
+
+| Key | Legion | Retail | Within Retail x1.1 |
+|---|---|---|---|
+| densehead gate.mid.crossings (W3-2) | 447 | 208 | no |
+| strait-2x150 gate.strait.crossings (W3-2) | 22 | 8 | no |
+| corner-1x448 gate.top.crossings (W3-3) | 4 | 0 | no |
+| corner-8x56 gate.top.crossings (W3-3) | 3 | 2 | no |
+| attackring-wall-64 wall_touch_permille / near (W5-1) | 58 / 112 | 25 / 81 | no |
+| ringcross g.M.t90 (W5-1) | 4689 | 3854 | no |
+| jagged arrived_settled (C1 ruling (s)) | 2000x1 660/670/661, 500x4 1312/1321/1320 | -- | not recovered (C1 took 2000x1 694 -> 660) |
+
+The attempt made on the corner keys (record only, branch `task-w8-b-graft-attempt`): the plan's S1-failure graft on the existing
+pinwheel (plan 3.2 stop rule) -- the rank re-mapped to cap-R at a turn the other way, and the inner files keeping their rank instead of the
+permanent -1 hug. It meets the graft's own condition (sbend turn-2 swaps 207 -> 11 permille, gate t2 crossings 9 -> 0; uturn and doubleturn
+bit-identical) but not the obligation (corner-1x448 / 8x56 top crossings unchanged at 4 / 3; with one re-map per member they rise), and it
+fails the bands elsewhere: strait-3x48 / 3x80 reversals 53 -> 221 / 245 -> 487, strait-3x80 crossings 0 -> 1 and region.east.inside lower,
+gen1-route-27459 / 36057 / 45941 arrivals or done lower, corner-4x50 / corner-8x56 / sbend / slowturn group done or arrived lower, wall-4x50
+crossings 8 -> 9 (`legion_check` against the committed baseline: 252 FAIL lines the step-2 head does not have, in both variants). Ragged coasts and walls
+give the turn detector spurious opposite turns. Not landed; step 3's owner may take it up as the MV-13 partial with a turn-significance guard.
+
 ## W8 step 0 (2026-10-10): instruments, fixtures and the base for lanes (no sim change, protocol 246)
 
 Base head 4fa6d497 (W7 landed, protocol 246). Every number is measured on it with the step-0 instruments (optimized Debug, `legion_scenario`,
