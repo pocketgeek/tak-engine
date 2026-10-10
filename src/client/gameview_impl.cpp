@@ -2326,10 +2326,11 @@
             // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
             // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
             // bulk of the capture cost at 10k units. Queues are tiny and only factories hold
-            // one, so an ally's stay visible for the HUD.
+            // one, so an ally's stay visible for the HUD -- and every player's for a spectator
+            // or replay viewer, whose info panel shows any selected factory's queue.
             if (u.player==localPlayer_) s.captureOrders(u);
             else s.clearOrders();
-            if (u.player==localPlayer_ || alliedToLocal(u.player)) s.buildQueue = u.buildQueue;
+            if (u.player==localPlayer_ || alliedToLocal(u.player) || spectating_ || replayMode_) s.buildQueue = u.buildQueue;
             else s.buildQueue.clear();
             s.cargo = u.cargo; s.repeatType = u.repeatType;
             s.captureMovement(u);
