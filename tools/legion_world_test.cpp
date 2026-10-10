@@ -340,6 +340,14 @@ void crowdhold() {
     for(int id:ids)check(f.legal(id),"illegal footprint in held crowd");
 }
 
+// AR-10 (PLAN 3.4, W5 step 6): the claims invariant -- no cell claimed by two
+// members, no lost claim, no slot on a point that is gone (ring spots too).
+void checkClaims(World& world,const char* where) {
+    const auto a=world.legionNavigator()->claimsAudit();
+    if(a.overlaps+a.missing+a.dangling)
+        std::printf("%s: claims overlaps=%d missing=%d dangling=%d\n",where,a.overlaps,a.missing,a.dangling);
+    check(a.overlaps+a.missing+a.dangling==0,"the claims invariant failed (overlapping, lost or dangling slot claims)");
+}
 // A group sent across open ground with a large standing block of idle
 // bodies on its straight way (of the same player, then of another): it
 // must plan round the block, not walk into it and wait against its face.
@@ -1342,6 +1350,7 @@ PinwheelResult pinwheelRun(int gap) {
     int t=0;
     for(;t<6000;++t) {
         f.world.tick(1.f/30);motion.observe(f.world,ids);
+        if(t%30==0)checkClaims(f.world,"pinwheel");
         int arrived=0;
         for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
         r.arrived=arrived;
@@ -1962,6 +1971,7 @@ SquadResult squadRun() {
     for(int t=0;t<kTicks;++t) {
         f.world.tick(1.f/30);
         motion.observe(f.world,ids);
+        if(t%30==0)checkClaims(f.world,"squadformation");
         for(int id:ids) {
             const auto& u=*f.world.unit(id);
             check(f.legal(id),"illegal footprint in a commanded formation");
