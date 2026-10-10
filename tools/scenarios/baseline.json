@@ -18578,6 +18578,30 @@
      "since": "W0",
      "value": 3596
     },
+    "work.fields_paused.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 7
+    },
+    "work.fields_paused.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 4
+    },
+    "work.fields_paused.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 3699
+    },
     "work.fields_shared.max": {
      "band": 1.1,
      "dir": "lower",
@@ -18821,11 +18845,6 @@
     "work.legion_total.max": {
      "band": 1.1,
      "dir": "lower",
-     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0); combat cost: at or below this W0 value from the W4 exit on",
-     "rule": "band",
-     "since": "W0",
-     "value": 496290,
-     "w0": 484465,
      "phase_gate": {
       "phases": [
        511216,
@@ -18840,7 +18859,12 @@
        484960
       ],
       "reason": "Lead ruling W4 (p), 2026-10-09: B2's striped still scan moves where the per-tick spike lands; the cumulative combat gate for battle-assault is judged on the median over the 10 stripe phases (core-five median of the 11 gate offsets per phase, Windows): 476843 <= W0 484465. Phase 0 (this head's draw) is 511216. Base (B1+B3) over the same 10 phases: median 460893, range 452160..488795. Table in docs/legion-exit-tables.md 'W4 exit with B1 + B2'."
-     }
+     },
+     "reason": "W0 first base (legion-w0 b081298), work counter within 1.10x (PLAN 3.0); combat cost: at or below this W0 value from the W4 exit on",
+     "rule": "band",
+     "since": "W0",
+     "value": 496290,
+     "w0": 484465
     },
     "work.legion_total.p99": {
      "band": 1.1,
@@ -19123,6 +19147,30 @@
      "rule": "band",
      "since": "W0",
      "value": 1466358
+    },
+    "work.paused_resumes.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 3
+    },
+    "work.paused_resumes.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 1
+    },
+    "work.paused_resumes.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 470
     },
     "work.pivot_part_ids.max": {
      "dir": "lower",
@@ -20198,6 +20246,30 @@
      "since": "W0",
      "value": 1494
     },
+    "work.fields_paused.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 5
+    },
+    "work.fields_paused.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 3
+    },
+    "work.fields_paused.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 1435
+    },
     "work.fields_shared.max": {
      "band": 1.1,
      "dir": "lower",
@@ -20752,6 +20824,30 @@
      "rule": "band",
      "since": "W0",
      "value": 615790
+    },
+    "work.paused_resumes.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 2
+    },
+    "work.paused_resumes.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 1
+    },
+    "work.paused_resumes.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 204
     },
     "work.plane_builds.max": {
      "band": 1.1,
@@ -21771,6 +21867,30 @@
      "since": "W0",
      "value": 3034
     },
+    "work.fields_paused.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 7
+    },
+    "work.fields_paused.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 4
+    },
+    "work.fields_paused.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 3041
+    },
     "work.fields_shared.max": {
      "band": 1.1,
      "dir": "lower",
@@ -22325,6 +22445,30 @@
      "rule": "band",
      "since": "W0",
      "value": 1758201
+    },
+    "work.paused_resumes.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 3
+    },
+    "work.paused_resumes.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 1
+    },
+    "work.paused_resumes.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 512
     },
     "work.plane_builds.max": {
      "band": 1.1,
@@ -23336,6 +23480,30 @@
      "since": "W0",
      "value": 360
     },
+    "work.fields_paused.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 3
+    },
+    "work.fields_paused.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 2
+    },
+    "work.fields_paused.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 356
+    },
     "work.fields_shared.max": {
      "band": 1.1,
      "dir": "lower",
@@ -23890,6 +24058,30 @@
      "rule": "band",
      "since": "W0",
      "value": 119552
+    },
+    "work.paused_resumes.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 2
+    },
+    "work.paused_resumes.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 1
+    },
+    "work.paused_resumes.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "W4 C1 (paused solo first builds): the new fields_paused and paused_resumes work classes (first builds paused once they cover their members; paused builds resumed for a member's demand), taken at the C1 land head on W4 with B1 + B2; not in legion_total",
+     "rule": "band",
+     "since": "W4 C1",
+     "value": 64
     },
     "work.plane_builds.max": {
      "band": 1.1,
