@@ -336,6 +336,21 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
   # Costs these 38 cases ~17 s -> ~44 s in total at -O2 (the longest, squadformation, 6 -> 11 s).
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# W6 step 0 (PLAN 4 W6): the flyer instruments of tools/legion_flyers_test.cpp. Each prints the numbers the W6
+# steps move and asserts determinism (serial == workers); W6_REQUIRE=1 asserts the PLAN targets (the acceptance
+# check of the step that meets them; docs/legion-w6-step0.md).
+add_executable(legion_flyers_test tools/legion_flyers_test.cpp)
+target_link_libraries(legion_flyers_test PRIVATE tak-formats)
+foreach(legion_probe mixedsquad mixedseal mv08group mv08deadend deadendrejoin ctrlmixed ctrlmixedbig factoryjoin auditlift
+    fl04 fl05match fl05unreach)
+  add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
+  set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6")
+endforeach()
+# The lift and touchdown cases also run with TAK_LEGION_VERIFY (debug builds): the lift buckets and homes against a scan each tick.
+foreach(legion_probe landunder descentwalkin auditlift40 splitpatrol liftcombat)
+  add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
+  set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6" ENVIRONMENT TAK_LEGION_VERIFY=1)
+endforeach()
 # T1 probes for W3 (measurement only; they assert determinism, not bounds).
 foreach(legion_probe settlelatency doorplug)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
