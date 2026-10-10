@@ -442,8 +442,10 @@ struct LegionNavigator::Impl {
         // W6 headway clock (PLAN 3.6 advancing()): the tick this body last
         // reached a new best potential on its group's current field (headBest
         // on field headSerial; a new field re-baselines the best without
-        // counting as progress), standing still like stallTick while it walks
-        // a committed route or side-step. stallTick cannot serve: `progress`
+        // counting as progress). Unlike stallTick it runs on through a
+        // committed route or side-step: a body wiggling between side-steps
+        // for good (mixed2's straggler) is not advancing. stallTick cannot
+        // serve anyway: `progress`
         // mixes two scales (squared cells before the field is done, potential
         // x64 after), so a body that registers before its field is built
         // makes no "progress" for most of its walk. Read only by the flyer
@@ -2603,9 +2605,17 @@ struct LegionNavigator::Impl {
     std::vector<int> liftGoalCells;
     // One lift request, counted (observation only). A request that starts a new
     // episode within 600 ticks of the flyer's previous landing is a relift.
-    void requestLift(Unit& flyer) {
-        if(!flyer.legionLift&&flyer.legionLiftRest&&w.tickCounter_<=flyer.legionLiftRest-World::kLegionLiftRest+600)++stats.relifts;
-        w.requestLegionLift(flyer);++stats.lifts;
+    void requestLift(Unit& flyer,bool blocked) {
+        const bool fresh=!flyer.legionLift;
+        if(!w.requestLegionLift(flyer,blocked))return;
+        if(fresh&&flyer.legionLiftEnded&&w.tickCounter_<=flyer.legionLiftEnded+600)++stats.relifts;
+        ++stats.lifts;
+    }
+    // FL-01 headway (PLAN 3.6): a member keeps a lifted flyer up through the
+    // area rule only while it makes headway (advancing over kLiftStall); a
+    // creeping straggler with no new best for 120 ticks does not.
+    bool liftAdvancing(const Member& m) const {
+        return (m.state==Moving||m.state==Holding||m.state==Waiting)&&peerHeadFor(m)<LegionNavigator::kLiftStall;
     }
     void liftFlyers() {
         if(groundedIds.empty()&&liftHomeCells.empty())return;
@@ -2633,16 +2643,22 @@ struct LegionNavigator::Impl {
                 for(int cz=std::max(0,oz-kLiftClear);cz<std::min(w.occH_,oz+fz+kLiftClear)&&!busy;++cz)
                     for(int cx=std::max(0,ox-kLiftClear);cx<std::min(w.occW_,ox+fx+kLiftClear)&&!busy;++cx) {
                         const size_t c=size_t(cz)*w.occW_+cx;
-                        for(const int32_t o:{w.occ_[c],liftGoal[c]}) {
+                        for(int k=0;k<2;++k) {
+                            const int32_t o=k?liftGoal[c]:w.occ_[c];
                             if(!o)continue;
                             const Member* m=member(o);
                             const Unit* b=m?w.unit(o):nullptr;
                             // Its own squad settling round it is not traffic passing through.
                             if(b&&b->squad&&b->squad==flyer->squad)continue;
-                            if(b&&(m->state==Moving||((m->state==Holding||m->state==Waiting)&&heldFor(*m)<kRestAfter))&&w.allied(flyer->player,b->player)) {busy=true;break;}
+                            // A body standing near it keeps it up only while it makes
+                            // headway (FL-01); one bound for a goal under it, while it
+                            // is moving or only briefly held (it still has to get in).
+                            if(!b)continue;
+                            const bool keeps=k?(m->state==Moving||((m->state==Holding||m->state==Waiting)&&heldFor(*m)<kRestAfter)):liftAdvancing(*m);
+                            if(keeps&&w.allied(flyer->player,b->player)) {busy=true;break;}
                         }
                     }
-                if(busy&&w.legionLiftable(*flyer,flyer->player))requestLift(*flyer);
+                if(busy&&w.legionLiftable(*flyer,flyer->player))requestLift(*flyer,false);
             }
         }
         // Bounding box of every cell a request can hit, and the exact gate
@@ -2667,6 +2683,7 @@ struct LegionNavigator::Impl {
             const int fx=u->type->footX,fz=u->type->footZ;
             int x=footprintOrigin(u->x,fx),z=footprintOrigin(u->z,fz);
             const int gx=m.goal%W,gz=m.goal/W;
+            const bool advancing=liftAdvancing(m);
             size_t r=0;
             for(int k=0;k<=kLiftCells;++k) {
                 for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
@@ -2680,9 +2697,26 @@ struct LegionNavigator::Impl {
                     Unit* flyer=w.unit(o);
                     // A flyer of this member's own squad (a mixed formation that
                     // has just landed where the formation is settling) stays down:
-                    // the member settles beside it rather than driving it back up.
-                    if(flyer&&u->squad&&u->squad==flyer->squad)continue;
-                    if(flyer&&w.legionLiftable(*flyer,u->player))requestLift(*flyer);
+                    // the member settles beside it rather than driving it back up
+                    // -- unless the member has stalled (no headway for kLiftStall)
+                    // and the flyer stands on its own goal or its next 2 planned
+                    // cells (T5's narrowed exemption, PLAN 3.5, limited to the
+                    // deadlock itself: lifting for every member bound under a
+                    // squad flyer re-lifted the wing at each arrival, hover
+                    // 18 -> 448-842 on the Ctrl fixtures).
+                    if(flyer&&u->squad&&u->squad==flyer->squad) {
+                        if(advancing)continue;
+                        const int vx=footprintOrigin(flyer->x,flyer->type->footX),vz=footprintOrigin(flyer->z,flyer->type->footZ);
+                        if(k>2&&!(vx<gx+fx&&gx<vx+flyer->type->footX&&vz<gz+fz&&gz<vz+flyer->type->footZ))continue;
+                    }
+                    // FL-01 headway: past its next 2 planned cells only a member
+                    // making headway asks. A flyer on those cells blocks it, and
+                    // that request alone outlasts the episode cap -- while the
+                    // member is advancing or only briefly held (a body parked in
+                    // a jam beside the flyer's home would keep it up for good).
+                    if(!advancing&&k>2)continue;
+                    if(flyer&&w.legionLiftable(*flyer,u->player))
+                        requestLift(*flyer,k<=2&&(advancing||heldFor(m)<kRestAfter));
                 }
                 if(k==kLiftCells||(x==gx&&z==gz))break;
                 // The next planned cell.
@@ -3538,7 +3572,7 @@ struct LegionNavigator::Impl {
     // body finishing a long way round arrived "stalled" and settled where
     // the route left it (gap6: one body short of the area, order never
     // complete in 3 of 5 offsets). Resting bodies walk neither.
-    void holdStall(Member& m) const {m.stallTick=std::min(m.stallTick+1,w.tickCounter_);m.headTick=std::min(m.headTick+1,w.tickCounter_);}
+    void holdStall(Member& m) const {m.stallTick=std::min(m.stallTick+1,w.tickCounter_);}
     // The headway clock (Member::headTick) as a peer reads it: one tick less
     // while the peer's update of this tick is still to come (peerStalledFor).
     uint32_t peerHeadFor(const Member& peer) const {
@@ -5624,6 +5658,7 @@ void LegionNavigator::noteFlyerEvent(FlyerEvent e) {
     case FlyerEvent::ReleaseB:++s.stationReleasesB;break;
     case FlyerEvent::CapHit:++s.capHits;break;
     case FlyerEvent::GoAround:++s.goArounds;break;
+    case FlyerEvent::TargetPoll:++s.liftTargetPolls;break;
     }
 }
 bool LegionNavigator::advancing(int id,uint32_t limit) const {

@@ -755,6 +755,14 @@ struct Unit {
     uint32_t legionLiftUntil=0;
     uint32_t legionLiftRest=0;   // after landing again, no new lift before this tick
     Fixed legionLiftX,legionLiftZ;
+    // W6 FL-01: the tick this lift episode began (hashed with legionLift).
+    // An episode is capped at kLegionLiftCap ticks: after that only a member
+    // whose next planned cells the flyer covers keeps it up, and once it has
+    // landed it rests kLegionLiftCapRest ticks.
+    uint32_t legionLiftSince=0;
+    // Observation only (never hashed, never read by a decision): the tick the
+    // flyer handed its last episode over to landing (the relift counter).
+    uint32_t legionLiftEnded=0;
     // Fixed, not float: retail keeps no float in its unit state (docs/retail-engine.md).
     //
     // RANGE. Fixed is 16.16 in an int32, so it saturates at 32768 -- and the largest
@@ -2699,8 +2707,14 @@ private:
     // Legion: idle landed flyers make way for allied ground groups.
     static constexpr uint32_t kLegionLiftQuiet=90;   // ticks after the last request
     static constexpr uint32_t kLegionLiftRest=240;   // ticks from the hand-over to landing until it may lift again
+    static constexpr uint32_t kLegionLiftCap=1800;   // ticks one episode may last (60 s, user decision 4)
+    static constexpr uint32_t kLegionLiftCapRest=600; // the rest after a capped episode
+    static constexpr uint32_t kLegionLiftPoll=8;     // a lifted flyer polls for a target every 8 ticks, staggered by id
     bool legionLiftable(const Unit& flyer,int player) const;
-    void requestLegionLift(Unit& flyer);
+    // blocked: the flyer covers one of the requesting member's next planned
+    // cells (the only request that extends an episode past kLegionLiftCap).
+    // Returns whether the request started or extended the episode.
+    bool requestLegionLift(Unit& flyer, bool blocked);
     bool tickLegionLift(Unit& u);
     void leaveRetailGroupCentre(const Unit& u);
     Fixed retailGroupLimit(const Unit& u) const;

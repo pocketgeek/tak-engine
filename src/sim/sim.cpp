@@ -2129,13 +2129,20 @@ void World::tickFlightBody(Unit& u) {
     if (u.baseSpeed<=Fixed()) { u.flightVelocity={}; u.speed=Fixed(); return; }
     Fixed maximum=u.baseSpeed;
     // Legion formation flyer: the ground's pace (see planLegionFlightStations).
-    if (const auto* station=legionFlightStation(u); station && station->capped) maximum=fxMin(maximum,station->cap);
+    const auto* station=legionFlightStation(u);
+    if (station && station->capped) maximum=fxMin(maximum,station->cap);
     const uint16_t heading=portHeadingToRetail(u.heading);
     const auto previousVelocity=u.flightVelocity;
     u.flightVelocity=retailFlightVelocity(u.flightVelocity,position,
         u.flightNavigation.destination,u.flightNavigation.velocity,u.speed.v,std::max(1,maximum.v),
         u.type->accel.v,u.type->brake.v,heading);
-    const int diff=int16_t(uint16_t(u.flightNavigation.heading-heading));
+    // W6 (Legion, deliberate): an escort with no way on over the ground --
+    // climbing straight up from the ground at the start of a leg, or held
+    // still by the ground's pace -- does not yaw on the spot toward its lead
+    // point; it turns once it moves (mixed2 leg 2: 16 flyers yawing through
+    // their vertical take-off read as ~110 spins).
+    const bool parked=station && u.flightVelocity.x==0 && u.flightVelocity.z==0;
+    const int diff=parked ? 0 : int16_t(uint16_t(u.flightNavigation.heading-heading));
     u.heading=u.heading+Bam(std::clamp(diff,-u.type->turnRate,u.type->turnRate));
     u.turnReqBam=diff;
     const auto delta=[](int32_t next,int32_t previous) {
@@ -2318,9 +2325,21 @@ bool World::legionLiftable(const Unit& f,int player) const {
         (f.legionLift || (f.flightGroundMode==1 && tickCounter_>=f.legionLiftRest));
 }
 
-void World::requestLegionLift(Unit& f) {
-    if (!f.legionLift) { f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; }
-    f.legionLiftUntil=tickCounter_+kLegionLiftQuiet;
+// W6 FL-01 (PLAN 3.6): an episode lasts at most kLegionLiftCap ticks unless
+// a member is blocked by the flyer itself (it covers the member's next planned
+// cells); a capped episode then rests kLegionLiftCapRest ticks once landed.
+// While lifted the flyer polls for a target on the VTOL-standby call
+// (acquireTarget, as the landed standby does) every kLegionLiftPoll ticks,
+// staggered by id: lifted flyers fight instead of hovering through a battle.
+bool World::requestLegionLift(Unit& f, bool blocked) {
+    if (!f.legionLift) {
+        f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; f.legionLiftSince=tickCounter_;
+    } else if (!blocked && tickCounter_-f.legionLiftSince>=kLegionLiftCap) return false;
+    // An unblocked request never carries the episode past the cap, quiet
+    // period included.
+    f.legionLiftUntil=blocked ? tickCounter_+kLegionLiftQuiet
+                              : std::min(tickCounter_+kLegionLiftQuiet,f.legionLiftSince+kLegionLiftCap);
+    return true;
 }
 
 bool World::tickLegionLift(Unit& u) {
@@ -2333,10 +2352,24 @@ bool World::tickLegionLift(Unit& u) {
     if (tickCounter_>=u.legionLiftUntil) {
         // Nobody asked for kLegionLiftQuiet ticks: land again, searching from
         // the spot it holds over (the retail landing mission's own search).
+        const bool capped=tickCounter_-u.legionLiftSince>=kLegionLiftCap-1;
         u.legionLift=false;
-        u.legionLiftRest=tickCounter_+kLegionLiftRest;
+        u.legionLiftRest=tickCounter_+(capped ? kLegionLiftCapRest : kLegionLiftRest);
+        u.legionLiftEnded=tickCounter_;
+        if (capped && legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::CapHit);
         if (u.flightGroundMode==2) { u.standbyActive=false; u.landing.emplace(); }
         return false;
+    }
+    if (u.flightGroundMode==2 && (uint32_t(u.id)+tickCounter_)%kLegionLiftPoll==0) {
+        if (legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::TargetPoll);
+        if (acquireTarget(u,true)) {
+            // A target: the attack order ends the lift (the flyer is no longer
+            // liftable) and this tick's combat update takes it on.
+            u.legionLift=false;
+            u.legionLiftRest=tickCounter_+kLegionLiftRest;
+            u.legionLiftEnded=tickCounter_;
+            return false;
+        }
     }
     if (u.flightGroundMode!=2) {
         // 416c50, as VTOL_Move's stage 0.
@@ -12029,7 +12062,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.orders.size()));
         mix(u.missionEvents);
         mix(u.standbyAllowed); mix(u.standbyActive);
-        if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); }
+        if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); mix(u.legionLiftSince); }
         if (u.legionLiftRest) { mix(0x52455354u); mix(u.legionLiftRest); }
         if (unitScript(u.id) && (u.legionStillTicks || u.legionStepTicks || u.legionStill)) {
             mix(0x5354494cu); mix(u.legionStillTicks); mix(u.legionStepTicks); mix(u.legionStill);

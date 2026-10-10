@@ -53,6 +53,9 @@ public:
         // stationOverflow (a 5th distinct click in one squad that got no station,
         // step 3).
         uint64_t relifts=0,capHits=0,stationReleasesA=0,stationReleasesB=0,goArounds=0,stationOverflow=0;
+        // W6 FL-01: acquireTarget polls by lifted flyers (a declared work class,
+        // PLAN 3.0: at most lifted flyers / 8 per tick).
+        uint64_t liftTargetPolls=0;
         // Per LegionMission: legs (unit, order) Legion took on, arrivals it
         // raised (0x500) and failed approaches it handed back (0x200).
         uint64_t missionLegs[16]={},missionArrivals[16]={},missionFailures[16]={};
@@ -135,7 +138,7 @@ public:
         f("arrivals",s.arrivals);f("contact_arrivals",s.contactArrivals);f("trapped",s.trapped);f("escapes",s.escapes);
         f("detours",s.detours);f("detour_cells",s.detourCells);f("lifts",s.lifts);
         f("relifts",s.relifts);f("cap_hits",s.capHits);f("station_releases_a",s.stationReleasesA);f("station_releases_b",s.stationReleasesB);
-        f("go_arounds",s.goArounds);f("station_overflow",s.stationOverflow);
+        f("go_arounds",s.goArounds);f("station_overflow",s.stationOverflow);f("lift_target_polls",s.liftTargetPolls);
         array("mission_legs",s.missionLegs,16);array("mission_arrivals",s.missionArrivals,16);array("mission_failures",s.missionFailures,16);
         f("line_sweeps",s.lineSweeps);f("held_rechecks",s.heldRechecks);f("slot_search_cells",s.slotSearchCells);
         f("trace_cells",s.traceCells);f("pass_scan_cells",s.passScanCells);
@@ -221,7 +224,7 @@ public:
     // it has none.
     bool arrivalPoint(int id,int32_t& x,int32_t& z,int& count) const;
     // W6 behaviour counters World's flyer rules raise (Stats, observation only).
-    enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround};
+    enum class FlyerEvent : uint8_t {StationOverflow,ReleaseA,ReleaseB,CapHit,GoAround,TargetPoll};
     void noteFlyerEvent(FlyerEvent);
     // Test hook: the unit's group field potential at an origin (-1 if none).
     int fieldPotential(int id,int originX,int originZ) const;
