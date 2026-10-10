@@ -12,6 +12,73 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W7 step 0 (2026-10-10): instruments, fixtures and the base for crossing / opposing traffic (no sim change, protocol 245)
+
+Base head 2d671644 (W5 landed over C1 and W6). Every row below is measured on it with the step-0 instruments
+(optimized Debug, offset 0 unless noted; the world-test fixtures run the awareness code ON and OFF through
+`LegionNavigator::setAwareOffForTest`). **Hash-identical:** `tools/legion_identity.sh --quick` base vs candidate -- 181 rows SAME
+(replays L-bench / R-bench final and 61 / 62 checkpoints, both navigation goldens, `--mpai` Legion 4d8c06c9747f5a66 and
+Retail 56cfcbf8ef57181e at 60 s, check-determinism golden dcef618cd2e4d558, the 12 quick crowdbench rows, every existing ctest);
+the 8 FAIL rows are the 7 new tests ("missing in one build") and `legion_acceptance_crowdheld_legion`, which fails in both builds
+(W5/W9 hard gate). Windows crowdbench rows below ran on the same commit.
+
+What was added (plan W7 step 0 list):
+
+| Plan item | Where |
+|---|---|
+| `legion_detours` (existing), `legion_parts`, `legion_aware_pairs` (existing), `legion_aware_builds`, `legion_aware_latency_max` (+ `_sum`, `_n`), `legion_giveway_ticks`, `legion_giveway_timeouts` | `Stats` fields exported by crowdbench's `forEachStat` loop as `legion_<name>` and by the scenario runner (`probe aware`) as `aware.<name>`; additionally `aware_encounters`, `aware_replans`, `aware_work` (chain cells + corridor tests), `giveway_starts`. Never hashed, not in `work.legion_total` |
+| `last_cross_tick` | already in every crowdbench row (`first_cross_tick`, `last_cross_tick`, `cross_gap_max`) |
+| aware work counter | `aware_work` plus the per-tick maximum of `aware_pairs + aware_work` (`aware.work_max`, `NavWork::awareWorkMax`) |
+| promote probe_rb02 | `legion_world_test rb02` (`legion_w7_rb02`): ring clot N = 52 / 104 / 208, the Holding-queue corridor, the plug; `TAK_RB02_FULL=1` adds the Stopped control and the no-clot rows |
+| awarebig (768x768), awaredense, crossthree, the long-stream crossing | `legion_world_test awarebig awaredense crossthree crosslong` (`legion_w7_*`), and as scenarios `crosslong.scn`, `aware-cross-behind.scn` |
+| crowdbench opposing doors / bridges, crossingcolumns | scenarios `opposingdoors`, `opposingbridges`, `crossingcolumns` (second stream a separate command 100 ticks after the first; outside the default matrix) |
+| route-behind metric (decision 5) | `behind NAME LATER EARLIER` shape (`legion_observe::BehindProbe`): `behind.*.extra_cells` / `.detour_permille` (how far the later group deviates) and `.wait_ticks` / `.wait_run_max` / `.waits` (waits at the stream edge; **must be 0 after W7**), plus `giveway_ticks` / `giveway_timeouts` (must stay 0: W7 builds no hold under decision 5) |
+
+**Base values.** The audit's figures (b8a4110) are not reproduced on this head: W2-W6 moved them, so these are the W7 base.
+
+| Fixture | ON (awareness as today) | OFF (`setAwareOffForTest`) |
+|---|---|---|
+| aware cross (24 v 24, `aware`) | done 2409, stopped 9.8%, contacts 10.90 | (no OFF arm in `aware`) |
+| aware headon | done 2251, stopped 5.7%, contacts 4.85 | |
+| aware enemy-seen / unseen / attack | 2701 / 5.0% / 2.76; 2476 / 11.2% / 7.22; 2611 / 8.2% / 6.87 | |
+| awarebig cross | done 8426, stopped 1.9%, contacts 1.83; 1 encounter, 1 build, latency 48; later group waits 283 ticks (2 waits, longest 221) | identical (hash equal: awareness changed nothing) |
+| awarebig headon | done 8156, stopped 1.8%, contacts 0.20; 2 encounters, 2 builds, latency max 7 / mean 4; extra path 11 cells | done 7580, contacts 1.42 (OFF finishes sooner: **ON > OFF on done**) |
+| awarebig enemy | same as headon (enemy B): 8156, contacts 0.20 | 7580, contacts 1.42 |
+| awaredense 200 v 200, 17 across in 40 cells (85%) | arrived 394/400 at 9000, stopped 26.5%, contacts 1.34, hold_max 1610, 2 encounters, 4160 detours | arrived 342/400, stopped 29.9%, contacts 2.17, hold_max 2318 |
+| crossthree (3 x 24, lines 60 degrees apart, commands 60 ticks apart) | done 2926, hold_max 301, 5 encounters, 7 builds; stream C waits at A: 3 waits (run 224), at B: 1 (318) | done 3046, hold_max 481 |
+| crosslong (200 long x 24 crossing, command at tick 400) | done 4546, hold_max 471; later group waits 771 ticks in 3 waits (longest 549), extra path 6 cells; 1 encounter | done 4282; waits 921 ticks (3, longest 682) |
+| rb02 ring N = 52 / 104 / 208 (followers 40, 6000 ticks) | done 40 / 32 / 17 of 40; done@3000 23 / 17 / 16; p50 2812 / 2774 / 2211 | Stopped control and no-clot rows: `TAK_RB02_FULL=1` |
+| rb02 Holding-queue corridor N = 208 | 40/40, p50 2521, p90 3376 | |
+| rb02 plug (six 4x4 at a 3-cell gap, 9000 ticks) | 0/40 done, 40 holding, 6 Trapped | |
+
+Route-behind on the scenario fixtures (`legion_scenario ... --offsets 0`): `aware-cross-behind` -- the later group b* waits 365 ticks in one wait
+(path 108 cells for a 107-cell straight line, 16 per mille); `crosslong.scn` -- 3 waits, longest 759, 1049 wait ticks, extra path 6 cells (35 per mille),
+`g.B.t90` 3461. Aware counters on `crosslong.scn`: 1 encounter, 1 build, latency 4 ticks, `aware.work_max` 116. After W7 every `wait_ticks`, `wait_run_max`
+and `waits` above must read 0 and `giveway_*` must stay 0 (the later group routes behind; no hold).
+
+The aware-headon / aware-seen / aware-unseen floor exceptions (lead ruling (i)) at offset 0, Legion vs Retail click t90:
+headon a00 2031 vs 1925, b00 2262 vs 2013; seen a00 1932 vs 1877, b00 2162 vs 1968; unseen a00 2297 vs 1877, b00 2252 vs 1968. (The gate judges the
+median over the 11 gate offsets; W7's exit must bring all of them within Retail.) Contacts per mille (pair a-x-b, 2 cells): headon 4.90 vs 8.78, seen 2.72 vs 8.15,
+unseen 7.26 vs 8.15, cross 11.04 vs 6.99 (Legion worse than Retail only on the crossing).
+
+crowdbench rows (Windows, hashes equal Linux on the three rows re-run there: opposingcolumns 250x1@100 5719085a1cd8649b, crossingcolumns 250x1@100 854ba1aa7ab58424, opposingdoors 50x2@100 7a7efbf53b7a3c17; 6000 ticks unless noted, seed 0; seeds 1 equals 0 where no randomness; Legion / Retail):
+
+| Row | crossed | arrived | other |
+|---|---|---|---|
+| opposingcolumns 250x8@50 | 892 / 1000 | 626 / 493 | spin 2884 (4 units) vs 8583 (444); held at end 344 vs 214; cross_gap_max 1243 vs 157; seed 2: 875 / 1000, arrived 621 / 488 |
+| opposingcolumns 250x1@50 | 112 / 125 | 67 / 63 | gap 1990 vs 175 |
+| opposingcolumns 250x1@100 | 250 / 250 | 239 / 67 | gap 22 vs 54 |
+| opposingcolumns 2000x1@100, 12000 ticks | 1194 / 968 | 597 / 4 | last cross 10067 vs 11998; gap 1933 vs 732 |
+| opposingdoors 250x2@100 | 107 / 74 | 68 / 8 | gap 3765 vs 4005; held at end 430 vs 459 |
+| opposingdoors 50x2@100 | 69 / 30 | 65 / 0 | |
+| opposingbridges 250x2@100 | 53 / 52 | 0 / 0 | held at end 500 vs 492 (the 64-cell bridge is one lane: head-on jam in both) |
+| opposingbridges 50x2@100 | 33 / 22 | 4 / 0 | |
+| (doors / bridges 250x2@100, one-way, for reference) | 500 / 500 | 351 / 135; 389 / 103 | |
+| crossingcolumns 100 / 250 / 500 x1 | 100 / 250 / 500 (all arrive at 2877 / 3342 / 4376) | 100 / 250 / 500 | Retail: arrived 99 / 236 / 486, spin 221 / 517 / 2225 |
+
+Legion counters on those rows: `legion_parts` 763-869 on opposingcolumns 250x8@50 (0 on the others), `legion_aware_encounters` 0 on every crowdbench
+row (per-unit goals never form an aware mover of 8), so MV-09 is exercised by the scenario and world-test fixtures, not crowdbench.
+
 ## W5 land over C1 (2026-10-10): reach rings on the C1 + W6 head (protocol 245)
 
 Head: `task-w5-land` = W5 (merged over W6, was protocol 244) + `origin/main` `35e03191` (C1 over W6, protocol 244) merged,
