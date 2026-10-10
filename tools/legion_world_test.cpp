@@ -747,9 +747,9 @@ void liftflyers() {
     check(own.landed==12&&own.home==12,"lifted flyers did not land again on their spots");
     // The detour allows open + 3 cells, not + 1, by user decision W3-4 (2026-10-09): under W3 the last body
     // re-chooses its slot along the formation's west face AT the destination (own run 5 vs open 2), a
-    // steering gap round a settled crowd accepted for W3 and fixed in W5/W9. W5/W9 HARD EXIT GATE: back to
-    // open + 1 (docs/legion-exit-tables.md, "W3 exit"; w5-w9-gates).
-    constexpr uint64_t kLiftDetourSlack=3;   // W3-4; W5/W9 restore 1
+    // steering gap round a settled crowd accepted for W3. Moved to W9's exit by user decision W5-1
+    // (2026-10-10): HARD EXIT GATE at W9, back to open + 1 (docs/legion-exit-tables.md, "W3 exit" and "W5 exit").
+    constexpr uint64_t kLiftDetourSlack=3;   // W3-4; W9 restores 1 (W5-1)
     check(own.ticks<=open.ticks*11/10&&own.half<=open.half*11/10,"group slowed by flyers that lift");
     check(own.detour<=open.detour+kLiftDetourSlack,"group detoured round flyers that lift");
     // An enemy's flyers never lift: obstacles, planned and steered round.

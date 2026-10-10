@@ -12,6 +12,34 @@ median of the gate offsets 0, +-1 .. +-5); the
 crowdbench rows are the committed screen (`crowdbench_screen_baseline.jsonl`,
 seed 0, 6000 ticks, turn rate 2500).
 
+## W5 land over C1 (2026-10-10): reach rings on the C1 + W6 head (protocol 245)
+
+Head: `task-w5-land` = W5 (merged over W6, was protocol 244) + `origin/main` `35e03191` (C1 over W6, protocol 244) merged,
+renumbered **245**, plus one sim change found by the combination (below), the Legion navigation golden, the baselines and
+docs. User decision **W5-1** (2026-10-10): W5 lands with the three new Retail-floor results and the six open W5/W9 hard gates;
+the gates move to W9's exit (`w5-w9-gates.md`).
+
+**What the combination broke, and the fix.** C1 pauses a first field once it covers its members; W5's ring planning
+(`ringClaim`) reads a *done* field. On the first merged sweep every attack fixture planned its ring late or never:
+`attackring-r200-64` `reach.ring.ever_end` 57 -> 37 and `damage_end` 3448 -> 1844 (Retail 3648), `struct-60` `damage_end` 23846 -> 12714,
+f1-64 2326 -> 1719, mob-40 1961 -> 1571, 15 new Retail-floor failures (`ever_t1200` / `damage_*` of f1-16, f1-64, f2-64, mob-40, r200-64,
+squad-64, struct-60) and 764 failed keys. Fix (`pausable`, one line): an attack or guard group's first field is never paused.
+With it the twelve attackring fixtures and `ringcross` are **hash-identical to W5 alone** again (all 13 theme tables above hold).
+Cost: the battle armies' attack groups lose C1's saving on those keys (battle-assault `refresh_completed` C1 alone 40, here 335 = W5 alone 347; 2x250 `detours` 642 -> 955 = W5 alone 956); the battle cost gates still pass (cost row).
+
+| Gate | Result |
+|---|---|
+| Scenario set (`legion_check check --cumulative --require-all`, all 120 files, both modes, gate offsets, serial == workers on all 240 lines; Windows, optimized Debug, head `af0f9ac3`) | **PASS** after licensing (25242 keys, 0 failed, 392 ratchets left unapplied (ruling (q)), 1708 licensed, 175 floor exceptions). Before licensing 55 failed: 33 hash lines of the three chase rows, 12 `fields_paused` first non-zero, 10 battle keys |
+| What the combination moved (per-row hashes, same sweep, against W5 alone `merged-all` and against C1 `c1sweep`) | against W5: 14 of 120 scenarios, Legion only: the four battles, `chase-1`, `chase-50`, `chase-line` (C1's paused first solo builds: `field_work_first_solo` 751760 -> 308552 on chase-1 / chase-line, 820160 -> 378032 on chase-50, `fields_built` 21 -> 19 / 24 -> 22, registrations and every theme key unchanged), and the seven C1-over-W6 rows already in main's baseline (the six squad dead-end rows and `mixed2`). Retail lines and the other 106 Legion rows are identical, including every attackring fixture, `ringcross`, `fight-retarget`, goalblock, lateblock, staticblock and keelturn. Against C1: the four battles (W5) only |
+| Licensing by cause | (1) chase-1 / chase-50 / chase-line hashes retaken (C1 cause: first solo builds pause; the keys that moved improved). (2) `fields_paused` first non-zero on keelturn-0/90/180 and chase-1/50/line baselined at the measured value (C1's own counter on W5 fixtures). (3) 10 battle keys re-pinned at the combination's measured values, reason "C1 over W5": battle-assault `field_work_refresh_idle` (p99, total), `field_work_refresh_moving.total`, `refresh_completed.total`, `rechoice_bfs_cells`; 2x250 `detours`, `trace_cells`; 2x500 `formation_ring_cells`, `slot_search_cells` -- all at the W5-alone level within about 5% (C1's low base values for these keys came in with its baseline; its saving does not apply to ring-planning attack groups) |
+| Retail-floor exceptions (W5-1) | the three new ones are floor exceptions citing W5-1 with deadline W8/W9: attackring-wall-64 `wall_touch_permille` 58 vs Retail 25 and `wall_touch_near_permille` 112 vs 81 (AR-06), ringcross `g.M.t90` 4291 vs 3854 (MV-06). Unchanged by the combination |
+| W5/W9 hard gates (W5-1) | all six moved to the **W9 exit**: baseline exceptions of doorplug-112 (wall touch, near), tail-corner380 (near), doorplug-124 `g.A.done` are now cluster `W9`; motion-cross `click.u01.done` licence cites W5-1; `legion_liftflyers` bound stays open + 3 (`kLiftDetourSlack`, W9 restores 1); `legion_acceptance_crowdheld_legion` stays a known failure (W9) |
+| `legion_cost` scaling and `legion_cost battle --cumulative` | ok / ok (run per-tick max / p99: 2x60 393639 / 120818; 2x250 396709 / 168523; 2x500 405292 / 225758; battle-assault 488796 / 397731). No baseline retake needed: the existing W5 retakes hold |
+| crowdbench screen (86 rows, seed 0, both modes) | **0 differences** against main's C1 baseline (hashes and outcomes); the five W5 counters (`legion_engaged_now`, `_reach_slots_built`, `_soft_replans`, `_reseeds_in_place`, `_brisk_steps`) are the only new keys; baseline retaken with them |
+| Legion navigation golden | regenerated: Retail 24 of 24 unchanged, Legion 8 of 24 differ from main (serial == workers); the pause fix does not move it |
+| ctest | optimized Debug non-nightly 263 tests: 262 pass, `legion_acceptance_crowdheld_legion` fails (known, W9; `units_ever_terrain_stuck`); Release `-L quick` 246: the same one. Before the pause fix `legion_scenario_battle-field-2x60` also failed |
+| `--mpai` Inner Circle 300 s seed 1 (takserver --local, clean XDG_DATA_HOME, `TAK_LEGION_VERIFY` on, build-o2) | Legion **b2261dc31dc84cdf**, Retail **b240750e5765c02b**: unchanged from protocols 242 - 244 |
+
 ## W4 C1 land (2026-10-10): paused solo first builds on W4 with B1 + B2, merged over W6 (protocol 244)
 
 Head: `task-c1-land` = origin/main `6333e38d` (W4 with B1 + B2, protocol 242) + C1's code (`588f80ea` from
@@ -303,8 +331,8 @@ PLAN gate "ring-crossing within +10%": **not met** (+19%).
 
 ### What the lead has to decide
 
-1. Land with the 3 new floor failures as AR-06 exceptions (ringcross `g.M.t90`, wall-64 touches), or hold W5 for them.
-2. Land with the six open W5/W9 hard gates carried to W9 (crowdheld's ctest still fails), or hold W5 until a design for the lattice /
+1. (DECIDED, user W5-1, 2026-10-10: land; floor exceptions AR-06 / MV-06, deadline W8/W9) Land with the 3 new floor failures as AR-06 exceptions (ringcross `g.M.t90`, wall-64 touches), or hold W5 for them.
+2. (DECIDED, user W5-1, 2026-10-10: land; the gates move to W9's exit) Land with the six open W5/W9 hard gates carried to W9 (crowdheld's ctest still fails), or hold W5 until a design for the lattice /
    queue-tail settle rule exists (it is the same rule in crowdheld, g.u11 and doorplug-124, and W3 B's).
 3. The `staticidle` warm-up change (900 -> 2400 ticks) and the `legion_cost` retakes (2x60 p99 121654 at offset 0; battle-assault contactA
    aware_pairs / slot_search_cells) under the combat-lag reasons recorded in the baselines.
