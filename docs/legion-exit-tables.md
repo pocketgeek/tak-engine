@@ -92,31 +92,34 @@ rows; they are not applied (lead ruling W4 (q): no blanket ratchet, and only imp
 with its reason); exceptions +3 (spread), -1 (floor). New entries: `work.lift_target_polls.*` bounds, `work.lifts.*` and
 `work.relifts.*` bases for `liftstream` and `mixed2`.
 
-## W5 exit (2026-10-09): units that never arrive -- reach rings, re-seed in place, late soft blocks (protocol 243)
+## W5 exit (2026-10-09): units that never arrive -- reach rings, re-seed in place, late soft blocks (protocol 244)
 
 Head: `task-w5-land` = `task-w5-steps` (`fbe9d019`: steps 1 AR-06, 2 AR-07, 3 MV-05, 6 AR-10 claims; MV-06 built three ways and
-reverted under its stop rule; MV-18 out of scope) + the exit commits: a guard plans to its ward without a ring and
-`staticidle` warms up 2400 ticks (`4114ea08`), protocol 243 with its note, `replay_test`, the Legion navigation golden
-(`9ffc8ecd`), the baseline / legion_cost / docs commit. Base = the W5 step-0 sim (`2b2dc14c`, = W4 land `6333e38d` + instruments;
-origin/main was still `6333e38d`, nothing to merge). **Not every W5/W9 hard gate is cleared** -- see "Hard gates" and
-"What the lead has to decide".
+reverted under its stop rule; MV-18 out of scope) + the exit commits: a guard plans to its ward without a ring and `staticidle` warms up
+2400 ticks (`4114ea08`), the protocol note and the Legion navigation golden, the baseline / legion_cost / docs commits, then
+**`origin/main` merged in** (`b36151fb`: W6 landed on main as `17e42209` with protocol 243 while this exit was being prepared, so the W5
+note became **protocol 244**; conflicts were only `legion.h` / `legion.cpp` (both sides' hooks kept), `protocol.h`, `replay_test` and the
+two baselines) and everything below re-run on the merged head. Base = `task-w5-base` (`25406740`) = the W5 step-0 sim (`2b2dc14c` = W4 land
+`6333e38d` + instruments) with W6's land merged in. The merge changes the state of seven scenarios only (the six dead-end squad rows and
+`mixed2`, all already in W6's baseline); W5 on top of W6 moves exactly the 26 scenarios it moved on top of W4.
+**Not every W5/W9 hard gate is cleared** -- see "Hard gates" and "What the lead has to decide".
 
 ### Gates on the exit head
 
 | Gate | Result |
 |---|---|
-| Scenario set (`legion_check check --cumulative --require-all`, all 120 files, both modes, gate offsets, serial == workers on all 240 lines; Windows, optimized Debug) | **PASS**, 25194 keys, 0 failed, 1717 licensed, 288 ratchets left unapplied outside the W5 fixtures (W4 ruling (q)), 202 floor exceptions in the run (176 after the ratchet). Local Linux run of the same sim: all 240 lines hash-equal to Windows |
-| What moved | 26 of 120 scenarios change state (Legion only): the 21 W5 fixtures, the four battles, `unreach-200` (hash only, no key moves by more than 5%). Every other scenario and every Retail line is hash-identical to the step-0 sim. 1609 keys moved by more than 5%: [legion-exit-w5-moves.md](legion-exit-w5-moves.md) |
+| Scenario set (`legion_check check --cumulative --require-all`, all 120 files, both modes, gate offsets, serial == workers on all 240 lines; Windows, optimized Debug, merged head) | **PASS**, 25206 keys, 0 failed, 1708 licensed, 319 ratchets left unapplied outside the W5 fixtures (W4 ruling (q)), 175 floor exceptions in the run. The same sim on Linux (before the merge) is hash-equal to Windows on all 240 lines |
+| What moved | 26 of 120 scenarios change state (Legion only): the 21 W5 fixtures, the four battles, `unreach-200` (hash only, no key moves by more than 5%). Every other scenario and every Retail line is hash-identical to the base. 1609 keys moved by more than 5%: [legion-exit-w5-moves.md](legion-exit-w5-moves.md) |
 | Baseline update | 21 scenarios' hashes retaken; 195 counters first non-zero or new baselined (the W5 classes `reach_slots_built` 5.9, `reseeds_in_place` 14, `soft_replans` 0.0051, `move_calls_by_state_6` 0.56 per unit as declared bounds; the rest band entries at the measured value); 478 losses licensed (`accepted_regressions`, pinned at the exit values, reasons by cause: the W5 fixtures 1 reason, the battles 1, MV-05 `group_loop_iters` 1); 50 offset-spread exceptions; ratchet on the W5 fixtures only (823 references raised, 26 Retail-floor exceptions cleared) |
-| Retail-floor exceptions | the 124 that existed at the W4 exit are unchanged (cluster `W5/W9` still holds the 3 open hard gates); the W5 fixtures went 86 (step 0) -> 63, of which **3 are new floor failures** (below). Total non-spread exceptions 210 -> 187 |
+| Retail-floor exceptions | the 123 that exist on `origin/main` are unchanged (cluster `W5/W9` still holds the 3 open hard gates); the W5 fixtures went 86 (step 0) -> 63, of which **3 are new floor failures** (below). Total non-spread exceptions 209 -> 186 |
 | Cumulative combat gate (core-five medians, Windows) | below the W0 base on all twelve keys: battle-field-2x60 max 393639 / p99 108982 / total 19.8M (W0 398804 / 116526 / 23.6M); 2x250 396121 / 178117 / 88.1M (W0 438589 / 255750 / 119.9M); 2x500 405958 / 226189 / 214.8M (W0 528461 / 393727 / 271.6M); battle-assault 457355 / 403641 / 240.0M (W0 484465 / 416681 / 394.7M). Whole-run total work is 0.61-0.84x the W0 base, 0.85-0.91x the step-0 sim. AR-06's declared 1.25x per-tick tolerance is not used up: per-tick max is unchanged on 2x60 and below the step-0 sim elsewhere |
 | `legion_cost` | scaling ok; battle files ok after two retakes: 2x60 `run` p99 121654 (the offset-0 draw; the check runs only offset 0, where the step-0 sim is 90329; core-five median 108982 vs W0 116526) and battle-assault `contactA` `aware_pairs` 18555 / `slot_search_cells` 8286803 (both ring work, +14% / +12%) |
 | Field-quota peg run | unchanged (battle-assault 47 = base, 2x500 9, 2x250 8, 2x60 2): the 8-member ring fallback is not needed |
-| crowdbench screen (Release, seed 0, 86 rows, both modes) | **0 differences** against the committed baseline, hashes included (the new fields fold only when set; no row sets one), so the screen baseline is unchanged |
-| Exact | Retail navigation golden and hashes unchanged; Legion navigation golden regenerated (8 of 24 moved, serial == workers, Retail 24 of 24 equal); `check-determinism.sh` OK (dcef618cd2e4d558); `check-detmath` OK; serial == workers on all 240 scenario lines; observer_neutral passes |
-| `--mpai` Inner Circle 300 s seed 1 (takserver --local, clean XDG_DATA_HOME, `TAK_LEGION_VERIFY` on) | Legion **b2261dc31dc84cdf** twice on Linux, and on Windows and the Mac; Retail b240750e5765c02b on all three. **Unchanged from protocol 242**: the 16-unit AI game never has two attackers on one target, so no W5 field is ever set |
-| ctest | optimized Debug, non-nightly (244 tests): 243 pass, `legion_acceptance_crowdheld_legion` fails (hard gate, below). Release `-L quick` 226 of 227, the same one. Windows (touched areas, 229): 227, the same crowdheld and `legion_scenario_battle-assault` (the legion_cost contactA window, fixed by the retake) |
-| Reconnect | Ulasem host + joiner + 6 AIs, `TAK_LEGION_VERIFY` on, joiner killed at 150 s and rejoined with `--mprejoin`: host and joiner both 2a209aaaaed61523 at tick 9000 (120 units), no DESYNCED / suspect in the server log |
+| crowdbench screen (Release, seed 0, 86 rows, both modes, merged head) | **0 differences** against W6's committed baseline, hashes included (the new fields fold only when set; no row sets one); the baseline is retaken only to add the five never-hashed W5 counters (0 on every row) |
+| Exact | Retail navigation golden and hashes unchanged; Legion navigation golden regenerated (8 of 24 moved against W4's, serial == workers, Retail 24 of 24 equal; W6's golden was the same file, so the merged file passes unchanged); `check-determinism.sh` OK (dcef618cd2e4d558); `check-detmath` OK; serial == workers on all 240 scenario lines; observer_neutral passes |
+| `--mpai` Inner Circle 300 s seed 1 (takserver --local, clean XDG_DATA_HOME, `TAK_LEGION_VERIFY` on) | Legion **b2261dc31dc84cdf** twice on Linux (merged head), and on Windows and the Mac; Retail b240750e5765c02b on all three. **Unchanged from protocols 242 and 243**: the 16-unit AI game never has two attackers on one target and no squads or lifted flyers, so no W5 or W6 field is ever set |
+| ctest | merged head: optimized Debug non-nightly 262 tests: 261 pass, `legion_acceptance_crowdheld_legion` fails (hard gate, below); Release `-L quick` 244 of 245, the same one; Windows (touched areas, 247): 246, the same one (the `legion_scenario_battle-assault` window checks pass after the contactA retake); the nightly-labelled `legion_check_*` / scenario ctests were not run (the scenario sweep above is the same check) |
+| Reconnect | Ulasem host + joiner + 6 AIs, `TAK_LEGION_VERIFY` on, joiner killed at 150 s and rejoined with `--mprejoin`: host and joiner both 2a209aaaaed61523 at tick 9000 (120 units), no DESYNCED / suspect in the server log (before and after the merge) |
 
 ### Theme targets (Legion, core-five medians, base = the step-0 baseline; Retail on the same binary)
 

@@ -1,16 +1,15 @@
 # W5 exit: every key moved by more than 5% against the step-0 sim
 
-Base = the W5 step-0 sim (`task-w5-s0` `2b2dc14c`, the W4 land `6333e38d` plus instrument-only commits; every Legion and
-Retail hash equals W4's), new = `task-w5-land` (protocol 243). Both swept on Windows (optimized Debug), all 120 files, both
-modes, the gate offsets (keys as the run lines report them: small-count keys on the gate-offset median, the rest on the core
-five), serial == workers on all 240 lines. Only 26 Legion scenarios change state at all: the 21 W5 fixtures, the four battle
-scenarios and `unreach-200` (hash only, no key moves by more than 5%); every other scenario, and every Retail line, is
-hash-identical to the base. *intended*: the W5 theme keys (reach, damage, chase registrations and fields, goal-block and
-late-block arrivals, the new counters); *incidental (within band)*: everything else, which for the 21 fixtures is the cost of
-the intended change (an army that used to string out now stands round its target and fires: spins, reversals, statue / hold
-ticks) and for the four battles ring planning and its bodies standing in the way (docs/legion-exit-tables.md, "W5 exit").
-No Retail key moved. The `deadend-*` and `lateblock-before-16`, `liftstream`, `staticblock-*` rows are MV-05's
-`group_loop_iters` (one row each).
+Base = `task-w5-base` (`25406740`): the W5 step-0 sim (`task-w5-s0` `2b2dc14c`, the W4 land `6333e38d` plus instrument-only commits) with
+`origin/main` (W6 land, `17e42209`, protocol 243) merged in; new = `task-w5-land` (`b36151fb` plus the baseline commits, protocol 244). Both
+swept on Windows (optimized Debug), all 120 files, both modes, the gate offsets (keys as the run lines report them: small-count keys on the
+gate-offset median, the rest on the core five), serial == workers on all 240 lines. Only 26 Legion scenarios change state at all: the 21 W5
+fixtures, the four battle scenarios and `unreach-200` (hash only, no key moves by more than 5%); every other scenario, and every Retail
+line, is hash-identical to the base. *intended*: the W5 theme keys (reach, damage, chase registrations and fields, goal-block and
+late-block arrivals, the new counters); *incidental (within band)*: everything else, which for the 21 fixtures is the cost of the
+intended change (an army that used to string out now stands round its target and fires: spins, reversals, statue / hold ticks) and for
+the four battles ring planning and its bodies standing in the way (docs/legion-exit-tables.md, "W5 exit"). No Retail key moved. The
+`deadend-*`, `lateblock-before-16`, `liftstream` and `staticblock-*` rows are MV-05's `group_loop_iters` (one row each).
 
 | key | old | new | change | kind |
 |---|---|---|---|---|
@@ -1260,10 +1259,10 @@ No Retail key moved. The `deadend-*` and `lateblock-before-16`, `liftstream`, `s
 | chase-line/legion/work.trace_cells.total | 22797 | 21189 | -7.1% | incidental (within band) |
 | deadend-w2-n120-closed-squad/legion/work.group_loop_iters.total | 487 | 530 | +8.8% | incidental (within band) |
 | deadend-w2-n120-room-squad/legion/work.group_loop_iters.total | 487 | 530 | +8.8% | incidental (within band) |
-| deadend-w4-n120-closed-squad/legion/work.group_loop_iters.total | 494 | 537 | +8.7% | incidental (within band) |
-| deadend-w4-n120-room-squad/legion/work.group_loop_iters.total | 496 | 539 | +8.7% | incidental (within band) |
-| deadend-w6-n120-closed-squad/legion/work.group_loop_iters.total | 494 | 537 | +8.7% | incidental (within band) |
-| deadend-w6-n120-room-squad/legion/work.group_loop_iters.total | 348 | 391 | +12.4% | incidental (within band) |
+| deadend-w4-n120-closed-squad/legion/work.group_loop_iters.total | 371 | 414 | +11.6% | incidental (within band) |
+| deadend-w4-n120-room-squad/legion/work.group_loop_iters.total | 359 | 402 | +12.0% | incidental (within band) |
+| deadend-w6-n120-closed-squad/legion/work.group_loop_iters.total | 347 | 390 | +12.4% | incidental (within band) |
+| deadend-w6-n120-room-squad/legion/work.group_loop_iters.total | 344 | 387 | +12.5% | incidental (within band) |
 | fight-retarget/legion/aim_reversals | 53 | 64 | +20.8% | incidental (within band) |
 | fight-retarget/legion/back | 30 | 35 | +16.7% | incidental (within band) |
 | fight-retarget/legion/backward | 14 | 11 | -21.4% | incidental (within band) |

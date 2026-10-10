@@ -867,9 +867,9 @@ in a formation or Ctrl+number group with ground units keep station over them.
 - A large group sent into a **dead-end corridor** can leave some units
   unsettled at the far end.
 - A crowd that parks **after** a group has already planned its route is
-  avoided only if it fills 20 cells or more of the group's way; a smaller one
-  is walked round when the group reaches it, and the group plans again
-  once at most every ten seconds.
+  avoided only if it fills 20 cells or more of the group's way (the group then
+  plans again, at most once every ten seconds); a smaller one is walked round
+  when the group reaches it.
 - Units guarding a friend in a narrow place keep shuffling for a while, up to
   about a minute, until the crowd round it has packed.
 - A group walking through a ring of units that stand and fire goes round the
