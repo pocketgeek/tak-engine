@@ -1419,7 +1419,10 @@ void wallend() {wallendRun(1);wallendRun(12);}
 // 1931 (spread 1.36, so the median-of-5 and the full 1.20 band); gap spread (cells
 // above the end) 0.47 / 1.43 / 2.21 / 1.76 / 1.62.
 constexpr int kPinwheelSingleFile90=1252,kPinwheelGap90=2229;
-constexpr double kPinwheelGapSpread=1.62;
+// W8 step 2 (the passage gate, MV-10): the gap no longer folds to one file; the
+// median files abreast in the gap must reach the plan's target (base 1.15-1.50,
+// gate 2.60-2.82).
+constexpr double kPinwheelGapFiles=2.5;
 constexpr double kPinwheelFiles=4.48;                             // open ground, files abreast (higher is better)
 constexpr double kPinwheelOpenBand=1.20,kPinwheelFilesBand=1.20,kPinwheelGapBand=1.20;
 struct PinwheelResult {int arrived=0,total=0,rounded90=-1,done=-1;double lanes=0,spread=0;uint64_t spins=0,reversals=0;};
@@ -1490,11 +1493,11 @@ void pinwheel() {
     // Wider arcs are longer, but files abreast drain the end faster than one
     // file: the median offset rounds the end no slower than the committed build
     // (with its band), and the group stays abreast.
-    double fv[5],sv[5];int ov[5],gv[5];
-    for(int i=0;i<5;++i) {fv[i]=open[i].lanes;ov[i]=never(open[i].rounded90);gv[i]=never(gap[i].rounded90);sv[i]=gap[i].spread;}
-    const double files=medianOf(fv),gapSpread=medianOf(sv);const int open90=medianOf(ov),gap90=medianOf(gv);
-    std::printf("pinwheel medians: open rounded90=%d files=%.2f gap rounded90=%d spread=%.2f\n",open90,files,gap90,gapSpread);
-    check(gapSpread<=kPinwheelGapSpread*kPinwheelGapBand,"group did not fold into the gap as the baseline does");
+    double fv[5],sv[5],gf[5];int ov[5],gv[5];
+    for(int i=0;i<5;++i) {fv[i]=open[i].lanes;ov[i]=never(open[i].rounded90);gv[i]=never(gap[i].rounded90);sv[i]=gap[i].spread;gf[i]=gap[i].lanes;}
+    const double files=medianOf(fv),gapSpread=medianOf(sv),gapFiles=medianOf(gf);const int open90=medianOf(ov),gap90=medianOf(gv);
+    std::printf("pinwheel medians: open rounded90=%d files=%.2f gap rounded90=%d spread=%.2f files=%.2f\n",open90,files,gap90,gapSpread,gapFiles);
+    check(gapFiles>=kPinwheelGapFiles,"group did not keep its files through the gap (passage gate)");
     check(files*kPinwheelFilesBand>=kPinwheelFiles,"group folded into a file at the wall end");
     check(open90!=INT_MAX&&open90<=kPinwheelSingleFile90*kPinwheelOpenBand,"group rounded the wall end slower than the baseline");
     check(gap90!=INT_MAX&&gap90<=kPinwheelGap90*kPinwheelGapBand,"group took longer through the gap than the baseline");

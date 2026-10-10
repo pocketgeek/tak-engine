@@ -138,6 +138,11 @@ constexpr int kPivotLead=6;                    // pursuit distance along the arc
 constexpr int kObstacleReach=32;               // rings nearObstacle scans (Chebyshev cells)
 constexpr int kVertexChain=128;                // descent cells the vertex search walks
 constexpr int kLaneNear=32;                    // no vertex within this many cells of the destination
+constexpr int kLaneS0=1;                       // free cells between the inner lane and the wall
+constexpr int kGateCommit=12;                  // chain cells ahead within which a member commits to a gate
+constexpr int kGateQueue=6;                    // cells round a gate point counted as its queue
+constexpr int kGateRun=24;                     // strip cells searched for a gate's narrowest cell
+constexpr int kSpanCap=96;                     // origins a cross-section scan walks each way
 constexpr int kGoalSearchCells=24;             // blocked click -> nearest legal
 constexpr int kApproachRegion=256;             // origins a region needs before an unreachable goal is approached
 // Moving mission goals (chase, guard) re-seed their field at most once per
@@ -231,6 +236,12 @@ struct LegionNavigator::Impl {
         mutable std::vector<uint32_t> nearGen;
         mutable uint32_t nearGenCur=0;
         mutable uint64_t nearEpoch=~0ull;
+        // The passage gate's static cross-sections (see gateSpan): per
+        // origin the legal run west/east/north/south (kSpanCap at most), valid
+        // where spanGen holds spanGenCur. Derived, never hashed.
+        mutable std::vector<uint32_t> spanMemo,spanGen;
+        mutable uint32_t spanGenCur=0;
+        mutable uint64_t spanEpoch=~0ull;
     };
     // Running totals of the live fields (every Field lives in some group's
     // field or next): startField's cap test reads them instead of walking
@@ -639,6 +650,11 @@ struct LegionNavigator::Impl {
         // W8 step 1: the origin of the last vertex probe (instrument only:
         // it gates a Stats-only probe, never a decision; not hashed).
         int vertexCell=-1;
+        // The passage gate (see gateCommit): the gate point (origin cell, -1
+        // none) the member aims at until it crosses the gate line, its lane
+        // in the gate, and the travel axis and sign across the line. Hashed
+        // only when set (PLAN 3.0, C27).
+        int gateCell=-1;int8_t gateLane=0,gateAxis=0,gateSign=0;
         uint32_t routeTicks=0,nextDetour=8,detourCount=0;
         int64_t detourBest=-1;            // progress when the last local detour was planned
         // "Close enough": the start of the current no-progress window and the
@@ -5113,7 +5129,7 @@ struct LegionNavigator::Impl {
             else {ringRelease(g,u.id,m);m.slot=-1;m.goal=m.requested;}
         } else {m.slot=-1;m.goal=m.requested;}
         m.lineCell=-1;m.line=false;m.route.clear();m.routeTicks=0;
-        m.progress=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;
+        m.progress=0xffffffffu;m.rechoices=0;m.pivotCell=-1;m.pivotAim=-1;m.gateCell=-1;
         markPass(u,m);
     }
     // An illegal goal (AR-07): a slot member gives its slot back and claims
@@ -5509,7 +5525,10 @@ struct LegionNavigator::Impl {
             if(f->done&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 m.vertexCell=here;vertexInstrument(u,m,g,p,*f,ox,oz);
             }
-            if(f->done&&m.pivotR>=0&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
+            const bool lanes=f->done&&m.slot>=0&&m.pt&&partRefs(m)>=kPivotMembers&&formationMember(m);
+            if(!lanes)m.gateCell=-1;
+            else if(gateAim(u,m,g,p,*f,ox,oz,cell)) {pivoting=&m;pivotTarget=cell;}
+            else if(m.pivotR>=0) {
                 if(m.pivotCell!=here) {m.pivotCell=here;m.pivotAim=pivotAim(u,m,p,*f,ox,oz);}
                 if(m.pivotAim>=0) {cell=m.pivotAim;pivoting=&m;pivotTarget=cell;}
             }
@@ -5698,6 +5717,174 @@ struct LegionNavigator::Impl {
         stats.vertexWork+=work;
         stats.lineSweeps=sweeps;stats.traceCells=cells;
     }
+    // ---- W8 step 2 (PLAN 3.2 T2): the passage gate -----------------------
+    // The lane cap K of a member's point (n members): clamp((isqrt(n)*3+2)/4,
+    // 2, 10), and the band its lanes span, B = 2*s0 + (K-1)*(foot+1) + foot
+    // cells.
+    int laneCap(const Member& m) const {
+        const int n=m.pt?std::max(m.pt->refs,0):0;
+        return std::clamp((int(isqrtFloor(uint64_t(n)))*3+2)/4,2,10);
+    }
+    int laneBand(const Member& m,int foot) const {return 2*kLaneS0+(laneCap(m)-1)*(foot+1)+foot;}
+    // Static legal runs from origin (x,z) west, east, north and south (one
+    // byte each, at most kSpanCap), memoised per plane epoch (C10: static
+    // only).
+    uint32_t spanAt(const Plane& p,int x,int z) const {
+        const size_t W=size_t(width()),c=size_t(z)*W+size_t(x),n=W*size_t(height());
+        if(p.spanMemo.size()!=n) {p.spanMemo.assign(n,0);p.spanGen.assign(n,0);p.spanGenCur=0;p.spanEpoch=~0ull;}
+        if(p.spanEpoch!=p.epoch) {
+            p.spanEpoch=p.epoch;
+            if(++p.spanGenCur==0) {std::fill(p.spanGen.begin(),p.spanGen.end(),0u);p.spanGenCur=1;}
+        }
+        if(p.spanGen[c]==p.spanGenCur)return p.spanMemo[c];
+        auto run=[&](int dx,int dz) {int k=0;while(k<kSpanCap&&legal(p,x+dx*(k+1),z+dz*(k+1)))++k;return uint32_t(k);};
+        const uint32_t e=run(-1,0)|run(1,0)<<8|run(0,-1)<<16|run(0,1)<<24;
+        p.spanGen[c]=p.spanGenCur;p.spanMemo[c]=e;
+        return e;
+    }
+    // The static cross-section of the strip at chain cell i, across the
+    // chain's direction there (chain[i-3] to chain[i+3]; the axis nearer its
+    // perpendicular): the legal runs either side (origins), the free width
+    // in cells (origins plus the footprint across, less one) and the travel
+    // sign along the other axis.
+    struct Span {int axis=0,lo=0,hi=0,free=0,sign=0;};
+    // A gate strip: narrower than the band, and than the passage lane grid
+    // (kLaneSpan origins across), where the pinwheel's look-ahead ends (W8
+    // step 2 tuning: through wider strips the pinwheel keeps its files --
+    // gap 10 4.04, gap 14 4.45 at the step-0 base -- and a gate there
+    // measured stop-go +50-70% and gap 14 done +21-45%).
+    static bool gateStrip(const Span& s,int band) {return s.free<band&&s.lo+s.hi+1<kLaneSpan;}
+    Span gateSpan(const Plane& p,const int* chain,int n,int i,int fx,int fz) const {
+        const int W=width();
+        const int a=chain[std::max(i-3,0)],b=chain[std::min(i+3,n-1)];
+        const int tx=b%W-a%W,tz=b/W-a/W;
+        Span s;
+        s.axis=std::abs(tx)>=std::abs(tz)?1:0;   // 1: across z, travelling along x
+        s.sign=s.axis==1?(tx>0)-(tx<0):(tz>0)-(tz<0);
+        const uint32_t e=spanAt(p,chain[i]%W,chain[i]/W);
+        if(s.axis==0) {s.lo=int(e&0xff);s.hi=int(e>>8&0xff);} else {s.lo=int(e>>16&0xff);s.hi=int(e>>24);}
+        s.free=s.lo+s.hi+(s.axis==0?fx:fz);
+        return s;
+    }
+    // The passage gate (T2 3.2, MV-10). A short passage -- a strip narrower
+    // than the band and than the passage lane grid (gateStrip), two to
+    // kGateRun chain cells long -- forms a wall-to-wall gate at its narrowest
+    // chain cell G: the cross-section there (static, memoised), narrowed by
+    // soft origins at use, holds K_g = min(K, 1 + (free-foot)/foot) points at
+    // footprint pitch, centred. A member that comes within kGateCommit chain
+    // cells of a gate (from outside its strip, before the gate line) commits
+    // to the point with the fewest same-player bodies queued within
+    // kGateQueue cells before the line (ties: nearest its own projection on
+    // the line; crossing over is accepted, plan 3.2), aims at it while
+    // it is in a straight legal line, and is released once it crosses the
+    // line ((pos - point).travel >= 0). It passes a line rather than reaching
+    // a point, so no queue forms on a point. Corridors (straits, dead ends),
+    // strips of one lane and gates within kLaneNear of the destination are
+    // left to the field and its lane grid; the pinwheel's look-ahead still
+    // ends at such a strip.
+    bool gateCommit(const Unit& u,Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ,foot=std::max(fx,fz);
+        const int band=laneBand(m,foot);
+        std::array<int,kVertexChain+1> chain{};int n=0;chain[size_t(n++)]=oz*W+ox;
+        uint64_t work=0;
+        auto extend=[&](int upto) {
+            while(n<=std::min(upto,kVertexChain)) {
+                const int next=descend(p,f,chain[size_t(n-1)]%W,chain[size_t(n-1)]/W,m.goal,fx,fz);
+                if(next<0)return;
+                chain[size_t(n++)]=next;++work;
+            }
+        };
+        struct Flush {uint64_t& to;uint64_t& n;~Flush() {to+=n;}} flush{stats.laneWork,work};
+        extend(kGateCommit+3);
+        ++work;
+        if(gateStrip(gateSpan(p,chain.data(),n,0,fx,fz),band))return false;   // inside a strip
+        int best=-1;Span bs;
+        for(int j=1;j<n&&j<=kGateCommit;++j) {
+            ++work;
+            const Span sp=gateSpan(p,chain.data(),n,j,fx,fz);
+            if(gateStrip(sp,band)) {best=j;bs=sp;break;}
+        }
+        if(best<0)return false;
+        // G: the narrowest cell of the strip's first kGateRun cells (the
+        // first of equals).
+        // A gate is a short passage: at least two chain cells (one narrow
+        // cell is a pocket between stray rocks along a face) and ending
+        // within kGateRun cells (a corridor -- a strait, a dead end -- is
+        // left to the field and its lane grid).
+        int length=1;bool exits=false;
+        for(int j=best+1;j<=best+kGateRun;++j) {
+            extend(j+3);
+            if(j>=n)break;
+            ++work;
+            const Span sp=gateSpan(p,chain.data(),n,j,fx,fz);
+            if(!gateStrip(sp,band)) {exits=true;break;}
+            ++length;
+            if(sp.free<bs.free) {best=j;bs=sp;}
+        }
+        const int G=chain[size_t(best)],gx=G%W,gz=G/W;
+        if(!exits||length<2||!bs.sign||f.at(size_t(G))<kLaneNear*kOrthogonal)return false;
+        // Not when the member is already at or past the gate line.
+        if(((bs.axis==0?oz-gz:ox-gx)*bs.sign)>=0)return false;
+        const uint64_t command=g.soft?g.command:kNoSoft;
+        const int counts=!softCellCount?-1:softCountsFor(fx,fz);
+        auto soft=[&](int k) {++work;return bs.axis==0?softAt(gx+k,gz,fx,fz,command,counts):softAt(gx,gz+k,fx,fz,command,counts);};
+        if(soft(0))return false;
+        int lo=0,hi=0;
+        while(lo<bs.lo&&!soft(-(lo+1)))++lo;
+        while(hi<bs.hi&&!soft(hi+1))++hi;
+        const int across=bs.axis==0?fx:fz;
+        const int free=lo+hi+across;
+        const int lanes=std::min(laneCap(m),1+(free-across)/across);
+        if(lanes<2)return false;
+        // Lanes one free cell apart where the width allows, else at
+        // footprint pitch; the points centred in the free width.
+        const int pitch=across;
+        const int axisG=bs.axis==0?gx:gz,first=axisG-lo+(free-(lanes-1)*pitch-across)/2;
+        const int own=bs.axis==0?ox:oz,travelG=bs.axis==0?gz:gx;
+        int pick=-1,pickQueue=0,pickDist=0;
+        for(int k=0;k<lanes;++k) {
+            const int at=first+k*pitch;
+            const int px=bs.axis==0?at:gx,pz=bs.axis==0?gz:at;
+            int queue=0;
+            if(w.occW_>0)for(int dz=-kGateQueue;dz<=kGateQueue;++dz)for(int dx=-kGateQueue;dx<=kGateQueue;++dx) {
+                const int cx=px+dx,cz=pz+dz;
+                if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)continue;
+                ++work;
+                // Before the gate line only (the approach side).
+                if(((bs.axis==0?cz:cx)-travelG)*bs.sign>=0)continue;
+                const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+                if(!o||o==u.id)continue;
+                const Unit* v=w.unit(o);
+                queue+=v&&v->player==u.player;
+            }
+            // The shortest queue; ties to the nearest the member's own
+            // projection on the line.
+            const int dist=std::abs(own-at);
+            if(pick<0||queue<pickQueue||(queue==pickQueue&&dist<pickDist)) {pick=k;pickQueue=queue;pickDist=dist;}
+        }
+        const int at=first+pick*pitch;
+        m.gateCell=bs.axis==0?gz*W+at:at*W+gx;
+        m.gateLane=int8_t(pick);m.gateAxis=int8_t(bs.axis);m.gateSign=int8_t(bs.sign);
+        ++stats.gateCommits;
+        return true;
+    }
+    // A committed member aims at its gate point while it is in a straight
+    // legal line (otherwise the field and the pinwheel steer, the gate kept);
+    // false when it has none.
+    bool gateAim(const Unit& u,Member& m,const Group& g,const Plane& p,const Field& f,int ox,int oz,int& cell) {
+        const int W=width(),fx=u.type->footX,fz=u.type->footZ;
+        if(m.gateCell>=0) {
+            const int gx=m.gateCell%W,gz=m.gateCell/W;
+            const int along=m.gateAxis==0?oz-gz:ox-gx;
+            if(!legal(p,gx,gz)||along*m.gateSign>=0) {
+                m.gateCell=-1;++stats.gateReleases;return false;
+            }
+        } else if(!gateCommit(u,m,g,p,f,ox,oz))return false;
+        ++stats.laneWork;
+        if(!sweep(p,u,u.x,u.z,centre(m.gateCell%W,fx),centre(m.gateCell/W,fz)))return false;
+        cell=m.gateCell;
+        return true;
+    }
     // Pinwheel: a formation keeps its width round the end of a wall. The
     // field's shortest ways past a convex wall end all touch its tip, so
     // members descending it fold into one file there. Instead, when a turn
@@ -5737,10 +5924,10 @@ struct LegionNavigator::Impl {
         stats.pivotWork+=uint64_t(touch<0?n:touch+1);   // W8 step 0: the wall scan
         if(touch<0)return -1;
         // A passage on the way (a strip narrower than kLaneSpan across, as
-        // the passage lanes use) ends the look-ahead: there the field and its
-        // lane grid steer, so a gap beside a wall end is taken single file.
-        auto narrow=[&](int c) {
-            const int x=c%W,z=c/W;
+        // the passage lanes use) ends the look-ahead: there the passage gate
+        // (gateAim) and the field's lane grid steer.
+        auto narrow=[&](int i) {
+            const int x=chain[size_t(i)]%W,z=chain[size_t(i)]/W;
             for(const auto& d:std::array<std::array<int,2>,2>{{{1,0},{0,1}}}) {
                 int run=1;
                 for(int k=1;k<kLaneSpan&&legal(p,x+d[0]*k,z+d[1]*k);++k)++run;
@@ -5755,7 +5942,7 @@ struct LegionNavigator::Impl {
         int narrowTests=0;
         for(int i=touch;i<n;++i) {
             ++narrowTests;
-            if(narrow(chain[size_t(i)])||f.at(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
+            if(narrow(i)||f.at(size_t(chain[size_t(i)]))<kPivotNear*kOrthogonal) {n=i;break;}
         }
         stats.pivotWork+=uint64_t(narrowTests);   // W8 step 0
         if(touch>=n)return -1;
@@ -6847,6 +7034,10 @@ struct LegionNavigator::Impl {
             h=mix(h,uint32_t(std::get<2>(m.point)));h=mix(h,uint32_t(std::get<3>(m.point)));
             if(std::get<0>(m.point)>=0&&m.part!=std::get<1>(m.point)) {h=mix(h,0x70617274ull);h=mix(h,m.part);}
             if(m.pivotR||m.pivotCell>=0) {h=mix(h,uint64_t(uint16_t(m.pivotR)));h=mix(h,uint64_t(uint32_t(m.pivotCell))<<32|uint32_t(m.pivotAim));}
+            if(m.gateCell>=0) {
+                h=mix(h,0x67617465ull);h=mix(h,uint32_t(m.gateCell));
+                h=mix(h,uint64_t(uint8_t(m.gateLane))|uint64_t(uint8_t(m.gateAxis))<<8|uint64_t(uint8_t(m.gateSign))<<16);
+            }
             h=mix(h,m.routeTicks);h=mix(h,m.nextDetour);h=mix(h,m.detourCount);for(int c:m.route)h=mix(h,uint64_t(c));
             if(m.kind!=Kind::Move) {
                 h=mix(h,uint64_t(m.kind));h=mix(h,uint64_t(uint32_t(m.seedX))<<32|uint32_t(m.seedZ));h=mix(h,m.seededAt);

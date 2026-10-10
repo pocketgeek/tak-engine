@@ -164,6 +164,10 @@ public:
         // cells of the destination, or nothing past the body's own cell visible; vertexWork
         // is the chain cells, line probes and clearance-ring cells they touch.
         uint64_t vertexCalls=0,vertexFound=0,vertexVisible=0,vertexNear=0,vertexBlocked=0,vertexWork=0;
+        // W8 step 2 (the passage gate): members that committed to a gate point, and releases
+        // (crossed the gate line, came within 2 cells of the point, or the point turned illegal).
+        // The gate's search and aim work is counted in laneWork.
+        uint64_t gateCommits=0,gateReleases=0;
         size_t bytes=0;
         // Live container sizes (observation only).
         size_t liveGroups=0,liveMembers=0,livePoints=0,liveFields=0;
@@ -212,6 +216,7 @@ public:
         f("lane_work",s.laneWork);f("lane_clipped",s.laneClipped);
         f("vertex_calls",s.vertexCalls);f("vertex_found",s.vertexFound);f("vertex_visible",s.vertexVisible);
         f("vertex_near",s.vertexNear);f("vertex_blocked",s.vertexBlocked);f("vertex_work",s.vertexWork);
+        f("gate_commits",s.gateCommits);f("gate_releases",s.gateReleases);
         f("bytes",uint64_t(s.bytes));
         f("live_groups",uint64_t(s.liveGroups));f("live_members",uint64_t(s.liveMembers));
         f("live_points",uint64_t(s.livePoints));f("live_fields",uint64_t(s.liveFields));
