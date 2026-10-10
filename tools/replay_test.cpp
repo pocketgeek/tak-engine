@@ -137,7 +137,8 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 242, "replay format 11 is kept under protocol 242");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 243, "replay format 11 is kept under protocol 243");
+    check(!supportedReplayProtocol(11, 242), "previous Legion run-to-done first-field protocol is refused");
     check(!supportedReplayProtocol(11, 241), "previous Legion record-walk protocol is refused");
     check(!supportedReplayProtocol(11, 240), "previous Legion settle/convoy protocol is refused");
     check(!supportedReplayProtocol(11, 239), "previous Legion formation/approach protocol is refused");

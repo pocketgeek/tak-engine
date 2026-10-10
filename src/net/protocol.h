@@ -19,7 +19,14 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 242;      // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
+constexpr uint32_t kNetVersion = 243;      // 243: Legion W4 C1 -- a first field of a group that claims no packed per-goal slots
+                                           //      and does not pinwheel builds in 4096-relaxation slices and pauses once it
+                                           //      covers its members (Field::covered and the members' demand cells are hashed);
+                                           //      a member under its cover margin resumes it; the settle rule, the lift walk, the
+                                           //      aim memo, eviction, sharing and a formation's slot hand-out read a paused build;
+                                           //      a group with a member waiting on its paused build is active (B1), and a paused
+                                           //      build is a finished field to the blocked re-request
+                                           // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
                                            //      unit's orders change (World::noteOrders from the order helpers, mission dispatch,
                                            //      target acquisition and the death edge) instead of by a per-tick walk; prune's
                                            //      hashed 256-a-tick backstop cursor also walks those records. A stale field
