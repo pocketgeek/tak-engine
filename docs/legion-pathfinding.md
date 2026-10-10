@@ -1087,6 +1087,41 @@ group's field window gets the arc margin. Ranks and the aim memo are hashed;
 the work is bounded. Seen in `corner-1x48:gate.top.files_x100` (files abreast
 at the corner), `uturn:gate.top.files_x100` and the `pinwheel` world test.
 
+### Passage gate (W8, protocol 247)
+
+A group used to take a short gap in single file even where the gap was wide
+enough for two or three bodies, because every member descended the shared field
+into the same cell column. A formation member of a point part of 16 or more (the
+pinwheel's eligibility) now commits to a gate when a short passage comes within
+12 cells of its descent chain. A passage is a strip narrower than the formation's
+band (`B = 2*s0 + (K-1)*(foot+1) + foot`, `K` = clamp(3/4 of the square root of
+the point's members, 2, 10)) and than the passage lane grid, two to 24 chain
+cells long and not within the lane-near distance of the destination; the gate is
+the wall-to-wall cross-section at its narrowest cell. The member picks the gate
+point (points at footprint pitch, centred, as many as the free width holds) with
+the fewest same-player bodies queued within 6 cells before the line, aims at it
+while it is in a straight legal line, and is released once it crosses the gate
+line. A gap of two or three bodies is therefore taken two or three abreast
+(`gap6`: files 1.31 to 2.61, time to 90% 2972 to 2395 ticks). The static
+geometry is memoised per plane epoch (`nearObstacle` and its vertex probe, which
+steering does not read); soft narrowing is computed at use. The pinwheel is kept
+and its look-ahead still ends at the old narrow cut; members committed to a gate
+skip it. Hashed only when set: `gateCell`, `gateLane`, `gateAxis`, `gateSign`.
+`gate_commits` / `gate_releases`, the `pivot_*`, `lane_*` and `vertex_*` work
+counters and `pass_filter_holds` are instruments and never hashed.
+
+The cost is lane swaps after the gap: bodies arriving abreast are turned by the
+field at slightly different times, which the lane-crossing observer counts as a
+flip where single file never does. User decision W8-1 judges the GAP fixtures
+(`gap6`, `gap8`, `gap10`, `gap14`, `gap20`, `gapsweep`) per file, so
+`legion_check` compares legion crossings / files abreast with Retail's
+crossings / files abreast (`tools/legion_check.py`, `per_file_floor`); the corner
+and head-on obligations are unchanged and still raw. Corner lanes (a rank
+re-map at a turn), wake-following, a pass release and a door tie-break were
+tried at W8 and dropped by their stop rules; the lane-crossing exceptions on the
+corner and head-on fixtures, `attackring-wall-64`, `ringcross` and the jagged
+arrivals moved to W9 (user decision W8-2; `docs/legion-exit-tables.md`, "W8 exit").
+
 ### Clustered static repair (4a99092a)
 
 `refreshPlane` repairs component labels in a window round the bounding box of
