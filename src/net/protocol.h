@@ -19,17 +19,19 @@
 
 namespace tak::net {
 
-// W5 protocol note, PLACEHOLDER: the land step takes the next free number, moves this text into the list below
-// as "24x: Legion W5 -- ..." and bumps kNetVersion (replay_test asserts it):
-//      attack/guard members braked by combat in reach are Engaged (hashed member state 6): settled and still to
-//      local steering, never yielding or parting, soft to other commands only (as is a member held on its ring
-//      spot); a reach kind's held same-target peer (30 ticks) is settled to the bodies behind it, and reach kinds
-//      never run the settle rule; reach groups are keyed by target, reach bucket and seeded origin, and two or
-//      more members plan to a ring of spots at weapon reach (band 0 LoS/component-filtered seeds, outer waiting
-//      bands, bulk angular claims, re-choice, claims following engaged bodies; hashed when set); a moving goal's
-//      group re-seeds in place and reseats its members with their clocks; an illegal goal re-claims in its group;
-//      a soft block of 20+ cells formed on a group's way after its field re-plans it once (300-tick cooldown)
-constexpr uint32_t kNetVersion = 242;      // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
+constexpr uint32_t kNetVersion = 243;      // 243: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
+                                           //      member state 6): settled and still to local steering, never yielding or parting,
+                                           //      soft to other commands only (as is a member held on its ring spot); a reach kind's
+                                           //      held same-target peer (30 ticks) is settled to the bodies behind it, and reach kinds
+                                           //      never take the settle rule or contact arrival. Reach groups are keyed by target,
+                                           //      reach bucket and seeded origin; two or more attackers plan to a ring of spots at
+                                           //      weapon reach (band 0 LoS/component-filtered seeds, outer waiting bands, bulk
+                                           //      angular claims, re-choice at most 3 times, claims following engaged bodies; hashed
+                                           //      when set; a guard plans to its ward without a ring). A moving goal's group re-seeds
+                                           //      in place and reseats its members with their clocks; an illegal goal re-claims in its
+                                           //      group; a soft block of 20+ cells formed on a group's way after its field re-plans it
+                                           //      once (300-tick cooldown)
+                                           // 242: Legion W4 -- settled-arrival, parting and approach records are erased when a
                                            //      unit's orders change (World::noteOrders from the order helpers, mission dispatch,
                                            //      target acquisition and the death edge) instead of by a per-tick walk; prune's
                                            //      hashed 256-a-tick backstop cursor also walks those records. A stale field
