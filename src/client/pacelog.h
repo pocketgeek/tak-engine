@@ -28,6 +28,10 @@
 // cv is over the raw per-frame advance, so it also carries the frame clock's own jitter (a frame that
 // misses a vsync shows twice the game time, which is correct motion); rate_cv is over dtd / nominal, the
 // display clock's rate against the wall clock, which is what the presentation itself controls.
+// The last column (WE E3.3) is the backlog: ticks delivered but not yet simulated (the jitter buffer
+// plus, with the sim worker, the ticks pushed to it and not finished), sampled after the frame's
+// drain. The PACE line gives its p99 and max: the command latency a client-bound game builds up.
+// TAK_SIM_SLOW_US=N (debug) sleeps N us per simulated tick, to play a slow client.
 // TAK_VSYNC_HZ=N paces the headless --mpai frame loop to an N Hz deadline (a fake vsync).
 #include <algorithm>
 #include <cmath>
@@ -54,6 +58,7 @@ public:
         double dtd = 0, nominal = 0;   // display time advanced / the frame's nominal step, in ticks
         bool freeze = false, gate = false, snap = false;
         float lagTarget = 0;
+        int backlog = 0;     // delivered, not yet simulated (jitter buffer + worker queue), after the drain
     };
 
     // "1" (or any value that is not a path): summary only. Anything with a '/' or '.' is a file.
@@ -69,15 +74,15 @@ public:
         if (!on_) return;
         frames_.push_back(fr);
         if (f_)
-            std::fprintf(f_, "%.3f %d %u %d %d %.3f %d %u %.3f %.1f %.3f %.3f %.3f %.3f %.3f %.4f %.4f %d %d %d %.2f\n",
+            std::fprintf(f_, "%.3f %d %u %d %d %.3f %d %u %.3f %.1f %.3f %.3f %.3f %.3f %.3f %.4f %.4f %d %d %d %.2f %d\n",
                          fr.wallMs, fr.ticks, fr.tick, fr.inbox, fr.buffered, double(fr.rate), fr.fastForward ? 1 : 0,
                          fr.shown, fr.td, fr.lockWaitUs, fr.worldMs, fr.captureMs, fr.hashMs, fr.jobWallMs, fr.jobCpuMs,
-                         fr.dtd, fr.nominal, fr.freeze ? 1 : 0, fr.gate ? 1 : 0, fr.snap ? 1 : 0, double(fr.lagTarget));
+                         fr.dtd, fr.nominal, fr.freeze ? 1 : 0, fr.gate ? 1 : 0, fr.snap ? 1 : 0, double(fr.lagTarget), fr.backlog);
     }
 
     struct Summary {
         size_t frames = 0, zeroTick = 0, overTwice = 0, fastForward = 0;
-        int nominal = 0, maxBurst = 0, inboxP99 = 0;
+        int nominal = 0, maxBurst = 0, inboxP99 = 0, backlogP99 = 0, backlogMax = 0;
         uint32_t burstTick = 0;
         double wallP99 = 0, wallMax = 0;
         std::map<int, size_t> histogram;
@@ -86,11 +91,12 @@ public:
     // Frames before `skip` are ignored (the load frames and the initial buffer fill).
     Summary summarize(size_t skip = 0) const {
         Summary s;
-        std::vector<int> ticks, inbox;
+        std::vector<int> ticks, inbox, backlog;
         std::vector<double> wall;
         for (size_t i = skip; i < frames_.size(); ++i) {
             ticks.push_back(frames_[i].ticks);
             inbox.push_back(frames_[i].inbox);
+            backlog.push_back(frames_[i].backlog);
             wall.push_back(frames_[i].wallMs);
         }
         s.frames = ticks.size();
@@ -100,6 +106,9 @@ public:
         s.nominal = sorted[sorted.size() / 2];
         std::sort(inbox.begin(), inbox.end());
         s.inboxP99 = inbox[std::min(inbox.size() - 1, inbox.size() * 99 / 100)];
+        std::sort(backlog.begin(), backlog.end());
+        s.backlogP99 = backlog[std::min(backlog.size() - 1, backlog.size() * 99 / 100)];
+        s.backlogMax = backlog.back();
         std::sort(wall.begin(), wall.end());
         s.wallP99 = wall[std::min(wall.size() - 1, wall.size() * 99 / 100)];
         s.wallMax = wall.back();
@@ -118,7 +127,8 @@ public:
         std::string out = "PACE frames=" + std::to_string(s.frames) + " nominal=" + std::to_string(s.nominal) +
                           " zero_tick=" + std::to_string(s.zeroTick) + " over_2x=" + std::to_string(s.overTwice) +
                           " max_burst=" + std::to_string(s.maxBurst) + "@" + std::to_string(s.burstTick) +
-                          " ff512=" + std::to_string(s.fastForward) + " inbox_p99=" + std::to_string(s.inboxP99);
+                          " ff512=" + std::to_string(s.fastForward) + " inbox_p99=" + std::to_string(s.inboxP99) +
+                          " backlog_p99=" + std::to_string(s.backlogP99) + " backlog_max=" + std::to_string(s.backlogMax);
         char b[64];
         std::snprintf(b, sizeof b, " wall_p99=%.2fms wall_max=%.2fms", s.wallP99, s.wallMax);
         out += b;

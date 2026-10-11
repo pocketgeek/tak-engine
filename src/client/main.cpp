@@ -631,6 +631,17 @@ int main(int argc, char** argv) {
     // menu ignores (quit via the Exit door), so a kill/Ctrl-C would otherwise wedge a
     // headless run. Our handler sets a flag every event loop polls (see appquit.h).
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+#ifdef _WIN32
+    // Opt out of Windows display scaling BEFORE video init (SDL reads the hint then):
+    // per-monitor-v2 awareness makes window == pixels, so nothing is bitmap-stretched.
+    // SDL's own high-DPI window scaling stays off (no SDL_WINDOW_ALLOW_HIGHDPI), so
+    // window coords, mouse events and renderer output are all physical pixels.
+    // The setting file is read directly here, ahead of SDL_Init.
+    if (mpHeadless == 0 && shot.empty() && tak::loadSettings().ignoreDpiScaling) {
+        SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        tak::dpiIgnoredAtStartup() = true;
+    }
+#endif
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -639,6 +650,16 @@ int main(int argc, char** argv) {
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
     tak::Settings settings = tak::loadSettings();
+#ifdef _WIN32
+    if (tak::dpiIgnoredAtStartup()) {
+        // First run (or first run since this option arrived): the old stretched window made
+        // the HUD look OS-scale times bigger, so fold that scale into UI/cursor size.
+        float ddpi = 0;
+        float osScale = SDL_GetDisplayDPI(0, &ddpi, nullptr, nullptr) == 0 && ddpi > 0 ? ddpi / 96.0f : 1.0f;
+        std::fprintf(stderr, "dpi: ignoring Windows display scaling; primary display scale %.2f (%.0f dpi)\n", osScale, ddpi);
+        if (tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
+    }
+#endif
     // Select the saved output device before ANY audio opens (validated -- an absent
     // device falls back to system default). Keep the setting so the picker still shows
     // the user's choice even if it's currently unplugged.
@@ -775,6 +796,18 @@ int main(int argc, char** argv) {
         }
     }
 
+#ifdef _WIN32
+    {   // DPI evidence: with the option on, window size == renderer output (physical pixels).
+        int ww = 0, wh = 0, ow = 0, oh = 0;
+        SDL_GetWindowSize(win, &ww, &wh);
+        SDL_GetRendererOutputSize(ren, &ow, &oh);
+        float ddpi = 0;
+        const int dpiOk = SDL_GetDisplayDPI(SDL_GetWindowDisplayIndex(win), &ddpi, nullptr, nullptr);
+        std::fprintf(stderr, "dpi: window %dx%d, renderer output %dx%d, display dpi %.0f (scale %.2f), ignoreDpiScaling=%d uiScale=%.2f cursorScale=%d\n",
+                     ww, wh, ow, oh, dpiOk == 0 ? ddpi : 0.f, dpiOk == 0 ? ddpi / 96.f : 0.f,
+                     settings.ignoreDpiScaling ? 1 : 0, settings.uiScale, settings.cursorScale);
+    }
+#endif
     // ---- outer session loop: menu -> game -> menu (menu launches only) ----------
     // After a menu-launched session ends (a MAIN MENU button or post-game Escape),
     // loop back to the front-end and let the player pick again. Non-menu launches

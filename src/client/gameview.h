@@ -2599,6 +2599,9 @@ private:
     // queue thousands of ticks, and the join waits for every one of them.
     std::atomic<bool> simCancel_{false};
     std::atomic<uint32_t> simProcessedTick_{0};   // last tick the worker finished (backlog/ack)
+#ifndef NDEBUG
+    int simSlowUs_ = -1;   // TAK_SIM_SLOW_US: sleep this long per sim tick (a slow client, for flow-control checks)
+#endif
     bool useSimThread_ = false;         // true while the worker is running for this game
     bool wantSimThread_ = false;        // decided once per game (see mpStep)
     bool simThreadDecided_ = false;
@@ -2672,6 +2675,8 @@ private:
     float actualSpeed_ = 0.0f;
     float actualSpeedReq_ = 0.0f;   // requested speed the average is currently tracking
     uint64_t lastSpecAckMs_ = 0;   // spectator flow-control heartbeat (see mpStep)
+    uint32_t progressSentTick_ = 0;   // tick of the last Msg::Progress (WE S3 flow control, see mpStep)
+    bool progressSent_ = false;
     uint64_t gameStartMs_ = 0;     // wall time the game/spectate began (stats real-time elapsed)
     bool follow_ = false;
     bool trackSel_ = false;   // T: keep the camera centred on the selection

@@ -48,6 +48,8 @@ int main() {
     flips("vsync",           [](Settings& s) { s.vsync = !s.vsync; });
     flips("maxFps",          [](Settings& s) { s.maxFps += 17; });
     flips("renderer",        [](Settings& s) { s.renderer = "software"; });
+    flips("ignoreDpiScaling",[](Settings& s) { s.ignoreDpiScaling = !s.ignoreDpiScaling; });
+    flips("dpiMigrated",     [](Settings& s) { s.dpiMigrated = !s.dpiMigrated; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
     flips("bilinear",        [](Settings& s) { s.bilinear = !s.bilinear; });
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
@@ -202,6 +204,29 @@ int main() {
         const bool same = (a == b);
         std::printf("  %-22s %s\n", "(control) equal", same ? "ok" : "FAIL");
         if (!same) ++g_fail;
+    }
+
+    // DPI migration: once, folds the OS scale into uiScale/cursorScale (clamped), and
+    // only when the option is on.
+    {
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        Settings s{};
+        check("dpi: changed", tak::applyDpiMigration(s, 1.5f));
+        check("dpi: ui 1.5", s.uiScale == 1.5f && s.cursorScale == 2 && s.dpiMigrated);
+        check("dpi: only once", !tak::applyDpiMigration(s, 2.0f) && s.uiScale == 1.5f);
+        Settings c{}; c.uiScale = 1.5f; c.cursorScale = 6;
+        tak::applyDpiMigration(c, 3.0f);
+        check("dpi: clamped", c.uiScale == 2.0f && c.cursorScale == 8);
+        Settings o{}; o.ignoreDpiScaling = false;
+        tak::applyDpiMigration(o, 1.5f);
+        check("dpi: off untouched", o.uiScale == 1.0f && o.cursorScale == 1 && o.dpiMigrated);
+        Settings h{};
+        tak::applyDpiMigration(h, 1.0f);
+        check("dpi: 100% untouched", h.uiScale == 1.0f && h.cursorScale == 1);
+        check("dpi: defaults keep flag", tak::preferenceDefaults(s).dpiMigrated);
     }
 
     std::printf(g_fail ? "settings_test: %d FAILURE(S)\n" : "settings_test: all passed\n",

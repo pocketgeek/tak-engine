@@ -4394,6 +4394,9 @@
                 std::lock_guard<std::mutex> lk(outboxMutex_);
                 simOutbox_.push_back({job.tick, hash, pos});
             }
+#ifndef NDEBUG
+            if (simSlowUs_ > 0) std::this_thread::sleep_for(std::chrono::microseconds(simSlowUs_));
+#endif
             simProcessedTick_.store(job.tick, std::memory_order_relaxed);   // for backlog/ack tracking
         }
     }

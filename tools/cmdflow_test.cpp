@@ -245,6 +245,21 @@ int main() {
               "old rule: 5fps " + std::to_string(oldLo.got) + " vs 120fps " +
                   std::to_string(oldHi.got));
     }
+    // WE S3 flow-control lead: clamp(kProgressPeriod + 2 * rttTicks + 16, 16, 120).
+    {
+        using net::flowLeadTicks;
+        check(flowLeadTicks(80, 0) == 20, "local 8x lead is 4 + 16 = 20 ticks",
+              std::to_string(flowLeadTicks(80, 0)));
+        check(flowLeadTicks(10, 100) == 26, "100 ms at 1x is 3 RTT ticks: 4 + 6 + 16 = 26",
+              std::to_string(flowLeadTicks(10, 100)));
+        check(flowLeadTicks(80, 100) == 68, "100 ms at 8x is 24 RTT ticks: 4 + 48 + 16 = 68",
+              std::to_string(flowLeadTicks(80, 100)));
+        check(flowLeadTicks(80, 17) == 30, "17 ms (a 60 Hz frame of polling) at 8x: 4 + 10 + 16 = 30",
+              std::to_string(flowLeadTicks(80, 17)));
+        check(flowLeadTicks(80, 5000) == 120 && flowLeadTicks(80, 0xffffffffu) == 120,
+              "never more than the old fixed lead of 120, whatever the client claims");
+        check(flowLeadTicks(0, 0) == 20 && flowLeadTicks(-5, 0) == 20, "a bad speed reads as 1x, lead >= 16");
+    }
     std::printf("\n%s\n", fails ? "FAILED" : "ALL PASS");
     return fails ? 1 : 0;
 }

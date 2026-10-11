@@ -271,6 +271,15 @@ void OptionsScreen::build(int channels) {
             return s_.renderer != a.inEffect ? std::string("RESTART REQUIRED") : std::string();
         };
     }
+#ifdef _WIN32
+    // Windows scales DPI-unaware programs by the display scale setting (a blurry stretch).
+    // ON opts out at startup: real pixels, HUD sized via UI SCALE instead.
+    toggle("IGNORE WINDOWS DISPLAY SCALING", [&] { return s_.ignoreDpiScaling ? 1.0f : 0.0f; },
+           [&](float v) { s_.ignoreDpiScaling = v > 0.5f; });
+    ctls_.back().note = [this] {
+        return s_.ignoreDpiScaling != dpiIgnoredAtStartup() ? std::string("RESTART REQUIRED") : std::string();
+    };
+#endif
     toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
            [&](float v) { s_.bilinear = v > 0.5f; });
     // Projected unit shadows. Retail's Glide path casts these, so ON is the faithful

@@ -374,6 +374,9 @@
         if (!simThreadDecided_) {
             simThreadDecided_ = true;
             wantSimThread_ = simThreadMode_;
+#ifndef NDEBUG
+            if (const char* e = tak::devEnv("TAK_SIM_SLOW_US")) simSlowUs_ = std::max(0, std::atoi(e));
+#endif
             if (wantSimThread_) startSimThread();
         }
         // Simulate every delivered tick, but cap per frame so a big catch-up
@@ -424,6 +427,9 @@
                 // catch-up replays lockstep state without replaying 512 ticks of
                 // sounds, effects and VM dispatch per frame.
                 simStep(1.0f / 30.0f);
+#ifndef NDEBUG
+                if (simSlowUs_ > 0) std::this_thread::sleep_for(std::chrono::microseconds(simSlowUs_));
+#endif
                 // Report our processed tick every kHashPeriod. A seated player sends its
                 // state hash (desync check + flow-control ack); a spectator sends one too
                 // -- purely as a progress ACK so the server can pace an all-AI watch game
@@ -473,9 +479,22 @@
             int kFrame = netFrameMs_ > tickMs ? int(std::ceil(netFrameMs_ / tickMs)) : 0;   // sub-tick frames: 1x unchanged
             netDelay_ = std::clamp(2 + std::max({kJit, kRtt, kFrame}), 2, std::max(16, int(16.0f * sp)));
         }
+        // WE S3: a seated player's sim worker is fed only while its inbox holds kSimInboxCap ticks
+        // or fewer at the start of the frame. The rest wait in mp_, where the jitter servo, the
+        // 900-tick guard and the server's flow control (Msg::Progress below) all see them, so a
+        // client that cannot sustain the speed slows the game to what it can play instead of
+        // queueing 120-150 ticks of command latency in the inbox. Rejoin catch-up and spectators
+        // keep the 512-tick fast-forward: they replay history the server is not waiting on.
+        constexpr size_t kSimInboxCap = 2;
+        const bool capInbox = useSimThread_ && !cmdCatchUp_ && !mp_->isSpectator();
+        bool inboxFull = false;
+        if (capInbox) {
+            std::lock_guard<std::mutex> lk(inboxMutex_);
+            inboxFull = simInbox_.size() > kSimInboxCap;
+        }
         if (netDelay_ <= 0) {
             // Default: drain to the newest delivered bundle every frame.
-            while (drained < 512 && netTick_ < netStopTick_ && mp_->takeBundle(netTick_, bd)) simTick();
+            while (!inboxFull && drained < 512 && netTick_ < netStopTick_ && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: 0 ticks played this frame while future bundles ARE
             // buffered means the one we need is late (head-of-line block) -- a stall.
             ++netBenchFrames_;
@@ -507,9 +526,11 @@
             netAccum_ -= float(budget);
             // A deep backlog (rejoin replay, or the client fell behind) is NOT jitter
             // -- fast-forward it back down to the target reserve instead of pacing.
-            if (buffered > netDelay_ + 60) budget = 512;
+            const bool fastForward = buffered > netDelay_ + 60 && !capInbox;
+            if (fastForward) budget = 512;
+            if (inboxFull) budget = 0;
 #ifndef NDEBUG
-            paceBuffered = buffered; paceRate = rate; paceFF = buffered > netDelay_ + 60;
+            paceBuffered = buffered; paceRate = rate; paceFF = fastForward;
 #endif
             budget = std::min(budget, 512);
             while (drained < budget && netTick_ < netStopTick_ && mp_->takeBundle(netTick_, bd)) simTick();
@@ -551,6 +572,21 @@
             for (const auto& h : done) mp_->sendHash(h.tick, h.hash, h.pos);
             drainPendingNotice();   // apply any HUD notice the worker posted (god/mission/scenario)
         }
+        // WE S3 flow control: report the tick actually PROCESSED (the worker's, never the push
+        // position) every kProgressPeriod ticks, so the server runs flowLeadTicks() past it rather
+        // than 120 ticks past a hash sent every 30. Seated players and spectators alike (a spectator
+        // paces an all-AI room).
+        if (netTick_ > 0) {
+            const uint32_t pushed = netTick_ - 1;
+            const uint32_t done = useSimThread_ ? std::min(simProcessedTick_.load(std::memory_order_relaxed), pushed)
+                                                : pushed;
+            if (!progressSent_ || done < progressSentTick_ ||
+                done - progressSentTick_ >= uint32_t(tak::net::kProgressPeriod)) {
+                mp_->sendProgress(done);
+                progressSent_ = true;
+                progressSentTick_ = done;
+            }
+        }
 #ifndef NDEBUG
         if (!paceInit_) { paceInit_ = true; pace_.open(tak::devEnv("TAK_PACELOG")); }
         if (pace_.on()) {
@@ -572,6 +608,10 @@
                 fr.tick = netTick_;
             }
             fr.buffered = paceBuffered; fr.rate = paceRate; fr.fastForward = paceFF;
+            fr.backlog = int(mp_->bufferedBundles());
+            if (useSimThread_ && netTick_ > 0)
+                fr.backlog += int(std::max<long long>(0, (long long)netTick_ - 1 -
+                                                         (long long)simProcessedTick_.load(std::memory_order_relaxed)));
             // What the frame shows: the pinned snapshot, interpolated the way the render does.
             fr.shown = front().gameTick;
             if (present_.on) {

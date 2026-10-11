@@ -42,6 +42,21 @@ class Peer(battle.Peer):
         return self.pending
 
 
+def quota_tempdir():
+    """Scratch dir for the quota boundaries, on RAM-backed storage when there is some.
+
+    The campaign store is deliberately durable (synchronous=EXTRA, rollback journal), so
+    every allegiance mutation costs several fsyncs. The quota windows are wall-clock, so
+    on a disk with slow fsync (btrfs: ~30 ms per commit) a 120-message burst takes seconds
+    to process and the one-second budget legitimately refills mid-burst. The test is about
+    quota arithmetic, not disk speed, so keep the store off slow media.
+    """
+    for candidate in ('/dev/shm', '/tmp'):
+        if os.path.isdir(candidate) and os.access(candidate, os.W_OK):
+            return candidate
+    return None
+
+
 @contextlib.contextmanager
 def server(binary, data, root):
     with socket.socket() as reservation:
@@ -480,7 +495,7 @@ def main():
     parser.add_argument('--data', type=Path, required=True)
     parser.add_argument('--admin', type=Path)
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='tak-crusades-hardening-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='tak-crusades-hardening-', dir=quota_tempdir()) as temporary:
         root = Path(temporary)
         prepare(root)
         boundaries(args.server.resolve(), args.data.resolve(), root)
