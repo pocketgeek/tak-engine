@@ -76,6 +76,57 @@ static void defensiveShooters(const sim::TypeRegistry& registry,const ai::Profil
     }
 }
 
+// The Monarch fights back instead of standing on a build/move order under fire,
+// and the Defensive AI does not site buildings inside a spotted fight.
+static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                              const sim::UnitType& soldier) {
+    auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
+    base.weapon.damage=0;base.weapons.clear();
+    auto monarch=soldier;monarch.id="monarch";monarch.commander=true;monarch.isBuilder=true;monarch.sight=300;
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        const int m=w.spawn(&monarch,600,800,0,0);
+        const int enemy=w.spawn(&soldier,680,800,0,1);
+        net::Command mv;mv.kind=net::Cmd::Move;mv.player=0;mv.unitId=m;mv.x=900;mv.z=800;
+        sim::applyCommand(w,registry,mv);
+        ai::Controller ai(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        auto cs=think(ai,w);
+        check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){
+            return c.kind==net::Cmd::Attack && c.unitId==m && c.targetId==enemy;
+        }),"a moving Monarch attacks an enemy within its reach");
+        w.unit(enemy)->x=sim::Fixed::fromInt(2000);
+        cs=think(ai,w,30);
+        check(std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.kind==net::Cmd::Attack && c.unitId==m;}),
+              "a Monarch with no enemy near is left to its work");
+        auto blindMonarch=monarch;blindMonarch.sight=60;
+        sim::World w2;terrain(w2);w2.spawn(&base,400,800,0,0);
+        const int m2=w2.spawn(&blindMonarch,600,800,0,0);
+        const int shooter=w2.spawn(&soldier,780,800,0,1);
+        w2.unit(m2)->lastHitBy=shooter;
+        ai::Controller ai2(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        cs=think(ai2,w2);
+        check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){
+            return c.kind==net::Cmd::Attack && c.unitId==m2 && c.targetId==shooter;
+        }),"an idle Monarch hits back at an attacker it cannot see");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,800,800,0,0);
+        const int builderId=w.spawn(&monarch,800,800,0,0);
+        sim::UnitType building;building.id="site-test";building.maxHp=100;building.maxVel=sim::Fixed();
+        building.footX=building.footZ=2;
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        float x=0,z=0;
+        check(ai::PlacementProbe::place(defensive,w,&building,*w.unit(builderId),x,z),
+              "Defensive placement baseline finds a site");
+        const float fx=x+40,fz=z;
+        w.spawn(&soldier,fx,fz,0,1);
+        float x2=0,z2=0;
+        const bool found=ai::PlacementProbe::place(defensive,w,&building,*w.unit(builderId),x2,z2);
+        check(!found || (x2-fx)*(x2-fx)+(z2-fz)*(z2-fz)>=400*400,
+              "the Defensive AI does not site a building inside a spotted fight");
+    }
+}
+
 static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profile& profile,
                                const sim::UnitType& soldier) {
     auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
@@ -212,6 +263,7 @@ int main(int argc,char** argv) {
     }
     defensiveResponses(empty,profile,soldier);
     defensiveShooters(empty,profile,soldier);
+    monarchFightsBack(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);

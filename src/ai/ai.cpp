@@ -617,9 +617,37 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             }
     const bool factory=!registry_.buildable(t->id).empty();
     const auto* launches=naval ? &navalLaunchOffsets(t) : nullptr;
+    // The Defensive AI does not send a builder into a fight: a site with a spotted,
+    // armed enemy within kFightRadius waits until the defenders have cleared it.
+    constexpr float kFightRadius=400;
+    std::vector<std::pair<float,float>> fights;
+    if (!dp_.attack) {
+        std::vector<const tak::sim::Unit*> eyes;
+        for (const auto& u:world.units())
+            if (u.alive() && u.type && !u.embarked() && !u.underConstruction && world.allied(player_,u.player))
+                eyes.push_back(&u);
+        for (const auto& e:world.units()) {
+            if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
+                world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
+            if (!e.type->canCapture && e.type->weapon.damage<=0 &&
+                std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& w) {
+                    return w.damage>0 || w.mindControl;
+                })) continue;
+            const float ex=e.x.toFloat(),ez=e.z.toFloat();
+            const float hx=ex-home.first,hz=ez-home.second,reach=radius+kFightRadius;
+            if (hx*hx+hz*hz>reach*reach) continue;
+            if (std::any_of(eyes.begin(),eyes.end(),[&](const tak::sim::Unit* eye) {
+                const float r=std::max(world.sightDistance(*eye->type),world.radarDistance(*eye->type));
+                const float dx=ex-eye->x.toFloat(),dz=ez-eye->z.toFloat();return dx*dx+dz*dz<=r*r;
+            })) fights.emplace_back(ex,ez);
+        }
+    }
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
         if (dx*dx+dz*dz>radius*radius || !world.canPlace(t,x,z,player_)) return false;
+        if (std::any_of(fights.begin(),fights.end(),[&](const auto& f) {
+            const float fx=f.first-x,fz=f.second-z;return fx*fx+fz*fz<kFightRadius*kFightRadius;
+        })) return false;
         float approachX=x,approachZ=z;
         if (launches && !launches->empty()) {
             bool output=false;
@@ -1119,11 +1147,58 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     int acted = 0;
     bool commanderActed = false;
     std::vector<int> assigned;
+    // The Monarch fights back. The sim never lets a unit pick its own target while a
+    // build order leads its queue, so a Monarch walking to a site -- or waiting there
+    // for a converted unit to clear its spot -- stood and died under fire (a replay:
+    // five converted units shot Elsin for a minute on a stalled Lodestone approach).
+    // When it is building, moving or idle and something hits it or stands within its
+    // reach, order it to attack that unit; production leaves it alone this think.
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type || !u.type->commander ||
+            u.underConstruction || u.embarked() || u.incapacitated()) continue;
+        const float reach = std::max(float(u.type->weapon.range), u.type->maxRange());
+        const bool armed = u.type->weapon.damage > 0 ||
+            std::any_of(u.type->weapons.begin(), u.type->weapons.end(), [](const auto& w) { return w.damage > 0; });
+        if (!armed || reach <= 0) break;
+        if (!u.orders.empty()) {
+            const auto& front = u.orders.front();
+            if (front.targetId || front.attackMove || front.patrol || front.guard ||
+                front.load || front.unload) break;   // already fighting, or a deliberate task
+        }
+        const float sight = float(world.sightDistance(*u.type));
+        int target = 0;
+        float best = 1e18f;
+        auto consider = [&](const tak::sim::Unit* e, bool seen) {
+            if (!e || !e->alive() || !e->type || e->embarked() || e->underConstruction ||
+                world.isNeutralPlayer(e->player) || world.allied(player_, e->player)) return;
+            if (seen && e->cloaked) return;
+            const float dx = e->x.toFloat() - u.x.toFloat(), dz = e->z.toFloat() - u.z.toFloat();
+            const float d = dx * dx + dz * dz, limit = seen ? std::min(reach + 90, sight) : reach + 90;
+            if (d <= limit * limit && d < best) { best = d; target = e->id; }
+        };
+        consider(world.unit(u.lastHitBy), false);   // whoever is hitting it, seen or not
+        if (!target)
+            for (const auto& e : world.units()) {
+                if (e.type && (e.type->weapon.damage > 0 || e.type->canCapture ||
+                    std::any_of(e.type->weapons.begin(), e.type->weapons.end(),
+                                [](const auto& w) { return w.damage > 0 || w.mindControl; })))
+                    consider(&e, true);
+            }
+        if (target) {
+            tak::net::Command c; c.kind = tak::net::Cmd::Attack; c.player = uint8_t(player_);
+            c.unitId = u.id; c.targetId = target;
+            sink(c);
+            assigned.push_back(u.id);
+            commanderActed = true;   // the home leash below must not override it
+        }
+        break;
+    }
     if (!throttle)
         for (int pid : producers) {
             if (acted >= dp_.producersPerThink) break;
             const auto* p = world.unit(pid);
             if (!p || !p->alive()) continue;
+            if (std::find(assigned.begin(), assigned.end(), pid) != assigned.end()) continue;
             // Retry in the next-best category when a pick cannot be acted on.
             // Without this a producer whose top category is unproducible burns its
             // turn silently, every think, for ever: measured on Zhon, all three
