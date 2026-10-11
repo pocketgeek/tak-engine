@@ -6563,7 +6563,7 @@ uint32_t World::rebuildSpatialParallel(bool grid, bool occupancy) {
         if (occ_.size() != cells) occ_.assign(cells, 0);
         else pool.forChunks(occTouched_.size(), 4096, 0, [&](size_t, size_t begin, size_t end, unsigned) {
             for (size_t i = begin; i < end; ++i)
-                std::atomic_ref<int32_t>(occ_[occTouched_[i]]).store(0, std::memory_order_relaxed);
+                __atomic_store_n(&occ_[occTouched_[i]], int32_t(0), __ATOMIC_RELAXED);   // not std::atomic_ref: Apple libc++ lacks it (see visCompute)
         });
         occTouched_.clear();
         auto stamp = [&](const SpatialRec& r) {
@@ -11153,7 +11153,7 @@ void World::tick(float dt) {
         simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0, [&](size_t, size_t begin, size_t end, unsigned) {
             for (size_t i = begin; i < end; ++i)
                 if (Unit* site = protectedSite(units_[i]))
-                    std::atomic_ref<bool>(site->beingBuilt).store(true, std::memory_order_relaxed);
+                    __atomic_store_n(&site->beingBuilt, true, __ATOMIC_RELAXED);   // not std::atomic_ref (Apple libc++)
         });
 #ifndef NDEBUG
         if (verifyPool())
