@@ -34,6 +34,7 @@
 // Hashed state (World::stateHash folds checksum() while the table is not
 // empty): the table only. The indexes are derived from it and checked against
 // a rebuild by indexesMatch() under TAK_LEGION_VERIFY.
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <set>
