@@ -10590,29 +10590,63 @@ void World::tick(float dt) {
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
+    // One walk (WE D4) does three things per unit, in unit order:
+    //  - the beingBuilt clear for sites (factory and mobile construction mark
+    //    them again below). It used to run after the god summon; nothing in
+    //    between reads beingBuilt or changes alive/underConstruction, and the
+    //    summon's spawn starts complete with beingBuilt false.
+    //  - the income/storage sums, in the same order;
+    //  - the retail construction demand of every retail-resources player (it
+    //    was one walk per player). Each player's sum still adds its own builders
+    //    in unit order, and nothing between here and the player loop below
+    //    changes a unit, so every float comes out the same.
+    retailDemand_.assign(players_.size(),0.0f);
     TAK_PASS();
     for (auto& u : units_) {
+        if (!u.alive()) continue;
         // A unit under construction contributes no economy until it finishes -- a
         // half-built lodestone must not add its mana income or storage capacity yet.
-        if (!u.alive() || !u.type || u.underConstruction) continue;
-        auto& tm = players_[size_t(u.player)];
-        float income=u.type->income,storage=u.type->storage;
-        bool sacred=u.type->sacredIncome;
-        if (tm.buildCache) {
-            const auto& entries=tm.buildCache->entries;
-            auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==u.type;});
-            if (entry!=entries.end() && entry->hasEconomy) {
-                income=entry->income;storage=entry->storage;
-                sacred=(entry->inputs.secondaryFlags&0x80000000u)!=0;
+        if (u.underConstruction) { u.beingBuilt = false; continue; }
+        if (u.type) {
+            auto& tm = players_[size_t(u.player)];
+            float income=u.type->income,storage=u.type->storage;
+            bool sacred=u.type->sacredIncome;
+            if (tm.buildCache) {
+                const auto& entries=tm.buildCache->entries;
+                auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==u.type;});
+                if (entry!=entries.end() && entry->hasEconomy) {
+                    income=entry->income;storage=entry->storage;
+                    sacred=(entry->inputs.secondaryFlags&0x80000000u)!=0;
+                }
             }
+            if (sacred) {
+                const float multiplier=sacredIncomeMultiplier(
+                    footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
+                    u.type->footX,u.type->footZ);
+                tm.income=float(double(tm.income)+double(income)*double(multiplier));
+            } else tm.income += income;
+            tm.storage += storage;
         }
-        if (sacred) {
-            const float multiplier=sacredIncomeMultiplier(
-                footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
-                u.type->footX,u.type->footZ);
-            tm.income=float(double(tm.income)+double(income)*double(multiplier));
-        } else tm.income += income;
-        tm.storage += storage;
+        const auto& builder=u;
+        if (size_t(builder.player)>=players_.size() || builder.embarked()) continue;
+        const auto& tm=players_[size_t(builder.player)];
+        if (!tm.retailResources) continue;
+        int target=0;
+        float worker=0;
+        if (builder.retailBuild && builder.retailBuild->working) {
+            target=builder.retailBuild->target;worker=builder.retailBuild->workerTime;
+        } else if (builder.productionSiteId && !builder.buildQueue.empty()) {
+            target=builder.productionSiteId;worker=builder.type->workerTime;
+            if (tm.buildCache) for (const auto& entry:tm.buildCache->entries)
+                if (entry.type==builder.type && entry.construction) worker=entry.construction->workerTime;
+        } else continue;
+        const auto* site=unit(target);
+        if (site && site->retailSite && site->alive()) {
+            const auto& type=site->retailSite->type;
+            float& demand=retailDemand_[size_t(builder.player)];
+            demand=float(double(demand)+double(worker)*
+                double(type.inverseTime)*double(type.cost));
+        }
     }
     // Difficulty income cheat: scale the summed income so the boost flows through the
     // mana accrual below, allied surplus sharing, and god-favour alike. manaMult is 1
@@ -10630,36 +10664,6 @@ void World::tick(float dt) {
     // wasted only when the whole team is capped. Deterministic -- collected in
     // player order, shared by lowest fill percentage. A solo/FFA player has no
     // teammate to receive the surplus, so this reduces exactly to the old clamp.
-    // Retail construction demand: one walk sums every retail-resources player's
-    // demand (WE D4; it was one walk per player). Each player's sum still adds
-    // its own builders in unit order, and nothing below changes a unit before
-    // the player loop reads its sum, so every float comes out the same.
-    retailDemand_.assign(players_.size(),0.0f);
-    if (std::any_of(players_.begin(),players_.end(),[](const Player& p){return p.retailResources.has_value();})) {
-        TAK_PASS();
-        for (const auto& builder:units_) {
-            if (size_t(builder.player)>=players_.size() || !builder.alive() || builder.underConstruction ||
-                builder.embarked()) continue;
-            const auto& tm=players_[size_t(builder.player)];
-            if (!tm.retailResources) continue;
-            int target=0;
-            float worker=0;
-            if (builder.retailBuild && builder.retailBuild->working) {
-                target=builder.retailBuild->target;worker=builder.retailBuild->workerTime;
-            } else if (builder.productionSiteId && !builder.buildQueue.empty()) {
-                target=builder.productionSiteId;worker=builder.type->workerTime;
-                if (tm.buildCache) for (const auto& entry:tm.buildCache->entries)
-                    if (entry.type==builder.type && entry.construction) worker=entry.construction->workerTime;
-            } else continue;
-            const auto* site=unit(target);
-            if (site && site->retailSite && site->alive()) {
-                const auto& type=site->retailSite->type;
-                float& demand=retailDemand_[size_t(builder.player)];
-                demand=float(double(demand)+double(worker)*
-                    double(type.inverseTime)*double(type.cost));
-            }
-        }
-    }
     for (size_t player=0;player<players_.size();++player) {
         auto& tm=players_[player];
         if (!tm.retailResources) { tm.creditMana(tm.income*dt);continue; }
@@ -10725,10 +10729,8 @@ void World::tick(float dt) {
     // in, with nothing in the command stream to explain it.
     summonReadyGods();
 
-    // Both factory and mobile construction keep their sites alive this tick.
-    TAK_PASS();
-    for (auto& u : units_)
-        if (u.alive() && u.underConstruction) u.beingBuilt = false;
+    // Both factory and mobile construction keep their sites alive this tick
+    // (beingBuilt was cleared in the economy walk above).
     // Factory missions run in unit order below. Protect their existing sites
     // from orphan decay while the producer still owns an active build.
     TAK_PASS();
