@@ -2,7 +2,7 @@
 """In-game speed changes on a real server: the tick rate follows the speed both ways.
 
 An all-AI game watched by its host (the spectator acknowledges ticks, as the client does)
-is run at 1x, raised to 8x and dropped back to 1x, timing the TickBundles as they arrive.
+is run at 1x, raised to 2x (retail's top speed, +10) and dropped back to 1x, timing the TickBundles as they arrive.
 Two regressions are covered. A Windows server slept a whole timer quantum (~15.6 ms) in
 poll() for every tick it had in flight, so it never got far past 70 ticks/s: raising the
 speed sped up the clients' animation but not the game. And the deficit that server ran up
@@ -93,7 +93,7 @@ def main():
                 w.pump(3.0)
                 assert w.ticks, 'the game never ticked'
                 t0 = time.monotonic()
-                w.send('SetGameOptions', options(80))
+                w.send('SetGameOptions', options(20))   # +10 = 2x, retail's top speed
                 w.pump(3.0)
                 t1 = time.monotonic()
                 w.send('SetGameOptions', options(10))
@@ -104,18 +104,18 @@ def main():
                 fast = w.rate(t0 + 0.5, t1)
                 back = w.rate(t1 + 0.5, t2)
                 windows = [w.rate(s, s + 1.0) for s in (t1 + 0.5, t1 + 1.5, t1 + 2.5)]
-                print(f'1x {slow:.1f}/s, 8x {fast:.1f}/s, back to 1x {back:.1f}/s '
+                print(f'1x {slow:.1f}/s, 2x {fast:.1f}/s, back to 1x {back:.1f}/s '
                       f'(per second: {", ".join(f"{x:.0f}" for x in windows)})')
                 failures = []
                 if not 25 <= slow <= 35:
                     failures.append(f'1x ran {slow:.1f} ticks/s, want 30')
-                if fast < 200:
-                    failures.append(f'8x ran {fast:.1f} ticks/s, want 240 (the speed change did not speed the game up)')
+                if fast < 50:
+                    failures.append(f'2x ran {fast:.1f} ticks/s, want 60 (the speed change did not speed the game up)')
                 if not 25 <= back <= 35 or max(windows) > 40:
-                    failures.append(f'1x after 8x ran {back:.1f} ticks/s, peak {max(windows):.0f} in one second, '
+                    failures.append(f'1x after 2x ran {back:.1f} ticks/s, peak {max(windows):.0f} in one second, '
                                     'want 30 with no catch-up burst')
                 assert not failures, '; '.join(failures)
-    print('PASS in-game speed changes re-pace the server: 1x -> 8x -> 1x')
+    print('PASS in-game speed changes re-pace the server: 1x -> 2x -> 1x')
 
 
 if __name__ == '__main__':
