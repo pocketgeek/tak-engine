@@ -2,6 +2,7 @@
 #include "server/crusades/store.h"
 #include <sqlite3.h>
 #include <chrono>
+#include <exception>
 #include <atomic>
 #include <filesystem>
 #include <iostream>

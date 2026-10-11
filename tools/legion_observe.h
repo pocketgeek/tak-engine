@@ -60,6 +60,9 @@
 //   free samples (a step of at least half its base speed) the member stops
 //   (under a quarter) or deviates by more than 45 degrees. crawl_samples: a
 //   sample's step is positive but no more than cap/8 per tick.
+//   transit_samples: ordered ground samples more than 10 cells from the final goal; transit_held_permille: those
+//   at no speed; the _far_ pair counts only samples more than 100 cells out (W8 step 0, the MV-12 spacing probe's
+//   far held); g.NAME.stops: a transit sample held right after a moving one (the probe's stops by fast / slow type).
 //   follow_chain_max/mean: the longest run of same-group movers each within
 //   two body widths behind the next (inside 45 degrees of its own motion),
 //   at exactly the same speed.
@@ -76,6 +79,12 @@
 //   member is hugging a vertex when its lateral cell on entering the vertex's
 //   line is within `cells` of the tip; carry is the members that hug both
 //   vertices (kept separate from crossings).
+//   W9 step 0 (observation only): a crossing is also attributed to a flip SITE, the steering source that moved
+//   the pair apart laterally: each member's lateral displacement between its two end-window entries is summed
+//   per site (LegionNavigator::steerSite: 0 none, 1 field descent, 2 passage gate, 3 pinwheel, 4 lane pass,
+//   5 blocked branch, 6 straight walk), and a flipped pair goes to the site whose displacement DIFFERENCE
+//   between the two bodies is largest in the direction the order changed (none when no site moved them that
+//   way): gate.NAME.cross_{none,field,gate,pivot,pass,blocked,direct} sum to crossings.
 // - Spacing (every decisionEvery ticks, ordered ground members). Every live
 //   ground body (landed flyers included) is stamped into an epoch-stamped id
 //   grid; the ring of cells round a member's footprint is walked:
@@ -100,7 +109,15 @@
 //   nearest wall (distance - 1), capped at 11. wall_touch_permille: moving
 //   ordered ground samples with clearance 0; the _near variant and the
 //   clearance mean/p10 count only samples within 10 cells of a wall (the
-//   lanes2 'touch'/'wallgap').
+//   lanes2 'touch'/'wallgap'). W9 step 0 splits: wall_still_samples /
+//   wall_touch_still_permille (ordered ground samples that did not move, the
+//   bodies the moving key leaves out) and the moving touches by place, in
+//   permille of wall_samples (wall_touch_{gate,ring,corner,flat}_permille, summing
+//   to wall_touch_permille up to rounding) and of the near samples
+//   (wall_touch_near_{gate,ring,corner,flat}_permille): gate = within 6 cells of a
+//   configured gate region, ring = the body's current leg is an attack / guard
+//   (the reach ring round its target), corner = an illegal origin on both axes
+//   beside it, else flat wall.
 // - Pair proximity (the aware case's contacts_permille). Every decision
 //   sample, pairs = live ordered members of A x those of B; contact when
 //   their centre cells are within `cells` on both axes (a count grid, no
@@ -122,10 +139,13 @@
 #include "sim/retailmotion.h"
 
 #include <algorithm>
+#include <array>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -237,6 +257,7 @@ public:
         }
         for(auto& m:m_) {
             m.gate.assign(cfg_.gates.size()*2,Mark{});
+            m.gateLat.assign(cfg_.gates.size(),std::array<int64_t,kSites>{});
             m.lane.assign(cfg_.laneOrders.size()*2,Mark{});
             m.hug.assign(cfg_.hugs.size()*2,Mark{});
         }
@@ -297,6 +318,24 @@ public:
         for(auto& s:work_) {s.values.push_back(s.pending);s.pending=0;}
     }
 
+    // W9 step 0: the live members of group g that have not arrived (the progress() test: no orders, standing
+    // still, inside the group's disc) at this moment -- the tails a decision trace follows.
+    std::vector<int> leftBehind(const sim::World& w,size_t g) {
+        std::vector<int> ids;
+        const int64_t r2=groupRadius2(g);
+        const auto& grp=cfg_.groups[g];
+        for(const auto& m:m_) {
+            if(m.group!=int(g))continue;
+            const auto* u=w.unit(m.id);
+            if(!u||!u->alive())continue;
+            const int64_t dx=(int64_t(u->x.v)>>16)-grp.clickX,dz=(int64_t(u->z.v)>>16)-grp.clickZ;
+            if(!u->orders.empty()||u->speed.v!=0||dx*dx+dz*dz>r2)ids.push_back(m.id);
+        }
+        return ids;
+    }
+    size_t groupCount() const {return cfg_.groups.size();}
+    const std::string& groupName(size_t g) const {return cfg_.groups[g].name;}
+
     Keys report() const {
         Keys k;
         auto put=[&](std::string key,int64_t v) {k.emplace_back(std::move(key),v);};
@@ -319,6 +358,7 @@ public:
             std::sort(dists.begin(),dists.end());
             put(p+"n",n);put(p+"radius_px",detail::isqrt(gs.radius2));
             put(p+"arrived",gs.arrived);put(p+"t50",gs.t50);put(p+"t90",gs.t90);put(p+"done",gs.done);
+            put(p+"stops",gs.stops);
             put(p+"left_behind",n-gs.arrived-gs.dead);put(p+"dead",gs.dead);put(p+"orders_done",gs.ordersDone);
             for(const auto& c:clicks_)if(c.name==cfg_.groups[g].click)put(p+"click_n",c.n);
             put(p+"complete_n",int64_t(dists.size()));put(p+"complete_outside_radius",outside);
@@ -350,6 +390,8 @@ public:
         }
         put("waiting_held",waitingHeld_);put("waiting_no_progress",waitingNoProgress_);
         put("parked_held",parkedHeld_);put("parked_no_progress",parkedNoProgress_);
+        put("transit_samples",transit_);put("transit_held_permille",detail::permille(transitHeld_,transit_));
+        put("transit_far_samples",transitFar_);put("transit_far_held_permille",detail::permille(transitFarHeld_,transitFar_));
         put("decision_samples",ordered_);put("stopped_permille",detail::permille(stopped_,ordered_));
         put("flips",flips_);
         put("flip_rate_per30_permille",flipSamples_?(flips_*30*1000+flipSamples_*cfg_.decisionEvery/2)/(flipSamples_*cfg_.decisionEvery):0);
@@ -376,17 +418,29 @@ public:
             put("wall_near_samples",int64_t(near_.size()));
             int64_t touching=0,sum=0;for(int g:near_) {touching+=g<=0;sum+=g;}
             put("wall_touch_near_permille",detail::permille(touching,int64_t(near_.size())));
+            {   // W9 step 0 splits (see the header)
+                static constexpr const char* kNames[4]={"flat","gate","ring","corner"};
+                std::array<int64_t,4> nearBy{};
+                for(size_t i=0;i<near_.size();++i)nearBy[nearPlace_[i]&3]+=near_[i]<=0;
+                put("wall_still_samples",wallStill_);put("wall_touch_still_permille",detail::permille(wallStillTouch_,wallStill_));
+                for(int c=0;c<4;++c) {
+                    put(std::string("wall_touch_")+kNames[c]+"_permille",detail::permille(wallTouchBy_[size_t(c)],wallSamples_));
+                    put(std::string("wall_touch_near_")+kNames[c]+"_permille",detail::permille(nearBy[size_t(c)],int64_t(near_.size())));
+                }
+            }
             put("clearance_mean_x100",near_.empty()?-1:(sum*100+int64_t(near_.size())/2)/int64_t(near_.size()));
             auto sorted=near_;std::sort(sorted.begin(),sorted.end());
             put("clearance_p10_x100",sorted.empty()?-1:int64_t(sorted[sorted.size()/10])*100);
         }
         for(size_t i=0;i<cfg_.gates.size();++i) {
             const auto& s=gateStats_[i];const std::string p="gate."+cfg_.gates[i].name+".";
-            int64_t pairs=0,cross=0;gateCrossings(i,pairs,cross);
+            int64_t pairs=0,cross=0;std::array<int64_t,kSites> bySite{};gateCrossings(i,pairs,cross,&bySite);
             put(p+"samples",s.samples);
             put(p+"files_x100",s.samples?(s.files*100+s.samples/2)/s.samples:0);
             put(p+"spread_x100",s.samples?(s.spread*100+s.samples/2)/s.samples:0);
             put(p+"pairs",pairs);put(p+"crossings",cross);
+            static constexpr const char* kSiteNames[kSites]={"none","field","gate","pivot","pass","blocked","direct"};
+            for(int k=0;k<kSites;++k)put(p+"cross_"+kSiteNames[k],bySite[size_t(k)]);
         }
         for(size_t i=0;i<cfg_.laneOrders.size();++i) {
             const std::string p="lane."+cfg_.laneOrders[i].name+".";
@@ -439,6 +493,7 @@ public:
         return fallback;
     }
 
+    static constexpr int kSites=sim::LegionNavigator::kSites;
 private:
     struct Mark {int lat=0;int64_t tick=-1;};
     struct Member {
@@ -455,17 +510,22 @@ private:
         // decision samples: positions at the last 11 samples (10 steps).
         std::vector<std::pair<int32_t,int32_t>> ring;
         int lastClass=-1,aimSign=0,freeRun=0;
+        int wasHeld=-1;          // transit: the last sample's held class (1 held, 0 moving), -1 none yet
         int64_t speed=0;bool chainMover=false;int64_t stepX=0,stepZ=0;
         // flyers
         int mode=-1;bool landing=false,landedOnce=false;
         int takeoffs=0,relifts=0,goArounds=0,hoverRun=0,hoverMax=0;
         int64_t idleAt=-1;int64_t landDelayMax=0;
         std::vector<Mark> gate,lane,hug;   // [probe*2 + end]
+        // W9 step 0: per gate, the signed lateral displacement (1/256 px) walked between the two end-window
+        // entries, summed per steering site (LegionNavigator::steerSite 0..5).
+        std::vector<std::array<int64_t,kSites>> gateLat;
     };
     struct GroupStats {
         int64_t radius2=0;int foot=0;
         int n=0,arrived=0,dead=0;int64_t t50=-1,t90=-1,done=-1,ordersDone=-1;
         int64_t awayMax=0,awaySum=0,awaySamples=0,illegalOverlap=0;
+        int64_t stops=0;         // transit samples: held right after a moving one (W8 step 0, the MV-12 fast/slow stops)
     };
     // A click read as one command (ruling W3 final exit (f)): its groups' bodies together.
     struct ClickStats {std::string name;std::vector<int> groups;int n=0,arrived=0;int64_t t50=-1,t90=-1,done=-1;};
@@ -612,6 +672,13 @@ private:
         m.moved=moved;
         // gates, lane-order lines, hug lines: first entries
         const int cx=detail::centreCell(u->x),cz=detail::centreCell(u->z);
+        {   // W9 step 0: the lateral step of a member between its two end-window entries, by steering site
+            const int site=nav?std::clamp(nav->steerSite(m.id),0,kSites-1):0;
+            const int64_t ddx=int64_t(u->x.v)-m.x,ddz=int64_t(u->z.v)-m.z;
+            for(size_t i=0;i<cfg_.gates.size();++i)
+                if((m.gate[i*2].tick>=0)!=(m.gate[i*2+1].tick>=0))
+                    m.gateLat[i][size_t(site)]+=(cfg_.gates[i].lateral?ddz:ddx)>>8;
+        }
         for(size_t i=0;i<cfg_.gates.size();++i) {
             const auto& g=cfg_.gates[i];
             if(!g.region.contains(cx,cz))continue;
@@ -708,15 +775,15 @@ private:
             ++s.samples;s.files+=std::unique(bands_.begin(),bands_.end())-bands_.begin();s.spread+=hi-lo;
         }
     }
-    void gateCrossings(size_t i,int64_t& pairs,int64_t& cross) const {
+    void gateCrossings(size_t i,int64_t& pairs,int64_t& cross,std::array<int64_t,kSites>* bySite=nullptr) const {
         const auto& g=cfg_.gates[i];
-        struct Pass {int group,dir,entry,exit,foot;int64_t tick;};
+        struct Pass {int group,dir,entry,exit,foot;int64_t tick;const Member* m;};
         std::vector<Pass> passes;
         for(const auto& m:m_) {
             const auto& a=m.gate[i*2];const auto& b=m.gate[i*2+1];
             if(a.tick<0||b.tick<0)continue;
             const bool up=a.tick<b.tick;
-            passes.push_back({m.group,up?1:-1,up?a.lat:b.lat,up?b.lat:a.lat,m.foot,std::min(a.tick,b.tick)});
+            passes.push_back({m.group,up?1:-1,up?a.lat:b.lat,up?b.lat:a.lat,m.foot,std::min(a.tick,b.tick),&m});
         }
         for(size_t a=0;a<passes.size();++a)for(size_t b=a+1;b<passes.size();++b) {
             const auto& p=passes[a];const auto& q=passes[b];
@@ -726,7 +793,18 @@ private:
             const int flip=g.flipCells>0?g.flipCells:std::max(p.foot,q.foot);
             const int da=p.entry-q.entry,db=p.exit-q.exit;
             const bool far=cfg_.mutation==1?std::abs(da)>flip&&std::abs(db)>flip:std::abs(da)>=flip&&std::abs(db)>=flip;
-            if(int64_t(da)*db<0&&far)++cross;
+            if(int64_t(da)*db<0&&far) {
+                ++cross;
+                if(bySite) {   // W9 step 0: the site whose lateral displacement difference most favours the new order
+                    const int sign=db>0?1:-1;
+                    int best=0;int64_t bestV=0;
+                    for(int k=0;k<kSites;++k) {
+                        const int64_t v=(p.m->gateLat[i][size_t(k)]-q.m->gateLat[i][size_t(k)])*sign;
+                        if(v>bestV) {bestV=v;best=k;}
+                    }
+                    ++(*bySite)[size_t(best)];
+                }
+            }
         }
     }
     void laneSwaps(size_t i,int64_t& pairs,int64_t& swaps) const {
@@ -791,6 +869,20 @@ private:
         const int64_t step=detail::isqrt(sx*sx+sz*sz);   // raw px over `every` ticks
         const int64_t base=std::max<int64_t>(1,u->baseSpeed.v);
         if(orders) {++ordered_;stopped_+=u->speed.v<=0;}
+        if(orders&&!m.flyer) {
+            // W8 step 0 (MV-12 spacing probe): a sample more than 10 cells from the final goal is in transit;
+            // more than 100 is far. Held = no speed. A stop is a held sample right after a moving one.
+            const auto& goal=u->orders.back();
+            const int64_t gx=(int64_t(goal.x.v)-u->x.v)>>16,gz=(int64_t(goal.z.v)-u->z.v)>>16;
+            const int64_t cells=detail::isqrt(gx*gx+gz*gz)/16;
+            if(cells>10) {
+                const int held=u->speed.v<=0;
+                ++transit_;transitHeld_+=held;
+                if(cells>100) {++transitFar_;transitFarHeld_+=held;}
+                if(held&&m.wasHeld==0&&m.group>=0&&size_t(m.group)<groupStats_.size())++groupStats_[size_t(m.group)].stops;
+                m.wasHeld=held;
+            } else m.wasHeld=-1;
+        } else m.wasHeld=-1;
         if(orders&&hasPrev) {
             ++flipSamples_;
             const int cls=moved?1:0;
@@ -845,8 +937,13 @@ private:
             const int g=clearance(*u);
             if(g>=0) {
                 ++wallSamples_;wallTouch_+=g==0;
-                if(g<kClearanceCap)near_.push_back(g);
+                const int place=g==0||g<kClearanceCap?touchPlace(*u,orders):0;
+                if(g==0)++wallTouchBy_[size_t(place)];
+                if(g<kClearanceCap) {near_.push_back(g);nearPlace_.push_back(uint8_t(place));}
             }
+        } else if(orders&&!moved&&hasPrev&&!m.flyer&&bw_>0) {   // W9 step 0: the ordered bodies standing still
+            const int g=clearance(*u);
+            if(g>=0) {++wallStill_;wallStillTouch_+=g==0;}
         }
     }
 
@@ -993,6 +1090,22 @@ private:
         const int d=it->second[size_t(oz)*size_t(bw_)+size_t(ox)];
         return d<=0?0:std::min(d-1,kClearanceCap);
     }
+    // Where a wall sample is: within kGateNear cells of a configured gate region, else the current leg is
+    // an attack / guard (the reach ring round its target), else an illegal origin on both axes beside the
+    // body (a corner), else a flat wall.
+    int touchPlace(const sim::Unit& u,bool orders) {
+        const int cx=detail::centreCell(u.x),cz=detail::centreCell(u.z);
+        for(const auto& g:cfg_.gates)
+            if(cx>=g.region.x0-kGateNear&&cx<=g.region.x1+kGateNear&&cz>=g.region.z0-kGateNear&&cz<=g.region.z1+kGateNear)return kPlaceGate;
+        if(orders&&u.orders[sim::World::currentLeg(u.orders)].targetId!=0)return kPlaceRing;
+        const int key=u.type->footX*64+u.type->footZ;
+        auto it=std::find_if(dt_.begin(),dt_.end(),[&](const auto& e){return e.first==key;});
+        if(it==dt_.end())return kPlaceFlat;
+        const int ox=sim::footprintOrigin(u.x,u.type->footX),oz=sim::footprintOrigin(u.z,u.type->footZ);
+        auto blockedAt=[&](int x,int z) {return x<0||z<0||x>=bw_||z>=bh_||it->second[size_t(z)*size_t(bw_)+size_t(x)]==0;};
+        const bool ax=blockedAt(ox-1,oz)||blockedAt(ox+1,oz),az=blockedAt(ox,oz-1)||blockedAt(ox,oz+1);
+        return ax&&az?kPlaceCorner:kPlaceFlat;
+    }
     std::vector<uint16_t> buildDistance(const sim::Unit& u) const {
         const int fx=u.type->footX,fz=u.type->footZ;
         std::vector<uint16_t> d(size_t(bw_)*size_t(bh_),0);
@@ -1032,11 +1145,17 @@ private:
     int64_t start_=-1,samples_=0;
     int64_t spins_=0,reversals_=0,stopGo_=0,sideways_=0,backward_=0,back_=0,walkInPlace_=0,statue_=0,crawl_=0;
     int64_t waitingHeld_=0,waitingNoProgress_=0,parkedHeld_=0,parkedNoProgress_=0;
+    int64_t transit_=0,transitHeld_=0,transitFar_=0,transitFarHeld_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;
     int64_t spacingSamples_=0,contactOwn_=0,contactOther_=0,contactSettled_=0;
     static constexpr int64_t kConvoyCommand=int64_t(1)<<40;   // convoy commands, apart from plain selections
     std::vector<std::pair<int,int64_t>> selection_;int64_t selections_=0;   // (unit id, command), sorted
     int64_t wallSamples_=0,wallTouch_=0;std::vector<int> near_;
+    // W9 step 0: the place of each near-wall sample (parallel to near_), the moving touches by place, and the
+    // still ordered samples (kPlaceFlat, kPlaceGate, kPlaceRing, kPlaceCorner).
+    enum {kPlaceFlat=0,kPlaceGate=1,kPlaceRing=2,kPlaceCorner=3};
+    static constexpr int kGateNear=6;
+    std::vector<uint8_t> nearPlace_;std::array<int64_t,4> wallTouchBy_{};int64_t wallStill_=0,wallStillTouch_=0;
     // id grid and the pair count grid
     int gw_=0,gh_=0;uint32_t epoch_=0,cepoch_=0;
     std::vector<uint32_t> gridEpoch_,countEpoch_;std::vector<int> gridId_;std::vector<int64_t> countGrid_;
@@ -1079,7 +1198,7 @@ public:
     void sample(Observer& obs,const sim::World& w) {
         if(!const_cast<sim::World&>(w).legionNavigator())return;   // a plain accessor
         const auto s=w.legionStats();
-        size_t i=0;uint64_t total=0;
+        size_t i=0;uint64_t total=0,awareTickWork=0;
         sim::LegionNavigator::forEachStat(s,[&](const char* name,uint64_t v) {
             const std::string_view n(name);
             if(i>=last_.size())last_.push_back(0);
@@ -1089,9 +1208,24 @@ public:
             if(n=="engaged_now") {   // W5 step 0: a per-tick population, not work (Stats::engagedNow)
                 engagedMax_=std::max(engagedMax_,d);engagedTicks_+=d;return;
             }
+            if(isW8Instrument(n)) {   // W8 step 0: the lane counters, reported by w8() and never summed as work
+                w8_[std::string(n)]=v;
+                return;
+            }
+            if(isW9Instrument(n)) {   // W9 step 0: the mechanism counters, reported by w9() and never summed as work
+                w9_[std::string(n)]=v;
+                return;
+            }
+            if(isW7Instrument(n)) {   // W7 step 0: observation counters, reported by w7() and never summed as work
+                w7_[std::string(n)]=v;
+                if(n=="aware_work")awareTickWork+=d;
+                return;
+            }
+            if(n=="aware_pairs")awareTickWork+=d;
             if(d||n=="midroute_completions")obs.work(n,d);   // a safety key: always present, 0 when clean
             if(totalClass(n))total+=d;
         });
+        awareWorkMax_=std::max(awareWorkMax_,awareTickWork);
         // World's convoy lookups (sim/convoy.h), a work class outside Stats.
         const uint64_t convoy=w.convoyStats().tests;
         const uint64_t d=convoy>=lastConvoy_?convoy-lastConvoy_:0;lastConvoy_=convoy;
@@ -1113,13 +1247,113 @@ public:
     // W5 step 0: the most bodies tickCombat braked in reach on one tick (Stats::engagedNow's largest
     // per-tick delta) and the member-ticks summed over the run.
     uint64_t engagedMax() const {return engagedMax_;}
+    // W7 step 0: the latest cumulative value of each awareness / parting / give-way counter
+    // (Stats::parts, awareEncounters, awareReplans, awareBuilds, awareWork, awareLatency*, giveWay*),
+    // and the most awareness work (aware_pairs + aware_work) any one tick spent.
+    const std::map<std::string,uint64_t>& w7() const {return w7_;}
+    uint64_t awareWorkMax() const {return awareWorkMax_;}
+    static bool isW7Instrument(std::string_view n) {
+        return n=="parts"||n=="aware_work"||n=="aware_encounters"||n=="aware_replans"||n=="aware_builds"||
+            n.substr(0,14)=="aware_latency_"||n.substr(0,8)=="giveway_";
+    }
     uint64_t engagedMemberTicks() const {return engagedTicks_;}
+    // W8 step 0: the latest cumulative value of each lane counter (Stats::pivotCalls, pivotWork, pivotSweeps,
+    // laneWork, laneClipped). pivot_work is the base lane steering work the S1 lanes are gated against (<= 1.5x).
+    const std::map<std::string,uint64_t>& w8() const {return w8_;}
+    // W9 step 0: the latest cumulative value of each mechanism counter (Stats::sealSettles .. orderInversionsTaken).
+    const std::map<std::string,uint64_t>& w9() const {return w9_;}
+    static bool isW9Instrument(std::string_view n) {
+        static constexpr std::string_view k[]={
+            "seal_settles","creep_presses","deep_rechoices","anchor_advances","gate_lane_moves","gate_holds","fold_binds",
+            "turn_guard_rejects","clear_aims","meet_latches","order_inversions_avoided","order_inversions_taken"};
+        for(auto c:k)if(c==n)return true;
+        return false;
+    }
+    static bool isW8Instrument(std::string_view n) {
+        return n=="pivot_calls"||n=="pivot_work"||n=="pivot_sweeps"||n=="lane_work"||n=="lane_clipped"||n.substr(0,7)=="vertex_"||n=="gate_commits"||n=="gate_releases"||n=="pass_filter_holds";
+    }
 private:
     void gauge(std::string_view n,uint64_t v) {(n=="quota_peg_run_max"?quotaPegRunMax_:stillPerResidueMax_)=v;}
     std::vector<uint64_t> bins_;
+    std::map<std::string,uint64_t> w7_,w8_,w9_;
+    uint64_t awareWorkMax_=0;
     uint64_t ticks_=0,stillPerResidueMax_=0,quotaPegRunMax_=0,engagedMax_=0,engagedTicks_=0;
     std::vector<uint64_t> last_;
     uint64_t lastConvoy_=0;
+};
+
+
+// `behind NAME LATER EARLIER [cells=N]` (PLAN W7 step 0, user decision 5): the route-behind metric. LATER is the group
+// that gives way to the stream EARLIER; under decision 5 it always routes behind that stream and never waits at its
+// edge. Per LATER member the path it walked while ordered against the straight line from its first ordered position to
+// its click, and the WAIT: a LATER member with orders that stood (a step of no more than an eighth of its speed) with a
+// moving EARLIER member within `cells` (default 8) cells; a group wait is a tick on which at least a quarter of the
+// LATER members with orders (and 2) do so, a wait is a run of at least 30 such ticks. Read-only.
+//   behind.NAME.members          LATER members that were ever ordered
+//   behind.NAME.path_cells       mean path walked (cells), straight_cells the mean straight line, extra_cells the
+//                                difference, detour_permille path / straight - 1
+//   behind.NAME.wait_member_ticks  member-ticks standing at the stream
+//   behind.NAME.wait_ticks / .wait_run_max / .waits   group-level wait ticks, the longest run, runs of >= 30
+struct BehindProbe {
+    std::string name;
+    int64_t edge = 8 * 16;
+    struct Late { int id; int64_t cx, cz; int32_t px = INT32_MIN, pz = INT32_MIN; int64_t sx = 0, sz = 0; double path = 0; bool started = false; };
+    std::vector<Late> late;
+    std::vector<int> early;
+    std::vector<std::pair<int32_t, int32_t>> earlyPrev, stream;
+    int64_t memberWait = 0, groupWait = 0, run = 0, runMax = 0, waits = 0;
+    void sample(const sim::World& w) {
+        if (earlyPrev.size() != early.size()) earlyPrev.assign(early.size(), {INT32_MIN, INT32_MIN});
+        stream.clear();
+        for (size_t i = 0; i < early.size(); ++i) {
+            const auto* u = w.unit(early[i]);
+            if (!u || !u->alive() || u->orders.empty()) { earlyPrev[i] = {INT32_MIN, INT32_MIN}; continue; }
+            if (earlyPrev[i].first != INT32_MIN && (u->x.v != earlyPrev[i].first || u->z.v != earlyPrev[i].second))
+                stream.push_back({int32_t(int64_t(u->x.v) >> 16), int32_t(int64_t(u->z.v) >> 16)});
+            earlyPrev[i] = {u->x.v, u->z.v};
+        }
+        int64_t active = 0, nearWait = 0;
+        for (auto& b : late) {
+            const auto* u = w.unit(b.id);
+            if (!u || !u->alive() || !u->type) continue;
+            const bool ordered = !u->orders.empty();
+            if (ordered && !b.started) { b.started = true; b.sx = int64_t(u->x.v) >> 16; b.sz = int64_t(u->z.v) >> 16; }
+            if (ordered && b.px != INT32_MIN) {
+                const double dx = double(u->x.v) - b.px, dz = double(u->z.v) - b.pz;
+                b.path += std::sqrt(dx * dx + dz * dz) / 65536.0;
+                ++active;
+                const int64_t cap = int64_t(u->baseSpeed.v) / 8;
+                if (int64_t(dx) * int64_t(dx) + int64_t(dz) * int64_t(dz) <= cap * cap) {
+                    const int64_t x = int64_t(u->x.v) >> 16, z = int64_t(u->z.v) >> 16;
+                    for (const auto& e : stream)
+                        if (std::abs(e.first - x) <= edge && std::abs(e.second - z) <= edge) { ++nearWait; break; }
+                }
+            }
+            b.px = u->x.v; b.pz = u->z.v;
+        }
+        memberWait += nearWait;
+        if (nearWait >= 2 && nearWait * 4 >= active) { ++groupWait; ++run; }
+        else { if (run >= 30) ++waits; runMax = std::max(runMax, run); run = 0; }
+    }
+    void report(Keys& k) const {
+        const std::string p = "behind." + name + ".";
+        double path = 0, straight = 0;
+        int64_t n = 0;
+        for (const auto& b : late) {
+            if (!b.started) continue;
+            const double dx = double(b.cx - b.sx), dz = double(b.cz - b.sz);
+            path += b.path; straight += std::sqrt(dx * dx + dz * dz); ++n;
+        }
+        k.emplace_back(p + "members", n);
+        k.emplace_back(p + "path_cells", n ? int64_t(std::llround(path / 16.0 / double(n))) : 0);
+        k.emplace_back(p + "straight_cells", n ? int64_t(std::llround(straight / 16.0 / double(n))) : 0);
+        k.emplace_back(p + "extra_cells", n ? int64_t(std::llround((path - straight) / 16.0 / double(n))) : 0);
+        k.emplace_back(p + "detour_permille", straight > 0 ? int64_t(std::llround((path / straight - 1.0) * 1000.0)) : 0);
+        k.emplace_back(p + "wait_member_ticks", memberWait);
+        k.emplace_back(p + "wait_ticks", groupWait);
+        k.emplace_back(p + "wait_run_max", std::max(runMax, run));
+        k.emplace_back(p + "waits", waits + (run >= 30 ? 1 : 0));
+    }
 };
 
 }

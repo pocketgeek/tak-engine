@@ -236,9 +236,11 @@
         if (geomPool_.size() < visUnits_.size()) geomPool_.resize(visUnits_.size());
         // Fraction through the current sim-tick interval, for motion interpolation this
         // frame (clamped: a late tick just holds at the newest pose until it arrives).
-        interpAlpha_ = front().tickDurMs > 0.0f
-            ? std::clamp(float(SDL_GetTicks64() - front().tickMs) / front().tickDurMs, 0.0f, 1.0f)
-            : 1.0f;
+        // The presentation clock (presentFrame) has already set it from the display time.
+        if (!present_.on)
+            interpAlpha_ = front().tickDurMs > 0.0f
+                ? std::clamp(float(SDL_GetTicks64() - front().tickMs) / front().tickDurMs, 0.0f, 1.0f)
+                : 1.0f;
 #ifndef NDEBUG
         if(tak::devFlag("TAK_RENDER_STUDY"))interpAlpha_=0.5f;
 #endif

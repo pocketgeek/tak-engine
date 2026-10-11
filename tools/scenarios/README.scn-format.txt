@@ -36,6 +36,23 @@ never names a pathfinding mode: the runner builds it once per mode.
                                 approach point (an unreachable goal's nearest
                                 reachable spot) and the tick its orders empty.
                                 Meant for scenarios whose goal is unreachable.
+  probe aware                   Legion only: the runner reports the awareness / parting / give-way counters of
+                                LegionNavigator::Stats as aware.* keys (parts, encounters, replans, builds,
+                                latency_max / _sum / _n, work, work_max, giveway_starts / _ticks / _timeouts;
+                                W7 step 0) and the route-behind metric of every `behind` shape.
+  probe lanes                   Legion only: the runner reports the lane counters of LegionNavigator::Stats as
+                                lanes.* keys (pivot_calls, pivot_work, pivot_sweeps: the pinwheel's steering
+                                work, the base the S1 corner lanes are gated against; lane_work, lane_clipped:
+                                0 until W8 step 3 builds the lanes; W8 step 0).
+  probe w9                      Legion only: the runner reports the W9 instruments (W9 step 0): w9.* (the twelve
+                                never-hashed mechanism counters of LegionNavigator::Stats: seal_settles,
+                                creep_presses, deep_rechoices, anchor_advances, gate_lane_moves, gate_holds,
+                                fold_binds, turn_guard_rejects, clear_aims, meet_latches,
+                                order_inversions_avoided / _taken; 0 until their step builds them) and, in a
+                                debug build (NDEBUG undefined), census.* (how often each mechanism's trigger
+                                WOULD fire, definitions in legion.cpp's struct Census). `legion_scenario --w9`
+                                turns it on for any file; `--trace ID[,ID...]` prints one stderr line per
+                                decision of those members (debug build).
   probe claims                  Legion only: every 10 ticks the navigator audits
                                 its arrival-slot claims (the claims invariant);
                                 keys claims.bad_max (overlapping + lost +
@@ -135,6 +152,12 @@ Shapes (for the runner's metrics; never affect the world):
         within `window` ticks (300) swap when their order flips by at least
         `mincells` (2) at both lines. Pairs of one group, or of all groups with
         across=all. Keys lane.NAME.pairs / .swaps / .swaps_permille.
+  hug NAME BX0 BZ0 BX1 BZ1 AX0 AZ0 AX1 AZ1 tip1=N tip2=N [cells=N]
+        the observer's hug probe (the MV-13 S-bend, W8 step 0): the two lines are the lane probe's, one per
+        vertex (each horizontal or vertical); tip1 / tip2 are the lateral cell of each vertex's tip (x on a
+        horizontal line, z on a vertical one). A member hugs a vertex when its lateral cell on first
+        entering the vertex's line is within `cells` (2) of the tip; it carries over when it hugs both.
+        Keys hug.NAME.first / .second / .carry.
   reach NAME ATTACKERS TARGETS [range=PX] [marks=T,T]
         the AR-06 probe (comma lists of groups, a trailing * is a prefix): how
         many attackers ever get a shot at the targets, when, the damage dealt
@@ -153,6 +176,16 @@ Shapes (for the runner's metrics; never affect the world):
         groups, a trailing * is a name prefix) sampled every 10 ticks: pairs
         whose centre cells are within `cells` (2) on both axes. Keys
         pair.NAME.pairs / .contacts / .permille_x100.
+
+  behind NAME LATER EARLIER [cells=N]
+        the route-behind metric (W7, user decision 5: the later of two crossing groups routes behind the
+        other's stream and never waits at its edge). LATER and EARLIER are comma lists of groups (a trailing * is
+        a prefix). Per LATER member: the path walked while ordered against the straight line from its first
+        ordered position to its click. A WAIT: a LATER member with orders stood (a step of at most an eighth of
+        its speed) with a moving EARLIER member within `cells` (8) cells; a group wait is a tick on which at
+        least 2 and a quarter of the LATER members with orders do so; a wait is a run of 30 such ticks. Keys
+        behind.NAME.members / .path_cells / .straight_cells / .extra_cells / .detour_permille /
+        .wait_member_ticks / .wait_ticks / .wait_run_max / .waits (tools/legion_observe.h BehindProbe).
 
 Start offset: the builder shifts every spawn by 0, +1 or -1 cells on both
 axes (BuildOptions::offset); orders, walls and shapes stay put.

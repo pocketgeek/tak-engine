@@ -12,6 +12,7 @@ scn 1
 # files over the tangent 1.63 / 1.92, done 4250 / 4250, reversals 7 / 7, spins 0.
 name opentangent
 ticks 7000
+probe lanes
 seed 7
 map flat 260 170
 wall 80 70 40 100

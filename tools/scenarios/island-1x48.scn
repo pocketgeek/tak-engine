@@ -6,6 +6,7 @@ scn 1
 # 'crossings' are gate lane's (end windows at x 69-70 and 130-131).
 name island-1x48
 ticks 12000
+probe lanes
 seed 7
 players 2
 team 0 0

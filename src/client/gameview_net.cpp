@@ -322,6 +322,7 @@
 #ifndef NDEBUG
         // Regression probe: an eliminated, non-acking client must not stall survivors.
         if (outcome_ < 0 && tak::devFlag("TAK_DEFEAT_STALL")) return true;
+        speedProbe();
 #endif
         // Send at the rate the server DRAINS (kCmdCapPerTick per sim tick), metered
         // by elapsed ticks rather than by frames. Two earlier versions of this were
@@ -573,9 +574,28 @@
             fr.buffered = paceBuffered; fr.rate = paceRate; fr.fastForward = paceFF;
             // What the frame shows: the pinned snapshot, interpolated the way the render does.
             fr.shown = front().gameTick;
-            const double alpha = front().tickDurMs > 0.0f
-                ? std::clamp(double(nowMs - front().tickMs) / double(front().tickDurMs), 0.0, 1.0) : 1.0;
-            fr.td = double(fr.shown) - 1.0 + alpha;
+            if (present_.on) {
+                // The presentation clock's own record of this frame (presentFrame).
+                fr.td = present_.td; fr.dtd = present_.dtd; fr.nominal = present_.nominal;
+                fr.freeze = present_.freeze; fr.gate = present_.gate; fr.snap = present_.snap;
+                fr.lagTarget = float(present_.lagTarget);
+            } else {
+                const double rawAlpha = front().tickDurMs > 0.0f
+                    ? double(nowMs - front().tickMs) / double(front().tickDurMs) : 1.0;
+                fr.td = double(fr.shown) - 1.0 + std::clamp(rawAlpha, 0.0, 1.0);
+                fr.freeze = rawAlpha >= 1.0;   // the newest pose is held: nothing newer to interpolate toward
+                // Display time advanced this frame against the frame's nominal step (its wall time at
+                // the game speed), timed on the performance counter: millisecond ticks would quantise a
+                // 4.17 ms frame by 24%.
+                const uint64_t nowC = SDL_GetPerformanceCounter();
+                if (paceLastCounter_ && paceLastTd_ >= 0) {
+                    const double dtS = double(nowC - paceLastCounter_) / double(SDL_GetPerformanceFrequency());
+                    fr.nominal = paused_ ? 0.0 : dtS * 30.0 * double(animSpeed());
+                    fr.dtd = fr.td - paceLastTd_;
+                }
+                paceLastCounter_ = nowC;
+                paceLastTd_ = fr.td;
+            }
             fr.lockWaitUs = double(paceLockWaitNs_) / 1000.0;
             paceLockWaitNs_ = 0;
             const uint64_t now[5] = {paceWorldNs_.load(), paceCaptureNs_.load(), paceHashNs_.load(),
@@ -588,8 +608,11 @@
             pace_.frame(fr);
         }
 #endif
-        // Cosmetics once per frame, covering the game time actually played.
-        if (drained > 0) cosmeticStep(float(drained) / 30.0f);
+        // Cosmetics once per frame, covering the game time actually DISPLAYED: the presentation
+        // clock's advance (particles, timers and the tick-stamped event queues then follow what is
+        // on screen), or without it the ticks played.
+        if (present_.on) { if (present_.dtd > 0) cosmeticStep(float(present_.dtd) / 30.0f); }
+        else if (drained > 0) cosmeticStep(float(drained) / 30.0f);
         // Spectator progress heartbeat: keep the server's flow-control ack FRESH even
         // when we're caught up and not draining. The per-tick hash send only fires while
         // draining (at 30-tick boundaries), so a caught-up spectator would stop acking;
@@ -697,6 +720,41 @@
     }
 
 #ifndef NDEBUG
+// TAK_SPEED_AT=<tick>:<speed>[,<tick>:<speed>...] -- the host changes the game speed (tenths)
+// in-game when the played tick reaches <tick>, exactly as the +/- keys do. Each change, and one
+// line per wall second, is printed as SPEEDLOG (wall ms, played tick, requested speed) so a
+// harness can measure the real playout rate across a change. Debug-only, pacing only.
+void GameView::speedProbe() {
+    static const char* spec = tak::devEnv("TAK_SPEED_AT");
+    if (!spec || !mp_ || mp_->state() != tak::net::MpClient::State::InGame) return;
+    if (speedAt_.empty() && !speedAtParsed_) {
+        speedAtParsed_ = true;
+        std::string s = spec;
+        for (size_t p = 0; p < s.size();) {
+            size_t e = s.find(',', p); if (e == std::string::npos) e = s.size();
+            const std::string item = s.substr(p, e - p);
+            const size_t c = item.find(':');
+            if (c != std::string::npos)
+                speedAt_.push_back({uint32_t(std::atoi(item.c_str())), std::atoi(item.c_str() + c + 1)});
+            p = e + 1;
+        }
+    }
+    const uint64_t now = SDL_GetTicks64();
+    if (!speedLogMs_) speedLogMs_ = now;
+    if (speedAtNext_ < speedAt_.size() && netTick_ >= speedAt_[speedAtNext_].first) {
+        auto o = mp_->room().opts;
+        o.speed = uint8_t(std::clamp(speedAt_[speedAtNext_].second, 1, tak::net::kMaxGameSpeed));
+        mp_->setGameOptions(o);
+        std::fprintf(stderr, "SPEEDLOG set %llu tick %u speed %d\n", (unsigned long long)now, netTick_, int(o.speed));
+        ++speedAtNext_;
+    }
+    if (now - speedLogMs_ >= 1000) {
+        speedLogMs_ += 1000;
+        std::fprintf(stderr, "SPEEDLOG wall %llu tick %u speed %d buffered %d delay %d\n", (unsigned long long)now,
+                     netTick_, int(mp_->gameSpeed()), int(mp_->bufferedBundles()), netDelay_);
+    }
+}
+
 // See gameview.h. Issues ordinary Move / AttackMove orders through GameView::issue,
 // so they travel the real path -- outbox -> sendCommands -> server -> bundle -> every
 // peer -- rather than being applied locally, which would desync by construction.
@@ -810,6 +868,9 @@ void GameView::autoplayStep() {
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxGameSpeed));
+            // TAK_SPEED_AT schedules in-game speed changes (see mpStep), so the room must
+            // allow them.
+            if (tak::devEnv("TAK_SPEED_AT")) o.speedUnlock = 1;
             o.stressTest = tak::devFlag("TAK_STRESS") ? 1 : 0;   // headless: spawn ~95% cap per AI
             if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
                 int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High

@@ -130,6 +130,7 @@ add_library(tak-formats
   src/cob/cob.cpp
   src/cob/vm.cpp
   src/sim/sim.cpp
+  src/sim/simpool.cpp
   src/sim/pathsearch.cpp
   src/sim/legion.cpp
   src/sim/convoy.cpp
@@ -329,13 +330,15 @@ add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock
-    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware b3events)
+    navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation liftflyers aware b3events lanegeom)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
   # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.
   # Costs these 38 cases ~17 s -> ~44 s in total at -O2 (the longest, squadformation, 6 -> 11 s).
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# planeincremental also runs its churn with workers (three in debug builds) and requires serial == workers.
+set_tests_properties(legion_planeincremental PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 # W6 step 0 (PLAN 4 W6): the flyer instruments of tools/legion_flyers_test.cpp. Each prints the numbers the W6
 # steps move and asserts determinism (serial == workers); W6_REQUIRE=1 asserts the PLAN targets (the acceptance
 # check of the step that meets them; docs/legion-w6-step0.md).
@@ -350,6 +353,15 @@ endforeach()
 foreach(legion_probe landunder descentwalkin auditlift40 splitpatrol liftcombat)
   add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
   set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6" ENVIRONMENT TAK_LEGION_VERIFY=1)
+endforeach()
+# W7 step 0 fixtures (PLAN 4 W7 step 0, docs/legion-exit-tables.md "W7 step 0"): the promoted RB-02 probe (ring clot,
+# Holding-queue corridor, plug) and the awareness stream fixtures awarebig (768x768), awaredense (200 v 200 at 85% fill),
+# crossthree and crosslong. Measurement only: each prints the numbers W7's steps move (done tick, standing share,
+# contacts, hold_max, the aware / parting / give-way counters, the route-behind metric) in both awareness arms and asserts
+# determinism (serial == workers) on the cheap rows; the bounds come with W7's steps.
+foreach(legion_probe rb02 awarebig awaredense crossthree crosslong)
+  add_test(NAME legion_w7_${legion_probe} COMMAND legion_world_test ${legion_probe})
+  set_tests_properties(legion_w7_${legion_probe} PROPERTIES LABELS "legion;w7")
 endforeach()
 # T1 probes for W3 (measurement only; they assert determinism, not bounds).
 foreach(legion_probe settlelatency doorplug)
@@ -432,6 +444,24 @@ foreach(legion_scn aware-cross aware-headon aware-seen aware-unseen aware-attack
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
   set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS legion)
 endforeach()
+# W7 step 0 scenario fixtures: the route-behind metric (`behind`) and the aware.* counters (`probe aware`).
+foreach(legion_scn aware-cross-behind crosslong)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w7")
+endforeach()
+# W8 step 0 fixtures (PLAN 4 W8 step 0, docs/legion-exit-tables.md "W8 step 0"): the flowing-route guard doubleturn, the
+# audit's gap sweep one gap per world (gap 6 is gap6), the MV-12 mixed-speed spacing probe at 0.7x / 0.5x / 0.4x, and the
+# 8x30 multi-group corner. Same run as part A (both modes, serial and workers); the lane probes (`probe lanes`,
+# lane / hug shapes in sbend) report with them. No bounds yet: S1's gates come with W8's steps.
+foreach(legion_scn doubleturn gap8 gap10 gap14 gap20 mixed-spacing-07x mixed-spacing-05x mixed-spacing-04x)
+  add_test(NAME legion_scenario_${legion_scn}
+           COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
+  set_tests_properties(legion_scenario_${legion_scn} PROPERTIES LABELS "legion;w8")
+endforeach()
+add_test(NAME legion_scenario_corner-8x30
+         COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/corner-8x30.scn --mode both)
+set_tests_properties(legion_scenario_corner-8x30 PROPERTIES LABELS "legion;w8;nightly" TIMEOUT 1200)
 foreach(legion_scn densehead island-1x150 strait-3x80 strait-2x150)
   add_test(NAME legion_scenario_${legion_scn}
            COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both)
@@ -570,9 +600,11 @@ endforeach()
 # rule prints its value) and still fails on any spin, terrain-stuck unit or a
 # lower count. Group right-clicks use a shared point with re-choosable slots and
 # do not create this layout. Raise the 61 with the count as AR-09 improves.
+# The one terrain-stuck unit (units_ever_terrain_stuck 1) is a limit the user accepted at the close of
+# the Legion plan (decision W9-1, "Known weaknesses"), so only spin still fails the test.
 set_tests_properties(legion_acceptance_crowdheld_legion PROPERTIES
                      PASS_REGULAR_EXPRESSION "physical_in_goal == moving \\(value 6[1-4]\\)"
-                     FAIL_REGULAR_EXPRESSION "FAIL: (spin_while|units_ever)")
+                     FAIL_REGULAR_EXPRESSION "FAIL: spin_while")
 add_executable(retail_search_scratch_test tools/retail_search_scratch_test.cpp)
 target_include_directories(retail_search_scratch_test PRIVATE src)
 add_executable(retail_group_test tools/retail_group_test.cpp)
@@ -607,6 +639,10 @@ add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.c
 target_link_libraries(room_worker_test PRIVATE tak-formats)
 add_test(NAME room_worker COMMAND room_worker_test)
 set_tests_properties(room_worker PROPERTIES TIMEOUT 30)
+# Server tick pacing on a simulated clock: exact rates, speed changes, bounded catch-up.
+add_executable(tick_pacer_test tools/tick_pacer_test.cpp)
+target_include_directories(tick_pacer_test PRIVATE src)
+add_test(NAME tick_pacer COMMAND tick_pacer_test)
 add_executable(featgen_test tools/featgen_test.cpp)
 add_executable(transport_test tools/transport_test.cpp)
 add_executable(production_test tools/production_test.cpp)
@@ -718,6 +754,8 @@ target_link_libraries(retail_motion_test PRIVATE tak-formats)
 add_test(NAME retail_motion COMMAND retail_motion_test)
 add_executable(duration_test tools/duration_test.cpp)
 add_executable(navincr_test tools/navincr_test.cpp)
+add_executable(simpool_test tools/simpool_test.cpp)
+target_link_libraries(simpool_test PRIVATE tak-formats)
 add_executable(fixed_test tools/fixed_test.cpp)
 add_executable(statsfit_test tools/statsfit_test.cpp)
 add_executable(settings_test tools/settings_test.cpp)
@@ -786,6 +824,7 @@ add_test(NAME cadence COMMAND cadence_test)
 add_test(NAME duration COMMAND duration_test)
 add_test(NAME navincr COMMAND navincr_test)
 add_test(NAME fixed COMMAND fixed_test)
+add_test(NAME simpool COMMAND simpool_test)
 add_test(NAME settings COMMAND settings_test)
 add_test(NAME door_animation COMMAND door_animation_test)
 add_test(NAME pathgeom COMMAND pathgeom_test)
@@ -1615,6 +1654,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_seed_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_seed PROPERTIES TIMEOUT 120)
+    add_test(NAME server_speed_pacing COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_speed_pacing_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_speed_pacing PROPERTIES TIMEOUT 120)
     add_test(NAME server_public COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>" --map-tool "$<TARGET_FILE:map_transfer_test>")

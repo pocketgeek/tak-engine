@@ -1264,7 +1264,7 @@
             hit.x = cx + 120; hit.z = cz;
             hit.fromPosition=std::array<int32_t,3>{int32_t((cx-120)*65536),200*65536,int32_t(cz*65536)};
             hit.position=std::array<int32_t,3>{int32_t((cx+120)*65536),80*65536,int32_t(cz*65536)};
-            hitQueue_.push_back(hit);
+            hitQueue_.push_back({front().gameTick, hit});
             cosmeticStep(0);
             if (beams_.empty() || beams_.back().fromPosition != hit.fromPosition ||
                 beams_.back().position != hit.position || beams_.back().sprite != spell.weaponArt ||
@@ -1293,7 +1293,7 @@
             cosmeticStep(0);
             std::printf("BASILISK_AUDIO_IMPACT\n");
             hit.weapon = &basilisk->weapons.front();
-            hitQueue_.push_back(hit);
+            hitQueue_.push_back({front().gameTick, hit});
             cosmeticStep(0);
             sounds_.setVerbose(false);
             std::printf("BASILISK_AUDIO_END\n");
@@ -2389,13 +2389,16 @@
     }
 
     void GameView::captureFrame() {
-        // Pick a spare buffer to write: never the published one (the render may pin it on
-        // its next beginFrame) and never the one the render is currently pinned on. With
-        // three buffers there is always exactly one such spare.
-        int w;
+        // Pick the oldest free ring slot: never the published one (the render may pin it on
+        // its next frame), the one the render is pinned on, or the one the presentation clock
+        // showed last frame. With twelve slots at least nine are free.
+        int w = -1;
         {
             std::lock_guard<std::mutex> lk(frameMutex_);
-            for (w = 0; w < 3; ++w) if (w != published_ && w != reading_) break;
+            for (int i = 0; i < kFrameRing; ++i)
+                if (i != published_ && i != reading_ && i != shown_ &&
+                    (w < 0 || frameBuf_[i].gen < frameBuf_[w].gen)) w = i;
+            writing_ = w;
         }
         // Compact snapshots follow current records, not every lifetime unit ID.
         // The previous published buffer supplies same-ID interpolation poses.
@@ -2461,7 +2464,7 @@
             for (const auto& h : fb.hits) {
                 pendingMonarchAlerts_ |= h.attackedMonarchPlayers;
                 if (hitQueue_.size() >= kMaxPendingHits) hitQueue_.pop_front();
-                hitQueue_.push_back(h);
+                hitQueue_.push_back({world_.tickCount(), h});
             }
         }
         fb.shakeReq = world_.shakeRequest();       // copied under the worker's lock
@@ -2492,10 +2495,12 @@
         } else fb.effectVisibility.clear();
         fb.tickMs = SDL_GetTicks64();
         fb.tickDurMs = (1000.0f / 30.0f) / std::max(0.1f, animSpeed());
-        // Publish: the render's next beginFrame() will pin this buffer as front().
+        fb.pubCounter = SDL_GetPerformanceCounter();
+        // Publish: the render's next frame may pin this slot as front().
         {
             std::lock_guard<std::mutex> lk(frameMutex_);
             published_ = w;
+            writing_ = -1;
         }
     }
 
@@ -2599,13 +2604,16 @@
         }
         // Drained, not gated on newTick_: the whole point is to pick up impacts
         // from ticks whose snapshots the render never saw.
+        // Released by the displayed tick, like the other tick-stamped queues below.
         std::vector<tak::sim::World::HitFx> hitsToShow;
         uint8_t monarchAlerts = 0;
         {
             std::lock_guard<std::mutex> hq(hitQueueMutex_);
             monarchAlerts = std::exchange(pendingMonarchAlerts_, uint8_t(0));
-            hitsToShow.assign(hitQueue_.begin(), hitQueue_.end());
-            hitQueue_.clear();
+            while (!hitQueue_.empty() && int32_t(front().gameTick - hitQueue_.front().tick) >= 0) {
+                hitsToShow.push_back(std::move(hitQueue_.front().hit));
+                hitQueue_.pop_front();
+            }
         }
         if (monarchAlert_.admit(monarchAlerts, localPlayer_, spectating_, SDL_GetTicks64()))
             sounds_.play("alarmmon", 1.f, 1.f, 7, false);
@@ -4411,8 +4419,13 @@
 
     void GameView::beginFrame() {
         std::lock_guard<std::mutex> lk(frameMutex_);
-        renderReadIdx_ = published_;
-        reading_ = published_;
+        shown_ = -1;
+        pinFrameLocked(published_);
+    }
+
+    void GameView::pinFrameLocked(int slot) {
+        renderReadIdx_ = slot;
+        reading_ = slot;
         placePreviewBusy_ = false;   // one failed try_lock per frame at most (canPlacePreview)
         if (!gameStartMs_ && front().gameTick > 0) gameStartMs_ = SDL_GetTicks64();
         // A previously selected enemy must stop exposing its live state on leaving sight.
@@ -4426,6 +4439,126 @@
     void GameView::endFrame() {
         std::lock_guard<std::mutex> lk(frameMutex_);
         reading_ = -1;
+    }
+
+    bool GameView::presentClockWanted() const {
+#ifndef NDEBUG
+        // TAK_PRESENT=0: the pre-S4 presentation (newest snapshot, wall-clock alpha), for A/B runs.
+        if (const char* e = tak::devEnv("TAK_PRESENT"); e && e[0] == '0') return false;
+#endif
+        return isNet() && !replayMode_;
+    }
+
+    int GameView::ringSlotLocked(uint32_t tick) const {
+        int best = -1;
+        for (int i = 0; i < kFrameRing; ++i)
+            if (i != writing_ && frameBuf_[i].gen && frameBuf_[i].gameTick == tick &&
+                (best < 0 || frameBuf_[i].gen > frameBuf_[best].gen)) best = i;
+        return best;
+    }
+
+    void GameView::presentFrame() {
+        if (!presentClockWanted()) {
+            present_ = {};
+            beginFrame();
+            return;
+        }
+        auto& c = present_;
+        c.on = true;
+        c.freeze = c.gate = c.snap = false;
+        c.dtd = c.nominal = 0;
+        std::lock_guard<std::mutex> lk(frameMutex_);
+        const uint32_t newest = frameBuf_[published_].gameTick;
+        const uint64_t now = SDL_GetPerformanceCounter();
+        const double freq = double(SDL_GetPerformanceFrequency());
+        const double dt = c.last ? std::min(0.25, double(now - c.last) / freq) : 0.0;
+        c.last = now;
+        const double nominalRate = 30.0 * double(std::max(0.1f, animSpeed()));
+        if (c.rate <= 0) c.rate = nominalRate;
+        // Before the first tick (loading, the pre-game hold) and after the game is over or
+        // reset: show the newest snapshot, as beginFrame does.
+        if (newest == 0 || newest < c.seen) {
+            c = {};
+            shown_ = -1;
+            pinFrameLocked(published_);
+            return;
+        }
+        // The rate the display time advances at: the game speed, or the measured publish rate when
+        // the game runs slower than that (a client- or referee-bound game slows down smoothly
+        // instead of freezing between snapshots).
+        if (dt > 0 && c.started) c.rate += (double(newest - c.seen) / dt - c.rate) * std::min(1.0, dt / 0.25);
+        const double base = std::clamp(c.rate, 0.02 * nominalRate, nominalRate);
+        // Publish gaps of the ticks that appeared since the last frame (slots still in the ring),
+        // in ticks at that rate: how far the display time moves while no new snapshot arrives.
+        if (newest > c.seen) {
+            const uint32_t from = std::max(c.seen + 1, newest > uint32_t(kFrameRing) ? newest - uint32_t(kFrameRing) + 1 : 1u);
+            for (uint32_t t = from; t <= newest; ++t) {
+                const int a = ringSlotLocked(t - 1), b = ringSlotLocked(t);
+                if (a < 0 || b < 0 || frameBuf_[b].pubCounter <= frameBuf_[a].pubCounter) continue;
+                c.gaps[c.gapNext] = float(double(frameBuf_[b].pubCounter - frameBuf_[a].pubCounter) / freq * base);
+                c.gapNext = (c.gapNext + 1) % c.gaps.size();
+                c.gapCount = std::min(c.gapCount + 1, c.gaps.size());
+            }
+        }
+        c.seen = newest;
+        if (c.gapCount) {
+            std::array<float, 128> sorted = c.gaps;
+            const size_t n = c.gapCount, k = std::min(n - 1, n * 98 / 100);
+            std::nth_element(sorted.begin(), sorted.begin() + std::ptrdiff_t(k), sorted.begin() + std::ptrdiff_t(n));
+            c.lagTarget = std::clamp(double(sorted[k]) + 0.25, 1.0, 4.0);
+        }
+        // Start gate: hold the first tick until the first ticks are published, so a slow spawn
+        // tick is part of the game-start transition instead of the first thing that moves.
+        const uint32_t gateTicks = std::max(3u, uint32_t(std::lround(double(kPresentGate) * nominalRate / 240.0)));
+        if (!c.started) { c.started = true; c.gateTick = newest; c.td = newest; }
+        if (!c.gateOpen) {
+            if (newest < c.gateTick + gateTicks) {
+                c.gate = true;
+                c.td = c.gateTick;
+                const int slot = ringSlotLocked(c.gateTick);
+                shown_ = slot >= 0 ? slot : published_;
+                pinFrameLocked(shown_);
+                interpAlpha_ = 1.0f;
+                return;
+            }
+            c.gateOpen = true;
+            c.snap = true;
+            c.td = std::max(double(c.gateTick), double(newest) - c.lagTarget);
+            c.lagAfter = double(newest) - c.td;
+        } else {
+            // Advance at that rate, servoed so the lag behind the newest snapshot settles at
+            // lagTarget over ~0.25 s.
+            const double factor = std::clamp(1.0 + (c.lagAfter - c.lagTarget) / (base * 0.25), 0.85, 1.25);
+            const double before = c.td;
+            c.nominal = paused_ ? 0.0 : dt * nominalRate;
+            c.td += dt * base * factor;
+            if (c.td >= double(newest)) { c.td = double(newest); c.freeze = true; }
+            // Far behind (a catch-up, a long stall): jump. A smaller overrun of the ring is caught
+            // below, when the wanted tick is no longer held.
+            if (double(newest) - c.td > double(2 * kFrameRing)) { c.td = double(newest) - c.lagTarget; c.snap = true; }
+            c.dtd = c.td - before;
+            c.lagAfter += (double(newest) - c.td - c.lagAfter) * std::min(1.0, dt / 0.1);
+        }
+        uint32_t tick = std::max<uint32_t>(1, uint32_t(std::ceil(c.td - 1e-9)));
+        int slot = ringSlotLocked(tick);
+        if (slot < 0) {
+            // The tick was overwritten (the writer outran the ring): show the oldest tick still held
+            // that is not older than the one wanted, or the newest.
+            const double before = c.td;
+            uint32_t found = newest;
+            for (int i = 0; i < kFrameRing; ++i)
+                if (i != writing_ && frameBuf_[i].gen && frameBuf_[i].gameTick >= tick && frameBuf_[i].gameTick < found)
+                    found = frameBuf_[i].gameTick;
+            tick = found;
+            slot = ringSlotLocked(tick);
+            if (slot < 0) { slot = published_; tick = newest; }
+            c.td = std::max(c.td, double(tick) - 1.0);
+            c.dtd += c.td - before;
+            c.snap = true;
+        }
+        shown_ = slot;
+        pinFrameLocked(slot);
+        interpAlpha_ = float(std::clamp(c.td - (double(tick) - 1.0), 0.0, 1.0));
     }
 
     void GameView::finishTerrain() {

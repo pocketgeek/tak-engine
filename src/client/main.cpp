@@ -1345,10 +1345,16 @@ int main(int argc, char** argv) {
         // interactive IN-04 run drew about 20 frames/s). tools/pace_check.sh sets it with TAK_PACELOG.
         const int frameMs = tak::devEnv("TAK_FRAME_MS") ? std::clamp(std::atoi(tak::devEnv("TAK_FRAME_MS")), 1, 200)
                                                          : (bench ? 16 : 2);
+        // TAK_VSYNC_HZ=N: a fake vsync instead -- each iteration ends on an N Hz deadline (the same
+        // deadline pacer the interactive client falls back to), so 240/144/60 Hz frame cadences can be
+        // measured headless (the TAK_PACELOG PRESENT line). It overrides TAK_FRAME_MS.
+        const int vsyncHz = tak::devEnv("TAK_VSYNC_HZ") ? std::clamp(std::atoi(tak::devEnv("TAK_VSYNC_HZ")), 1, 1000) : 0;
+        tak::PresentationPacer vsyncPacer;
         while (true) {
             // Pin the snapshot for the iteration (mirrors the interactive render loop), so
             // cosmeticStep's front() reads can't tear against the worker under TAK_SIM_THREAD.
-            gameView->beginFrame();
+            // presentFrame advances the presentation clock exactly as a rendered frame does.
+            gameView->presentFrame();
             bool cont = gameView->mpAutoStep(mpHeadless, mapId, crusades);
             gameView->endFrame();
             // Ordinary headless runs finish at their result. The defeat probe waits
@@ -1367,7 +1373,8 @@ int main(int argc, char** argv) {
             }
             if (!cont || (!defeatProbe && gameView->outcomePublic() != 0)) break;
             if (int(gameView->netTick()) >= limitTicks) break;
-            SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
+            if (vsyncHz) vsyncPacer.paceAtRefresh(vsyncHz);
+            else SDL_Delay(Uint32(frameMs));   // ~60 fps for the benchmark
         }
         // Flush + join the worker so the final world hash reflects every pushed tick (no read
         // race against a still-running worker). No-op when inline.
@@ -1469,7 +1476,8 @@ int main(int argc, char** argv) {
         // (below) AND the render pass (further down) read front(), so the pin must span both
         // so a concurrent publish from the sim worker (Stage B) can't tear them. Released by
         // endFrame() after the cursor overlay, once every front()-reading pass is done.
-        if (gameView) gameView->beginFrame();
+        // presentFrame picks the snapshot the presentation clock shows this frame (WE S4).
+        if (gameView) gameView->presentFrame();
         SDL_Event e;
         bool targetsReset = false, windowResized = false;
         while (SDL_PollEvent(&e)) {
@@ -1648,6 +1656,15 @@ int main(int argc, char** argv) {
                 // autoOv (computed once per session above) drives the lobby: 0 =
                 // UI-driven, 1 = auto-host, etc. TAK_MPAUTO can override it.
                 gameView->mpAutoStep(autoOv, serverMapId, crusades);
+#ifndef NDEBUG
+                // TAK_QUIT_TICK=N: leave once the game reaches tick N (or the benchmark's stats
+                // screen is up), so a short real-display pacing run (TAK_PACELOG) ends by itself.
+                if (const char* qt = tak::devEnv("TAK_QUIT_TICK");
+                    qt && (gameView->netTick() >= uint32_t(std::max(1, std::atoi(qt))) ||
+                           gameView->benchmarkStatsShown())) {
+                    running = false; quitApp = true;
+                }
+#endif
                 if (gameView->consumeBriefingPause()) {
                     last=SDL_GetPerformanceCounter();
                     dt=0;   // paused reading time is not animation time

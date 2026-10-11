@@ -18,6 +18,7 @@ scn 1
 # Gap 8 is as narrow as 6 for 2x2 bodies: the footprint-origin plane holds 7 origins.
 name gapsweep
 ticks 5000
+probe lanes
 seed 7
 map flat 200 700
 type m mover 2 2500 10 1.79999

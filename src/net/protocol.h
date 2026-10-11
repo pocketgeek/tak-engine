@@ -19,7 +19,44 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 245;      // 245: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
+constexpr uint32_t kNetVersion = 248;      // 248: Legion W9 -- head-on meets narrow before contact (C1, W9-U2: aim-only, forward-only, latched per
+                                           //      Point). A formation Point of 16 or more members whose mission does not engage enemies
+                                           //      latches a meet when awareness plans a head-on entry for its group (seen) or when a
+                                           //      member's lane scan finds an oncoming body of another command's point (unseen). Its
+                                           //      members then aim six cells ahead into the right half of their own lateral extent,
+                                           //      shifted a body further right, on an increasing map of lateral position driven by
+                                           //      the group's never-falling progress, once the gap is within twice the span plus two
+                                           //      leads and not near the goal; the latch is released when the other tail is behind
+                                           //      this group's rear or after 90 ticks without contact. Hashed Point::meet and
+                                           //      Member::meetSeen (folded only when set); the derived pendingMeets / meetIds indexes
+                                           //      are checked by TAK_LEGION_VERIFY. The other W9 lanes kept no sim change; the new
+                                           //      Stats counters (sealSettles .. orderInversionsTaken) are never hashed
+                                           // 247: Legion W8 -- the passage gate (MV-10): a short passage on a member's descent chain (a strip
+                                           //      narrower than the band and than the lane grid, two to 24 chain cells long, not
+                                           //      within the lane-near distance of the destination) forms a wall-to-wall gate at its
+                                           //      narrowest cell. A member within 12 chain cells of the gate commits to the lane point
+                                           //      with the fewest same-player bodies queued before the line, aims at it while it is in
+                                           //      a straight legal line and is released once it crosses the line (hashed gateCell /
+                                           //      gateLane / gateAxis / gateSign, folded only when set), so a gap of two or three
+                                           //      bodies is taken two or three abreast instead of in single file. Also: memoised
+                                           //      nearObstacle clearance (static part per plane epoch) and a vertex probe steering does
+                                           //      not read; the new Stats counters (pivot*, lane*, vertex_*, pass_filter_holds) are
+                                           //      never hashed
+                                           // 246: Legion W7 -- crossing groups take the longer route (user decision 5): the later of two crossing
+                                           //      groups plans round a time-swept corridor covering the other stream's band from its
+                                           //      tail to 450 ticks past its head (charge 12x, not a wall: with no detour at all it
+                                           //      crosses as before), sticky until it has crossed or the tail has passed, re-placed on
+                                           //      drift at most every 90 ticks; the 10 s wait at the stream's edge does not exist.
+                                           //      Awareness detection samples each group's own descent chain every 15 ticks (450
+                                           //      ahead) against each mover's measured velocity; the class (head-on / same way /
+                                           //      crossing) is an integer dot-product test on the line to the destination and is
+                                           //      stored as hashed avoidKind (folded only when set); a shared awareness field is shared
+                                           //      only between equal charge lists; aware refreshes are served first inside the refresh
+                                           //      quota (at most 8 aware starts a tick). Stuck approach members of a completing kind
+                                           //      are soft bodies to other convoys (a clot is no longer a wall to routes behind it);
+                                           //      stuck members part a lane for others and keep their order (the leg key is hashed
+                                           //      when set); approach points clear of bodies that cannot move
+                                           // 245: Legion W5 -- attack and guard members braked by combat in reach are Engaged (hashed
                                            //      member state 6): settled and still to local steering, never yielding or parting,
                                            //      soft to other commands only (as is a member held on its ring spot); a reach kind's
                                            //      held same-target peer (30 ticks) is settled to the bodies behind it, and reach kinds

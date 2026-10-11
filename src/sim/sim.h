@@ -31,6 +31,7 @@
 #include "sim/retailmap.h"
 #include "cob/retailstate.h"
 #include "sim/simprobe.h"
+#include "sim/simpool.h"
 
 #include <cstddef>
 #include <algorithm>
@@ -1948,8 +1949,9 @@ public:
     // oversubscribe. A lone game (SP, or the client's own sim) leaves it off.
     //
     // It was named serialFlow_ and gated the flow-field prefetch; the flow fields are
-    // gone, and today the only thing it gates is the fog/visibility pass (see
-    // updateVisibility/visCompute). Never affects results -- purely scheduling.
+    // gone. Today it gates the fog/visibility pass (see updateVisibility/visCompute)
+    // and the sim's SimPool: serial runs the pool's identical fixed chunks inline.
+    // Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
     // Deterministic digest of sim state, for lockstep sync checking.
     struct WeaponAimSolution {
@@ -2790,14 +2792,15 @@ private:
     }();
     int winningTeam_ = -1;
     bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
-    std::array<std::vector<uint16_t>,3> explorationScratch_; // derived worker-local reveal masks
     // Derived, unhashed, rebuilt each exploration pass: per 8x8-cell block,
-    // the AND of navigationExplored_ (and of each worker's mask), so fully
-    // explored blocks are skipped.
+    // the AND of navigationExplored_, so fully explored blocks are skipped.
     static constexpr int kExplorationBlockShift=3;
     std::vector<uint16_t> explorationBlocks_;
-    std::array<std::vector<uint16_t>,3> explorationBlockScratch_;
     bool serialThreads_ = false;
+    // The intra-tick worker pool (0 workers when serialThreads_), created on
+    // first use; see simPool().
+    std::unique_ptr<SimPool> pool_;
+    SimPool& simPool();
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
     bool buildRestrictionsEnabled_ = false;

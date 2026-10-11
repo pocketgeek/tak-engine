@@ -1087,6 +1087,75 @@ group's field window gets the arc margin. Ranks and the aim memo are hashed;
 the work is bounded. Seen in `corner-1x48:gate.top.files_x100` (files abreast
 at the corner), `uturn:gate.top.files_x100` and the `pinwheel` world test.
 
+### Passage gate (W8, protocol 247)
+
+A group used to take a short gap in single file even where the gap was wide
+enough for two or three bodies, because every member descended the shared field
+into the same cell column. A formation member of a point part of 16 or more (the
+pinwheel's eligibility) now commits to a gate when a short passage comes within
+12 cells of its descent chain. A passage is a strip narrower than the formation's
+band (`B = 2*s0 + (K-1)*(foot+1) + foot`, `K` = clamp(3/4 of the square root of
+the point's members, 2, 10)) and than the passage lane grid, two to 24 chain
+cells long and not within the lane-near distance of the destination; the gate is
+the wall-to-wall cross-section at its narrowest cell. The member picks the gate
+point (points at footprint pitch, centred, as many as the free width holds) with
+the fewest same-player bodies queued within 6 cells before the line, aims at it
+while it is in a straight legal line, and is released once it crosses the gate
+line. A gap of two or three bodies is therefore taken two or three abreast
+(`gap6`: files 1.31 to 2.61, time to 90% 2972 to 2395 ticks). The static
+geometry is memoised per plane epoch (`nearObstacle` and its vertex probe, which
+steering does not read); soft narrowing is computed at use. The pinwheel is kept
+and its look-ahead still ends at the old narrow cut; members committed to a gate
+skip it. Hashed only when set: `gateCell`, `gateLane`, `gateAxis`, `gateSign`.
+`gate_commits` / `gate_releases`, the `pivot_*`, `lane_*` and `vertex_*` work
+counters and `pass_filter_holds` are instruments and never hashed.
+
+The cost is lane swaps after the gap: bodies arriving abreast are turned by the
+field at slightly different times, which the lane-crossing observer counts as a
+flip where single file never does. User decision W8-1 judges the GAP fixtures
+(`gap6`, `gap8`, `gap10`, `gap14`, `gap20`, `gapsweep`) per file, so
+`legion_check` compares legion crossings / files abreast with Retail's
+crossings / files abreast (`tools/legion_check.py`, `per_file_floor`); the corner
+and head-on obligations are unchanged and still raw. Corner lanes (a rank
+re-map at a turn), wake-following, a pass release and a door tie-break were
+tried at W8 and dropped by their stop rules; the lane-crossing exceptions on the
+corner and head-on fixtures, `attackring-wall-64`, `ringcross` and the jagged
+arrivals moved to W9 (user decision W8-2; `docs/legion-exit-tables.md`, "W8 exit").
+
+### Head-on meets (W9 C1, protocol 248)
+
+Two large columns walking at each other used to meet face to face and shoulder
+through one another (`densehead`: 447 lane swaps in the middle gate against
+Retail's 208, the groups never completing). A formation Point of 16 or more
+members whose mission does not engage enemies (fight, attack, guard and patrol
+never latch) now latches a meet (`Point::meet`) in two cases: group awareness
+plans a head-on entry for its group (seen), or a member's lane scan
+(`passAhead`) finds an oncoming body of another command's point and stamps it
+(`Member::meetSeen`, unseen; the stamps are combined per point by a minimum, so
+update order does not matter). `meetScan` runs serially once a tick after
+`awareScan`, over the cued and latched points only. A latched point's members
+narrow into the right half of their own lateral extent, shifted one body
+further right, and aim six cells ahead at it (`meetAim`), aim-only: no field
+charge, no re-plan, no stored lanes (W9-U2). The target is an increasing map of
+each member's current lateral position driven by the group's progress, which
+never falls, so members cannot cross each other; they move at most one cell
+across per two along, only on a statically legal line that descends the field,
+never within the pivot distance of the goal, and the target is cut before a
+wall. Narrowing waits until the gap between the groups is within twice the
+span plus two leads. Both groups keep right. The latch is released when the
+other group's tail is behind this group's rear, or after 90 ticks without
+contact before the groups meet. Hashed only when set (`Point::meet`,
+`Member::meetSeen`); the derived `pendingMeets` / `meetIds` indexes are checked
+by `TAK_LEGION_VERIFY`; `meet_latches` is a never-hashed counter. Measured:
+`densehead` lane swaps 447 to 39, arrivals 69 / 70 to 197 / 198 of 200,
+`aware-unseen` click t90 2162 / 2207 to 1757 / 1792 ticks (Retail 1877 / 1929).
+The 96-member awareness horizon (cliff edge) was pre-approved as round 2 and
+was not needed. What W9 did not deliver: the step-0 traces refuted or weakened
+the premises of the other lanes (A1-A5 slot re-choice and settling, B1-B4 and
+B6 gate, ring and corner shaping); each was run for its two rounds, missed its
+acceptance and was reverted (`docs/legion-exit-tables.md`, "W9 lane A" and
+"W9 exit").
+
 ### Clustered static repair (4a99092a)
 
 `refreshPlane` repairs component labels in a window round the bounding box of
@@ -1132,20 +1201,46 @@ counts the installs.
 Opposing groups are aware of each other (when they can see each other) and path
 round each other as whole groups, unless they are attacking the other group.
 Every 30 ticks each moving formation of 8 or more (members of one command sent
-to one point) is a mover: its centroid, spread, and the corridor it sweeps over
-the next three scans. A Legion group whose way ahead (48 descent cells from its
-centroid) meets a mover plans round it as a whole: its next field charges the
-corridor like a soft obstacle, and its members' direct lines refuse to cross it.
-A mover stays in the plan until it has been off the way for two scans.
-Same-player and allied movers always count; an enemy mover only within
+to one point) is a mover: its centroid, spread, and measured velocity. A Legion
+group whose way ahead meets a mover plans round it as a whole: its next field
+charges the corridor like a soft obstacle, and its members' direct lines refuse
+to cross it. A mover stays in the plan until it has been off the way for two
+scans. Same-player and allied movers always count; an enemy mover only within
 `World::sightDistance` of some member, never for a group whose mission engages
 enemies (fight, attack, guard, patrol). One selection sent as several groups
 (one player, within 90 ticks, to points within 32 cells) never plans round
-itself, and a mover going the same way (within 60 degrees) is followed, not
-avoided. Head on, both groups keep right; on crossing ways only the group with
-the larger command key gives way. Measured by `aware-headon:pair.contacts.permille_x100`
-and the `aware-*` fixtures (`aware-unseen` is the awareness-off control: the
-enemy is out of sight).
+itself, and a mover going the same way is followed, not avoided.
+
+**Detection (W7, protocol 246).** A conflict is found by sampling, not by a
+distance test. Every 15 ticks, up to 450 ticks ahead, the group's own descent
+chain (walked at its slowest member's speed) is compared with each mover at its
+measured velocity; a conflict is the group's disc meeting the mover's box, and
+one under 45 ticks away is too late to plan round. The class of the meeting is an
+integer dot-product test on each group's line to its destination (never its
+measured heading, which reads a group already routing behind a stream as head
+on): head on over 135 degrees, same way under 45, crossing in between. It is
+stored as hashed `avoidKind`, folded into the checksum only when set. A shared
+awareness field is shared only between groups with equal charge lists, and
+aware refreshes are served first inside `kRefreshQuota`, at most 8 starts a tick.
+
+**Crossing groups take the longer route (W7, user decision 5).** On a crossing
+way the later group never waits for the other stream to pass. It plans round a
+time-swept corridor that covers the stream's band from its tail to 450 ticks past
+its head, but only where the stream will be when the group gets there (a lead of
+twice the group's radius), so the cheapest way is just behind the tail. The
+corridor charges 12x inside and is not a wall: if no detour exists at all the
+group crosses as it did before, and no detour length leads to a wait. The entry
+is sticky until the group has crossed or the stream's tail has passed, and the
+corridor is re-placed when the stream drifts, at most every 90 ticks. The old
+10-second wait at the stream's edge (give-way hold) does not exist, so no
+`giveWay` / `waitSince` state exists and the `giveway_*` counters stay 0. Head on,
+the groups still keep right. Measured by `aware-cross-behind` and `crosslong`
+(`behind.*.extra_cells`, `detour_permille`, `wait_member_ticks`; the wait keys
+`wait_ticks`, `wait_run_max`, `waits` read 0), `aware-cross`, `awarebig-cross` and
+`crossthree`.
+
+Measured by `aware-headon:pair.contacts.permille_x100` and the `aware-*` fixtures
+(`aware-unseen` is the awareness-off control: the enemy is out of sight).
 
 ### Convoys: one order per click (W3 A1)
 
@@ -1273,7 +1368,7 @@ its refresh starts the tick it becomes active (`work.demand_resumes`), and each
 skipped visit counts `work.refresh_suppressed`. A refresh already under way keeps
 building (pausing it too cost crowdtrap arrivals), `kRefreshQuota` and swap-in at
 done are unchanged. Blocked is Retail's re-request (`kBlockedRetry` = 120 ticks):
-`stalledFor >= 120`, not a give-way holder (always false until W7), and either no
+`stalledFor >= 120` (there is no give-way hold, W7 decision 5), and either no
 finished field reaches it, or it stands outside its destination area with no legal
 step down the field clear of soft bodies (a body held only by its own command or
 by movers is not blocked: a refresh would give it the same way); each turn to
@@ -1408,7 +1503,7 @@ went wrong.
 | `legion_cost` | work per member-tick W(4N)/W(N) and slot-assignment work per slot | wall time |
 | situations (`tools/scenarios/situations/`, `scn_truth`) | a moment cut out of one of the user's recordings: exact bodies, the orders in flight, the next 600 ticks of commands, and the recording's own positions 300 ticks in | what is not in the snapshot: economy, scripts, AI, production, units in transports; the first 100 ticks follow the recording (two of six moments clear 90% of bodies within 2 cells) but by 300 none does (best 85%), because the Legion group and mission state of bodies already in flight is not in the file; so they gate nothing (README in that directory) |
 | replay checkpoints (format 12) | the state hash and `posDigest` at every checkpoint; the verifier reports "state diverged at tick T1; positions/hp/orders match until tick T2" (an older recording gets its digests from `TAK_POSTRAIL` run on the recording build) | a replay plays back exactly only on the build that recorded it |
-| `TAK_PACELOG`, `tools/pace_check.sh` | ticks published per rendered frame, sim inbox depth, the 512-tick fast-forward, bursts | the display path of a headless run (see `TAK_FRAME_MS`); report-only |
+| `TAK_PACELOG`, `tools/pace_check.sh` | ticks published per rendered frame, sim inbox depth, the 512-tick fast-forward, bursts; the presentation clock (WE S4): displayed time per frame, its CV and rate CV, freeze frames, snaps, the lag target, at a fake vsync (`TAK_VSYNC_HZ`, `--vsync`) | the real renderer and GPU: a headless run draws nothing (see `TAK_FRAME_MS` / `TAK_VSYNC_HZ`); `TAK_QUIT_TICK` ends an interactive run for a real-display log; report-only |
 | `tools/legion_timing.sh` | per-tick mean and p99 on an idle pinned core, A/B interleaved, N of 4 or more | never a gate: wall time is reported, not asserted |
 
 Rules that came out of using them:
@@ -1457,6 +1552,26 @@ Rules that came out of using them:
   right-click sends one shared point, so it uses formation slots instead and
   is not affected. Measured by `ctest:legion_acceptance_crowdheld_legion`
   (the 61/64 ratchet) and `ctest:legion_crowdhold`.
+* **Limits accepted at the close of the 2026-10 plan (user decision W9-1).**
+  W9 cleared the head-on jam; eleven harder gates resisted every local fix
+  (each attempt broke more scenarios than it fixed, so the stop rule reverted
+  it) and are accepted as known limitations, re-openable later. Lane order:
+  corners still swap 3-4 bodies across the top gate (Retail 0-2), a long
+  strait 22 (Retail 8), and wider gaps 2-5 swaps per file (Retail 0) because
+  Legion takes gaps several abreast. Walls: an attack ring against a wall and
+  the bodies queued in doorplug-112 touch the wall about twice as often as
+  Retail. Tails: a Move group crossing its own firing ring arrives about 11%
+  later than Retail; one doorplug-124 body and one motion-cross body never
+  finish from some start offsets; a lifted flyer detours 5 cells against 2.
+  The attempts are parked on branches task-w9-a-A1..A4 and
+  task-w9-b-b1..b6-reverted with their numbers; an unplanned probe that removes
+  the corner hug behind a turn guard brought both corner fixtures within
+  Retail and is the first lead to try. Measured by
+  `corner-1x448:gate.top.crossings`, `corner-8x56:gate.top.crossings`,
+  `strait-2x150:gate.strait.crossings`, `attackring-wall-64:wall_touch_permille`,
+  `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
+  `doorplug-124:g.A.done`, `motion-cross:click.u01.done` and
+  `ctest:legion_liftflyers`.
 * **Approaching an unreachable goal counts as trapped movement.** The
   acceptance and matrix observers classify a unit as Trapped whenever its
   origin cannot statically reach its goal disc, and any move or turn more

@@ -93,6 +93,8 @@ int crossingsCase(int mutation,bool quiet) {
     const int before=failures;
     expect("crossings",k,"gate.strip.pairs",3,quiet);
     expect("crossings",k,"gate.strip.crossings",1,quiet);
+    expect("crossings",k,"gate.strip.cross_none",1,quiet);   // W9 step 0: no navigator in this scene: every flip is unattributed
+    expect("crossings",k,"gate.strip.cross_gate",0,quiet);
     return failures-before;
 }
 
@@ -232,13 +234,15 @@ void pairListCase() {
 void wallCase() {
     Scene s;const auto t=mover(2);
     const int a=s.spawn(t,28*16+16,30*16+16),b=s.spawn(t,27*16+16,30*16+16),c=s.spawn(t,60*16+16,30*16+16);
+    const int d=s.spawn(t,28*16+16,10*16+16);   // W9 step 0: a body that stands still against the wall
     std::vector<uint8_t> blocked(size_t(s.W)*s.H,0);
     for(int z=0;z<s.H;++z)blocked[size_t(z)*s.W+30]=1;
-    for(int id:{a,b,c})s.order(id,id==c?60*16+16:28*16,90*16);
-    obs::Config cfg;cfg.groups={{"g",{a,b,c},0,0}};
+    for(int id:{a,b,c,d})s.order(id,id==c?60*16+16:28*16,90*16);
+    obs::Config cfg;cfg.groups={{"g",{a,b,c,d},0,0}};
     obs::Observer o(cfg);o.setStaticBlocked(blocked,s.W,s.H);
     for(int tick=0;tick<100;++tick) {
         s.at(a,28*16+16,30*16+16+tick);s.at(b,27*16+16,30*16+16+tick);s.at(c,60*16+16,30*16+16+tick);
+        s.at(d,28*16+16,10*16+16);
         o.sample(s.world,tick);
     }
     const auto k=o.report();
@@ -248,6 +252,14 @@ void wallCase() {
     expect("walls",k,"wall_touch_near_permille",500);
     expect("walls",k,"clearance_mean_x100",50);
     expect("walls",k,"clearance_p10_x100",0);
+    // W9 step 0 splits: the moving touches are all on a flat wall column; d stands still against it
+    expect("walls",k,"wall_touch_flat_permille",333);
+    expect("walls",k,"wall_touch_gate_permille",0);
+    expect("walls",k,"wall_touch_ring_permille",0);
+    expect("walls",k,"wall_touch_corner_permille",0);
+    expect("walls",k,"wall_touch_near_flat_permille",500);
+    expect("walls",k,"wall_still_samples",9);
+    expect("walls",k,"wall_touch_still_permille",1000);
 }
 
 // ---- motion: spins, reversals, sideways/backward, statue, walk in place ---

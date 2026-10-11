@@ -275,6 +275,72 @@ contention costs (up to 2.5x).
 | legion | mixedfootprints | 0.995 | 1.051 | 1.009 | 1.076 | 1.171 | 1.181 | 2.501 | 2.573 | same |
 
 
+## E3.2: presentation clock (S4), 2026-10-10
+
+The render no longer shows the newest snapshot with a wall-clock interpolation alpha. It keeps a display
+time Td (ticks) that advances at the game speed every frame, servoed to stay lagTarget ticks behind the
+newest snapshot, and shows ring slot ceil(Td) interpolated by Td - (ceil(Td) - 1). Client only: no sim
+or wire change.
+
+- **Ring.** `frameBuf_` is a ring of 12 Frames (the design named 8).
+  - The writer fills the oldest slot that is neither published, pinned by the render this frame, nor
+    the one shown last frame.
+  - 8 was measured too small on the Mac's real 60 Hz display. A frame that misses a vsync (27 ms) takes
+    5 ticks at 8x, on top of a lag of 4, so the tick the next frame wanted was overwritten in 50 of 551
+    frames. With 12: 5 of 432, all at the start catch-up.
+- **lagTarget.** The p98 of the last 128 publish gaps plus 0.25, clamped to 1..4 ticks:
+  - 1.25 at 1x;
+  - 2.3-2.7 at 8x at 144-240 Hz;
+  - 4 at 60 Hz.
+- **Base rate.** The game speed, or the measured publish rate (0.25 s EMA) when the game cannot hold
+  that speed. So an overloaded game slows smoothly instead of freezing between snapshots.
+  - The design's 0.85-1.25 servo band alone left 64-99% freeze frames on the overloaded bench.
+- **Corrected servo sign.** The servo is `1 + (lag - lagTarget) / (rate * 0.25 s)`, clamped to 0.85..1.25.
+  WE-client.md had the sign the other way round.
+- **Display-time queues.** `cosmeticStep` runs on ΔTd. Impacts (`hitQueue_`) are now tick-stamped and
+  released by the displayed tick, like the other queues.
+- **Start gate.** Td holds the first tick until 15 ticks at 8x are published (scaled to the speed, at
+  least 3).
+- **TAK_PRESENT=0** (debug) restores the old presentation for A/B runs.
+
+Measured with `tools/pace_check.sh --vsync HZ` (TAK_VSYNC_HZ, a headless deadline loop) at 8x. Setup:
+build-o2, `TAK_SIM_THREAD=1`, on a busy machine (cores 22-23 for Inner Circle, 20-23 for the bench).
+
+- **cv** is the coefficient of variation of the displayed game time per frame (the design's metric).
+  It also carries the harness's own frame-time jitter: nominal CV is about 12% at 240 Hz here.
+- **rate_cv** is the CV of displayed time over wall time (dtd / nominal), which is what the clock
+  controls.
+- **freeze** is Td held at the newest snapshot.
+
+| run | Hz | cv | rate_cv | freeze | over 1.3x | snaps | hash |
+|---|---|---|---|---|---|---|---|
+| Inner Circle Legion --mpai 300 s, before | 240 / 144 / 60 | 39.4 / 29.7 / 12.8% | 428 / 40 / 16% | 49.3 / 93.6 / 100% | 2340 / 1078 / 69 | - | b2261dc31dc84cdf |
+| Inner Circle Legion --mpai 300 s, S4 | 240 / 144 / 60 | 11.0 / 7.6 / 3.7% | 3.0 / 3.3 / 2.9% | 0.09 / 0.12 / 0.09% | 0 / 0 / 0 | 0 / 0 / 0 | b2261dc31dc84cdf |
+| Ulasem 8-AI bench (VERY HIGH) 120 s, TAK_PRESENT=0 | 240 / 144 / 60 | 218 / 184 / 99% | 1374 / 186 / 98% | 88.2 / 89.2 / 88.0% | 25 / 6 / 0 | - | 45c5f6b47c6a0506 |
+| Ulasem 8-AI bench (VERY HIGH) 120 s, S4 | 240 / 144 / 60 | 59 / 46 / 71% | 52 / 41 / 73% | 0.22 / 0.42 / 0.50% | 0 / 0 / 0 | 0 / 0 / 0 | 45c5f6b47c6a0506 |
+
+The bench runs heavily overloaded on this box. The client's World::tick takes 34-37 ms against a
+4.17 ms budget, with wall/CPU at 2.0-2.2 (preempted). Throughput falls about tenfold as the armies grow,
+so the whole-run CV is the slowdown itself.
+
+Over a one-second rolling window, the bench's local rate CV is 13.1 / 12.9 / 14.4% with S4. With
+TAK_PRESENT=0 it is 339 / 196 / 99%.
+
+**Real displays** (`TAK_QUIT_TICK=1500`, Ulasem benchmark watch at 8x against an explicit local
+takserver; `TAK_PRESENT=1` vs `0` on the same binary):
+
+| host | run | game rate | frame ms p50 / p99 | rate_cv on / off | freeze on / off |
+|---|---|---|---|---|---|
+| Windows, RTX 5070, D3D11 (scheduled-task desktop session; vsync not engaged) | LOW | 2.3x (server-paced; client world 0.9 ms/tick) | 1 / 17 | 6.1% / 162% | 0.02% / 69.4% |
+| Windows, RTX 5070, D3D11 | VERY HIGH | 2.2x | 6 / 23 | 6.3% / 101% | 0.07% / 66.7% |
+| MacBook Neo, Metal | LOW | 5.6x | 17 / 30 (60 Hz with missed vsyncs) | 5.2% / 117% | 0.69% / 74.1% (432 frames) |
+
+Hashes are unchanged in every run. Both --mpai Inner Circle 300 s games were inline and seed 1, base
+8fcc03d6 vs S4: Legion b2261dc31dc84cdf and Retail b240750e5765c02b on both, with no DESYNCED or
+suspect lines.
+
+**Not yet done:** the manual 240 Hz session on the user's display, at 1x and 8x (WE synthesis section 3).
+
 ## Reproducing
 
 ```sh
@@ -285,4 +351,8 @@ TAK_SIMSTATS=1 TAK_PHASE=1 TAK_PHASE_MS=0 TAK_REPLAY_VERIFY=1 TAK_HEADLESS=1 SDL
 TAK_PMU=1 TAK_PHASE=1 TAK_PHASE_MS=0 ... taskset -c 0-1 build-o2/takclient replay R-2h.takrep --data <install>
 # presentation / worker columns
 tools/pace_check.sh build-o2 --cpus 4-5     # PACE + PACEWORK lines, pace.txt per frame
+tools/pace_check.sh build-o2 --vsync 240 --seconds 300            # + PRESENT (E3.2) at a 240 Hz fake vsync
+tools/pace_check.sh build-o2 --vsync 60 --bench 4 --no-formation  # the 8-AI Ulasem bench instead
+# a real display (debug build): TAK_MPAUTO=1 TAK_BENCH=1 TAK_SPEED=80 TAK_QUIT_TICK=1500 TAK_PACELOG=pace.txt \
+#   takclient game "Ulasem Arena" --data <install> --server 127.0.0.1 --serverport <port of a local takserver>
 ```

@@ -53,6 +53,22 @@ t90 / done are report-only (no entry, no band, no Retail floor); the click's key
 `apply_ratchet` keeps the offset spread a cleared Retail-floor exception had masked: it is
 converted to a spread exception (ruling (h)).
 
+Per-file lane crossings (user decision W8-1, 2026-10-10): for the GAP fixtures (`gap*`: gap6 .. gap20,
+gapsweep) the Retail floor of `gate.X.crossings` compares legion crossings / files abreast with Retail's
+crossings / files abreast (`gate.X.files_x100`, a mean under 1 read as 1), because the passage gate takes
+a gap two or three abreast where Retail single-files. Corner and head-on fixtures keep the raw count.
+
+W9-U1 (user, 2026-10-10): where Retail itself is 0 or 1, x1.1 of it is 0 or 1.1, below Retail's own spread
+(0..10 on corner crossings, ruling (a)), so three keys are judged on the eleven-offset median with a
+one-event tolerance, `legion <= max(retail x1.1, retail + 1)`: corner-1x448 `gate.top.crossings`,
+tail-corner380 `wall_touch_near_permille`, and the GAP fixtures' per-file crossing key
+(`gate.X.crossings_per_file_x100`, below). Every other Retail-floor key keeps legion <= retail x1.1.
+
+The gap per-file key (W9 step 0, W8-1): for a GAP fixture `regate` derives `gate.X.crossings_per_file_x100` =
+crossings x 10000 / max(100, files_x100) at EACH offset and takes the median of the eleven, the number the
+W8-1 rule compares (a ratio of the per-offset medians used to stand in for it); the floor reads it, an INFO
+line prints it for every GAP fixture, and it is a plain key for the exit table.
+
 Precedence (PLAN 3.0): eq/safety, then the Retail floor, then a declared
 tolerance or accepted regression, then the bands. A tolerance never licenses a
 Retail-floor failure; one with a `step` licenses its loss only when `--step`
@@ -90,7 +106,7 @@ BAD_CLUSTERS = ("", "UNASSIGNED", "TODO", "?")
 CORE_OFFSETS = (0, 1, -1, 2, -2)
 WIDE_OFFSETS = (0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5)
 WIDE_MIN = 9
-WIDE_KEYS = ("gate.*.crossings", "wall_touch_permille", "wall_touch_near_permille")
+WIDE_KEYS = ("gate.*.crossings", "wall_touch_permille", "wall_touch_near_permille", "gate.*.crossings_per_file_x100")
 WIDE_T90_MAX_N = 9
 # Ruling (b): contact_settled is per arrived unit (W3-1), so its Retail floor is only read where
 # at least this many units arrive in both modes (the motion-* scenarios deliver 1-3).
@@ -126,8 +142,11 @@ def floor_dir(key):
         return "higher"
     if key.startswith("reach.") and (".ever_" in key or ".damage_" in key):
         return "higher"          # W5 step 0: the AR-06 rows (the army that gets a shot, the damage dealt)
+    # wall_touch_permille / wall_touch_near_permille only: the W9 step 0 splits (wall_touch_{gate,ring,corner,flat}_permille,
+    # the _near_ variants, wall_touch_still_permille) are report-only, like gate.X.cross_<site>.
     if (key.endswith(".t90") or key in ("spins", "parked_no_progress") or key.endswith(".crossings")
-            or key.startswith("wall_touch") or (key.startswith("contact_") and key.endswith("_permille"))):
+            or key in ("wall_touch_permille", "wall_touch_near_permille")
+            or (key.startswith("contact_") and key.endswith("_permille"))):
         return "lower"
     return None
 
@@ -186,7 +205,27 @@ def regate(rec):
             varying[k] = vals
     rec["all_keys"], rec["all_varying"] = rec["keys"], rec.get("varying", {})
     rec["keys"], rec["varying"] = keys, varying
+    add_per_file_keys(rec, wide)
     return rec
+
+
+def add_per_file_keys(rec, offs):
+    """W9 step 0 (user decision W8-1): for a GAP fixture, `gate.X.crossings_per_file_x100` = crossings x 10000 /
+    max(100, files_x100) at each offset (a mean under one file reads as one), medianed over the eleven."""
+    if not any(fnmatch.fnmatch(rec.get("scenario", ""), g) for g in GAP_SCENARIOS):
+        return
+    src = dict(rec, keys=rec["all_keys"], varying=rec["all_varying"])
+    for k in sorted(rec["all_keys"]):
+        m = re.fullmatch(r"gate\.(.+)\.crossings", k)
+        fk = "gate.%s.files_x100" % m.group(1) if m else None
+        if not m or fk not in rec["all_keys"]:
+            continue
+        cb, fb = per_offset(src, k), per_offset(src, fk)
+        vals = [(cb[o] * 10000 + max(100, fb[o]) // 2) // max(100, fb[o]) for o in offs]
+        pk = "gate.%s.crossings_per_file_x100" % m.group(1)
+        rec["keys"][pk] = median_of(pk, vals)
+        if any(v != vals[0] for v in vals):
+            rec["varying"][pk] = vals
 
 
 def arrived_median(rec):
@@ -483,9 +522,21 @@ def spread_check(doc, rpt, scn, mode, key, e, rec, exc):
              "it on median-of-5" % (fmt(lo), fmt(hi), band))
 
 
-def floor_passes(lower, legion, retail):
-    """legion <= retail x1.1 (lower is better) or legion x1.1 >= retail."""
+def floor_passes(lower, legion, retail, tolerance=False):
+    """legion <= retail x1.1 (lower is better) or legion x1.1 >= retail. `tolerance` (W9-U1, small counts where
+    Retail is 0 or 1): legion <= max(retail x1.1, retail + 1)."""
+    if lower and tolerance and retail != INF and legion <= retail + 1 + 1e-9:
+        return True
     return not worse(True, legion, retail, FLOOR) if lower else legion * FLOOR + 1e-9 >= retail
+
+
+# W9-U1 (user, 2026-10-10): the keys judged with the one-event tolerance, as (scenario glob, key glob).
+U1_KEYS = (("corner-1x448", "gate.top.crossings"), ("tail-corner380", "wall_touch_near_permille"),
+           ("gap*", "gate.*.crossings"))
+
+
+def u1_applies(scn, key):
+    return any(fnmatch.fnmatch(scn, s) and fnmatch.fnmatch(key, k) for s, k in U1_KEYS)
 
 
 def need_median5(rpt, path, exc, rec):
@@ -523,6 +574,43 @@ def need_wide(rpt, path, key, rec):
                                                                 rec.get("offsets", [])))
 
 
+# W8-1 (user, 2026-10-10): the passage gate takes a gap two or three abreast (throughput), which a
+# single-file Retail never does, so the lane swaps after the gap are judged PER FILE for the GAP
+# fixtures: legion crossings / files against Retail's crossings / files, instead of the raw counts.
+# Corner and head-on lane-crossing floors (W3-2 / W3-3) are not GAP fixtures and stay raw.
+GAP_SCENARIOS = ("gap*",)
+
+
+def per_file_floor(scn, key, lrec, rrec):
+    """(legion per file, retail per file) for a `gate.X.crossings` key of a GAP fixture, else None.
+    The files key is `gate.X.files_x100` (the observer's mean files abreast over the gate's samples,
+    times 100); a mean under 1 is read as 1 (nobody abreast)."""
+    if not any(fnmatch.fnmatch(scn, g) for g in GAP_SCENARIOS):
+        return None
+    m = re.fullmatch(r"gate\.(.+)\.crossings", key)
+    if not m:
+        return None
+    fk = "gate.%s.files_x100" % m.group(1)
+    lf, rf = lrec.get("keys", {}).get(fk), rrec.get("keys", {}).get(fk)
+    lc_, rc_ = lrec.get("keys", {}).get(key), rrec.get("keys", {}).get(key)
+    if any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in (lf, rf, lc_, rc_)):
+        return None
+    pk = "gate.%s.crossings_per_file_x100" % m.group(1)
+    lp, rp = lrec.get("keys", {}).get(pk), rrec.get("keys", {}).get(pk)
+    if isinstance(lp, int) and isinstance(rp, int) and not isinstance(lp, bool) and not isinstance(rp, bool):
+        return (lp / 100.0, rp / 100.0)      # the median of the per-offset ratios (W9 step 0)
+    return (lc_ / max(1.0, lf / 100.0), rc_ / max(1.0, rf / 100.0))
+
+
+def floor_pair(scn, key, lrec, rrec):
+    """(legion, retail, per_file) as the Retail floor reads them: normalised keys, or the W8-1 per-file
+    values for a GAP fixture's lane crossings."""
+    pf = per_file_floor(scn, key, lrec, rrec)
+    if pf is not None:
+        return pf[0], pf[1], True
+    return norm(key, lrec["keys"][key]), norm(key, rrec["keys"][key]), False
+
+
 def floor_check(doc, rpt, recs):
     for (scn, mode), lrec in sorted(recs.items()):
         if mode != "legion" or (scn, "retail") not in recs:
@@ -536,8 +624,17 @@ def floor_check(doc, rpt, recs):
                 rpt.report_only += 1
                 continue
             lower = fd == "lower"
-            lo, re_ = norm(key, lv), norm(key, rrec["keys"][key])
-            passes = floor_passes(lower, lo, re_)
+            lo, re_, per_file = floor_pair(scn, key, lrec, rrec)
+            tol = u1_applies(scn, key)
+            strict = floor_passes(lower, lo, re_)
+            passes = floor_passes(lower, lo, re_, tol)
+            pfx = " per file (W8-1)" if per_file else ""
+            if per_file:
+                rpt.info.append("gap per file (W8-1) %s/legion/%s: legion %s vs retail %s%s" % (
+                    scn, key, fmt(lo), fmt(re_), "" if strict else " (above x1.1" + (", inside U1)" if passes else ")")))
+            if passes and not strict:
+                rpt.info.append("W9-U1 tolerance %s/legion/%s%s: legion %s <= max(retail x1.1, retail + 1) = %s" % (
+                    scn, key, pfx, fmt(lo), fmt(max(re_ * FLOOR, re_ + 1))))
             exc = floor_exception_for(doc, scn, key)
             path = "%s/legion/%s" % (scn, key)
             need_wide(rpt, path, key, lrec)
@@ -545,14 +642,14 @@ def floor_check(doc, rpt, recs):
             if exc:
                 rpt.exception_count += 1
                 if passes:
-                    rpt.cleared.append("%s (legion %s vs retail %s, %s)" % (path, fmt(lo), fmt(re_), exc["cluster"]))
+                    rpt.cleared.append("%s (legion %s vs retail %s%s, %s)" % (path, fmt(lo), fmt(re_), pfx, exc["cluster"]))
                 else:
-                    rpt.info.append("floor exception %s legion %s vs retail %s (%s)" % (path, fmt(lo), fmt(re_),
-                                                                                       exc["cluster"]))
+                    rpt.info.append("floor exception %s legion %s vs retail %s%s (%s)" % (path, fmt(lo), fmt(re_), pfx,
+                                                                                         exc["cluster"]))
                 need_median5(rpt, path, exc, lrec)
             elif not passes:
-                rpt.fail(path, "Retail floor: legion %s vs retail %s (needs %s); a passing key may not start "
-                               "failing the floor" % (fmt(lo), fmt(re_), "legion <= retail x%.1f" % FLOOR if lower
+                rpt.fail(path, "Retail floor%s: legion %s vs retail %s (needs %s); a passing key may not start "
+                               "failing the floor" % (pfx, fmt(lo), fmt(re_), "legion <= retail x%.1f" % FLOOR if lower
                                                       else "legion x%.1f >= retail" % FLOOR))
 
 
@@ -728,7 +825,7 @@ def write_base(doc, recs, reason, since, patterns, hashes, clusters):
                     continue
                 if is_report_only(k, rec) or is_report_only(k, recs[(scn, "retail")]):
                     continue
-                lo, rr = norm(k, v), norm(k, rv)
+                lo, rr, _pf = floor_pair(scn, k, rec, recs[(scn, "retail")])
                 ok = floor_passes(fd == "lower", lo, rr)
                 if ok or floor_exception_for(doc, scn, k):
                     continue
