@@ -8474,11 +8474,12 @@ void World::setRepeat(int builderId, const UnitType* type) {
 // buildcost/buildtime rate (KINGDOMS.icd 0x51d3e0 -> 0x51f7b0 -> 0x429d90). Dividing
 // by the full count -- damaged or not -- is what stops it being absurd in a crowd.
 void World::tickHealAuras() {
-    TAK_PASS();
-    for (size_t i = 0; i < units_.size(); ++i) {
-        Unit& s = units_[i];
-        if (!s.alive() || s.embarked() || !s.type || s.type->auras.empty() ||
-            s.underConstruction || !s.active || s.incapacitated())
+    // The emitters alone, in unit order (UnitClassLists: every unit whose type
+    // has auras). Nothing here spawns.
+    syncUnitLists();
+    for (const int id : unitLists_.emitters) {
+        Unit& s = *unit(id);
+        if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
             continue;
         for (const Aura& a : s.type->auras) {
             if (a.kind != Aura::Kind::Joy || a.radius <= 0 || a.amount <= 0) continue;
@@ -8552,11 +8553,11 @@ void World::tickAuras(float dt) {
         u.atkBuff += (1.0f - u.atkBuff) * relax;
         u.armBuff += (1.0f - u.armBuff) * relax;
     }
-    TAK_PASS();
-    for (size_t i = 0; i < units_.size(); ++i) {
-        Unit& s = units_[i];
-        if (!s.alive() || s.embarked() || !s.type || s.type->auras.empty() ||
-            s.underConstruction || !s.active || s.incapacitated())
+    // The emitters alone, in unit order (UnitClassLists); see tickHealAuras.
+    syncUnitLists();
+    for (const int id : unitLists_.emitters) {
+        Unit& s = *unit(id);
+        if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
             continue;
         for (const Aura& a : s.type->auras) {
             if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;  // morale: not modelled
