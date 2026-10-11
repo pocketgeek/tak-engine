@@ -1,5 +1,6 @@
 #include "client/settings.h"
 
+#include "client/dev.h"
 #include "client/renderdriver.h"
 
 #include <SDL.h>
@@ -23,6 +24,7 @@ T clampv(T v, T lo, T hi) { return std::max(lo, std::min(hi, v)); }
 }  // namespace
 
 std::string settingsPath() {
+    if (const char* o = devEnv("TAK_SETTINGS_FILE")) if (*o) return o;   // debug builds: test profile
     char* base = SDL_GetPrefPath("TAKengine", "TAKingdoms");
     if (!base) return {};
     std::string p = std::string(base) + "settings.ini";
@@ -75,6 +77,8 @@ Settings loadSettings() {
         else if (key == "vsync")           s.vsync = asBool();
         else if (key == "maxFps")          s.maxFps = asInt(30, 480);
         else if (key == "renderer")        s.renderer = renderdriver::normalize(val);
+        else if (key == "ignoreDpiScaling") s.ignoreDpiScaling = asBool();
+        else if (key == "dpiMigrated")     s.dpiMigrated = asBool();
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.75f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
         else if (key == "bilinearFilter")  { s.bilinear = asBool(); bilinearSeen = true; }
@@ -167,6 +171,8 @@ bool saveSettings(const Settings& s) {
     o << "vsync = " << (s.vsync ? 1 : 0) << "\n";
     o << "maxFps = " << s.maxFps << "\n";
     o << "renderer = " << (s.renderer.empty() ? "auto" : s.renderer) << "\n";
+    o << "ignoreDpiScaling = " << (s.ignoreDpiScaling ? 1 : 0) << "\n";
+    o << "dpiMigrated = " << (s.dpiMigrated ? 1 : 0) << "\n";
     o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
     o << "bilinearFilter = " << (s.bilinear ? 1 : 0) << "\n";

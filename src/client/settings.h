@@ -6,6 +6,7 @@
 // GameOptions/MatchConfig and never read these preferences during a match.
 // Never include this header from src/sim, src/net, or src/server.
 
+#include <algorithm>
 #include "sim/pathmode.h"
 #include <map>
 #include <set>
@@ -25,6 +26,11 @@ struct Settings {
     std::string renderer;          // SDL render driver id ("opengl", "software", ...);
                                    // "" = AUTO, SDL's own choice. Applied at startup
                                    // only (restart required); see client/renderdriver.h.
+    // Windows only (ignored elsewhere): opt the process out of Windows display scaling so
+    // the window is real pixels instead of a bitmap-stretched (blurry) low-res surface.
+    // Applied at startup only (restart required); see applyDpiMigration below.
+    bool  ignoreDpiScaling = true;
+    bool  dpiMigrated = false;     // one-time: uiScale/cursorScale already adapted to the OS scale
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.75..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
     // Retail's BiLinearFilter video option (default off): bilinear sampling of unit
@@ -149,6 +155,7 @@ struct Settings {
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
             && a.audioDevice == b.audioDevice && a.renderer == b.renderer
+            && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
     }
@@ -189,7 +196,26 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.dataManifest = cur.dataManifest;
     d.campaignCompleted = cur.campaignCompleted;
     d.knownServers = cur.knownServers;
+    d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
     return d;
+}
+
+// What the running process started with (set once in main before SDL_Init), so the
+// Options row can say RESTART REQUIRED when the saved choice differs.
+inline bool& dpiIgnoredAtStartup() { static bool v = false; return v; }
+
+// First run with DPI-unaware scaling switched off (Windows): the window used to be
+// stretched by the OS scale, so keep the HUD/cursor the same apparent size by folding the
+// scale into uiScale/cursorScale (clamped to their ranges). Runs once (dpiMigrated);
+// returns true if the settings changed and should be saved. osScale = display DPI / 96.
+inline bool applyDpiMigration(Settings& s, float osScale) {
+    if (s.dpiMigrated) return false;
+    s.dpiMigrated = true;
+    if (s.ignoreDpiScaling && osScale > 1.01f) {
+        s.uiScale = std::clamp(s.uiScale * osScale, 0.75f, 2.0f);
+        s.cursorScale = std::clamp(int(float(s.cursorScale) * osScale + 0.5f), 1, 8);
+    }
+    return true;
 }
 
 }  // namespace tak

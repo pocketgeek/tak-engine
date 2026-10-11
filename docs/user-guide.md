@@ -948,6 +948,7 @@ World sounds are full volume on screen and fade with distance off screen.
 | Option | Default | What it does |
 | --- | --- | --- |
 | **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
+| **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
 | **Bilinear Filtering** | Off | The original game's option. Smooths unit textures and unit shadows. Terrain, scenery and the interface stay sharp, as in the original. |
 | **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
 | **Smooth GUI Art** | Off | Sharpens the low-resolution interface art, menus, fonts and cursors with an edge-aware upscale. No cost per frame; uses more video memory. |
