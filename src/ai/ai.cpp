@@ -832,6 +832,9 @@ std::pair<float, float> Controller::homeOf(const tak::sim::World& world) const {
 
 void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& sink) {
     constexpr float kHomeRadius = 900, kSiteRadius = 400;
+    // An enemy shooting into the territory from outside it is answered out to this
+    // far from home, and melee defenders give up the chase beyond it.
+    constexpr float kPursuitRadius = kHomeRadius + 600, kMeleeRange = 64;
     constexpr int kMaxCommands = 256, kMaxThreats = 16;
     const auto home=homeOf(world);
     struct Eye { float x,z,r2; };
@@ -871,8 +874,33 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
         const float dx=x-home.first,dz=z-home.second;
         threats.emplace_back(dx*dx+dz*dz,e.id);
     }
+    // Whoever is hitting our units inside the territory is a threat too, seen or
+    // not ("we know where the arrows come from"): archers that outrange both our
+    // sight and the defended radius otherwise pick a parked army apart. Bounded to
+    // attackers still within their reach of the victim and near enough to home.
+    auto nearHome=[&](float x,float z) {
+        const float dx=x-home.first,dz=z-home.second;
+        return dx*dx+dz*dz<=kPursuitRadius*kPursuitRadius;
+    };
+    std::vector<int> shooters;
+    for (const auto& v:world.units()) {
+        if (!v.alive() || v.player!=player_ || !v.lastHitBy || v.embarked()) continue;
+        if (!local(v.x.toFloat(),v.z.toFloat())) continue;
+        const auto* e=world.unit(v.lastHitBy);
+        if (!e || !e->alive() || !e->type || e->embarked() || e->underConstruction ||
+            world.isNeutralPlayer(e->player) || world.allied(player_,e->player)) continue;
+        const float reach=std::max(float(e->type->weapon.range),e->type->maxRange())+64;
+        const float dx=e->x.toFloat()-v.x.toFloat(),dz=e->z.toFloat()-v.z.toFloat();
+        if (dx*dx+dz*dz>reach*reach || !nearHome(e->x.toFloat(),e->z.toFloat())) continue;
+        if (std::any_of(threats.begin(),threats.end(),[&](const auto& t){return t.second==e->id;}) ||
+            std::find(shooters.begin(),shooters.end(),e->id)!=shooters.end()) continue;
+        shooters.push_back(e->id);
+        const float hx=e->x.toFloat()-home.first,hz=e->z.toFloat()-home.second;
+        threats.emplace_back(hx*hx+hz*hz,e->id);
+    }
     std::sort(threats.begin(),threats.end());
     if (threats.size()>kMaxThreats) threats.resize(kMaxThreats);
+    auto shooter=[&](int id){return std::find(shooters.begin(),shooters.end(),id)!=shooters.end();};
     for (auto it=defenders_.begin();it!=defenders_.end();) {
         const auto* u=world.unit(it->first);
         if (!u || !u->alive() || u->player!=player_) it=defenders_.erase(it);
@@ -888,7 +916,10 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
             u.incapacitated() || u.type->weapon.damage<=0) continue;
         auto response=defenders_.find(u.id);
         const bool assigned=response!=defenders_.end();
+        const bool melee=std::max(float(u.type->weapon.range),u.type->maxRange())<=kMeleeRange;
         const bool ownsOrder=assigned && std::any_of(u.orders.begin(),u.orders.end(),[&](const auto& order) {
+            if (response->second.targetId)
+                return !response->second.returning && order.targetId==response->second.targetId && !order.attackMove;
             if (order.targetId || order.buildType || order.patrol || order.guard || order.load || order.unload)
                 return false;
             const auto goal=order.missionTarget.value_or(std::pair{order.x,order.z});
@@ -900,15 +931,34 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
             if (assigned) defenders_.erase(response);
             continue; // preserve unrelated explicit attacks and working orders
         }
+        // A melee defender keeps chasing its attacker while that is still a threat,
+        // instead of switching whenever another one edges nearer to home.
+        if (ownsOrder && response->second.targetId &&
+            std::any_of(threats.begin(),threats.end(),[&](const auto& t){return t.second==response->second.targetId;}))
+            continue;
         float tx=0,tz=0;
-        bool found=false;
+        int targetId=0;
         for (const auto& threat:threats) {
             const auto* e=world.unit(threat.second);
             if (e && reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),
-                e->x.toFloat(),e->z.toFloat(),tx,tz) && local(tx,tz)) {found=true;break;}
+                e->x.toFloat(),e->z.toFloat(),tx,tz) &&
+                (shooter(e->id) ? nearHome(tx,tz) : local(tx,tz))) {targetId=e->id;break;}
         }
-        if (found) {
-            if (assigned && !response->second.returning) {
+        if (targetId && melee) {
+            // Melee goes straight for the attacker: a direct Attack is not held back
+            // by the Defensive stance, so it closes on an archer that backs away. The
+            // leash is the threat list -- once the target leaves kPursuitRadius it is
+            // no threat, and the unit is walked home below.
+            if (assigned && ownsOrder && response->second.targetId==targetId) continue;
+            DefenseResponse next=assigned ? response->second :
+                DefenseResponse{u.x.toFloat(),u.z.toFloat(),tx,tz};
+            next.goalX=tx;next.goalZ=tz;next.returning=false;next.targetId=targetId;
+            defenders_[u.id]=next;
+            tak::net::Command c;c.kind=tak::net::Cmd::Attack;c.player=uint8_t(player_);
+            c.unitId=u.id;c.targetId=targetId;
+            sink(c);++issued;
+        } else if (targetId) {
+            if (assigned && !response->second.returning && !response->second.targetId) {
                 const float dx=tx-response->second.goalX,dz=tz-response->second.goalZ;
                 const float ux=u.x.toFloat()-tx,uz=u.z.toFloat()-tz;
                 if (dx*dx+dz*dz<96*96 && (ownsOrder ||
@@ -916,7 +966,7 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
             }
             DefenseResponse next=assigned ? response->second :
                 DefenseResponse{u.x.toFloat(),u.z.toFloat(),tx,tz};
-            next.goalX=tx;next.goalZ=tz;next.returning=false;
+            next.goalX=tx;next.goalZ=tz;next.returning=false;next.targetId=0;
             defenders_[u.id]=next;
             emit(sink,tak::net::Cmd::AttackMove,u.id,"",tx,tz);++issued;
         } else if (assigned) {
@@ -926,7 +976,7 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
                 defenders_.erase(response);continue;
             }
             if (ownsOrder && next.returning) continue;
-            next.goalX=next.homeX;next.goalZ=next.homeZ;next.returning=true;
+            next.goalX=next.homeX;next.goalZ=next.homeZ;next.returning=true;next.targetId=0;
             emit(sink,tak::net::Cmd::Move,u.id,"",next.homeX,next.homeZ);++issued;
         }
     }

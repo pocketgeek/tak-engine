@@ -195,6 +195,7 @@ private:
     struct DefenseResponse {
         float homeX, homeZ, goalX, goalZ;
         bool returning = false;
+        int targetId = 0;   // melee defenders chase one attacker with a direct Attack
     };
     // Server-local assignments, not simulation state. Commands still use the
     // ordinary sequencer and movement controllers on every peer.

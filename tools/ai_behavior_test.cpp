@@ -34,6 +34,48 @@ static std::vector<net::Command> think(ai::Controller& ai,sim::World& w,uint32_t
 static int attacks(const std::vector<net::Command>& cs) {
     return int(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::AttackMove || c.kind==net::Cmd::Attack;}));
 }
+// Archers that outrange both our sight and the defended radius must still be
+// answered: whoever is hitting a unit inside the territory is a threat.
+static void defensiveShooters(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                              const sim::UnitType& soldier) {
+    auto base=soldier;base.id="base";base.maxVel={};base.sight=300;
+    base.weapon.damage=0;base.weapons.clear();
+    auto archer=soldier;archer.id="archer";archer.weapon.range=450;archer.weapons={archer.weapon};
+    auto blind=soldier;blind.sight=100;
+    auto melee=blind;melee.id="melee";melee.weapon.range=30;melee.weapons={melee.weapon};
+    for (const auto* defenderType:{&blind,&melee}) {
+        const bool isMelee=defenderType==&melee;
+        sim::World w;terrain(w);w.player(0).defensiveAi=true;
+        w.spawn(&base,400,800,0,0);
+        const int defender=w.spawn(defenderType,1000,800,0,0);   // inside the 900 home radius
+        const int shooter=w.spawn(&archer,1420,800,0,1);           // 1020 from home, unseen
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        check(attacks(think(defensive,w))==0,"an unseen archer outside the territory is no threat until it hits something");
+        w.unit(defender)->lastHitBy=shooter;
+        auto cs=think(defensive,w,30);
+        check(attacks(cs)==1 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.unitId==defender && (isMelee ? c.kind==net::Cmd::Attack && c.targetId==shooter
+                                                  : c.kind==net::Cmd::AttackMove);
+        }),isMelee ? "a melee defender attacks the archer hitting it directly (chases past the Defensive stance)"
+                   : "a ranged defender attack-moves on the unseen archer hitting it");
+        for (const auto& c:cs) sim::applyCommand(w,registry,c);
+        check(attacks(think(defensive,w,60))==0,"the response to an attacker is not re-issued every think");
+        w.unit(shooter)->x=sim::Fixed::fromInt(2100);w.unit(defender)->x=sim::Fixed::fromInt(1800);
+        cs=think(defensive,w,90);
+        check(attacks(cs)==0 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.unitId==defender && c.kind==net::Cmd::Move && c.x==1000 && c.z==800;
+        }),"defenders give up an attacker beyond the pursuit radius and return to their posts");
+    }
+    {
+        sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
+        const int defender=w.spawn(&blind,1000,800,0,0);
+        const int shooter=w.spawn(&archer,1700,800,0,1);   // out of its own reach of the victim
+        w.unit(defender)->lastHitBy=shooter;
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        check(attacks(think(defensive,w))==0,"a stale attacker no longer within reach of its victim is ignored");
+    }
+}
+
 static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profile& profile,
                                const sim::UnitType& soldier) {
     auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
@@ -169,6 +211,7 @@ int main(int argc,char** argv) {
         }
     }
     defensiveResponses(empty,profile,soldier);
+    defensiveShooters(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
