@@ -1,4 +1,5 @@
 #include "client/gameview.h"
+#include "client/gamespeed.h"
 #include "client/renderdriver.h"
 
     void GameView::setupPatrolPerf() {
@@ -182,7 +183,7 @@
             if (s.serverRss) std::snprintf(b, sizeof b, "%zuMB", s.serverRss / (1024 * 1024)); else std::snprintf(b, sizeof b, "N/A");
             cell(b); cx += colW[7];
             std::snprintf(b, sizeof b, "%.0f", s.fps); cell(b); cx += colW[8];
-            std::snprintf(b, sizeof b, "%.2fX", s.simSpeed); cell(b);
+            cell(tak::speedLevelText(tak::speedLevelOf(s.simSpeed)).c_str());
             y += rowH;
         }
         y += 30 * k;

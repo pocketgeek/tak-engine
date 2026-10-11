@@ -1,6 +1,7 @@
 #include <ctime>
 #include "client/guiart.h"
 #include "client/gameview.h"
+#include "client/gamespeed.h"
 #include "client/artscale.h"
 #include "client/cursorrange.h"
 #include "client/gpuvram.h"
@@ -694,10 +695,8 @@ namespace {
             rows.push_back({"PING", b});
         }
         if (actualSpeed_ > 0) {
-            // One decimal: the second one was never meaningful (see the smoothing note
-            // where actualSpeed_ is measured) and only made the row look busy.
-            std::snprintf(b, sizeof b, "%.1fX", actualSpeed_);
-            rows.push_back({"SIM", b});
+            // The measured speed as retail's level (NORMAL, +5, -3), not a multiplier.
+            rows.push_back({"SIM", tak::speedLevelText(tak::speedLevelOf(actualSpeed_))});
         }
 
         // Living units owned by the player, including embarked units. Spectators

@@ -2,6 +2,7 @@
 #include "client/retailaim.h"
 #include "gaf/nimbus.h"
 #include "client/gameview.h"
+#include "client/gamespeed.h"
 #include "client/shadowmask.h"
 #include "client/retailfeatureclock.h"
 #include "client/retailbuilderanimation.h"
@@ -4099,12 +4100,9 @@
                                     : std::clamp(it->second / kBirthFxDur, 0.0f, 1.0f);
     }
 
-    // Retail's banner for speed level d (-10..+10): "GAME SPEED NORMAL" or
-    // "GAME SPEED +5". Debug speeds past +10 show the multiplier.
+    // Retail's banner for speed level d: "GAME SPEED NORMAL" or "GAME SPEED +5".
     static std::string speedNotice(int d) {
-        if (d == 0) return "GAME SPEED NORMAL";
-        if (d > 10) { char b[40]; std::snprintf(b, sizeof b, "GAME SPEED %.1fx (DEBUG)", (d + 10) / 10.0); return b; }
-        return "GAME SPEED " + std::string(d > 0 ? "+" : "") + std::to_string(d);
+        return "GAME SPEED " + tak::speedLevelText(d) + (d > 10 ? " (DEBUG)" : "");
     }
 
     float GameView::speedMult() const {

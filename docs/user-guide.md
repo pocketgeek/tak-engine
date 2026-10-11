@@ -1020,7 +1020,8 @@ available on your system appear.
 | **Build Menu Scale** | 100% | Extra size for the build icons (75–400%). |
 
 The **stats panel** shows your units, kills and score, the clock, real time,
-game time, client and server processor use and GPU use. It drops rows when there
+game time, the speed the game is actually running at (as a game-speed level: NORMAL,
++5, -3), client and server processor use and GPU use. It drops rows when there
 is not enough room.
 
 ### Camera
