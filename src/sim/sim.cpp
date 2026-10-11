@@ -10630,14 +10630,18 @@ void World::tick(float dt) {
     // wasted only when the whole team is capped. Deterministic -- collected in
     // player order, shared by lowest fill percentage. A solo/FFA player has no
     // teammate to receive the surplus, so this reduces exactly to the old clamp.
-    for (size_t player=0;player<players_.size();++player) {
-        auto& tm=players_[player];
-        if (!tm.retailResources) { tm.creditMana(tm.income*dt);continue; }
-        float demand=0;
+    // Retail construction demand: one walk sums every retail-resources player's
+    // demand (WE D4; it was one walk per player). Each player's sum still adds
+    // its own builders in unit order, and nothing below changes a unit before
+    // the player loop reads its sum, so every float comes out the same.
+    retailDemand_.assign(players_.size(),0.0f);
+    if (std::any_of(players_.begin(),players_.end(),[](const Player& p){return p.retailResources.has_value();})) {
         TAK_PASS();
         for (const auto& builder:units_) {
-            if (builder.player!=int(player) || !builder.alive() || builder.underConstruction ||
+            if (size_t(builder.player)>=players_.size() || !builder.alive() || builder.underConstruction ||
                 builder.embarked()) continue;
+            const auto& tm=players_[size_t(builder.player)];
+            if (!tm.retailResources) continue;
             int target=0;
             float worker=0;
             if (builder.retailBuild && builder.retailBuild->working) {
@@ -10650,11 +10654,16 @@ void World::tick(float dt) {
             const auto* site=unit(target);
             if (site && site->retailSite && site->alive()) {
                 const auto& type=site->retailSite->type;
+                float& demand=retailDemand_[size_t(builder.player)];
                 demand=float(double(demand)+double(worker)*
                     double(type.inverseTime)*double(type.cost));
             }
         }
-        tm.retailResources->beginTick(tm.income,tm.storage,demand);
+    }
+    for (size_t player=0;player<players_.size();++player) {
+        auto& tm=players_[player];
+        if (!tm.retailResources) { tm.creditMana(tm.income*dt);continue; }
+        tm.retailResources->beginTick(tm.income,tm.storage,retailDemand_[player]);
         tm.mana=tm.retailResources->stored;tm.storage=tm.retailResources->capacity;
     }
     const int np = int(players_.size());

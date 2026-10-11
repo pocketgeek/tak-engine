@@ -2967,6 +2967,8 @@ private:
     // Indices into units_ of the bodies eligible to be raised or reclaimed this tick,
     // in ascending unit id. Rebuilt once per corpse pass; see the note there.
     std::vector<uint32_t> corpseIdx_;
+    // Per player, this tick's retail construction demand (World::tick's economy step).
+    std::vector<float> retailDemand_;
     NavGrid nav_, navWater_, navHover_;
     NavGrid navalSight_; // combat only: terrain at/above the water surface
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
