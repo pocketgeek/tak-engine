@@ -11036,8 +11036,11 @@ void World::tick(float dt) {
             pathfindingMode_==PathfindingMode::Retail) return nullptr;
         return &forms[u.player][-u.squad];
     };
-    TAK_PASS();
-    for (auto& u : units_)
+    // Retail has no formation aggregates (formOf is null for every unit), so it
+    // skips this walk and the rejoin walk below: neither can do anything there.
+    const bool formations = pathfindingMode_!=PathfindingMode::Retail;
+    if (formations) TAK_PASS();
+    if (formations) for (auto& u : units_)
         if (u.alive() && u.type && u.squad < 0 && !u.type->isStructure() &&
             !u.underConstruction && u.baseSpeed.v > 0)
             if (FormAgg* f = formOf(u)) {
@@ -11103,8 +11106,8 @@ void World::tick(float dt) {
         r.count = best;
         return r;
     };
-    TAK_PASS();
-    for (auto& u : units_) {
+    if (formations) TAK_PASS();
+    if (formations) for (auto& u : units_) {
         if (!u.alive() || !u.type || u.squad >= 0 || !u.orders.empty()) continue;
         if (u.type->isStructure() || u.underConstruction) continue;   // buildings don't rejoin
         if (legionRejoin) {
