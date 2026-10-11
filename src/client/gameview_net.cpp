@@ -322,6 +322,7 @@
 #ifndef NDEBUG
         // Regression probe: an eliminated, non-acking client must not stall survivors.
         if (outcome_ < 0 && tak::devFlag("TAK_DEFEAT_STALL")) return true;
+        speedProbe();
 #endif
         // Send at the rate the server DRAINS (kCmdCapPerTick per sim tick), metered
         // by elapsed ticks rather than by frames. Two earlier versions of this were
@@ -719,6 +720,41 @@
     }
 
 #ifndef NDEBUG
+// TAK_SPEED_AT=<tick>:<speed>[,<tick>:<speed>...] -- the host changes the game speed (tenths)
+// in-game when the played tick reaches <tick>, exactly as the +/- keys do. Each change, and one
+// line per wall second, is printed as SPEEDLOG (wall ms, played tick, requested speed) so a
+// harness can measure the real playout rate across a change. Debug-only, pacing only.
+void GameView::speedProbe() {
+    static const char* spec = tak::devEnv("TAK_SPEED_AT");
+    if (!spec || !mp_ || mp_->state() != tak::net::MpClient::State::InGame) return;
+    if (speedAt_.empty() && !speedAtParsed_) {
+        speedAtParsed_ = true;
+        std::string s = spec;
+        for (size_t p = 0; p < s.size();) {
+            size_t e = s.find(',', p); if (e == std::string::npos) e = s.size();
+            const std::string item = s.substr(p, e - p);
+            const size_t c = item.find(':');
+            if (c != std::string::npos)
+                speedAt_.push_back({uint32_t(std::atoi(item.c_str())), std::atoi(item.c_str() + c + 1)});
+            p = e + 1;
+        }
+    }
+    const uint64_t now = SDL_GetTicks64();
+    if (!speedLogMs_) speedLogMs_ = now;
+    if (speedAtNext_ < speedAt_.size() && netTick_ >= speedAt_[speedAtNext_].first) {
+        auto o = mp_->room().opts;
+        o.speed = uint8_t(std::clamp(speedAt_[speedAtNext_].second, 1, tak::net::kMaxGameSpeed));
+        mp_->setGameOptions(o);
+        std::fprintf(stderr, "SPEEDLOG set %llu tick %u speed %d\n", (unsigned long long)now, netTick_, int(o.speed));
+        ++speedAtNext_;
+    }
+    if (now - speedLogMs_ >= 1000) {
+        speedLogMs_ += 1000;
+        std::fprintf(stderr, "SPEEDLOG wall %llu tick %u speed %d buffered %d delay %d\n", (unsigned long long)now,
+                     netTick_, int(mp_->gameSpeed()), int(mp_->bufferedBundles()), netDelay_);
+    }
+}
+
 // See gameview.h. Issues ordinary Move / AttackMove orders through GameView::issue,
 // so they travel the real path -- outbox -> sendCommands -> server -> bundle -> every
 // peer -- rather than being applied locally, which would desync by construction.
@@ -832,6 +868,9 @@ void GameView::autoplayStep() {
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxGameSpeed));
+            // TAK_SPEED_AT schedules in-game speed changes (see mpStep), so the room must
+            // allow them.
+            if (tak::devEnv("TAK_SPEED_AT")) o.speedUnlock = 1;
             o.stressTest = tak::devFlag("TAK_STRESS") ? 1 : 0;   // headless: spawn ~95% cap per AI
             if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
                 int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
