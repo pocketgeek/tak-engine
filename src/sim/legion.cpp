@@ -284,10 +284,8 @@ struct LegionNavigator::Impl {
         std::vector<uint16_t> potential;  // fw*fh, row-major within the window
         bool inside(int x,int z) const {return x>=x0&&z>=z0&&x<x0+fw&&z<z0+fh;}
         size_t local(int x,int z) const {return size_t(z-z0)*size_t(fw)+size_t(x-x0);}
-        uint16_t at(size_t cell) const {
-            const int x=int(cell%size_t(W)),z=int(cell/size_t(W));
-            return inside(x,z)?potential[local(x,z)]:kUnreached;
-        }
+        uint16_t at(int x,int z) const {return inside(x,z)?potential[local(x,z)]:kUnreached;}
+        uint16_t at(size_t cell) const {return at(int(cell%size_t(W)),int(cell/size_t(W)));}
         // Buckets keyed by potential + heuristic (see advance); the key of a
         // relaxed neighbour is at most (kSoftFactor+1)*kDiagonal above the
         // popped one, plus a mover corridor's charge (see Corridor).
@@ -2228,6 +2226,25 @@ struct LegionNavigator::Impl {
         if(!legal(p,x+dx,z+dz))return false;
         return !dx||!dz||(legal(p,x+dx,z)&&legal(p,x,z+dz));
     }
+    // step() for all eight kDirections at once, bit k = kDirections[k]. Away
+    // from the map edge the 3x3 neighbourhood is read without bounds checks.
+    uint32_t steps(const Plane& p,int x,int z) const {
+        const int W=width(),H=height();
+        uint32_t m=0;
+        if(x<1||z<1||x>=W-1||z>=H-1) {
+            for(size_t k=0;k<kDirections.size();++k)
+                if(step(p,x,z,kDirections[k][0],kDirections[k][1]))m|=1u<<k;
+            return m;
+        }
+        const uint8_t* c=p.legal.data()+size_t(z)*size_t(W)+size_t(x);
+        const bool e=c[1],wst=c[-1],s=c[W],n=c[-W];
+        m=uint32_t(e)|uint32_t(wst)<<1|uint32_t(s)<<2|uint32_t(n)<<3;
+        if(e&&s&&c[W+1])m|=1u<<4;
+        if(wst&&s&&c[W-1])m|=1u<<5;
+        if(e&&n&&c[-W+1])m|=1u<<6;
+        if(wst&&n&&c[-W-1])m|=1u<<7;
+        return m;
+    }
 
     // ---- groups and fields -------------------------------------------
     static bool plainMove(const Order& front) {
@@ -2800,11 +2817,13 @@ struct LegionNavigator::Impl {
             if(bucket.empty()) {++f.current;continue;}
             const int cell=bucket.back();bucket.pop_back();--f.queued;
             const int x=cell%W,z=cell/W;
-            const uint32_t g=f.at(size_t(cell));
+            const uint32_t g=f.at(x,z);
             if(g+f.heuristic(x,z)!=f.current)continue;   // stale entry
-            for(const auto& d:kDirections) {
+            const uint32_t open=steps(p,x,z);
+            for(size_t k=0;k<kDirections.size();++k) {
+                const auto& d=kDirections[k];
                 ++spent;
-                if(!step(p,x,z,d[0],d[1]))continue;
+                if(!(open>>k&1))continue;
                 const uint32_t base=d[0]&&d[1]?kDiagonal:kOrthogonal;
                 // Outside the window only after a static change mid-build
                 // (the field is then stale and rebuilt on the new plane).
@@ -4763,13 +4782,15 @@ struct LegionNavigator::Impl {
     // Potential strictly decreases, so no step can cycle.
     int descend(const Plane& p,const Field& f,int x,int z,int goal,int fx=0,int fz=0) const {
         const int W=width(),gx=goal%W,gz=goal/W;
-        const uint16_t here=f.at(size_t(z)*W+x);
+        const uint16_t here=f.at(x,z);
         int best=-1;int64_t bestSlope=0,bestD=0;
         std::array<std::pair<int,int64_t>,8> down{};int count=0;
-        for(const auto& d:kDirections) {
-            if(!step(p,x,z,d[0],d[1]))continue;
+        const uint32_t open=steps(p,x,z);
+        for(size_t k=0;k<kDirections.size();++k) {
+            const auto& d=kDirections[k];
+            if(!(open>>k&1))continue;
             const int cell=(z+d[1])*W+x+d[0];
-            const uint16_t v=f.at(size_t(cell));
+            const uint16_t v=f.at(x+d[0],z+d[1]);
             if(v>=here)continue;
             const int64_t slope=int64_t(here-v)*(d[0]&&d[1]?kOrthogonal:kDiagonal);
             const int64_t dx=gx-x-d[0],dz=gz-z-d[1],dd=dx*dx+dz*dz;
