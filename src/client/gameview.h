@@ -2191,6 +2191,12 @@ private:
     tak::situation::Harvester situation_;         // TAK_SITUATION: cut a .scn out of the recording
 public:
     void armSituation(const tak::situation::Request& r, const tak::situation::Meta& m) { situation_.arm(r, m); }
+    // TAK_SPEED_AT: scheduled in-game speed changes + SPEEDLOG lines (gameview_net.cpp).
+    void speedProbe();
+    std::vector<std::pair<uint32_t, int>> speedAt_;
+    size_t speedAtNext_ = 0;
+    bool speedAtParsed_ = false;
+    uint64_t speedLogMs_ = 0;
     tak::PaceLog pace_;                           // TAK_PACELOG: per-frame ticks/backlog record (src/client/pacelog.h)
     bool paceInit_ = false;
     uint32_t paceLastTick_ = 0;
