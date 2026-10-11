@@ -187,6 +187,7 @@
         cfg.doubleSight = room.opts.doubleSight != 0;
         cfg.pathfindingMode = room.opts.pathfindingMode;
         cfg.stressTest = room.opts.stressTest != 0;
+        cfg.stressImmediate = room.opts.stressTest == tak::net::kStressImmediate;
         cfg.benchmark = room.opts.benchmark;
         cfg.randomStarts = room.opts.randomStarts != 0;
         cfg.startSeed = seed;   // same seed the referee shuffles with
@@ -911,7 +912,7 @@ void GameView::autoplayStep() {
             // TAK_SPEED_AT schedules in-game speed changes (see mpStep), so the room must
             // allow them.
             if (tak::devEnv("TAK_SPEED_AT")) o.speedUnlock = 1;
-            o.stressTest = tak::devFlag("TAK_STRESS") ? 1 : 0;   // headless: spawn ~95% cap per AI
+            o.stressTest = tak::devFlag("TAK_STRESS") ? tak::net::kStressStaged : 0;   // headless: spawn ~95% cap per AI
             if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
                 int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
                 benchmarkLevel_ = (lv >= 1 && lv <= tak::sim::kBenchLevels) ? lv : 3;

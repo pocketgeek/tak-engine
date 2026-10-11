@@ -9,6 +9,7 @@
         cfg.vfs = &vfs_;
         cfg.mapPath = mapPath_;
         cfg.stressTest = true;
+        cfg.stressImmediate = true;   // counts and orders the whole army below
         cfg.unitCap = (1999 * 100 + 94) / 95;
         for (int p = 0; p < 8; ++p)
             cfg.slots.push_back({true, p % 5, 0, 2, true, false});

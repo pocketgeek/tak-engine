@@ -1,6 +1,7 @@
 #include "legion.h"
 #include "sim.h"
 #include "footprint.h"
+#include "idmap.h"
 #include "retailplacement.h"
 #include <algorithm>
 #include <array>
@@ -728,7 +729,9 @@ struct LegionNavigator::Impl {
     // (see startField), so the next caller skips the O(groups) scan.
     uint64_t fieldsDone=0;
     uint32_t noVictimTick=~0u;uint64_t noVictimDone=~0ull;
-    std::map<int,Group> groups;
+    // Groups, members and anchors (D5): flat id-indexed maps with std::map's
+    // ascending visit order (idmap.h).
+    IdMap<Group> groups;
     // Scheduler work lists (see tick), ascending ids:
     //   buildingIds  a field or refresh is building ((field && !done) ||
     //                next); a group whose shared field another group
@@ -842,18 +845,12 @@ struct LegionNavigator::Impl {
         const auto at=ids.upper_bound(id);
         return at==ids.end()?0:*at;
     }
-    std::map<int,Member> members;
-    // Unit id -> its node in `members` (std::map nodes are stable): the
-    // per-update lookups (own member, bodies in the lane ahead) without a
-    // tree walk. `members` keeps the ordered iteration.
-    std::vector<Member*> memberIndex;
-    Member* member(int id) const {
-        return id>=0&&size_t(id)<memberIndex.size()?memberIndex[size_t(id)]:nullptr;
-    }
+    // Unit id -> member. member(id) is the dense lookup (own member, bodies
+    // in the lane ahead); a Member's address is stable while it is listed.
+    IdMap<Member> members;
+    Member* member(int id) const {return members.get(id);}
     void putMember(int id,const Member& m) {
         auto& slot=members[id];slot=m;
-        if(size_t(id)>=memberIndex.size())memberIndex.resize(size_t(id)+1,nullptr);
-        memberIndex[size_t(id)]=&slot;
         markPass(id);
         if(slot.pt) {
             auto& ids=slot.pt->ids;
@@ -867,7 +864,7 @@ struct LegionNavigator::Impl {
     // inside its destination area) to open a lane for a same-player member
     // whose own goal it walls in. Capped per body: no endless shuffling.
     struct Anchor {int goal=-1;uint8_t yields=0;std::tuple<int,uint32_t,int32_t,int32_t> point{};};
-    std::map<int,Anchor> anchors;
+    IdMap<Anchor> anchors;
     // Settled arrivals per destination (player, requested point): the crowd
     // a settling body's reach is sized by (see settleReach). A function of
     // `anchors`, kept with it by setAnchor/dropAnchor; never hashed.
@@ -921,7 +918,7 @@ struct LegionNavigator::Impl {
         parts.erase(id);yielding.erase(id);
         watchMark[size_t(id)]=0;
     }
-    std::map<int,Anchor>::iterator dropAnchor(std::map<int,Anchor>::iterator it) {
+    IdMap<Anchor>::iterator dropAnchor(IdMap<Anchor>::iterator it) {
         const auto d=anchorsAt.find(destination(it->second.point));
         if(d!=anchorsAt.end()&&--d->second<=0)anchorsAt.erase(d);
         markAnchor(it->first,false);
@@ -2475,7 +2472,6 @@ struct LegionNavigator::Impl {
             if(const auto at=std::lower_bound(gids.begin(),gids.end(),id);at!=gids.end()&&*at==id)gids.erase(at);
             if(--group->second.members<=0) {unlistGroup(group->second);groups.erase(group);}
         }
-        if(size_t(id)<memberIndex.size())memberIndex[size_t(id)]=nullptr;
         members.erase(found);
     }
     void registerMove(Unit& u) {
@@ -4944,7 +4940,7 @@ struct LegionNavigator::Impl {
         std::vector<std::pair<int,Member*>> list;
         int64_t sumX=0,sumZ=0,area=0,areaGap=0,firstSide=0,minSide=8;bool mixed=false;
         for(const int id:pt.ids) {
-            Member& mm=*memberIndex[size_t(id)];
+            Member& mm=*member(id);
             // Approach members stand in for an unreachable click: they take
             // no slot and do not size the area.
             if(mm.point!=key||mm.goal<0||mm.slot>=0||mm.approach)continue;

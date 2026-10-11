@@ -1506,6 +1506,18 @@ public:
     void setBenchmarkPlan(std::vector<BenchStage> plan, uint32_t endTick) {
         benchPlan_ = std::move(plan); benchCursor_ = 0; benchEndTick_ = endTick;
     }
+    // Stress fill: the same staged executor, without making this a benchmark run (no
+    // end tick, Monarchs stay mortal). setupMatch merges it with a benchmark plan when
+    // both are on and installs the merge with setBenchmarkPlan instead.
+    void setStagedSpawns(std::vector<BenchStage> plan) {
+        size_t n = 0;
+        for (const auto& stage : plan) n += stage.units.size();
+        // No reallocation of the 1.3 KB records during the fill: copying ~15k of them is a
+        // 6 ms tick. The slack covers what the players produce meanwhile, which otherwise
+        // overflows an exact reservation on the last stage. Capacity only, never hashed.
+        units_.reserve(units_.size() + n + n / 4);
+        benchPlan_ = std::move(plan); benchCursor_ = 0;
+    }
     bool benchmarkMode() const { return benchEndTick_ > 0; }
     uint32_t benchmarkEndTick() const { return benchEndTick_; }
     uint32_t tickCount() const { return tickCounter_; }   // ticks elapsed (benchmark timing)

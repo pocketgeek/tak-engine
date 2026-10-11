@@ -83,7 +83,7 @@ int main(int argc,char** argv) try {
         config.vfs=&vfs;
         config.mapPath=mapName.empty() ? mapgen::encodeMapId(map) : hpi::findMap(vfs,mapName);
         if (config.mapPath.empty()) throw std::invalid_argument("map not found: "+mapName);
-        config.stressTest=count>8;config.unitCap=(((count/8)-1)*100+94)/95;
+        config.stressTest=count>8;config.stressImmediate=true;config.unitCap=(((count/8)-1)*100+94)/95;
         for (int p=0;p<8;++p) config.slots.push_back({true,p%5,mode=="patrol" || mode=="crowd" ? 0 : p,2,true,false});
         const auto starts=sim::setupMatch(world,registry,config);
         if (world.units().size()!=size_t(count))

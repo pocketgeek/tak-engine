@@ -2143,6 +2143,7 @@ int main(int argc, char** argv) {
         {
             sim::MatchConfig cfg;
             cfg.stressTest = true;
+            cfg.stressImmediate = true;      // inspects the army right after setup
             cfg.unitCap = 2000;
             sim::World w;
             auto [bad, total] = misplaced(cfg, w);

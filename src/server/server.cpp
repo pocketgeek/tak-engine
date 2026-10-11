@@ -1752,7 +1752,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (o.speed < 1) o.speed = 10;
             o.unitCap = clampUnitCap(uint16_t(r.u32()));
             o.monarchExpendable = r.u8() ? 1 : 0;
-            o.stressTest = r.u8() ? 1 : 0;
+            o.stressTest = std::min<uint8_t>(r.u8(), kStressStaged);   // 0/1/2, see GameOptions
             // THREE-state, not a bool: 0 = not explored, 1 = explored, 2 = full
             // vision. Decoding it as `? 1 : 0` silently folded FULL VISION back to
             // EXPLORED, so the room's fog button cycled through a setting the
@@ -2370,6 +2370,7 @@ void Server::tryStart(Client& c) {
             cfg.doubleSight = r->opts.doubleSight != 0;
             cfg.pathfindingMode = r->opts.pathfindingMode;
             cfg.stressTest = r->opts.stressTest != 0;
+            cfg.stressImmediate = r->opts.stressTest == kStressImmediate;
             cfg.benchmark = r->opts.benchmark;
             cfg.randomStarts = r->opts.randomStarts != 0;
             cfg.startSeed = r->seed;   // the seed sent in GameStarting
@@ -2539,7 +2540,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             GameOptions o; o.crusades = rd.u8(); o.forfeitSelfDestruct = rd.u8();
             o.overridePolicy = rd.u8(); o.speed = rd.u8(); o.speedUnlock = rd.u8();
             o.unitCap = clampUnitCap(uint16_t(rd.u32())); o.monarchExpendable = rd.u8() ? 1 : 0;
-            o.stressTest = rd.u8() ? 1 : 0;
+            o.stressTest = std::min<uint8_t>(rd.u8(), kStressStaged);
             o.fogExplored = std::min<uint8_t>(rd.u8(), 2);   // 0/1/2, see CreateGame
             o.benchmark = rd.u8();
             o.randomStarts = rd.u8() ? 1 : 0;

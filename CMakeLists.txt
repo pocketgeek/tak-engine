@@ -395,6 +395,11 @@ add_executable(convoy_test tools/convoy_test.cpp)
 target_link_libraries(convoy_test PRIVATE tak-formats)
 add_test(NAME convoy_test COMMAND convoy_test)
 set_tests_properties(convoy_test PROPERTIES LABELS legion)
+# IdMap (sim/idmap.h): the flat groups/members/anchors maps visit as std::map.
+add_executable(legion_idmap_test tools/legion_idmap_test.cpp)
+target_include_directories(legion_idmap_test PRIVATE src)
+add_test(NAME legion_idmap_test COMMAND legion_idmap_test)
+set_tests_properties(legion_idmap_test PROPERTIES LABELS legion)
 
 add_executable(issue_selection_test tools/issue_selection_test.cpp)
 target_link_libraries(issue_selection_test PRIVATE tak-formats)

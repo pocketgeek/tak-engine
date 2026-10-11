@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,7 @@ void runCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Case& c) {
     cfg.mapPath = std::string("maps/") + c.map + ".tnt";
     cfg.benchmark = c.benchmark;
     cfg.stressTest = c.stress;
+    cfg.stressImmediate = true;                          // check the bodies, not a plan
     cfg.unitCap = 500;                                   // keep the stress fills quick
     for (int i = 0; i < c.players; ++i) {
         sim::MatchSlot s; s.used = true; s.faction = i % 5; s.team = i;
@@ -130,6 +132,79 @@ void runCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Case& c) {
     std::printf("  %-24s %4d units, %d unplaceable%s\n", c.name, total, bad,
                 badMonarch ? "  (INCLUDING A MONARCH)" : "");
     if (bad) ++failures;
+}
+
+// The staged stress fill (MatchConfig::stressImmediate=false, the game default) must
+// place exactly the army the immediate fill places -- same player, type and position for
+// every body -- only spread over ticks 1..kStressStageTicks, and must not turn the run
+// into a benchmark (Monarchs stay mortal, no end tick).
+using Body = std::tuple<int, std::string, float, float>;
+std::vector<Body> bodies(const sim::World& w) {
+    std::vector<Body> out;
+    for (const auto& u : w.units())
+        if (u.alive() && u.type) out.emplace_back(u.player, u.type->id, u.x.toFloat(), u.z.toFloat());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void stagedStressCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int benchmark) {
+    auto setup = [&](sim::World& w, bool immediate, int bench) {
+        w.setVisPlayer(-1);
+        sim::MatchConfig cfg;
+        cfg.vfs = &vfs;
+        cfg.mapPath = "maps/Ulasem Arena.tnt";
+        cfg.stressTest = true;
+        cfg.stressImmediate = immediate;
+        cfg.benchmark = bench;
+        cfg.unitCap = 500;
+        for (int i = 0; i < 8; ++i) {
+            sim::MatchSlot s; s.used = true; s.faction = i % 5; s.team = i;
+            cfg.slots.push_back(s);
+        }
+        sim::setupMatch(w, reg, cfg);
+    };
+    sim::World now, staged;
+    setup(now, true, benchmark);
+    setup(staged, false, benchmark);
+    const auto want = bodies(now);
+    const size_t opening = bodies(staged).size();
+    const auto& plan = sim::RetailReplayProbe::plan(staged);
+    size_t planned = 0, peak = 0;
+    bool ordered = true;
+    uint32_t prev = 0, lastStress = 0;
+    for (const auto& stage : plan) {
+        if (stage.tick < prev) ordered = false;
+        prev = stage.tick;
+        if (stage.tick <= uint32_t(sim::kStressStageTicks)) {
+            planned += stage.units.size();
+            peak = std::max(peak, stage.units.size());
+            if (!stage.units.empty()) lastStress = stage.tick;
+        }
+    }
+    // Benchmark stages may share the first ticks; count only what the stress fill adds.
+    const size_t benchEarly = [&] {
+        size_t n = 0;
+        for (const auto& stage : sim::RetailReplayProbe::plan(now))
+            if (stage.tick <= uint32_t(sim::kStressStageTicks)) n += stage.units.size();
+        return n;
+    }();
+    planned -= benchEarly;
+    for (int i = 0; i <= sim::kStressStageTicks; ++i) {
+        now.tick(1.f / 30.f);
+        staged.tick(1.f / 30.f);
+    }
+    const bool same = bodies(staged) == bodies(now);
+    const bool modeOk = staged.benchmarkMode() == (benchmark != 0);
+    const size_t spread = (planned + sim::kStressStageTicks - 1) / sim::kStressStageTicks + 8;
+    std::printf("  staged stress%s: opening %zu bodies (immediate %zu), %zu staged over ticks 1..%u, "
+                "peak %zu/tick; same army after tick %d: %s\n",
+                benchmark ? " + benchmark" : "", opening, want.size(), planned, lastStress, peak,
+                sim::kStressStageTicks, same ? "yes" : "NO");
+    if (!same || !ordered || !modeOk || opening != 8 || planned + 8 != want.size() ||
+        lastStress > uint32_t(sim::kStressStageTicks) || peak > spread + (benchmark ? 8 : 0)) {
+        std::printf("      staged stress fill: FAIL (ordered=%d mode=%d)\n", ordered, modeOk);
+        ++failures;
+    }
 }
 
 void seafortPlacementCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, bool crusades) {
@@ -258,6 +333,8 @@ int main(int argc, char** argv) {
         sim::setupRegistry(reg, vfs, crusades);
         std::printf("balance: %s\n",crusades ? "Crusades" : "standard");
         for (const auto& c : kCases) runCase(vfs, reg, c);
+        stagedStressCase(vfs, reg, 0);
+        stagedStressCase(vfs, reg, 1);
         seafortPlacementCase(vfs,reg,crusades);
         shipyardProductionCases(vfs,reg);
         for (const char* id:{"aralode","tarlode","verlode","zonlode","crelode"}) {
