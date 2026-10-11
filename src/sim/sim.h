@@ -2972,6 +2972,9 @@ private:
     std::vector<uint32_t> corpseIdx_;
     // Per player, this tick's retail construction demand (World::tick's economy step).
     std::vector<float> retailDemand_;
+    // Indices into units_ of this tick's construction sites, ascending, as the
+    // economy walk found them (World::tick's decay pass).
+    std::vector<uint32_t> sitesIdx_;
     NavGrid nav_, navWater_, navHover_;
     NavGrid navalSight_; // combat only: terrain at/above the water surface
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.

@@ -10616,6 +10616,7 @@ void World::tick(float dt) {
     hits_.clear();   // per-tick weapon impacts (drained by the viewer for sounds/fx)
     // Economy: recompute income/storage, apply income.
     for (auto& tm : players_) { tm.income = 0; tm.storage = 0; }
+    const size_t unitsAtEconomy = units_.size();
     // One walk (WE D4) does three things per unit, in unit order:
     //  - the beingBuilt clear for sites (factory and mobile construction mark
     //    them again below). It used to run after the god summon; nothing in
@@ -10626,13 +10627,19 @@ void World::tick(float dt) {
     //    was one walk per player). Each player's sum still adds its own builders
     //    in unit order, and nothing between here and the player loop below
     //    changes a unit, so every float comes out the same.
+    // It also lists the sites for the decay pass below (A4).
     retailDemand_.assign(players_.size(),0.0f);
+    sitesIdx_.clear();
     TAK_PASS();
     for (auto& u : units_) {
         if (!u.alive()) continue;
         // A unit under construction contributes no economy until it finishes -- a
         // half-built lodestone must not add its mana income or storage capacity yet.
-        if (u.underConstruction) { u.beingBuilt = false; continue; }
+        if (u.underConstruction) {
+            u.beingBuilt = false;
+            sitesIdx_.push_back(uint32_t(&u - units_.data()));
+            continue;
+        }
         if (u.type) {
             auto& tm = players_[size_t(u.player)];
             float income=u.type->income,storage=u.type->storage;
@@ -10780,10 +10787,31 @@ void World::tick(float dt) {
         else if (u.alive() && u.type && u.reclaimId) tickReclaim(u, dt);
         else if (u.alive() && u.type && u.repairId) tickRepair(u, dt);
     }
-    TAK_PASS();
-    for (auto& u : units_)
+    // Decay walks the sites listed by the economy walk, then every unit spawned
+    // since (A4). Between the two, no unit already in units_ becomes alive or
+    // under construction (only a fresh spawn does, and spawns append), so these
+    // are all the units the full walk would decay, visited in the same order with
+    // the same test at the same moment.
+    auto decay = [&](Unit& u) {
         if (u.alive() && u.type && u.underConstruction && !u.beingBuilt && !(u.retailSite && u.retailSite->mission))
             decayConstruction(u, dt);
+    };
+#ifndef NDEBUG
+    if (verifyLists()) {
+        size_t next = 0;
+        for (size_t i = 0; i < unitsAtEconomy; ++i) {
+            while (next < sitesIdx_.size() && sitesIdx_[next] < i) ++next;
+            const Unit& u = units_[i];
+            if (u.alive() && u.type && u.underConstruction && (next == sitesIdx_.size() || sitesIdx_[next] != i)) {
+                std::fprintf(stderr, "TAK_VERIFY_LISTS tick %u: site %d (index %zu) missing from the decay list\n",
+                             tickCounter_, u.id, i);
+                std::abort();
+            }
+        }
+    }
+#endif
+    for (uint32_t i : sitesIdx_) decay(units_[i]);
+    for (size_t i = unitsAtEconomy; i < units_.size(); ++i) decay(units_[i]);
 
     visPump();   // land a finished async fog pass (cheap; a swap or nothing at all)
     visTimer_ -= dt;
