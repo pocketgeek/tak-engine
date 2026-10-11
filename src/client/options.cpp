@@ -240,6 +240,7 @@ void OptionsScreen::build(int channels) {
     toggle("VSYNC", [&] { return s_.vsync ? 1.0f : 0.0f; }, [&](float v) { s_.vsync = v > 0.5f; });
     slider("MAX FPS", 30, 240, [&] { return float(s_.maxFps); },
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
+    ctls_.back().enabled = [&] { return !s_.vsync; };   // vsync paces frames; the cap does nothing
 
     // GRAPHICS. BILINEAR FILTERING is retail's video option (BiLinearFilter).
     section("GRAPHICS");
