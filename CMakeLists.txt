@@ -636,6 +636,10 @@ add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.c
 target_link_libraries(room_worker_test PRIVATE tak-formats)
 add_test(NAME room_worker COMMAND room_worker_test)
 set_tests_properties(room_worker PROPERTIES TIMEOUT 30)
+# Server tick pacing on a simulated clock: exact rates, speed changes, bounded catch-up.
+add_executable(tick_pacer_test tools/tick_pacer_test.cpp)
+target_include_directories(tick_pacer_test PRIVATE src)
+add_test(NAME tick_pacer COMMAND tick_pacer_test)
 add_executable(featgen_test tools/featgen_test.cpp)
 add_executable(transport_test tools/transport_test.cpp)
 add_executable(production_test tools/production_test.cpp)
@@ -1644,6 +1648,10 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_seed_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_seed PROPERTIES TIMEOUT 120)
+    add_test(NAME server_speed_pacing COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_speed_pacing_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_speed_pacing PROPERTIES TIMEOUT 120)
     add_test(NAME server_public COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_public_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>" --map-tool "$<TARGET_FILE:map_transfer_test>")

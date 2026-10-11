@@ -17,6 +17,7 @@
 #include "server/commands.h"
 #include "server/acme.h"
 #include "server/roomworker.h"
+#include "server/tickpacer.h"
 #include "server/validationworker.h"
 #include "util/stoptoken.h"
 #include "server/roomtick.h"
@@ -258,6 +259,7 @@ struct Client {
 static constexpr int kPauseByRequest = -2;
 
 using tak::srv::TickResult;
+static_assert(tak::srv::TickPacer::kHz == kServerHz, "TickPacer paces kServerHz ticks per second at 1x");
 
     struct DataSet {
         tak::hpi::Vfs vfs;
@@ -306,23 +308,11 @@ struct Room {
     std::vector<Command> pending;               // commands for the next tick
     std::map<uint32_t, std::vector<Command>> pendingAt;  // server input-delay: cmds bucketed by future tick
     std::vector<Event> pendingEvents;           // sequenced events for the next tick
-    // Tick pacing (server wall clock only; never sim state). The deadline of tick
-    // `tick` is paceUs + (tick-paceTick)*1e7/(kServerHz*paceSpeed) microseconds,
-    // computed from the base each tick rather than accumulated, so a period that is
-    // not a whole number of microseconds (8x = 4166.67 us) neither rounds the rate
-    // (adding a 4 ms period ran 8x at 250 ticks/s) nor drifts. Rebased by
-    // rebasePace() at every start, resume, speed change and retry.
-    uint64_t nextTickUs = 0;                    // wall deadline for the next tick
-    uint64_t paceUs = 0;                        // wall time of tick paceTick
-    uint32_t paceTick = 0;
-    int paceSpeed = 10;                         // the speed (tenths) the base was set at
-    void rebasePace(uint64_t atUs) {
-        paceUs = atUs; paceTick = tick; paceSpeed = std::max<int>(1, int(opts.speed));
-        nextTickUs = atUs;
-    }
-    void advancePace() {
-        nextTickUs = paceUs + uint64_t(tick - paceTick) * 10000000ull / uint64_t(kServerHz * paceSpeed);
-    }
+    // Tick pacing (server wall clock only; never sim state): see server/tickpacer.h.
+    // Rebased by rebasePace() at every start, resume and retry.
+    tak::srv::TickPacer pace;
+    uint64_t nextTickUs() const { return pace.nextUs(); }
+    void rebasePace(uint64_t atUs) { pace.rebase(atUs, tick, int(opts.speed)); }
     // hash cross-check: tick -> (clientId -> hash)
     std::map<uint32_t, std::map<uint32_t, uint64_t>> hashes;
     std::map<uint32_t, bool> desyncFlagged;     // clientId -> already told
@@ -2572,11 +2562,10 @@ void Server::gameMsg(Client& c, const Frame& f) {
             } else if (r->opts.speedUnlock && r->opts.speed != o.speed) {
                 // In-game: only speed can change (re-cadences the sim), and only if the
                 // game was created with speed-unlock. Tell every peer to re-pace.
-                // Rebase at the pending tick's deadline under the old speed, so the
-                // ticks already paced keep their times and the new rate starts here.
-                const uint64_t at = r->nextTickUs;
+                // Re-pace from the pending tick (never inheriting a deficit run up at the
+                // old speed: see TickPacer::changeSpeed).
                 r->opts.speed = o.speed;
-                r->rebasePace(at);
+                r->pace.changeSpeed(r->tick, int(o.speed), nowUs());
                 Writer w; w.u8(o.speed);
                 broadcastRoom(*r, Msg::SpeedUpdate, w);
             }
@@ -2894,7 +2883,7 @@ void Server::finishTick(Room& r) {
         std::fprintf(stderr,"game %u mission %s: %s\n",r.id,r.mission.c_str(),result.missionOutcome>0?"VICTORY":"DEFEAT");
     }
     ++r.tick;
-    r.advancePace();
+    r.pace.advance(r.tick, nowUs());
     // TAK_SRV_PACELOG=N: log the wall time every N published ticks, to measure the
     // real tick rate (8x must be 240.0 ticks/s, 1x 30.0).
     static const uint32_t paceLog = [] {
@@ -3137,7 +3126,7 @@ int Server::run() {
         uint64_t now = nowMs();
         uint64_t soonest = now + (validations_.empty()?1000:10);
         // Only rooms ELIGIBLE to tick may pull the poll deadline in. A paused room
-        // is skipped by the tick loop below but its nextTickUs still slides into
+        // is skipped by the tick loop below but its tick deadline still slides into
         // the past, so counting it here pinned the timeout at 0 and span the
         // server at full CPU for as long as the pause lasted -- and a manual
         // pause has no expiry, so that is indefinite.
@@ -3151,7 +3140,7 @@ int Server::run() {
             }
             // Round the deadline UP to the poll's millisecond, so the wake-up is never
             // early (an early wake finds nothing due and polls again with timeout 0).
-            const uint64_t dueMs = (r.nextTickUs + 999) / 1000;
+            const uint64_t dueMs = (r.nextTickUs() + 999) / 1000;
             if (r.running && !r.paused && dueMs < soonest) soonest = dueMs;
         }
         // A client still streaming catch-up needs servicing regardless of the
@@ -3164,8 +3153,16 @@ int Server::run() {
         }
         int timeout = int(soonest > now ? soonest - now : 0);
 
-        int n = TAK_POLL(pfds.data(), (unsigned)pfds.size(), timeout);
+        // A tick in flight on a room worker caps the timeout at 2 ms above, but sleeping in
+        // poll() for it costs a whole timer quantum on Windows (~15.6 ms), not 2 ms -- one
+        // quantum per tick, which held a Windows server near 70 ticks/s whatever the speed
+        // (8x wants 240). So poll without sleeping, and if no socket is ready wait on the
+        // job's future instead: its completion wakes the wait at once.
+        std::future<TickResult>* inFlight = nullptr;
+        for (auto& [rid, r] : rooms_) { (void)rid; if (r.tickJob.valid()) { inFlight = &r.tickJob; break; } }
+        int n = TAK_POLL(pfds.data(), (unsigned)pfds.size(), inFlight ? 0 : timeout);
         if (n < 0) { if (sockInterrupted(sockErr())) continue; break; }
+        if (n == 0 && inFlight && timeout > 0) inFlight->wait_for(std::chrono::milliseconds(timeout));
 
         for(auto& [id,room]:rooms_) {(void)id;finishTick(room);}
         throttle_.expire(now);   // forget hosts that have long since behaved
@@ -3323,7 +3320,7 @@ int Server::run() {
             (void)id;
             if(!room.running || room.paused || room.tickJob.valid() || room.campaignResult ||
                room.campaignFault || room.resourceLimited || !room.simulationError.empty() ||
-               !roomOccupied(room) || !roomActive(room) || room.nextTickUs>nowTickUs)continue;
+               !roomOccupied(room) || !roomActive(room) || room.nextTickUs()>nowTickUs)continue;
             if(!canAdvance(room)) {room.rebasePace(nowTickUs+kFlowRetryMs*1000);continue;}
             try {closeTick(room,running>1);}
             catch(const std::exception& e) {

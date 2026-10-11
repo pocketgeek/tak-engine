@@ -58,6 +58,7 @@ structure_combat 16
 legion_situation_r10-46292_retail 15
 override_transfer 15
 legion_gen1_route_36057_om1 14
+server_speed_pacing 13
 issue_selection_test_data 13
 legion_scenario_gapsweep 12
 legion_scenario_strait-3x80 12
