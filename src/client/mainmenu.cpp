@@ -1464,8 +1464,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
         }
         SDL_RenderPresent(d_->ren);
-        streamPacer.pace(SDL_RenderGetWindow(d_->ren), settings && settings->vsync &&
-                         streaming && streaming->stream().active());
+        streamPacer.pace(SDL_RenderGetWindow(d_->ren), settings && settings->vsync);   // see main.cpp
         SDL_Delay(1);
     }
 }

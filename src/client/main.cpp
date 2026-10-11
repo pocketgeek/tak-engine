@@ -1811,7 +1811,11 @@ int main(int argc, char** argv) {
             if(studyQuery){studyDeleteQuery(1,&studyQuery);studyQuery=0;}
         }
 #endif
-        streamPacer.pace(win, settings.vsync && !noVsync && streaming.stream().active());
+        // With vsync on, bound presentation at the display's refresh: some renderers report
+        // vsync enabled yet let presents run ahead (macOS Metal under Core Animation was seen
+        // jumping past the refresh and bouncing in a benchmark), and the frame cap below is
+        // off whenever vsync is on. A swap that really waited is left alone (see the pacer).
+        streamPacer.pace(win, settings.vsync && !noVsync);
         if (prof) {
             double t5 = pnow();
             if (profFrames)

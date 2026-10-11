@@ -3,9 +3,10 @@
 #include <cstdint>
 
 namespace tak {
-// Some drivers/compositors keep reporting VSync enabled while readback lets
-// presents run ahead. Bound streaming presentation without double-pacing a
-// swap that has already waited for the monitor.
+// Some drivers/compositors keep reporting VSync enabled while presents run
+// ahead (stream readback; macOS Metal/Core Animation). Bound presentation at
+// the display refresh whenever VSync is on, without double-pacing a swap that
+// has already waited for the monitor.
 class PresentationPacer {
 public:
     void pace(SDL_Window* window, bool enabled) {
