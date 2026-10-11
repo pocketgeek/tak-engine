@@ -10530,11 +10530,6 @@ void World::tick(float dt) {
             if (squad.parameters[8]!=int(populated)) { squad.parameters[8]=int(populated);squad.dirty=1; }
         }
     }
-    TAK_PASS();
-    for (auto& _u : units_) {
-        _u.turnReqBam = 0;   // requested-turn display field, refreshed below
-        _u.tickStartHeadingBam=uint16_t(_u.heading.v);
-    }
 #ifndef NDEBUG
     hashTrace();   // TAK_HASHTRACE=lo:hi -- per-component dump, EVERY tick on both peers
 #endif
@@ -10577,8 +10572,14 @@ void World::tick(float dt) {
     // re-anchor of the segment). The fix is to improve the mover until units stop
     // needing a search -- at which point this zero costs nothing -- NOT to put the
     // budget back. Deliberate call: be faithful now, sharpen the steering later.
+    // One walk (WE D4) resets the per-tick turn and fire/animation state. The turn
+    // reset used to run before hashTrace, tickBurning and the benchmark spawns:
+    // none of them reads or writes a unit's heading or these fields (a spawn
+    // starts with turnReqBam 0 and tickStartHeadingBam at its heading).
     TAK_PASS();
     for (auto& u : units_) {
+        u.turnReqBam = 0;   // requested-turn display field, refreshed below
+        u.tickStartHeadingBam=uint16_t(u.heading.v);
         u.justFired=false;u.firedWeapons=0;u.fireAnimations=0;u.weaponAnimations.clear();u.justBuilt=0;
         for(const auto& event:u.pendingWeaponAnimations)
             u.weaponAnimations.add(event.kind,event.slot,event.heading,event.pitch,event.damage);
