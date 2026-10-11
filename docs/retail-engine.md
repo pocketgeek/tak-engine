@@ -1568,6 +1568,7 @@ TAK_MPAUTO=4 TAK_SHOT_MS=35000 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 - `TAK_SHOT_MS=<ms>` delays the capture by wall-clock ms (default is 3 frames).
 - Add `TAK_STRESS=1` to spawn each AI at ~95% of the unit cap for instant mass
   combat -- the quickest way to see projectile art, beams and storms on screen.
+  The fill arrives over the first 30 ticks (one second), not all at setup.
 - No real window is needed; the dummy driver renders correctly.
 
 ## Mana is a double, and the economy is floating point (2026-09-15)

@@ -516,6 +516,8 @@ struct GameInfo {
 inline constexpr int kMaxGameSpeed = 80;
 
 // Per-game settings chosen by the host.
+constexpr uint8_t kStressImmediate = 1, kStressStaged = 2;
+
 struct GameOptions {
     uint8_t crusades = 0;
     uint8_t forfeitSelfDestruct = 0;   // 0=units go inert on forfeit, 1=self-destruct
@@ -534,8 +536,12 @@ struct GameOptions {
     uint16_t unitCap = 2000;
     // When 0 (default) losing your Monarch loses the game; 1 makes it just a unit.
     uint8_t monarchExpendable = 0;
-    // Stress test (SP all-AI spectate): 1 = spawn each AI at ~95% of the unit cap in
-    // its faction's combat units the moment the game starts, to load-test the sim.
+    // Stress test (SP all-AI spectate): spawn each AI at ~95% of the unit cap in its
+    // faction's combat units at the start, to load-test the sim. 0 = off;
+    // kStressStaged (2, what TAK_STRESS asks for) spreads the fill over the first
+    // kStressStageTicks ticks; kStressImmediate (1) spawns it all at setup, as every
+    // game did before staging -- kept so the stress replays recorded then (the L-2h/R-2h
+    // timing and identity references among them) still replay exactly.
     uint8_t stressTest = 0;
     // Fog of war (client-only display, never hashed -- every client applies the
     // same room rule, so it stays fair): 0 = NOT EXPLORED (terrain starts hidden),

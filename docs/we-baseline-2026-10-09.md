@@ -398,6 +398,49 @@ joiner + 2 AIs at 4x, joiner killed after its game had run 15 s and rejoined wit
 (replaying 1881 and 1885 ticks in two runs), plus a `--mpspectate` client joining mid-game: host, rejoiner and spectator
 all end on 78015ff081df2d52 at tick 4500, no DESYNCED / suspect.
 
+## E4.5: staged stress fill (B2), 2026-10-11
+
+Stress runs (`TAK_STRESS`, room option `stressTest`) no longer open with one huge tick. Bench/stress
+harness hygiene only: it is not a game fix, and normal games do not change (identity below).
+
+- **Staging.** `setupMatch` still plans the whole fill at setup (same roster, round robin, lattice and
+  `snapSpawn` claims, so every body gets the same type and position as before), but puts it into the
+  staged spawn plan instead of spawning it: unit k of a player's army of `target` appears at tick
+  `1 + k * 30 / target` (`kStressStageTicks` = 30, about 507 bodies a tick for 8 x 1900). Each army
+  grows evenly. `World::setStagedSpawns` installs the plan without making the run a benchmark (no end
+  tick, Monarchs stay mortal). With a benchmark on too, the two plans are merged in tick order.
+- **Old stress replays stay exact.** The room option is now 0 = off, 1 = `kStressImmediate` (the old
+  all-at-setup fill), 2 = `kStressStaged` (what `TAK_STRESS` asks for). Replays recorded before this
+  carry 1 and replay with the immediate fill, so L-2h / R-2h (stress recordings) and their harvested
+  timing situations are unchanged. Fixtures that inspect or order the army right after setup
+  (simperf, the patrol perf fixture, placement_test, retailgap_test) set `MatchConfig::stressImmediate`.
+  The server keeps the value (it used to fold it to 0/1). A client from before this sees 2 as "on" and
+  would fill immediately: stress games only, and no kNetVersion bump was taken (it rides the next one).
+- **What the opening tick was.** Staging alone moved most of the cost but left two in-tick costs:
+  (1) `retailRotationCoefficients` builds a process-wide 65536-entry Q60 table on first use (20-54 ms);
+  its first user is the first non-upright ground-support spawn, which used to be at setup and was now
+  tick 1. `setupMatch` builds it up front (pure and immutable, so hash-neutral; this also removes the
+  same one-off from the first such unit a normal game produces). (2) `units_` reallocating its 1.3 KB
+  records during the fill (up to 6 ms once ~15k are copied, and an exact reservation overflowed on the
+  last stage because the AIs produce meanwhile): `setStagedSpawns` reserves the plan plus 25%.
+- **Check.** placement_test `staged stress` (both balances, with and without a benchmark): the opening
+  holds only the 8 Monarchs, 3800 bodies are staged over ticks 1..30 (peak 128 a tick at cap 500), and
+  after tick 30 the set of (player, type, x, z) equals the immediate fill's. A seated 8-player staged
+  stress game (7 AIs + host, 3038 ticks at 4x) raised no desync, and its replay verifies (100 hash
+  checkpoints).
+
+Opening ticks, client sim, Ulasem 8 x 1900 (`TAK_STRESS=1 TAK_UNITCAP=2000`, 8 AIs, watch), build-o2,
+`TAK_PHASE`, under `timing.sh` (cores 0-3) on a busy box; three runs each:
+
+| | ticks 1-3 (ms) | worst of ticks 1-40 | mean of ticks 61-100 |
+|---|---|---|---|
+| base (a7a7902a) | 29.8 26.8 51.8 / 23.5 27.9 54.1 / 34.8 25.6 53.6 | 51.8 / 54.1 / 53.6 (tick 3) | 20.2 / 21.3 / 19.3 |
+| E4.5 | 7.1 6.1 6.2 / 6.1 3.4 4.4 / 7.1 6.8 7.7 | 19.5 / 19.9 / 24.7 | 19.1 / 19.1 / 22.6 |
+
+The base's spawn hitch is 32-35 ms above its steady tick (tick 3: scripts 37 ms + first movement 24 ms
+on this run); with E4.5 no opening tick is more than about 2 ms above the steady tick, and ticks 1-3
+run 3-8 ms.
+
 ## Reproducing
 
 ```sh

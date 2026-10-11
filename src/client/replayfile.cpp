@@ -55,6 +55,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     out.cfg.doubleSight = h.mission.empty() && h.doubleSight != 0;
     out.cfg.pathfindingMode = h.mission.empty() ? h.pathfindingMode : tak::sim::PathfindingMode::Retail;
     out.cfg.stressTest = h.stressTest != 0;
+    out.cfg.stressImmediate = h.stressTest == tak::net::kStressImmediate;   // recorded before staging
     out.cfg.randomStarts = h.randomStarts != 0;
     out.cfg.benchmark = h.benchmark;
     out.cfg.startSeed = h.seed;          // the game's own seed: was recorded, then dropped

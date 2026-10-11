@@ -53,6 +53,14 @@ struct MatchConfig {
     bool doubleSight = false;       // double authored sight and radar distances (not weapon range)
     bool stressTest = false;        // spawn each player at ~95% of the unit cap in combat
                                     // units at setup (SP all-AI load test)
+    // Stress fill timing. By default the fill is staged over the first kStressStageTicks
+    // ticks (World::setStagedSpawns), so a stress run does not open with one 55-89 ms
+    // tick of ~15k Create scripts and a first mass movement pass. Positions, types and
+    // order are the same; only when each body appears changes. Fixtures that inspect or
+    // order the whole army right after setupMatch (simperf, patrol perf, placement and
+    // retail-gap checks) set this to spawn it immediately instead, and so do games whose
+    // room option is net::kStressImmediate (stress replays recorded before staging).
+    bool stressImmediate = false;
     // Random Start Locations: shuffle which start position each slot takes, so a
     // map's spawns can't be memorised. Deterministic (seeded below), so every peer
     // and the referee produce the same assignment.
@@ -67,6 +75,9 @@ struct MatchConfig {
 // 1/spawnsPerSec seconds over the 60s run. Shared by the sim (setupMatch) and the client
 // (menu + results label) so both agree.
 constexpr int kBenchLevels = 6;
+// Ticks the staged stress fill is spread over (each player's army arrives evenly across
+// ticks 1..kStressStageTicks, about 512 bodies a tick for a full 8-player fill).
+constexpr int kStressStageTicks = 30;
 inline int benchmarkSpawnsPerSec(int level) { return (level >= 1 && level <= kBenchLevels) ? (1 << (level - 1)) : 0; }
 inline int benchmarkSpawns(int level) { return benchmarkSpawnsPerSec(level) * 60; }
 inline const char* benchmarkLevelName(int level) {

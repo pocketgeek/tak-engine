@@ -4,6 +4,7 @@
 #include "sim/detmath.h"
 #include "gaf/featureburntiming.h"
 #include "sim/footprint.h"
+#include "sim/retailpiecepose.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -943,6 +944,20 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         for (int s = 0; s < kBenchSpawns; ++s)
             benchPlan[size_t(s)].tick = uint32_t((uint64_t(s + 1) * 1800) / uint64_t(kBenchSpawns));
     }
+    // Build the process-wide ground-support rotation table now (retailRotationCoefficients:
+    // 65536 Q60 Taylor evaluations, 20-50 ms, a pure function of the heading). Its first
+    // user is the first spawn of a non-upright ground-support unit; that used to be the
+    // stress fill's first catapult here at setup, but a staged fill or a benchmark ramp
+    // spawns it inside a tick, where it was the whole opening hitch of a staged run.
+    // Hash-neutral: the table is immutable and identical whenever it is built.
+    (void)retailRotationCoefficients(0);
+    // Staged stress fill (see MatchConfig::stressImmediate): stage k spawns at tick k+1.
+    const bool stressStaged = cfg.stressTest && !cfg.stressImmediate;
+    std::vector<BenchStage> stressPlan;
+    if (stressStaged) {
+        stressPlan.resize(size_t(kStressStageTicks));
+        for (int s = 0; s < kStressStageTicks; ++s) stressPlan[size_t(s)].tick = uint32_t(s + 1);
+    }
     for (int i = 0; i < int(cfg.slots.size()); ++i) {
         if (!cfg.slots[i].used) continue;
         const UnitType* monarch = reg.find(kMonarchs[cfg.slots[i].faction % 5]);
@@ -1038,7 +1053,14 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                     // The lattice ignores terrain; this does not. False means the map
                     // is genuinely full -- stop rather than stack the remainder.
                     if (!snapSpawn(t, ux, uz)) break;
-                    world.spawn(t, ux, uz, 0, i);
+                    // Staged: unit k of this player's army appears at tick
+                    // 1 + k*kStressStageTicks/target, so every army grows evenly. The
+                    // snap above already claimed its footprint, exactly as before.
+                    if (stressStaged)
+                        stressPlan[size_t((int64_t(k) * kStressStageTicks) / target)]
+                            .units.push_back({t, ux, uz, i});
+                    else
+                        world.spawn(t, ux, uz, 0, i);
                 }
             }
         }
@@ -1080,6 +1102,22 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 }
             }
         }
+    }
+    if (stressStaged && cfg.benchmark) {
+        // Both on: one tick-ordered plan for the single executor cursor. Stable, and the
+        // stress stage goes first on a tie.
+        std::vector<BenchStage> merged;
+        merged.reserve(stressPlan.size() + benchPlan.size());
+        size_t a = 0, b = 0;
+        while (a < stressPlan.size() || b < benchPlan.size()) {
+            if (b == benchPlan.size() || (a < stressPlan.size() && stressPlan[a].tick <= benchPlan[b].tick))
+                merged.push_back(std::move(stressPlan[a++]));
+            else
+                merged.push_back(std::move(benchPlan[b++]));
+        }
+        benchPlan = std::move(merged);
+    } else if (stressStaged) {
+        world.setStagedSpawns(std::move(stressPlan));
     }
     if (cfg.benchmark) world.setBenchmarkPlan(std::move(benchPlan), 1800);   // end at tick 1800 (60s)
     // Block the (structure) footprints just spawned. Monarchs move, so this is a
