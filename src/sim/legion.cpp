@@ -7186,7 +7186,7 @@ struct LegionNavigator::Impl {
         };
         // Nearer the point: by the field's potential at the other body's
         // origin where the field reaches it, else by pixel distance.
-        bool queued=false,foreign=false;uint16_t front=kUnreached;
+        bool queued=false,foreign=false,stranger=false;uint16_t front=kUnreached;
         const int r=foot<=5?2:1;
         uint64_t ring=0;
         for(int j=-r;j<fz+r&&!foreign&&ring<uint64_t(kSettleRing);++j)for(int i=-r;i<fx+r&&!foreign&&ring<uint64_t(kSettleRing);++i) {
@@ -7197,7 +7197,10 @@ struct LegionNavigator::Impl {
             const int32_t o=occAt(size_t(cz)*w.occW_+cx);
             if(!o||o==u.id)continue;
             const Unit* other=w.unit(o);
-            if(!other||other->player!=u.player||!other->type||other->type->isStructure()||!nearer(*other))continue;
+            if(!other||!other->type||other->type->isStructure())continue;
+            // Legion never asks another player's body to yield or part.
+            if(other->player!=u.player) {stranger=true;continue;}
+            if(!nearer(*other))continue;
             if(isAnchor(o)) {
                 const auto a=anchors.find(o);
                 if(!sameDestination(a->second.point))continue;
@@ -7223,6 +7226,15 @@ struct LegionNavigator::Impl {
             }
         }
         stats.crowdWindowRingCells+=ring;
+        // An exact goal (a build rectangle, a transport circle, a park ring)
+        // held for a window against another player's body, with no free step
+        // nearer its point: no yield or part can move that body, so nothing
+        // here would ever end the approach. Retail's mover bumps it, the
+        // refused step re-asks the navigator and the search from the closest
+        // point returns an empty route: 0x200, and the mission handler
+        // decides (build within reach, or give up). That body counts as a
+        // foreign crowd, so complete raises the same event.
+        if(stranger&&!foreign&&policy(m.kind).exact&&pressed(u,p,*f,ox,oz,potential))foreign=true;
         // The chain's first link: a shared point's member standing inside
         // the destination area itself is at the crowd.
         if(area&&!queued&&!foreign&&shared(g,m)&&potential<=areaBound(g,m,fx,fz,body))queued=true;

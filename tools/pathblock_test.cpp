@@ -20,7 +20,9 @@
 
 #include "sim/sim.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <string>
 #include <tuple>
@@ -72,6 +74,84 @@ static float runWall(int thick) {
     return -1.0f;
 }
 
+
+
+// A builder whose approach and site are blocked by another player's unit that
+// never moves. Retail's mover bumps it, its step is refused, the navigator
+// re-searches and, from the closest point, gets an empty route: the 0x200
+// failed-approach event hands the order back to MobileBuild, which places
+// (within reach) or drops it (out of reach). Legion used to hold the builder
+// in front of the body for ever (the order never ended). Returns the tick
+// the build order retired, or -1 if it never did within `limit`.
+static int runBlockedApproach(bool legion,float blockerX,float blockerZ,int limit,bool verbose=false) {
+    World w;
+    w.setVisPlayer(-1);
+    w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    w.setPathService(true);
+    if (legion) w.setPathfindingMode(PathfindingMode::Legion);
+    UnitType builder=soldier(),blocker=soldier(),site=soldier();
+    builder.id=builder.name="bld";builder.isBuilder=true;builder.buildDist=60;builder.turnInPlaceRate=1000;
+    blocker.id=blocker.name="blk";
+    site.id=site.name="site";site.maxVel=Fixed();site.buildTime=10000;site.buildCost=0;
+    const int bid=w.spawn(&builder,160,512,0,0);
+    // Ordered onto a clear site; the body walks in afterwards.
+    w.queueBuild(bid,&site,512,512,false);
+    if (w.unit(bid)->orders.empty()) return -2;
+    w.spawn(&blocker,blockerX,blockerZ,0,1);
+    for (int t=0;t<limit;++t) {
+        w.tick(1.0f/30.0f);
+        const Unit* b=w.unit(bid);
+        if (verbose && t%30==0) std::printf("    t=%d pos=(%.1f,%.1f) orders=%zu site=%d\n",t,b->x.toFloat(),b->z.toFloat(),b->orders.size(),b->buildSiteId);
+        if (b->orders.empty() || b->buildSiteId) return t;
+    }
+    return -1;
+}
+
+// MobileBuild placement at the site (retail 405824..405911). The builder
+// approaches from the west and stands outside the 2x2 site at (512,512).
+// `what`: 0 another player's unit stands on the site's east column and never
+// moves; 1 the same, but it walks away after 100 ticks; 2 a non-reclaimable
+// feature appears on the site. A move is queued behind the build.
+struct PlacementRun {int firstFailure=-1,dropped=-1,built=-1,maxFailures=0;bool heldStill=true;};
+static PlacementRun runSitePlacement(bool legion,int what) {
+    PlacementRun r;
+    World w;
+    w.setVisPlayer(-1);
+    w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    w.setPathService(true);
+    if (legion) w.setPathfindingMode(PathfindingMode::Legion);
+    FeatType rock;rock.reclaimable=false;
+    w.setFeatureTypes({rock});
+    UnitType builder=soldier(),blocker=soldier(),site=soldier();
+    builder.id=builder.name="bld";builder.isBuilder=true;builder.buildDist=60;builder.turnInPlaceRate=1000;
+    builder.accel=Fixed::fromFloat(0.1f);builder.brake=Fixed::fromFloat(0.5f);
+    blocker.id=blocker.name="blk";
+    site.id=site.name="site";site.maxVel=Fixed();site.buildTime=10000;site.buildCost=0;
+    const int bid=w.spawn(&builder,160,512,0,0);
+    w.queueBuild(bid,&site,512,512,false);
+    w.order(bid,160,800,true);
+    int kid=0;
+    if (what==2) w.addFeature(4242,512,512,0,10,1,1,true,0);
+    else kid=w.spawn(&blocker,528,512,0,1);
+    Fixed sx,sz;
+    for (int t=0;t<1200;++t) {
+        if (what==1 && t==r.firstFailure+100 && r.firstFailure>=0) w.order(kid,900,900,false);
+        w.tick(1.0f/30.0f);
+        const Unit* b=w.unit(bid);
+        if (b->buildSiteId) {r.built=t;break;}
+        const bool building=!b->orders.empty() && b->orders.front().buildType;
+        const int failures=building ? b->orders.front().placementFailures : 0;
+        // Braking settles within a few ticks of the first refusal.
+        if (failures>0 && r.firstFailure<0) r.firstFailure=t;
+        if (failures>0 && t==r.firstFailure+10) {sx=b->x;sz=b->z;}
+        if (failures>0 && t>r.firstFailure+10 && (b->x!=sx || b->z!=sz)) r.heldStill=false;
+        r.maxFailures=std::max(r.maxFailures,failures);
+        bool pending=false;
+        for (const auto& o:b->orders) pending|=o.buildType!=nullptr;
+        if (!pending) {r.dropped=t;break;}
+    }
+    return r;
+}
 
 int main() {
     {
@@ -674,6 +754,32 @@ int main() {
             close = std::sqrt(dx * dx + dz * dz) < 140.0f;
         }
         check(close, "a unit still reaches a destination others are standing on");
+    }
+
+    for (bool legion:{false,true}) {
+        const bool verbose=std::getenv("PATHBLOCK_VERBOSE")!=nullptr;
+        const int done=runBlockedApproach(legion,496,512,1800,verbose);
+        check(done>=0,std::string(legion?"Legion":"Retail")+": a builder blocked by a still body ends its approach",
+              "retired at tick "+std::to_string(done));
+    }
+
+    for (bool legion:{false,true}) {
+        const std::string mode=legion?"Legion: ":"Retail: ";
+        const auto wait=runSitePlacement(legion,0);
+        check(wait.firstFailure>=0 && wait.dropped>=0 && wait.maxFailures==30 && wait.heldStill &&
+              wait.dropped-wait.firstFailure>=295 && wait.dropped-wait.firstFailure<=305,
+              mode+"a unit on the site: retry every 10 ticks, drop after 31",
+              "first failure "+std::to_string(wait.firstFailure)+", dropped "+std::to_string(wait.dropped)+
+              ", failures "+std::to_string(wait.maxFailures));
+        const auto clears=runSitePlacement(legion,1);
+        check(clears.firstFailure>=0 && clears.built>=0 && clears.dropped<0 &&
+              clears.built-clears.firstFailure>100 && clears.built-clears.firstFailure<300,
+              mode+"the site clears during the wait: the builder places",
+              "first failure "+std::to_string(clears.firstFailure)+", built "+std::to_string(clears.built));
+        const auto rock=runSitePlacement(legion,2);
+        check(rock.dropped>=0 && rock.maxFailures==0 && rock.built<0,
+              mode+"a non-reclaimable feature on the site: drop at once",
+              "dropped "+std::to_string(rock.dropped)+", failures "+std::to_string(rock.maxFailures));
     }
 
     std::printf(g_fail ? "pathblock_test: %d FAILURE(S)\n" : "pathblock_test: all passed\n",

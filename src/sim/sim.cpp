@@ -6748,7 +6748,8 @@ std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomi
 }
 
 bool World::placementCheck(const UnitType* type, float x, float z, int player,
-                           std::vector<int>* clearFeatures,const std::vector<int>* candidates,int ignoreId) const {
+                           std::vector<int>* clearFeatures,const std::vector<int>* candidates,int ignoreId,
+                           bool ignoreMobile) const {
     if (!type) return false;
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,player);
     // Lodestones must sit on a mana deposit — but only on maps that have any
@@ -6878,17 +6879,44 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
         // Retail's building branch (507400) checks occupied footprint cells.
         // A radius based on the longest side rejects builders standing beside
         // a rectangular building after they reach its construction perimeter.
-        const auto bodies=searchBodyRect(cx,cz,type->footX,type->footZ,replacing ? replacing->id : 0);
-        for (size_t i=0;i<bodies.cells.size();++i) {
-            if (!type->yardMap.empty() && type->yardMap[i]=='.') continue;
+        const auto tested=[&](size_t i) {
+            if (!type->yardMap.empty() && type->yardMap[i]=='.') return false;
             // Native Y has no occupancy bits; w and C both test bodies.
-            if (waterOnlyYard && type->yardMap[i]=='Y') continue;
-            if (bodies.cells[i]) return false;
+            return !(waterOnlyYard && type->yardMap[i]=='Y');
+        };
+        if (ignoreMobile) {
+            // MobileBuild's second test (405824..405911) ignores every mobile
+            // unit: only another building's occupied cells refuse the site.
+            // The body plane keeps one occupant per cell, which a unit
+            // standing in a yard would hide, so stamp buildings alone.
+            for (const auto& u:units_) {
+                if ((replacing && u.id==replacing->id) || !u.alive() || u.embarked() || !u.type ||
+                    !u.type->isStructure()) continue;
+                const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+                for (int j=std::max(cz,uz);j<std::min(cz+type->footZ,uz+u.type->footZ);++j)
+                    for (int i=std::max(cx,ux);i<std::min(cx+type->footX,ux+u.type->footX);++i) {
+                        if (!tested(size_t(j-cz)*type->footX+i-cx)) continue;
+                        if (!u.type->yardMap.empty()) {
+                            const char yard=u.type->yardMap.at(size_t(j-uz)*u.type->footX+i-ux);
+                            if (yard=='.') continue;
+                            if (yard=='c' || yard=='C') {
+                                const auto script=unitScripts_.find(u.id);
+                                if (script!=unitScripts_.end() && script->second.yardOpen) continue;
+                            }
+                        }
+                        return false;
+                    }
+            }
+            return true;
         }
+        const auto bodies=searchBodyRect(cx,cz,type->footX,type->footZ,replacing ? replacing->id : 0);
+        for (size_t i=0;i<bodies.cells.size();++i)
+            if (tested(i) && bodies.cells[i]) return false;
         return true;
     }
     const auto overlaps=[&](const Unit& u) {
         if (!u.alive() || u.id==ignoreId) return false;
+        if (ignoreMobile && !(u.type && u.type->isStructure())) return false;
         float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
         float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
         return dx * dx + dz * dz < min * min;
@@ -6922,7 +6950,8 @@ bool World::buildAllowed(const UnitType* type) const {
 }
 
 int World::startBuild(int builderId, const UnitType* type, float x, float z,
-                      Approach approach) {
+                      Approach approach, bool* mobileBlocked) {
+    if (mobileBlocked) *mobileBlocked=false;
     if (!buildAllowed(type)) return 0;
     Unit* b = unit(builderId);
     // A mobile builder only: a building may carry canMove=1 in its FBI but can never
@@ -6933,7 +6962,11 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,b->player);
     if (!replacing && atUnitCap(b->player)) return 0;
     if (atTypeCap(b->player, type)) return 0;   // totalallowed: already fielding one
-    if (!canPlace(type, x, z, b->player)) return 0;
+    if (!canPlace(type, x, z, b->player)) {
+        if (mobileBlocked)
+            *mobileBlocked=placementCheck(type,x,z,b->player,nullptr,nullptr,0,true);
+        return 0;
+    }
     std::optional<Unit::LodestoneReplacement> replacement;
     if (replacing) {
         replacement=Unit::LodestoneReplacement{replacing->type,replacing->x,replacing->z,replacing->heading};
@@ -10518,6 +10551,13 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         else brakeGround(u);
         return;
     }
+    // MobileBuild stopped navigating at its site while mobile units stand on
+    // it (405824..405911): the body brakes and stays for the 10-tick retry.
+    if (!u.type->canFly && !u.orders.empty() && u.orders.front().buildType &&
+        u.orders.front().placementFailures) {
+        brakeGround(u);
+        return;
+    }
     // Queued mobile production already advanced its hover controller this tick.
     if (u.type->canFly && u.orders.empty() && u.productionSiteId &&
         u.conjureHoverTarget==u.productionSiteId) return;
@@ -11843,32 +11883,44 @@ void World::tick(float dt) {
         // not all ground missions before every other unit's activity.
         if (u.constructionHolding && u.buildSiteId) continue;
         if (u.legionLift && tickLegionLift(u)) continue;
-        tickManaBuildArea(u);
-        tickPatrolRepair(u);
-        if (g_phase) {
-            PhaseSpan span(g_moveMs,probe::kMovement);
-            tickGroundMission(u);
-        } else tickGroundMission(u);
-        if (plainFlightPatrol(u)) tickFlightPatrol(u);
-        tickGuardNoMove(u);
+        // MobileBuild standing at its site, waiting out mobile units on it
+        // (405824..405911): navigation has stopped (tickNavigationMovement
+        // only brakes it); only the retry below runs.
+        const bool placementWait=!u.type->canFly && !u.orders.empty() &&
+            u.orders.front().buildType && !u.orders.front().buildRectangle &&
+            u.orders.front().placementFailures>0;
+        if (!placementWait) {
+            tickManaBuildArea(u);
+            tickPatrolRepair(u);
+            if (g_phase) {
+                PhaseSpan span(g_moveMs,probe::kMovement);
+                tickGroundMission(u);
+            } else tickGroundMission(u);
+            if (plainFlightPatrol(u)) tickFlightPatrol(u);
+            tickGuardNoMove(u);
+        }
         // A captured MobileBuild waits for navigator arrival before creating
         // the site. Keep that rectangle attached to the owning goal across
         // every intermediate route, and hand construction over on the next tick.
         if (!u.orders.empty()) {
             auto& goal=u.orders[currentLeg(u.orders)];
-            if (prepareBuildApproach(u)) {
-                const Order arrived=goal;
-                dropLeg(u);
-                u.orders.insert(u.orders.begin(),arrived);
-                u.orders.front().buildRectangle.reset();
-                u.orders.front().x=arrived.buildX;
-                u.orders.front().z=arrived.buildZ+Fixed::fromInt(arrived.buildType->footZ*8+24);
-                cancelPath(u);
+            if (placementWait ? tickCounter_>=u.orders.front().placementRetryTick : prepareBuildApproach(u)) {
+                if (!placementWait) {
+                    const Order arrived=goal;
+                    dropLeg(u);
+                    u.orders.insert(u.orders.begin(),arrived);
+                    u.orders.front().buildRectangle.reset();
+                    u.orders.front().x=arrived.buildX;
+                    u.orders.front().z=arrived.buildZ+Fixed::fromInt(arrived.buildType->footZ*8+24);
+                    cancelPath(u);
+                }
+                const Order arrived=u.orders.front();
                 // Allocate during this unit's dispatch: later units may draw
                 // construction particles from the same CRT stream.
                 const int builderId=u.id;
+                bool mobileBlocked=false;
                 const int siteId=startBuild(builderId,arrived.buildType,arrived.buildX.toFloat(),
-                                             arrived.buildZ.toFloat(),Approach::None);
+                                             arrived.buildZ.toFloat(),Approach::None,&mobileBlocked);
                 if (siteId) {
                     auto& builder=*unit(builderId);
                     if (builder.type->canFly) {
@@ -11879,7 +11931,21 @@ void World::tick(float dt) {
                         tickFlightBody(builder);
                         notifyFlightOccupancy(builder);
                     } else turnBuilderToSite(builder,*unit(siteId));
-                } else popBuildOrder(*unit(builderId));
+                } else {
+                    // 405824..405911: a site refused only by mobile units is
+                    // retried every 10 ticks where the builder stands. Retail
+                    // says UNITCHATTER_WAITFORTARGETTOCLEAR on the 7th try and
+                    // UNITCHATTER_TARGETBLOCKED when the 31st fails; we have
+                    // no unit-chatter channel, so both pass silently. Anything
+                    // else (a building, a feature, terrain, caps) adds 999 to
+                    // the count there: the order is dropped at once and the
+                    // builder moves on to its next order.
+                    auto& builder=*unit(builderId);
+                    auto& order=builder.orders.front();
+                    if (mobileBlocked && !builder.type->canFly && ++order.placementFailures<31)
+                        order.placementRetryTick=tickCounter_+10;
+                    else popBuildOrder(builder);
+                }
                 // spawn invalidates references; re-establish slot order before
                 // continuing so a later newborn receives its first update today.
                 if (retailAllocation_) {
@@ -11973,7 +12039,9 @@ void World::tick(float dt) {
         // The actual startBuild happens after this loop: it spawns the site, which
         // can reallocate units_ and leave every Unit& here dangling -- an earlier
         // version called it inline and read the order queue out of freed memory.
-        if (!u.orders.empty() && u.orders.front().buildType && !u.orders.front().buildRectangle && u.buildSiteId == 0)
+        // (A MobileBuild waiting out mobile units on its site retries above.)
+        if (!u.orders.empty() && u.orders.front().buildType && !u.orders.front().buildRectangle && u.buildSiteId == 0 &&
+            !u.orders.front().placementFailures)
             buildDue_.push_back(u.id);
         tickReclaimArea(u);
         // Reclaim needs no deferral: consuming a feature spawns nothing, so
@@ -12892,6 +12960,7 @@ uint64_t World::stateHash() const {
                 } else mix(0);
             }
             if (order.convoyTick != ConvoyTable::kNone) {mix(0x434f4e5654494bull);mix(order.convoyTick);}
+            if (order.placementFailures) {mix(0x504c4143454dull);mix(order.placementFailures);mix(order.placementRetryTick);}
             if (order.stationFree || order.stationRefTick) {
                 mix(0x53544e52454cull);mix(order.stationFree);
                 mix(uint32_t(order.stationRefX));mix(uint32_t(order.stationRefZ));mix(order.stationRefTick);

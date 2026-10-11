@@ -705,6 +705,11 @@ struct alignas(64) Order {
     Fixed hoverAttackTargetX, hoverAttackTargetZ;
     int32_t stationRefX = 0, stationRefZ = 0;
     uint32_t stationRefTick = 0;
+    // MobileBuild placement at the site (405824..405911): failures while only
+    // mobile units stand on it, and the tick of the next 10-tick retry. Zero
+    // until the first such failure. Hashed with a tag when set.
+    uint32_t placementRetryTick = 0;
+    uint8_t placementFailures = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1651,8 +1656,10 @@ public:
     //   None    -- it is already standing in position (a queued build that has just
     //              come due), so issuing an approach would only disturb the queue.
     enum class Approach { Replace, None };
+    // `mobileBlocked`, when given, is set when the site is refused only by
+    // mobile units standing on it (retail re-runs 507d10 ignoring them).
     int startBuild(int builderId, const UnitType* type, float x, float z,
-                   Approach approach = Approach::Replace);
+                   Approach approach = Approach::Replace, bool* mobileBlocked = nullptr);
     // Build now if the builder is free, else queue it (shift-click). A
     // non-queued order replaces any pending queue.
     void queueBuild(int builderId, const UnitType* type, float x, float z, bool queue);
@@ -2277,7 +2284,7 @@ private:
     bool canPlaceProduction(int builderId,const UnitType* type,float x,float z) const;
     bool placementCheck(const UnitType* type, float x, float z, int player,
                         std::vector<int>* clearFeatures,const std::vector<int>* candidates=nullptr,
-                        int ignoreId=0) const;
+                        int ignoreId=0,bool ignoreMobile=false) const;
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot);

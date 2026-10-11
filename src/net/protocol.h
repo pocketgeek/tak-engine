@@ -19,7 +19,14 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 250;      // 250: retail game speed -- GameOptions.speed is 1..20 tenths (retail's linear
+constexpr uint32_t kNetVersion = 251;      // 251: blocked build sites. MobileBuild placement at the site follows retail
+                                           //      405824..405911: refused only by mobile units it retries every 10 ticks where the
+                                           //      builder stands and drops after the 31st failure; refused by anything else it drops
+                                           //      at once (hashed Order::placementFailures/placementRetryTick). Legion: an exact goal
+                                           //      (build/transport/park) held a window against another player's body with no free
+                                           //      step nearer settles there and raises the failed-approach event (0x200), as retail's
+                                           //      refused step -> re-search -> empty route does; it used to wait for ever
+                                           // 250: retail game speed -- GameOptions.speed is 1..20 tenths (retail's linear
                                            //      -10..+10, 0.1x steps, 2x max; 80 only on a test/loopback server for the
                                            //      timing harnesses), and WE E4.5's stressTest=2 (staged stress fill). Pacing and
                                            //      bench setup only; no hashed sim change in a normal game
