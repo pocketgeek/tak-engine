@@ -1086,6 +1086,8 @@ namespace {
         loadOrderButtons();
         for (auto& [name, texture] : weaponIcons_) gpuvram::destroy(texture);
         weaponIcons_.clear();
+        for (auto& [name, texture] : icons_) if (texture) gpuvram::destroy(texture);
+        icons_.clear();   // build portraits reload smoothed (or not) on next use
         for (auto& [name, texture] : scoreboardLogos_) gpuvram::destroy(texture);
         scoreboardLogos_.clear();
         auto kill = [](SDL_Texture*& t) { gpuvram::destroy(t); t = nullptr; };

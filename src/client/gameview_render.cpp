@@ -3702,10 +3702,12 @@
         if (it != icons_.end()) return it->second;
         SDL_Texture* tex = nullptr;
         try {
+            // Through makeTexture like the rest of the GUI art: with Smooth GUI Art on,
+            // the portrait is edge-upscaled 2x and filtered linearly, so it stops
+            // looking blocky at large build-bar scales. Callers size from their own
+            // boxes (or the texture's aspect), so the 2x dimensions change no layout.
             auto img = tak::jpeg::load(vread("anims/buildpic/" + typeId + ".jpg"));
-            tex = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
-                                    SDL_TEXTUREACCESS_STATIC, img.width, img.height);
-            SDL_UpdateTexture(tex, nullptr, img.rgba.data(), img.width * 4);
+            tex = tak::art::makeTexture(ren_, img.rgba, img.width, img.height);
         } catch (const std::exception&) {}
         icons_[typeId] = tex;
         return tex;
