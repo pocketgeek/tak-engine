@@ -1985,6 +1985,9 @@ public:
     // and the sim's SimPool: serial runs the pool's identical fixed chunks inline.
     // Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
+    // The SimPool's worker count, for tests (-1: SimPool::defaultWorkers()).
+    // setSerialThreads(true) still means 0. Scheduling only, like the above.
+    void setSimWorkers(int n) { simWorkers_ = n; }
     // Deterministic digest of sim state, for lockstep sync checking.
     struct WeaponAimSolution {
         uint16_t heading=0,pitch=0;
@@ -2198,6 +2201,10 @@ public:
     const Unit* unit(int id) const {
         return const_cast<World*>(this)->unit(id);
     }
+    // unit(id) without its lookup-table repair, so it never writes: safe on
+    // SimPool workers, with the same result.
+    Unit* unitNoRepair(int id);
+    const Unit* unitNoRepair(int id) const { return const_cast<World*>(this)->unitNoRepair(id); }
 
     // Weapon impacts this tick (view-side: impact sound + effect). Carries the
     // source weapon (soundhitclass / hweffect) and the unit struck (body material
@@ -2404,6 +2411,23 @@ private:
     // count of alive units with a type (embarked ones included).
     uint32_t rebuildGridAndOccupancy();
     uint32_t rebuildSpatial(bool grid, bool occupancy);
+    // rebuildSpatial on the SimPool (WE E4.3, P6): the chunks read the units
+    // into spatialRec_, then serial walks over those records stamp and link in
+    // unit order, so every chain, stamp and list is the serial one.
+    uint32_t rebuildSpatialParallel(bool grid, bool occupancy);
+    uint32_t rebuildSpatialSerial(bool grid, bool occupancy);
+    static constexpr size_t kSpatialMinParallel = 2048;
+    struct SpatialRec {
+        float x, z;                 // u.x/u.z as float (grid units only)
+        int32_t id;
+        int16_t ox, oz;             // footprint origin (occupancy units only)
+        uint8_t fx, fz;
+        uint8_t player;             // 0xff: not representable in the 64-bit owner masks
+        uint8_t kind;               // bit 0: in the grid; bits 1-2: 1 moving body, 2 parked body
+    };
+    std::vector<SpatialRec> spatialRec_;
+    struct SpatialChunk { float minx, minz, maxx, maxz; uint32_t live; bool any; };
+    std::vector<SpatialChunk> spatialChunks_;
     // Call fn(int unitIndex) for every mobile unit whose cell lies within
     // `radius` of (x,z). Iterates cells in a fixed order, so it is deterministic.
     //
@@ -2833,6 +2857,7 @@ private:
     static constexpr int kExplorationBlockShift=3;
     std::vector<uint16_t> explorationBlocks_;
     bool serialThreads_ = false;
+    int simWorkers_ = -1;
     // The intra-tick worker pool (0 workers when serialThreads_), created on
     // first use; see simPool().
     std::unique_ptr<SimPool> pool_;
@@ -3002,8 +3027,27 @@ private:
     // Indices into units_ of the bodies eligible to be raised or reclaimed this tick,
     // in ascending unit id. Rebuilt once per corpse pass; see the note there.
     std::vector<uint32_t> corpseIdx_;
+    // ...and of the units the caster loop visits (alive, able to act, idle,
+    // a caster or a reclaimer), ascending.
+    std::vector<uint32_t> actorIdx_;
+    struct AbilityChunk { std::vector<uint32_t> corpses, actors; };
+    std::vector<AbilityChunk> abilityChunks_;   // tickAbilities on the SimPool (WE E4.3)
+    // The post-loop passes go to the SimPool from this many units.
+    static constexpr size_t kPostMinParallel = 2048;
+    // tickAuras on the SimPool: per chunk of kAuraEmitterChunk emitters, the
+    // units refreshed, in the serial order.
+    struct AuraHit { uint32_t index; uint8_t flags; float amt; };   // flags: 1 armour, 2 debuff
+    std::vector<std::vector<AuraHit>> auraChunks_;
+    static constexpr size_t kAuraEmitterChunk = 4;
     // Per player, this tick's retail construction demand (World::tick's economy step).
     std::vector<float> retailDemand_;
+    // The economy walk on the SimPool (WE E4.3): per chunk, its units'
+    // nonzero contributions and its sites, in unit order.
+    enum class EconomyKind : uint8_t { Site, Income, SacredIncome, Storage, Demand };
+    struct EconomyItem { uint32_t index; int16_t player; EconomyKind kind; float f; double d; };
+    std::vector<std::vector<EconomyItem>> economyChunks_;
+    // The tick prologue's passes go to the SimPool from this many units.
+    static constexpr size_t kPrologueMinParallel = 2048;
     // Indices into units_ of this tick's construction sites, ascending, as the
     // economy walk found them (World::tick's decay pass).
     std::vector<uint32_t> sitesIdx_;

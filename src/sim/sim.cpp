@@ -60,6 +60,16 @@ static bool verifyLists() {
     static const bool on = std::getenv("TAK_VERIFY_LISTS") != nullptr;
     return on;
 }
+// TAK_VERIFY_POOL (debug): every pass that WE E4.3 put on the SimPool is
+// redone serially and its result compared (aborts on a difference).
+static bool verifyPool() {
+    static const bool on = std::getenv("TAK_VERIFY_POOL") != nullptr;
+    return on;
+}
+[[noreturn]] static void poolMismatch(const char* pass, uint32_t tick) {
+    std::fprintf(stderr, "TAK_VERIFY_POOL tick %u: %s differs from the serial pass\n", tick, pass);
+    std::abort();
+}
 #endif
 
 namespace {
@@ -941,6 +951,18 @@ Unit* World::unit(int id) {
         if(unitSlotById_.size()<=size_t(id))unitSlotById_.resize(size_t(id)+1,-1);
         unitSlotById_[size_t(id)]=int32_t(i);return &units_[i];
     }
+    return nullptr;
+}
+
+Unit* World::unitNoRepair(int id) {
+    if(id<=0)return nullptr;
+    if(size_t(id)<unitSlotById_.size()) {
+        const int32_t slot=unitSlotById_[size_t(id)];
+        if(slot>=0 && size_t(slot)<units_.size() && units_[size_t(slot)].id==id)
+            return &units_[size_t(slot)];
+        if(slot<0 && retiredOwners_.contains(id))return nullptr;
+    }
+    for(size_t i=0;i<units_.size();++i)if(units_[i].id==id)return &units_[i];
     return nullptr;
 }
 
@@ -6348,6 +6370,29 @@ uint32_t World::rebuildGridAndOccupancy() { return rebuildSpatial(true,true); }
 // other's grid, so every bucket chain, stamp and touched list comes out exactly
 // as from the two separate walks.
 uint32_t World::rebuildSpatial(bool grid, bool occupancy) {
+    if (units_.size() < kSpatialMinParallel || !simPool().workers()) return rebuildSpatialSerial(grid, occupancy);
+    const uint32_t live = rebuildSpatialParallel(grid, occupancy);
+#ifndef NDEBUG
+    if (verifyPool()) {
+        const auto head = gHead_, next = gNext_; const auto touched = gTouched_;
+        const auto players = gPlayers_, blocks = gBlockPlayers_;
+        const auto occ = occ_; const auto occTouched = occTouched_;
+        const bool valid = gPlayersValid_; const int w = gW_, h = gH_;
+        const float ox = gOx_, oz = gOz_;
+        const uint32_t serialLive = rebuildSpatialSerial(grid, occupancy);
+        if (serialLive != live || occ != occ_ || occTouched != occTouched_ || w != gW_ || h != gH_ ||
+            (w > 0 && (head != gHead_ || touched != gTouched_ || players != gPlayers_ || blocks != gBlockPlayers_ ||
+                       valid != gPlayersValid_ || ox != gOx_ || oz != gOz_)))
+            poolMismatch("rebuildSpatial", tickCounter_);
+        if (grid && w > 0)
+            for (size_t i = 0; i < next.size(); ++i)
+                if (next[i] != gNext_[i] && spatialRec_[i].kind & 1) poolMismatch("rebuildSpatial gNext_", tickCounter_);
+    }
+#endif
+    return live;
+}
+
+uint32_t World::rebuildSpatialSerial(bool grid, bool occupancy) {
     // ---- spatial hash: bounds and buckets
     // Include ALL alive units (buildings too) so combat can target structures.
     auto inGrid = [](const Unit& u) {
@@ -6444,6 +6489,137 @@ uint32_t World::rebuildSpatial(bool grid, bool occupancy) {
         else stamp(u);
     }
     for (uint32_t i : occParked_) stamp(units_[i]);
+    return live;
+}
+
+// The same rebuild on the SimPool (WE E4.3, P6). Below kSpatialMinParallel
+// units, or with no workers, the serial walk above runs: the pass is then a few
+// tens of microseconds and a fork-join would cost more.
+//
+//  1. The unit chunks read the units (several cache lines each, the cost of
+//     the serial walk) into compact records, spatialRec_[i], with per-chunk
+//     bounds and live counts merged in chunk order.
+//  2. The occupancy grid is cleared in chunks of occTouched_ (relaxed atomic
+//     stores of 0: a cell may be listed more than once).
+//  3. Serial walks over the records then stamp the bodies (moving ones in
+//     unit order, then parked ones) and link the spatial hash in unit order,
+//     with the serial walk's float cell arithmetic.
+// So every chain, stamp and list is the serial one at any worker count
+// (TAK_VERIFY_POOL checks it). Stamping and linking in parallel were tried and
+// measured slower: banded stamping was unbalanced (armies fill a few bands),
+// and chunk-local chains merged in order cost more than the walk they split.
+uint32_t World::rebuildSpatialParallel(bool grid, bool occupancy) {
+    SimPool& pool = simPool();
+    const size_t n = units_.size();
+    spatialRec_.resize(n);
+    const size_t chunks = (n + SimPool::kUnitChunk - 1) / SimPool::kUnitChunk;
+    spatialChunks_.assign(chunks, SpatialChunk{1e30f, 1e30f, -1e30f, -1e30f, 0, false});
+    if (occupancy && (terW_ <= 0 || terH_ <= 0)) {
+        occW_ = occH_ = 0; occ_.clear(); occTouched_.clear(); occupancy = false;
+    }
+    if (occupancy) { occW_ = terW_; occH_ = terH_; }
+    pool.forChunks(n, SimPool::kUnitChunk, 0, [&](size_t k, size_t begin, size_t end, unsigned) {
+        SpatialChunk c = spatialChunks_[k];
+        for (size_t i = begin; i < end; ++i) {
+            const Unit& u = units_[i];
+            SpatialRec& r = spatialRec_[i];
+            r.kind = 0;
+            if (!u.alive() || !u.type) continue;
+            ++c.live;
+            if (u.embarked()) continue;
+            r.id = u.id;
+            if (grid) {
+                const float x = float(u.x.toFloat()), z = float(u.z.toFloat());
+                c.any = true;
+                c.minx = std::min(c.minx, x); c.maxx = std::max(c.maxx, x);
+                c.minz = std::min(c.minz, z); c.maxz = std::max(c.maxz, z);
+                r.x = x; r.z = z;
+                r.player = unsigned(u.player) < 64 ? uint8_t(u.player) : uint8_t(0xff);
+                r.kind = 1;
+            }
+            if (!occupancy) continue;
+            if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
+            if (u.underConstruction) continue;
+            const int fx = u.type->footX, fz = u.type->footZ;
+            const int ox = footprintOrigin(u.x, fx), oz = footprintOrigin(u.z, fz);
+            r.fx = uint8_t(fx); r.fz = uint8_t(fz);
+            r.ox = int16_t(ox); r.oz = int16_t(oz);
+            r.kind |= unitHoldsCell(u) ? 4 : 2;
+        }
+        spatialChunks_[k] = c;
+    });
+    uint32_t live = 0;
+    bool any = false;
+    float minx = 1e30f, minz = 1e30f, maxx = -1e30f, maxz = -1e30f;
+    for (const SpatialChunk& c : spatialChunks_) {
+        live += c.live;
+        if (!c.any) continue;
+        any = true;
+        minx = std::min(minx, c.minx); maxx = std::max(maxx, c.maxx);
+        minz = std::min(minz, c.minz); maxz = std::max(maxz, c.maxz);
+    }
+    if (occupancy) {
+        const size_t cells = size_t(occW_) * occH_;
+        if (occ_.size() != cells) occ_.assign(cells, 0);
+        else pool.forChunks(occTouched_.size(), 4096, 0, [&](size_t, size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i)
+                std::atomic_ref<int32_t>(occ_[occTouched_[i]]).store(0, std::memory_order_relaxed);
+        });
+        occTouched_.clear();
+        auto stamp = [&](const SpatialRec& r) {
+            for (int j = 0; j < r.fz; ++j)
+                for (int i = 0; i < r.fx; ++i) {
+                    int x = r.ox + i, z = r.oz + j;
+                    if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
+                    setOccupant(size_t(z) * size_t(occW_) + size_t(x), r.id);
+                }
+        };
+        occParked_.clear();
+        TAK_PASS();
+        for (size_t i = 0; i < n; ++i) {
+            const SpatialRec& r = spatialRec_[i];
+            if (r.kind & 4) occParked_.push_back(uint32_t(i));
+            else if (r.kind & 2) stamp(r);
+        }
+        for (uint32_t i : occParked_) stamp(spatialRec_[i]);
+    }
+    // ---- spatial hash: bounds and buckets (as rebuildSpatial)
+    if (grid) {
+        gCell_ = 32.0f;
+        if (!any) { gW_ = gH_ = 0; grid = false; }
+        else {
+            gOx_ = minx - gCell_;
+            gOz_ = minz - gCell_;
+            gW_ = int((maxx - minx) / gCell_) + 3;
+            gH_ = int((maxz - minz) / gCell_) + 3;
+            const size_t cells=size_t(gW_)*gH_;
+            if (gHead_.size()!=cells) {
+                gHead_.assign(cells,-1);gPlayers_.assign(cells,0);
+            } else for (size_t cell:gTouched_) {gHead_[cell]=-1;gPlayers_[cell]=0;}
+            gTouched_.clear();
+            gPlayersValid_=true;
+            gBlockW_ = (gW_ + 7) / 8;
+            gBlockPlayers_.assign(size_t(gBlockW_) * size_t((gH_ + 7) / 8), 0);
+            gNext_.assign(units_.size(), -1);
+        }
+    }
+    if (!grid) return live;
+    TAK_PASS();
+    for (size_t i = 0; i < n; ++i) {
+        const SpatialRec& r = spatialRec_[i];
+        if (!(r.kind & 1)) continue;
+        int cx = std::clamp(int((r.x - gOx_) / gCell_), 0, gW_ - 1);
+        int cz = std::clamp(int((r.z - gOz_) / gCell_), 0, gH_ - 1);
+        int c = cz * gW_ + cx;
+        if (gHead_[size_t(c)]<0) gTouched_.push_back(size_t(c));
+        gNext_[i] = gHead_[size_t(c)];
+        gHead_[size_t(c)] = int(i);
+        if (r.player != 0xff) {
+            gPlayers_[size_t(c)]|=uint64_t(1)<<r.player;
+            gBlockPlayers_[size_t(cz>>3)*size_t(gBlockW_)+size_t(cx>>3)]|=uint64_t(1)<<r.player;
+        }
+        else gPlayersValid_=false;
+    }
     return live;
 }
 
@@ -8547,23 +8723,37 @@ void World::tickAuras(float dt) {
     // Every unit's buffs relax back toward 1.0; aura projectors then refresh the
     // units in their radius, so a buff holds while in range and fades on leaving.
     float relax = std::min(1.0f, 2.0f * dt * float(stride));   // catch up skipped ticks
-    TAK_PASS();
-    for (auto& u : units_) {
-        if (!u.alive()) continue;
-        u.atkBuff += (1.0f - u.atkBuff) * relax;
-        u.armBuff += (1.0f - u.armBuff) * relax;
+    auto relaxBuffs = [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            Unit& u = units_[i];
+            if (!u.alive()) continue;
+            u.atkBuff += (1.0f - u.atkBuff) * relax;
+            u.armBuff += (1.0f - u.armBuff) * relax;
+        }
+    };
+    // Each unit relaxes its own buffs: on the SimPool for a big army (WE E4.3).
+    if (units_.size() >= kPostMinParallel && simPool().workers())
+        simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0,
+                            [&](size_t, size_t begin, size_t end, unsigned) { relaxBuffs(begin, end); });
+    else {
+        TAK_PASS();
+        relaxBuffs(0, units_.size());
     }
     // The emitters alone, in unit order (UnitClassLists); see tickHealAuras.
     syncUnitLists();
-    for (const int id : unitLists_.emitters) {
-        Unit& s = *unit(id);
+    // Per emitter, in forEachNear order, every unit it refreshes and the
+    // value. The values depend only on positions, owners and liveness, none
+    // of which the pass changes, so they can be gathered first and applied
+    // after, in the serial order (a unit both buffed and debuffed takes a max
+    // and a min, which do not commute).
+    auto gather = [&](const Unit& s, auto&& hit) {
         if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
-            continue;
+            return;
         for (const Aura& a : s.type->auras) {
             if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;  // morale: not modelled
             float r2 = a.radius * a.radius;
             forEachNear(s.x.toFloat(), s.z.toFloat(), a.radius, [&](int idx) {
-                Unit& e = units_[size_t(idx)];
+                const Unit& e = units_[size_t(idx)];
                 if (!e.alive() || e.embarked() || !e.type) return;
                 bool enemy = !allied(e.player, s.player);
                 if (enemy != a.affectsEnemy) return;   // buff friends OR debuff foes
@@ -8574,10 +8764,50 @@ void World::tickAuras(float dt) {
                 // Aura comment); we had it the other way round, so a Shaman's +20%
                 // was strongest where it should have been weakest.
                 float amt = 1.0f + (a.amount - 1.0f) * a.falloff(std::sqrt(d2));
-                float& buff = a.kind == Aura::Kind::Armor ? e.armBuff : e.atkBuff;
-                buff = a.affectsEnemy ? std::min(buff, amt) : std::max(buff, amt);
+                hit(uint32_t(idx), a.kind == Aura::Kind::Armor, a.affectsEnemy, amt);
             });
         }
+    };
+    auto apply = [&](uint32_t idx, bool armor, bool affectsEnemy, float amt) {
+        Unit& e = units_[idx];
+        float& buff = armor ? e.armBuff : e.atkBuff;
+        buff = affectsEnemy ? std::min(buff, amt) : std::max(buff, amt);
+    };
+    const auto& emitters = unitLists_.emitters;
+    if (units_.size() >= kPostMinParallel && emitters.size() >= 2 * kAuraEmitterChunk && simPool().workers()) {
+        // WE E4.3 (P6): the gathers on the SimPool, a few emitters per chunk.
+        const size_t chunks = (emitters.size() + kAuraEmitterChunk - 1) / kAuraEmitterChunk;
+        if (auraChunks_.size() < chunks) auraChunks_.resize(chunks);
+        simPool().forChunks(emitters.size(), kAuraEmitterChunk, 0, [&](size_t k, size_t begin, size_t end, unsigned) {
+            auto& hits = auraChunks_[k];
+            hits.clear();
+            for (size_t i = begin; i < end; ++i)
+                gather(*unitNoRepair(emitters[i]), [&](uint32_t idx, bool armor, bool affectsEnemy, float amt) {
+                    hits.push_back({idx, uint8_t(armor | (affectsEnemy << 1)), amt});
+                });
+        });
+#ifndef NDEBUG
+        if (verifyPool()) {
+            std::vector<AuraHit> serial;
+            for (const int id : emitters)
+                gather(*unit(id), [&](uint32_t idx, bool armor, bool affectsEnemy, float amt) {
+                    serial.push_back({idx, uint8_t(armor | (affectsEnemy << 1)), amt});
+                });
+            size_t at = 0;
+            for (size_t k = 0; k < chunks; ++k)
+                for (const AuraHit& h : auraChunks_[k]) {
+                    if (at >= serial.size() || serial[at].index != h.index || serial[at].flags != h.flags ||
+                        std::bit_cast<uint32_t>(serial[at].amt) != std::bit_cast<uint32_t>(h.amt))
+                        poolMismatch("tickAuras gathers", tickCounter_);
+                    ++at;
+                }
+            if (at != serial.size()) poolMismatch("tickAuras gathers", tickCounter_);
+        }
+#endif
+        for (size_t k = 0; k < chunks; ++k)
+            for (const AuraHit& h : auraChunks_[k]) apply(h.index, h.flags & 1, h.flags & 2, h.amt);
+    } else {
+        for (const int id : emitters) gather(*unit(id), apply);
     }
 }
 
@@ -8619,10 +8849,56 @@ void World::tickAbilities(float dt) {
     // still picks the same corpse. `retire()` mutates corpses as casters claim them, and
     // the eligibility re-check inside the loop still runs, so a corpse taken by an
     // earlier caster is skipped by a later one exactly as before.
+    // A unit that cannot act this tick drops its channel; one that can, and is a
+    // caster or a reclaimer, is visited by the caster loop below. No caster's
+    // work changes these tests for another unit (it debits or credits mana,
+    // retires corpses -- dead units, which stay dead -- and queues revives that
+    // spawn after the loop), so they can all be taken before the loop.
+    auto actor = [](Unit& u) {
+        if (!u.alive() || !u.type || u.underConstruction || u.incapacitated() ||
+            !u.orders.empty()) {
+            if (u.reviveTarget) u.reviveTarget = 0;   // interrupted: channel drops
+            return false;
+        }
+        bool caster = u.type->canResurrect || (u.type->canAnimate && u.type->animateType);
+        return caster || u.type->canReclaim;
+    };
     corpseIdx_.clear();
-    TAK_PASS();
-    for (size_t j = 0; j < units_.size(); ++j)
-        if (isCorpse(units_[j])) corpseIdx_.push_back(uint32_t(j));
+    actorIdx_.clear();
+    if (units_.size() >= kPostMinParallel && simPool().workers()) {
+        // WE E4.3 (P6): both lists on the SimPool, each chunk listing its own
+        // units in order, concatenated in chunk order (= ascending index).
+        const size_t chunks = (units_.size() + SimPool::kUnitChunk - 1) / SimPool::kUnitChunk;
+        if (abilityChunks_.size() < chunks) abilityChunks_.resize(chunks);
+        simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0, [&](size_t k, size_t begin, size_t end, unsigned) {
+            auto& c = abilityChunks_[k];
+            c.corpses.clear(); c.actors.clear();
+            for (size_t j = begin; j < end; ++j) {
+                if (isCorpse(units_[j])) c.corpses.push_back(uint32_t(j));
+                if (actor(units_[j])) c.actors.push_back(uint32_t(j));
+            }
+        });
+        for (size_t k = 0; k < chunks; ++k) {
+            corpseIdx_.insert(corpseIdx_.end(), abilityChunks_[k].corpses.begin(), abilityChunks_[k].corpses.end());
+            actorIdx_.insert(actorIdx_.end(), abilityChunks_[k].actors.begin(), abilityChunks_[k].actors.end());
+        }
+#ifndef NDEBUG
+        if (verifyPool()) {
+            std::vector<uint32_t> corpses, actors;
+            for (size_t j = 0; j < units_.size(); ++j) {
+                if (isCorpse(units_[j])) corpses.push_back(uint32_t(j));
+                if (actor(units_[j])) actors.push_back(uint32_t(j));
+            }
+            if (corpses != corpseIdx_ || actors != actorIdx_) poolMismatch("tickAbilities lists", tickCounter_);
+        }
+#endif
+    } else {
+        TAK_PASS();
+        for (size_t j = 0; j < units_.size(); ++j) {
+            if (isCorpse(units_[j])) corpseIdx_.push_back(uint32_t(j));
+            if (actor(units_[j])) actorIdx_.push_back(uint32_t(j));
+        }
+    }
     // No early return when the list is empty, deliberately. The per-caster loop below
     // does more than search for corpses: it also DROPS a channel whose target has gone
     // (interrupted, out of range, or decomposed). Returning here skipped that, so if the
@@ -8632,16 +8908,9 @@ void World::tickAbilities(float dt) {
     // empty corpseIdx_ that inner loop is already a no-op -- so the walk stays O(n),
     // which is the whole point of collecting the corpses once. (Found by review.)
 
-    TAK_PASS();
-    for (size_t i = 0; i < units_.size(); ++i) {
+    for (const uint32_t ai : actorIdx_) {
+        const size_t i = ai;
         Unit& u = units_[i];
-        if (!u.alive() || !u.type || u.underConstruction || u.incapacitated() ||
-            !u.orders.empty()) {
-            if (u.reviveTarget) u.reviveTarget = 0;   // interrupted: channel drops
-            continue;
-        }
-        bool caster = u.type->canResurrect || (u.type->canAnimate && u.type->animateType);
-        if (!caster && !u.type->canReclaim) continue;
 
         // A revive is a CHANNEL, not an instant (retail order-0xA task states:
         // work = target buildtime / caster workertime, x0.3 for animate; mana
@@ -8850,7 +9119,7 @@ void World::updateNavigationExploration() {
 }
 
 SimPool& World::simPool() {
-    const unsigned want=serialThreads_ ? 0u : SimPool::defaultWorkers();
+    const unsigned want=serialThreads_ ? 0u : simWorkers_>=0 ? unsigned(simWorkers_) : SimPool::defaultWorkers();
     if (!pool_ || pool_->workers()!=want) pool_=std::make_unique<SimPool>(want);
     return *pool_;
 }
@@ -10627,14 +10896,109 @@ void World::tick(float dt) {
     // reset used to run before hashTrace, tickBurning and the benchmark spawns:
     // none of them reads or writes a unit's heading or these fields (a spawn
     // starts with turnReqBam 0 and tickStartHeadingBam at its heading).
-    TAK_PASS();
-    for (auto& u : units_) {
+    auto resetTickState = [](Unit& u) {
         u.turnReqBam = 0;   // requested-turn display field, refreshed below
         u.tickStartHeadingBam=uint16_t(u.heading.v);
         u.justFired=false;u.firedWeapons=0;u.fireAnimations=0;u.weaponAnimations.clear();u.justBuilt=0;
         for(const auto& event:u.pendingWeaponAnimations)
             u.weaponAnimations.add(event.kind,event.slot,event.heading,event.pitch,event.damage);
         u.pendingWeaponAnimations.clear();
+    };
+    // Per unit, the economy walk's work (below): the beingBuilt clear and the
+    // site list for sites, and the unit's income, storage and retail demand
+    // contributions, handed to emit(kind, player, float, double) in the order
+    // the sums take them. It reads only the unit, its build site and player
+    // state the walk does not write (buildCache, retailResources).
+    auto economyOf = [&](Unit& u, auto&& emit, auto&& listSite) {
+        if (!u.alive()) return;
+        // A unit under construction contributes no economy until it finishes -- a
+        // half-built lodestone must not add its mana income or storage capacity yet.
+        if (u.underConstruction) {
+            u.beingBuilt = false;
+            listSite();
+            return;
+        }
+        if (u.type) {
+            const auto& tm = players_[size_t(u.player)];
+            float income=u.type->income,storage=u.type->storage;
+            bool sacred=u.type->sacredIncome;
+            if (tm.buildCache) {
+                const auto& entries=tm.buildCache->entries;
+                auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==u.type;});
+                if (entry!=entries.end() && entry->hasEconomy) {
+                    income=entry->income;storage=entry->storage;
+                    sacred=(entry->inputs.secondaryFlags&0x80000000u)!=0;
+                }
+            }
+            if (sacred) {
+                const float multiplier=sacredIncomeMultiplier(
+                    footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
+                    u.type->footX,u.type->footZ);
+                emit(EconomyKind::SacredIncome,u.player,0.0f,double(income)*double(multiplier));
+            } else emit(EconomyKind::Income,u.player,income,0.0);
+            emit(EconomyKind::Storage,u.player,storage,0.0);
+        }
+        const auto& builder=u;
+        if (size_t(builder.player)>=players_.size() || builder.embarked()) return;
+        const auto& tm=players_[size_t(builder.player)];
+        if (!tm.retailResources) return;
+        int target=0;
+        float worker=0;
+        if (builder.retailBuild && builder.retailBuild->working) {
+            target=builder.retailBuild->target;worker=builder.retailBuild->workerTime;
+        } else if (builder.productionSiteId && !builder.buildQueue.empty()) {
+            target=builder.productionSiteId;worker=builder.type->workerTime;
+            if (tm.buildCache) for (const auto& entry:tm.buildCache->entries)
+                if (entry.type==builder.type && entry.construction) worker=entry.construction->workerTime;
+        } else return;
+        const auto* site=unitNoRepair(target);
+        if (site && site->retailSite && site->alive()) {
+            const auto& type=site->retailSite->type;
+            emit(EconomyKind::Demand,builder.player,0.0f,double(worker)*double(type.inverseTime)*double(type.cost));
+        }
+    };
+    auto applyEconomy = [&](EconomyKind kind, int player, float f, double d) {
+        auto& tm = players_[size_t(player)];
+        switch (kind) {
+        case EconomyKind::Income: tm.income += f; break;
+        case EconomyKind::SacredIncome: tm.income=float(double(tm.income)+d); break;
+        case EconomyKind::Storage: tm.storage += f; break;
+        case EconomyKind::Demand: {
+            float& demand=retailDemand_[size_t(player)];
+            demand=float(double(demand)+d);
+            break;
+        }
+        case EconomyKind::Site: break;
+        }
+    };
+    // At kPrologueMinParallel units, with workers, the turn reset and the
+    // economy walk's per-unit work run in one job on the SimPool (WE E4.3, P2).
+    // Each chunk writes only its own units and its own list of contributions,
+    // in unit order; the sums are then taken serially, chunk after chunk, in
+    // exactly the serial order. A contribution of zero is left out of the
+    // list: every sum starts at +0, a sum of finite floats starting at +0 is
+    // never -0, and x + 0 is then exactly x (also through the double round
+    // trip of the sacred and demand sums), so the totals are unchanged.
+    const bool prologuePool = units_.size() >= kPrologueMinParallel && simPool().workers();
+    if (!prologuePool) {
+        TAK_PASS();
+        for (auto& u : units_) resetTickState(u);
+    } else {
+        const size_t chunks = (units_.size() + SimPool::kUnitChunk - 1) / SimPool::kUnitChunk;
+        if (economyChunks_.size() < chunks) economyChunks_.resize(chunks);
+        simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0, [&](size_t k, size_t begin, size_t end, unsigned) {
+            auto& items = economyChunks_[k];
+            items.clear();
+            for (size_t i = begin; i < end; ++i) {
+                Unit& u = units_[i];
+                resetTickState(u);
+                economyOf(u,
+                    [&](EconomyKind kind, int player, float f, double d) {
+                        if (f != 0.0f || d != 0.0) items.push_back({uint32_t(i), int16_t(player), kind, f, d});
+                    },
+                    [&] { items.push_back({uint32_t(i), 0, EconomyKind::Site, 0.0f, 0.0}); });
+            }
+        });
     }
     if (mission_ || scenario_) justDied_.clear();   // deaths this tick, fed to mission/scenario below
     transportEffects_.clear();
@@ -10656,56 +11020,39 @@ void World::tick(float dt) {
     // It also lists the sites for the decay pass below (A4).
     retailDemand_.assign(players_.size(),0.0f);
     sitesIdx_.clear();
-    TAK_PASS();
-    for (auto& u : units_) {
-        if (!u.alive()) continue;
-        // A unit under construction contributes no economy until it finishes -- a
-        // half-built lodestone must not add its mana income or storage capacity yet.
-        if (u.underConstruction) {
-            u.beingBuilt = false;
-            sitesIdx_.push_back(uint32_t(&u - units_.data()));
-            continue;
-        }
-        if (u.type) {
-            auto& tm = players_[size_t(u.player)];
-            float income=u.type->income,storage=u.type->storage;
-            bool sacred=u.type->sacredIncome;
-            if (tm.buildCache) {
-                const auto& entries=tm.buildCache->entries;
-                auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto& e){return e.type==u.type;});
-                if (entry!=entries.end() && entry->hasEconomy) {
-                    income=entry->income;storage=entry->storage;
-                    sacred=(entry->inputs.secondaryFlags&0x80000000u)!=0;
+    if (prologuePool) {
+        const size_t chunks = (unitsAtEconomy + SimPool::kUnitChunk - 1) / SimPool::kUnitChunk;
+#ifndef NDEBUG
+        if (verifyPool()) {
+            std::vector<EconomyItem> serial;
+            for (size_t i = 0; i < units_.size(); ++i)
+                economyOf(units_[i],
+                    [&](EconomyKind kind, int player, float f, double d) {
+                        if (f != 0.0f || d != 0.0) serial.push_back({uint32_t(i), int16_t(player), kind, f, d});
+                    },
+                    [&] { serial.push_back({uint32_t(i), 0, EconomyKind::Site, 0.0f, 0.0}); });
+            size_t at = 0;
+            for (size_t k = 0; k < chunks; ++k)
+                for (const EconomyItem& item : economyChunks_[k]) {
+                    const EconomyItem& o = serial.size() > at ? serial[at] : item;
+                    if (serial.size() <= at || o.index != item.index || o.player != item.player || o.kind != item.kind ||
+                        std::bit_cast<uint32_t>(o.f) != std::bit_cast<uint32_t>(item.f) ||
+                        std::bit_cast<uint64_t>(o.d) != std::bit_cast<uint64_t>(item.d))
+                        poolMismatch("economy walk", tickCounter_);
+                    ++at;
                 }
+            if (at != serial.size()) poolMismatch("economy walk", tickCounter_);
+        }
+#endif
+        for (size_t k = 0; k < chunks; ++k)
+            for (const EconomyItem& item : economyChunks_[k]) {
+                if (item.kind == EconomyKind::Site) sitesIdx_.push_back(item.index);
+                else applyEconomy(item.kind, item.player, item.f, item.d);
             }
-            if (sacred) {
-                const float multiplier=sacredIncomeMultiplier(
-                    footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ),
-                    u.type->footX,u.type->footZ);
-                tm.income=float(double(tm.income)+double(income)*double(multiplier));
-            } else tm.income += income;
-            tm.storage += storage;
-        }
-        const auto& builder=u;
-        if (size_t(builder.player)>=players_.size() || builder.embarked()) continue;
-        const auto& tm=players_[size_t(builder.player)];
-        if (!tm.retailResources) continue;
-        int target=0;
-        float worker=0;
-        if (builder.retailBuild && builder.retailBuild->working) {
-            target=builder.retailBuild->target;worker=builder.retailBuild->workerTime;
-        } else if (builder.productionSiteId && !builder.buildQueue.empty()) {
-            target=builder.productionSiteId;worker=builder.type->workerTime;
-            if (tm.buildCache) for (const auto& entry:tm.buildCache->entries)
-                if (entry.type==builder.type && entry.construction) worker=entry.construction->workerTime;
-        } else continue;
-        const auto* site=unit(target);
-        if (site && site->retailSite && site->alive()) {
-            const auto& type=site->retailSite->type;
-            float& demand=retailDemand_[size_t(builder.player)];
-            demand=float(double(demand)+double(worker)*
-                double(type.inverseTime)*double(type.cost));
-        }
+    } else {
+        TAK_PASS();
+        for (size_t i = 0; i < units_.size(); ++i)
+            economyOf(units_[i], applyEconomy, [&] { sitesIdx_.push_back(uint32_t(i)); });
     }
     // Difficulty income cheat: scale the summed income so the boost flows through the
     // mana accrual below, allied surplus sharing, and god-favour alike. manaMult is 1
@@ -10792,12 +11139,33 @@ void World::tick(float dt) {
     // (beingBuilt was cleared in the economy walk above).
     // Factory missions run in unit order below. Protect their existing sites
     // from orphan decay while the producer still owns an active build.
-    TAK_PASS();
-    for (const auto& producer:units_)
+    auto protectedSite = [&](const Unit& producer) -> Unit* {
         if (producer.alive() && producer.hp>Fixed() && !producer.incapacitated() &&
             !producer.embarked() && !producer.underConstruction && !producer.buildQueue.empty() && producer.productionSiteId)
-            if (auto* site=unit(producer.productionSiteId);site && site->alive() &&
-                (site->hp>Fixed() || site->retailSite) && site->player==producer.player) site->beingBuilt=true;
+            if (auto* site=unitNoRepair(producer.productionSiteId);site && site->alive() &&
+                (site->hp>Fixed() || site->retailSite) && site->player==producer.player) return site;
+        return nullptr;
+    };
+    // On the SimPool from kPrologueMinParallel units (WE E4.3): the walk only
+    // sets flags to true, and nothing in it reads them, so any order of the
+    // (relaxed atomic) stores gives the serial result.
+    if (units_.size() >= kPrologueMinParallel && simPool().workers()) {
+        simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0, [&](size_t, size_t begin, size_t end, unsigned) {
+            for (size_t i = begin; i < end; ++i)
+                if (Unit* site = protectedSite(units_[i]))
+                    std::atomic_ref<bool>(site->beingBuilt).store(true, std::memory_order_relaxed);
+        });
+#ifndef NDEBUG
+        if (verifyPool())
+            for (const auto& producer : units_)
+                if (const Unit* site = protectedSite(producer); site && !site->beingBuilt)
+                    poolMismatch("producer site walk", tickCounter_);
+#endif
+    } else {
+        TAK_PASS();
+        for (const auto& producer:units_)
+            if (Unit* site = protectedSite(producer)) site->beingBuilt=true;
+    }
     TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         Unit& u = units_[i];
@@ -12052,10 +12420,20 @@ void World::tick(float dt) {
     }
     // Unit COBs ran before the movers above, so GET 33 on the next tick reads
     // this tick's actual wrapped heading delta, not the mover's unclamped request.
-    TAK_PASS();
-    for (auto& u:units_)
-        u.animationTurnBam=std::bit_cast<int16_t>(
-            uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam));
+    auto turnBam = [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            Unit& u = units_[i];
+            u.animationTurnBam=std::bit_cast<int16_t>(
+                uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam));
+        }
+    };
+    if (units_.size() >= kPostMinParallel && simPool().workers())   // own state only (WE E4.3)
+        simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0,
+                            [&](size_t, size_t begin, size_t end, unsigned) { turnBam(begin, end); });
+    else {
+        TAK_PASS();
+        turnBam(0, units_.size());
+    }
     {
         std::optional<PhaseSpan> _compact;
         if (g_phase) _compact.emplace(g_compactMs, probe::kCompact);
