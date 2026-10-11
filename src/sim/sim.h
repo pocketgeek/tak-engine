@@ -1134,6 +1134,38 @@ TAK_UNIT_LINES(retainedFlightGoal, 9, 11); TAK_UNIT_LINES(flightSectorZ, 9, 11);
 TAK_UNIT_LINES(legionLiftUntil, 9, 11); TAK_UNIT_LINES(legionLiftEnded, 9, 11);
 #undef TAK_UNIT_LINES
 #undef TAK_UNIT_LINE
+
+// The ids of the units of a few rare classes, each in units_ order, so a
+// pass that wants only those walks them alone, in the order the all-unit
+// walk visited them (Legion W1 A5; World's prologue and aura passes, WE
+// E2.5). A unit's type never changes; spawn only appends to units_, and
+// compaction (the only removal) keeps the order, so the lists follow units_
+// by reading the units appended since the last sync, and are rebuilt
+// whenever the entry they ended at moved (a compaction) or the caller says
+// units_ was reordered. They keep dead units until then: every walk tests
+// alive() as before. Never hashed.
+struct UnitClassLists {
+    std::vector<int> flyers, structures, gates, emitters;   // canFly, isStructure, gate, auras
+    size_t listed = 0; int tail = 0;
+    void sync(const std::vector<Unit>& units, bool reordered = false) {
+        size_t from = listed;
+        if (reordered || from > units.size() || (from && units[from-1].id != tail)) {
+            from = 0; flyers.clear(); structures.clear(); gates.clear(); emitters.clear();
+        }
+        for (size_t i = from; i < units.size(); ++i) {
+            const Unit& u = units[i];
+            if (!u.type) continue;
+            if (u.type->canFly) flyers.push_back(u.id);
+            if (u.type->isStructure()) structures.push_back(u.id);
+            if (u.type->gate) gates.push_back(u.id);
+            if (!u.type->auras.empty()) emitters.push_back(u.id);
+        }
+        listed = units.size(); tail = units.empty() ? 0 : units.back().id;
+    }
+    bool operator==(const UnitClassLists& o) const {
+        return flyers == o.flyers && structures == o.structures && gates == o.gates && emitters == o.emitters;
+    }
+};
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
@@ -2511,8 +2543,8 @@ private:
     void updateBodyIndex(const Unit&) const;
     SearchBodyRect searchBodyRect(int,int,int,int,int ignoreId=0) const;
     int cellScoreWithBodies(const UnitType*,int,int,int,const SearchBodyRect*) const;
-    bool gatePassageAt(int,int) const;
-    bool gateWantsOpen(const Unit&) const;
+    bool gatePassageAt(int,int,const std::vector<int>* gates=nullptr) const;
+    bool gateWantsOpen(const Unit&,const std::vector<int>& gates) const;
     void tickAutomaticGates();
     int mapFeatureGrade(int,int) const;
     int rawSearchGrade(const SearchGradePlane&,int,int,int,int,const SearchBodyRect* = nullptr) const;
@@ -2975,6 +3007,9 @@ private:
     // Indices into units_ of this tick's construction sites, ascending, as the
     // economy walk found them (World::tick's decay pass).
     std::vector<uint32_t> sitesIdx_;
+    // Flyers, gates and aura emitters for the passes that want only those.
+    UnitClassLists unitLists_;
+    void syncUnitLists();
     NavGrid nav_, navWater_, navHover_;
     NavGrid navalSight_; // combat only: terrain at/above the water surface
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.

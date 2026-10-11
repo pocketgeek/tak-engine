@@ -5843,20 +5843,27 @@ World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId
     return result;
 }
 
-bool World::gatePassageAt(int x,int z) const {
-    TAK_PASS();
-    for (const auto& gate:units_) {
-        if (!gate.alive() || gate.embarked() || !gate.type || !gate.type->gate) continue;
+bool World::gatePassageAt(int x,int z,const std::vector<int>* gates) const {
+    auto passage=[&](const Unit& gate) {
+        if (!gate.alive() || gate.embarked() || !gate.type || !gate.type->gate) return false;
         const auto& type=*gate.type;
         const int dx=x-footprintOrigin(gate.x,type.footX),dz=z-footprintOrigin(gate.z,type.footZ);
-        if (dx<0 || dz<0 || dx>=type.footX || dz>=type.footZ || type.yardMap.empty()) continue;
+        if (dx<0 || dz<0 || dx>=type.footX || dz>=type.footZ || type.yardMap.empty()) return false;
         const char yard=type.yardMap.at(size_t(dz)*type.footX+dx);
-        if (yard=='c' || yard=='C') return true;
+        return yard=='c' || yard=='C';
+    };
+    // A synced gate list (tickAutomaticGates) holds every unit the walk would
+    // accept. Other callers (path searches, which may run on workers) walk.
+    if (gates) {
+        for (const int id:*gates) if (passage(*unit(id))) return true;
+        return false;
     }
+    TAK_PASS();
+    for (const auto& gate:units_) if (passage(gate)) return true;
     return false;
 }
 
-bool World::gateWantsOpen(const Unit& gate) const {
+bool World::gateWantsOpen(const Unit& gate,const std::vector<int>& gates) const {
     const int x=footprintOrigin(gate.x,gate.type->footX),z=footprintOrigin(gate.z,gate.type->footZ);
     const auto bodies=searchBodyRect(x-1,z-1,gate.type->footX+2,gate.type->footZ+2);
     for (const auto* body:bodies.cells) {
@@ -5865,7 +5872,7 @@ bool World::gateWantsOpen(const Unit& gate) const {
         const int bx=footprintOrigin(body->x,body->type->footX),bz=footprintOrigin(body->z,body->type->footZ);
         for (int dz=0;dz<body->type->footZ;++dz)
             for (int dx=0;dx<body->type->footX;++dx)
-                if (gatePassageAt(bx+dx,bz+dz)) return true;
+                if (gatePassageAt(bx+dx,bz+dz,&gates)) return true;
     }
     return false;
 }
@@ -5873,11 +5880,14 @@ bool World::gateWantsOpen(const Unit& gate) const {
 void World::tickAutomaticGates() {
     // Gate policy runs at simulation cadence. The skirmish AI scheduler is
     // intentionally independent of retail's planner; the proximity rule is not.
-    TAK_PASS();
-    for (auto& gate:units_) {
-        if (!gate.alive() || gate.underConstruction || !gate.type || !gate.type->gate ||
+    // The gates alone, in unit order (UnitClassLists). Indexed: the scripts
+    // setActive runs could in principle lengthen the list (they never spawn).
+    syncUnitLists();
+    for (size_t k=0;k<unitLists_.gates.size();++k) {
+        auto& gate=*unit(unitLists_.gates[k]);
+        if (!gate.alive() || gate.underConstruction ||
             !players_[size_t(gate.player)].automaticGates) continue;
-        setActive(gate.id,gateWantsOpen(gate));
+        setActive(gate.id,gateWantsOpen(gate,unitLists_.gates));
     }
 }
 
@@ -9394,12 +9404,27 @@ void World::retireAirOccupant(Unit& u) {
 // footprint (507050(unit,1)), then insert them all (506c40), each pass in
 // player/entity order. The grid persists between ticks: the landing predicate
 // and projectiles read it.
+void World::syncUnitLists() {
+    // A restored retail world is re-sorted by id every tick: rebuild then.
+    unitLists_.sync(units_,retailAllocation_);
+#ifndef NDEBUG
+    if (verifyLists()) {
+        UnitClassLists fresh;
+        fresh.sync(units_);
+        if (!(fresh==unitLists_)) {
+            std::fprintf(stderr,"TAK_VERIFY_LISTS tick %u: unit class lists differ from a walk of the units\n",tickCounter_);
+            std::abort();
+        }
+    }
+#endif
+}
+
 std::span<const int> World::updateAirOccupancy() {
     if (airOccupancy_.width()!=hW_ || airOccupancy_.height()!=hH_) airOccupancy_.reset(hW_,hH_);
     std::vector<Unit*> flyers;
-    TAK_PASS();
-    for (auto& u:units_) {
-        if (!u.type || !u.type->canFly) continue;
+    syncUnitLists();
+    for (const int id:unitLists_.flyers) {
+        Unit& u=*unit(id);
         if (u.alive()) flyers.push_back(&u);
         else if (u.airOccupant.recordedX>=0) retireAirOccupant(u); // a removal path without a death hook
     }
