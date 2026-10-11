@@ -65,3 +65,22 @@ if [ -n "$hits" ]; then
     exit 1
 fi
 echo "OK: no direct libm transcendentals in the sim path."
+
+# Portability, checked here because this is the guard CI runs first: Apple's libc++
+# (the macOS CI toolchain) has no std::atomic_ref, and a newer local Xcode does, so
+# nothing short of CI caught it -- it broke the macOS build twice. Use
+# __atomic_store_n / __atomic_load_n (see World::visCompute).
+ref=""
+for f in $(find src tools -name '*.cpp' -o -name '*.h' | sort); do
+    h=$(strip_comments "$f" | grep -n 'atomic_ref' | sed "s|^|$f:|")
+    [ -n "$h" ] && ref="$ref$h
+"
+done
+ref=$(printf '%s' "$ref" | sed '/^$/d')
+if [ -n "$ref" ]; then
+    echo "ERROR: std::atomic_ref does not exist in Apple's libc++ (macOS build):"
+    echo "$ref"
+    echo "Use __atomic_store_n / __atomic_load_n instead."
+    exit 1
+fi
+echo "OK: no std::atomic_ref."

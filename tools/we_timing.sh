@@ -47,6 +47,13 @@ mkdir -p "$OUT/scn" "$OUT/runs"
 if [ -z "$INNER" ]; then
   if [ -z "$SITS" ]; then SITS=$(cd "$SITDIR" && ls *.scn.gz | sed 's/\.scn\.gz$//' | paste -sd,); fi
   for s in ${SITS//,/ }; do
+    # Fail on a bad name here: a wrong one used to run every round in ~0 s and report nothing.
+    if [ -n "$REPLAYS" ]; then
+      [[ $s =~ ^.+-[0-9]+$ ]] || { echo "we_timing.sh: --replays situation '$s' must be <replay>-<harvest tick>, e.g. R-2h-1800" >&2; exit 2; }
+      [ -s "$REPLAYS/${s%-*}.takrep" ] || { echo "we_timing.sh: no replay $REPLAYS/${s%-*}.takrep for situation '$s'" >&2; exit 2; }
+    else
+      [ -s "$SITDIR/$s.scn.gz" ] || { echo "we_timing.sh: no situation $SITDIR/$s.scn.gz" >&2; exit 2; }
+    fi
     [ -n "$REPLAYS" ] || [ -s "$OUT/scn/$s.scn" ] || zcat "$SITDIR/$s.scn.gz" > "$OUT/scn/$s.scn"
   done
   echo "we_timing: base=$BASE cand=$CAND sits=$SITS rounds=$ROUNDS warm=$WARM out=$OUT"
@@ -56,6 +63,13 @@ if [ -z "$INNER" ]; then
   start=$(date +%s)
   "$TIMING" bash "$0" "${args[@]}"
   echo "we_timing: wall $(( $(date +%s) - start )) s (including any wait for the timing cores)"
+  # A run that produced no SIMPHASE lines (most often a replay recorded under another protocol,
+  # which takclient refuses) must not pass as a timing result.
+  empty=$(find "$OUT/runs" -type f ! -name '*.*' -empty | sort)
+  if [ -n "$empty" ]; then
+    echo "we_timing.sh: $(echo "$empty" | wc -l) run(s) recorded no SIMPHASE lines -- replay protocol must match each build's (legion_identity.py patch-replay); see the .out next to:" >&2
+    echo "$empty" | head -4 >&2; exit 1
+  fi
   python3 "$HERE/we_timing.py" "$OUT" --warm "$WARM" | tee "$OUT/report.txt"
   exit 0
 fi
