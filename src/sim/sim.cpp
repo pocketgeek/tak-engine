@@ -911,8 +911,8 @@ int World::spawn(const UnitType* type, float x, float z, std::optional<float> he
         unitScriptById_[size_t(u.id)]=&it->second;
         if (scriptYardById_.size()<=size_t(u.id)) scriptYardById_.resize(size_t(u.id)+1,0);
         scriptYardById_[size_t(u.id)]=it->second.yardOpen;
-        it->second.state.vm.start(*type->script(),type->script()->scriptIndex("Create"));
-        it->second.state.startArguments(*type->script(),type->script()->scriptIndex("SetMaxReloadTime"),
+        it->second.state().vm.start(*type->script(),type->script()->scriptIndex("Create"));
+        it->second.state().startArguments(*type->script(),type->script()->scriptIndex("SetMaxReloadTime"),
                                        {uint32_t(type->maxWeaponReloadMs),0,0,0},1);
     }
     return u.id;
@@ -4205,7 +4205,7 @@ void World::setWeapon(int unitId, int slot) {
     const auto script=unitScripts_.find(u->id);
     if(script!=unitScripts_.end()) {
         const auto& file=*u->type->script();
-        script->second.state.startArguments(file,file.scriptIndex("SwitchWeapon"),{uint32_t(slot),0,0,0},1);
+        script->second.state().startArguments(file,file.scriptIndex("SwitchWeapon"),{uint32_t(slot),0,0,0},1);
         u->pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Switch,uint8_t(slot),0,0});
     }
 }
@@ -4245,7 +4245,7 @@ void World::setCloak(int unitId, bool on) {
     // the requested mode changes, independently of visibility or mana payment.
     if(auto it=unitScripts_.find(u->id);it!=unitScripts_.end()) {
         const auto& file=*u->type->script();
-        it->second.state.startArguments(file,file.scriptIndex(on ? "StartCloaking" : "StopCloaking"),{},0);
+        it->second.state().startArguments(file,file.scriptIndex(on ? "StartCloaking" : "StopCloaking"),{},0);
     }
 }
 
@@ -4428,7 +4428,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                         Fixed::fromFloat(hz)-e.z).v-portHeadingToRetail(e.heading))&0xff00u;
                     const uint16_t damage=uint16_t(dealt);
                     e.weaponAnimations.add(tak::RetailWeaponAnimation::Hit,w.dmgType,bearing,0,damage);
-                    script->second.state.startArguments(file,callback,
+                    script->second.state().startArguments(file,callback,
                         {uint32_t(w.dmgType),uint32_t(retailScaledCosine(bearing,400)),
                          uint32_t(retailScaledSine(bearing,400)),damage},4);
                 }
@@ -6454,54 +6454,6 @@ void World::verifyNear(float x, float z, float radius, uint64_t players) const {
                                  "than the plain scan (TAK_VERIFY_NEAR, tick " + std::to_string(tickCounter_) + ")");
 }
 
-void World::probeScriptBefore(int id, bool eligible) {
-    auto& p = scriptProbe_;
-    const size_t i = size_t(id);
-    if (p.wake.size() <= i) { p.wake.resize(i + 1, 0); p.debt.resize(i + 1, 0); }
-    ++probe::tl.vmTicks;
-    if (eligible && p.wake[i] > tickCounter_) {
-        ++probe::tl.vmSkippable;
-        ++p.debt[i];
-        if (p.wake[i] == UINT32_MAX) ++probe::tl.vmEmpty;
-    } else p.debt[i] = 0;   // due: A1 folds the debt into this real tick
-    p.ticking = id;
-}
-
-void World::probeScriptAfter(int id, const cob::RetailScriptState& state, bool eligible) {
-    auto& p = scriptProbe_;
-    p.ticking = -1;
-    p.owner[&state.vm] = id;
-    const uint64_t now = tickCounter_;
-    uint64_t wake = eligible ? UINT32_MAX : 0;
-    if (eligible) {
-        for (uint32_t m = state.vm.activeThreadMask(); m; m &= m - 1) {
-            const auto& t = state.vm.threads[size_t(std::countr_zero(m))];
-            const uint32_t f = t.words[0];
-            if ((f & 0xff000000u) == 0x2000000u) {
-                const uint32_t w = f & 0xf00000u;
-                if (w == 0x400000u) {   // sleeping: runs again when its remaining count reaches 0
-                    wake = std::min<uint64_t>(wake, now + uint64_t(std::max<int32_t>(std::bit_cast<int32_t>(t.words[3]), 1)));
-                    continue;
-                }
-                if (w == 0x800000u) continue;   // waiting for a child in this VM: the child decides
-            }
-            wake = std::min<uint64_t>(wake, now + 1);   // ready, or waiting on a turn/move
-        }
-        bool moving = state.activePieceMask() != 0;
-        for (size_t k = 64; !moving && k < state.pieces.size(); ++k) moving = state.pieces[k].active;
-        if (moving) wake = std::min<uint64_t>(wake, now + 1);
-    }
-    p.wake[size_t(id)] = uint32_t(std::min<uint64_t>(wake, UINT32_MAX));
-}
-
-void World::probeScriptTouch(const void* vm) {
-    auto& p = scriptProbe_;
-    const auto it = p.owner.find(vm);
-    if (it == p.owner.end() || it->second == p.ticking || size_t(it->second) >= p.wake.size()) return;
-    const size_t i = size_t(it->second);
-    if (p.debt[i]) { ++probe::tl.vmDebtFlushes; p.debt[i] = 0; }
-    p.wake[i] = 0;
-}
 #endif
 
 const Unit* World::lodestoneUpgradeSource(const UnitType* type,float x,float z,int player) const {
@@ -6806,7 +6758,7 @@ int World::startBuild(int builderId, const UnitType* type, float x, float z,
         b->retailBuild=job;b->constructionHolding=true;
         if (auto script=unitScripts_.find(builderId);script!=unitScripts_.end()) {
             const auto& file=*b->type->script();
-            script->second.state.startArguments(file,file.scriptIndex("StartBuilding"),
+            script->second.state().startArguments(file,file.scriptIndex("StartBuilding"),
                 {uint16_t(target-portHeadingToRetail(b->heading)),1,0,0},2);
         }
     }
@@ -9239,7 +9191,7 @@ struct World::ScriptHost {
     void effect(uint32_t opcode,int piece,int32_t code) {
         const bool pointEffect=code>=2 && code<=5;
         if(opcode!=0x1000f000 || (!pointEffect && !(uint32_t(code)&0x100u)) ||
-           piece<0 || size_t(piece)>=factory.state.pieces.size())return;
+           piece<0 || size_t(piece)>=factory.peek().pieces.size())return;
         if(pointEffect) {
             const auto& model=unit.type->productionModel;
             int index=-1;
@@ -9256,8 +9208,8 @@ struct World::ScriptHost {
             for(;index>=0;index=model[size_t(index)].parent) {
                 const auto& node=model[size_t(index)];
                 cob::EmissionPose pose;pose.offset=node.offset;
-                if(node.scriptPiece>=0 && size_t(node.scriptPiece)<factory.state.pieces.size()) {
-                    const auto& state=factory.state.pieces[size_t(node.scriptPiece)];
+                if(node.scriptPiece>=0 && size_t(node.scriptPiece)<factory.peek().pieces.size()) {
+                    const auto& state=factory.peek().pieces[size_t(node.scriptPiece)];
                     for(size_t axis=0;axis<3;++axis) {
                         pose.move[axis]=state.move[axis];pose.turn[axis]=uint16_t(state.turn[axis]);
                     }
@@ -9271,7 +9223,7 @@ struct World::ScriptHost {
         const std::array<int32_t,3> base={unit.x.v,
             (unit.type->canFly ? unit.flightY : unit.groundY).v,unit.z.v};
         const auto position=retailScriptEffectPosition(base,unit.type->productionModel,
-            factory.state.pieces,piece,portHeadingToRetail(unit.heading),
+            factory.peek().pieces,piece,portHeadingToRetail(unit.heading),
             unit.groundPitch,unit.groundRoll);
         world.scriptEmissions_.push_back({world.tickCounter_,unit.id,unit.player,piece,code,position});
     }
@@ -9482,14 +9434,14 @@ std::array<int32_t,3> World::queryUnitScriptPoint(int unitId,bool sweetSpot,int 
     const auto& file=*u->type->script();
     std::array<uint32_t,4> args{0,uint32_t(slot),0,0};
     ScriptHost host{*this,*u,*it};
-    it->state.query(file,file.scriptIndex(sweetSpot ? "SweetSpot" : "QueryWeapon"),args,host);
+    it->state().query(file,file.scriptIndex(sweetSpot ? "SweetSpot" : "QueryWeapon"),args,host);
     const int32_t piece=std::bit_cast<int32_t>(args[0]);
-    if(piece<0 || size_t(piece)>=it->state.pieces.size())return point;
+    if(piece<0 || size_t(piece)>=it->peek().pieces.size())return point;
     std::array<int32_t,3> offset{};
     if(sweetSpot) {
         if(size_t(piece)>=u->type->scriptPieceCenters.size())return point;
         offset=u->type->scriptPieceCenters[size_t(piece)];
-    } else offset=retailPieceOrigin(u->type->productionModel,it->state.pieces,piece,
+    } else offset=retailPieceOrigin(u->type->productionModel,it->peek().pieces,piece,
         portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
     for(size_t axis=0;axis<3;++axis)
         point[axis]=std::bit_cast<int32_t>(uint32_t(point[axis])+uint32_t(offset[axis]));
@@ -9544,7 +9496,7 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
             // Native 51a7f0 starts TargetCleared with immediate=0. The callback
             // thread runs in the next regular COB pass, not inline in target
             // retirement; its SET 21 remains script-owned and takes effect there.
-            it->state.startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
+            it->state().startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
         }
     }
     u.scriptAimTarget=0;
@@ -9568,7 +9520,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
         u.weaponAnimations.add(tak::RetailWeaponAnimation::Aim,slot,solution->heading,solution->pitch);
         // Native 52fe30 starts AimWeapon with immediate=0. Starting the VM here
         // only queues its thread; the following unit-script phase runs its body.
-        it->state.startArguments(file,aimScript,{solution->heading,solution->pitch,uint32_t(slot),0},3);
+        it->state().startArguments(file,aimScript,{solution->heading,solution->pitch,uint32_t(slot),0},3);
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
@@ -9586,7 +9538,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot) {
         u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);
         // Native 530140 also starts FireWeapon with immediate=0. SET 23 can
         // therefore only be observed by a later common weapon update.
-        it->state.startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
+        it->state().startArguments(file,fireScript,{uint32_t(slot),0,0,0},1);
     }
     if(aim.flags&16) {
         fire(u,target,slot,true);
@@ -9601,7 +9553,7 @@ void World::startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ) {
     if(auto script=unitScript(u.id);script) {
         const auto& file=*u.type->script();
         const uint16_t heading=uint16_t(retailDirection(u.x-targetX,u.z-targetZ).v);
-        script->state.startArguments(file,file.scriptIndex("StartBuilding"),
+        script->state().startArguments(file,file.scriptIndex("StartBuilding"),
             {uint16_t(heading-portHeadingToRetail(u.heading)),1,0,0},2);
     }
 }
@@ -9619,7 +9571,7 @@ void World::notifyUnitScript(Unit& u,const char* name) {
     auto& state=*it;
     const auto& file=*u.type->script();
     ScriptHost host{*this,u,state};
-    state.state.notify(file,file.scriptIndex(name),host);
+    state.state().notify(file,file.scriptIndex(name),host);
 }
 
 // Legion (deliberate, not retail): no walking on the spot. A walker's gait is
@@ -9694,8 +9646,8 @@ void World::notifyMovementRate(Unit& u) {
     // Native 4db350 executes this edge at zero elapsed time before occupancy.
     // It can move QueryWeapon pieces (Verharp's emitjim), so it also belongs
     // to the authoritative VM, not just the display animation.
-    if (script.state.startArguments(file,file.scriptIndex("MoveRate"),{rate,0,0,0},1))
-        script.state.tick(file,0,host);
+    if (script.state().startArguments(file,file.scriptIndex("MoveRate"),{rate,0,0,0},1))
+        script.state().tick(file,0,host);
 }
 
 void World::notifyFlightOccupancy(Unit& u) {
@@ -9709,8 +9661,8 @@ void World::notifyFlightOccupancy(Unit& u) {
     if (it) {
         auto& script=*it;const auto& file=*u.type->script();
         ScriptHost host{*this,u,script};
-        if (script.state.startArguments(file,file.scriptIndex("setSFXoccupy"),{occupancy,0,0,0},1))
-            script.state.tick(file,0,host);
+        if (script.state().startArguments(file,file.scriptIndex("setSFXoccupy"),{occupancy,0,0,0},1))
+            script.state().tick(file,0,host);
     }
     u.scriptOccupancy=occupancy;
 }
@@ -9731,21 +9683,91 @@ void World::tickUnitScript(Unit& u) {
     const auto& file=*u.type->script();
     ScriptHost host{*this,u,factory};
     if (!factory.deathStopValue) {
+        // A1 sleep skip (see UnitScript). Production scripts and dying VMs always run.
+        const bool skippable=!factory.dying && !u.type->productionScript;
 #ifndef NDEBUG
-        const bool probing=probe::kStats;
-        if (probing) probeScriptBefore(u.id,!factory.dying && !u.type->productionScript);
+        if (probe::kStats) ++probe::tl.vmTicks;
 #endif
-        factory.state.tick(file,1,host);
+        if (skippable && factory.skipTick()) {
 #ifndef NDEBUG
-        if (probing) probeScriptAfter(u.id,factory.state,!factory.dying && !factory.deathStopValue && !u.type->productionScript);
+            if (probe::kStats) { ++probe::tl.vmSkippable; if (factory.idle()) ++probe::tl.vmEmpty; }
 #endif
+        } else {
+            factory.stateForTick().tick(file,1,host);
+            factory.scheduleSkip(skippable && !factory.dying && !factory.deathStopValue);
+        }
     }
     if (factory.dying) { updateCorpseWindow(u);return; }
     const bool activated=!u.underConstruction && !u.buildQueue.empty();
     if (u.type->productionScript && activated!=factory.activated) {
         factory.activated=activated;
-        factory.state.notify(file,file.scriptIndex(activated ? "Activate" : "Deactivate"),host);
+        factory.state().notify(file,file.scriptIndex(activated ? "Activate" : "Deactivate"),host);
     }
+}
+
+void World::UnitScript::scheduleSkip(bool eligible) {
+    skipLeft_=0;
+    if (!eligible || state_.activePieceMask()) return;
+    for (size_t k=64;k<state_.pieces.size();++k) if (state_.pieces[k].active) return;
+    // Which ticks would change nothing but sleep counts: RetailVm::run lowers a
+    // sleeper's words[3] by the elapsed ticks and wakes it at <= 0, so one left at w
+    // runs on the max(w,1)-th tick from now; a thread waiting on a child changes only
+    // when that child (in this VM) runs. Anything ready, or waiting on a piece, runs now.
+    uint32_t left=kSkipIdle;
+    const auto& vm=state_.vm;
+    for (uint32_t m=vm.activeThreadMask();m;m&=m-1) {
+        const auto& t=vm.threads[size_t(std::countr_zero(m))];
+        const uint32_t wait=t.words[0]&0xfff00000u;
+        if (wait==0x2400000u) {
+            left=std::min(left,uint32_t(std::max(std::bit_cast<int32_t>(t.words[3]),1)-1));
+            continue;
+        }
+        if (wait==0x2800000u) continue;
+        return;
+    }
+    skipLeft_=left;
+}
+
+void World::UnitScript::pay([[maybe_unused]] bool touch) {
+    if (!debt_) return;
+#ifndef NDEBUG
+    if (probe::kStats && touch) ++probe::tl.vmDebtFlushes;
+    static const bool verify=probe::envOn("TAK_VERIFY_SCRIPT_SKIP");
+    std::optional<cob::RetailScriptState> replayed;
+    if (verify && file_) {
+        // Re-run the skipped ticks for real on a copy. A skipped tick must not reach
+        // the host at all (no RNG draw, no query, no piece callback).
+        struct Refuse {
+            [[noreturn]] static void fail() {
+                throw std::runtime_error("TAK_VERIFY_SCRIPT_SKIP: a skipped COB tick reached its host");
+            }
+            uint32_t random(int32_t) { fail(); }
+            uint32_t get(int,const std::array<uint32_t,4>&) { fail(); }
+            void set(int,int) { fail(); }
+            uint32_t sound(int,int32_t) { fail(); }
+            void effect(uint32_t,int,int32_t) { fail(); }
+        } refuse;
+        replayed.emplace(state_);
+        for (uint32_t n=0;n<debt_;++n) replayed->tick(*file_,1,refuse);
+    }
+#endif
+    auto& vm=state_.vm;
+    for (uint32_t m=vm.activeThreadMask();m;m&=m-1) {
+        auto& t=vm.threads[size_t(std::countr_zero(m))];
+        if ((t.words[0]&0xfff00000u)==0x2400000u) t.words[3]-=debt_;
+    }
+    debt_=0;
+#ifndef NDEBUG
+    if (replayed) {
+        const auto& r=*replayed;
+        bool same=r.vm.active==vm.active && r.vm.activeThreadMask()==vm.activeThreadMask() &&
+            r.vm.statics==vm.statics && r.pieces==state_.pieces &&
+            r.activePieceMask()==state_.activePieceMask();
+        for (size_t i=0;same && i<vm.threads.size();++i) same=r.vm.threads[i].words==vm.threads[i].words;
+        if (!same) throw std::runtime_error("TAK_VERIFY_SCRIPT_SKIP: paying a COB VM's skipped ticks "
+                                            "differs from running them");
+    }
+#endif
 }
 
 void World::updateCorpseWindow(Unit& u) {
@@ -9771,11 +9793,11 @@ void World::beginUnitDeath(Unit& u) {
         std::array<uint32_t,4> args{u.severity,0,u.deathType,0};
         // 512610 skips Killed for self destruction and zero-severity packets.
         if (u.severity && u.deathType!=Unit::kDeathSelfDestruct)
-            script->state.query(file,file.scriptIndex("Killed"),args,host);
+            script->state().query(file,file.scriptIndex("Killed"),args,host);
         u.deathHasCorpse=(args[1]&15)==1 && !u.underConstruction && corpseTypeOf(u.type)>=0;
-        const bool dying=u.severity && script->state.startArguments(
+        const bool dying=u.severity && script->state().startArguments(
             file,file.scriptIndex("Dying"),{u.deathType,0,0,0},1);
-        if (dying && !script->deathStopValue) script->state.tick(file,0,host);
+        if (dying && !script->deathStopValue) script->state().tick(file,0,host);
         if (!dying && script->deathStopValue!=31) u.deathAnimationTicks=0;
     }
     if (u.deathType==9 && !u.underConstruction && corpseTypeOf(u.type)>=0)
@@ -9801,7 +9823,7 @@ void World::initializeRetailSite(Unit& site,int builderId) {
     // 511ed3 executes Create at zero elapsed time while work remaining is 1.
     if (auto script=unitScripts_.find(site.id);script!=unitScripts_.end()) {
         ScriptHost host{*this,site,script->second};
-        script->second.state.tick(*site.type->script(),0,host);
+        script->second.state().tick(*site.type->script(),0,host);
     }
 }
 
@@ -9828,8 +9850,8 @@ bool World::productionPosition(int builderId,const UnitType* t,Fixed& spawnX,Fix
         const auto& file=*u.type->productionScript;
         std::array<uint32_t,4> args{0xffffffffu,0,0,0};
         ScriptHost host{*this,u,it->second};
-        if (!it->second.state.query(file,file.scriptIndex("QueryBuildInfo"),args,host)) return false;
-        const auto offset=retailPieceOrigin(u.type->productionModel,it->second.state.pieces,
+        if (!it->second.state().query(file,file.scriptIndex("QueryBuildInfo"),args,host)) return false;
+        const auto offset=retailPieceOrigin(u.type->productionModel,it->second.peek().pieces,
                                            std::bit_cast<int32_t>(args[0]),portHeadingToRetail(u.heading));
         spawnX=u.x+Fixed::raw(offset[0]); spawnZ=u.z+Fixed::raw(offset[2]);
         const int cx=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
@@ -9877,7 +9899,7 @@ void World::tickProduction(Unit& u, float dt) {
         unit(producerId)->productionSiteId=siteId;
         if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) {
             const auto& file=*unit(producerId)->type->script();
-            it->second.state.startArguments(file,file.scriptIndex("StartBuilding"),{},2);
+            it->second.state().startArguments(file,file.scriptIndex("StartBuilding"),{},2);
         }
     }
     // spawn can reallocate units_; never use the original reference after it.
@@ -9940,7 +9962,7 @@ void World::tickProduction(Unit& u, float dt) {
     retireProductionItem(*producer,0);
     if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) {
         const auto& file=*producer->type->script();
-        it->second.state.vm.start(file,file.scriptIndex("StopBuilding"));
+        it->second.state().vm.start(file,file.scriptIndex("StopBuilding"));
     }
     // Then walk it clear of the exit, to a spot that is free RIGHT NOW -- computed
     // after the spawn, so it also avoids the unit we just put down.
@@ -10439,14 +10461,6 @@ void World::tick(float dt) {
     probe::PmuSample _pmuTick, _pmuSep, _pmuPro;
     if (g_phase && probe::kPmu) { probe::pmuReset(); _pmuTick = probe::pmuRead(); }
     if (probe::kStats) probe::allocMark();
-    // The A1 probe hears about VMs touched from outside their own tick, for this tick only.
-    struct ProbeHook {
-        bool on;
-        explicit ProbeHook(World* w) : on(probe::kStats) {
-            if (on) { probeWorld_ = w; cob::gRetailVmTouch = &World::probeVmTouch; }
-        }
-        ~ProbeHook() { if (on) { probeWorld_ = nullptr; cob::gRetailVmTouch = nullptr; } }
-    } probeHook{this};
 #endif
     if (!tickCounter_) updateNavigationExploration();
     if (isLegionPathfinding(pathfindingMode_)) {
@@ -11104,13 +11118,15 @@ void World::tick(float dt) {
                 for (size_t k=1;k<n && k<4;++k) __builtin_prefetch(o+k,0,3);
             }
             const size_t id=size_t(next.id);
-            if (id<unitScriptById_.size()) if (const auto* script=unitScriptById_[id])
-                __builtin_prefetch(&script->state.vm.active,0,3);
+            if (id<unitScriptById_.size()) if (const auto* script=unitScriptById_[id]) {
+                __builtin_prefetch(&script->peek().vm.active,0,3);
+                __builtin_prefetch(script->skipLine(),0,3);   // the skip test's line (often the same)
+            }
         }
         if (unitIndex+1<units_.size()) {
             const size_t id=size_t(units_[unitIndex+1].id);
-            if (id<unitScriptById_.size()) if (const auto* script=unitScriptById_[id]) {
-                const auto& vm=script->state.vm;
+            if (id<unitScriptById_.size()) if (const auto* script=unitScriptById_[id]; script && !script->willSkip()) {
+                const auto& vm=script->peek().vm;
                 for (uint32_t m=vm.activeThreadMask();m;m&=m-1)
                     __builtin_prefetch(vm.threads[size_t(std::countr_zero(m))].words.data(),0,3);
             }
@@ -12216,11 +12232,16 @@ uint64_t World::stateHash() const {
         mix(factory.activated); mix(factory.ready); mix(factory.yardOpen); mix(factory.buggerOff);
         if (factory.dying) { mix(0x44454144u);mix(factory.deathStopValue); }
         if (factory.movementRate) { mix(0x4d4f5645u);mix(factory.movementRate); }
-        const auto& state=factory.state;
+        // A skipped VM's unpaid debt is folded in: each sleeper hashes the count it
+        // would hold had the skipped ticks run (UnitScript::pay).
+        const auto& state=factory.peek();
+        const uint32_t debt=factory.debt();
         mix(state.vm.active); mix(uint32_t(state.vm.ticksPerSecond));
         for (auto value:state.vm.statics) mix(value);
-        for (const auto& thread:state.vm.threads)
-            for (auto value:thread.words) mix(value);
+        for (const auto& thread:state.vm.threads) {
+            const bool owes=debt && (thread.words[0]&0xfff00000u)==0x2400000u;
+            for (size_t n=0;n<thread.words.size();++n) mix(owes && n==3 ? thread.words[n]-debt : thread.words[n]);
+        }
         for (const auto& piece:state.pieces) {
             mix(piece.active); mix(piece.visible); mix(piece.cached); mix(piece.shaded); mix(piece.rendered);
             for (const auto* values:{&piece.moveTarget,&piece.moveSpeed,&piece.turnTarget,&piece.turnSpeed,

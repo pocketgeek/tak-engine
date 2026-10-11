@@ -129,7 +129,8 @@ struct RetailReplayProbe {
     }
     static void gateComposedState(FILE* output,const World& world,int id) {
         const auto& unit=*world.unit(id);const auto& script=world.unitScripts_.at(id);
-        const auto& state=script.state;
+        // The printed thread words include sleep counts: pay any skipped ticks first.
+        const auto& state=const_cast<World::UnitScript&>(script).state();
         std::fprintf(output,"{\"kind\":\"gate\",\"result\":[%u,%u,%u,%u",unsigned(unit.active),
             unsigned(script.yardOpen),unsigned(state.vm.active),world.gameRng_);
         for (auto v:state.vm.statics) std::fprintf(output,",%u",v);
@@ -250,7 +251,8 @@ struct RetailReplayProbe {
     }
     static const tak::cob::RetailScriptState* scriptState(const World& world,int id) {
         const auto it=world.unitScripts_.find(id);
-        return it==world.unitScripts_.end() ? nullptr : &it->second.state;
+        // Callers read thread words: pay any skipped ticks first.
+        return it==world.unitScripts_.end() ? nullptr : &const_cast<World::UnitScript&>(it->second).state();
     }
     static void discardColdFactory(World& world,int id) {
         if (size_t(id)<world.unitScriptById_.size()) world.unitScriptById_[size_t(id)]=nullptr;
@@ -276,7 +278,7 @@ struct RetailReplayProbe {
         for (size_t n=0;n<hex.size();n+=2) bytes.push_back(uint8_t(digit(hex[n])*16+digit(hex[n+1])));
         auto [it,inserted]=world.unitScripts_.try_emplace(id,*unit->type->script());
         if (!inserted) throw std::runtime_error("duplicate factory restore");
-        it->second.state.restore(*unit->type->script(),bytes);
+        it->second.state().restore(*unit->type->script(),bytes);
         // Restored units have captured slot IDs, not their temporary spawn IDs.
         // Keep the fast script lookup coherent with the restored map node.
         if (world.unitScriptById_.size()<=size_t(id)) world.unitScriptById_.resize(size_t(id)+1,nullptr);

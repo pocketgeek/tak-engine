@@ -2595,24 +2595,6 @@ private:
     // TAK_VERIFY_NEAR: the unit sequence of the block-skipping scan must equal the plain
     // square scan's (every in-bounds cell, per-cell mask only); throws if not.
     void verifyNear(float x, float z, float radius, uint64_t players) const;
-    // The A1 COB sleep-skip predicate, evaluated after every real tick and never acted on.
-    // wake: the first tick at which the VM must run (0 = every tick, UINT32_MAX = only after
-    // an outside start); debt: ticks it could have skipped since it last ran or was flushed.
-    // owner maps a VM to its unit, so a touch from outside (a thread start or zero-elapsed
-    // run; cob::gRetailVmTouch) can count the flush A1 would need and reset the wake.
-    struct ScriptSkipProbe {
-        std::vector<uint32_t> wake, debt;
-        std::unordered_map<const void*, int> owner;
-        int ticking = -1;
-    } scriptProbe_;
-    void probeScriptTouch(const void* vm);
-    void probeScriptBefore(int id, bool eligible);
-    void probeScriptAfter(int id, const cob::RetailScriptState& state, bool eligible);
-    // The world whose tick is running on this thread; the hook is installed only for the
-    // duration of World::tick, so a VM touched between ticks (a command applied before the
-    // tick) is not seen -- the probe slightly overcounts vm_skippable for those VMs.
-    static inline thread_local World* probeWorld_ = nullptr;
-    static void probeVmTouch(const cob::RetailVm* vm) { if (probeWorld_) probeWorld_->probeScriptTouch(vm); }
 #endif
 
     std::atomic<uint32_t> featGen_{0};   // see featGeneration()
@@ -2891,13 +2873,63 @@ private:
     Fixed retailGroupLimit(const Unit& u) const;
     bool pathPending(int id) const {return paths_.pending(id);}
 
+    // A unit's authoritative COB VM plus the host flags its scripts read.
+    //
+    // Sleep skip (WE A1). Most of a big army's VMs spend most ticks with every thread
+    // asleep (or waiting on a child that sleeps) and no piece in motion: a real tick of
+    // such a VM only counts each sleeper's remaining ticks down by one. tickUnitScript
+    // skips those ticks and counts them as debt; the debt is paid -- every sleeper's
+    // count lowered by it, exactly what the skipped ticks would have done -- before the
+    // VM is next touched for any reason. So the VM is private: state() pays the debt and
+    // makes the VM run on its next tick (a thread may be started, a count read);
+    // peek() is for reads the debt cannot change (pieces, statics, the active masks,
+    // flags, which a skipped tick never touches); stateHash folds the debt in instead
+    // (debt()). Exact by construction: the skip never passes the tick a sleeper wakes
+    // on (words[3] is already in ticks: the SLEEP opcode converts its milliseconds at
+    // ticksPerSecond), and nothing else in the VM changes on a skipped tick.
+    // TAK_VERIFY_SCRIPT_SKIP (debug): every payment re-runs the skipped ticks on a copy
+    // with a host that throws, and compares.
     struct UnitScript {
-        cob::RetailScriptState state;
+    private:
+        cob::RetailScriptState state_;
+        // Right after the VM's tail (its active count and thread mask, the piece mask), with
+        // the flags after them: the skip test and a real tick's first reads share these lines,
+        // which World::tick prefetches two units ahead.
+        uint32_t skipLeft_=0;   // further ticks to skip; kSkipIdle = until touched
+        uint32_t debt_=0;       // ticks skipped and not yet paid
+    public:
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;
         uint32_t movementRate=0;
         bool dying=false;
         int deathStopValue=0;
-        explicit UnitScript(const cob::File& file):state(file) {}
+        explicit UnitScript(const cob::File& file):state_(file) {
+#ifndef NDEBUG
+            file_=&file;
+#endif
+        }
+        cob::RetailScriptState& state() { pay(true); skipLeft_=0; return state_; }
+        const cob::RetailScriptState& peek() const { return state_; }
+        uint32_t debt() const { return debt_; }
+        // tickUnitScript only: true if this tick is skipped (and owed).
+        bool skipTick() {
+            if (!skipLeft_) return false;
+            if (skipLeft_!=kSkipIdle) --skipLeft_;
+            ++debt_;
+            return true;
+        }
+        // tickUnitScript only: state() for the VM's own tick (not counted as a touch).
+        cob::RetailScriptState& stateForTick() { pay(false); skipLeft_=0; return state_; }
+        // tickUnitScript only, after a real elapsed tick: how many ticks may be skipped.
+        void scheduleSkip(bool eligible);
+        static constexpr uint32_t kSkipIdle=UINT32_MAX;
+        bool idle() const { return skipLeft_==kSkipIdle; }   // no thread will wake by itself
+        bool willSkip() const { return skipLeft_!=0; }       // the next tick is skipped (prefetch hint)
+        const void* skipLine() const { return &skipLeft_; }
+    private:
+        void pay(bool touch);   // touch: from outside the VM's own tick (TAK_SIMSTATS vm_debt_flushes)
+#ifndef NDEBUG
+        const cob::File* file_=nullptr;   // TAK_VERIFY_SCRIPT_SKIP re-runs the skipped ticks
+#endif
     };
     std::map<int,UnitScript> unitScripts_;
     // Non-owning direct lookup; the map still owns stable script objects and

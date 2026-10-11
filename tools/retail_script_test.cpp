@@ -27,8 +27,13 @@ struct RetailReplayProbe {
         return world.placeCorpse(unit,type);
     }
     static void retire(World& world,int id) {world.retireCorpse(*world.unit(id));}
-    static const auto& scriptStatics(const World& world,int id) { return world.unitScripts_.at(id).state.vm.statics; }
+    static const auto& scriptStatics(const World& world,int id) { return world.unitScripts_.at(id).peek().vm.statics; }
     static void emitScript(World& world,int id) {world.notifyUnitScript(*world.unit(id),"Emit");}
+    static void notifyScript(World& world,int id,const char* name) {world.notifyUnitScript(*world.unit(id),name);}
+    // The A1 sleep skip: touching a VM pays its debt and makes it run next tick.
+    static void touchScript(World& world,int id) {world.unitScripts_.at(id).state();}
+    static uint32_t scriptDebt(const World& world,int id) {return world.unitScripts_.at(id).debt();}
+    static const tak::cob::RetailVm& paidVm(World& world,int id) {return world.unitScripts_.at(id).state().vm;}
     static void repairTick(World& world,int id) {world.tickRepair(*world.unit(id),1.f/30);}
     static void reclaimTick(World& world,int id) {world.tickReclaim(*world.unit(id),1.f/30);}
     static void scriptTick(World& world,int id) {world.tickUnitScript(*world.unit(id));}
@@ -44,7 +49,7 @@ struct RetailReplayProbe {
 
     static std::vector<uint32_t> movementQueries(World& world,int id) {
         world.notifyUnitScript(*world.unit(id),"ReadMovement");
-        return world.unitScripts_.at(id).state.vm.statics;
+        return world.unitScripts_.at(id).peek().vm.statics;
     }
     static void cacheYard(World& world) {
         World::SearchGradePlane plane;plane.nav=&world.nav_;
@@ -68,7 +73,8 @@ struct RetailReplayProbe {
     static void gateSeed(World& world) { world.gameRng_=1; }
     static void gateState(const World& world,int id) {
         const auto& unit=*world.unit(id);const auto& script=world.unitScripts_.at(id);
-        const auto& state=script.state;
+        // The printed thread words include sleep counts: pay any skipped ticks first.
+        const auto& state=const_cast<World::UnitScript&>(script).state();
         std::cout<<unit.active<<' '<<script.yardOpen<<' '<<state.vm.active<<' '<<world.gameRng_;
         for (auto v:state.vm.statics) std::cout<<' '<<v;
         for (const auto& thread:state.vm.threads) for (auto v:thread.words) std::cout<<' '<<v;
@@ -566,6 +572,52 @@ int main(int argc,char** argv) {
         const auto pointHash=world.stateHash();RetailReplayProbe::clearScriptEvents(world);
         require(world.stateHash()==pointHash,"point pose capture remains unhashed");
         std::cout<<"PASS: instruction-time script effect events and cosmetic hash isolation\n";
+    }
+    {
+        // WE A1: a world whose idle COB VMs skip their sleeping ticks hashes, and after paying
+        // holds, exactly what a world whose VMs run every tick does. B's VMs are touched before
+        // every tick, so they never skip. Sleeps of 1000 ms and 50-59 ms (RAND), and an outside
+        // start (Poke) that lands mid-sleep and pays the debt.
+        using namespace tak::sim;
+        auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
+        auto file=std::make_shared<tak::cob::File>();
+        file->numStatics=2;file->scripts={{"Create",0},{"Poke",21}};
+        file->code={0x10021001,1000,0x10013000,                 // sleep 1000 ms
+                    0x10021004,0,0x10021001,1,0x10031000,0x10023004,0,   // static0 += 1
+                    0x10021001,0,0x10021001,9,0x10041000,               // rand(0,9)
+                    0x10021001,50,0x10031000,0x10013000,                // sleep 50+rand ms
+                    0x10064000,0,                                       // loop
+                    0x10021001,7,0x10023004,1,0x10065000};              // Poke: static1 = 7
+        UnitType type;type.simulationScript=file;type.maxHp=100;
+        World skipping,running;skipping.setVisPlayer(-1);running.setVisPlayer(-1);
+        std::vector<int> ids;
+        for (int k=0;k<5;++k) {
+            ids.push_back(skipping.spawn(&type,100.f+40*k,200));
+            require(running.spawn(&type,100.f+40*k,200)==ids.back(),"both worlds give the same ids");
+        }
+        uint64_t owed=0;uint32_t maxDebt=0;
+        for (int tick=0;tick<900;++tick) {
+            if (tick%37==11) {
+                RetailReplayProbe::notifyScript(skipping,ids[size_t(tick%5)],"Poke");
+                RetailReplayProbe::notifyScript(running,ids[size_t(tick%5)],"Poke");
+            }
+            for (int id:ids) RetailReplayProbe::touchScript(running,id);
+            skipping.tick(1.f/30.f);running.tick(1.f/30.f);
+            for (int id:ids) {
+                const uint32_t debt=RetailReplayProbe::scriptDebt(skipping,id);
+                owed+=debt;maxDebt=std::max(maxDebt,debt);
+            }
+            require(skipping.stateHash()==running.stateHash(),"a skipped VM's debt folds into stateHash exactly");
+        }
+        require(owed>0 && maxDebt>=20,"idle VMs skip their sleeping ticks");
+        for (int id:ids) {
+            const auto& a=RetailReplayProbe::paidVm(skipping,id);
+            const auto& b=RetailReplayProbe::paidVm(running,id);
+            require(a.statics==b.statics && a.statics[0]>0,"paid VMs ran every wake-up");
+            for (size_t i=0;i<a.threads.size();++i)
+                require(a.threads[i].words==b.threads[i].words,"paying a debt equals running the skipped ticks");
+        }
+        std::cout<<"PASS: COB sleep skip (max debt "<<maxDebt<<" ticks) hashes and pays like running every tick\n";
     }
     {
         using namespace tak::sim;

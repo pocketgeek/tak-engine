@@ -14,6 +14,7 @@ struct RetailPiece {
     std::array<int32_t,3> moveTarget{},moveSpeed{},turnTarget{},turnSpeed{},spinTarget{},spinAcceleration{};
     std::array<int32_t,3> move{},turn{};
     bool visible=true,cached=true,shaded=true,rendered=true,active=false;
+    bool operator==(const RetailPiece&) const = default;
     static int32_t wrap(uint32_t value) { return std::bit_cast<int32_t>(value); }
     static int32_t add(int32_t a,int32_t b) { return wrap(uint32_t(a)+uint32_t(b)); }
     static int32_t negate(int32_t a) { return wrap(0u-uint32_t(a)); }

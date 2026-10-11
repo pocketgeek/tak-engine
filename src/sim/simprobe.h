@@ -5,7 +5,9 @@
 //
 //   TAK_SIMSTATS=1  one SIMSTATS line per tick (stderr) with work counters:
 //                   vm_ticks / vm_skippable / vm_empty / vm_debt_flushes (the A1 COB
-//                   sleep-skip predicate, evaluated but never acted on),
+//                   sleep skip: VM ticks due, ticks skipped, skipped with no thread able
+//                   to wake by itself, and skipped-tick debts paid by a touch from
+//                   outside the VM's own tick; World::UnitScript),
 //                   near_scans / near_cells / near_cells_masked / near_blocks_skipped /
 //                   near_cells_block_skippable / near_cells_outside_disk / acq_scans /
 //                   los_calls (forEachNear and findTarget, for A2),

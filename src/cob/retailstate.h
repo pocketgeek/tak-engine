@@ -103,9 +103,6 @@ struct RetailScriptState {
     };
 
     template<class Host> void tick(const File& file,int32_t elapsed,Host& host) {
-#ifndef NDEBUG
-        if (!elapsed && gRetailVmTouch) gRetailVmTouch(&vm);
-#endif
         Adapter<Host> adapter{*this,host};
         vm.tick(file,elapsed,adapter);
 #ifndef NDEBUG
