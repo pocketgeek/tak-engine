@@ -977,7 +977,7 @@ void World::compactRetiredUnits() {
     if(write==units_.size())return;
     units_.resize(write);
     corpseIdx_.clear();bodyIndexValid_=false;
-    rebuildGrid();rebuildOccupancy();
+    rebuildGridAndOccupancy();
 }
 
 Fixed World::surfaceHeight(const Unit& u,uint32_t clock,uint16_t* pitch,uint16_t* roll) const {
@@ -6321,23 +6321,71 @@ int World::cellScoreWithBodies(const UnitType* t,int cx,int cz,int selfId,
     return blockedScore;
 }
 
-void World::rebuildOccupancy() {
-    occW_ = terW_;
-    occH_ = terH_;
-    if (occW_ <= 0 || occH_ <= 0) {
-        occ_.clear(); occTouched_.clear(); occW_ = occH_ = 0; return;
+void World::rebuildOccupancy() { rebuildSpatial(false,true); }
+void World::rebuildGrid() { rebuildSpatial(true,false); }
+void World::rebuildGridAndOccupancy() { rebuildSpatial(true,true); }
+
+// The spatial hash (rebuildGrid) and the body occupancy grid (rebuildOccupancy)
+// in one walk over the units when both are wanted (WE D4). Neither reads the
+// other's grid, so every bucket chain, stamp and touched list comes out exactly
+// as from the two separate walks.
+uint32_t World::rebuildSpatial(bool grid, bool occupancy) {
+    // ---- spatial hash: bounds and buckets
+    // Include ALL alive units (buildings too) so combat can target structures.
+    auto inGrid = [](const Unit& u) {
+        return u.alive() && !u.embarked() && u.type;
+    };
+    if (grid) {
+        gCell_ = 32.0f;
+        float minx = 1e30f, minz = 1e30f, maxx = -1e30f, maxz = -1e30f;
+        bool any = false;
+        TAK_PASS();
+        for (const auto& u : units_) {
+            if (!inGrid(u)) continue;
+            any = true;
+            minx = std::min(minx, float(u.x.toFloat())); maxx = std::max(maxx, float(u.x.toFloat()));
+            minz = std::min(minz, float(u.z.toFloat())); maxz = std::max(maxz, float(u.z.toFloat()));
+        }
+        if (!any) { gW_ = gH_ = 0; grid = false; }
+        else {
+            gOx_ = minx - gCell_;
+            gOz_ = minz - gCell_;
+            gW_ = int((maxx - minx) / gCell_) + 3;
+            gH_ = int((maxz - minz) / gCell_) + 3;
+            const size_t cells=size_t(gW_)*gH_;
+            if (gHead_.size()!=cells) {
+                gHead_.assign(cells,-1);gPlayers_.assign(cells,0);
+            } else for (size_t cell:gTouched_) {gHead_[cell]=-1;gPlayers_[cell]=0;}
+            gTouched_.clear();
+            gPlayersValid_=true;
+            // 8x8-cell block masks for forEachNear's block skip (WE A2b): the OR of the cell masks
+            // in each block, so a zero block bit means no cell in the block has that player.
+            gBlockW_ = (gW_ + 7) / 8;
+            gBlockPlayers_.assign(size_t(gBlockW_) * size_t((gH_ + 7) / 8), 0);
+            gNext_.assign(units_.size(), -1);
+        }
     }
-    const size_t cells=size_t(occW_)*occH_;
-    if (occ_.size()!=cells) occ_.assign(cells,0);
-    else for (size_t cell:occTouched_) occ_[cell]=0;
-    occTouched_.clear();
-    // Rebuild in deterministic order, moving bodies first and parked ones last.
-    // Subsequent steps update ownership immediately; two units cannot reserve
-    // the same destination using a stale snapshot of this grid.
-    // One walk (WE D4): moving bodies are stamped as they are met and the parked
-    // ones' indices are kept, then stamped in the same unit order. Whether a body
-    // holds its cell (speed == 0) cannot change while the grid is stamped, so the
-    // stamps, and occTouched_, come out exactly as from the two-pass walk.
+    // ---- occupancy: clear
+    if (occupancy) {
+        occW_ = terW_;
+        occH_ = terH_;
+        if (occW_ <= 0 || occH_ <= 0) {
+            occ_.clear(); occTouched_.clear(); occW_ = occH_ = 0; occupancy = false;
+        } else {
+            const size_t cells=size_t(occW_)*occH_;
+            if (occ_.size()!=cells) occ_.assign(cells,0);
+            else for (size_t cell:occTouched_) occ_[cell]=0;
+            occTouched_.clear();
+        }
+    }
+    // Occupancy is rebuilt in deterministic order, moving bodies first and parked
+    // ones last. Subsequent steps update ownership immediately; two units cannot
+    // reserve the same destination using a stale snapshot of this grid.
+    // Moving bodies are stamped as they are met and the parked ones' indices are
+    // kept, then stamped in the same unit order (WE D4: one walk, was two).
+    // Whether a body holds its cell (speed == 0) cannot change while the grid is
+    // stamped, so the stamps, and occTouched_, come out exactly as from the
+    // two-pass walk.
     auto stamp = [&](const Unit& u) {
         // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
         const int fx=u.type->footX,fz=u.type->footZ;
@@ -6351,65 +6399,34 @@ void World::rebuildOccupancy() {
             }
     };
     occParked_.clear();
+    uint32_t live = 0;
     TAK_PASS();
     for (size_t i = 0; i < units_.size(); ++i) {
         const Unit& u = units_[i];
-        if (!u.alive() || u.embarked() || !u.type) continue;
+        if (!u.alive() || !u.type) continue;
+        ++live;
+        if (u.embarked()) continue;
+        if (grid) {
+            int cx = std::clamp(int((u.x.toFloat() - gOx_) / gCell_), 0, gW_ - 1);
+            int cz = std::clamp(int((u.z.toFloat() - gOz_) / gCell_), 0, gH_ - 1);
+            int c = cz * gW_ + cx;
+            if (gHead_[size_t(c)]<0) gTouched_.push_back(size_t(c));
+            gNext_[i] = gHead_[size_t(c)];
+            gHead_[size_t(c)] = int(i);
+            if (unsigned(u.player)<64) {
+                gPlayers_[size_t(c)]|=uint64_t(1)<<u.player;
+                gBlockPlayers_[size_t(cz>>3)*size_t(gBlockW_)+size_t(cx>>3)]|=uint64_t(1)<<u.player;
+            }
+            else gPlayersValid_=false; // unrepresentable owners require the full traversal
+        }
+        if (!occupancy) continue;
         if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
         if (u.underConstruction) continue;
         if (unitHoldsCell(u)) occParked_.push_back(uint32_t(i));
         else stamp(u);
     }
     for (uint32_t i : occParked_) stamp(units_[i]);
-}
-
-void World::rebuildGrid() {
-    gCell_ = 32.0f;
-    float minx = 1e30f, minz = 1e30f, maxx = -1e30f, maxz = -1e30f;
-    bool any = false;
-    // Include ALL alive units (buildings too) so combat can target structures.
-    auto inGrid = [](const Unit& u) {
-        return u.alive() && !u.embarked() && u.type;
-    };
-    TAK_PASS();
-    for (const auto& u : units_) {
-        if (!inGrid(u)) continue;
-        any = true;
-        minx = std::min(minx, float(u.x.toFloat())); maxx = std::max(maxx, float(u.x.toFloat()));
-        minz = std::min(minz, float(u.z.toFloat())); maxz = std::max(maxz, float(u.z.toFloat()));
-    }
-    if (!any) { gW_ = gH_ = 0; return; }
-    gOx_ = minx - gCell_;
-    gOz_ = minz - gCell_;
-    gW_ = int((maxx - minx) / gCell_) + 3;
-    gH_ = int((maxz - minz) / gCell_) + 3;
-    const size_t cells=size_t(gW_)*gH_;
-    if (gHead_.size()!=cells) {
-        gHead_.assign(cells,-1);gPlayers_.assign(cells,0);
-    } else for (size_t cell:gTouched_) {gHead_[cell]=-1;gPlayers_[cell]=0;}
-    gTouched_.clear();
-    gPlayersValid_=true;
-    // 8x8-cell block masks for forEachNear's block skip (WE A2b): the OR of the cell masks
-    // in each block, so a zero block bit means no cell in the block has that player.
-    gBlockW_ = (gW_ + 7) / 8;
-    gBlockPlayers_.assign(size_t(gBlockW_) * size_t((gH_ + 7) / 8), 0);
-    gNext_.assign(units_.size(), -1);
-    TAK_PASS();
-    for (size_t i = 0; i < units_.size(); ++i) {
-        const Unit& u = units_[i];
-        if (!inGrid(u)) continue;
-        int cx = std::clamp(int((u.x.toFloat() - gOx_) / gCell_), 0, gW_ - 1);
-        int cz = std::clamp(int((u.z.toFloat() - gOz_) / gCell_), 0, gH_ - 1);
-        int c = cz * gW_ + cx;
-        if (gHead_[size_t(c)]<0) gTouched_.push_back(size_t(c));
-        gNext_[i] = gHead_[size_t(c)];
-        gHead_[size_t(c)] = int(i);
-        if (unsigned(u.player)<64) {
-            gPlayers_[size_t(c)]|=uint64_t(1)<<u.player;
-            gBlockPlayers_[size_t(cz>>3)*size_t(gBlockW_)+size_t(cx>>3)]|=uint64_t(1)<<u.player;
-        }
-        else gPlayersValid_=false; // unrepresentable owners require the full traversal
-    }
+    return live;
 }
 
 #ifndef NDEBUG
@@ -10932,8 +10949,9 @@ void World::tick(float dt) {
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
-    rebuildGrid();   // spatial hash for this tick (combat acquire + separation)
-    rebuildOccupancy();   // who is parked where: units are solid (see sim.h)
+    // The spatial hash for this tick (combat acquire + separation), and who is
+    // parked where: units are solid (see sim.h).
+    rebuildGridAndOccupancy();
     tickAutomaticGates();
 
     // The periodic re-anchor sweep that lived here (every unit with a route,
@@ -11183,7 +11201,7 @@ void World::tick(float dt) {
                 bodyIndexValid_=false;
                 unitIndex=size_t(std::find_if(units_.begin(),units_.end(),[&](const auto& u){return u.id==currentId;})-units_.begin());
             }
-            rebuildGrid();rebuildOccupancy();
+            rebuildGridAndOccupancy();
         }
         // Production may reallocate the vector; acquire the reference afterward.
         auto& u=units_[unitIndex];
@@ -11418,7 +11436,7 @@ void World::tick(float dt) {
                 bodyIndexValid_=false;
                 unitIndex=size_t(std::find_if(units_.begin(),units_.end(),
                     [&](const auto& candidate){return candidate.id==builderId;})-units_.begin());
-                rebuildGrid();rebuildOccupancy();
+                rebuildGridAndOccupancy();
                 continue;
             }
         }

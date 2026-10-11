@@ -2368,7 +2368,10 @@ private:
     // Uniform spatial hash over mobile units, rebuilt each tick, so the
     // separation and combat-acquisition passes are O(n) instead of O(n^2).
     void rebuildGrid();
-    // (rebuildOccupancy declared with occ_ below)
+    // (rebuildOccupancy declared with occ_ below.) Both in one walk; returns the
+    // count of alive units with a type (embarked ones included).
+    void rebuildGridAndOccupancy();
+    uint32_t rebuildSpatial(bool grid, bool occupancy);
     // Call fn(int unitIndex) for every mobile unit whose cell lies within
     // `radius` of (x,z). Iterates cells in a fixed order, so it is deterministic.
     //
