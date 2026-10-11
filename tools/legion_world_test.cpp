@@ -1556,16 +1556,17 @@ void determinism() {
 }
 
 namespace {
-void planeincrementalSeed(uint32_t seed) {
+std::array<uint64_t,3> planeincrementalSeed(uint32_t seed,bool serial) {
     // Random static churn (features of every size placed over each other,
     // blocking and not, walls that split regions and reopen, structures with
     // yards built and destroyed): the incrementally maintained plane must
-    // equal a whole-map rebuild after every change, labels included.
+    // equal a whole-map rebuild after every change, labels included, and a
+    // run with workers must equal the serial one.
     const int W=96,H=80;
     std::vector<uint8_t> heights(size_t(W)*H);
     for(int z=0;z<H;++z)for(int x=0;x<W;++x)
         heights[size_t(z)*W+x]=uint8_t(std::clamp(100+int((x*7+z*3)%40)-(x>60&&z>50?70:0),0,255));
-    Fixture f(W,H,true,heights);
+    Fixture f(W,H,serial,heights);
     for(int i=0;i<40;++i)f.wall(10+i,20+(i%3));
     f.publish();
     std::vector<UnitType> types;
@@ -1606,12 +1607,17 @@ void planeincrementalSeed(uint32_t seed) {
                 std::to_string(step)+" for "+f.world.unit(id)->type->id);
     }
     const auto stats=f.world.legionStats();
-    std::printf("planeincremental refreshes=%llu relabels=%llu\n",(unsigned long long)stats.planeRefreshes,
-        (unsigned long long)stats.planeRelabels);
+    std::printf("planeincremental %s refreshes=%llu relabels=%llu\n",serial?"serial":"workers",
+        (unsigned long long)stats.planeRefreshes,(unsigned long long)stats.planeRelabels);
     (void)builds0;
     check(stats.planeRefreshes>50,"churn never exercised the incremental path");
+    return {stats.planeRefreshes,stats.planeRelabels,f.world.stateHash()};
 }
-void planeincremental() {for(uint32_t seed:{987654321u,7u,42u,2026u})planeincrementalSeed(seed);}
+void planeincremental() {
+    for(uint32_t seed:{987654321u,7u,42u,2026u})
+        check(planeincrementalSeed(seed,true)==planeincrementalSeed(seed,false),
+              "plane refresh serial and workers differ (seed "+std::to_string(seed)+")");
+}
 }
 
 namespace {

@@ -337,6 +337,8 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
   # Costs these 38 cases ~17 s -> ~44 s in total at -O2 (the longest, squadformation, 6 -> 11 s).
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# planeincremental also runs its churn with workers (three in debug builds) and requires serial == workers.
+set_tests_properties(legion_planeincremental PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 # W6 step 0 (PLAN 4 W6): the flyer instruments of tools/legion_flyers_test.cpp. Each prints the numbers the W6
 # steps move and asserts determinism (serial == workers); W6_REQUIRE=1 asserts the PLAN targets (the acceptance
 # check of the step that meets them; docs/legion-w6-step0.md).

@@ -725,7 +725,13 @@ struct LegionNavigator::Impl {
     // stampGrounded and liftFlyers. Measured only while the probe is on.
     double probeSyncMs=0,probeStampMs=0,probeLiftMs=0;
     // LPROBE only: the longest single syncStatic (ms) since the last LPROBE
-    // line (the static-refresh spike, PF-05); reset by each line.
+    // line (the static-refresh spike, PF-05) and its breakdown: changed
+    // rectangles, planes refreshed incrementally, ms gathering structures,
+    // refreshing (all planes; the slowest single plane) and in
+    // staticChanged. `probeSync` is the latest sync's; reset by each line.
+    struct ProbeSync {size_t rects=0,planes=0;double gatherMs=0,refreshMs=0,planeMs=0,changedMs=0;uint64_t work=0,relabels=0;};
+    ProbeSync probeSync;
+    mutable ProbeSync probeSyncMax;
     mutable double probeSyncMaxMs=0;
     static uint64_t seedsKey(const std::vector<int>& seeds) {
         uint64_t h=mix(0x7365656473ull,seeds.size());
@@ -1840,18 +1846,17 @@ struct LegionNavigator::Impl {
     // ---- incremental static change ------------------------------------
     // A plane refresh's scratch: splitSearch's marks (a cache, never state)
     // and the whole-plane relabels it did (added to stats.planeRelabels by
-    // the caller). A refresh touches only its own plane and this, so planes
-    // refresh concurrently with one scratch per thread (see syncStatic).
+    // the caller). A refresh reads the world and syncStatic's structureList
+    // and writes only its own plane and this, so planes could refresh
+    // concurrently with one scratch per thread. WE E4.2 (P5) measured that
+    // (branch task-we-e42-pool): exact, but the static-sync spike is one
+    // plane's relabel, not a sum over planes, and at 3 workers the max got
+    // worse (1.7 -> up to 7 ms), so the refresh stays serial.
     struct RefreshScratch {
         std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
         uint64_t relabels=0;
     };
-    // Indexed by SimPool slot (0 = the calling thread, used by serial callers).
-    std::vector<RefreshScratch> refreshScratch;
-    RefreshScratch& serialScratch() {
-        if(refreshScratch.empty())refreshScratch.resize(1);
-        return refreshScratch[0];
-    }
+    RefreshScratch refreshScratch;
     // A static change (feature placed/removed, corpse, structure built or
     // gone, yard opened/closed) touches a few cells. Recompute the cell layer
     // there, the origins whose footprint covers it, and repair the component
@@ -2928,6 +2933,10 @@ struct LegionNavigator::Impl {
             if(e!=lastWorldEpoch) {lastWorldEpoch=e;staticChanged();}
             return;
         }
+        using ProbeClock=std::chrono::steady_clock;
+        auto probeMs=[](ProbeClock::time_point a,ProbeClock::time_point b) {return std::chrono::duration<double,std::milli>(b-a).count();};
+        const auto probeT0=gProbe?ProbeClock::now():ProbeClock::time_point{};
+        probeSync={};
         std::vector<std::array<int,4>> rects;
         auto& now=nowStamps;
         auto& structures=structurePtrs;
@@ -2960,6 +2969,8 @@ struct LegionNavigator::Impl {
         bool changed=false;
         if(lastWorldEpoch==~0ull) {lastWorldEpoch=0;changed=true;}   // the first epoch, as before
         structureList=&structures;
+        auto probeT1=gProbe?ProbeClock::now():ProbeClock::time_point{};
+        if(gProbe) {probeSync.rects=rects.size();probeSync.gatherMs=probeMs(probeT0,probeT1);}
         if(all||!rects.empty()) {
             auto& refreshed=refreshList;
             refreshed.clear();
@@ -2979,31 +2990,40 @@ struct LegionNavigator::Impl {
                 refreshed.push_back(&p);
             }
             // Each refresh reads the world and structureList and writes only
-            // its own plane, touch slot, result and scratch; the results are
-            // merged in plane order (planeDebt's capped sum of nonnegative
-            // work is order-independent anyway).
+            // its own plane, touch slot and result (see RefreshScratch); the
+            // results are merged in plane order (planeDebt's capped sum of
+            // nonnegative work is order-independent anyway).
             refreshResults.assign(refreshed.size(),{});
             for(size_t k=0;k<refreshed.size();++k) {
                 Plane& p=*refreshed[k];
                 auto& r=refreshResults[k];
-                r.work=refreshPlane(p,rects,r.any,serialScratch(),&touch[size_t(&p-planes.data())]);
+                const auto start=gProbe?ProbeClock::now():ProbeClock::time_point{};
+                r.work=refreshPlane(p,rects,r.any,refreshScratch,&touch[size_t(&p-planes.data())]);
+                if(gProbe)r.ms=probeMs(start,ProbeClock::now());
+            }
+            if(gProbe) {
+                const auto t=ProbeClock::now();
+                probeSync.planes=refreshed.size();probeSync.refreshMs=probeMs(probeT1,t);probeT1=t;
+                for(const auto& r:refreshResults) {probeSync.planeMs=std::max(probeSync.planeMs,r.ms);probeSync.work+=r.work;}
+                probeSync.relabels=refreshScratch.relabels;
             }
             for(const auto& r:refreshResults) {
                 planeDebt=std::min(planeDebt+r.work,kFieldQuota/2);
                 if(r.any) {changed=true;++stats.planeRefreshes;}
             }
-            for(auto& scratch:refreshScratch) {stats.planeRelabels+=scratch.relabels;scratch.relabels=0;}
+            stats.planeRelabels+=refreshScratch.relabels;refreshScratch.relabels=0;
             if(changed)for(auto* p:refreshed)p->epoch=epoch+1;
         }
         if(changed)staticChanged(touch.empty()?nullptr:&touch);
         touch.clear();
+        if(gProbe)probeSync.changedMs=probeMs(probeT1,ProbeClock::now());
     }
     // Per plane, the bounding box of origins whose legality changed in this
     // sync ({0,0,-1,-1}: none).
     std::vector<std::array<int,4>> touch;
     // syncStatic's scratch: the planes refreshed incrementally (plane order)
     // and each one's work and whether its legality changed.
-    struct RefreshResult {uint64_t work=0;bool any=false;};
+    struct RefreshResult {uint64_t work=0;bool any=false;double ms=0;};   // ms: LPROBE only
     std::vector<Plane*> refreshList;
     std::vector<RefreshResult> refreshResults;
     // Does a static change box (on the group's plane) reach the group's
@@ -3140,9 +3160,8 @@ struct LegionNavigator::Impl {
                         clearStage(p);
                         bool changed=false;
                         if(!pending.empty()) {
-                            auto& scratch=serialScratch();
-                            refreshPlane(p,pending,changed,scratch);
-                            stats.planeRelabels+=scratch.relabels;scratch.relabels=0;
+                            refreshPlane(p,pending,changed,refreshScratch);
+                            stats.planeRelabels+=refreshScratch.relabels;refreshScratch.relabels=0;
                         }
                         break;
                     }
@@ -3354,7 +3373,7 @@ struct LegionNavigator::Impl {
             liftFlyers();
             const auto t4=Clock::now();
             probeSyncMs+=ms(t0,t1);probeStampMs+=ms(t1,t2);probeLiftMs+=ms(t3,t4);
-            probeSyncMaxMs=std::max(probeSyncMaxMs,ms(t0,t1));
+            if(ms(t0,t1)>probeSyncMaxMs) {probeSyncMaxMs=ms(t0,t1);probeSyncMax=probeSync;}
         } else {
             syncStatic();
             stampGrounded();
@@ -3499,7 +3518,9 @@ struct LegionNavigator::Impl {
         std::fprintf(stderr,"LPROBE tick=%u units=%zu groups=%zu members=%zu sched_group_visits=%llu sharedfield_full_scans=%llu softowner_lookups=%llu"
             " field_work=%llu first_slot=%llu first_solo=%llu refresh_moving=%llu refresh_idle=%llu refresh_deferred=%llu blocked_rerequests=%llu"
             " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu paused_resumes=%llu"
-            " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f sync_max_ms=%.3f\n",
+            " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f sync_max_ms=%.3f"
+            " sync_max_rects=%zu sync_max_planes=%zu sync_max_gather_ms=%.3f sync_max_refresh_ms=%.3f sync_max_plane_ms=%.3f sync_max_changed_ms=%.3f"
+            " sync_max_work=%llu sync_max_relabels=%llu\n",
             w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
@@ -3508,8 +3529,10 @@ struct LegionNavigator::Impl {
             (unsigned long long)s.demandResumes,(unsigned long long)s.refreshSuppressed,(unsigned long long)s.fieldsPaused,(unsigned long long)s.pausedResumes,(unsigned long long)s.stillUnitsProcessed,
             (unsigned long long)s.stillPerResidueMax,(unsigned long long)s.quotaPegRunMax,(unsigned long long)s.anchorWalkIters,
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
-            probeSyncMs,probeStampMs,probeLiftMs,probeSyncMaxMs);
-        probeSyncMaxMs=0;
+            probeSyncMs,probeStampMs,probeLiftMs,probeSyncMaxMs,probeSyncMax.rects,probeSyncMax.planes,probeSyncMax.gatherMs,
+            probeSyncMax.refreshMs,probeSyncMax.planeMs,probeSyncMax.changedMs,(unsigned long long)probeSyncMax.work,
+            (unsigned long long)probeSyncMax.relabels);
+        probeSyncMaxMs=0;probeSyncMax={};
     }
 #ifndef NDEBUG
     // TAK_LEGION_VERIFY: every derived index and work list against a full
