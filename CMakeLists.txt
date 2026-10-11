@@ -130,6 +130,7 @@ add_library(tak-formats
   src/cob/cob.cpp
   src/cob/vm.cpp
   src/sim/sim.cpp
+  src/sim/simpool.cpp
   src/sim/pathsearch.cpp
   src/sim/legion.cpp
   src/sim/convoy.cpp
@@ -336,6 +337,8 @@ foreach(legion_case clearance groupreuse jagged trapped crowdhold replace unreac
   # Costs these 38 cases ~17 s -> ~44 s in total at -O2 (the longest, squadformation, 6 -> 11 s).
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS legion ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# planeincremental also runs its churn with workers (three in debug builds) and requires serial == workers.
+set_tests_properties(legion_planeincremental PROPERTIES ENVIRONMENT "TAK_LEGION_VERIFY=1;TAK_SIM_WORKERS=3")
 # W6 step 0 (PLAN 4 W6): the flyer instruments of tools/legion_flyers_test.cpp. Each prints the numbers the W6
 # steps move and asserts determinism (serial == workers); W6_REQUIRE=1 asserts the PLAN targets (the acceptance
 # check of the step that meets them; docs/legion-w6-step0.md).
@@ -747,6 +750,8 @@ target_link_libraries(retail_motion_test PRIVATE tak-formats)
 add_test(NAME retail_motion COMMAND retail_motion_test)
 add_executable(duration_test tools/duration_test.cpp)
 add_executable(navincr_test tools/navincr_test.cpp)
+add_executable(simpool_test tools/simpool_test.cpp)
+target_link_libraries(simpool_test PRIVATE tak-formats)
 add_executable(fixed_test tools/fixed_test.cpp)
 add_executable(statsfit_test tools/statsfit_test.cpp)
 add_executable(settings_test tools/settings_test.cpp)
@@ -815,6 +820,7 @@ add_test(NAME cadence COMMAND cadence_test)
 add_test(NAME duration COMMAND duration_test)
 add_test(NAME navincr COMMAND navincr_test)
 add_test(NAME fixed COMMAND fixed_test)
+add_test(NAME simpool COMMAND simpool_test)
 add_test(NAME settings COMMAND settings_test)
 add_test(NAME door_animation COMMAND door_animation_test)
 add_test(NAME pathgeom COMMAND pathgeom_test)

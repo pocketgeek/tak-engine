@@ -8795,15 +8795,25 @@ void World::updateNavigationExploration() {
     for (size_t owner=0;owner<players_.size();++owner)
         for (size_t viewer=0;viewer<players_.size() && viewer<16;++viewer)
             if (allied(int(owner),int(viewer))) playerViewers[owner]|=uint16_t(1u<<viewer);
-    const unsigned available=serialThreads_ ? 1u : std::max(1u,std::thread::hardware_concurrency());
-    const unsigned workers=std::min({4u,available,unsigned(std::max(size_t(1),units_.size()/2048))});
-    // Seed private masks before starting workers: each can skip cells already
-    // explored without reading another worker's writes.
-    for (unsigned k=1;k<workers;++k) {
-        explorationScratch_[k-1]=navigationExplored_;
-        explorationBlockScratch_[k-1]=explorationBlocks_;
-    }
-    auto explore=[&](size_t begin,size_t end,std::vector<uint16_t>& revealed,std::vector<uint16_t>& blocks) {
+    // One plane shared by every chunk. Exploration only adds bits: a footprint
+    // depends on its own unit alone, and covered/needed may skip only work whose
+    // bits are already set, so any interleaving of the reveals yields the same
+    // plane (O9). With workers the cells and block summaries are accessed
+    // atomically (relaxed): a summary computed from a cell read before another
+    // chunk's OR is only lower, i.e. it skips less, never more.
+    auto explore=[&](size_t begin,size_t end,auto shared) {
+        constexpr bool kShared=decltype(shared)::value;
+        auto load=[](const uint16_t& v)->uint16_t {
+            if constexpr (kShared) return __atomic_load_n(&v,__ATOMIC_RELAXED); else return v;
+        };
+        auto summarizeBlock=[&](int bx,int bz) {
+            uint16_t all=0xffff;
+            const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
+            for (int z=bz<<blockShift;z<zh;++z)
+                for (int x=bx<<blockShift;x<xh;++x) all&=load(navigationExplored_[size_t(z)*width+x]);
+            uint16_t& out=explorationBlocks_[size_t(bz)*blocksW+bx];
+            if constexpr (kShared) __atomic_store_n(&out,all,__ATOMIC_RELAXED); else out=all;
+        };
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
             // 4f6a60..4f6ac0 has no attachment test: transport cargo explores
@@ -8821,32 +8831,33 @@ void World::updateNavigationExploration() {
             // need no terrain calculation, and removal never changes this map.
             retailUpdateExploration(u.sightFootprint,u.x,y,u.z,uint8_t(seaLevel_),width,height,blockShift,
                 [&](int x,int z){return explorationHeights_[size_t(z)*width+x];},
-                [&](int bx,int bz){return (blocks[size_t(bz)*blocksW+bx]&viewers)==viewers;},
-                [&](int x,int z){return (revealed[size_t(z)*width+x]&viewers)!=viewers;},
-                [&](int x,int z){revealed[size_t(z)*width+x]|=viewers;},
-                [&](int bx,int bz){summarize(revealed,blocks,bx,bz);});
+                [&](int bx,int bz){return (load(explorationBlocks_[size_t(bz)*blocksW+bx])&viewers)==viewers;},
+                [&](int x,int z){return (load(navigationExplored_[size_t(z)*width+x])&viewers)!=viewers;},
+                [&](int x,int z){
+                    uint16_t& cell=navigationExplored_[size_t(z)*width+x];
+                    if constexpr (kShared) __atomic_fetch_or(&cell,viewers,__ATOMIC_RELAXED); else cell|=viewers;
+                },
+                [&](int bx,int bz){summarizeBlock(bx,bz);});
         }
     };
-    // Each worker owns distinct unit footprints and an independent reveal mask.
-    // OR is associative and commutative; merge only after all workers join.
-    const size_t chunk=(units_.size()+workers-1)/workers;
-    std::vector<std::thread> threads;
-    struct JoinThreads {
-        std::vector<std::thread>& threads;
-        ~JoinThreads() { for (auto& thread:threads) if (thread.joinable()) thread.join(); }
-    } joinThreads{threads};
-    threads.reserve(workers-1);
-    for (unsigned k=1;k<workers;++k) {
-        const size_t begin=std::min(units_.size(),size_t(k)*chunk);
-        const size_t end=std::min(units_.size(),begin+chunk);
-        threads.emplace_back([&,k,begin,end]{
-            explore(begin,end,explorationScratch_[k-1],explorationBlockScratch_[k-1]);});
+    // Below about 4k units the whole pass is ~0.1 ms: a fork-join (and the
+    // atomics) would cost more than it saves, most of all in single player,
+    // where the client's and the local referee's sims share the cores.
+    SimPool& pool=simPool();
+    constexpr size_t kMinParallel=4096;
+    if (!pool.workers() || units_.size()<kMinParallel) {
+        explore(0,units_.size(),std::false_type{});
+        return;
     }
-    explore(0,std::min(units_.size(),chunk),navigationExplored_,explorationBlocks_);
-    for (auto& thread:threads) thread.join();
-    for (unsigned k=1;k<workers;++k)
-        for (size_t i=0;i<navigationExplored_.size();++i)
-            navigationExplored_[i]|=explorationScratch_[k-1][i];
+    pool.forChunks(units_.size(),SimPool::kUnitChunk,kMinParallel,[&](size_t,size_t begin,size_t end,unsigned) {
+        explore(begin,end,std::true_type{});
+    });
+}
+
+SimPool& World::simPool() {
+    const unsigned want=serialThreads_ ? 0u : SimPool::defaultWorkers();
+    if (!pool_ || pool_->workers()!=want) pool_=std::make_unique<SimPool>(want);
+    return *pool_;
 }
 
 void World::updateVisibility() {
