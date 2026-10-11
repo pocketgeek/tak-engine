@@ -113,7 +113,7 @@ static int runBlockedApproach(bool legion,float blockerX,float blockerZ,int limi
 // moves; 1 the same, but it walks away after 100 ticks; 2 a non-reclaimable
 // feature appears on the site. A move is queued behind the build.
 struct PlacementRun {int firstFailure=-1,dropped=-1,built=-1,maxFailures=0;bool heldStill=true;};
-static PlacementRun runSitePlacement(bool legion,int what) {
+static PlacementRun runSitePlacement(bool legion,int what,bool fly=false) {
     PlacementRun r;
     World w;
     w.setVisPlayer(-1);
@@ -125,6 +125,7 @@ static PlacementRun runSitePlacement(bool legion,int what) {
     UnitType builder=soldier(),blocker=soldier(),site=soldier();
     builder.id=builder.name="bld";builder.isBuilder=true;builder.buildDist=60;builder.turnInPlaceRate=1000;
     builder.accel=Fixed::fromFloat(0.1f);builder.brake=Fixed::fromFloat(0.5f);
+    builder.canFly=fly;
     blocker.id=blocker.name="blk";
     site.id=site.name="site";site.maxVel=Fixed();site.buildTime=10000;site.buildCost=0;
     const int bid=w.spawn(&builder,160,512,0,0);
@@ -779,6 +780,21 @@ int main() {
         const auto rock=runSitePlacement(legion,2);
         check(rock.dropped>=0 && rock.maxFailures==0 && rock.built<0,
               mode+"a non-reclaimable feature on the site: drop at once",
+              "dropped "+std::to_string(rock.dropped)+", failures "+std::to_string(rock.maxFailures));
+    }
+
+    {
+        // FlyingBuild (41f301..41f3e5) runs the same placement sequence; the
+        // flyer hovers where it arrived for the retries.
+        const auto wait=runSitePlacement(false,0,true);
+        check(wait.firstFailure>=0 && wait.dropped>=0 && wait.maxFailures==30 && wait.heldStill &&
+              wait.dropped-wait.firstFailure>=295 && wait.dropped-wait.firstFailure<=305,
+              "Flyer: a unit on the site: hover, retry every 10 ticks, drop after 31",
+              "first failure "+std::to_string(wait.firstFailure)+", dropped "+std::to_string(wait.dropped)+
+              ", failures "+std::to_string(wait.maxFailures)+", held "+std::to_string(wait.heldStill));
+        const auto rock=runSitePlacement(false,2,true);
+        check(rock.dropped>=0 && rock.maxFailures==0 && rock.built<0,
+              "Flyer: a non-reclaimable feature on the site: drop at once",
               "dropped "+std::to_string(rock.dropped)+", failures "+std::to_string(rock.maxFailures));
     }
 

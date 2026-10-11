@@ -10553,9 +10553,11 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
     }
     // MobileBuild stopped navigating at its site while mobile units stand on
     // it (405824..405911): the body brakes and stays for the 10-tick retry.
-    if (!u.type->canFly && !u.orders.empty() && u.orders.front().buildType &&
-        u.orders.front().placementFailures) {
-        brakeGround(u);
+    // FlyingBuild (41f2a8) has no controller left after arrival: the flyer
+    // hovers where it arrived, braking as a scripted wait does.
+    if (!u.orders.empty() && u.orders.front().buildType && u.orders.front().placementFailures) {
+        if (u.type->canFly) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+        else brakeGround(u);
         return;
     }
     // Queued mobile production already advanced its hover controller this tick.
@@ -11883,10 +11885,11 @@ void World::tick(float dt) {
         // not all ground missions before every other unit's activity.
         if (u.constructionHolding && u.buildSiteId) continue;
         if (u.legionLift && tickLegionLift(u)) continue;
-        // MobileBuild standing at its site, waiting out mobile units on it
-        // (405824..405911): navigation has stopped (tickNavigationMovement
-        // only brakes it); only the retry below runs.
-        const bool placementWait=!u.type->canFly && !u.orders.empty() &&
+        // MobileBuild/FlyingBuild standing (or hovering) at its site, waiting
+        // out mobile units on it (405824..405911, 41f301..41f3e5): navigation
+        // has stopped (tickNavigationMovement only brakes it); only the retry
+        // below runs.
+        const bool placementWait=!u.orders.empty() &&
             u.orders.front().buildType && !u.orders.front().buildRectangle &&
             u.orders.front().placementFailures>0;
         if (!placementWait) {
@@ -11932,8 +11935,9 @@ void World::tick(float dt) {
                         notifyFlightOccupancy(builder);
                     } else turnBuilderToSite(builder,*unit(siteId));
                 } else {
-                    // 405824..405911: a site refused only by mobile units is
-                    // retried every 10 ticks where the builder stands. Retail
+                    // 405824..405911 (FlyingBuild 41f301..41f3e5 alike): a site
+                    // refused only by mobile units is retried every 10 ticks
+                    // where the builder stands or hovers. Retail
                     // says UNITCHATTER_WAITFORTARGETTOCLEAR on the 7th try and
                     // UNITCHATTER_TARGETBLOCKED when the 31st fails; we have
                     // no unit-chatter channel, so both pass silently. Anything
@@ -11942,9 +11946,12 @@ void World::tick(float dt) {
                     // builder moves on to its next order.
                     auto& builder=*unit(builderId);
                     auto& order=builder.orders.front();
-                    if (mobileBlocked && !builder.type->canFly && ++order.placementFailures<31)
+                    if (mobileBlocked && ++order.placementFailures<31) {
                         order.placementRetryTick=tickCounter_+10;
-                    else popBuildOrder(builder);
+                        // FlyingBuild's point controller detached on arrival:
+                        // nothing steers the hovering flyer during the wait.
+                        order.flightGoal.reset();
+                    } else popBuildOrder(builder);
                 }
                 // spawn invalidates references; re-establish slot order before
                 // continuing so a later newborn receives its first update today.

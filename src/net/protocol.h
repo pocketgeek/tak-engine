@@ -20,8 +20,8 @@
 namespace tak::net {
 
 constexpr uint32_t kNetVersion = 251;      // 251: blocked build sites. MobileBuild placement at the site follows retail
-                                           //      405824..405911: refused only by mobile units it retries every 10 ticks where the
-                                           //      builder stands and drops after the 31st failure; refused by anything else it drops
+                                           //      405824..405911 (FlyingBuild 41f301..41f3e5 alike): refused only by mobile units it
+                                           //      retries every 10 ticks where the builder stands or hovers and drops after the 31st failure; refused by anything else it drops
                                            //      at once (hashed Order::placementFailures/placementRetryTick). Legion: an exact goal
                                            //      (build/transport/park) held a window against another player's body with no free
                                            //      step nearer settles there and raises the failed-approach event (0x200), as retail's
