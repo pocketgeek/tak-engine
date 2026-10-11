@@ -6334,26 +6334,33 @@ void World::rebuildOccupancy() {
     // Rebuild in deterministic order, moving bodies first and parked ones last.
     // Subsequent steps update ownership immediately; two units cannot reserve
     // the same destination using a stale snapshot of this grid.
-    for (int pass = 0; pass < 2; ++pass) {
-        const bool wantParked = (pass == 1);
-        TAK_PASS();
-        for (const auto& u : units_) {
-            if (!u.alive() || u.embarked() || !u.type) continue;
-            if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
-            if (u.underConstruction) continue;
-            if (unitHoldsCell(u) != wantParked) continue;
-            // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
-            const int fx=u.type->footX,fz=u.type->footZ;
-            int cx = footprintOrigin(u.x, fx), cz = footprintOrigin(u.z, fz);
-            for (int j = 0; j < fz; ++j)
-                for (int i = 0; i < fx; ++i) {
-                    int x = cx + i, z = cz + j;
-                    if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
-                    const size_t cell = size_t(z) * size_t(occW_) + size_t(x);
-                    setOccupant(cell,u.id);
-                }
-        }
+    // One walk (WE D4): moving bodies are stamped as they are met and the parked
+    // ones' indices are kept, then stamped in the same unit order. Whether a body
+    // holds its cell (speed == 0) cannot change while the grid is stamped, so the
+    // stamps, and occTouched_, come out exactly as from the two-pass walk.
+    auto stamp = [&](const Unit& u) {
+        // Stamp the whole footprint, centre-anchored to match NavGrid::fits.
+        const int fx=u.type->footX,fz=u.type->footZ;
+        int cx = footprintOrigin(u.x, fx), cz = footprintOrigin(u.z, fz);
+        for (int j = 0; j < fz; ++j)
+            for (int i = 0; i < fx; ++i) {
+                int x = cx + i, z = cz + j;
+                if (x < 0 || z < 0 || x >= occW_ || z >= occH_) continue;
+                const size_t cell = size_t(z) * size_t(occW_) + size_t(x);
+                setOccupant(cell,u.id);
+            }
+    };
+    occParked_.clear();
+    TAK_PASS();
+    for (size_t i = 0; i < units_.size(); ++i) {
+        const Unit& u = units_[i];
+        if (!u.alive() || u.embarked() || !u.type) continue;
+        if (u.type->canFly || u.type->isStructure()) continue;   // structures are in nav_
+        if (u.underConstruction) continue;
+        if (unitHoldsCell(u)) occParked_.push_back(uint32_t(i));
+        else stamp(u);
     }
+    for (uint32_t i : occParked_) stamp(units_[i]);
 }
 
 void World::rebuildGrid() {

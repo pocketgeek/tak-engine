@@ -2528,6 +2528,7 @@ private:
     // Both moving and parked bodies reserve their whole footprint (0 = free).
     std::vector<int32_t> occ_;
     std::vector<size_t> occTouched_;
+    std::vector<uint32_t> occParked_;   // rebuildOccupancy's scratch: parked bodies, unit order
     void setOccupant(size_t cell,int id) {
         if (id && !occ_[cell]) occTouched_.push_back(cell);
         occ_[cell]=id;
