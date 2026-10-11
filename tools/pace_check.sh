@@ -6,6 +6,7 @@
 #
 #   tools/pace_check.sh <debug build dir> [--seconds GAME_SECONDS] [--cpus A-B] [--data DIR] [--speed TENTHS]
 #                       [--frame-ms N] [--map NAME] [--port N] [--no-formation] [--no-thread] [--log DIR] [--allow-busy]
+#                       [--vsync HZ] [--retail] [--bench LEVEL]
 #
 # Debug builds only (every hook it sets is a dev.h env var, compiled out of a release takclient). The run
 # is REPORT-ONLY: nothing reads the numbers back as a gate. Defaults follow the audit: 8x (speed 80), 150
@@ -13,19 +14,24 @@
 # server share them), the sim worker thread ON (the interactive default; --no-thread runs it inline), and a
 # 50 ms frame (20 frames/s, the rate of the audited interactive run, whose mode was 12 ticks per frame).
 #
+# --vsync HZ replaces the fixed frame sleep with an HZ deadline (TAK_VSYNC_HZ, a fake vsync); the PRESENT line
+# then gives the displayed-time CV and freeze share at that refresh rate (WE E3.2). --retail plays Retail
+# pathfinding instead of Legion; --bench LEVEL watches the 8-AI Ulasem benchmark (TAK_BENCH) instead of --map.
+#
 # The pace is only comparable run to run on idle cores: the script refuses a pinned core that is more than 2%
 # busy, the same rule as tools/legion_timing.sh (--allow-busy runs anyway and says so).
 set -u
 BUILD=${1:-}; shift || true
 [ -n "$BUILD" ] && [ -x "$BUILD/takclient" ] || { echo "usage: $0 <debug build dir> [options]" >&2; exit 2; }
 SECS=460; CPUS=${PACE_CPUS:-22-23}; DATA=${TAK_DATA:-assets/game}; SPEED=80; FRAME=50; MAP="Inner Circle"; PORT=7793
-FORMATION=1; THREAD=1; LOGDIR=""; BUSY_OK=0
+FORMATION=1; THREAD=1; LOGDIR=""; BUSY_OK=0; VSYNC=""; LEGION=1; BENCH=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --seconds) SECS=$2; shift 2;; --cpus) CPUS=$2; shift 2;; --data) DATA=$2; shift 2;;
     --speed) SPEED=$2; shift 2;; --frame-ms) FRAME=$2; shift 2;; --map) MAP=$2; shift 2;;
     --port) PORT=$2; shift 2;; --no-formation) FORMATION=0; shift;; --no-thread) THREAD=0; shift;;
     --log) LOGDIR=$2; shift 2;; --allow-busy) BUSY_OK=1; shift;;
+    --vsync) VSYNC=$2; shift 2;; --retail) LEGION=0; shift;; --bench) BENCH=$2; shift 2;;
     *) echo "unknown option $1" >&2; exit 2;;
   esac
 done
@@ -35,7 +41,10 @@ if ! "$here/legion_timing.sh" --check-idle "$CPUS"; then
 fi
 work=${LOGDIR:-$(mktemp -d)}; mkdir -p "$work/xdg"
 export XDG_DATA_HOME="$work/xdg" TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy
-export TAK_LEGION=1 TAK_SPEED=$SPEED TAK_PACELOG="$work/pace.txt" TAK_FRAME_MS=$FRAME
+export TAK_SPEED=$SPEED TAK_PACELOG="$work/pace.txt" TAK_FRAME_MS=$FRAME
+[ "$LEGION" = 1 ] && export TAK_LEGION=1
+[ -n "$VSYNC" ] && export TAK_VSYNC_HZ=$VSYNC
+[ -n "$BENCH" ] && export TAK_BENCH=$BENCH
 [ "$FORMATION" = 1 ] && export TAK_AUTOPLAY_FORMATION=1
 [ "$THREAD" = 1 ] && export TAK_SIM_THREAD=1
 taskset -c "$CPUS" "$BUILD/takserver" --port "$PORT" --data "$DATA" --no-auth --seed 1 --local > "$work/server.log" 2>&1 &
@@ -43,5 +52,5 @@ SP=$!
 trap 'kill $SP 2>/dev/null; wait $SP 2>/dev/null' EXIT
 for _ in $(seq 1 90); do grep -qi listening "$work/server.log" && break; sleep 1; done
 taskset -c "$CPUS" "$BUILD/takclient" game "$MAP" --data "$DATA" --server 127.0.0.1 --serverport "$PORT" --mpai --time "$SECS" > "$work/client.log" 2>&1
-grep -E '^(PACE|PACEWORK|mp-headless done)' "$work/client.log"
-echo "logs: $work (pace.txt: wall_ms ticks tick inbox buffered rate fast_forward shown td lock_wait_us world_ms capture_ms hash_ms job_wall_ms job_cpu_ms, one line per frame)"
+grep -E '^(PACE|PACEWORK|PRESENT|mp-headless done)' "$work/client.log"
+echo "logs: $work (pace.txt: wall_ms ticks tick inbox buffered rate fast_forward shown td lock_wait_us world_ms capture_ms hash_ms job_wall_ms job_cpu_ms dtd nominal freeze gate snap lag_target, one line per frame)"

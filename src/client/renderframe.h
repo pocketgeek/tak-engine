@@ -244,8 +244,8 @@ struct PlayerR {
 };
 
 // A complete per-tick render snapshot -- everything the render/HUD reads from the sim.
-// Triple-buffered (see frameBuf_): the render reads front(), the writer fills a spare and
-// publishes it. `live` points into THIS Frame's `units`, so it swaps consistently.
+// Held in a ring (see frameBuf_): the render reads front(), the writer fills the oldest free slot
+// and publishes it. `live` points into THIS Frame's `units`, so it swaps consistently.
 struct Frame {
     std::vector<UnitR> units;            // compact current records, never indexed by lifetime ID
     // Small ID-to-slot table may retain history; full snapshots only retain current units.
@@ -279,6 +279,7 @@ struct Frame {
     bool scenarioClock = false;         // CRT Display gameclock action
     uint64_t tickMs = 0;                 // wall-clock of this tick (for interpolation)
     float tickDurMs = 1000.0f / 30.0f;
+    uint64_t pubCounter = 0;             // performance counter at publish (presentation clock gaps)
     uint32_t gen = 0;                    // capture generation (UnitR.gen == this => live this tick)
     // Shake state is snapshotted; mission audio uses an ordered event queue
     // captured under the worker's lock so skipped snapshots cannot drop lines.

@@ -573,9 +573,28 @@
             fr.buffered = paceBuffered; fr.rate = paceRate; fr.fastForward = paceFF;
             // What the frame shows: the pinned snapshot, interpolated the way the render does.
             fr.shown = front().gameTick;
-            const double alpha = front().tickDurMs > 0.0f
-                ? std::clamp(double(nowMs - front().tickMs) / double(front().tickDurMs), 0.0, 1.0) : 1.0;
-            fr.td = double(fr.shown) - 1.0 + alpha;
+            if (present_.on) {
+                // The presentation clock's own record of this frame (presentFrame).
+                fr.td = present_.td; fr.dtd = present_.dtd; fr.nominal = present_.nominal;
+                fr.freeze = present_.freeze; fr.gate = present_.gate; fr.snap = present_.snap;
+                fr.lagTarget = float(present_.lagTarget);
+            } else {
+                const double rawAlpha = front().tickDurMs > 0.0f
+                    ? double(nowMs - front().tickMs) / double(front().tickDurMs) : 1.0;
+                fr.td = double(fr.shown) - 1.0 + std::clamp(rawAlpha, 0.0, 1.0);
+                fr.freeze = rawAlpha >= 1.0;   // the newest pose is held: nothing newer to interpolate toward
+                // Display time advanced this frame against the frame's nominal step (its wall time at
+                // the game speed), timed on the performance counter: millisecond ticks would quantise a
+                // 4.17 ms frame by 24%.
+                const uint64_t nowC = SDL_GetPerformanceCounter();
+                if (paceLastCounter_ && paceLastTd_ >= 0) {
+                    const double dtS = double(nowC - paceLastCounter_) / double(SDL_GetPerformanceFrequency());
+                    fr.nominal = paused_ ? 0.0 : dtS * 30.0 * double(animSpeed());
+                    fr.dtd = fr.td - paceLastTd_;
+                }
+                paceLastCounter_ = nowC;
+                paceLastTd_ = fr.td;
+            }
             fr.lockWaitUs = double(paceLockWaitNs_) / 1000.0;
             paceLockWaitNs_ = 0;
             const uint64_t now[5] = {paceWorldNs_.load(), paceCaptureNs_.load(), paceHashNs_.load(),
@@ -588,8 +607,11 @@
             pace_.frame(fr);
         }
 #endif
-        // Cosmetics once per frame, covering the game time actually played.
-        if (drained > 0) cosmeticStep(float(drained) / 30.0f);
+        // Cosmetics once per frame, covering the game time actually DISPLAYED: the presentation
+        // clock's advance (particles, timers and the tick-stamped event queues then follow what is
+        // on screen), or without it the ticks played.
+        if (present_.on) { if (present_.dtd > 0) cosmeticStep(float(present_.dtd) / 30.0f); }
+        else if (drained > 0) cosmeticStep(float(drained) / 30.0f);
         // Spectator progress heartbeat: keep the server's flow-control ack FRESH even
         // when we're caught up and not draining. The per-tick hash send only fires while
         // draining (at 30-tick boundaries), so a caught-up spectator would stop acking;
