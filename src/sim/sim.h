@@ -1134,6 +1134,38 @@ TAK_UNIT_LINES(retainedFlightGoal, 9, 11); TAK_UNIT_LINES(flightSectorZ, 9, 11);
 TAK_UNIT_LINES(legionLiftUntil, 9, 11); TAK_UNIT_LINES(legionLiftEnded, 9, 11);
 #undef TAK_UNIT_LINES
 #undef TAK_UNIT_LINE
+
+// The ids of the units of a few rare classes, each in units_ order, so a
+// pass that wants only those walks them alone, in the order the all-unit
+// walk visited them (Legion W1 A5; World's prologue and aura passes, WE
+// E2.5). A unit's type never changes; spawn only appends to units_, and
+// compaction (the only removal) keeps the order, so the lists follow units_
+// by reading the units appended since the last sync, and are rebuilt
+// whenever the entry they ended at moved (a compaction) or the caller says
+// units_ was reordered. They keep dead units until then: every walk tests
+// alive() as before. Never hashed.
+struct UnitClassLists {
+    std::vector<int> flyers, structures, gates, emitters;   // canFly, isStructure, gate, auras
+    size_t listed = 0; int tail = 0;
+    void sync(const std::vector<Unit>& units, bool reordered = false) {
+        size_t from = listed;
+        if (reordered || from > units.size() || (from && units[from-1].id != tail)) {
+            from = 0; flyers.clear(); structures.clear(); gates.clear(); emitters.clear();
+        }
+        for (size_t i = from; i < units.size(); ++i) {
+            const Unit& u = units[i];
+            if (!u.type) continue;
+            if (u.type->canFly) flyers.push_back(u.id);
+            if (u.type->isStructure()) structures.push_back(u.id);
+            if (u.type->gate) gates.push_back(u.id);
+            if (!u.type->auras.empty()) emitters.push_back(u.id);
+        }
+        listed = units.size(); tail = units.empty() ? 0 : units.back().id;
+    }
+    bool operator==(const UnitClassLists& o) const {
+        return flyers == o.flyers && structures == o.structures && gates == o.gates && emitters == o.emitters;
+    }
+};
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
@@ -1965,6 +1997,9 @@ public:
     // and the sim's SimPool: serial runs the pool's identical fixed chunks inline.
     // Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
+    // The SimPool's worker count, for tests (-1: SimPool::defaultWorkers()).
+    // setSerialThreads(true) still means 0. Scheduling only, like the above.
+    void setSimWorkers(int n) { simWorkers_ = n; }
     // Deterministic digest of sim state, for lockstep sync checking.
     struct WeaponAimSolution {
         uint16_t heading=0,pitch=0;
@@ -2178,6 +2213,10 @@ public:
     const Unit* unit(int id) const {
         return const_cast<World*>(this)->unit(id);
     }
+    // unit(id) without its lookup-table repair, so it never writes: safe on
+    // SimPool workers, with the same result.
+    Unit* unitNoRepair(int id);
+    const Unit* unitNoRepair(int id) const { return const_cast<World*>(this)->unitNoRepair(id); }
 
     // Weapon impacts this tick (view-side: impact sound + effect). Carries the
     // source weapon (soundhitclass / hweffect) and the unit struck (body material
@@ -2380,7 +2419,27 @@ private:
     // Uniform spatial hash over mobile units, rebuilt each tick, so the
     // separation and combat-acquisition passes are O(n) instead of O(n^2).
     void rebuildGrid();
-    // (rebuildOccupancy declared with occ_ below)
+    // (rebuildOccupancy declared with occ_ below.) Both in one walk; returns the
+    // count of alive units with a type (embarked ones included).
+    uint32_t rebuildGridAndOccupancy();
+    uint32_t rebuildSpatial(bool grid, bool occupancy);
+    // rebuildSpatial on the SimPool (WE E4.3, P6): the chunks read the units
+    // into spatialRec_, then serial walks over those records stamp and link in
+    // unit order, so every chain, stamp and list is the serial one.
+    uint32_t rebuildSpatialParallel(bool grid, bool occupancy);
+    uint32_t rebuildSpatialSerial(bool grid, bool occupancy);
+    static constexpr size_t kSpatialMinParallel = 2048;
+    struct SpatialRec {
+        float x, z;                 // u.x/u.z as float (grid units only)
+        int32_t id;
+        int16_t ox, oz;             // footprint origin (occupancy units only)
+        uint8_t fx, fz;
+        uint8_t player;             // 0xff: not representable in the 64-bit owner masks
+        uint8_t kind;               // bit 0: in the grid; bits 1-2: 1 moving body, 2 parked body
+    };
+    std::vector<SpatialRec> spatialRec_;
+    struct SpatialChunk { float minx, minz, maxx, maxz; uint32_t live; bool any; };
+    std::vector<SpatialChunk> spatialChunks_;
     // Call fn(int unitIndex) for every mobile unit whose cell lies within
     // `radius` of (x,z). Iterates cells in a fixed order, so it is deterministic.
     //
@@ -2520,8 +2579,8 @@ private:
     void updateBodyIndex(const Unit&) const;
     SearchBodyRect searchBodyRect(int,int,int,int,int ignoreId=0) const;
     int cellScoreWithBodies(const UnitType*,int,int,int,const SearchBodyRect*) const;
-    bool gatePassageAt(int,int) const;
-    bool gateWantsOpen(const Unit&) const;
+    bool gatePassageAt(int,int,const std::vector<int>* gates=nullptr) const;
+    bool gateWantsOpen(const Unit&,const std::vector<int>& gates) const;
     void tickAutomaticGates();
     int mapFeatureGrade(int,int) const;
     int rawSearchGrade(const SearchGradePlane&,int,int,int,int,const SearchBodyRect* = nullptr) const;
@@ -2540,6 +2599,7 @@ private:
     // Both moving and parked bodies reserve their whole footprint (0 = free).
     std::vector<int32_t> occ_;
     std::vector<size_t> occTouched_;
+    std::vector<uint32_t> occParked_;   // rebuildOccupancy's scratch: parked bodies, unit order
     void setOccupant(size_t cell,int id) {
         if (id && !occ_[cell]) occTouched_.push_back(cell);
         occ_[cell]=id;
@@ -2809,6 +2869,7 @@ private:
     static constexpr int kExplorationBlockShift=3;
     std::vector<uint16_t> explorationBlocks_;
     bool serialThreads_ = false;
+    int simWorkers_ = -1;
     // The intra-tick worker pool (0 workers when serialThreads_), created on
     // first use; see simPool().
     std::unique_ptr<SimPool> pool_;
@@ -2978,6 +3039,33 @@ private:
     // Indices into units_ of the bodies eligible to be raised or reclaimed this tick,
     // in ascending unit id. Rebuilt once per corpse pass; see the note there.
     std::vector<uint32_t> corpseIdx_;
+    // ...and of the units the caster loop visits (alive, able to act, idle,
+    // a caster or a reclaimer), ascending.
+    std::vector<uint32_t> actorIdx_;
+    struct AbilityChunk { std::vector<uint32_t> corpses, actors; };
+    std::vector<AbilityChunk> abilityChunks_;   // tickAbilities on the SimPool (WE E4.3)
+    // The post-loop passes go to the SimPool from this many units.
+    static constexpr size_t kPostMinParallel = 2048;
+    // tickAuras on the SimPool: per chunk of kAuraEmitterChunk emitters, the
+    // units refreshed, in the serial order.
+    struct AuraHit { uint32_t index; uint8_t flags; float amt; };   // flags: 1 armour, 2 debuff
+    std::vector<std::vector<AuraHit>> auraChunks_;
+    static constexpr size_t kAuraEmitterChunk = 4;
+    // Per player, this tick's retail construction demand (World::tick's economy step).
+    std::vector<float> retailDemand_;
+    // The economy walk on the SimPool (WE E4.3): per chunk, its units'
+    // nonzero contributions and its sites, in unit order.
+    enum class EconomyKind : uint8_t { Site, Income, SacredIncome, Storage, Demand };
+    struct EconomyItem { uint32_t index; int16_t player; EconomyKind kind; float f; double d; };
+    std::vector<std::vector<EconomyItem>> economyChunks_;
+    // The tick prologue's passes go to the SimPool from this many units.
+    static constexpr size_t kPrologueMinParallel = 2048;
+    // Indices into units_ of this tick's construction sites, ascending, as the
+    // economy walk found them (World::tick's decay pass).
+    std::vector<uint32_t> sitesIdx_;
+    // Flyers, gates and aura emitters for the passes that want only those.
+    UnitClassLists unitLists_;
+    void syncUnitLists();
     NavGrid nav_, navWater_, navHover_;
     NavGrid navalSight_; // combat only: terrain at/above the water surface
     // Per-cell terrain metrics (16px cells) for per-unit passability limits.
