@@ -4099,8 +4099,16 @@
                                     : std::clamp(it->second / kBirthFxDur, 0.0f, 1.0f);
     }
 
+    // Retail's banner for speed level d (-10..+10): "GAME SPEED NORMAL" or
+    // "GAME SPEED +5". Debug speeds past +10 show the multiplier.
+    static std::string speedNotice(int d) {
+        if (d == 0) return "GAME SPEED NORMAL";
+        if (d > 10) { char b[40]; std::snprintf(b, sizeof b, "GAME SPEED %.1fx (DEBUG)", (d + 10) / 10.0); return b; }
+        return "GAME SPEED " + std::string(d > 0 ? "+" : "") + std::to_string(d);
+    }
+
     float GameView::speedMult() const {
-        return mp_ ? 1.0f : std::pow(10.0f, float(gameSpeed_) / 10.0f);
+        return mp_ ? 1.0f : float(gameSpeed_ + 10) / 10.0f;   // retail: linear, (d+10)/10
     }
 
     SDL_Color GameView::playerColor(int player) const {
@@ -4688,15 +4696,20 @@
                     noticeTimer_ = 2; return true;
                 }
                 auto o = mp_->room().opts;
-                int ns = std::clamp(int(mp_->gameSpeed()) + (up ? 5 : -5), 5, tak::net::kMaxGameSpeed);
+                // Retail steps one level (0.1x) at a time, 0.1x .. 2x. Debug builds
+                // with TAK_FAST_SPEED=1 carry on past 2x in 0.5x steps up to 8x
+                // (a debug test/loopback server accepts it; others clamp to 2x).
+                int maxSpeed = tak::net::kMaxGameSpeed;
+                if (tak::devFlag("TAK_FAST_SPEED")) maxSpeed = tak::net::kMaxDevGameSpeed;
+                const int cur = std::min(int(mp_->gameSpeed()), maxSpeed);
+                const int stepBy = (up ? cur >= tak::net::kMaxGameSpeed : cur > tak::net::kMaxGameSpeed) ? 5 : 1;
+                int ns = std::clamp(cur + (up ? stepBy : -stepBy), tak::net::kMinGameSpeed, maxSpeed);
                 if (ns != o.speed) { o.speed = uint8_t(ns); mp_->setGameOptions(o); }
-                char nb[24]; std::snprintf(nb, sizeof nb, "GAME SPEED %.1fx", ns / 10.0f);
-                notice_ = nb; noticeTimer_ = 2;
+                notice_ = speedNotice(ns - 10); noticeTimer_ = 2;
                 return true;
             }
-            gameSpeed_ = std::clamp(gameSpeed_ + (up ? 1 : -1), -10, 10);
-            notice_ = "GAME SPEED " + std::string(gameSpeed_ > 0 ? "+" : "") +
-                      std::to_string(gameSpeed_);
+            gameSpeed_ = std::clamp(gameSpeed_ + (up ? 1 : -1), -9, 10);
+            notice_ = speedNotice(gameSpeed_);
             noticeTimer_ = 2;
             return true;
         }

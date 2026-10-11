@@ -797,7 +797,8 @@ builders, but units they produce inherit their squad.
 | **Shift+D** | Selected mobile units disco for 10 real seconds; with no selection, living monarch |
 | **Shift+H** | Selected mobile units headbang for 10 real seconds; with no selection, living monarch |
 
-Live game speed ranges from 0.5× to 8× in 0.5× steps. Only the host can change it, and the
+Live game speed works like the original: **+** / **−** step one level from −9 to +10, where level *d*
+runs at (*d*+10)/10 of normal speed (−9 = 0.1×, NORMAL = 1×, +10 = 2×). Only the host can change it, and the
 game creation screen’s **Allow speed change** option must be enabled (the lobby
 only displays it). Chat is available in live networked games (single-player also uses a local server), not replay playback.
 

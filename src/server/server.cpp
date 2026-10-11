@@ -457,6 +457,15 @@ private:
     bool requireAuth_ = true;
     bool registrationOpen_ = true;
     bool testWork_=false;
+    // Speeds past retail's 2x exist only for the debug timing harnesses and the
+    // debug TAK_FAST_SPEED keys, on a debug server that is a test or private
+    // loopback one; a release server always holds the retail range.
+    int maxGameSpeed() const {
+#ifndef NDEBUG
+        if (testWork_ || (loopbackOnly_ && !requireAuth_)) return tak::net::kMaxDevGameSpeed;
+#endif
+        return tak::net::kMaxGameSpeed;
+    }
     tak::srv::Limits limits_;
     std::shared_ptr<tak::net::TlsContext> tlsContext_;
     std::shared_ptr<tak::srv::AcmeCertificates> acme_;
@@ -1772,7 +1781,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
                 sendReject(c,"public servers do not accept benchmark, stress or campaign mission requests");return;
             }
-            o.speed=std::clamp<uint8_t>(o.speed,1,kMaxGameSpeed);
+            o.speed=uint8_t(std::clamp<int>(o.speed,kMinGameSpeed,maxGameSpeed()));
             if (cap < 2 || cap > kMaxSlots) cap = kMaxSlots;   // sane default
             Room& room = rooms_[nextRoomId_];
             room.id = nextRoomId_++;
@@ -2552,8 +2561,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (!r->mission.empty()) o.doubleSight = 0;
             if (!rd.ok || rd.p!=rd.end) return;
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark)) {sendReject(c,"public benchmark/stress requests disabled");return;}
-            if (o.speed < 1) o.speed = 1;
-            if (o.speed > kMaxGameSpeed) o.speed = kMaxGameSpeed;   // clamp 0.1x .. 8.0x
+            o.speed = uint8_t(std::clamp<int>(o.speed, kMinGameSpeed, maxGameSpeed()));   // 0.1x .. 2x
             if (!r->running) {
                 // The unit limit is fixed when the room is created.
                 o.unitCap = r->opts.unitCap;

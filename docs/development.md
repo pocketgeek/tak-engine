@@ -272,6 +272,13 @@ and `build-o2/takclient --help`; additional harness arguments are defined in
 [src/client/main.cpp](../src/client/main.cpp). Client `TAK_*` diagnostic
 environment hooks are disabled in Release builds.
 
+Game speed follows the original's −9..+10 levels (0.1× to 2×). For testing, a
+debug client run with `TAK_FAST_SPEED=1` keeps stepping past +10 in 0.5× steps up
+to 8×; only a debug `takserver` that is a test or private loopback server (such
+as the single-player local server) accepts those speeds, and every other server
+clamps them to 2×. `TAK_SPEED=<tenths>` (up to 80) sets the starting speed of a
+headless harness game the same way.
+
 ## Server authentication
 
 Sign-in uses SCRAM-SHA-256-style challenge/response over the game's binary

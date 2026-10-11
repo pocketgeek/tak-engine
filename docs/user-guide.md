@@ -729,7 +729,7 @@ group automatically.
 | **F4** | Player names, kills, losses and score. |
 | **F9** | YouTube streaming setup. |
 | **Pause** | Pause or resume. This pauses the game for every player. |
-| **+** / **−** | Game speed, 0.5× to 8× in 0.5× steps. Only the host can change it, and only if **Allow speed change** was on. |
+| **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. Only the host can change it, and only if **Allow speed change** was on. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
 
@@ -1352,8 +1352,7 @@ files) in your install folder. See [Creon](#creon).
 - Leave **Smooth Motion** on; it makes movement look smooth at any frame rate.
 - Turn **Shadows** off. It is the largest graphics cost in big battles.
 - Leave **Hardware Cursor** on so the pointer stays responsive.
-- Very large armies are expensive at high game speeds. Speeds above 1× are mostly
-  for testing.
+- Very large armies are expensive at high game speeds.
 - In Legion mode, armies of several thousand units cost more processor time than
   in Retail.
 - The **Benchmark** gives comparable numbers if you want to measure a change.

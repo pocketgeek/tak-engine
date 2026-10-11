@@ -2136,7 +2136,7 @@ private:
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
     std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS
     tak::Hotkeys hotkeys_;                             // effective bindings (from settings)
-    int gameSpeed_ = 0;         // -10..+10 game-speed level (+/- keys); 0 = normal
+    int gameSpeed_ = 0;         // retail game-speed level -9..+10 (+/- keys, (d+10)/10 x); 0 = normal
     // 10^(level/10): +10 = 10x, 0 = 1x, -10 = 0.1x.
     // Game-speed multiplier. Forced to 1x in a networked game: the peers advance
     // the sim in lockstep at a fixed step, so scaling one peer's dt would desync.

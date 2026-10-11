@@ -784,7 +784,7 @@ void GameView::speedProbe() {
     if (!speedLogMs_) speedLogMs_ = now;
     if (speedAtNext_ < speedAt_.size() && netTick_ >= speedAt_[speedAtNext_].first) {
         auto o = mp_->room().opts;
-        o.speed = uint8_t(std::clamp(speedAt_[speedAtNext_].second, 1, tak::net::kMaxGameSpeed));
+        o.speed = uint8_t(std::clamp(speedAt_[speedAtNext_].second, 1, tak::net::kMaxDevGameSpeed));
         mp_->setGameOptions(o);
         std::fprintf(stderr, "SPEEDLOG set %llu tick %u speed %d\n", (unsigned long long)now, netTick_, int(o.speed));
         ++speedAtNext_;
@@ -908,7 +908,7 @@ void GameView::autoplayStep() {
             o.overridePolicy = uint8_t(policy_);   // room tier = this host's launch tier
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
-            if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxGameSpeed));
+            if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxDevGameSpeed));
             // TAK_SPEED_AT schedules in-game speed changes (see mpStep), so the room must
             // allow them.
             if (tak::devEnv("TAK_SPEED_AT")) o.speedUnlock = 1;

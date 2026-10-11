@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 249;      // 249: WE E3.3 (S3) -- Msg::Progress (C->S: last processed tick + RTT ms) every
+constexpr uint32_t kNetVersion = 250;      // 250: retail game speed -- GameOptions.speed is 1..20 tenths (retail's linear
+                                           //      -10..+10, 0.1x steps, 2x max; 80 only on a test/loopback server for the
+                                           //      timing harnesses), and WE E4.5's stressTest=2 (staged stress fill). Pacing and
+                                           //      bench setup only; no hashed sim change in a normal game
+                                           // 249: WE E3.3 (S3) -- Msg::Progress (C->S: last processed tick + RTT ms) every
                                            //      kProgressPeriod (4) ticks from a seated or spectating client; the server leads each
                                            //      client by flowLeadTicks() (clamp(ackPeriod + 2*rtt + 16, 16, 120), 120 before its
                                            //      first Progress) past that ack instead of a flat 120 past the hash ack, and a seated
@@ -512,8 +516,11 @@ struct GameInfo {
     uint32_t uptimeSec = 0;
 };
 
-// Maximum live game speed, in tenths (80 = 8x); shared by UI and server admission.
-inline constexpr int kMaxGameSpeed = 80;
+// Live game speed, in tenths (10 = 1x). Retail's -10..+10 setting is linear:
+// level d runs (d+10)/10 x normal, 0.1x steps up to 2x (multiplayer floors at
+// 0.1x). The UI shows d = speed - 10. kMaxDevGameSpeed is only for the headless
+// timing harnesses (TAK_SPEED) on a test/loopback server.
+inline constexpr int kMinGameSpeed = 1, kMaxGameSpeed = 20, kMaxDevGameSpeed = 80;
 
 // Per-game settings chosen by the host.
 constexpr uint8_t kStressImmediate = 1, kStressStaged = 2;
