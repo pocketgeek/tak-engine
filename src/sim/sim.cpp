@@ -53,6 +53,14 @@ static thread_local double g_exploreMs = 0;   // navigation exploration; part of
 // per-unit loop, less burn and vis), and the once-a-second retired-unit compaction, which
 // runs after the tick total is taken and is reported beside it.
 static thread_local double g_prologueMs = 0, g_compactMs = 0;
+#ifndef NDEBUG
+// TAK_VERIFY_LISTS (debug): every tick, each id list and reused count that
+// stands in for a full walk over units_ (WE E2.5) is checked against that walk.
+static bool verifyLists() {
+    static const bool on = std::getenv("TAK_VERIFY_LISTS") != nullptr;
+    return on;
+}
+#endif
 
 namespace {
 // One TAK_PHASE bucket: its wall time, and in a debug build with TAK_PMU also the PMU
@@ -6323,7 +6331,7 @@ int World::cellScoreWithBodies(const UnitType* t,int cx,int cz,int selfId,
 
 void World::rebuildOccupancy() { rebuildSpatial(false,true); }
 void World::rebuildGrid() { rebuildSpatial(true,false); }
-void World::rebuildGridAndOccupancy() { rebuildSpatial(true,true); }
+uint32_t World::rebuildGridAndOccupancy() { return rebuildSpatial(true,true); }
 
 // The spatial hash (rebuildGrid) and the body occupancy grid (rebuildOccupancy)
 // in one walk over the units when both are wanted (WE D4). Neither reads the
@@ -10950,8 +10958,10 @@ void World::tick(float dt) {
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
     // The spatial hash for this tick (combat acquire + separation), and who is
-    // parked where: units are solid (see sim.h).
-    rebuildGridAndOccupancy();
+    // parked where: units are solid (see sim.h). Its walk also counts the live
+    // units for acqStride_ below.
+    const size_t unitsBeforeGates = units_.size();
+    uint32_t live = rebuildGridAndOccupancy();
     tickAutomaticGates();
 
     // The periodic re-anchor sweep that lived here (every unit with a route,
@@ -10969,9 +10979,26 @@ void World::tick(float dt) {
     // acquisition cost there. Deterministic: derived from the live-unit count, which is
     // identical on every lockstep peer.
     {
-        uint32_t live = 0;
-        TAK_PASS();
-        for (const auto& u : units_) if (u.alive() && u.type) ++live;
+        // The grid walk above counted them. Only tickAutomaticGates ran since:
+        // a unit's type is set only by spawn, and its scripts (Activate and
+        // Deactivate) can neither kill nor retire a unit -- alive() changes in
+        // the unit loop's death sweep and in the construction, reclaim and
+        // cancel paths, none reachable from a script. So the count still holds
+        // unless something was spawned.
+        auto countLive = [&] {
+            uint32_t n = 0;
+            TAK_PASS();
+            for (const auto& u : units_) if (u.alive() && u.type) ++n;
+            return n;
+        };
+        if (units_.size() != unitsBeforeGates) live = countLive();
+#ifndef NDEBUG
+        if (verifyLists() && live != countLive()) {
+            std::fprintf(stderr, "TAK_VERIFY_LISTS tick %u: live count %u differs from a full count %u\n",
+                         tickCounter_, live, countLive());
+            std::abort();
+        }
+#endif
         acqStride_ = std::clamp<uint32_t>(4 + live / 700, 4, 16);
         // (Goal quantization used to coarsen with the crowd here as well -- 2x2 cell
         // blocks up to 8x8 -- so that fewer distinct goal blocks meant fewer full-map
