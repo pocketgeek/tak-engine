@@ -546,6 +546,13 @@ static int fontWorkflow() {
             for(const auto& other:seen)check(image!=other,std::string(name)+" duplicates another glyph");
             seen.push_back(image);
         }
+        // Noto Sans Mono draws these on a two-column advance (or overshoots); they must be fitted, i.e. centred
+        // in their one column like "H", not drawn at their own metrics with the right half cut off.
+        const auto [hx0,hx1]=extent(pixels("H"));
+        for(const char* glyph:{"⇒","⇔","⅓","◆","▶","℃","※"}) {
+            const auto [g0,g1]=extent(pixels(glyph));
+            check(g0>=0 && std::abs((g0+g1)-(hx0+hx1))<=3 && g1-g0<=14,std::string(glyph)+" is clipped or off-centre in its column");
+        }
         // Replacement boxes: valid-but-unmapped code points are visible, one or two columns wide; they
         // differ from the U+FFFD that invalid UTF-8 produces.
         const auto [n0,n1]=extent(narrowBox);const auto [w0,w1]=extent(wideBox);const auto [h0,h1]=extent(pixels("日"));
@@ -601,7 +608,7 @@ static int fontSheet(const char* out) {
             "Greek/Cyrillic: \u0391\u03b2\u03b3\u03b4 \u0416\u0434\u044f \u041f\u0440\u0438\u0432\u0435\u0442",
             "Armenian: \u0540\u0561\u0575\u0561\u057d\u057f\u0561\u0576 \u0531\u0562\u0563\u0564",
             "Georgian: \u10e1\u10d0\u10e5\u10d0\u10e0\u10d7\u10d5\u10d4\u10da\u10dd \u1c91\u1c92",
-            "Symbols: \u2190\u2191\u2192\u2193\u2194 \u21d2 \u2200\u2203\u2208 \u221e \u2264\u2265 \u2500\u2502\u250c\u2510 \u2588\u2593 \u25cf\u25a0\u25b2 \u2605\u2606 \u2713\u2717 \u20ac\u00a3\u00a5\u20b9 \u2800\u28ff",
+            "Symbols: \u2190\u2191\u2192\u2193\u2194 \u21d2 \u2200\u2203\u2208 \u221e \u2264\u2265 \u2500\u2502\u250c\u2510 \u2588\u2593 \u25cf\u25a0\u25b2 \u2605\u2606 \u2713\u2717 \u20ac\u00a3\u00a5\u20b9 \u2800\u28ff \u21d4\u2153\u25b6\u25c6\u2103\u203b\u1ea8",
             "Japanese: \u30de\u30c3\u30d7\u306e\u540d\u524d \u3072\u3089\u304c\u306a \u30ab\u30bf\u30ab\u30ca \uff71\uff72\uff73 \uff21\uff22\uff23\uff11\uff12",
             "Chinese: \u5730\u56fe\u540d\u79f0 \u81ea\u5b9a\u4e49\u5730\u56fe \u5730\u5716\u540d\u7a31 \u9f8d\u738b\u6230\u722d",
             "Korean: \ud55c\uad6d\uc5b4 \uc9c0\ub3c4 \uc774\ub984 \uac00\ub098\ub2e4",

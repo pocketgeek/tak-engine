@@ -5,7 +5,7 @@ the repository root for notices and the license text); none is a retail game ass
 
 | File | Provides | Notes |
 | --- | --- | --- |
-| `NotoSansMono-Regular.ttf` | Latin, Latin Extended (incl. Vietnamese), Greek, Cyrillic, box drawing, many symbols | 2.014, primary face, exact metrics |
+| `NotoSansMono-Regular.ttf` | Latin, Latin Extended (incl. Vietnamese), Greek, Cyrillic, box drawing, many symbols | 2.014, primary face, exact metrics (glyphs whose ink would leave the cell are fitted instead) |
 | `NotoSansArmenian-VF.ttf` | Armenian | 2.008 variable font (default 400 instance), fitted into one column |
 | `NotoSansGeorgian-VF.ttf` | Georgian (Mkhedruli, Mtavruli, Asomtavruli) | 2.005, fitted into one column |
 | `NotoSansSymbols-VF.ttf`, `NotoSansSymbols2-Regular.ttf` | arrows, math, technical, shapes, dingbats, Braille, currency | 2.003 / 2.008, fill gaps in Noto Sans Mono |

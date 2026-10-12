@@ -1133,9 +1133,13 @@ the first frame does not (with the wait disabled it fails).
 The embedded editor font now merges several SIL OFL Noto faces (sources, hashes and
 licenses in `res/editor-font/` and `EDITOR-FONT-LICENSE.txt`):
 
-- Noto Sans Mono (unchanged): Latin, Latin Extended Additional (Vietnamese), Greek,
+- Noto Sans Mono (exact metrics, except about 300 glyphs whose ink would leave the cell --
+  symbols it draws on a two-column advance such as ⇒ ▶ ◆ ⅓ ℃, a few stacked Vietnamese
+  capitals -- which are fitted and centred like the other faces; they used to be clipped):
+  Latin, Latin Extended Additional (Vietnamese), Greek,
   Cyrillic, box drawing and blocks, geometric shapes and many symbols.
-- Noto Sans Armenian and Georgian (proportional faces, shrunk/centred into one column).
+- Noto Sans Armenian and Georgian (proportional faces, shrunk/centred into one column by
+  their ink extent).
 - Noto Sans Symbols and Symbols 2 for the arrows, math, technical, shapes, dingbats,
   Braille and currency code points Noto Sans Mono lacks.
 - A subset of Noto Sans Mono CJK (SC face): kana, Bopomofo, Hangul (KS X 1001, 2,350
@@ -1151,8 +1155,8 @@ valid code point with no glyph draws an outlined replacement box of the right wi
 (previously U+FFFD, indistinguishable from invalid UTF-8, or nothing if the font lacked
 U+FFFD); invalid UTF-8 still draws U+FFFD.
 
-Cost: the Release `cartographer` binary grew by 1.76 MB (21.5 to 23.3 MB: narrow glyph
-data 0.62 to 0.86 MB, double-width glyphs 1.45 MB at 2 bits per pixel). The repo adds about
+Cost: the Release `cartographer` binary grew by 1.78 MB (21.5 to 23.3 MB: narrow glyph
+data 0.62 to 0.87 MB, double-width glyphs 1.45 MB at 2 bits per pixel). The repo adds about
 3.1 MB of font sources (the CJK subset is 2.1 MB) and about 5 MB of generated `.inc` text
 (6.7 MB in total). The `font` test now covers every added range, both replacement boxes, wide
 advances, wrapping, click columns, vertical caret movement and clipping; each assertion

@@ -90,11 +90,27 @@ def renderExact(name, code, cell):
     ImageDraw.Draw(img).text((cell['ox'], cell['base']), chr(code), font=font(name, cell['size']), fill=255, anchor='ls')
     return img
 
+def inkBox(name, code, size):
+    """Ink extent (l, t, r, b) relative to the pen origin and baseline. Pillow's getbbox spans the advance
+    horizontally, which would shrink and shift glyphs drawn on a wider advance than their ink."""
+    pad = 2 * size
+    img = Image.new('L', (4 * size, 4 * size))
+    ImageDraw.Draw(img).text((pad, 3 * size), chr(code), font=font(name, size), fill=255, anchor='ls')
+    box = img.getbbox()
+    return (box[0] - pad, box[1] - 3 * size, box[2] - pad, box[3] - 3 * size) if box else (0, 0, 0, 0)
+
+def fitsExact(name, code, cell):
+    """Whether the glyph's ink stays inside the cell at the font's own metrics. Noto Sans Mono draws some
+    symbols (double arrows, fractions, circled operators, ...) on a two-column advance, and a few stacked
+    Vietnamese capitals overshoot the ascent; drawn exactly they would be clipped."""
+    l, t, r, b = inkBox(name, code, cell['size'])
+    return l + cell['ox'] >= 0 and r + cell['ox'] <= cell['w'] and cell['base'] + t >= 0 and cell['base'] + b <= cell['h']
+
 def renderFit(name, code, cell, maxw):
     """Proportional/foreign glyph: centre its ink on the cell's advance box, shrinking it until it fits."""
     size = cell['size']
     while True:
-        l, t, r, b = font(name, size).getbbox(chr(code), anchor='ls')
+        l, t, r, b = inkBox(name, code, size)
         top, bottom = cell['base'], cell['h'] - cell['base']
         if (r - l <= maxw and -t <= top and b <= bottom) or size <= 8: break
         size -= 1
@@ -164,7 +180,7 @@ def generate():
             img = renderExact(name, code, WIDE) if exact else renderFit(name, code, WIDE, 24)
             wide.append(code); wideData += pack2(list(img.tobytes()))
         else:
-            img = renderExact(name, code, NARROW) if exact else renderFit(name, code, NARROW, 13)
+            img = renderExact(name, code, NARROW) if exact and fitsExact(name, code, NARROW) else renderFit(name, code, NARROW, 13)
             narrow.append((code, rle(list(img.tobytes()), data)))
     # Wide ranges (including code points the fonts lack, which draw a two-column replacement box).
     ranges, start = [], None
