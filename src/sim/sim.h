@@ -445,6 +445,10 @@ struct UnitType {
     // kamikaze (UnitDef+0x260 bit 28): the sweep's selector skips the in-range
     // test for these (icd 412789).
     bool kamikaze = false;
+    // shootme (UnitDef+0x260 bit 15): the sweep's selector lets a HUMAN-owned
+    // shooter auto-pick only types that set it (icd 412620). FBIs that omit it
+    // read 0 (aranull, cregate, npcflag); synthetic types default to shootable.
+    bool shootMe = true;
     // notargetcategory (UnitDef+0x9a) and w{pri,sec,spe}_badtargetcategory
     // (+0x8e/+0x92/+0x96), lowercased tokens matched against a target's
     // `categories`. The sweep's selector never picks a noTarget candidate and

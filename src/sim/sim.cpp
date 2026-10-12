@@ -331,6 +331,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.attractsGods = info->numberOr("attractsgods", 0) != 0;
             t.weaponSwitching = info->numberOr("weaponswitching", 0) != 0;
             t.kamikaze = info->numberOr("kamikaze", 0) != 0;
+            t.shootMe = info->numberOr("shootme", 0) != 0;
             {
                 auto tokens=[](const std::string& text) {
                     std::vector<std::string> out;std::string tok;
@@ -5351,8 +5352,10 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         const Unit* tp=unit(id);
         if (!tp || !tp->alive() || tp->hp<=Fixed()) continue;
         const Unit& t=*tp;
-        // shootme (UnitDef+0x260 bit 15) is not parsed: 200 of the 203
-        // shipped types set it, so every candidate is treated as shootable.
+        // shootme (UnitDef+0x260 bit 15) is required unless the shooter is
+        // AI-owned. Retail's global override ([[62d558]]+7) is not identified
+        // and is treated as unset.
+        if (!t.type->shootMe && !players_[size_t(u.player)].automaticGates) continue;
         const int32_t eff=int32_t(w.damageVs(t.type));
         if (!u.type->kamikaze && !w.melee && !(eff>0 && slotInRange(u,t,slot) && slotClearShot(u,t,slot)))
             continue;   // 52ad60

@@ -88,6 +88,28 @@ void vision() {
     check(lost>=0 && w.visibleEnemies(0).empty(),"vision: an enemy that left sight drops off the list at the next rebuild");
     check(consistent,"vision: the view counters equal a rebuild from the footprints every tick");
 }
+// shootme: a human-owned shooter's sweep skips types without it; an AI-owned
+// shooter picks them anyway (icd 412620).
+void shootMe() {
+    const auto g=gunner(400);auto d=dummy();d.shootMe=false;
+    for (bool ai:{false,true}) {
+        sim::World w;setup(w,2);w.player(0).automaticGates=ai;
+        const int shooter=w.spawn(&g,400,1000,0,0),foe=w.spawn(&d,600,1000,0,1);
+        w.unit(shooter)->fireState=0;
+        int picked=0;
+        for(int i=0;i<8 && !picked;++i){ticks(w,1);picked=w.retailSelectTarget(*w.unit(shooter),0,true);}
+        check(ai ? picked==foe : picked==0,ai ? "shootme: an AI-owned shooter picks a type without shootme"
+                                              : "shootme: a human-owned shooter does not pick a type without shootme");
+    }
+    {   // An explicit attack order is never gated by shootme.
+        sim::World w;setup(w,2);
+        const int shooter=w.spawn(&g,400,1000,0,0),foe=w.spawn(&d,600,1000,0,1);
+        w.attack(shooter,foe,false);
+        const auto hp=w.unit(foe)->hp;
+        ticks(w,90);
+        check(w.unit(foe)->hp<hp,"shootme: a human-ordered attack still hits a type without shootme");
+    }
+}
 } // namespace
 
 void weaponSwitch();
@@ -96,6 +118,7 @@ void retaliation();
 int main(int argc,char** argv) {
     const std::string part=argc>1 ? argv[1] : "all";
     if(part=="vision" || part=="all")vision();
+    if(part=="vision" || part=="all")shootMe();
     if(part=="switch" || part=="all")weaponSwitch();
     if(part=="retaliation" || part=="all")retaliation();
     return failures?1:0;
