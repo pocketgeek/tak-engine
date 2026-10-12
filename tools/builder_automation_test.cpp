@@ -338,8 +338,7 @@ sim::UnitType dummy() {
 sim::UnitType hut() {
     sim::UnitType t;t.id="hut";t.maxHp=100;t.maxVel={};t.footX=t.footZ=2;t.buildTime=100;t.buildCost=10;return t;
 }
-void fireSweep() {
-    const auto mode=sim::PathfindingMode::Retail;
+void fireSweep(sim::PathfindingMode mode) {
     {   // 1 + 3: a builder walking to its site fires at an enemy it passes,
         // keeps its build order and keeps moving; placement takes the slots
         // (targets cleared, no fire while building) and completion gives
@@ -431,7 +430,8 @@ int main(int argc,char** argv) {
     check(patrolRepair(sim::PathfindingMode::Retail,false,true)==patrolRepair(sim::PathfindingMode::Retail,false,false),
           "patrol repair serial/threaded hashes agree");
     areaPolicy();repairPolicy();repairEligibility();movingRepair();
-    fireSweep();
+    fireSweep(sim::PathfindingMode::Retail);
+    fireSweep(sim::PathfindingMode::Legion);   // the sweep is pathfinder-independent
     check(areaNearestFirst(true)==areaNearestFirst(false),"nearest-first area serial/threaded hashes agree");
     areaNearestEdgeCases();
     net::Command c;c.kind=net::Cmd::BuildManaArea;c.unitId=1;c.x=100;c.z=200;c.x2=800;c.z2=900;
