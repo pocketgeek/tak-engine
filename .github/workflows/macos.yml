@@ -348,6 +348,7 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-latest
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
@@ -416,21 +417,47 @@ jobs:
             codesign --force --options runtime --timestamp --keychain "$KEYCHAIN" \
               --sign "$MACOS_SIGN_IDENTITY" "$@"
           }
-          # notarize <file>: submit, wait, always print Apple's log, fail unless Accepted.
-          notarize() {
-            local out id status
-            out=$(xcrun notarytool submit "$1" --key "$RUNNER_TEMP/notary/AuthKey.p8" \
-              --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
-              --wait --timeout 45m --output-format json) || true
-            echo "$out"
-            id=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
-            status=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)
-            if [ -n "$id" ]; then
-              xcrun notarytool log "$id" --key "$RUNNER_TEMP/notary/AuthKey.p8" \
-                --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" || true
+          # notarytool prints its JSON on stdout on success but on stderr on failure (a --wait
+          # timeout included), so both streams are kept and parsed.
+          notary() {
+            xcrun notarytool "$@" --key "$RUNNER_TEMP/notary/AuthKey.p8" \
+              --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID"
+          }
+          json_field() {  # json_field <field> <file>...: first value found in any file
+            python3 - "$@" <<'PY'
+          import json, sys
+          for path in sys.argv[2:]:
+              for line in open(path, errors="replace"):
+                  line = line.strip()
+                  if line.startswith("{"):
+                      try: value = json.loads(line).get(sys.argv[1])
+                      except ValueError: continue
+                      if value: print(value); sys.exit(0)
+          PY
+          }
+          # submit <file>: upload without waiting; prints the submission id.
+          submit() {
+            local out="$RUNNER_TEMP/submit-$(basename "$1").out" id
+            notary submit "$1" --output-format json >"$out" 2>&1 || true
+            id=$(json_field id "$out" || true)
+            if [ -z "$id" ]; then
+              cat "$out" >&2
+              echo "::error::Upload of $(basename "$1") to the notary service failed" >&2
+              exit 1
             fi
+            echo "Submitted $(basename "$1") as $id" >&2
+            echo "$id"
+          }
+          # await <id> <name>: wait for Apple, always print its log, fail unless Accepted.
+          # A new team's first submissions can sit in Apple's queue for over an hour.
+          await() {
+            local out="$RUNNER_TEMP/wait-$1.out" status
+            notary wait "$1" --timeout 2h --output-format json >"$out" 2>&1 || true
+            cat "$out"
+            status=$(json_field status "$out" || true)
+            notary log "$1" || true
             if [ "$status" != "Accepted" ]; then
-              echo "::error::Notarization of $(basename "$1") finished with status '${status:-unknown}' (submission ${id:-none})"
+              echo "::error::Notarization of $2 (submission $1) ended with status '${status:-still in progress}'"
               exit 1
             fi
           }
@@ -453,9 +480,23 @@ jobs:
             sign "work/release/$bin"
           done
 
-          # Release zip: notarize, staple the apps, then re-zip so the tickets ship inside.
+          # Debug CLI binaries: bare Mach-Os cannot hold a stapled ticket; Gatekeeper checks online.
+          mkdir -p work/debug
+          ditto unsigned/takclient-macos-"$ARCH"-debug work/debug
+          # upload-artifact drops Unix modes on a loose directory; restore the execute bit.
+          chmod 755 work/debug/takclient work/debug/takserver work/debug/cartographer work/debug/crusades_admin
+          for bin in takclient takserver cartographer crusades_admin; do
+            sign "work/debug/$bin"
+          done
+          (cd work/debug && zip -qr "$GITHUB_WORKSPACE/signed/takclient-macos-$ARCH-debug.zip" .)
+
+          # Release zip and debug zip are notarized together; the apps are stapled and
+          # re-zipped so the tickets ship inside. The DMG is built from the stapled apps after.
           ditto -c -k --sequesterRsrc work/release "$RUNNER_TEMP/release-submit.zip"
-          notarize "$RUNNER_TEMP/release-submit.zip"
+          release_id=$(submit "$RUNNER_TEMP/release-submit.zip")
+          debug_id=$(submit "signed/takclient-macos-$ARCH-debug.zip")
+          await "$release_id" "the release zip"
+          await "$debug_id" "the debug zip"
           xcrun stapler staple "$GAME"
           xcrun stapler staple "$EDITOR"
           for app in "$GAME" "$EDITOR"; do
@@ -472,21 +513,11 @@ jobs:
           DMG="signed/tak-engine-$VERSION-macos-$ARCH.dmg"
           hdiutil create -volname "Total Annihilation - Kingdoms" -srcfolder work/dmg -ov -format UDZO "$DMG"
           codesign --force --timestamp --keychain "$KEYCHAIN" --sign "$MACOS_SIGN_IDENTITY" "$DMG"
-          notarize "$DMG"
+          dmg_id=$(submit "$DMG")
+          await "$dmg_id" "the DMG"
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG" || echo "::warning::spctl rejected the DMG"
-
-          # Debug CLI binaries: bare Mach-Os cannot hold a stapled ticket; Gatekeeper checks online.
-          mkdir -p work/debug
-          ditto unsigned/takclient-macos-"$ARCH"-debug work/debug
-          # upload-artifact drops Unix modes on a loose directory; restore the execute bit.
-          chmod 755 work/debug/takclient work/debug/takserver work/debug/cartographer work/debug/crusades_admin
-          for bin in takclient takserver cartographer crusades_admin; do
-            sign "work/debug/$bin"
-          done
-          (cd work/debug && zip -qr "$GITHUB_WORKSPACE/signed/takclient-macos-$ARCH-debug.zip" .)
-          notarize "signed/takclient-macos-$ARCH-debug.zip"
 
       - name: Upload signed CI artifacts
         if: steps.secrets.outputs.enabled == 'true'
@@ -514,4 +545,5 @@ jobs:
         if: always()
         run: |
           if [ -n "${KEYCHAIN:-}" ]; then security delete-keychain "$KEYCHAIN" || true; fi
-          rm -rf "$RUNNER_TEMP/notary" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/release-submit.zip"
+          rm -rf "$RUNNER_TEMP/notary" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/release-submit.zip" \
+            "$RUNNER_TEMP"/submit-*.out "$RUNNER_TEMP"/wait-*.out
