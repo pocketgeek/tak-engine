@@ -109,8 +109,10 @@ Source layout (split 2026-10-12): `editorstate.h` declares the editor state,
 `session.cpp` save/open/undo/recovery/Test Map, `headless.cpp` the command line
 and `--save/--bundle/--stamp/--shot`, `palette.cpp` the left browser,
 `canvas.cpp` map editing tools and canvas drawing, `chrome.cpp` menus, toolbar,
-shortcuts, status bar and minimap, `dialogs.cpp` modal dialogs and lists, and
-`scripting.cpp` the trigger overlay.
+shortcuts, status bar and minimap, `dialogs.cpp` modal dialogs and lists,
+`scripting.cpp` the trigger overlay, and `symmetrytools.cpp` the Symmetry menu,
+live mirroring and the terrain clipboard (their SDL-free mirror math, section
+twins and clipboard data are in `symmetry.cpp`).
 
 ### Build phases
 0. Skeleton: window, open a `.tnt`, render terrain (reuse MapView), pan/zoom. ✅ this session

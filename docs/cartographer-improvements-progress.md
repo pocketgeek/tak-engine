@@ -918,6 +918,128 @@ native preview was captured and inspected. Five changed Windows sources
 cross-compiled, including the client entry point, editor, model viewer, network
 setup and scenario runner. No new dynamic dependencies or retail launch were added.
 
+## Symmetry and terrain clipboard checkpoint
+
+A new **Symmetry** menu builds fair multiplayer maps. Mirror kinds are the
+vertical axis (left/right), horizontal axis (top/bottom), both diagonals,
+rotate 2-way (180 degrees), rotate 4-way (90 degrees) and mirror 4-way (both
+axes). Diagonals and 4-way rotation are offered only on square maps.
+
+- **Symmetrize** (Shift+M) chooses a mirror, a source (a half, quadrant or
+  triangle, or the current unit / feature / terrain selection) and whether to
+  mirror terrain. A dry run on copies gives the exact counts for the
+  confirmation (copies, replaced objects, skipped objects, unmirrored terrain
+  blocks). The result is one undo step. Source regions are half-open, so a
+  source and its images tile the map. Objects on an axis stay in place and are
+  never copied onto themselves. Target-side units, features, starts and regions
+  are replaced. Regions used by a rule are kept and counted.
+- **Live symmetry** (M) mirrors the placement, erasure and movement of units,
+  features and starts as you edit, including select-mode group drags, pastes
+  and Delete. Each edit and its mirrors are one undo step. Partners are found at
+  the mirrored position; a moved unit, feature or start without one gains one.
+  Indices never shift on a move, so drags and selections stay valid. The axis is
+  drawn on the canvas. Terrain stamps use the twin section at the mirrored spot,
+  shown as a cyan outline next to the brush preview. A stamp touching the axis
+  is not mirrored, and the status bar says why.
+
+Correctness details:
+
+- **Facing.** The CRT angle `a` spawns as engine heading `a` (`matchsetup`), and
+  the engine moves along `(sin h, cos h)` in map x/z (`fxAtan2(dx,dz)`). Angle 0
+  therefore faces south. Mirrors use that vector: a left-right mirror gives
+  `-a`, top-bottom `180-a`, a half turn `a+180`, the diagonals `90-a` and
+  `270-a`, and the clockwise quarter turn `a-90`. The selected-unit facing tick
+  on the canvas pointed north for angle 0; it now matches the engine.
+- **Footprints.** A unit or feature occupies the mirrored cells, not just the
+  mirrored origin point (a 3x2 keep at cell 2 mirrors to cell 59 on a 64-cell
+  map). Footprints do not rotate in the engine. On the transposing transforms
+  (square maps only), a non-square footprint is centred on the mirrored centre,
+  rounded to whole cells. Feature footprints come from `footprintx/z` in the
+  feature TDFs.
+- **Starts.** Source starts keep their numbers; mirrors take the next free
+  number from 1 to 8. A mirror with no free number, or one landing off the map
+  or on another start, is skipped and reported. Unit copies change owner to the
+  player whose start is the mirror of the original owner's start. Neutral units
+  and owners without a mirrored start keep their owner.
+- **Names.** Copies drop unique unit names, as paste already does. Mirrored
+  regions are renamed `<name> mirror`, then `mirror 2` and so on (unique,
+  63 bytes). Trigger rules are not duplicated.
+- **Skips.** Units are skipped when off the map or overlapping an existing
+  footprint. Features are skipped when their anchor cell holds another named
+  feature. Mirrored features may replace road/blocker markers, as the Place tool
+  does, because the source anchor replaced the same marker of its own section.
+
+**Terrain is never pixel-flipped.** Tile art carries baked lighting and relief.
+The `.tnt` does not record which section was stamped where, so placements are
+recognized from content. Each block's tile triple `(jpg key, column, row)` is
+looked up in an index of the world's sections. In the shipped data,
+251,070 of 251,898 Zhon triples belong to exactly one section. The placement
+(section and origin) that explains the most neighbouring blocks wins. A mirrored
+block takes the section's **mirror twin** at the mirror of that whole
+placement, so a complete placement becomes an intact twin stamp, and partial or
+clipped placements stay consistent with it. Heights and terrain markers come
+from the twin. Twins are found by name within the same category:
+
+- n/s/e/w runs (`ne`, `1neclif1trans`, `e_n_s`, `ensw`, `hwye_n01`) and the
+  `lft/rgt/top/btm` words are transformed.
+- Connection sets are reordered to match the shipped spelling.
+- A trailing non-direction letter (the exterior `e` of `nee01`, the `s` of
+  `1enstair`) is tried last.
+- A token counts as a direction when it stands alone or when a transform turns
+  it into another name family of the category (digits ignored, so `sclif4` is
+  directional because `nclif1` exists).
+- A name whose tokens are invariant is its own twin (`n01` under a left-right
+  mirror).
+- Direction-free names are their own twin only in flat categories.
+
+Twins must have the transformed size. Coverage on the retail data: Zhon 1155 of
+1261 sections have a left-right twin, Veruna 339/417, Taros 334/401 and Aramon
+245/467 (Aramon's numbered `accoast`, river, hill and sinkhole sets carry no
+direction in their names). Symmetrizing Ulasem Arena (320x320 blocks) mirrors
+49,326 blocks and leaves 1,874 unchanged, in about 20 ms after a 0.2 s first
+index build. Unmirrored blocks are left alone and reported per 512px area. They
+become the issue list: Symmetry > Locate unmirrored terrain, Scenario > Next
+issue and Validation results visit them.
+
+**Terrain clipboard.** With the Terrain tool in Select mode, dragging selects a
+block-aligned rectangle. Ctrl+C (or Edit > Copy terrain selection) captures its
+tiles, heights and feature plane. Named features are remapped by name. The copy
+also captures the units whose centres lie inside and the section attribution.
+Ctrl+V (Edit > Paste terrain clipboard) makes it the brush, with the usual
+translucent snapped preview centred on the pointer. Each click pastes once as
+one undo step. Edit > Terrain brush: protect objects applies, as for sections:
+a protected paste keeps existing objects and adds none. Esc or choosing a
+section returns to section brushes. The clipboard survives File > Open. Pasting
+into a map of another world asks first (tile art and features are per world)
+and remembers the answer for that pair of worlds. In live symmetry, a paste
+places the mirror twins only when every clipboard block is a known section with
+a twin. Otherwise it pastes at the source only and the status bar says why.
+Cut is intentionally not offered for terrain.
+
+Tests: `cartographer_document_test` covers mirrored angles against the
+transformed facing vector for all transforms; source/image tiling for every
+mirror and source; footprints, regions, starts and edge cases; twin names on
+shipped-style names; attribution, twin tiles, heights and markers; unmirrored
+reporting; replaced and kept objects; start numbering past eight; owner remap;
+name clearing; selection sources; live add/move/erase; and clipboard
+copy/paste/protect/mirror. Two SDL workflows, `cartographer_symmetry_ui` and
+`cartographer_terrain_clipboard_ui`, drive the real editor. The first runs the
+dialog and confirmation, checks one-step undo/redo, compares the saved map with
+an independent symmetrize, and checks a live mirrored placement and its single
+undo. The second covers rectangle selection, copy, brush paste, undo/redo, save,
+and the cross-world warning after File > Open. Targeted mutations
+(angle sign, twin lookup, the trailing-letter variant, name clearing, owner
+remap, footprint origin, live mirroring, history grouping, the Ctrl+C
+interception, the world warning and the copied rectangle) each make a test
+fail. All 24 cartographer and scenario-placement tests pass. The symmetry unit
+tests also pass under AddressSanitizer/UBSan.
+
+Limits: Clear Area, property edits and region edits are not mirrored live.
+Rule operands that name mirrored regions are not rewritten. Sections without a
+twin, unknown tiles and twin pairs whose art is not an exact mirror leave
+visible seams at the axis or on unmirrored blocks. Non-square footprints under
+diagonal or quarter-turn mirrors are centred to the nearest cell.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop

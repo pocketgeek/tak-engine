@@ -1300,6 +1300,32 @@ application shortcut. It uses the same data folder as the game.
   overlays for movement, buildability, water and slope.
 - **F6** opens a rotating 3D preview of the selected unit.
 
+### Symmetry and terrain copy
+
+For fair multiplayer maps, the **Symmetry** menu picks a mirror: left/right,
+top/bottom, either diagonal, a 2-way or 4-way rotation, or a 4-way mirror.
+Diagonals and 4-way rotation need a square map.
+
+- **M** turns on live symmetry. Units, features and start positions you place,
+  move or erase are mirrored as you go, and terrain stamps use the matching
+  mirrored section. The axis is drawn on the map. **Ctrl+Z** undoes an edit and
+  its mirrors together.
+- **Shift+M** (**Symmetrize**) copies one half, quadrant or triangle (or the
+  current selection) onto the rest of the map, replacing what is there. It
+  shows what will change first, and one **Ctrl+Z** undoes it. Mirrored starts
+  get the next free numbers, and mirrored units belong to the player whose
+  start mirrors the original owner's.
+- Terrain art is never flipped, because its lighting is painted in. Each
+  terrain section is replaced by its mirror-image section (for example a
+  north-east cliff by its north-west twin). Areas with no such section are left
+  unchanged; **Symmetry → Locate unmirrored terrain** visits them.
+
+To copy terrain, choose the **Terrain** tool and **Select** mode, then drag a
+rectangle. **Ctrl+C** copies it and **Ctrl+V** turns it into a brush. Click to
+paste; **Esc** returns to the section brushes. The copy includes trees, rocks
+and units unless **Edit → Terrain brush: protect objects** is on. It stays
+available after you open another map.
+
 ### Scenarios
 
 - The **Regions** tool draws named trigger areas on the map.
