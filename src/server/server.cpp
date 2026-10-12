@@ -23,6 +23,7 @@
 #include "server/roomtick.h"
 #include "server/status.h"
 #include "net/crusades.h"
+#include "net/matchconfig.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
 #include "net/netcompat.h"
@@ -637,6 +638,7 @@ private:
     void checkHashes(Room& r, uint32_t tick);
     void dropClient(uint32_t id, const char* reason);
     void writeSlots(Writer& w, Room& r, bool fromStart = false);
+    void sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, bool catchUp);
     void writeReplay(Room& r);
 };
 
@@ -679,36 +681,15 @@ static bool roomOccupied(const Room& r) {
 // Worth revisiting only if replays get much larger (many seated humans issuing orders
 // every tick) or the store is slow.
 Writer Server::replayBytes(Room& r) {
-    // Self-contained replay: header (see net/replayhdr.h -- one definition, shared
-    // with the client writer and the loader), every tick bundle, then the referee's
+    // Self-contained replay: header (see net/replayhdr.h -- one definition, filled by
+    // replayHeaderFor for both writers), every tick bundle, then the referee's
     // recorded hash checkpoints. A viewer can rebuild the world, play it back, and
-    // compare its own hashes against what actually happened.
-    tak::net::ReplayHeader h;
-    h.mapId = r.mapId;
+    // compare its own hashes against what actually happened. The header records the
+    // START slot table, not the forfeited end state.
+    tak::net::ReplayHeader h = tak::net::replayHeaderFor(r.opts, r.mapId, r.mission, r.startSlots, r.seed);
     if (r.overridePackage) h.overrideDigest=r.overridePackage->digest;
     if (r.mapPackage) h.mapDigest = r.mapPackage->digest;
-    h.mission = r.mission;
-    h.engineVersion = tak::kVersion;
-    h.crusades = r.opts.crusades;
-    h.forfeitSelfDestruct = r.opts.forfeitSelfDestruct;
-    h.overridePolicy = r.opts.overridePolicy;
-    h.unitCap = r.opts.unitCap;
-    h.monarchExpendable = r.opts.monarchExpendable;
-    h.doubleSight = r.opts.doubleSight;
-    h.pathfindingMode = r.opts.pathfindingMode;
-    h.stressTest = r.opts.stressTest;
-    h.randomStarts = r.opts.randomStarts;
-    h.benchmark = uint8_t(r.opts.benchmark);
-    h.seed = r.seed;
     h.dataHash = roomData(r).hash;
-    for (int i = 0; i < kMaxSlots; ++i) {
-        const SlotInfo& s = r.startSlots[i];   // start config, not the forfeited end state
-        h.slotType[i] = s.type;
-        h.slotFaction[i] = s.faction;
-        h.slotColor[i] = s.color;
-        h.slotTeam[i] = s.team;
-        h.slotAiLevel[i] = s.aiLevel;
-    }
     Writer w;
     tak::net::writeReplayHeader(w, h);
     w.u32(uint32_t(r.log.size()));
@@ -1007,15 +988,10 @@ tak::srv::crusades::BattleContext Server::campaignContext(const Room& r, bool re
     tak::srv::crusades::BattleContext context;
     context.mapIdentifier = r.mapId;context.mapDigest = r.mapPackage->digest;
     context.crusadesBalance = r.opts.crusades == 1;
-    Writer rules;
-    rules.str("modern-crusades-duel-v1");rules.u32(r.seed);
-    const auto& o=r.opts;
-    rules.u8(o.crusades);rules.u8(o.forfeitSelfDestruct);rules.u8(o.overridePolicy);
-    rules.u8(o.speed);rules.u8(o.speedUnlock);rules.u32(o.unitCap);rules.u8(o.monarchExpendable);
-    rules.u8(o.stressTest);rules.u8(o.fogExplored);rules.u8(o.benchmark);rules.u8(o.randomStarts);rules.u8(o.doubleSight);rules.u8(uint8_t(o.pathfindingMode));
+    const SlotInfo* slots=r.running ? r.startSlots : r.slots;
+    const Writer rules=tak::net::crusadesRulesPreimage(r.seed,r.opts,slots);
     for (int i=0;i<kMaxSlots;++i) {
-        const auto& slot=r.running ? r.startSlots[i] : r.slots[i];
-        rules.u8(slot.type);rules.u8(slot.faction);rules.u8(slot.color);rules.u8(slot.team);rules.u8(slot.aiLevel);
+        const auto& slot=slots[i];
         if(i>=2) {if(slot.type!=3 || r.slotClient[i]>=0)throw std::runtime_error("extra campaign participant");continue;}
         if(slot.type!=1)throw std::runtime_error("campaign requires two human participants");
         std::string account=r.campaignAccounts[i];
@@ -1681,19 +1657,38 @@ void Server::writeSlots(Writer& w, Room& r, bool fromStart) {
     w.str(r.name);
     w.str(r.mapId);
     w.str(r.mission);
-    w.u8(r.opts.crusades); w.u8(r.opts.forfeitSelfDestruct);
-    w.u8(r.opts.overridePolicy);
-    w.u8(r.opts.speed); w.u8(r.opts.speedUnlock); w.u32(r.opts.unitCap); w.u8(r.opts.monarchExpendable);
-    w.u8(r.opts.stressTest); w.u8(r.opts.fogExplored); w.u8(r.opts.benchmark);
-    w.u8(r.opts.randomStarts); w.u8(r.opts.doubleSight); w.u8(uint8_t(r.opts.pathfindingMode));
+    put(w, r.opts);
     w.u32(r.hostId);
     w.u8(mapsReady(r) ? 1 : 0);
-    for (int i = 0; i < kMaxSlots; ++i) {
-        const SlotInfo& s = (fromStart && r.running) ? r.startSlots[i] : r.slots[i];
-        w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team); w.u8(s.ready);
-        w.u8(s.aiLevel);
-        w.str(s.name);
+    for (int i = 0; i < kMaxSlots; ++i) put(w, (fromStart && r.running) ? r.startSlots[i] : r.slots[i]);
+}
+
+// GameStarting: the START slot table + options, then your slot (0xFF = spectator),
+// the seed, your resume token and where the bundle log ends. At a fresh start the
+// log is empty and the start table is the live one. `catchUp` (a rejoin or a
+// spectate) re-offers the room's packages first and then streams the whole log to
+// this client from tick 0, paced by txPending(). Flow control starts over; each
+// caller sets `loaded` itself.
+void Server::sendGameStarting(Client& c, Room& r, uint8_t slot, uint64_t token, bool catchUp) {
+    Writer w; writeSlots(w, r, /*fromStart=*/true);
+    w.u8(slot); w.u32(r.seed); w.u64(token);
+    // Where the HISTORY ends. The client must not send -- or treat its own
+    // commands coming back as acknowledgements -- until it has consumed
+    // every bundle logged before it rejoined. It cannot work that out
+    // locally: the replay is streamed in chunks paced by the socket, so its
+    // receive buffer legitimately runs dry BETWEEN chunks while history is
+    // still coming, and a buffer-depth guess releases the gate early.
+    w.u32(uint32_t(r.log.size()));
+    if (catchUp) {
+        if (r.mapPackage) {
+            c.mapReadyRoom = 0; c.mapOfferedRoom = r.id;
+            c.conn.send(Msg::MapOffer, tak::net::maps::offer(r.id, r.mapId, *r.mapPackage));
+        }
+        if(r.overridePackage)c.conn.send(Msg::OverrideOffer,tak::net::maps::offer(r.id,"overrides",*r.overridePackage));
     }
+    c.conn.send(Msg::GameStarting, w);
+    if (catchUp) { c.replaying = true; c.replayPos = 0; }
+    c.ackTick = 0; c.leadTicks = kMaxLeadTicks;   // flow control starts over with this game
 }
 
 void Server::broadcastLobby(Room& r) {
@@ -1754,26 +1749,23 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if(rooms_.size()>=limits_.rooms) {sendReject(c,"server game capacity reached");return;}
             Reader r(f.payload.data(), f.payload.size());
             std::string name = r.str(), pass = r.str(), mapId = r.str(), mission = r.str();
-            GameOptions o; o.crusades = r.u8(); o.forfeitSelfDestruct = r.u8();
-            o.overridePolicy = std::min<uint8_t>(r.u8(),2);
+            GameOptions o; get(r, o);
+            if (!tak::sim::validPathfindingMode(uint8_t(o.pathfindingMode))) { sendReject(c,"invalid pathfinding mode"); return; }
+            // Sanitise the raw options (get() checks only the pathfinder byte).
+            o.overridePolicy = std::min<uint8_t>(o.overridePolicy,2);
             if(!mission.empty())o.overridePolicy=0;
-            o.speed = r.u8(); o.speedUnlock = r.u8();
             if (o.speed < 1) o.speed = 10;
-            o.unitCap = clampUnitCap(uint16_t(r.u32()));
-            o.monarchExpendable = r.u8() ? 1 : 0;
-            o.stressTest = std::min<uint8_t>(r.u8(), kStressStaged);   // 0/1/2, see GameOptions
+            o.unitCap = clampUnitCap(o.unitCap);
+            o.monarchExpendable = o.monarchExpendable ? 1 : 0;
+            o.stressTest = std::min<uint8_t>(o.stressTest, kStressStaged);   // 0/1/2, see GameOptions
             // THREE-state, not a bool: 0 = not explored, 1 = explored, 2 = full
             // vision. Decoding it as `? 1 : 0` silently folded FULL VISION back to
             // EXPLORED, so the room's fog button cycled through a setting the
             // server threw away -- it looked like the button did nothing.
-            o.fogExplored = std::min<uint8_t>(r.u8(), 2);
-            o.benchmark = r.u8();
-            o.randomStarts = r.u8() ? 1 : 0;
-            o.doubleSight = r.u8() ? 1 : 0;
-            const auto pathMode = r.u8();
-            if (!tak::sim::validPathfindingMode(pathMode)) { sendReject(c,"invalid pathfinding mode"); return; }
-            o.pathfindingMode = mission.empty() ? tak::sim::PathfindingMode(pathMode) : tak::sim::PathfindingMode::Retail;
-            if (!mission.empty()) o.doubleSight = 0;
+            o.fogExplored = std::min<uint8_t>(o.fogExplored, 2);
+            o.randomStarts = o.randomStarts ? 1 : 0;
+            o.doubleSight = o.doubleSight ? 1 : 0;
+            if (!mission.empty()) { o.pathfindingMode = tak::sim::PathfindingMode::Retail; o.doubleSight = 0; }
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
@@ -1895,26 +1887,10 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.desyncFlagged.clear();   // fresh sim; old desync flags are stale
             c.cmdQueue.clear();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = slot; c.loaded = true;
-            c.ackTick = 0; c.leadTicks = kMaxLeadTicks;   // flow control starts over with this game
             // GameStarting rebuilds the client's world; then the whole bundle log
             // replays it up to now, after which it receives live bundles. Because that
             // rebuild starts at tick 0, it needs the START slot table -- see writeSlots.
-            Writer w; writeSlots(w, room, /*fromStart=*/true);
-            w.u8(uint8_t(slot)); w.u32(room.seed); w.u64(room.slotToken[slot]);
-            // Where the HISTORY ends. The client must not send -- or treat its own
-            // commands coming back as acknowledgements -- until it has consumed
-            // every bundle logged before it rejoined. It cannot work that out
-            // locally: the replay is streamed in chunks paced by the socket, so its
-            // receive buffer legitimately runs dry BETWEEN chunks while history is
-            // still coming, and a buffer-depth guess releases the gate early.
-            w.u32(uint32_t(room.log.size()));
-            if (room.mapPackage) {
-                c.mapReadyRoom = 0; c.mapOfferedRoom = room.id;
-                c.conn.send(Msg::MapOffer, tak::net::maps::offer(room.id, room.mapId, *room.mapPackage));
-            }
-            if(room.overridePackage)c.conn.send(Msg::OverrideOffer,tak::net::maps::offer(room.id,"overrides",*room.overridePackage));
-            c.conn.send(Msg::GameStarting, w);
-            c.replaying = true; c.replayPos = 0;   // streamed below, paced by txPending()
+            sendGameStarting(c, room, uint8_t(slot), room.slotToken[slot], /*catchUp=*/true);
             // Unpause if this was the player we were waiting on.
             if (room.paused && room.pausePlayer == slot) {
                 room.pauseBudgetMs[slot] -= std::min(room.pauseBudgetMs[slot], nowMs() - room.pauseStartMs);
@@ -1947,21 +1923,11 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 room.spectators.push_back(c.id);
             c.cmdQueue.clear();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = -1; c.loaded = true;
-            c.ackTick = 0; c.leadTicks = kMaxLeadTicks;   // flow control starts over with this game
             // GameStarting (slot 0xFF = spectator) rebuilds the world; the whole
             // bundle log replays it to now, then live bundles stream via broadcast.
             // Same reason as the rejoin above: that rebuild starts at tick 0, so it
             // needs the START table, not one with mid-game forfeits already applied.
-            Writer w; writeSlots(w, room, /*fromStart=*/true);
-            w.u8(0xFF); w.u32(room.seed); w.u64(0);
-            w.u32(uint32_t(room.log.size()));   // replay boundary (see above)
-            if (room.mapPackage) {
-                c.mapReadyRoom = 0; c.mapOfferedRoom = room.id;
-                c.conn.send(Msg::MapOffer, tak::net::maps::offer(room.id, room.mapId, *room.mapPackage));
-            }
-            if(room.overridePackage)c.conn.send(Msg::OverrideOffer,tak::net::maps::offer(room.id,"overrides",*room.overridePackage));
-            c.conn.send(Msg::GameStarting, w);
-            c.replaying = true; c.replayPos = 0;   // streamed below, paced by txPending()
+            sendGameStarting(c, room, 0xFF, 0, /*catchUp=*/true);
             std::fprintf(stderr, "game %u: client %u SPECTATING (replaying %zu ticks)\n",
                          room.id, c.id, room.log.size());
             break;
@@ -2368,30 +2334,12 @@ void Server::tryStart(Client& c) {
                                  ms.aiProfile.empty() ? "" : (" profile=" + ms.aiProfile).c_str());
             }
         } else {
-            int maxSlot = 0;
-            for (int i = 0; i < kMaxSlots; ++i)
-                if (r->slots[i].type == 1 || r->slots[i].type == 2) maxSlot = i;
-            tak::sim::MatchConfig cfg;
+            // The same builder every client mirrors (net/matchconfig.h): Absurd AI
+            // income, the passive stance and the player count all come from it.
+            tak::sim::MatchConfig cfg = tak::net::matchConfigFor(r->opts, r->slots, r->seed);
             cfg.vfs = r->mapVfs ? r->mapVfs.get() : &ds->vfs;
             cfg.mapPath = mapPath;
-            cfg.unitCap = r->opts.unitCap;
-            cfg.monarchExpendable = r->opts.monarchExpendable != 0;
-            cfg.doubleSight = r->opts.doubleSight != 0;
-            cfg.pathfindingMode = r->opts.pathfindingMode;
-            cfg.stressTest = r->opts.stressTest != 0;
-            cfg.stressImmediate = r->opts.stressTest == kStressImmediate;
-            cfg.benchmark = r->opts.benchmark;
-            cfg.randomStarts = r->opts.randomStarts != 0;
-            cfg.startSeed = r->seed;   // the seed sent in GameStarting
-            cfg.slots.resize(size_t(maxSlot + 1));
-            for (int i = 0; i <= maxSlot; ++i) {
-                const auto& s = r->slots[i];
-                // Absurd AI slots earn double income (incomeMultFor); derived from the
-                // shared aiLevel so the client mirror sets the same factor (lockstep).
-                float mm = s.type == 2
-                    ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
-                cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm, s.type == 2, s.type == 2 && s.aiLevel == 0};
-            }
+            const int maxSlot = int(cfg.slots.size()) - 1;
             std::vector<std::pair<float,float>> spots;
             try { spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg); }
             catch (const std::exception& e) {
@@ -2443,26 +2391,16 @@ void Server::tryStart(Client& c) {
         r->slotToken[i] = randToken();
         auto it = clients_.find(uint32_t(r->slotClient[i]));
         if (it == clients_.end()) continue;
-        Writer w; writeSlots(w, *r);
-        w.u8(uint8_t(i));                 // your slot
-        w.u32(r->seed);       // per-game RNG seed base
-        w.u64(r->slotToken[i]);           // resume token
-        w.u32(0);                         // fresh game: no history to replay
-        it->second->conn.send(Msg::GameStarting, w);
+        sendGameStarting(*it->second, *r, uint8_t(i), r->slotToken[i], /*catchUp=*/false);
         it->second->loaded = false;
-        it->second->ackTick = 0; it->second->leadTicks = kMaxLeadTicks;
     }
     // Spectators (incl. a host who created the game to watch) get a slot-less
     // GameStarting; they don't gate the first tick, so mark them loaded.
     for (uint32_t sid : r->spectators) {
         auto it = clients_.find(sid);
         if (it == clients_.end()) continue;
-        Writer w; writeSlots(w, *r);
-        w.u8(0xFF); w.u32(r->seed); w.u64(0);
-        w.u32(uint32_t(r->log.size()));   // replay boundary
-        it->second->conn.send(Msg::GameStarting, w);
+        sendGameStarting(*it->second, *r, 0xFF, 0, /*catchUp=*/false);
         it->second->loaded = true;
-        it->second->ackTick = 0; it->second->leadTicks = kMaxLeadTicks;
     }
     for(int i=0;i<std::min(kMaxSlots,r->ref->numPlayers());++i)r->defeated[size_t(i)]=r->ref->player(i).defeated;
     std::fprintf(stderr, "game %u starting with %d players\n", r->id, r->usedSlots());
@@ -2546,16 +2484,14 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if(!r->campaignBattleId.empty())return;
             if (r->hostId != c.id) return;   // host only
             Reader rd(f.payload.data(), f.payload.size());
-            GameOptions o; o.crusades = rd.u8(); o.forfeitSelfDestruct = rd.u8();
-            o.overridePolicy = rd.u8(); o.speed = rd.u8(); o.speedUnlock = rd.u8();
-            o.unitCap = clampUnitCap(uint16_t(rd.u32())); o.monarchExpendable = rd.u8() ? 1 : 0;
-            o.stressTest = std::min<uint8_t>(rd.u8(), kStressStaged);
-            o.fogExplored = std::min<uint8_t>(rd.u8(), 2);   // 0/1/2, see CreateGame
-            o.benchmark = rd.u8();
-            o.randomStarts = rd.u8() ? 1 : 0;
-            o.doubleSight = rd.u8() ? 1 : 0;
-            const auto pathMode = rd.u8();
-            if (!tak::sim::validPathfindingMode(pathMode)) { sendReject(c,"invalid pathfinding mode"); return; }
+            GameOptions o; get(rd, o);
+            if (!tak::sim::validPathfindingMode(uint8_t(o.pathfindingMode))) { sendReject(c,"invalid pathfinding mode"); return; }
+            // Sanitise the raw options (overridePolicy and speed are handled below).
+            o.unitCap = clampUnitCap(o.unitCap); o.monarchExpendable = o.monarchExpendable ? 1 : 0;
+            o.stressTest = std::min<uint8_t>(o.stressTest, kStressStaged);
+            o.fogExplored = std::min<uint8_t>(o.fogExplored, 2);   // 0/1/2, see CreateGame
+            o.randomStarts = o.randomStarts ? 1 : 0;
+            o.doubleSight = o.doubleSight ? 1 : 0;
             // Creation-only: lobby updates cannot change the selected pathfinder.
             o.pathfindingMode = r->opts.pathfindingMode;
             if (!r->mission.empty()) o.doubleSight = 0;

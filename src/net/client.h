@@ -26,12 +26,6 @@
 
 namespace tak::net {
 
-// The commands + sequenced events the server assigned to one tick.
-struct Bundle {
-    std::vector<Command> cmds;
-    std::vector<Event> events;
-};
-
 // A game's setup as the client sees it in the lobby / at start.
 struct RoomView {
     uint32_t id = 0;

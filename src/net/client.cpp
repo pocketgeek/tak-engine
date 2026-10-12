@@ -697,26 +697,10 @@ static void readSlots(Reader& r, RoomView& v) {
     v.name = r.str();
     v.mapId = r.str();
     v.mission = r.str();
-    v.opts.crusades = r.u8(); v.opts.forfeitSelfDestruct = r.u8();
-    v.opts.overridePolicy = r.u8();
-    v.opts.speed = r.u8(); v.opts.speedUnlock = r.u8();
-    v.opts.unitCap = uint16_t(r.u32());
-    v.opts.monarchExpendable = r.u8();
-    v.opts.stressTest = r.u8();
-    v.opts.fogExplored = r.u8();
-    v.opts.benchmark = r.u8();
-    v.opts.randomStarts = r.u8();
-    v.opts.doubleSight = r.u8();
-    const auto pathMode = r.u8();
-    if (!sim::validPathfindingMode(pathMode)) r.ok = false;
-    v.opts.pathfindingMode = sim::PathfindingMode(pathMode);
+    get(r, v.opts);
     v.hostId = r.u32();
     v.mapsReady = r.u8() != 0;
-    for (int i = 0; i < kMaxSlots; ++i) {
-        SlotInfo& s = v.slots[i];
-        s.type = r.u8(); s.faction = r.u8(); s.color = r.u8(); s.team = r.u8();
-        s.ready = r.u8(); s.aiLevel = r.u8(); s.name = r.str();
-    }
+    for (auto& s : v.slots) get(r, s);
 }
 
 void MpClient::onFrame(const Frame& f) {
@@ -904,16 +888,11 @@ void MpClient::onFrame(const Frame& f) {
             // buffer, so replaying our copy reproduces the game bit-for-bit. Parsing
             // and re-serializing would risk a format drift between the two writers.
             if (recording_) replayLog_.push_back(f.payload);
-            uint32_t tk = r.u32();
+            // The same strict decoder as replay playback: a malformed bundle is
+            // dropped here rather than reaching applyCommand/applyEvent.
+            uint32_t tk = 0;
             Bundle bd;
-            uint32_t nc = r.u32();
-            for (uint32_t i = 0; i < nc && r.ok; ++i) bd.cmds.push_back(r.cmd());
-            uint32_t ne = r.u32();
-            for (uint32_t i = 0; i < ne && r.ok; ++i) {
-                Event e; e.kind = Event::Kind(r.u8()); e.player = r.u8();
-                bd.events.push_back(e);
-            }
-            if (r.ok) {
+            if (getBundle(r, tk, bd)) {
                 uint64_t delay = receiveDelayMs();
                 if (delay > 0) {   // model the link: hold, then release later
                     jitterHeld_.push_back({nowMs() + delay, tk, std::move(bd)});
@@ -952,9 +931,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
         } catch (const std::exception& e) { err_ = mapStatus_ = e.what(); return; }
     }
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
-    w.u8(o.crusades); w.u8(o.forfeitSelfDestruct); w.u8(o.overridePolicy);
-    w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
-    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts); w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
+    put(w, o);
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     w.u8(priv ? 1 : 0);       // private (single-player): not in the public game list
@@ -985,9 +962,7 @@ void MpClient::setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
 }
 
 void MpClient::setGameOptions(const GameOptions& o) {
-    Writer w; w.u8(o.crusades); w.u8(o.forfeitSelfDestruct);
-    w.u8(o.overridePolicy); w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
-    w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts); w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
+    Writer w; put(w, o);
     send(Msg::SetGameOptions, w);
 }
 

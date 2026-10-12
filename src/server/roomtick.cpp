@@ -25,10 +25,7 @@ TickResult simulateRoomTick(sim::World& world,const sim::TypeRegistry& registry,
     input.commands.insert(input.commands.end(),input.scheduled.begin(),input.scheduled.end());
     std::stable_sort(input.commands.begin(),input.commands.end(),
         [](const Command& a,const Command& b) {return a.player<b.player;});
-    Writer w;w.u32(input.tick);w.u32(uint32_t(input.commands.size()));
-    for(const auto& command:input.commands)w.cmd(command);
-    w.u32(uint32_t(input.events.size()));
-    for(const auto& event:input.events) {w.u8(uint8_t(event.kind));w.u8(event.player);}
+    Writer w;putBundle(w,input.tick,input.commands,input.events);
     if(w.b.size()+2*sizeof(std::vector<uint8_t>)>input.replayBudget) {
         result.resourceLimited=true;return result;
     }

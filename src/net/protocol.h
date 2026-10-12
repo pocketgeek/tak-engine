@@ -677,4 +677,37 @@ struct Reader {
     Command cmd();
 };
 
+// ------- shared codecs -------------------------------------------------------
+//
+// GameOptions and SlotInfo have ONE byte layout, used by CreateGame, SetGameOptions,
+// LobbyState/GameStarting and the Crusades rules digest. Each used to be written out
+// field by field at every site, and fixes landed in some copies only. get() is RAW:
+// it checks nothing but the pathfinder byte (an unknown mode clears r.ok; the byte is
+// still stored so the server can reject with a reason). The server's clamps and
+// creation-only rules stay explicit at its two readers.
+void put(Writer& w, const GameOptions& o);
+void get(Reader& r, GameOptions& o);
+void put(Writer& w, const SlotInfo& s);   // type faction color team ready aiLevel, name
+void get(Reader& r, SlotInfo& s);
+
+// The preimage of a Crusades duel's rulesDigest: a tag, the seed, the options in
+// put() order, then each slot's type/faction/color/team/aiLevel. Its SHA-256 is
+// stored with every issued battle and checked again when the result is reported,
+// so this byte order is frozen (match_codec_test pins it).
+Writer crusadesRulesPreimage(uint32_t seed, const GameOptions& o, const SlotInfo* slots);
+
+// The commands + sequenced events the server assigned to one tick.
+struct Bundle {
+    std::vector<Command> cmds;
+    std::vector<Event> events;
+};
+
+// One TickBundle payload: u32 tick, u32 count + commands, u32 count + events. The
+// referee writes it (roomtick), clients decode it live and replays decode it from
+// the file. getBundle reads the whole of `r` and is strict: a command kind or player
+// out of range, a non-finite coordinate, an unknown event or a trailing byte fails
+// it. `proto` is the protocol the bundle was recorded under (area commands are 221+).
+void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const std::vector<Event>& events);
+bool getBundle(Reader& r, uint32_t& tick, Bundle& out, uint32_t proto = kNetVersion);
+
 }  // namespace tak::net

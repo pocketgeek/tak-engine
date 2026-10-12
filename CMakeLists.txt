@@ -142,6 +142,7 @@ add_library(tak-formats
   src/crt/crt.cpp
   src/gui/gui.cpp
   src/net/protocol.cpp
+  src/net/matchconfig.cpp
   src/net/crusades.cpp
   src/net/conn.cpp
   src/net/client.cpp
@@ -1648,6 +1649,9 @@ add_test(NAME pacelog COMMAND pacelog_test)
 add_executable(replay_file_test tools/replay_file_test.cpp src/client/replayfile.cpp)
 target_link_libraries(replay_file_test PRIVATE tak-formats)
 add_test(NAME replay_file COMMAND replay_file_test)
+add_executable(match_codec_test tools/match_codec_test.cpp src/client/replayfile.cpp)
+target_link_libraries(match_codec_test PRIVATE tak-formats)
+add_test(NAME match_codec COMMAND match_codec_test)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.

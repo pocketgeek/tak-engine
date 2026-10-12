@@ -1,13 +1,10 @@
 #include "client/replayfile.h"
 
-#include "version.h"
-
-#include "ai/ai.h"
-#include "net/protocol.h"      // tak::net::Reader / Event / Command
+#include "net/matchconfig.h"   // matchConfigFor / replayHeaderFor
+#include "net/protocol.h"      // tak::net::Reader / getBundle
 
 #include <cstdio>
 #include <filesystem>
-#include <cmath>
 #include <utility>
 
 bool loadReplayFile(const std::string& path, ReplayFile& out) {
@@ -50,30 +47,12 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     out.overridePolicy = h.overridePolicy;
     out.dataHash = h.dataHash;
     out.engineVersion = h.engineVersion;
-    out.cfg.unitCap = uint16_t(h.unitCap);
-    out.cfg.monarchExpendable = h.monarchExpendable != 0;
-    out.cfg.doubleSight = h.mission.empty() && h.doubleSight != 0;
-    out.cfg.pathfindingMode = h.mission.empty() ? h.pathfindingMode : tak::sim::PathfindingMode::Retail;
-    out.cfg.stressTest = h.stressTest != 0;
-    out.cfg.stressImmediate = h.stressTest == tak::net::kStressImmediate;   // recorded before staging
-    out.cfg.randomStarts = h.randomStarts != 0;
-    out.cfg.benchmark = h.benchmark;
-    out.cfg.startSeed = h.seed;          // the game's own seed: was recorded, then dropped
-    out.cfg.slots.resize(tak::net::kMaxSlots);
-    int maxUsed = 0;
-    for (int i = 0; i < tak::net::kMaxSlots; ++i) {
-        const bool used = (h.slotType[i] == 1 || h.slotType[i] == 2);
-        // An AI slot's income multiplier is derived from its LEVEL at setup, and the
-        // recorded commands do not carry it -- so without this an Absurd AI replayed
-        // on normal income and its whole production curve diverged.
-        const float mm = h.slotType[i] == 2
-            ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(h.slotAiLevel[i])) : 1.0f;
-        out.cfg.slots[size_t(i)] = {used, h.slotFaction[i] % 5, h.slotTeam[i], mm, h.slotType[i] == 2, h.slotType[i] == 2 && h.slotAiLevel[i] == 0};
-        if (used) maxUsed = i;
-    }
-    // The game used setPlayerCount(maxUsedSlot+1); match it exactly (empty trailing
-    // players would otherwise enter the state hash and diverge from the recording).
-    out.cfg.slots.resize(size_t(maxUsed + 1));
+    // The same builder the referee and the live clients use (net/matchconfig.h), fed
+    // the options and START slot table the header recorded.
+    tak::net::GameOptions opts;
+    tak::net::SlotInfo slots[tak::net::kMaxSlots];
+    tak::net::matchInputsFrom(h, opts, slots);
+    out.cfg = tak::net::matchConfigFor(opts, slots, h.seed, !h.mission.empty());
     uint32_t nticks = r.u32();
     if (!r.ok) return false;
     // Bound the count by what is actually LEFT in the file before reserving. A count is
@@ -87,28 +66,10 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
         if (!r.ok || !r.avail(len)) return false;
         tak::net::Reader br(r.p, len);
         r.p += len;
-        const uint32_t tick = br.u32();
-        // The recorded tick index was read and thrown away. It is the one thing that
-        // can prove the bundle stream is intact and in order, so check it.
-        if (!br.ok || tick != t) return false;
+        // The recorded tick index proves the bundle stream is intact and in order.
+        uint32_t tick = 0;
         tak::net::Bundle bd;
-        uint32_t nc = br.u32();
-        if (uint64_t(nc) * 35 > uint64_t(br.end - br.p)) return false;
-        for (uint32_t i = 0; i < nc && br.ok; ++i) {
-            const auto cmd=br.cmd();
-            const auto maxKind=proto>=221 ? tak::net::Cmd::BuildManaArea : tak::net::Cmd::ShareMana;
-            if (uint8_t(cmd.kind)>uint8_t(maxKind) || cmd.player>=tak::net::kMaxSlots ||
-                !std::isfinite(cmd.x) || !std::isfinite(cmd.z) || !std::isfinite(cmd.x2) || !std::isfinite(cmd.z2)) return false;
-            bd.cmds.push_back(cmd);
-        }
-        uint32_t ne = br.u32();
-        if (!br.ok || uint64_t(ne)*2>uint64_t(br.end-br.p)) return false;
-        for (uint32_t i = 0; i < ne && br.ok; ++i) {
-            tak::net::Event e; e.kind = tak::net::Event::Kind(br.u8()); e.player = br.u8();
-            if (e.player>=tak::net::kMaxSlots || uint8_t(e.kind)<1 || uint8_t(e.kind)>uint8_t(tak::net::Event::Kind::CampaignForfeit)) return false;
-            bd.events.push_back(e);
-        }
-        if (!br.ok || br.p != br.end) return false; // reject truncated or trailing inner data
+        if (!tak::net::getBundle(br, tick, bd, proto) || tick != t) return false;
         out.bundles.push_back(std::move(bd));
     }
     // Hash checkpoints (format 6+). Absent in an older file, which simply means
@@ -136,36 +97,15 @@ std::string saveReplayFile(const std::string& dir, const tak::net::MpClient& mp,
     if (dir.empty() || log.empty()) return {};
     const tak::net::RoomView& room = mp.room();
     const tak::net::SlotInfo* slots = mp.startSlots();
-    // Header shared with the server writer and the loader -- see net/replayhdr.h.
-    tak::net::ReplayHeader h;
-    h.mapId = room.mapId;
+    // Header shared with the server writer and the loader -- see net/matchconfig.h.
+    tak::net::ReplayHeader h = tak::net::replayHeaderFor(room.opts, room.mapId, room.mission, slots, mp.startSeed());
     if (mp.overridePackage()) h.overrideDigest=mp.overridePackage()->digest;
     if (mp.mapPackage()) h.mapDigest = mp.mapPackage()->digest;
-    h.mission = room.mission;
-    h.engineVersion = tak::kVersion;
-    h.crusades = room.opts.crusades;
-    h.forfeitSelfDestruct = room.opts.forfeitSelfDestruct;
-    h.overridePolicy = room.opts.overridePolicy;
-    h.unitCap = room.opts.unitCap;
-    h.monarchExpendable = room.opts.monarchExpendable;
-    h.doubleSight = room.opts.doubleSight;
-    h.pathfindingMode = room.opts.pathfindingMode;
-    h.stressTest = room.opts.stressTest;
-    h.randomStarts = room.opts.randomStarts;
-    h.benchmark = uint8_t(room.opts.benchmark);
-    h.seed = mp.startSeed();
     // The hash of the data this GAME ran on, at its override tier -- not the
     // pure-retail fingerprint the handshake uses. Under a Full-tier game the two
     // differ, and it is the effective one a replay has to be checked against. The
     // server's writer already records that; this recorded the handshake hash.
     h.dataHash = gameplayHash;
-    for (int i = 0; i < tak::net::kMaxSlots; ++i) {
-        h.slotType[i] = slots[i].type;
-        h.slotFaction[i] = slots[i].faction;
-        h.slotColor[i] = slots[i].color;
-        h.slotTeam[i] = slots[i].team;
-        h.slotAiLevel[i] = slots[i].aiLevel;
-    }
     tak::net::Writer w;
     tak::net::writeReplayHeader(w, h);
     w.u32(uint32_t(log.size()));

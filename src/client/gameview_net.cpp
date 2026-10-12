@@ -1,6 +1,7 @@
 #include <ctime>
 #include "tnt/ota.h"
 #include "client/gameview.h"
+#include "net/matchconfig.h"
 
 // Out-of-line GameView method definitions (net concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -177,29 +178,16 @@
         loadScreen_->step("LOADING TERRAIN", 30);
         mapView_.reload(vfs_, mapPath_);
         loadScreen_->step("BUILDING THE WORLD", 65);
-        tak::sim::MatchConfig cfg;
+        // The referee's own builder (net/matchconfig.h) -- the same seed, slot table,
+        // Absurd AI income and player count -- so hashed state matches (lockstep).
+        tak::sim::MatchConfig cfg = tak::net::matchConfigFor(room.opts, room.slots, seed);
         cfg.vfs = &vfs_;
         cfg.mapPath = mapPath_;
         cfg.scenarioViewPlayer = localPlayer_;
         cfg.scenarioTrace = scenarioTrace_;
-        cfg.unitCap = room.opts.unitCap;
-        cfg.monarchExpendable = room.opts.monarchExpendable != 0;
-        cfg.doubleSight = room.opts.doubleSight != 0;
-        cfg.pathfindingMode = room.opts.pathfindingMode;
-        cfg.stressTest = room.opts.stressTest != 0;
-        cfg.stressImmediate = room.opts.stressTest == tak::net::kStressImmediate;
-        cfg.benchmark = room.opts.benchmark;
-        cfg.randomStarts = room.opts.randomStarts != 0;
-        cfg.startSeed = seed;   // same seed the referee shuffles with
         if (room.opts.benchmark) benchmarkLevel_ = room.opts.benchmark;   // for the results label
-        cfg.slots.resize(size_t(maxSlot + 1));
         for (int i = 0; i <= maxSlot; ++i) {
             const auto& s = room.slots[i];
-            // Mirror the referee's per-slot income multiplier (Absurd AI = 2x) from the
-            // shared aiLevel, so hashed mana stays identical to the server (lockstep).
-            float mm = s.type == 2
-                ? tak::ai::incomeMultFor(tak::ai::difficultyFromLevel(s.aiLevel)) : 1.0f;
-            cfg.slots[size_t(i)] = {s.type == 1 || s.type == 2, s.faction % 5, s.team, mm, s.type == 2, s.type == 2 && s.aiLevel == 0};
             colorSlot_[i & 7] = s.color % 10;
             playerAi_[i & 7] = (s.type == 2);
             playerName_[i & 7] = !s.name.empty()
