@@ -212,7 +212,10 @@ void MapView::rebuildTileBatch(int winW, int winH) {
             SDL_Vertex bl{{x0, y1}, white, {u0, v1}};
             vb.push_back(tl); vb.push_back(tr); vb.push_back(br);
             vb.push_back(tl); vb.push_back(br); vb.push_back(bl);
-            if (!bilinear_) continue;
+            // Below 1x (only the Cartographer filters there) a half texel is under half
+            // a pixel and the fades are invisible, while a zoomed-out fallback view
+            // would quadruple the tile vertices -- skip them.
+            if (!bilinear_ || zoom_ < 1.0f) continue;
             // Aprons: across a boundary to an unrelated crop, the neighbour's edge
             // texel row/column is laid over this tile's outer half texel, fading from
             // half strength at the boundary to nothing at this tile's edge-texel

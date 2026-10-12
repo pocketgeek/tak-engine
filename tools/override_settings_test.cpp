@@ -169,6 +169,8 @@ int main() {
                 // and textureFilter wins over everything, in any order
                 {"bilinearFilter = 1\ntextureFilter = 0\nbilinear = 1\n",0},
                 {"textureFilter = 2\nbilinearFilter = 0\n",2},
+                // a hand-edited level out of range clamps like every other number
+                {"textureFilter = 7\nbilinearFilter = 0\n",2},{"bilinearFilter = 1\ntextureFilter = -3\n",0},
                 {"antiAlias = 4\nterrainAA = 4\nmodelAA = 16\nunitEdgeAA = 16\nzoomedOutTerrain = 4\n",0}}) {
             std::ofstream(path)<<c.text<<"smoothArt = on\nvideoDeblock = 1\ntreeSway = 0\nvsync = 0\n";
             const auto loaded=tak::loadSettings();
