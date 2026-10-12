@@ -103,6 +103,15 @@ the **tile/section palette + brush tools**, the **height tools**, the
 **trigger (condition/action) system**. Immediate-mode UI in our own widgets
 (we have font + input already), matching Cartographer's panel layout 1:1.
 
+Source layout (split 2026-10-12): `editorstate.h` declares the editor state,
+`cart::Session` (command line, window, open document, save/history) and
+`cart::Editor` (UI state); `main.cpp` is startup plus the frame loop,
+`session.cpp` save/open/undo/recovery/Test Map, `headless.cpp` the command line
+and `--save/--bundle/--stamp/--shot`, `palette.cpp` the left browser,
+`canvas.cpp` map editing tools and canvas drawing, `chrome.cpp` menus, toolbar,
+shortcuts, status bar and minimap, `dialogs.cpp` modal dialogs and lists, and
+`scripting.cpp` the trigger overlay.
+
 ### Build phases
 0. Skeleton: window, open a `.tnt`, render terrain (reuse MapView), pan/zoom. ✅ this session
 1. TNT writer + New/Save/Save As round-trip (load→save→byte-compare).

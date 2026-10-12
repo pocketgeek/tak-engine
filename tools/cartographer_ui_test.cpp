@@ -784,6 +784,33 @@ static int recoveryWorkflow(const char* data,const char* folder,const std::strin
     }
     return 0;
 }
+// The command-line paths end through Session::Exit before any UI exists: usage
+// and missing maps/sections fail, --save/--stamp/--bundle write and exit, and
+// --shot renders one frame of the real editor to a PNG.
+static int headlessWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-headless-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);SDL_setenv("XDG_CONFIG_HOME",root.string().c_str(),1);SDL_setenv("XDG_DATA_HOME",root.string().c_str(),1);
+    auto run=[](std::vector<std::string> args) {
+        args.insert(args.begin(),"cartographer");std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+        return cart::runEditor(int(raw.size()),raw.data());
+    };
+    auto written=[](const fs::path& path) {return fs::exists(path) && fs::file_size(path)>0;};
+    const auto vfs=tak::hpi::mountRetailRoot(data);cart::SectionLibrary sections;sections.scan(vfs,"zhon");
+    if(sections.list().empty()) {std::cerr<<"no zhon sections\n";return 1;}
+    const auto tnt=root/"Saved.tnt",stamped=root/"Stamped.tnt",kmp=root/"Saved.kmp",png=root/"shot.png";
+    std::string failure;auto check=[&](bool value,const char* message){if(!value && failure.empty())failure=message;};
+    check(run({"Ulasem Arena","--save",tnt.string()})==2,"no data root prints usage and exits 2");
+    check(run({"No Such Map Anywhere","--data",data,"--save",tnt.string()})==1 && !fs::exists(tnt),"a missing map exits 1 without writing");
+    check(run({"Ulasem Arena","--data",data,"--save",tnt.string()})==0 && written(tnt),"--save writes the map and exits 0");
+    check(run({"Ulasem Arena","--data",data,"--stamp","no such section","0","0","--save",stamped.string()})==1 && !fs::exists(stamped),"an unknown --stamp section exits 1");
+    check(run({"Ulasem Arena","--data",data,"--stamp",sections.list().front().name,"0","0","--save",stamped.string()})==0 && written(stamped),"--stamp edits, saves and exits 0");
+    check(run({"Ulasem Arena","--data",data,"--bundle",kmp.string()})==0 && written(kmp),"--bundle writes the KMP and exits 0");
+    check(run({"Ulasem Arena","--data",data,"--shot",png.string()})==0 && written(png),"--shot writes one frame and exits 0");
+    fs::remove_all(root);
+    if(!failure.empty()) {std::cerr<<"FAIL: "<<failure<<'\n';return 1;}
+    std::cout<<"PASS: headless exit codes, --save/--stamp/--bundle output and --shot capture\n";return 0;
+}
 int main(int argc,char** argv) {
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
@@ -799,6 +826,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="overlay")return overlayWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="generation")return generationWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="headless")return headlessWorkflow(argv[1]);
     if(argc!=2)return 2;
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-ui-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
