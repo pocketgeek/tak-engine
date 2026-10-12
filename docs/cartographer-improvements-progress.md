@@ -984,7 +984,16 @@ from the twin. Twins are found by name within the same category:
   `lft/rgt/top/btm` words are transformed.
 - Connection sets are reordered to match the shipped spelling.
 - A trailing non-direction letter (the exterior `e` of `nee01`, the `s` of
-  `1enstair`) is tried last.
+  `1enstair`) is kept literally. In a run of three or more letters whose last
+  letter no other name of the category varies, that comes before reordering
+  letters, so `nwe01` mirrors to `nee01` (not itself) and `1nestair` keeps its
+  stair side (`1sestair` top-bottom, not `1enstair`). Pairs try it last, since
+  `n|stair` and `we|clearing` cannot be told apart by name.
+- Mid-word runs are read three ways (`hwy|e_n01` joined, `corn|nw_ne` split).
+  A later reading replaces the plain one only when another name anchors each
+  mid-word run it turns, that is, puts a different direction letter at its
+  start (`hwyn_w01` anchors the `e` of `hwye_n01`; nothing anchors the `s` of
+  `trans_e01` or the `e` of `ne_gate_e`).
 - A token counts as a direction when it stands alone or when a transform turns
   it into another name family of the category (digits ignored, so `sclif4` is
   directional because `nclif1` exists).
@@ -1033,6 +1042,17 @@ remap, footprint origin, live mirroring, history grouping, the Ctrl+C
 interception, the world warning and the copied rectangle) each make a test
 fail. All 24 cartographer and scenario-placement tests pass. The symmetry unit
 tests also pass under AddressSanitizer/UBSan.
+
+Review fixes (same checkpoint): checking every twin against the inverse
+transform over all five worlds found 144 twins that did not map back. Zhon
+stairs flipped their stair side, Taros exterior corners (`nwe`/`swe`) were
+their own twins, and Taros highways and Zhon corner paths left mid-word letters
+unturned under turns. The rules above fix them; 24 remain (the Zhon `nstair` /
+`sstair` stairs, one Zhon corner path and the Taros canal ends `NEND`). The section matcher now
+rebuilds whenever the browser rescans, because File > Open frees the cached
+prefabs it pointed at. Dragging a unit together with its mirror no longer
+creates a second partner, because partners are now found in the pre-edit
+state.
 
 Limits: Clear Area, property edits and region edits are not mirrored live.
 Rule operands that name mirrored regions are not rewritten. Sections without a
