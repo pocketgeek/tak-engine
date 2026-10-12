@@ -148,8 +148,9 @@ weapon slots is **auto** or **manual**:
   weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not.
 
 Deviations: auto slots of ranged, non-lobbing ground weapons keep our 2D
-clear-shot test (retail has none); turn-rate terrain multipliers, `shootme`
-and parts of the stone/freeze/paralyze immunity checks are not modelled.
+clear-shot test (retail has none); turn-rate terrain multipliers and parts of
+the stone/freeze/paralyze immunity checks are not modelled. `shootme` is: a
+human-owned shooter never auto-picks a type without it (protocol 253).
 
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 
