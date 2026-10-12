@@ -1741,7 +1741,8 @@
         // Control-squad marker: retail-style bright-green number centred BELOW the
         // unit (under where the selection ring/bar sits), "<N>F" for a formation.
         // The number is the recall key (squad 10 shows as "0"). Skipped when zoomed
-        // far out so it doesn't clutter the field.
+        // far out so it doesn't clutter the field. Drawn in FLAT green: tinting the
+        // shaded tan glyph art gave a dark, mottled outline that was hard to read.
         if (hudFont_.ok() && zm > 0.55f)
             for (const UnitR* _up : front().live) {
                 const UnitR& u = *_up;
@@ -1759,8 +1760,8 @@
                 if (cx < -20 || cx > mvw + 20 || cy < -30 || cy > winH + 30) continue;
                 float sc = std::clamp(1.1f * zm, 0.9f, 1.7f);
                 float tw = float(hudFont_.width(lbl, sc));
-                hudFont_.draw(ren_, lbl, cx - tw / 2, cy, sc,
-                              SDL_Color{70, 240, 90, 255});   // the selection-UI green
+                hudFont_.drawSolid(ren_, lbl, cx - tw / 2, cy, sc,
+                                   SDL_Color{70, 240, 90, 255});   // the selection-UI green
             }
 
         // Production progress above busy buildings -- viewport-culled and batched

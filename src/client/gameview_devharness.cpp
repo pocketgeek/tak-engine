@@ -65,8 +65,50 @@
             if (!on) check(gpuvram::bytes() == bytes && gpuvram::count() == count,
                            "HUD smoothing leaks textures");
         }
+        // The squad marker's drawSolid(): every fully covered pixel is exactly the
+        // requested colour, and (unsmoothed) it covers the same pixels as the tinted
+        // draw(). The tinted draw is checked to be MULTI-coloured, so the test would
+        // catch the marker going back to the shaded glyph art.
+        const SDL_Color green{70, 240, 90, 255};
+        const auto render = [&](bool solid, float scale) {
+            const int tw = 96, th = 48;
+            SDL_Texture* rt = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, tw, th);
+            check(rt, "solid-text render target");
+            SDL_Texture* prev = SDL_GetRenderTarget(ren_);
+            SDL_SetRenderTarget(ren_, rt);
+            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0); SDL_RenderClear(ren_);
+            if (solid) hudFont_.drawSolid(ren_, "2F0", 4, 30, scale, green);
+            else hudFont_.draw(ren_, "2F0", 4, 30, scale, green);
+            std::vector<uint8_t> px(size_t(tw) * th * 4);
+            SDL_RenderReadPixels(ren_, nullptr, SDL_PIXELFORMAT_RGBA32, px.data(), tw * 4);
+            SDL_SetRenderTarget(ren_, prev);
+            gpuvram::destroy(rt);
+            return px;
+        };
+        for (bool on : {false, true}) {
+            s.smoothArt = on; applySettings(s);
+            for (float scale : {1.0f, 1.7f}) {
+                const auto solid = render(true, scale), tinted = render(false, scale);
+                size_t opaque = 0, sameCover = 0, covered = 0, offColour = 0;
+                std::set<uint32_t> tintedColours;
+                for (size_t p = 0; p < solid.size(); p += 4) {
+                    if (solid[p + 3] == 255) {
+                        ++opaque;
+                        if (solid[p] != green.r || solid[p + 1] != green.g || solid[p + 2] != green.b) ++offColour;
+                    }
+                    if (tinted[p + 3] == 255)
+                        tintedColours.insert(uint32_t(tinted[p]) << 16 | uint32_t(tinted[p + 1]) << 8 | tinted[p + 2]);
+                    if (solid[p + 3] || tinted[p + 3]) { ++covered; sameCover += (solid[p + 3] > 0) == (tinted[p + 3] > 0); }
+                }
+                check(opaque > 40, "solid text drew nothing");
+                check(offColour == 0, "solid text is not one flat colour");
+                check(tintedColours.size() > 4, "tinted glyph art is unexpectedly flat (fixture lost its contrast)");
+                if (!on && scale == 1.0f) check(sameCover == covered, "solid text changed the glyph shapes");
+            }
+        }
         s.smoothArt = initial; applySettings(s);
         std::puts("PASS: HUD smoothing applies live, keeps layout/state and releases textures");
+        std::puts("PASS: solid HUD text is one flat colour in the glyph shapes");
     }
 
     void GameView::setupScenario() {
@@ -194,17 +236,29 @@
             // Showcase: skip the slow build-up and pit two ready armies at the
             // start positions against each other.
             std::vector<int> playerA, playerB;
+            // TAK_SHOT_SQUADS=1: a still life for the under-unit squad marker -- the
+            // first three troops in control group 1, the rest in formation 2, the
+            // monarch in group 10 ("0"), spread out with no keeps and no attack orders
+            // so the labels neither overlap nor walk away.
+            const bool squadShot = tak::devFlag("TAK_SHOT_SQUADS");
+            const float sp = squadShot ? 2.5f : 1.0f;
             for (int i = 0; i < 6; ++i) {
-                int a = spawn(pk.squad[i % 4], px + float(i % 2) * 26,
-                              pz - 60 + float(i / 2) * 30, pFace, 0);
+                int a = spawn(pk.squad[i % 4], px + float(i % 2) * 26 * sp + (sp - 1) * 40,
+                              pz - 60 * sp + float(i / 2) * 30 * sp, pFace, 0);
                 int b = spawn(ak.squad[i % 4], ax + float(i % 2) * 26,
                               az - 60 + float(i / 2) * 30, aFace, 1);
                 if (a >= 0) playerA.push_back(a);
                 if (b >= 0) playerB.push_back(b);
             }
-            if (pk.keep[0]) keepId_ = spawn(pk.keep, px, pz + 60, pFace, 0);
-            if (ak.keep[0]) aiKeepId_ = spawn(ak.keep, ax, az + 60, aFace, 1);
-            if (!playerA.empty() && !playerB.empty()) {
+            if (pk.keep[0] && !squadShot) keepId_ = spawn(pk.keep, px, pz + 60, pFace, 0);
+            if (ak.keep[0] && !squadShot) aiKeepId_ = spawn(ak.keep, ax, az + 60, aFace, 1);
+            if (squadShot) {
+                for (size_t k = 0; k < playerA.size(); ++k)
+                    writableWorld().unit(playerA[k])->squad = k < 3 ? 1 : -2;
+                if (auto* m = writableWorld().unit(playerMonarchId_)) m->squad = 10;
+                std::fprintf(stderr, "squad shot: player army at %.0f %.0f\n", px, pz);
+            }
+            if (!squadShot && !playerA.empty() && !playerB.empty()) {
                 for (size_t k = 0; k < playerA.size(); ++k)
                     writableWorld().attack(playerA[k], playerB[k % playerB.size()], false);
                 for (size_t k = 0; k < playerB.size(); ++k)
@@ -214,7 +268,7 @@
             // conjure/build menu and the info bar shows the portrait (a fuller HUD for
             // screenshots). Harmless otherwise -- demo is a dev/showcase mode.
             if (keepId_ >= 0) selectOnly(keepId_);
-            else if (!playerA.empty()) selectOnly(playerA.front());
+            else if (!playerA.empty() && !squadShot) selectOnly(playerA.front());
         }
         }
         return false;

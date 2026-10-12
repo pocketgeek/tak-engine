@@ -43,12 +43,22 @@ public:
     void draw(SDL_Renderer* ren, const std::string& text, float x, float y,
               float scale = 1, SDL_Color tint = {255, 255, 255, 255}) const;
 
+    // draw() in one flat colour: every opaque pixel of the glyph becomes exactly
+    // `color`. The retail glyph art is shaded tan, so a tint through draw() comes out
+    // a mottled, dark-edged version of the colour that is hard to read over terrain
+    // (the under-unit squad marker); this keeps the same shapes, size and placement.
+    void drawSolid(SDL_Renderer* ren, const std::string& text, float x, float y,
+                   float scale, SDL_Color color) const;
+
 private:
     struct Glyph {
         SDL_Texture* tex = nullptr;
+        SDL_Texture* mask = nullptr;   // the glyph's coverage in white, for drawSolid()
         int w = 0, h = 0, yoff = 0;
     };
     float advance(const Glyph& g) const;
+    void drawWith(SDL_Renderer* ren, const std::string& text, float x, float y,
+                  float scale, SDL_Color tint, bool solid) const;
     float letterSpacing_ = 2;
     Glyph glyphs_[256] = {};
     bool ok_ = false;

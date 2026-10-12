@@ -43,6 +43,9 @@ Font::Font(SDL_Renderer* ren, const tak::hpi::Vfs& vfs, const std::string& gafPa
             // Glyphs are the smallest art in the game (a few px tall) and the HUD
             // magnifies them, so they stair-step as badly as anything.
             g.tex = tak::art::makeTexture(ren, f.rgba, f.width, f.height);
+            std::vector<uint8_t> mask = f.rgba;
+            for (size_t p = 0; p + 3 < mask.size(); p += 4) mask[p] = mask[p + 1] = mask[p + 2] = 255;
+            g.mask = tak::art::makeTexture(ren, mask, f.width, f.height);
         }
         loaded.glyphs_[i] = g;
     }
@@ -77,13 +80,24 @@ void Font::vbounds(const std::string& text, float scale, float& topOff, float& h
 
 void Font::draw(SDL_Renderer* ren, const std::string& text, float x, float y,
                 float scale, SDL_Color tint) const {
+    drawWith(ren, text, x, y, scale, tint, false);
+}
+
+void Font::drawSolid(SDL_Renderer* ren, const std::string& text, float x, float y,
+                     float scale, SDL_Color color) const {
+    drawWith(ren, text, x, y, scale, color, true);
+}
+
+void Font::drawWith(SDL_Renderer* ren, const std::string& text, float x, float y,
+                    float scale, SDL_Color tint, bool solid) const {
     for (unsigned char c : text) {
         const Glyph& g = glyphs_[c];
         // Some fonts have a visible space glyph (a dot) — never draw it.
-        if (g.tex && c != ' ') {
-            SDL_SetTextureColorMod(g.tex, tint.r, tint.g, tint.b);
+        if (SDL_Texture* t = solid ? g.mask : g.tex; t && c != ' ') {
+            SDL_SetTextureColorMod(t, tint.r, tint.g, tint.b);
+            if (solid) SDL_SetTextureAlphaMod(t, tint.a);
             SDL_FRect dst{x, y - g.yoff * scale, g.w * scale, g.h * scale};
-            SDL_RenderCopyF(ren, g.tex, nullptr, &dst);
+            SDL_RenderCopyF(ren, t, nullptr, &dst);
         }
         x += advance(g) * scale;
     }
@@ -92,7 +106,9 @@ void Font::draw(SDL_Renderer* ren, const std::string& text, float x, float y,
 float Font::advance(const Glyph& g) const { return g.w > 0 ? g.w + letterSpacing_ : 4.0f; }
 
 void Font::destroyGlyphs() {
-    for (auto& g : glyphs_)
+    for (auto& g : glyphs_) {
         if (g.tex) { gpuvram::destroy(g.tex); g.tex = nullptr; }
+        if (g.mask) { gpuvram::destroy(g.mask); g.mask = nullptr; }
+    }
     ok_ = false;
 }
