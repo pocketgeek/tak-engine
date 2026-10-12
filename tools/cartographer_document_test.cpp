@@ -89,10 +89,31 @@ static void symmetryTests() {
     check(cart::sectionTwinName("trans_e01","Low Roads",roads,Xf::Rot90)=="trans_s01","letters inside words are not directions");
     check(cart::sectionTwinName("nee01","Low Roads",roads,Xf::FlipX)=="nwe01","exterior suffix is kept");
     check(cart::sectionTwinName("y_n_lft","Low Roads",roads,Xf::FlipX)=="y_n_rgt","left/right words swap");
+    // Letter order and readings, from the shipped Zhon/Taros/Creon names.
+    const std::vector<std::string> stairs={"1enstair","1esstair","1nestair","1nwstair","1sestair","1swstair","1wnstair","1wsstair","1nex","1ne"};
+    check(cart::sectionTwinName("1nestair","Low Plazas",stairs,Xf::FlipZ)=="1sestair" && cart::sectionTwinName("1enstair","Low Plazas",stairs,Xf::FlipZ)=="1esstair",
+          "a stair keeps its side: the s of stair is not a direction");
+    check(cart::sectionTwinName("1enstair","Low Plazas",stairs,Xf::Rot180)=="1wsstair","half turn keeps the stair side order");
+    const std::vector<std::string> exterior={"nee01","nwe01","see01","swe01","ne01","nw01","se01","sw01"};
+    check(cart::sectionTwinName("nwe01","Coast Cliffs",exterior,Xf::FlipX)=="nee01" && cart::sectionTwinName("swe01","Coast Cliffs",exterior,Xf::Rot180)=="nee01",
+          "an exterior corner is not permuted back into itself");
+    const std::vector<std::string> highways={"hwye_n01","hwye_s01","hwyn_w01","hwys_w01","hwye_w01","hwyn_s01"};
+    check(cart::sectionTwinName("hwye_n01","Low Roads",highways,Xf::Rot180)=="hwys_w01","an anchored mid-word run turns with the rest");
+    const std::vector<std::string> corners={"cornne","cornnw","cornse","cornsw","cornne_se","cornne_sw","cornnw_ne","cornnw_se","cornnw_sw","cornse_sw","cornall"};
+    check(cart::sectionTwinName("cornnw_ne","Low Paths",corners,Xf::FlipZ)=="cornse_sw" && cart::sectionTwinName("cornse","Low Paths",corners,Xf::Rot180)=="cornnw",
+          "the n of corn stays with its word");
+    const std::vector<std::string> patches={"patchne","patchnw","patchse","patchsw","patchns","patchwe"};
+    check(cart::sectionTwinName("patchne","Low Paths",patches,Xf::Rot180)=="patchsw","a run is not split when its first letter varies");
+    const std::vector<std::string> gates={"ne_gate_e","ne_gate_n","nw_gate_n","nw_gate_w","se_gate_e","se_gate_s","sw_gate_s","sw_gate_w"};
+    check(cart::sectionTwinName("ne_gate_e","Towns",gates,Xf::Rot180)=="sw_gate_w" && cart::sectionTwinName("ne_gate_n","Towns",gates,Xf::Rot90)=="se_gate_e",
+          "the e of gate is not a direction");
     check(!cart::sectionTwinName("ariver01a","Low Rivers",{"ariver01a","ariver01b"},Xf::FlipX),"direction-free specials have no twin");
     check(cart::sectionTwinName("cobb_80","Low Flats",{"cobb_80"},Xf::Rot90)=="cobb_80","direction-free flat ground is its own twin");
 
     // Terrain attribution and twins on a synthetic library.
+    // A rescan frees the cached prefabs, so the editor rebuilds its matcher.
+    {tak::hpi::Vfs none;cart::SectionLibrary library;const auto generation=library.generation();library.scan(none,"zhon");
+     check(library.generation()!=generation,"a section rescan is visible to the matcher's owner");}
     const auto ne=prefab(100,10),nw=prefab(200,40),river=prefab(300,70),flat=blankMap(2,2);
     std::vector<cart::SectionRef> refs{{"Cliffs","ne01","a"},{"Cliffs","nw01","b"},{"Rivers","river01","c"},{"Low Flats","flat01","d"}};
     const tak::tnt::Map* prefabs[]={&ne,&nw,&river,&flat};
@@ -143,6 +164,8 @@ static void symmetryTests() {
     check(cart::mirrorUnitEdits(before,live,Mirror::Vertical,{},16,8).copies==1 && live.size()==2 && live[1].x==13*16+8,"placing a unit places its mirror");
     before=live;live[0].x+=16;
     check(cart::mirrorUnitEdits(before,live,Mirror::Vertical,{},16,8).copies==0 && live.size()==2 && live[1].x==12*16+8,"moving a unit moves its mirror in place");
+    auto dragged=live;dragged[0].x+=32;dragged[1].x+=32;   // a selection holding both partners
+    check(cart::mirrorUnitEdits(live,dragged,Mirror::Vertical,{},16,8).copies==0 && dragged.size()==2 && dragged[1].x==14*16+8,"dragging a unit with its mirror adds no partner");
     before=live;live.erase(live.begin());
     cart::mirrorUnitEdits(before,live,Mirror::Vertical,{},16,8);
     check(live.empty(),"erasing a unit erases its mirror");

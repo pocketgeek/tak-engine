@@ -36,7 +36,7 @@ const char* wordFor(char direction,int family) {
     for(const auto& word:kWords)if(word.direction==direction && (word.family==family || (family==2 && word.family==0)))return word.text;
     return "";
 }
-struct Token {size_t pos=0,len=0;bool word=false,clean=false;int family=0;};
+struct Token {size_t pos=0,len=0;bool word=false,clean=false;int family=0;bool tail=false;};
 // Mode 0 joins underscore runs (e_n_s) only at word starts, so the "ns" of
 // trans_e01 stays apart; mode 1 also joins mid-word runs (hwye_n01); mode 2
 // leaves the first letter of a mid-word run to its word (cornne_se).
@@ -81,8 +81,13 @@ std::vector<std::string> tokenVariants(const std::string& text,const Token& toke
     add(mapped);
     const bool separated=text.find('_')!=std::string::npos;
     // The last letter may not be a direction: the exterior "e" of nee01/nwe01
-    // or the "s" of stair in 1enstair. Keeping it literally is the last resort.
+    // or the "s" of stair in 1enstair. Keeping it literally is the last resort,
+    // except in a run of three or more whose last letter no other name of the
+    // category turns (`Token::tail`): there it comes before reordering, since
+    // a permutation turns nwe01 back into itself and 1nestair (stair on the
+    // north side) into 1enstair (east side).
     const bool tail=!separated && text.size()>=2;
+    if(tail && token.tail && mapped.substr(0,mapped.size()-1)+text.back()!=text)add(mapped.substr(0,mapped.size()-1)+text.back());
     if(separated) {
         std::vector<std::string> groups;size_t start=0;
         for(size_t i=0;i<=mapped.size();++i)if(i==mapped.size() || mapped[i]=='_') {groups.push_back(mapped.substr(start,i-start));start=i+1;}
@@ -270,9 +275,19 @@ std::optional<std::string> sectionTwinName(const std::string& name,const std::st
     const auto source=lower(name);
     auto exists=[&](const std::string& candidate){return std::find(categoryNames.begin(),categoryNames.end(),candidate)!=categoryNames.end();};
     std::set<std::string> families;for(const auto& other:categoryNames)families.insert(digitless(other));
-    std::optional<std::string> self;std::vector<Token> previous;
+    // A mid-word run is anchored when another name of the category puts a
+    // different direction letter at its start: hwyn_w01 anchors the "e" of
+    // hwye_n01, while no "tra?" name anchors the "s" of trans_e01.
+    auto anchored=[&](size_t pos) {
+        return std::any_of(categoryNames.begin(),categoryNames.end(),[&](const std::string& other) {
+            return other.size()>pos && other.compare(0,pos,source,0,pos)==0 && directionChar(other[pos]) && other[pos]!=source[pos];
+        });
+    };
+    std::optional<std::string> self,first,best;std::vector<Token> previous;
     for(int mode=0;mode<3;++mode) {
-        const auto tokens=directionTokens(source,mode);
+        auto tokens=directionTokens(source,mode);
+        // Only runs of three or more: a pair is ambiguous (n|stair, we|clearing).
+        for(auto& token:tokens)token.tail=!token.word && token.len>=3 && !anchored(token.pos+token.len-1);
         if(mode && tokens.size()==previous.size() && std::equal(tokens.begin(),tokens.end(),previous.begin(),[](const Token& a,const Token& b){return a.pos==b.pos && a.len==b.len;}))continue;
         previous=tokens;
         auto text=[&](const Token& t){return source.substr(t.pos,t.len);};
@@ -314,10 +329,22 @@ std::optional<std::string> sectionTwinName(const std::string& name,const std::st
         }
         // An unchanged name can mean the tokens were misread (hwye_n01 under
         // a left-right mirror), so a different twin from a later reading wins.
-        if(found && *found!=source)return found;
-        if(found && !self)self=found;
+        // A later reading also overrides a different twin when every mid-word
+        // run it turns is anchored and the letter it leaves to the word is not:
+        // mode 0 leaves the "e" of hwye_n01 and the "nw" of cornnw_ne unturned
+        // under a half turn, while patchne's "n" belongs to the run (patchse).
+        if(found && *found!=source) {
+            bool sure=false;
+            for(size_t i=0;i<tokens.size() && mode>0;++i)if(const size_t pos=tokens[i].pos;real[i] && pos>0 && letter(source[pos-1])) {
+                sure=anchored(pos) && !(directionChar(source[pos-1]) && anchored(pos-1));   // corn|ne, not patc|hne
+                if(!sure)break;
+            }
+            if(!first)first=found;
+            else if(sure && !best && *found!=*first)best=found;
+        }
+        if(found && *found==source && !self)self=found;
     }
-    return self;
+    return best?best:first?first:self;
 }
 
 void SectionMatcher::build(const std::vector<SectionRef>& refs,const Loader& load) {
@@ -593,11 +620,17 @@ LiveMirrorResult mirrorUnitEdits(const std::vector<PlacedUnit>& before,std::vect
     if(units.size()==before.size()) {
         std::set<size_t> changed;
         for(size_t i=0;i<units.size();++i)if(!sameUnit(units[i],before[i]))changed.insert(i);
+        // Partners are found where they were: a selection holding both a unit
+        // and its mirror moves both before this runs.
+        auto partnerBefore=[&](const PlacedUnit& unit,const PlacedUnit& image,size_t self)->int {
+            for(size_t j=0;j<before.size();++j)if(j!=self && before[j].type==unit.type && samePlace(before[j],image.x,image.z))return int(j);
+            return -1;
+        };
         for(size_t i:changed)for(Xf xf:images) {
             const auto oldImage=mirrorUnit(before[i],xf,width,height);
             // A unit leaving the axis (its own image) gains a copy like any other.
             const bool axis=oldImage && samePlace(before[i],oldImage->x,oldImage->z);
-            const int j=oldImage && !axis?partner(before[i],*oldImage,i):-1;
+            const int j=oldImage && !axis?partnerBefore(before[i],*oldImage,i):-1;
             if(j>=0 && changed.count(size_t(j)))continue;   // the partner is moved explicitly too
             if(j<0) {addCopy(units[i],xf,i);continue;}      // a moved unit gains missing partners
             if(const auto image=mirrorUnit(units[i],xf,width,height)) {

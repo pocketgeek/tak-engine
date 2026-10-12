@@ -453,7 +453,7 @@ struct Editor : Session {
     std::vector<MapIssue> symmetryIssues;      // unmirrored terrain from the last Symmetrize
     std::vector<std::string> symmetryKindOpts,symmetrySourceOpts;
     const std::vector<std::string> symmetryTerrainOpts={"MIRROR SECTION TWINS","LEAVE TERRAIN"};
-    cart::SectionMatcher sectionMatcher;
+    cart::SectionMatcher sectionMatcher;unsigned sectionMatcherGeneration=0;
     const cart::SectionMatcher& symmetrySections();   // built lazily per world
     cart::FootprintLookup featureFootprint();
     bool symmetryFits(cart::Mirror) const;            // square-only kinds on square maps

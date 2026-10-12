@@ -9,7 +9,7 @@ namespace cart {
 
 void SectionLibrary::scan(const tak::hpi::Vfs& vfs, const std::string& world) {
     sections_.clear();
-    cache_.clear();
+    cache_.clear();++generation_;
     std::string normalized=world;
     std::transform(normalized.begin(),normalized.end(),normalized.begin(),[](unsigned char c){return char(std::tolower(c));});
     std::string root = "sections/" + normalized + "/";   // VFS keys are lowercased

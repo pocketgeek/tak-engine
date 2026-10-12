@@ -28,8 +28,11 @@ public:
     const std::vector<SectionRef>& list() const { return sections_; }
     // Load (and cache) a prefab by VFS path; nullptr if it won't parse.
     const tak::tnt::Map* load(const tak::hpi::Vfs& vfs, const std::string& path);
+    // Bumped by scan(), which frees every map load() returned.
+    unsigned generation() const { return generation_; }
 
 private:
+    unsigned generation_ = 0;
     std::vector<SectionRef> sections_;
     std::map<std::string, tak::tnt::Map> cache_;
 };

@@ -17,15 +17,16 @@ const char* kSelectionSource="CURRENT SELECTION";
 }
 
 const cart::SectionMatcher& cart::Editor::symmetrySections() {
-    // Rebuilt when the browser rescans (another world, or a reopened library
-    // whose cached prefabs were replaced); the key survives same-world opens.
+    // Rebuilt whenever the browser rescans: scan() frees the cached prefabs
+    // the matcher points at. The key (clipboard section indices) survives
+    // same-world opens.
     const auto& list=sections.list();
     const std::string key=lowerText(world)+":"+std::to_string(list.size())+(list.empty()?"":":"+list.front().path+":"+list.back().path);
-    const auto* first=list.empty()?nullptr:sections.load(vfs,list.front().path);
-    if(!sectionMatcher.built() || sectionMatcher.key()!=key || sectionMatcher.section(0)!=first) {
+    if(!sectionMatcher.built() || sectionMatcherGeneration!=sections.generation()) {
         sectionMatcher.build(list,[&](size_t i){return sections.load(vfs,list[i].path);});
-        sectionMatcher.setKey(key);
+        sectionMatcherGeneration=sections.generation();
     }
+    sectionMatcher.setKey(key);
     return sectionMatcher;
 }
 
