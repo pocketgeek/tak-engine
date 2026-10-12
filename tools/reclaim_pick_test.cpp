@@ -41,6 +41,10 @@ int main()try {
         check(reclaimFootprintInBox(10,10,3,3,0.f,160.f,0.f,160.f),"box edge on the anchor cell's first pixel counts");
         check(!reclaimFootprintInBox(10,10,3,3,208.f,300.f,0.f,300.f),"the pixel past the footprint belongs to the next cell");
         check(reclaimFootprintInBox(10,10,3,3,207.f,300.f,0.f,300.f),"the footprint's last pixel counts");
+        // The sim samples every 16px from the box's min corner: a box 150..161 samples
+        // x=150 only (cell 9), so the footprint it grazes at 160..161 is not cleared.
+        check(!reclaimFootprintInBox(10,10,3,3,150.f,161.f,0.f,300.f),"a cell grazed past the last sample is not taken");
+        check(reclaimFootprintInBox(10,10,3,3,150.f,166.f,0.f,300.f),"the next sample (166) lands in the footprint");
     }
     std::puts("reclaim_pick: ok");
     return 0;

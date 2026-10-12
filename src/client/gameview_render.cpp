@@ -1506,6 +1506,10 @@
             // Same reclaimable predicate as the click (reclaimTargetAt) and the same
             // footprint-cell selection as the sim's tickReclaimArea.
             const int mapW = mapView_.map().width;
+            // The sim clamps the box to the map before sampling it from the min corner.
+            const float limX = float(std::max(0, mapW - 1) * 16), limZ = float(std::max(0, mapView_.map().height - 1) * 16);
+            minx = std::clamp(minx, 0.f, limX); maxx = std::clamp(maxx, 0.f, limX);
+            minz = std::clamp(minz, 0.f, limZ); maxz = std::clamp(maxz, 0.f, limZ);
             auto mark = [&](float x, float z) {
                 float fsx = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
                 float fsy = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;

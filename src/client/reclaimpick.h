@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 
 namespace tak::client {
@@ -30,14 +31,20 @@ struct ReclaimPick {
     }
 };
 
-// Area preview: does a footprint of 16px cells [cx,cx+fx) x [cz,cz+fz) touch the
-// world box? The sim's tickReclaimArea resolves the area to footprint CELLS (via the
-// placement cell's back-offset to the anchor), so a multi-cell tree whose centre lies
-// outside the box is still cleared when one of its cells is inside -- the preview
-// marks what the sim will take, not just centres.
+// Area preview: does the sim's sampling of the box land in a footprint of 16px cells
+// [cx,cx+fx) x [cz,cz+fz)? tickReclaimArea samples the box every 16px from its min
+// corner (retailReclaimAreaTarget) and resolves each sample's cell back to its anchor,
+// so a multi-cell tree whose centre lies outside the box is still cleared when a
+// sample hits one of its cells -- and a cell the box only grazes past the last sample
+// is NOT. Per axis: the first sample at or after the footprint's first pixel must
+// still be inside both the box and the footprint.
+inline bool reclaimSampleHits(int c,int f,float lo,float hi) {
+    const float start=float(c*16);
+    const float s=lo>=start?lo:lo+16.f*std::ceil((start-lo)/16.f);
+    return s<=hi && s<float((c+f)*16);
+}
 inline bool reclaimFootprintInBox(int cx,int cz,int fx,int fz,float minx,float maxx,float minz,float maxz) {
-    return float(cx*16)<=maxx && float((cx+fx)*16)>minx &&
-           float(cz*16)<=maxz && float((cz+fz)*16)>minz;
+    return reclaimSampleHits(cx,fx,minx,maxx) && reclaimSampleHits(cz,fz,minz,maxz);
 }
 
 }
