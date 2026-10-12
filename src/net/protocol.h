@@ -19,7 +19,9 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 253;      // 253: shootme -- the fire-at-will sweep's selector skips types without
+constexpr uint32_t kNetVersion = 254;      // 254: Legion formation flyers station over the front of mixed squads (flyer stations/positions/order point;
+                                           //      Legion-only, retail unchanged)
+                                           // 253: shootme -- the fire-at-will sweep's selector skips types without
                                            //      shootme=1 for human-owned shooters (aranull, cregate, npcflag)
                                            // 252: retail fire-at-will sweep (icd 40f330/412620). Weapon slots carry an auto/manual mode
                                            //      and a swept target (hashed Unit::slotTarget/slotAuto/slotManual/faceRequest,
