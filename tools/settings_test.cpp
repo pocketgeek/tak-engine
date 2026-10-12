@@ -51,7 +51,8 @@ int main() {
     flips("ignoreDpiScaling",[](Settings& s) { s.ignoreDpiScaling = !s.ignoreDpiScaling; });
     flips("dpiMigrated",     [](Settings& s) { s.dpiMigrated = !s.dpiMigrated; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
-    flips("bilinear",        [](Settings& s) { s.bilinear = !s.bilinear; });
+    flips("textureFilter",   [](Settings& s) { s.textureFilter = (s.textureFilter + 1) % 3; });
+    flips("textureFilter 2", [](Settings& s) { s.textureFilter = 2; });
     flips("buildBarAlign",   [](Settings& s) { s.buildBarAlign = (s.buildBarAlign + 1) % 3; });
     flips("buildBarScale",   [](Settings& s) { s.buildBarScale += 0.25f; });
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
@@ -155,7 +156,7 @@ int main() {
         cur.videoDeblock = true;
         cur.masterVol = 7;
         cur.uiScale = 1.75f;
-        cur.bilinear = !cur.bilinear;
+        cur.textureFilter = 2;
         cur.tacticalDots = true;
         cur.renderer = "opengles2";
 
@@ -185,7 +186,7 @@ int main() {
         reset("videoDeblock",     d.videoDeblock == fresh.videoDeblock);
         reset("masterVol",        d.masterVol == fresh.masterVol);
         reset("uiScale",          d.uiScale == fresh.uiScale);
-        reset("bilinear",         d.bilinear == fresh.bilinear);
+        reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 0);
         reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && !d.tacticalDots);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
 
@@ -227,6 +228,24 @@ int main() {
         tak::applyDpiMigration(h, 1.0f);
         check("dpi: 100% untouched", h.uiScale == 1.0f && h.cursorScale == 1);
         check("dpi: defaults keep flag", tak::preferenceDefaults(s).dpiMigrated);
+    }
+
+    // Texture Filtering migration (resolveTextureFilter; -1 = key absent). The new key
+    // wins; a file from before it maps the old Bilinear Filtering toggle onto Off/Units
+    // (Units is exactly what that toggle smoothed), then the older 0.7.24 keys.
+    {
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        using tak::resolveTextureFilter;
+        check("tf: default Off", Settings{}.textureFilter == 0 && resolveTextureFilter(-1, -1, -1, -1) == 0);
+        check("tf: new key wins", resolveTextureFilter(2, 0, 0, 0) == 2 && resolveTextureFilter(0, 1, 1, 1) == 0);
+        check("tf: new key clamps", resolveTextureFilter(9, -1, -1, -1) == 2);
+        check("tf: bilinear 0 -> Off", resolveTextureFilter(-1, 0, 1, 1) == 0);
+        check("tf: bilinear 1 -> Units", resolveTextureFilter(-1, 1, -1, -1) == 1);
+        check("tf: old zoom smooth", resolveTextureFilter(-1, -1, 0, 1) == 1 && resolveTextureFilter(-1, -1, 1, 0) == 0);
+        check("tf: 0.7.24 bilinear", resolveTextureFilter(-1, -1, 1, -1) == 1 && resolveTextureFilter(-1, -1, 0, -1) == 0);
     }
 
     std::printf(g_fail ? "settings_test: %d FAILURE(S)\n" : "settings_test: all passed\n",

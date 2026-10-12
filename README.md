@@ -977,13 +977,16 @@ and camera behavior. **F4 Scorecard Scale** independently adjusts the player
 scorecard from 75–200% and is remembered between sessions. Fullscreen, VSync, Shadows, Stats Panel, Hardware Cursor,
 and Smooth Motion default to **on**; saved choices still apply. **Max FPS** caps
 the frame rate only while VSync is off, and is greyed out while VSync is on.
-The **Graphics** section holds **Renderer**, **Bilinear Filtering**, Shadows,
+The **Graphics** section holds **Renderer**, **Texture Filtering**, Shadows,
 **Smooth GUI Art**, **Smooth Movies**, Trees Sway in Wind, Tactical Dots,
-Hardware Cursor and Smooth Motion. Bilinear Filtering, Smooth GUI Art and Smooth Movies are **off** by
-default and remembered. Bilinear Filtering is
-retail's Visual Options filter: it smooths unit model textures and unit shadows,
-and nothing else; terrain and scenery stay point-sampled at every zoom, as in
-retail. Smooth GUI Art applies immediately to the current interface, fonts,
+Hardware Cursor and Smooth Motion. Texture Filtering, Smooth GUI Art and Smooth Movies are **off** by
+default and remembered. Texture Filtering applies to the game area only and has
+three levels: **Off** (retail's look, everything point-sampled), **Units**
+(retail's Visual Options Bilinear Filter: unit model textures and unit shadows
+only) and **Everything** (Units, plus terrain, scenery and effect sprites once
+zoomed in past 150%; a non-retail extension, since retail had no camera zoom).
+A saved Bilinear Filtering choice from an older version loads as Off or Units.
+Smooth GUI Art applies immediately to the current interface, fonts,
 cursors and build-menu portraits without a restart. On Windows, **Ignore Windows
 Display Scaling** (default **on**, applied after a restart) draws at the real
 screen resolution instead of letting Windows stretch the game blurrily; the first

@@ -211,7 +211,7 @@
         uiScale_ = s.uiScale;
         buildBarAlign_ = std::clamp(s.buildBarAlign, 0, 2);   // Options: build-menu row
         buildBarScale_ = std::clamp(s.buildBarScale, 0.75f, 4.0f);
-        setBilinear(s.bilinear);
+        setTextureFilter(s.textureFilter);
         healthBars_ = std::clamp(s.healthBars, 0, 2);
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
         tacticalDotsOpt_ = s.tacticalDots;                // Options: zoomed-out unit dots
@@ -477,6 +477,7 @@
 
     void GameView::lookAt(float x, float z) {
         initialCamera_.reset();
+        follow_ = false;   // an explicit view (--follow Z --look X Z = a fixed camera at zoom Z)
         mapView_.setOffset(x - 640 / mapView_.zoom(), z - 400 / mapView_.zoom());
     }
 
@@ -1677,6 +1678,7 @@
         }
 
         mapView_.ensureChunks(mapViewW(winW), winH);
+        updateWorldFilter();   // after the camera settles, before anything draws
         if (!miniTex_) buildMinimap();
         // Listener = the camera view (the map viewport), so positional sounds pan by
         // where the source sits on SCREEN, not by its absolute map position. This

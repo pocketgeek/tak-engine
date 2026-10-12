@@ -78,6 +78,7 @@ private:
         std::function<std::vector<std::string>()> options;   // Dropdown: the choices
         std::function<std::string()> note;       // Dropdown: optional status beside the label
         std::function<bool()> enabled;           // Slider: unset = always; false = greyed, ignores input
+        std::function<std::vector<std::string>()> help;   // optional lines shown while hovered
         SDL_FRect row{};                          // filled by layout()
     };
 
@@ -130,6 +131,8 @@ private:
     float scroll_ = 0;      // content scroll offset (px)
     float contentH_ = 0;    // total laid-out content height
     int drag_ = -1;         // index of the slider being dragged, or -1
+    float hoverX_ = -1, hoverY_ = -1;   // last pointer position (help text for the row under it)
+    void drawHelp(const Control& c);    // the hovered row's help lines in a box beside it
     int openDrop_ = -1;     // index of the open Dropdown control (-1 = none)
     float dropScroll_ = 0;  // scroll offset (px) INSIDE the open dropdown's option list
     std::vector<std::string> devSnapshot_;   // output devices ([0]="" system default, rest A-Z)

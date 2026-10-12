@@ -69,8 +69,12 @@ public:
 
     void draw(int winW, int winH);
 
-    // Bilinear terrain scaling (retail's video option). Applies to already-built
-    // chunk textures immediately and to every chunk composited afterwards.
+    // Linear terrain sampling (GameView's Texture Filtering = Everything while zoomed
+    // in; the Cartographer always). Applies to already-built chunk and section textures
+    // immediately and to every one built afterwards. Chunks carry a one-texel gutter of
+    // real neighbouring terrain; fallback tiles sample to the true edge where the
+    // neighbour is the adjoining crop of the same section, and blend an apron of the
+    // neighbour's edge texels elsewhere (rebuildTileBatch), so neither shows seams.
     void setBilinear(bool b);
 
     float offX() const { return offX_; }
@@ -131,6 +135,9 @@ private:
     // Per-frame tile-quad batch, keyed by section texture; cached across frames
     // when the view is static (idle spectating rebuilds nothing).
     std::map<SDL_Texture*, std::vector<SDL_Vertex>> tileBatch_;
+    // Linear sampling only: half-texel fades across boundaries between unrelated
+    // crops, drawn over every tileBatch_ quad (see rebuildTileBatch).
+    std::map<SDL_Texture*, std::vector<SDL_Vertex>> apronBatch_;
     tak::GeometrySubmit tileSubmit_;
     float builtOffX_ = 1e30f, builtOffY_ = 1e30f, builtZoom_ = -1;
     int builtW_ = -1, builtH_ = -1;
@@ -140,7 +147,7 @@ private:
     uint64_t chunkRevision_=0;
     bool chunksEnabled_=true;
 
-    bool bilinear_ = false;   // smooth terrain scaling (Options; see setBilinear)
+    bool bilinear_ = false;   // linear terrain sampling (see setBilinear)
     float offX_ = 0, offY_ = 0, zoom_ = 0.35f;
     float zoomSpeed_ = 1.0f;   // wheel-zoom sensitivity exponent (Options)
     SDL_Texture* underlay_ = nullptr;   // low-res overview drawn under tiles (not owned)

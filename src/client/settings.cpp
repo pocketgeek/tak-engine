@@ -39,13 +39,13 @@ Settings loadSettings() {
     std::ifstream in(path);
     if (!in) return s;
 
-    // Older filtering keys, used only when bilinearFilter is absent (in any line
-    // order): 0.7.24's bilinear toggle, and the unreleased Zoom Smoothing choice whose
-    // Smooth mode was this filter. Its Sharp and Off, and the AA keys
-    // (antiAlias/terrainAA/modelAA/unitEdgeAA/zoomedOutTerrain), have no successor;
-    // like any unknown key they are skipped and vanish on the next save.
-    int legacyBilinear=-1,legacyZoom=-1;
-    bool bilinearSeen=false;
+    // Filtering keys, resolved after the loop so line order does not matter (see
+    // resolveTextureFilter): textureFilter, else 0.7.25-0.7.28's bilinearFilter, else
+    // 0.7.24's bilinear toggle or the unreleased Zoom Smoothing choice whose Smooth mode
+    // was that filter. Zoom Smoothing's Sharp and Off, and the AA keys (antiAlias/
+    // terrainAA/modelAA/unitEdgeAA/zoomedOutTerrain), have no successor; like any
+    // unknown key they are skipped and vanish on the next save.
+    int textureFilter=-1,bilinearFilter=-1,legacyBilinear=-1,legacyZoom=-1;
     std::string line;
     while (std::getline(in, line)) {
         auto hash = line.find('#');
@@ -81,7 +81,8 @@ Settings loadSettings() {
         else if (key == "dpiMigrated")     s.dpiMigrated = asBool();
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.75f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.75f, 2.0f);
-        else if (key == "bilinearFilter")  { s.bilinear = asBool(); bilinearSeen = true; }
+        else if (key == "textureFilter")   textureFilter = asInt(0, 2);
+        else if (key == "bilinearFilter")  bilinearFilter = asBool();
         else if (key == "bilinear")        legacyBilinear = asBool();
         else if (key == "zoomSmoothing")   legacyZoom = val == "smooth" || val == "1";
         else if (key == "buildBarAlign")   s.buildBarAlign = asInt(0, 2);
@@ -156,8 +157,7 @@ Settings loadSettings() {
             for (int i = 0; i < n; ++i) s.campaignCompleted[id].insert(i);
         }
     }
-    if (!bilinearSeen && (legacyZoom >= 0 || legacyBilinear >= 0))
-        s.bilinear = legacyZoom >= 0 ? legacyZoom == 1 : legacyBilinear == 1;
+    s.textureFilter = resolveTextureFilter(textureFilter, bilinearFilter, legacyBilinear, legacyZoom);
     return s;
 }
 
@@ -175,7 +175,7 @@ bool saveSettings(const Settings& s) {
     o << "dpiMigrated = " << (s.dpiMigrated ? 1 : 0) << "\n";
     o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
-    o << "bilinearFilter = " << (s.bilinear ? 1 : 0) << "\n";
+    o << "textureFilter = " << std::clamp(s.textureFilter, 0, 2) << "\n";
     o << "buildBarAlign = " << s.buildBarAlign << "\n";
     o << "buildBarScale = " << s.buildBarScale << "\n";
     o << "treeSway = " << (s.treeSway ? 1 : 0) << "\n";

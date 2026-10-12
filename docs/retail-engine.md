@@ -1911,8 +1911,8 @@ because they are what decides whether hard solidity flows or gridlocks.
 
 ## BiLinearFilter: units and unit shadows only, default off (2026-10-06)
 
-Static analysis of `KINGDOMS.icd`; this is what the engine's single Bilinear
-Filtering toggle follows.
+Static analysis of `KINGDOMS.icd`; this is what the engine's Texture Filtering
+**Units** level follows (until 0.7.28 it was a single Bilinear Filtering toggle).
 
 - **Storage and default.** `HKCU\Software\Cavedog Entertainment\Kingdoms\VisualOptions\BiLinearFilter`,
   a bool at VisualOptions +0x13 (options container `[0x62d558]`+0x18). The load
@@ -1938,6 +1938,16 @@ Filtering toggle follows.
   stored value applies on Glide too.
 
 The engine renders units at full resolution, so there is no reduced-size image
-to stretch. Its toggle applies the same scope directly: unit model-texture
-pages and unit shadow silhouettes sample LINEAR when on; everything else is
-nearest regardless.
+to stretch. Its Units level applies the same scope directly: unit model-texture
+pages and unit shadow silhouettes sample LINEAR; everything else is nearest.
+Off is retail's default.
+
+**Everything is a non-retail extension.** Retail had no camera zoom, so its
+point-sampled terrain, scenery and effects were never magnified; this engine
+zooms to 4x, where every terrain or feature texel becomes a 4x4 block. The
+Everything level therefore also samples terrain (chunks, fallback tiles), feature
+sprites and shadows, effect/projectile sprites and the shadows.gaf ground
+shadows LINEAR, but only above 1.5x zoom (off again below 1.4x; one constant,
+`client/texturefilter.h`). At 1.0-1.25x a nearest texel is one or two screen
+pixels and filtering would only soften the view. Off and Units render
+pixel-identically to the old toggle's off and on.

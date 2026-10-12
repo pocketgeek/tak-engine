@@ -10,6 +10,7 @@
 #include "client/retailflame.h"
 #include "client/retaileffectframe.h"
 #include "client/retailviewport.h"
+#include "client/texturefilter.h"
 #include "sim/retailhweffectdata.h"
 #include "sim/retailheight.h"
 
@@ -1214,7 +1215,7 @@
                     auto& texture=lightningTextures_[{tw,th}];
                     if(!texture) {
                         texture=SDL_CreateTexture(ren_,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,tw,th);
-                        if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+                        if(texture){SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(texture,worldScaleMode());}
                     }
                     if(texture) {
                         std::vector<uint32_t> pixels(size_t(tw)*th,0);
@@ -2338,17 +2339,44 @@
     // scenery, effects and the interface stay point-sampled whatever it says. This
     // engine draws units at full resolution, so the same switch samples what makes
     // up a unit and its shadow -- the model-texture pages and the shadow silhouette
-    // pages -- and nothing else. Pages created later read bilinear_ when built.
+    // pages -- and nothing else. That is Texture Filtering's UNITS level; pages created
+    // later read the level when built.
     SDL_ScaleMode GameView::unitScaleMode() const {
-        return bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
+        return tak::texturefilter::unitsLinear(textureFilter_) ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
     }
-    void GameView::setBilinear(bool on) {
-        if (on == bilinear_) return;
-        bilinear_ = on;
-        const SDL_ScaleMode mode = unitScaleMode();
-        for (SDL_Texture* t : atlasTex_) if (t) SDL_SetTextureScaleMode(t, mode);
-        for (auto& page : paletteTexturePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
-        for (auto& page : shadowSilhouettePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
+    void GameView::setTextureFilter(int level) {
+        level = tak::texturefilter::clampLevel(level);
+        const bool unitsWas = tak::texturefilter::unitsLinear(textureFilter_);
+        textureFilter_ = level;
+        if (unitsWas != tak::texturefilter::unitsLinear(level)) {
+            SDL_RenderFlush(ren_);   // queued draws must not pick up the new mode
+            const SDL_ScaleMode mode = unitScaleMode();
+            for (SDL_Texture* t : atlasTex_) if (t) SDL_SetTextureScaleMode(t, mode);
+            for (auto& page : paletteTexturePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
+            for (auto& page : shadowSilhouettePages_) if (page.texture) SDL_SetTextureScaleMode(page.texture, mode);
+        }
+        updateWorldFilter();
+    }
+    // EVERYTHING (a non-retail extension: retail had no camera zoom) also smooths the
+    // world art a zoomed-in view magnifies -- terrain, feature sprites, effect and
+    // projectile sprites and the ground-shadow sprites -- but only past the zoom gate
+    // in client/texturefilter.h. Runs once a frame before drawing and touches textures
+    // only when the answer flips; art loaded later reads worldScaleMode() when built.
+    void GameView::updateWorldFilter() {
+        const bool on = tak::texturefilter::worldLinear(textureFilter_, mapView_.zoom(), worldLinear_);
+        if (on == worldLinear_) return;
+        SDL_RenderFlush(ren_);
+        worldLinear_ = on;
+        const SDL_ScaleMode mode = worldScaleMode();
+        const auto set = [mode](SDL_Texture* t) { if (t) SDL_SetTextureScaleMode(t, mode); };
+        for (auto& [key, art] : featureArt_) {
+            for (SDL_Texture* t : art.frames) set(t);
+            for (SDL_Texture* t : art.shadowFrames) set(t);
+        }
+        for (auto& [name, anim] : effectAnims_) for (auto& f : anim.frames) set(f.tex);
+        for (auto& [name, shadow] : shadowTex_) set(shadow.tex);
+        for (auto& [size, t] : lightningTextures_) set(t);
+        mapView_.setBilinear(on);
     }
 
     // Copy one model texture into its atlas rect plus a one-texel clamped gutter
@@ -3150,6 +3178,7 @@
                                                        fr.width, fr.height);
                     SDL_UpdateTexture(t, nullptr, px.data(), fr.width * 4);
                     SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureScaleMode(t, worldScaleMode());
                     std::string name = sq.name;
                     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                     shadowTex_[name] = {t, fr.width, fr.height, fr.xoff, fr.yoff};
@@ -3280,6 +3309,7 @@
                             if (!t) continue;   // VRAM-pressure alloc fail: drop the frame
                             if (blank) premulUpload(t, std::vector<uint8_t>(4, 0), 1);
                             else premulUpload(t, ff.rgba, ff.width);
+                            SDL_SetTextureScaleMode(t, worldScaleMode());
                             a.frames.push_back(t);
                             a.fgeom.push_back({ff.width, ff.height, ff.xoff, ff.yoff});
                             acc += std::max(1, int(ff.retailDelayTicks));
@@ -3308,6 +3338,7 @@
                                 SDL_TEXTUREACCESS_STATIC, blank ? 1 : frame.width, blank ? 1 : frame.height);
                             if (texture) {
                                 premulUpload(texture, px, blank ? 1 : frame.width);
+                                SDL_SetTextureScaleMode(texture, worldScaleMode());
                             }
                             a.shadowFrames.push_back(texture);
                             a.shadowGeom.push_back({frame.width, frame.height, frame.xoff, frame.yoff});
@@ -4025,9 +4056,14 @@
                     SDL_Texture* t = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
                                                        SDL_TEXTUREACCESS_STATIC,
                                                        blank ? 1 : fr.width, blank ? 1 : fr.height);
-                    const uint32_t transparent=0;
-                    SDL_UpdateTexture(t, nullptr, blank ? static_cast<const void*>(&transparent) :
-                        static_cast<const void*>(fr.rgba.data()), blank ? 4 : fr.width * 4);
+                    // Colour-bled like feature art (premulUpload): only RGB under alpha 0
+                    // changes, which neither BLEND nor ADD ever shows when sampled
+                    // nearest, while Everything's linear sampling no longer mixes the
+                    // GAF black into every sprite edge.
+                    if (t) {
+                        premulUpload(t, blank ? std::vector<uint8_t>(4, 0) : fr.rgba, blank ? 1 : fr.width);
+                        SDL_SetTextureScaleMode(t, worldScaleMode());
+                    }
                     // Glide adds only format-4 frames without flag FF. Indexed
                     // and 1555 sprites use ordinary coverage in the default
                     // draw mode; SDL alpha preserves their transparent pixels.

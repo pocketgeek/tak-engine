@@ -47,6 +47,7 @@ void MapView::reload(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
     for (auto& [k, s] : sections_) if (s.tex) gpuvram::destroy(s.tex);
     sections_.clear();
     tileBatch_.clear();
+    apronBatch_.clear();
     tileBatchDirty_ = true;
     builtZoom_ = -1;   // force a rebuild against the new map
     map_ = genOrLoad(vfs, mapPath);
@@ -153,6 +154,7 @@ void MapView::finishChunks() {
 
 void MapView::rebuildTileBatch(int winW, int winH) {
     for (auto& [t, v] : tileBatch_) v.clear();   // keep per-texture capacity
+    for (auto& [t, v] : apronBatch_) v.clear();
     const int mapW = map_.blocksX, mapH = map_.blocksY;
     // Visible block range, clamped to the map.
     int b0x = std::max(0, int(std::floor(offX_ / kBlock)));
@@ -176,11 +178,31 @@ void MapView::rebuildTileBatch(int winW, int winH) {
             int sx = (map_.tileCols[b] * kBlock) % std::max(s.w, 1);
             int sy = (map_.tileRows[b] * kBlock) % std::max(s.h, 1);
             // Half-texel inset: bilinear at the quad edge then samples exactly the
-            // tile's own edge texel, never the neighbour -- seam-free without a
-            // baked gutter. Clamp for the rare non-32-multiple section.
+            // tile's own edge texel, never the neighbour -- no bleed without a baked
+            // gutter. Clamp for the rare non-32-multiple section. Nearest sampling has
+            // always used these same UVs, so it stays pixel-identical.
             float u0 = (sx + 0.5f) / s.w, v0 = (sy + 0.5f) / s.h;
             float u1 = (std::min(sx + kBlock, s.w) - 0.5f) / s.w;
             float v1 = (std::min(sy + kBlock, s.h) - 0.5f) / s.h;
+            // Linear sampling would still stop at an inset edge, leaving a hard line
+            // every 32 texels. Where the map neighbour is the very next crop of the
+            // same section -- maps are mostly laid out that way -- its texels ARE the
+            // right neighbours: sample to the true edge and the filter crosses the
+            // boundary exactly as it does inside a chunk. Elsewhere see the aprons.
+            bool join[4] = {};   // left, top, right, bottom
+            if (bilinear_) {
+                const auto next = [&](int nx, int ny, int dx, int dy) {
+                    if (nx < 0 || ny < 0 || nx >= mapW || ny >= mapH) return false;
+                    const size_t n = size_t(ny) * mapW + nx;
+                    return map_.tileKeys[n] == map_.tileKeys[b] &&
+                           (map_.tileCols[n] * kBlock) % std::max(s.w, 1) == sx + dx &&
+                           (map_.tileRows[n] * kBlock) % std::max(s.h, 1) == sy + dy;
+                };
+                if ((join[0] = sx > 0 && next(bx - 1, by, -kBlock, 0))) u0 = float(sx) / s.w;
+                if ((join[1] = sy > 0 && next(bx, by - 1, 0, -kBlock))) v0 = float(sy) / s.h;
+                if ((join[2] = sx + kBlock < s.w && next(bx + 1, by, kBlock, 0))) u1 = float(sx + kBlock) / s.w;
+                if ((join[3] = sy + kBlock < s.h && next(bx, by + 1, 0, kBlock))) v1 = float(sy + kBlock) / s.h;
+            }
             float x0 = float(std::lround((bx * kBlock - offX_) * zoom_));
             float x1 = float(std::lround(((bx + 1) * kBlock - offX_) * zoom_));
             auto& vb = tileBatch_[s.tex];
@@ -190,6 +212,44 @@ void MapView::rebuildTileBatch(int winW, int winH) {
             SDL_Vertex bl{{x0, y1}, white, {u0, v1}};
             vb.push_back(tl); vb.push_back(tr); vb.push_back(br);
             vb.push_back(tl); vb.push_back(br); vb.push_back(bl);
+            if (!bilinear_) continue;
+            // Aprons: across a boundary to an unrelated crop, the neighbour's edge
+            // texel row/column is laid over this tile's outer half texel, fading from
+            // half strength at the boundary to nothing at this tile's edge-texel
+            // centre. Over this tile's own (clamped) edge texel that IS the bilinear
+            // blend of the two -- the half texel on the far side gets the matching
+            // apron from the neighbour's own pass, or is a chunk, which already
+            // filters across with its gutter. Only corners (one texel square, where
+            // the diagonal tile is ignored) are approximate.
+            const float h = 0.5f * zoom_;
+            const int nb[4][2] = {{bx - 1, by}, {bx, by - 1}, {bx + 1, by}, {bx, by + 1}};
+            for (int side = 0; side < 4; ++side) {
+                const int nx = nb[side][0], ny = nb[side][1];
+                if (join[side] || nx < 0 || ny < 0 || nx >= mapW || ny >= mapH) continue;
+                const size_t n = size_t(ny) * mapW + nx;
+                auto ni = sections_.find(map_.tileKeys[n]);
+                if (ni == sections_.end() || !ni->second.tex) continue;
+                const Section& ns = ni->second;
+                const float nsx = float((map_.tileCols[n] * kBlock) % std::max(ns.w, 1));
+                const float nsy = float((map_.tileRows[n] * kBlock) % std::max(ns.h, 1));
+                // The neighbour's texel row/column facing this tile, along its inset span.
+                const float nu0 = (nsx + 0.5f) / ns.w, nv0 = (nsy + 0.5f) / ns.h;
+                const float nu1 = (std::min(nsx + kBlock, float(ns.w)) - 0.5f) / ns.w;
+                const float nv1 = (std::min(nsy + kBlock, float(ns.h)) - 0.5f) / ns.h;
+                const SDL_Color edge{255, 255, 255, 128}, fade{255, 255, 255, 0};
+                SDL_Vertex q[4];   // boundary pair first, then the inner pair
+                if (side == 0)      q[0] = {{x0, y0}, edge, {nu1, nv0}}, q[1] = {{x0, y1}, edge, {nu1, nv1}},
+                                    q[2] = {{x0 + h, y1}, fade, {nu1, nv1}}, q[3] = {{x0 + h, y0}, fade, {nu1, nv0}};
+                else if (side == 2) q[0] = {{x1, y0}, edge, {nu0, nv0}}, q[1] = {{x1, y1}, edge, {nu0, nv1}},
+                                    q[2] = {{x1 - h, y1}, fade, {nu0, nv1}}, q[3] = {{x1 - h, y0}, fade, {nu0, nv0}};
+                else if (side == 1) q[0] = {{x0, y0}, edge, {nu0, nv1}}, q[1] = {{x1, y0}, edge, {nu1, nv1}},
+                                    q[2] = {{x1, y0 + h}, fade, {nu1, nv1}}, q[3] = {{x0, y0 + h}, fade, {nu0, nv1}};
+                else                q[0] = {{x0, y1}, edge, {nu0, nv0}}, q[1] = {{x1, y1}, edge, {nu1, nv0}},
+                                    q[2] = {{x1, y1 - h}, fade, {nu1, nv0}}, q[3] = {{x0, y1 - h}, fade, {nu0, nv0}};
+                auto& ab = apronBatch_[ns.tex];
+                ab.push_back(q[0]); ab.push_back(q[1]); ab.push_back(q[2]);
+                ab.push_back(q[0]); ab.push_back(q[2]); ab.push_back(q[3]);
+            }
         }
     }
     builtOffX_ = offX_; builtOffY_ = offY_; builtZoom_ = zoom_;
@@ -219,7 +279,7 @@ void MapView::draw(int winW, int winH) {
         const auto revision=chunks_.stats().revision;
         if(revision!=chunkRevision_) {tileBatchDirty_=true;chunkRevision_=revision;}
         if(chunks_.draw(ren_,offX_,offY_,zoom_)) {
-            tileBatch_.clear();tileBatchDirty_=true;return;
+            tileBatch_.clear();apronBatch_.clear();tileBatchDirty_=true;return;
         }
     } else {chunks_.clear();tileBatchDirty_=true;}
     const bool changed=tileBatchDirty_ || offX_ != builtOffX_ || offY_ != builtOffY_ ||
@@ -229,6 +289,10 @@ void MapView::draw(int winW, int winH) {
     for (auto& [tex, verts] : tileBatch_)
         if (tex && !verts.empty())
             tileSubmit_.draw(ren_, tex, verts, !tak::devFlag("TAK_TERRAIN_SDL_SUBMIT"));
+    // Linear-only blends across unrelated tile boundaries, over every base tile.
+    for (auto& [tex, verts] : apronBatch_)
+        if (tex && !verts.empty())
+            SDL_RenderGeometry(ren_, tex, verts.data(), int(verts.size()), nullptr, 0);
 }
 
 void MapView::invalidateRenderTargets() {
@@ -238,6 +302,7 @@ void MapView::invalidateRenderTargets() {
 void MapView::setBilinear(bool b) {
     if (b == bilinear_) return;
     bilinear_ = b;
+    tileBatchDirty_ = true;   // the fallback tile UVs depend on it (rebuildTileBatch)
     for (auto& [k, s] : sections_)
         if (s.tex) SDL_SetTextureScaleMode(s.tex, b ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
 }
@@ -272,6 +337,7 @@ void MapView::uploadReadySections() {
                                            SDL_TEXTUREACCESS_STATIC, img->width, img->height);
         if (!t) { gpuvram::noteFail(); deferred.push_back(key); continue; }
         SDL_UpdateTexture(t, nullptr, img->rgba.data(), img->width * 4);
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);   // opaque texels; the aprons fade by vertex alpha
         SDL_SetTextureScaleMode(t, bilinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
         sections_[key] = {t, img->width, img->height};
         tileBatchDirty_ = true;   // a new section can fill in visible tiles

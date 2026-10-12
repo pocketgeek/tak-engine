@@ -1549,6 +1549,9 @@ int main(int argc, char** argv) {
         last = now;
 #ifndef NDEBUG
         if(renderStudy)dt=1.f/60;
+        // Repeatable --shot captures (A/B image diffs): the frame clock advances a fixed
+        // 1/60s instead of wall-clock time, so the sim and animations land identically.
+        else if(!shot.empty() && tak::devFlag("TAK_SHOT_FIXED_DT"))dt=1.f/60;
 #endif
         // FPS readout in the window title (updated ~4x/sec).
         {

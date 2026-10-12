@@ -1114,9 +1114,16 @@ public:
 private:
     int buildBarAlign_ = 1;     // conjure/build row: 0=left 1=center 2=right (Options)
     float buildBarScale_ = 1.0f;   // extra row scale on top of uiScale_ (Options)
-    bool bilinear_ = false;     // retail BiLinearFilter: unit and unit-shadow pages LINEAR (Options)
-    void setBilinear(bool on);
+    // TEXTURE FILTERING (Options; client/texturefilter.h). Units and above = retail's
+    // BiLinearFilter on the unit and unit-shadow pages; Everything also turns terrain,
+    // feature, effect and ground-shadow sprites LINEAR while zoomed in (worldLinear_,
+    // re-decided each frame in prepare() and applied only when it flips).
+    int textureFilter_ = 0;
+    bool worldLinear_ = false;
+    void setTextureFilter(int level);
+    void updateWorldFilter();
     SDL_ScaleMode unitScaleMode() const;
+    SDL_ScaleMode worldScaleMode() const { return worldLinear_ ? SDL_ScaleModeLinear : SDL_ScaleModeNearest; }
     bool smoothArt_ = tak::art::g_smoothArt; // how the current interface was built
     int healthBars_ = 1;        // 0=off 1=damaged-only 2=always (Options)
     uint64_t statsSampleAt_ = 0, statsGpuAt_ = 0;

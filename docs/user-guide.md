@@ -1001,7 +1001,7 @@ World sounds are full volume on screen and fade with distance off screen.
 | --- | --- | --- |
 | **Renderer** | Auto | Which graphics backend draws the game. Takes effect after a restart; see [Renderer](#renderer). |
 | **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
-| **Bilinear Filtering** | Off | The original game's option. Smooths unit textures and unit shadows. Terrain, scenery and the interface stay sharp, as in the original. |
+| **Texture Filtering** | Off | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
 | **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
 | **Smooth GUI Art** | Off | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
 | **Smooth Movies** | Off | Removes the blocky compression artefacts from the game's movies. |
@@ -1010,6 +1010,22 @@ World sounds are full volume on screen and fade with distance off screen.
 | **Tactical Dots Zoom** | 20% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
+
+**Texture Filtering** applies at once. At **Off** every texture is drawn with
+sharp square pixels, which is how the original game looked: it had no camera
+zoom, so its art was never magnified. **Units** is the original game's own
+Bilinear Filtering option and smooths only unit textures and unit shadows.
+**Everything** also smooths the terrain, the scenery (trees, rocks and other
+map features and their shadows) and effects (explosions, fire, smoke and
+projectiles), so zooming in shows soft, natural ground instead of large
+blocks. It only switches on past 150% zoom: at the normal 125% view a texture
+pixel is one or two screen pixels, so smoothing would only blur the picture.
+It switches back off below 140%, so a wheel notch either side of the line does
+not flicker. Units are smoothed at every zoom, as with Units. None of the
+levels costs any measurable speed or video memory. The interface, cursor and
+movies have their own settings (Smooth GUI Art, Smooth Movies). Saved settings
+from an older version keep their look: Bilinear Filtering off becomes Off, on
+becomes Units.
 
 **Tactical Dots Zoom** sets when dots take over; it is greyed out and cannot be
 changed while Tactical Dots is off. It is a position along your zoom-out range:
@@ -1051,7 +1067,7 @@ available on your system appear.
 - **Software** draws everything on the processor without the graphics card. It
   is a last resort for a machine with no working graphics driver: it is very
   slow at high resolutions (a few frames per second at 1920x1080 in a big
-  battle), and Bilinear Filtering has no effect on units with it.
+  battle), and Texture Filtering has no effect on units with it.
 - The change takes effect the next time the game starts. Until then the row
   says **RESTART REQUIRED**.
 - If the chosen backend is missing or fails to start, the game uses **Auto** for

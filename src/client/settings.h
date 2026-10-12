@@ -33,10 +33,12 @@ struct Settings {
     bool  dpiMigrated = false;     // one-time: uiScale/cursorScale already adapted to the OS scale
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.75..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.75..2.0 (1.0 = 100%)
-    // Retail's BiLinearFilter video option (default off): bilinear sampling of unit
-    // model textures and unit shadows instead of nearest. Retail never filtered the
-    // terrain, scenery or interface, so this does not either; see Smooth GUI Art.
-    bool  bilinear   = false;
+    // TEXTURE FILTERING for the game area (client/texturefilter.h): 0 = Off (retail's
+    // default, all nearest), 1 = Units (retail's BiLinearFilter: unit model textures
+    // and unit shadows linear), 2 = Everything (Units, plus terrain, features and
+    // effects once zoomed in past 1.5x; a non-retail extension). The interface is
+    // never filtered by this; see Smooth GUI Art. Persisted as textureFilter.
+    int   textureFilter = 0;
     int   buildBarAlign = 1;       // conjure/build icon row: 0=left, 1=center, 2=right
     float buildBarScale = 1.0f;    // extra scale on the build icon row, ON TOP of uiScale; 0.75..4.0
     bool  treeSway   = true;       // animated tree and shadow sway; default on
@@ -138,7 +140,7 @@ struct Settings {
     friend bool operator==(const Settings& a, const Settings& b) {
         for (int i = 0; i < 8; ++i) if (a.chanGain[i] != b.chanGain[i]) return false;
         return a.fullscreen == b.fullscreen && a.vsync == b.vsync && a.maxFps == b.maxFps
-            && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.bilinear == b.bilinear
+            && a.scorecardScale == b.scorecardScale && a.uiScale == b.uiScale && a.textureFilter == b.textureFilter
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
             && a.tacticalDotsZoom == b.tacticalDotsZoom
@@ -198,6 +200,19 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.knownServers = cur.knownServers;
     d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
     return d;
+}
+
+// The Texture Filtering level a settings file asks for, from the keys it holds (-1 =
+// absent). textureFilter wins; a file written before it existed falls back to the
+// 0.7.25-0.7.28 bilinearFilter toggle (0 = Off, 1 = Units, which is exactly what that
+// toggle smoothed), then to 0.7.24's bilinear toggle or the unreleased Zoom Smoothing
+// choice whose Smooth mode was the same filter. Nothing at all = Off.
+inline int resolveTextureFilter(int textureFilter, int bilinearFilter, int legacyBilinear,
+                                int legacyZoom) {
+    if (textureFilter >= 0) return std::clamp(textureFilter, 0, 2);
+    if (bilinearFilter >= 0) return bilinearFilter ? 1 : 0;
+    if (legacyZoom >= 0) return legacyZoom == 1 ? 1 : 0;
+    return legacyBilinear == 1 ? 1 : 0;
 }
 
 // What the running process started with (set once in main before SDL_Init), so the

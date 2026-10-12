@@ -168,7 +168,8 @@
         sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
         if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }
         else sl("MAX FPS     (VSYNC)");
-        sl(std::string("BILINEAR    ") + (settings_ && settings_->bilinear ? "ON" : "OFF"));
+        {   const int tf = settings_ ? std::clamp(settings_->textureFilter, 0, 2) : 0;
+            sl(std::string("TEXFILTER   ") + (tf == 2 ? "EVERYTHING" : tf == 1 ? "UNITS" : "OFF")); }
         // GPU texture memory: the self-calibrating cap, and this run's peak usage/pages.
         size_t gpuPeak = 0, sysPeak = 0;
         for (const auto& s : benchSamples_) {

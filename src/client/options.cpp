@@ -242,7 +242,7 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
     ctls_.back().enabled = [&] { return !s_.vsync; };   // vsync paces frames; the cap does nothing
 
-    // GRAPHICS. BILINEAR FILTERING is retail's video option (BiLinearFilter).
+    // GRAPHICS. TEXTURE FILTERING's UNITS level is retail's video option (BiLinearFilter).
     section("GRAPHICS");
     // RENDERER: AUTO (SDL's own pick) or any driver this SDL build reports. Applied at
     // startup only, so the row says RESTART REQUIRED when the pick differs from what is
@@ -281,8 +281,19 @@ void OptionsScreen::build(int channels) {
         return s_.ignoreDpiScaling != dpiIgnoredAtStartup() ? std::string("RESTART REQUIRED") : std::string();
     };
 #endif
-    toggle("BILINEAR FILTERING", [&] { return s_.bilinear ? 1.0f : 0.0f; },
-           [&](float v) { s_.bilinear = v > 0.5f; });
+    // Three stops, game area only (client/texturefilter.h); applied live like the rest.
+    slider("TEXTURE FILTERING", 0, 2, [&] { return float(s_.textureFilter); },
+           [&](float v) { s_.textureFilter = std::clamp(int(v + 0.5f), 0, 2); },
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "EVERYTHING" : l >= 1 ? "UNITS" : "OFF"); });
+    ctls_.back().help = [&] {
+        const char* lines[] = {
+            "OFF: NOTHING IS SMOOTHED, AS IN THE ORIGINAL GAME.",
+            "UNITS: SMOOTHS UNIT TEXTURES AND UNIT SHADOWS (THE ORIGINAL GAME'S BILINEAR FILTER).",
+            "EVERYTHING: UNITS, PLUS TERRAIN, TREES, ROCKS AND EFFECTS ONCE ZOOMED IN PAST 1.5X."};
+        std::vector<std::string> out;
+        for (int i = 0; i < 3; ++i) out.push_back(std::string(i == s_.textureFilter ? "> " : "  ") + lines[i]);
+        return out;
+    };
     // Projected unit shadows. Retail's Glide path casts these, so ON is the faithful
     // setting -- but it is the largest single cost in a crowded frame (measured ~3.2ms
     // of a ~12ms draw at ~1180 visible units), which is worth a switch on a slow machine.
@@ -553,6 +564,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
         }
         return false;
     }
+    if (e.type == SDL_MOUSEMOTION) { hoverX_ = float(e.motion.x); hoverY_ = float(e.motion.y); }
     if (e.type == SDL_MOUSEMOTION && drag_ >= 0 && (e.motion.state & SDL_BUTTON_LMASK)) {
         layout(winW, winH);   // rows may have shifted if window resized mid-drag
         if (drag_ < int(ctls_.size())) commit(ctls_[size_t(drag_)], float(e.motion.x));
@@ -560,6 +572,39 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
     }
     if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) drag_ = -1;
     return false;
+}
+
+void OptionsScreen::drawHelp(const Control& c) {
+    // Word-wrapped to the row width in the block font; below the row, or above it when
+    // the footer is in the way. Lines starting "> " mark the current choice.
+    const float px = 1.4f * u_, pad = 6 * u_, lineH = 10 * px;
+    const int maxCh = std::max(8, int((c.row.w - 2 * pad) / (6 * px)));
+    std::vector<std::pair<std::string, bool>> lines;
+    for (const std::string& text : c.help()) {
+        const bool mark = text.rfind("> ", 0) == 0;
+        std::string line;
+        size_t at = 0;
+        while (at < text.size()) {
+            size_t end = text.find(' ', at + 1);
+            if (end == std::string::npos) end = text.size();
+            std::string word = text.substr(at, end - at);
+            if (!line.empty() && int(line.size() + word.size()) > maxCh) {
+                lines.push_back({line, mark}); line = "    " + word.substr(word[0] == ' ' ? 1 : 0);
+            } else line += word;
+            at = end;
+        }
+        lines.push_back({line, mark});
+    }
+    const float h = float(lines.size()) * lineH + 2 * pad - (lineH - 7 * px);
+    const float footerTop = panel_.y + panel_.h - 52 * u_;
+    float y = c.row.y + c.row.h + 2 * u_;
+    if (y + h > footerTop) y = c.row.y - h - 2 * u_;
+    SDL_FRect box{c.row.x, y, c.row.w, h};
+    SDL_SetRenderDrawColor(ren_, 14, 16, 24, 250); SDL_RenderFillRectF(ren_, &box);
+    SDL_SetRenderDrawColor(ren_, 150, 160, 195, 255); SDL_RenderDrawRectF(ren_, &box);
+    for (size_t i = 0; i < lines.size(); ++i)
+        drawBlockText(ren_, lines[i].first, box.x + pad, box.y + pad + float(i) * lineH, px,
+                      lines[i].second ? SDL_Color{235, 225, 180, 255} : SDL_Color{185, 192, 210, 255});
 }
 
 void OptionsScreen::render(int winW, int winH) {
@@ -687,6 +732,18 @@ void OptionsScreen::render(int winW, int winH) {
         }
     }
     SDL_RenderSetClipRect(ren_, nullptr);
+
+    // Help for the row under the pointer (or the slider being dragged), unless a
+    // dropdown's list is open over it.
+    if (openDrop_ < 0) {
+        const bool inView = hoverY_ >= float(clip.y) && hoverY_ <= float(clip.y + clip.h);
+        for (size_t i = 0; i < ctls_.size(); ++i) {
+            const Control& c = ctls_[i];
+            const bool hot = drag_ == int(i) || (inView && hoverX_ >= c.row.x && hoverX_ <= c.row.x + c.row.w &&
+                                                 hoverY_ >= c.row.y && hoverY_ <= c.row.y + c.row.h);
+            if (hot && c.help) { drawHelp(c); break; }
+        }
+    }
 
     // Scrollbar hint (viewport is the panel minus the title and the footer).
     float viewH = panel_.h - titleH - footerH;
