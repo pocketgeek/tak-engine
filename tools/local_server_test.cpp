@@ -4,6 +4,7 @@
 // The test spawns ITSELF as the child: `--child-exit N` exits N, `--child-sleep`
 // idles until killed.
 #include "client/localserver.h"
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -22,6 +23,19 @@ long waitExit(tak::LocalServer& s, int* code, int limitMs) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return -1;
+}
+// Is process `pid` gone (exited and reaped)? Checked AFTER a stop/destructor, so a
+// LocalServer that merely forgot the child (returned without killing it) fails.
+bool processGone(long pid) {
+#ifdef _WIN32
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, DWORD(pid));
+    if (!h) return true;
+    const bool done = WaitForSingleObject(h, 0) == WAIT_OBJECT_0;
+    CloseHandle(h);
+    return done;
+#else
+    return kill(pid_t(pid), 0) != 0 && errno == ESRCH;
+#endif
 }
 }  // namespace
 
@@ -57,13 +71,15 @@ int main(int argc, char** argv) {
     {   // a live child is running until stopped, and stop() ends it promptly
         tak::LocalServer s;
         expect(s.start(self, {"--child-sleep"}), "start self --child-sleep");
-        expect(s.pid() > 0, "live child has a pid");
+        const long pid = s.pid();
+        expect(pid > 0, "live child has a pid");
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         expect(!s.exited(), "live child is not reported exited");
         const auto t0 = Clock::now();
         s.stop();
         expect(Clock::now() - t0 < std::chrono::seconds(3), "stop() ends a live child promptly");
         expect(!s.started(), "stop() releases a live child");
+        expect(pid > 0 && processGone(pid), "stop() ends a live child");
         s.stop();   // idempotent
     }
     {   // the destructor stops a live child (the session's `continue`/return paths)
@@ -74,7 +90,8 @@ int main(int argc, char** argv) {
             expect(s.start(self, {"--child-sleep"}), "start self for destructor");
             pid = s.pid();
         }
-        expect(pid > 0 && Clock::now() - t0 < std::chrono::seconds(3), "destructor ends a live child promptly");
+        expect(pid > 0 && Clock::now() - t0 < std::chrono::seconds(3), "destructor returns promptly");
+        expect(pid > 0 && processGone(pid), "destructor ends a live child");
     }
     if (!failed) std::printf("local_server: ok\n");
     return failed ? 1 : 0;
