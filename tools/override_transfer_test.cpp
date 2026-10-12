@@ -19,12 +19,12 @@ int main(int argc,char** argv){try{
  put(hostRoot,"overrides/Alpha/sounds/pack-test.wav",std::string(80000,'a'));
  put(peerRoot,"overrides/Local/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=99999"));
  put(peerRoot,"overrides/Local/sounds/pack-test.wav","local");
- put(peerRoot,"OverrideCache","not a directory"); // every peer cache save fails: verified packs must still be accepted
+ put(peerRoot,"OverrideCache","not a directory"); // the first peer cache save fails: the verified packs must still be accepted
  net::MpClient host,peer;host.setMapRoot(hostRoot);peer.setMapRoot(peerRoot);host.setHostOverridePacks({"Beta","Alpha"});
  auto stockHash=hpi::gameplayHash(base);host.setDataHash(stockHash);peer.setDataHash(stockHash);
  check(host.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-host"),"host connect");check(peer.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-peer"),"peer connect");
  sim::TypeRegistry registry;hpi::Vfs hostData,peerData;sim::World wh,wp;
- bool created=false,joined=false,ready=false,started=false,loaded=false;int transition=0;std::string initialDigest,alphaDigest;uint32_t ht=0,pt=0;std::map<uint32_t,uint64_t> hashes;
+ bool created=false,joined=false,ready=false,started=false,loaded=false,saveFailed=false;int transition=0;std::string initialDigest,alphaDigest;uint32_t ht=0,pt=0;std::map<uint32_t,uint64_t> hashes;
  auto setup=[&](net::MpClient& c,hpi::Vfs& data,sim::World& world){
   data=c.overrideVfs(hpi::OverridePolicy::Cosmetic,&c==&host?std::vector<std::string>{}:std::vector<std::string>{"Local","Removed pack"});
   check(hpi::gameplayHash(data)!=stockHash,"full pack did not change gameplay");
@@ -40,11 +40,13 @@ int main(int argc,char** argv){try{
    std::cout<<"PASS: verified Full packs transferred; mismatching loaded gameplay rejected\n";return 0;
   }
   check(hostOk,host.error().c_str());check(peer.poll(),peer.error().c_str());
+  saveFailed|=peer.overrideStatus().find("SAVE FAILED")!=std::string::npos;
   if(!created && host.state()==net::MpClient::State::Lobby){net::GameOptions o;o.overridePolicy=2;for(int duplicate=0;duplicate<16;++duplicate)host.createGame("packs","","Ulasem Arena",o,2);created=true;}
   if(!joined && host.room().id && peer.state()==net::MpClient::State::Lobby){for(int duplicate=0;duplicate<160;++duplicate)peer.joinGame(host.room().id,"");joined=true;}
   if(!ready && peer.room().id && peer.room().mySlot>=0){host.setSlot(0,1,0,0,0,1);peer.setSlot(1,1,1,1,1,1);ready=true;}
   if(ready && !started) {
    if(transition==0 && host.room().mapsReady && peer.overridePackage()) {
+    check(saveFailed,"peer cache failure not reported");std::filesystem::remove(peerRoot/"OverrideCache"); // later transitions save, then reuse, the cache
     initialDigest=host.overridePackage()->digest;auto opts=host.room().opts;opts.overridePolicy=0;host.setGameOptions(opts);transition=1;
    } else if(transition==1 && host.room().opts.overridePolicy==0 && peer.room().opts.overridePolicy==0) {
     check(!host.overridePackage()&&!peer.overridePackage(),"Off retained shared overrides");
@@ -55,7 +57,7 @@ int main(int argc,char** argv){try{
     host.setHostOverridePacks({"Alpha"});transition=3;
    } else if(transition==3 && !host.overridePending() && host.room().mapsReady && peer.overridePackage() && host.overridePackage()->digest!=initialDigest && peer.overridePackage()->digest==host.overridePackage()->digest) {
     alphaDigest=host.overridePackage()->digest;check(alphaDigest!=initialDigest,"selection did not replace pack");host.setHostOverridePacks({"Beta","Alpha"});transition=4;
-   } else if(transition==4 && !host.overridePending() && host.room().mapsReady && peer.overridePackage() && peer.overridePackage()->digest==initialDigest)transition=5;
+   } else if(transition==4 && !host.overridePending() && host.room().mapsReady && peer.overridePackage() && peer.overridePackage()->digest==initialDigest){check(std::filesystem::exists(peerRoot/"OverrideCache"/(initialDigest+".takoverrides")),"peer cache not saved after recovery");transition=5;}
   }
   if(!started && transition==5 && ready && host.room().mapsReady && host.room().slots[1].ready){check(host.overridePackage()&&peer.overridePackage(),"start allowed before packs received");check(host.overridePackage()->digest==peer.overridePackage()->digest,"pack digest mismatch");host.startGame();started=true;}
   if(!loaded && host.starting() && peer.starting()){setup(host,hostData,wh);setup(peer,peerData,wp);loaded=true;}
